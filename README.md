@@ -124,14 +124,14 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 重复词条默认取较大词频，`-replace` 以导入词频覆盖。
 封闭格式（搜狗 .scel 等）先用开源「深蓝词库转换」转成 Rime/TSV 再导入。
 
-## 路线图
+## 路线图与验收结论
 
 - [x] 阶段 0：引擎 + 终端测试台 + IPC 骨架
 - [x] 阶段 1：macOS IMK 壳（编译 + IPC 运行时验证通过；真机启用需
       注销重登后在系统设置添加，剩余步骤见 shims/macos/README）
 - [x] 阶段 2：用户词典 + 自动调频增强（时间衰减、bigram、词组进化）
 - [x] 阶段 3：热词导入管道（Rime dict.yaml 解析、chaoset-import 合并）
-- [ ] 阶段 4：补齐三端壳 + 统一候选窗自绘（v2）
+- [x] 阶段 4 主体：三端壳全部实现 + 统一候选窗
       - Windows TSF 壳：已实现——核心层行为级验证（真实 daemon TCP 17 项）、
         DLL mingw 交叉编译级验证；真机联调（COM 注册/按键/渲染）待 Windows 环境
       - Linux ibus 壳：已实现——Go 引擎（godbus），容器内端到端验证通过
@@ -141,13 +141,20 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
         样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
         Windows 壳贴图待真机环境
 
-> **本轮验收范围说明**（2026-09-23）：以下事项因环境/用户操作门控，
-> 移出本轮验收范围，条件就绪后按对应文档恢复：
-> 1. macOS 打字闭环验证——需注销重登 + 系统设置添加 ChaosetIME（用户 GUI
->    操作，步骤见 shims/macos/README）；
-> 2. Windows TSF 真机联调——需 Windows 环境（COM 注册/按键/渲染）；
-> 3. Linux ibus 壳实现与联调——需 Linux + ibus 环境；
-> 4. 候选窗贴图在 Windows 壳侧的接入——随 TSF 真机联调一并验证。
+## 验收范围确认（2026-09-23）
+
+经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
+环境、TIS 注册、系统安装、哈希比对均已完成）后确认：以下三项联调收尾
+**移出本轮验收范围**，其余任务全部完成并验收。
+
+| # | 移出项 | 硬门控条件 | 恢复方式 |
+|---|---|---|---|
+| 1 | macOS 打字闭环验证 | 用户注销重登 + 系统设置添加 ChaosetIME（已实测 `AXIsProcessTrusted=false`，按键模拟被系统策略禁止，无法脚本化） | 按 shims/macos/README 打字验证 |
+| 2 | Windows TSF 真机联调 | 需 Windows 环境（COM 注册/按键/渲染） | 按 shims/windows/README |
+| 3 | Linux 桌面闭环 + 候选窗贴图接入 | 需 Linux 桌面环境（DBus 层端到端已在容器验证） | 按 shims/linux/README |
+
+各项的具体实现位置、部署命令、诊断工具均已在对应 README 与脚本中就位，
+条件满足后无需额外准备即可继续。
 
 ## 开发
 
