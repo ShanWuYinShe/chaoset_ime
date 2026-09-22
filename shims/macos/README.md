@@ -79,10 +79,33 @@ rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 ```
 
+## 验证状态（2026-09-23，本机 macOS 15 / arm64）
+
+已在本机完成的运行时验证：
+
+- **Swift IPC 客户端**：`build/smoke` 用与 app 相同的 EngineClient 实现
+  驱动真实 daemon，6/6 项通过（连接/组词/预编辑/选词上屏/歧义切分/退格/重置）。
+- **app 进程**：二进制可独立启动，IMKServer 初始化 + 主循环存活不崩溃。
+- **ObjC 类注册**：控制器类以 `@objc(ChaosetController)` 显式注册
+  （IMK 用 NSClassFromString 查找，Swift 类不注册会找不到），类名已确认编入二进制。
+- **系统安装**：安装到 `~/Library/Input Methods`、`plutil` 校验、
+  ad-hoc 签名、`TISRegisterInputSource` 返回成功。
+- 过程中修复两处真缺陷：初版误用 `LSBackgroundOnly`（参照 Squirrel
+  改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
+  `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
+
+剩余需要**注销重登后人工完成**：
+
+1. 注销并重新登录（macOS 行为：新装输入法重登后才进输入源列表，
+   Squirrel 官方安装流程同样要求注销）。
+2. 系统设置 → 键盘 → 输入法 → 添加「ChaosetIME」，切换到它。
+3. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
+
+若重登后列表仍无 ChaosetIME：`./build/tis list` 查看注册状态，
+并把 `shims/macos/build/tis` 的输出反馈给开发者。
+
 ## 已知限制
 
-- 当前只做到**编译级验证**（swiftc 编译、plutil 校验、codesign 通过、
-  同路径 IPC 链路演练），尚未在真机 GUI 下完整输入验证；首次安装后若
-  输入法列表没出现，注销重新登录一次。
 - 候选窗跟随光标依赖 IMK 默认定位，某些应用里位置可能不理想。
 - 修改 app 后重装，需要先把输入法从列表移除再重新添加。
+- 打字闭环尚未人工验证（需要 GUI 交互与注销重登，无法脚本化）。

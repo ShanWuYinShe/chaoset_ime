@@ -123,7 +123,8 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 ## 路线图
 
 - [x] 阶段 0：引擎 + 终端测试台 + IPC 骨架
-- [x] 阶段 1：macOS IMK 壳（编译级验证通过，真机 GUI 输入待安装验证；
+- [x] 阶段 1：macOS IMK 壳（编译 + IPC 运行时验证通过；真机启用需
+      注销重登后在系统设置添加，剩余步骤见 shims/macos/README；
       Linux ibus / Windows TSF 见 shims/ 规划）
 - [x] 阶段 2：用户词典 + 自动调频增强（时间衰减、bigram、词组进化）
 - [x] 阶段 3：热词导入管道（Rime dict.yaml 解析、chaoset-import 合并）

@@ -35,12 +35,18 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSBackgroundOnly</key>
+	<key>LSUIElement</key>
 	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 	<key>InputMethodConnectionName</key>
 	<string>ChaosetIME_Connection</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>ChaosetController</string>
+	<key>TISInputSourceID</key>
+	<string>ime.chaoset.inputmethod.ChaosetIME</string>
+	<key>TISIntendedLanguage</key>
+	<string>zh-Hans</string>
 </dict>
 </plist>
 PLIST

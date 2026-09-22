@@ -4,6 +4,10 @@ import InputMethodKit
 // ChaosetController 是 IMK 输入法控制器：把系统按键事件翻译成
 // 对 chaosetd 的 IPC 调用，并用内联预编辑 + IMKCandidates 候选窗展示。
 // daemon 未运行时所有按键原样透传，不影响宿主应用输入。
+// @objc 显式注册 ObjC 类名：IMK 经 Info.plist 的
+// InputMethodServerControllerClass 用 NSClassFromString 查找控制器，
+// Swift 类不注册 ObjC 名会查不到。
+@objc(ChaosetController)
 final class ChaosetController: IMKInputController {
     // main.swift 装配 IMKServer 后挂到这里，候选窗构造需要它
     static weak var sharedServer: IMKServer?
