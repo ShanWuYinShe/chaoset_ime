@@ -1,0 +1,11 @@
+# 构建产物
+bin/
+
+# 运行产物
+*.sock
+chaoset-userdict.json
+chaoset-userdict.json.tmp
+
+# 中间产物与 worktree
+.worktrees/
+.workwork/

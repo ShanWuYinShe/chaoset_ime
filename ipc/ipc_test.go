@@ -1,0 +1,100 @@
+package ipc
+
+import (
+	"fmt"
+	"net"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"chaoset.ime/engine"
+)
+
+const ipcTestDict = `
+你好	ni hao	99
+你	ni	80
+好	hao	85
+实施	shi shi	60
+试试	shi shi	10
+`
+
+func TestServerClientRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "test.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	udPath := filepath.Join(dir, "user.json")
+	user, err := engine.NewUserDict(udPath)
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("连接 daemon 失败: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Ping(); err != nil {
+		t.Fatalf("Ping 失败: %v", err)
+	}
+
+	comp, err := client.Input("nihao")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if comp.Preedit != "ni'hao" || len(comp.Candidates) == 0 || comp.Candidates[0].Text != "你好" {
+		t.Fatalf("组词结果不符预期: %+v", comp)
+	}
+
+	committed, err := client.Select(0)
+	if err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	if committed != "你好" {
+		t.Fatalf("上屏 = %q, 期望 你好", committed)
+	}
+
+	// Select 越界应返回业务错误而非崩溃
+	if _, err := client.Select(9); err == nil {
+		t.Fatal("越界 Select 应返回错误")
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("关闭 server 失败: %v", err)
+	}
+
+	// 用户词典应已落盘：重新加载可见学习记录
+	user2, err := engine.NewUserDict(udPath)
+	if err != nil {
+		t.Fatalf("重载用户词典失败: %v", err)
+	}
+	if got := user2.Count("你好", []string{"ni", "hao"}); got != 1 {
+		t.Fatalf("用户词典计数 = %d, 期望 1", got)
+	}
+}
+
+func waitForDial(sock string) (*Client, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c, err := Dial("unix", sock)
+		if err == nil {
+			return c, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("连接 daemon 超时: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

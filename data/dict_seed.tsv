@@ -1,0 +1,559 @@
+# chaoset 种子词库（演示规模，阶段 3 会接入完整词库与热词导入）
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 词频
+# 一字多音写多行；# 开头为注释
+
+# ---- 常用词 ----
+你好	ni hao	99
+谢谢	xie xie	95
+再见	zai jian	72
+不客气	bu ke qi	60
+我们	wo men	98
+你们	ni men	92
+他们	ta men	94
+她们	ta men	60
+自己	zi ji	90
+大家	da jia	78
+别人	bie ren	66
+什么	shen me	97
+这个	zhe ge	96
+那个	na ge	88
+这么	zhe me	74
+那么	na me	70
+怎么	zen me	92
+怎么样	zen me yang	75
+多少	duo shao	64
+几个	ji ge	60
+因为	yin wei	89
+所以	suo yi	88
+但是	dan shi	87
+可是	ke shi	80
+就是	jiu shi	84
+还是	hai shi	84
+还有	hai you	84
+或者	huo zhe	74
+而且	er qie	70
+如果	ru guo	84
+虽然	sui ran	72
+然后	ran hou	80
+其他	qi ta	72
+可以	ke yi	93
+应该	ying gai	88
+需要	xu yao	85
+知道	zhi dao	90
+觉得	jue de	86
+希望	xi wang	82
+喜欢	xi huan	89
+现在	xian zai	91
+时候	shi hou	89
+时间	shi jian	85
+今天	jin tian	90
+明天	ming tian	87
+昨天	zuo tian	78
+早上	zao shang	72
+中午	zhong wu	60
+上午	shang wu	66
+下午	xia wu	68
+晚上	wan shang	80
+以前	yi qian	66
+以后	yi hou	70
+之前	zhi qian	62
+之后	zhi hou	60
+刚才	gang cai	58
+工作	gong zuo	88
+学习	xue xi	86
+生活	sheng huo	84
+东西	dong xi	83
+地方	di fang	76
+问题	wen ti	88
+方法	fang fa	80
+方式	fang shi	74
+内容	nei rong	76
+情况	qing kuang	78
+结果	jie guo	78
+原因	yuan yin	74
+影响	ying xiang	72
+非常重要	fei chang zhong yao	40
+重要	zhong yao	80
+主要	zhu yao	76
+非常	fei chang	86
+特别	te bie	76
+一般	yi ban	74
+一起	yi qi	80
+一直	yi zhi	82
+已经	yi jing	84
+一点	yi dian	70
+有点	you dian	68
+不是	bu shi	90
+没有	mei you	90
+出来	chu lai	70
+起来	qi lai	72
+下来	xia lai	60
+过来	guo lai	58
+终于	zhong yu	72
+突然	tu ran	72
+马上	ma shang	74
+立刻	li ke	58
+慢慢	man man	66
+认真	ren zhen	72
+努力	nu li	70
+高兴	gao xing	74
+开心	kai xin	76
+快乐	kuai le	74
+难过	nan guo	58
+生气	sheng qi	60
+害怕	hai pa	56
+担心	dan xin	64
+放心	fang xin	62
+小心	xiao xin	64
+注意	zhu yi	76
+安全	an quan	70
+健康	jian kang	72
+幸福	xing fu	70
+美丽	mei li	64
+漂亮	piao liang	72
+聪明	cong ming	62
+能力	neng li	74
+水平	shui ping	66
+质量	zhi liang	62
+价格	jia ge	66
+便宜	pian yi	64
+免费	mian fei	68
+选择	xuan ze	76
+决定	jue ding	78
+同意	tong yi	72
+反对	fan dui	60
+支持	zhi chi	76
+帮助	bang zhu	74
+参加	can jia	68
+完成	wan cheng	76
+开始	kai shi	86
+结束	jie shu	70
+继续	ji xu	76
+停止	ting zhi	62
+改变	gai bian	72
+发展	fa zhan	74
+提高	ti gao	72
+减少	jian shao	62
+增加	zeng jia	66
+计算	ji suan	66
+检查	jian cha	68
+测试	ce shi	70
+实施	shi shi	60
+试试	shi shi	10
+发布	fa bu	64
+更新	geng xin	66
+下载	xia zai	66
+上传	shang chuan	54
+安装	an zhuang	62
+卸载	xie zai	40
+设置	she zhi	62
+配置	pei zhi	56
+功能	gong neng	66
+版本	ban ben	56
+应用	ying yong	60
+软件	ruan jian	68
+硬件	ying jian	56
+芯片	xin pian	52
+模型	mo xing	58
+算法	suan fa	60
+人工智能	ren gong zhi neng	62
+机器学习	ji qi xue xi	50
+互联网	hu lian wang	54
+网站	wang zhan	56
+电脑	dian nao	82
+手机	shou ji	88
+电话	dian hua	76
+信息	xin xi	78
+邮件	you jian	66
+文件	wen jian	76
+数据	shu ju	74
+系统	xi tong	76
+程序	cheng xu	72
+代码	dai ma	68
+项目	xiang mu	74
+会议	hui yi	70
+开会	kai hui	62
+上班	shang ban	66
+下班	xia ban	58
+休息	xiu xi	68
+加班	jia ban	54
+出差	chu chai	46
+面试	mian shi	54
+简历	jian li	46
+工资	gong zi	56
+老板	lao ban	58
+同事	tong shi	58
+领导	ling dao	60
+公司	gong si	82
+客户	ke hu	66
+服务	fu wu	74
+市场	shi chang	72
+产品	chan pin	72
+经济	jing ji	70
+管理	guan li	76
+技术	ji shu	76
+科学	ke xue	74
+数学	shu xue	66
+物理	wu li	58
+化学	hua xue	54
+生物	sheng wu	56
+医学	yi xue	52
+历史	li shi	70
+法律	fa lv	52
+语言	yu yan	72
+文字	wen zi	64
+文章	wen zhang	62
+小说	xiao shuo	66
+故事	gu shi	64
+词典	ci dian	55
+词组	ci zu	40
+拼音	pin yin	60
+汉字	han zi	58
+输入法	shu ru fa	75
+键盘	jian pan	58
+屏幕	ping mu	62
+鼠标	shu biao	56
+网络	wang luo	72
+服务器	fu wu qi	66
+密码	mi ma	66
+账号	zhang hao	58
+用户	yong hu	74
+界面	jie mian	54
+窗口	chuang kou	52
+按钮	an niu	44
+电池	dian chi	46
+充电	chong dian	50
+电影	dian ying	78
+音乐	yin yue	76
+游戏	you xi	84
+视频	shi pin	76
+直播	zhi bo	62
+照片	zhao pian	60
+相机	xiang ji	50
+运动	yun dong	70
+游戏机	you xi ji	36
+旅游	lv you	62
+酒店	jiu dian	56
+机票	ji piao	48
+火车	huo che	54
+汽车	qi che	58
+飞机	fei ji	58
+地铁	di tie	56
+公交	gong jiao	44
+自行车	zi xing che	40
+马路	ma lu	44
+公园	gong yuan	52
+超市	chao shi	54
+商场	shang chang	50
+餐厅	can ting	50
+饭馆	fan guan	44
+菜单	cai dan	44
+快递	kuai di	60
+地址	di zhi	58
+地图	di tu	52
+天气	tian qi	70
+温度	wen du	52
+春天	chun tian	56
+夏天	xia tian	56
+秋天	qiu tian	54
+冬天	dong tian	56
+生日	sheng ri	60
+节日	jie ri	52
+周末	zhou mo	64
+星期	xing qi	58
+分钟	fen zhong	66
+吃饭	chi fan	76
+喝水	he shui	60
+睡觉	shui jiao	68
+起床	qi chuang	55
+购物	gou wu	60
+支付	zhi fu	62
+钱包	qian bao	46
+现金	xian jin	50
+美元	mei yuan	46
+人民币	ren min bi	54
+老师	lao shi	76
+学生	xue sheng	75
+朋友	peng you	80
+同学	tong xue	68
+爸爸	ba ba	66
+妈妈	ma ma	68
+哥哥	ge ge	60
+姐姐	jie jie	60
+弟弟	di di	54
+妹妹	mei mei	56
+儿子	er zi	62
+女儿	nv er	62
+中国	zhong guo	92
+北京	bei jing	84
+上海	shang hai	82
+深圳	shen zhen	70
+广州	guang zhou	68
+杭州	hang zhou	62
+南京	nan jing	56
+武汉	wu han	54
+成都	cheng du	60
+重庆	chong qing	56
+天津	tian jin	54
+西安	xi an	70
+世界	shi jie	78
+国家	guo jia	80
+银行	yin hang	66
+医院	yi yuan	68
+学校	xue xiao	74
+
+# ---- 常用单字（高频在前；一字多音写多行） ----
+的	de	99
+是	shi	98
+了	le	97
+了	liao	30
+我	wo	97
+你	ni	96
+他	ta	94
+她	ta	88
+它	ta	70
+不	bu	95
+在	zai	93
+有	you	92
+人	ren	88
+个	ge	92
+这	zhe	90
+那	na	84
+哪	na	78
+谁	shei	70
+谁	shui	40
+什	shen	50
+么	me	90
+吗	ma	76
+呢	ne	74
+吧	ba	76
+啊	a	70
+哦	o	50
+嗯	en	60
+中	zhong	85
+大	da	84
+小	xiao	82
+多	duo	80
+少	shao	68
+上	shang	86
+下	xia	84
+前	qian	74
+后	hou	72
+左	zuo	62
+右	you	62
+东	dong	64
+南	nan	64
+西	xi	70
+北	bei	66
+里	li	74
+外	wai	66
+内	nei	60
+一	yi	93
+二	er	80
+三	san	76
+四	si	72
+五	wu	72
+六	liu	68
+七	qi	66
+八	ba	66
+九	jiu	64
+十	shi	72
+百	bai	58
+千	qian	60
+万	wan	62
+亿	yi	44
+零	ling	50
+年	nian	86
+月	yue	76
+日	ri	74
+时	shi	70
+分	fen	70
+秒	miao	54
+天	tian	82
+周	zhou	64
+早	zao	64
+晚	wan	66
+和	he	86
+与	yu	70
+或	huo	60
+及	ji	66
+而	er	70
+且	qie	56
+因	yin	64
+为	wei	88
+所	suo	70
+以	yi	80
+但	dan	72
+可	ke	76
+如	ru	66
+果	guo	70
+虽	sui	50
+然	ran	58
+就	jiu	82
+会	hui	80
+能	neng	78
+要	yao	84
+想	xiang	80
+说	shuo	84
+话	hua	74
+看	kan	82
+听	ting	76
+读	du	66
+写	xie	70
+问	wen	74
+答	da	62
+讲	jiang	64
+教	jiao	65
+学	xue	76
+练	lian	56
+试	shi	64
+做	zuo	78
+用	yong	78
+吃	chi	72
+喝	he	66
+睡	shui	64
+坐	zuo	64
+站	zhan	58
+走	zou	72
+跑	pao	60
+飞	fei	58
+来	lai	84
+去	qu	78
+回	hui	74
+进	jin	66
+出	chu	74
+开	kai	78
+关	guan	70
+买	mai	66
+卖	mai	54
+给	gei	76
+拿	na	60
+放	fang	64
+打	da	70
+拍	pai	54
+推	tui	52
+拉	la	52
+提	ti	56
+搬	ban	50
+找	zhao	68
+帮	bang	62
+送	song	58
+收	shou	60
+发	fa	66
+接	jie	60
+带	dai	60
+爱	ai	76
+恨	hen	44
+笑	xiao	62
+哭	ku	46
+地	de	86
+地	di	70
+得	de	90
+还	hai	88
+还	huan	40
+长	chang	60
+长	zhang	55
+行	xing	65
+行	hang	45
+觉	jue	70
+觉	jiao	50
+都	dou	86
+都	du	30
+重	zhong	60
+重	chong	30
+系	xi	60
+系	ji	30
+传	chuan	60
+干	gan	60
+乐	le	60
+乐	yue	30
+落	luo	55
+落	la	30
+单	dan	56
+坏	huai	60
+好	hao	82
+新	xin	72
+旧	jiu	52
+老	lao	66
+快	kuai	74
+慢	man	60
+冷	leng	56
+热	re	60
+粗	cu	50
+细	xi	50
+高	gao	72
+低	di	58
+手	shou	70
+口	kou	64
+头	tou	68
+目	mu	54
+心	xin	72
+男	nan	70
+女	nv	72
+姓	xing	60
+名	ming	66
+字	zi	70
+词	ci	66
+书	shu	74
+本	ben	60
+页	ye	44
+纸	zhi	46
+笔	bi	60
+画	hua	54
+歌	ge	60
+舞	wu	50
+戏	xi	50
+儿	er	66
+山	shan	62
+水	shui	72
+火	huo	60
+土	tu	52
+金	jin	58
+木	mu	52
+米	mi	54
+茶	cha	56
+饭	fan	62
+菜	cai	58
+肉	rou	56
+鱼	yu	58
+鸟	niao	52
+狗	gou	58
+猫	mao	58
+马	ma	56
+牛	niu	54
+羊	yang	52
+虫	chong	44
+花	hua	62
+草	cao	54
+树	shu	56
+叶	ye	48
+风	feng	62
+雨	yu	58
+雪	xue	56
+云	yun	54
+电	dian	70
+光	guang	62
+声	sheng	64
+色	se	56
+红	hong	64
+白	bai	64
+黑	hei	60
+蓝	lan	58
+绿	lv	58
+黄	huang	58
+紫	zi	46
+灰	hui	50
+春	chun	56
+夏	xia	54
+秋	qiu	54
+冬	dong	54
+苹果	ping guo	58
+香蕉	xiang jiao	44
+西瓜	xi gua	44
+葡萄	pu tao	42
+蔬菜	shu cai	44
+水果	shui guo	56
+鸡蛋	ji dan	48
+面包	mian bao	50
+牛奶	niu nai	48
+咖啡	ka fei	56
