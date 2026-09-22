@@ -95,9 +95,10 @@ TSV，每行三列（`#` 开头为注释）：
 `png` 为空；未配置字体时报错，壳回退 v1 系统候选 UI）。候选与预编辑
 结构见 `engine.Candidate` / `engine.Composition` 的 JSON 标签。
 
-Windows 命名管道传输在阶段 3 接入（同一协议，换传输层）。
+传输形态：Linux/macOS 用 Unix socket；Windows 壳经 TCP 回环
+（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 
-## 平台壳规划
+## 平台壳
 
 | 平台 | 壳 | 状态 |
 |---|---|---|
