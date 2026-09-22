@@ -75,13 +75,13 @@ func TestServerClientRoundTrip(t *testing.T) {
 		t.Fatalf("关闭 server 失败: %v", err)
 	}
 
-	// 用户词典应已落盘：重新加载可见学习记录
+	// 用户词典应已落盘：重新加载可见学习记录（新鲜记录得分 = 单次加权）
 	user2, err := engine.NewUserDict(udPath)
 	if err != nil {
 		t.Fatalf("重载用户词典失败: %v", err)
 	}
-	if got := user2.Count("你好", []string{"ni", "hao"}); got != 1 {
-		t.Fatalf("用户词典计数 = %d, 期望 1", got)
+	if got := user2.Score("你好", []string{"ni", "hao"}, ""); got != engine.UserBoostPerCount {
+		t.Fatalf("用户词典得分 = %d, 期望 %d", got, engine.UserBoostPerCount)
 	}
 }
 

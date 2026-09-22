@@ -9,22 +9,74 @@ import (
 	"time"
 )
 
+// 学习与调频参数。设计目标：越用越顺手——
+// 最近用过的词权重高（时间衰减）、顺着上下文的词加分（bigram）、
+// 反复分字打的组合自动固化成词组（词组进化）。
+const (
+	// UserBoostPerCount 是每次上屏对候选得分的加权基数。
+	UserBoostPerCount = 500
+	// BigramBonusPerCount 是上下文（前一词→当前词）每共现一次的加分。
+	BigramBonusPerCount = 250
+	// bigramMaxCount 限制上下文加成计入的共现次数，防止长尾刷分。
+	bigramMaxCount = 2
+)
+
+// decay 按上次使用时间给出衰减系数：越新鲜权重越高。
+// 桶式衰减（<1 天 / <7 天 / <30 天 / 更久）而非连续指数，
+// 分数稳定可预期，且测试可用注入时钟精确断言。
+func decay(lastUsed int64, now time.Time) float64 {
+	days := now.Sub(time.Unix(lastUsed, 0)).Hours() / 24
+	switch {
+	case days < 1:
+		return 1.0
+	case days < 7:
+		return 0.6
+	case days < 30:
+		return 0.3
+	default:
+		return 0.1
+	}
+}
+
 type userRecord struct {
 	Count    int   `json:"count"`
 	LastUsed int64 `json:"last_used"`
 }
 
-// UserDict 记录用户上屏行为用于自动调频。path 为空串时仅驻留内存
-// （CLI 演示、测试用）。调频公式：score = 基础词频 + 上屏次数 × userBoostPerCount，
-// 时间衰减与 bigram 属阶段 2。
-type UserDict struct {
-	path string
-	recs map[string]*userRecord
+// phraseRecord 是词组进化的产物：用户反复分字打出来的组合固化为词组。
+type phraseRecord struct {
+	Word     string `json:"word"`
+	Sylls    string `json:"sylls"` // 空格分隔
+	Count    int    `json:"count"`
+	LastUsed int64  `json:"last_used"`
 }
 
-// NewUserDict 加载用户词典；文件不存在视为空词典，不报错。
+type userFile struct {
+	Words   map[string]*userRecord   `json:"words"`   // 静态词的调频记录
+	Phrases map[string]*phraseRecord `json:"phrases"` // 用户合成词组
+	Bigrams map[string]*userRecord   `json:"bigrams"` // 前后词共现
+}
+
+// UserDict 是用户行为数据：静态词调频、合成词组、上下文共现。
+// path 为空串时仅驻留内存；所有 bump 即时原子落盘。
+type UserDict struct {
+	path string
+	now  func() time.Time
+	file userFile
+}
+
+// NewUserDict 加载用户词典；文件不存在视为空词典。
+// 兼容阶段 0 的扁平格式（仅 words 的 JSON），读取时自动迁移。
 func NewUserDict(path string) (*UserDict, error) {
-	u := &UserDict{path: path, recs: make(map[string]*userRecord)}
+	u := &UserDict{
+		path: path,
+		now:  time.Now,
+		file: userFile{
+			Words:   make(map[string]*userRecord),
+			Phrases: make(map[string]*phraseRecord),
+			Bigrams: make(map[string]*userRecord),
+		},
+	}
 	if path == "" {
 		return u, nil
 	}
@@ -35,36 +87,156 @@ func NewUserDict(path string) (*UserDict, error) {
 		}
 		return nil, fmt.Errorf("读取用户词典失败: %w", err)
 	}
-	if err := json.Unmarshal(data, &u.recs); err != nil {
+	if err := u.load(data); err != nil {
 		return nil, fmt.Errorf("解析用户词典 %s 失败: %w", path, err)
 	}
 	return u, nil
 }
 
+func (u *UserDict) load(data []byte) error {
+	// 先探测顶层键：新格式含 words/phrases/bigrams，旧格式是扁平 map
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if _, isNew := probe["phrases"]; isNew {
+		return json.Unmarshal(data, &u.file)
+	}
+	// 旧格式：整体就是 word → record 的扁平表
+	var legacy map[string]*userRecord
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	u.file.Words = legacy
+	return nil
+}
+
+// setClock 注入时钟供测试控制时间衰减。
+func (u *UserDict) setClock(f func() time.Time) { u.now = f }
+
 func userKey(word string, syllables []string) string {
 	return word + "\x00" + strings.Join(syllables, " ")
 }
 
-// Bump 记录一次上屏并立即落盘（种子规模下整文件重写足够快，
-// 记录量大后再做防抖）。
-func (u *UserDict) Bump(word string, syllables []string) error {
+func (u *UserDict) touch(rec *userRecord) {
+	rec.Count++
+	rec.LastUsed = u.now().Unix()
+}
+
+// BumpWord 记录一次静态词上屏。
+func (u *UserDict) BumpWord(word string, syllables []string) error {
 	key := userKey(word, syllables)
-	rec := u.recs[key]
+	rec := u.file.Words[key]
 	if rec == nil {
 		rec = &userRecord{}
-		u.recs[key] = rec
+		u.file.Words[key] = rec
 	}
-	rec.Count++
-	rec.LastUsed = time.Now().Unix()
+	u.touch(rec)
 	return u.Save()
 }
 
-// Count 返回某词条累计上屏次数。
-func (u *UserDict) Count(word string, syllables []string) int {
-	if rec := u.recs[userKey(word, syllables)]; rec != nil {
+// BumpBigram 记录一对前后词共现。
+func (u *UserDict) BumpBigram(prev, next string) error {
+	if prev == "" || next == "" {
+		return nil
+	}
+	key := prev + "\x00" + next
+	rec := u.file.Bigrams[key]
+	if rec == nil {
+		rec = &userRecord{}
+		u.file.Bigrams[key] = rec
+	}
+	u.touch(rec)
+	return u.Save()
+}
+
+// PairCount 返回前后词共现次数。
+func (u *UserDict) PairCount(prev, next string) int {
+	if rec := u.file.Bigrams[prev+"\x00"+next]; rec != nil {
 		return rec.Count
 	}
 	return 0
+}
+
+// BumpPhrase 记录（或创建）一个用户合成词组的一次使用。
+func (u *UserDict) BumpPhrase(word string, syllables []string) error {
+	key := userKey(word, syllables)
+	rec := u.file.Phrases[key]
+	if rec == nil {
+		rec = &phraseRecord{Word: word, Sylls: strings.Join(syllables, " ")}
+		u.file.Phrases[key] = rec
+	}
+	rec.Count++
+	rec.LastUsed = u.now().Unix()
+	return u.Save()
+}
+
+// PhraseCount 返回用户合成词组的使用次数（不存在为 0）。
+func (u *UserDict) PhraseCount(word string, syllables []string) int {
+	if rec := u.file.Phrases[userKey(word, syllables)]; rec != nil {
+		return rec.Count
+	}
+	return 0
+}
+
+// Score 计算静态词条在当前上下文中的用户得分：
+// 上屏次数 × 权重 × 时间衰减 + 上下文加成（后者独立生效，
+// 顺着前文的词即使从未上屏过也能加分）。无任何记录返回 0。
+func (u *UserDict) Score(word string, syllables []string, prev string) int {
+	score := 0
+	if rec := u.file.Words[userKey(word, syllables)]; rec != nil {
+		score = int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
+	}
+	if prev != "" {
+		if b := u.file.Bigrams[prev+"\x00"+word]; b != nil {
+			n := b.Count
+			if n > bigramMaxCount {
+				n = bigramMaxCount
+			}
+			score += n * BigramBonusPerCount
+		}
+	}
+	return score
+}
+
+func (u *UserDict) phraseScore(rec *phraseRecord) int {
+	return int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
+}
+
+// QueryPhrases 返回匹配「音节序列（+末尾残缺音节前缀）」的用户合成词组。
+// 词组规模在数千以内时线性扫描足够；量级上来后再建音节索引。
+func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
+	joined := strings.Join(syllables, " ")
+	prefix := ""
+	if joined != "" {
+		prefix = joined + " "
+	}
+	var out []*Entry
+	for _, rec := range u.file.Phrases {
+		if frag == "" {
+			if rec.Sylls != joined {
+				continue
+			}
+		} else {
+			if !strings.HasPrefix(rec.Sylls, prefix) {
+				continue
+			}
+			rest := rec.Sylls[len(prefix):]
+			next := rest
+			if i := strings.IndexByte(rest, ' '); i >= 0 {
+				next = rest[:i]
+			}
+			if !strings.HasPrefix(next, frag) {
+				continue
+			}
+		}
+		out = append(out, &Entry{
+			Word:      rec.Word,
+			Syllables: strings.Fields(rec.Sylls),
+			Freq:      u.phraseScore(rec),
+		})
+	}
+	return out
 }
 
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。
@@ -77,7 +249,7 @@ func (u *UserDict) Save() error {
 			return fmt.Errorf("创建用户词典目录失败: %w", err)
 		}
 	}
-	data, err := json.MarshalIndent(u.recs, "", "  ")
+	data, err := json.MarshalIndent(u.file, "", "  ")
 	if err != nil {
 		return err
 	}

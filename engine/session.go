@@ -11,7 +11,7 @@ type Candidate struct {
 	Text      string `json:"text"`
 	Syllables string `json:"syllables"`
 	Score     int    `json:"score"`
-	FromUser  bool   `json:"from_user,omitempty"` // 是否已被用户词典加权
+	FromUser  bool   `json:"from_user,omitempty"` // 是否被用户数据（调频/词组/上下文）加权
 }
 
 // Composition 是当前组词状态：原始输入、预编辑串与候选列表。
@@ -36,15 +36,31 @@ const (
 	maxPathsPerChunk  = 16
 	maxSegmentations  = 64
 	maxCandidates     = 9
-	userBoostPerCount = 500
+
+	// learnThreshold：相邻两词共现多少次后固化为用户词组（词组进化）。
+	learnThreshold = 2
+	// maxLearnSylls：可固化词组的最大音节数，避免学出无意义长串。
+	maxLearnSylls = 4
+	// maxHistory 限制参与学习观察的上屏历史长度。
+	maxHistory = 8
 )
 
-// Session 是一次连续输入的组词会话。不保证并发安全：
-// IPC 服务端为每个连接建独立 Session，本地使用方自行串行化。
+// learnEntry 记录一次上屏，供词组进化观察「相邻共现」。
+type learnEntry struct {
+	word  string
+	sylls []string
+}
+
+// Session 是一次连续输入的组词会话，持有用户习惯上下文：
+// prev 是上一个上屏词（bigram 加成），history 是最近的选词轨迹
+// （词组进化）。不保证并发安全：IPC 服务端为每个连接建独立
+// Session，本地使用方自行串行化。
 type Session struct {
-	dict  *Dictionary
-	user  *UserDict
-	input string // 仅小写字母与 '
+	dict    *Dictionary
+	user    *UserDict
+	input   string // 仅小写字母与 '
+	prev    string
+	history []learnEntry
 }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
@@ -81,26 +97,71 @@ func (s *Session) Backspace() (Composition, error) {
 	return s.Compose(), nil
 }
 
-// Reset 清空当前组词。
+// Reset 清空当前组词与学习上下文（对应 Esc / 失焦：
+// 输入流被切断后，相邻共现关系不再成立）。
 func (s *Session) Reset() (Composition, error) {
 	s.input = ""
+	s.prev = ""
+	s.history = nil
 	return s.Compose(), nil
 }
 
-// Select 选中候选（0 起）并「上屏」：记入用户词典、清空组词、返回候选文本。
+// Select 选中候选（0 起）并「上屏」：记调频、记上下文、观察词组进化，
+// 清空组词并返回候选文本。
 func (s *Session) Select(index int) (string, error) {
 	comp := s.Compose()
 	if index < 0 || index >= len(comp.Candidates) {
 		return "", fmt.Errorf("候选序号 %d 越界（当前共 %d 个候选）", index+1, len(comp.Candidates))
 	}
 	c := comp.Candidates[index]
+	sylls := strings.Split(c.Syllables, "'")
+	text := c.Text
 	if s.user != nil {
-		if err := s.user.Bump(c.Text, strings.Split(c.Syllables, "'")); err != nil {
+		if err := s.user.BumpWord(text, sylls); err != nil {
 			return "", fmt.Errorf("记录用户词频失败: %w", err)
 		}
+		if s.prev != "" {
+			if err := s.user.BumpBigram(s.prev, text); err != nil {
+				return "", fmt.Errorf("记录上下文共现失败: %w", err)
+			}
+		}
 	}
+	s.history = append(s.history, learnEntry{word: text, sylls: sylls})
+	if len(s.history) > maxHistory {
+		s.history = s.history[len(s.history)-maxHistory:]
+	}
+	if s.user != nil {
+		// 词组学习失败不阻断上屏（数据已落盘，学习是增量优化）
+		s.learnPhrase()
+	}
+	s.prev = text
 	s.input = ""
-	return c.Text, nil
+	return text, nil
+}
+
+// learnPhrase 观察「最后两次上屏」：相邻共现达到阈值且主词典还没有
+// 这个组合时，固化为用户词组。链式扩展（A+B→AB 之后 AB+又一词）
+// 由后续真实上屏自然发生，无需特殊处理。
+func (s *Session) learnPhrase() {
+	if s.user == nil || len(s.history) < 2 {
+		return
+	}
+	a := s.history[len(s.history)-2]
+	b := s.history[len(s.history)-1]
+	sylls := make([]string, 0, len(a.sylls)+len(b.sylls))
+	sylls = append(sylls, a.sylls...)
+	sylls = append(sylls, b.sylls...)
+	if len(sylls) > maxLearnSylls {
+		return
+	}
+	word := a.word + b.word
+	if s.dict.Contains(word, sylls) {
+		return
+	}
+	if s.user.PairCount(a.word, b.word) < learnThreshold {
+		return
+	}
+	_ = s.user.BumpPhrase(word, sylls)
 }
 
 // chunkSeg 是一段（以 ' 分隔的）连续字母的切分结果：
@@ -181,8 +242,8 @@ func combineChunks(chunks []chunkSeg) ([][]string, string) {
 	return opts, frag
 }
 
-// Compose 基于当前输入生成组词状态：枚举全部音节切分、查词典、
-// 合并去重、按「基础词频 + 用户上屏加权」排序。
+// Compose 基于当前输入生成组词状态：枚举全部音节切分、查主词典与
+// 用户词组、合并去重，按「基础词频 + 用户得分（调频/上下文加权）」排序。
 func (s *Session) Compose() Composition {
 	comp := Composition{Input: s.input}
 	if s.input == "" {
@@ -197,6 +258,25 @@ func (s *Session) Compose() Composition {
 
 	var merged []Candidate
 	seen := make(map[string]int)
+	addCandidate := func(e *Entry, score int, fromUser bool) {
+		key := e.Word + "\x00" + strings.Join(e.Syllables, " ")
+		if prev, ok := seen[key]; ok {
+			if score > merged[prev].Score {
+				merged[prev].Score = score
+				merged[prev].FromUser = fromUser
+			} else if fromUser {
+				merged[prev].FromUser = true
+			}
+			return
+		}
+		seen[key] = len(merged)
+		merged = append(merged, Candidate{
+			Text:      e.Word,
+			Syllables: strings.Join(e.Syllables, "'"),
+			Score:     score,
+			FromUser:  fromUser,
+		})
+	}
 	for _, sylls := range paths {
 		var entries []*Entry
 		if frag == "" {
@@ -205,26 +285,16 @@ func (s *Session) Compose() Composition {
 			entries = s.dict.QueryPrefix(sylls, frag)
 		}
 		for _, e := range entries {
-			count := 0
+			boost := 0
 			if s.user != nil {
-				count = s.user.Count(e.Word, e.Syllables)
+				boost = s.user.Score(e.Word, e.Syllables, s.prev)
 			}
-			score := e.Freq + count*userBoostPerCount
-			key := e.Word + "\x00" + strings.Join(e.Syllables, " ")
-			if prev, ok := seen[key]; ok {
-				if score > merged[prev].Score {
-					merged[prev].Score = score
-					merged[prev].FromUser = count > 0
-				}
-				continue
+			addCandidate(e, e.Freq+boost, boost > 0)
+		}
+		if s.user != nil {
+			for _, e := range s.user.QueryPhrases(sylls, frag) {
+				addCandidate(e, e.Freq, true)
 			}
-			seen[key] = len(merged)
-			merged = append(merged, Candidate{
-				Text:      e.Word,
-				Syllables: strings.Join(e.Syllables, "'"),
-				Score:     score,
-				FromUser:  count > 0,
-			})
 		}
 	}
 	sort.SliceStable(merged, func(i, j int) bool {

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -27,10 +29,11 @@ type dictNode struct {
 type Dictionary struct {
 	root    *dictNode
 	entries []*Entry
+	seen    map[string]int // word \x00 syllables -> entry 下标，跨文件去重
 }
 
 func NewDictionary() *Dictionary {
-	return &Dictionary{root: &dictNode{}}
+	return &Dictionary{root: &dictNode{}, seen: make(map[string]int)}
 }
 
 func (d *Dictionary) add(word string, syllables []string, freq int) {
@@ -55,9 +58,8 @@ func (d *Dictionary) add(word string, syllables []string, freq int) {
 	node.ids = append(node.ids, id)
 }
 
-// Query 按「完整音节序列」查询，返回该节点及其子树上的所有词条
-// （即以该序列开头的词，长短皆含）。
-func (d *Dictionary) Query(syllables []string) []*Entry {
+// walk 沿音节序列走到目标节点；序列不存在返回 nil。
+func (d *Dictionary) walk(syllables []string) *dictNode {
 	node := d.root
 	for _, s := range syllables {
 		if node.children == nil {
@@ -68,20 +70,24 @@ func (d *Dictionary) Query(syllables []string) []*Entry {
 			return nil
 		}
 	}
+	return node
+}
+
+// Query 按「完整音节序列」查询，返回该节点及其子树上的所有词条
+// （即以该序列开头的词，长短皆含）。
+func (d *Dictionary) Query(syllables []string) []*Entry {
+	node := d.walk(syllables)
+	if node == nil {
+		return nil
+	}
 	return d.collect(node)
 }
 
 // QueryPrefix 在走完 syllables 之后，对所有以 frag 为前缀的下一音节做子树收集。
 func (d *Dictionary) QueryPrefix(syllables []string, frag string) []*Entry {
-	node := d.root
-	for _, s := range syllables {
-		if node.children == nil {
-			return nil
-		}
-		node = node.children[s]
-		if node == nil {
-			return nil
-		}
+	node := d.walk(syllables)
+	if node == nil || node.children == nil {
+		return nil
 	}
 	var out []*Entry
 	for s, child := range node.children {
@@ -91,6 +97,29 @@ func (d *Dictionary) QueryPrefix(syllables []string, frag string) []*Entry {
 	}
 	return out
 }
+
+// Contains 判断主词典是否已存在「词 + 精确音节序列」一致的词条。
+// 词组进化用它避免把主词典已有的词重复学一遍。
+func (d *Dictionary) Contains(word string, syllables []string) bool {
+	node := d.walk(syllables)
+	if node == nil {
+		return false
+	}
+	for _, id := range node.ids {
+		if d.entries[id].Word == word {
+			return true
+		}
+	}
+	return false
+}
+
+// Entries 返回全部词条（供词库导出与合并工具使用）。
+func (d *Dictionary) Entries() []*Entry {
+	return append([]*Entry(nil), d.entries...)
+}
+
+// Len 返回词条总数。
+func (d *Dictionary) Len() int { return len(d.entries) }
 
 // collect 深度优先收集节点自身及子树上的词条。遍历顺序不确定，
 // 调用方（Session）最终会按确定性规则排序。
@@ -110,7 +139,36 @@ func (d *Dictionary) collect(node *dictNode) []*Entry {
 // 防止脏数据静默进入词库。
 func ParseDict(r io.Reader) (*Dictionary, error) {
 	d := NewDictionary()
-	seen := make(map[string]int) // word \x00 syllables -> entry 下标
+	if _, err := parseInto(d, r, true); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// LoadDictFiles 依次解析多个词库文件并合并进同一 Dictionary
+// （daemon 用它把种子词库与热词词库叠加加载）；重复词条取较大词频。
+// 各文件沿用严格校验：任何一行非法即报错。
+func LoadDictFiles(paths []string) (*Dictionary, error) {
+	d := NewDictionary()
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, fmt.Errorf("打开词库 %s 失败: %w", p, err)
+		}
+		_, perr := parseInto(d, f, true)
+		f.Close()
+		if perr != nil {
+			return nil, fmt.Errorf("解析词库 %s 失败: %w", p, perr)
+		}
+	}
+	return d, nil
+}
+
+// parseInto 解析词库进 d。strict 模式（种子/主词库）逐行强校验，
+// 遇到脏数据即报错；宽容模式（热词导入）跳过无效行并计数，
+// 缺省词频补 20、词频压缩到 1..99（用户学习权重远高于静态词频，
+// 压缩不影响「越用越顺手」的调频效果）。
+func parseInto(d *Dictionary, r io.Reader, strict bool) (skipped int, err error) {
 	sc := bufio.NewScanner(r)
 	lineNo := 0
 	for sc.Scan() {
@@ -120,35 +178,86 @@ func ParseDict(r io.Reader) (*Dictionary, error) {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 3 {
-			return nil, fmt.Errorf("词库第 %d 行格式错误：应为「词\\t拼音\\t词频」", lineNo)
+		if len(parts) < 2 {
+			if strict {
+				return skipped, fmt.Errorf("词库第 %d 行格式错误：应为「词\\t拼音\\t词频」", lineNo)
+			}
+			skipped++
+			continue
 		}
 		word := strings.TrimSpace(parts[0])
 		sylls := strings.Fields(parts[1])
-		freq, err := strconv.Atoi(strings.TrimSpace(parts[2]))
-		if err != nil {
-			return nil, fmt.Errorf("词库第 %d 行词频不是整数: %w", lineNo, err)
+		freq := 0
+		if len(parts) >= 3 {
+			if n, nerr := strconv.Atoi(strings.TrimSpace(parts[2])); nerr == nil {
+				freq = n
+			}
 		}
-		if word == "" || len(sylls) == 0 {
-			return nil, fmt.Errorf("词库第 %d 行词或拼音为空", lineNo)
-		}
-		for _, s := range sylls {
-			if !IsSyllable(s) {
-				return nil, fmt.Errorf("词库第 %d 行拼音 %q 不是合法音节", lineNo, s)
+		if strict {
+			if len(parts) != 3 {
+				return skipped, fmt.Errorf("词库第 %d 行格式错误：应为「词\\t拼音\\t词频」", lineNo)
+			}
+			if word == "" || len(sylls) == 0 {
+				return skipped, fmt.Errorf("词库第 %d 行词或拼音为空", lineNo)
+			}
+			if freq <= 0 {
+				return skipped, fmt.Errorf("词库第 %d 行词频不是正整数", lineNo)
+			}
+			for _, s := range sylls {
+				if !IsSyllable(s) {
+					return skipped, fmt.Errorf("词库第 %d 行拼音 %q 不是合法音节", lineNo, s)
+				}
+			}
+		} else {
+			// 宽容模式（热词导入）：先做拼音归一化（去声调/ü→v），
+			// 再补默认词频、压缩到 1..99（用户学习权重远高于静态词频）。
+			sylls = normalizePinyin(parts[1])
+			if freq <= 0 {
+				freq = 20
+			}
+			if freq > 99 {
+				freq = 99
+			}
+			if word == "" || sylls == nil {
+				skipped++
+				continue
 			}
 		}
 		key := word + "\x00" + strings.Join(sylls, " ")
-		if prev, ok := seen[key]; ok {
+		if prev, ok := d.seen[key]; ok {
 			if freq > d.entries[prev].Freq {
 				d.entries[prev].Freq = freq
 			}
 			continue
 		}
-		seen[key] = len(d.entries)
+		d.seen[key] = len(d.entries)
 		d.add(word, sylls, freq)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("读取词库失败: %w", err)
+		return skipped, fmt.Errorf("读取词库失败: %w", err)
 	}
-	return d, nil
+	return skipped, nil
+}
+
+// WriteTSV 把词条导出为 TSV（词频降序、同频按词排序），
+// 供 chaoset-import 生成合并后的词库文件。
+func WriteTSV(w io.Writer, entries []*Entry) error {
+	sorted := append([]*Entry(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.Freq != b.Freq {
+			return a.Freq > b.Freq
+		}
+		return a.Word < b.Word
+	})
+	bw := bufio.NewWriter(w)
+	if _, err := fmt.Fprintln(bw, "# chaoset 词库（由 chaoset-import 生成，词\\t拼音\\t词频）"); err != nil {
+		return err
+	}
+	for _, e := range sorted {
+		if _, err := fmt.Fprintf(bw, "%s\t%s\t%d\n", e.Word, strings.Join(e.Syllables, " "), e.Freq); err != nil {
+			return err
+		}
+	}
+	return bw.Flush()
 }

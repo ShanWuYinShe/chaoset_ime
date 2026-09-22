@@ -17,11 +17,15 @@ import (
 
 func main() {
 	socket := flag.String("socket", "", "连接该套接字上的 chaosetd；为空则使用本地内嵌引擎")
-	dictPath := flag.String("dict", "data/dict_seed.tsv", "主词典 TSV 路径（仅本地模式）")
+	var dicts repeatFlag
+	flag.Var(&dicts, "dict", "主词典 TSV 路径，可多次传入（仅本地模式）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
 	flag.Parse()
+	if len(dicts) == 0 {
+		dicts = repeatFlag{"data/dict_seed.tsv"}
+	}
 
-	ctrl, closeFn, err := buildController(*socket, *dictPath, *userPath)
+	ctrl, closeFn, err := buildController(*socket, dicts, *userPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -62,10 +66,16 @@ func main() {
 			}
 			fmt.Printf("上屏: %s\n", text)
 		default:
-			// 每行视为一次全新的击键序列：先清空上一行的组词再输入
-			if _, err := ctrl.Reset(); err != nil {
+			// 仅当上一行还挂着未上屏的输入时才清空，
+			// 保住跨行的学习上下文（词组进化依赖相邻上屏序列）
+			if cur, err := ctrl.Input(""); err != nil {
 				fmt.Println("错误:", err)
 				continue
+			} else if cur.Input != "" {
+				if _, err := ctrl.Reset(); err != nil {
+					fmt.Println("错误:", err)
+					continue
+				}
 			}
 			comp, err := ctrl.Input(line)
 			if err != nil {
@@ -77,7 +87,16 @@ func main() {
 	}
 }
 
-func buildController(socket, dictPath, userPath string) (engine.Controller, func(), error) {
+// repeatFlag 支持同一参数多次传入，与 chaosetd 保持一致。
+type repeatFlag []string
+
+func (f *repeatFlag) String() string { return strings.Join(*f, ",") }
+func (f *repeatFlag) Set(v string) error {
+	*f = append(*f, v)
+	return nil
+}
+
+func buildController(socket string, dicts []string, userPath string) (engine.Controller, func(), error) {
 	if socket != "" {
 		c, err := ipc.Dial("unix", socket)
 		if err != nil {
@@ -85,12 +104,7 @@ func buildController(socket, dictPath, userPath string) (engine.Controller, func
 		}
 		return c, func() { c.Close() }, nil
 	}
-	f, err := os.Open(dictPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("打开词典失败: %w", err)
-	}
-	defer f.Close()
-	dict, err := engine.ParseDict(f)
+	dict, err := engine.LoadDictFiles(dicts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,7 +113,7 @@ func buildController(socket, dictPath, userPath string) (engine.Controller, func
 		return nil, nil, err
 	}
 	return engine.NewSession(dict, user), func() {
-		// 退出时兜底保存（Bump 本身已即时落盘，这里只覆盖异常路径）
+		// 退出时兜底保存（bump 本身已即时落盘，这里只覆盖异常路径）
 		if err := user.Save(); err != nil {
 			log.Printf("保存用户词典失败: %v", err)
 		}

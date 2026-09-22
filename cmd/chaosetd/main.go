@@ -9,33 +9,42 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 
 	"chaoset.ime/engine"
 	"chaoset.ime/ipc"
 )
 
+// repeatFlag 支持同一参数多次传入（如多个 -dict 叠加加载）。
+type repeatFlag []string
+
+func (f *repeatFlag) String() string { return strings.Join(*f, ",") }
+func (f *repeatFlag) Set(v string) error {
+	*f = append(*f, v)
+	return nil
+}
+
 func main() {
 	socket := flag.String("socket", "chaoset.sock", "Unix 套接字路径")
-	dictPath := flag.String("dict", "data/dict_seed.tsv", "主词典 TSV 路径")
+	var dicts repeatFlag
+	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
 	flag.Parse()
+	if len(dicts) == 0 {
+		dicts = repeatFlag{"data/dict_seed.tsv"}
+	}
 
-	if err := run(*socket, *dictPath, *userPath); err != nil {
+	if err := run(*socket, dicts, *userPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(socket, dictPath, userPath string) error {
-	dictFile, err := os.Open(dictPath)
-	if err != nil {
-		return fmt.Errorf("打开词典失败: %w", err)
-	}
-	defer dictFile.Close()
-	dict, err := engine.ParseDict(dictFile)
+func run(socket string, dicts []string, userPath string) error {
+	dict, err := engine.LoadDictFiles(dicts)
 	if err != nil {
 		return err
 	}
-	log.Printf("已加载词典 %s", dictPath)
+	log.Printf("已加载词典 %d 条（%s）", dict.Len(), strings.Join(dicts, ", "))
 
 	user, err := engine.NewUserDict(userPath)
 	if err != nil {
