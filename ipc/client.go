@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -64,6 +65,27 @@ func (c *Client) call(method string, params any, result any) error {
 		return json.Unmarshal(resp.Result, result)
 	}
 	return nil
+}
+
+// CandidateImage 取当前组词的候选窗渲染图（v2 统一候选窗）。
+// 无候选时 data 为 nil；daemon 未启用渲染时返回错误（壳回退 v1 UI）。
+func (c *Client) CandidateImage() (width, height int, data []byte, err error) {
+	var out struct {
+		Width  int    `json:"width"`
+		Height int    `json:"height"`
+		PNG    string `json:"png"`
+	}
+	if err = c.call("candidateImage", nil, &out); err != nil {
+		return 0, 0, nil, err
+	}
+	if out.PNG == "" {
+		return out.Width, out.Height, nil, nil
+	}
+	data, err = base64.StdEncoding.DecodeString(out.PNG)
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("解码渲染图失败: %w", err)
+	}
+	return out.Width, out.Height, data, nil
 }
 
 func (c *Client) Input(text string) (engine.Composition, error) {

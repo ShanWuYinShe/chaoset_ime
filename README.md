@@ -27,15 +27,16 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
+renderer/          统一候选窗渲染（v2）：把组词状态画成 PNG，三端壳贴图显示
 cmd/
-  chaosetd/          守护进程二进制（-dict 可多次叠加加载）
+  chaosetd/          守护进程二进制（-dict 可多次叠加；-font/-fontsize 候选窗渲染）
   chaoset-cli/       阶段 0 终端测试台（本地内嵌引擎或连接 daemon）
   chaoset-import/    热词导入工具（合并输出 TSV）
 data/
   dict_seed.tsv      种子词库（演示规模，词 \t 拼音 \t 词频）
 shims/
   macos/             InputMethodKit 薄壳（Swift，已实现，见其 README）
-  windows/           TSF COM 薄壳（规划中，需 Windows 工具链）
+  windows/           TSF COM 薄壳（已实现，核心层行为级 + DLL 编译级验证）
   linux/             ibus engine 胶水（规划中）
 ```
 
@@ -89,8 +90,10 @@ TSV，每行三列（`#` 开头为注释）：
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法：`ping` / `input` / `backspace` / `reset` / `select`（`{"index":0}`，
-返回 `{"committed":"你好"}`）。候选与预编辑结构见 `engine.Candidate` /
-`engine.Composition` 的 JSON 标签。
+返回 `{"committed":"你好"}`）/ `candidateImage`（v2 统一候选窗：返回
+`{"width","height","png":<base64>}`，daemon 以 `-font` 启用；无候选时
+`png` 为空；未配置字体时报错，壳回退 v1 系统候选 UI）。候选与预编辑
+结构见 `engine.Candidate` / `engine.Composition` 的 JSON 标签。
 
 Windows 命名管道传输在阶段 3 接入（同一协议，换传输层）。
 
@@ -130,8 +133,9 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 - [ ] 阶段 4：补齐三端壳 + 统一候选窗自绘（v2）
       - Windows TSF 壳：已实现——核心层行为级验证（真实 daemon TCP 17 项）、
         DLL mingw 交叉编译级验证；真机联调（COM 注册/按键/渲染）待 Windows 环境
+      - 统一候选窗渲染（daemon 侧）：已实现——renderer 包 + candidateImage
+        IPC 方法（渲染样例经人工目检；壳侧贴图显示待接）
       - Linux ibus 壳：规划中（需 ibus 环境）
-      - 统一候选窗自绘（v2）：规划中
 
 ## 开发
 

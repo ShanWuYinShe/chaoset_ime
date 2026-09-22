@@ -1,14 +1,18 @@
 package ipc
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"log"
 	"net"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/renderer"
 )
 
 // Server 在一条监听套接字上为每个连接维护独立的 engine.Session。
@@ -17,10 +21,24 @@ type Server struct {
 	ln   net.Listener
 	dict *engine.Dictionary
 	user *engine.UserDict
+	skin *renderer.Skin // 可选：启用 candidateImage 候选窗渲染
 }
 
-func NewServer(ln net.Listener, dict *engine.Dictionary, user *engine.UserDict) *Server {
-	return &Server{ln: ln, dict: dict, user: user}
+// Option 定制 Server 可选能力。
+type Option func(*Server)
+
+// WithSkin 启用统一候选窗渲染（v2）：壳经 candidateImage 方法取
+// 渲染好的 PNG 贴图显示。
+func WithSkin(skin renderer.Skin) Option {
+	return func(s *Server) { s.skin = &skin }
+}
+
+func NewServer(ln net.Listener, dict *engine.Dictionary, user *engine.UserDict, opts ...Option) *Server {
+	s := &Server{ln: ln, dict: dict, user: user}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Serve 阻塞接受连接，直到 listener 被关闭（返回 nil）或出错。
@@ -80,7 +98,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 }
 
-func (s *Server) dispatch(sess engine.Controller, req Request) (any, error) {
+func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	switch req.Method {
 	case "ping":
 		return "pong", nil
@@ -108,6 +126,26 @@ func (s *Server) dispatch(sess engine.Controller, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "candidateImage":
+		if s.skin == nil {
+			return nil, fmt.Errorf("未启用候选窗渲染（daemon 未配置字体）")
+		}
+		comp := sess.Compose()
+		data, err := renderer.Render(comp, *s.skin)
+		if err != nil {
+			return nil, fmt.Errorf("渲染候选窗失败: %w", err)
+		}
+		out := map[string]any{"width": 0, "height": 0, "png": ""}
+		if len(data) > 0 {
+			cfg, derr := png.DecodeConfig(bytes.NewReader(data))
+			if derr != nil {
+				return nil, fmt.Errorf("解析渲染结果失败: %w", derr)
+			}
+			out["width"] = cfg.Width
+			out["height"] = cfg.Height
+			out["png"] = base64.StdEncoding.EncodeToString(data)
+		}
+		return out, nil
 	default:
 		return nil, fmt.Errorf("未知方法 %q", req.Method)
 	}
