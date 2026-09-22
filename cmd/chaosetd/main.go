@@ -26,6 +26,7 @@ func (f *repeatFlag) Set(v string) error {
 
 func main() {
 	socket := flag.String("socket", "chaoset.sock", "Unix 套接字路径")
+	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；设置后忽略 -socket，供 Windows 壳使用）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
@@ -34,12 +35,12 @@ func main() {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
 	}
 
-	if err := run(*socket, dicts, *userPath); err != nil {
+	if err := run(*socket, *tcpAddr, dicts, *userPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(socket string, dicts []string, userPath string) error {
+func run(socket, tcpAddr string, dicts []string, userPath string) error {
 	dict, err := engine.LoadDictFiles(dicts)
 	if err != nil {
 		return err
@@ -51,16 +52,26 @@ func run(socket string, dicts []string, userPath string) error {
 		return err
 	}
 
-	// 清理上次异常退出残留的套接字文件
-	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("清理旧套接字失败: %w", err)
-	}
-	ln, err := net.Listen("unix", socket)
-	if err != nil {
-		return fmt.Errorf("监听 %s 失败: %w", socket, err)
+	var ln net.Listener
+	if tcpAddr != "" {
+		// TCP 回环：Windows 壳的传输形态（Windows 服务无 Unix socket 语义）
+		ln, err = net.Listen("tcp", tcpAddr)
+		if err != nil {
+			return fmt.Errorf("监听 %s 失败: %w", tcpAddr, err)
+		}
+		log.Printf("chaosetd 就绪，TCP: %s", tcpAddr)
+	} else {
+		// 清理上次异常退出残留的套接字文件
+		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("清理旧套接字失败: %w", err)
+		}
+		ln, err = net.Listen("unix", socket)
+		if err != nil {
+			return fmt.Errorf("监听 %s 失败: %w", socket, err)
+		}
+		log.Printf("chaosetd 就绪，套接字: %s", socket)
 	}
 	srv := ipc.NewServer(ln, dict, user)
-	log.Printf("chaosetd 就绪，套接字: %s", socket)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
