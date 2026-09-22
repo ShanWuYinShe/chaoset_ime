@@ -1,5 +1,6 @@
 # 构建产物
 bin/
+shims/macos/build/
 
 # 运行产物
 *.sock
