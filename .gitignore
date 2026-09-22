@@ -1,5 +1,7 @@
 # 构建产物
 bin/
+ibus-engine
+chaoset-ibus-engine
 shims/macos/build/
 shims/windows/build/
 

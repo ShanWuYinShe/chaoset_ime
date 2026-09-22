@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component>
+  <name>org.freedesktop.IBus.Chaoset</name>
+  <description>Chaoset Input Method</description>
+  <exec>/usr/local/bin/chaoset-engine --ibus</exec>
+  <version>0.1.0</version>
+  <author>chaoset</author>
+  <license>MIT</license>
+  <engines>
+    <engine>
+      <name>chaoset</name>
+      <longname>Chaoset Pinyin</longname>
+      <language>zh</language>
+      <license>MIT</license>
+      <author>chaoset</author>
+      <layout>us</layout>
+      <rank>99</rank>
+      <symbol>中</symbol>
+    </engine>
+  </engines>
+</component>
