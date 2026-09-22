@@ -14,6 +14,13 @@ struct Comp {
     let candidates: [Candidate]
 }
 
+// CandidateImage 是 daemon 渲染的统一候选窗贴图（PNG）。
+struct CandidateImage {
+    let width: Int
+    let height: Int
+    let png: Data?  // nil = 无候选（壳应隐藏窗口）
+}
+
 final class EngineClient {
     // 套接字路径：优先环境变量 CHAOSET_SOCKET，否则用用户目录下的默认位置
     //（输入法进程没有可靠的工作目录，不能用相对路径）。
@@ -164,5 +171,18 @@ final class EngineClient {
     func select(_ index: Int) -> String? {
         guard let result = call(method: "select", params: ["index": index]) else { return nil }
         return result["committed"] as? String
+    }
+
+    // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；
+    // 返回 nil 表示 daemon 不可达或未启用渲染（调用方回退 IMKCandidates）。
+    func candidateImage() -> CandidateImage? {
+        guard let result = call(method: "candidateImage", params: [:]) else { return nil }
+        let width = result["width"] as? Int ?? 0
+        let height = result["height"] as? Int ?? 0
+        guard let b64 = result["png"] as? String else {
+            return CandidateImage(width: width, height: height, png: nil)
+        }
+        guard let data = Data(base64Encoded: b64) else { return nil }
+        return CandidateImage(width: width, height: height, png: data)
     }
 }

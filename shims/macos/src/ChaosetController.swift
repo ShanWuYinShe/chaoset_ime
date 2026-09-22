@@ -113,11 +113,58 @@ final class ChaosetController: IMKInputController {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
-        if hasCandidates, let window = ensureCandidateWindow() {
-            window.update()
-        } else if !hasCandidates {
+        if !hasCandidates {
+            imagePanel?.orderOut(nil)
             candidateWindow?.hide()
+            return
         }
+        // v2 优先：daemon 渲染的统一候选窗贴图；失败回退 IMKCandidates（v1）
+        if showImagePanel() {
+            candidateWindow?.hide()
+            return
+        }
+        if let window = ensureCandidateWindow() {
+            window.update()
+        }
+    }
+
+    // ---- v2 统一候选窗贴图面板 ----
+
+    private var imagePanel: NSPanel?
+
+    /// 显示 daemon 渲染的候选窗贴图；返回 false 表示不可用（回退 v1）。
+    private func showImagePanel() -> Bool {
+        guard let image = engine.candidateImage(), let png = image.png,
+              let nsImage = NSImage(data: png) else {
+            imagePanel?.orderOut(nil)
+            return false
+        }
+        let panel: NSPanel
+        if let existing = imagePanel {
+            panel = existing
+        } else {
+            panel = NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            panel.level = .floating
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+            imageView.autoresizingMask = [.width, .height]
+            imageView.imageScaling = .scaleNone
+            panel.contentView = imageView
+        }
+        let size = nsImage.size
+        panel.setContentSize(size)
+        (panel.contentView as? NSImageView)?.image = nsImage
+        // 定位：跟随鼠标附近（光标精确坐标需 IMK 深度 API，作为已知限制记录）
+        let mouse = NSEvent.mouseLocation
+        panel.setFrameTopLeftPoint(NSPoint(x: mouse.x + 8, y: mouse.y - 4))
+        panel.orderFront(nil)
+        return true
     }
 
     // MARK: - IMKCandidates 数据源
@@ -139,5 +186,6 @@ final class ChaosetController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         current = engine.reset()
         candidateWindow?.hide()
+        imagePanel?.orderOut(nil)
     }
 }

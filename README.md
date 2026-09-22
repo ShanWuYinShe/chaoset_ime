@@ -133,9 +133,18 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 - [ ] 阶段 4：补齐三端壳 + 统一候选窗自绘（v2）
       - Windows TSF 壳：已实现——核心层行为级验证（真实 daemon TCP 17 项）、
         DLL mingw 交叉编译级验证；真机联调（COM 注册/按键/渲染）待 Windows 环境
-      - 统一候选窗渲染（daemon 侧）：已实现——renderer 包 + candidateImage
-        IPC 方法（渲染样例经人工目检；壳侧贴图显示待接）
+      - 统一候选窗：已实现——daemon 侧渲染（renderer + candidateImage，
+        样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
+        Windows 壳贴图待真机环境
       - Linux ibus 壳：规划中（需 ibus 环境）
+
+> **本轮验收范围说明**（2026-09-23）：以下事项因环境/用户操作门控，
+> 移出本轮验收范围，条件就绪后按对应文档恢复：
+> 1. macOS 打字闭环验证——需注销重登 + 系统设置添加 ChaosetIME（用户 GUI
+>    操作，步骤见 shims/macos/README）；
+> 2. Windows TSF 真机联调——需 Windows 环境（COM 注册/按键/渲染）；
+> 3. Linux ibus 壳实现与联调——需 Linux + ibus 环境；
+> 4. 候选窗贴图在 Windows 壳侧的接入——随 TSF 真机联调一并验证。
 
 ## 开发
 

@@ -93,6 +93,10 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 - 过程中修复两处真缺陷：初版误用 `LSBackgroundOnly`（参照 Squirrel
   改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
   `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
+- **v2 统一候选窗贴图**：`candidateImage` 客户端方法 + NSPanel 贴图面板
+  已实现（编译级验证）。组词时优先显示 daemon 渲染的统一候选窗图，
+  daemon 未启用渲染时回退 IMKCandidates（v1）。面板跟随鼠标定位；
+  光标精确坐标需 IMK 深度 API，作为后续优化项。
 
 剩余需要**注销重登后人工完成**：
 
