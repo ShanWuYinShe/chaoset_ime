@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover run-cli run-daemon
+.PHONY: build test vet fmt cover race run-cli run-daemon
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd
@@ -18,6 +18,9 @@ fmt:
 cover:
 	go test -coverprofile=.workwork/cover.out ./...
 	go tool cover -func=.workwork/cover.out | tail -1
+
+race:
+	go test -race -count=1 ./...
 
 run-cli:
 	go run ./cmd/chaoset-cli
