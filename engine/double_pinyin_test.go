@@ -172,3 +172,46 @@ func TestDoublePinyinInvalidPair(t *testing.T) {
 		t.Fatalf("无效键码对 %c%c 应丢弃, Input = %q", a, b, comp.Input)
 	}
 }
+
+// 超长输入触发截断（maxInputRunes）后，退格栈（dpLens）必须与输入
+// 长度保持对齐：连续退格应能一路清空且不 panic。
+func TestDoublePinyinTruncateBackspaceAlignment(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.SetDoublePinyin(DPSchemeZRM)
+	// 40 对按键 → 80 字符（超过 maxInputRunes=64）
+	keys := ""
+	for i := 0; i < 40; i++ {
+		keys += "ni"
+	}
+	for _, r := range keys {
+		s.Input(string(r))
+	}
+	comp, _ := s.Input("")
+	runes := []rune(comp.Input)
+	if len(runes) > maxInputRunes {
+		t.Fatalf("输入应被截断到 %d 字符内, 实际 %d", maxInputRunes, len(runes))
+	}
+	// 连续退格直至清空：每次回滚一个按键事件（2 字符）
+	for guard := 0; guard < maxInputRunes+8; guard++ {
+		comp, _ = s.Backspace()
+		if comp.Input == "" {
+			break
+		}
+	}
+	comp, _ = s.Input("")
+	if comp.Input != "" {
+		t.Fatalf("连续退格后应清空, Input = %q", comp.Input)
+	}
+}
+
+// DoublePinyinSchemes 应列出全部已实现方案。
+func TestDoublePinyinSchemesList(t *testing.T) {
+	schemes := DoublePinyinSchemes()
+	if len(schemes) != 2 {
+		t.Fatalf("方案数 = %d, 期望 2", len(schemes))
+	}
+	have := map[string]bool{schemes[0]: true, schemes[1]: true}
+	if !have[DPSchemeZRM] || !have[DPSchemeMSPY] {
+		t.Fatalf("方案列表缺项: %v", schemes)
+	}
+}

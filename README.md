@@ -306,4 +306,6 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 
 ```sh
 make fmt && make vet && make test && make build
+make cover    # 覆盖率报告（写入 .workwork/cover.out）
+go test -race ./...    # 并发竞争检测（提交前建议）
 ```
