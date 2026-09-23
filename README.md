@@ -24,7 +24,8 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   syllable.go        无声调标准音节表（ü 以 v 输入：nv=女、lve=略）
   dict.go            音节 Trie 词典 + TSV 词库解析 + 多词库合并加载
   session.go         组词会话状态机（输入/退格/重置/选候选/词组进化）
-  punct.go           中文标点映射（直映表 + 引号开闭配对）
+  punct.go           中文标点映射（直映表 + 引号开闭配对 + 循环）
+  fuzzy.go           模糊音等价展开（zh/z、n/l、an/ang 等，默认关闭）
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
@@ -62,6 +63,20 @@ shims/
 句号/逗号同键连按在「全角→半角」间循环（。→.→。，，→,），任何其他
 输入/上屏即回到首项。组词中的 `'` 仍是音节分隔符，不作为标点。
 完整映射表见 `engine/punct.go`。
+
+## 模糊音
+
+默认关闭，`-fuzzy` 开启（daemon 与本地测试台均支持）：
+
+```sh
+bin/chaosetd -fuzzy          # 或 chaoset-cli -fuzzy（本地模式）
+```
+
+规则（微软拼音常用集）：声母对 zh/z、ch/c、sh/s、n/l；韵母对
+an/ang、en/eng、in/ing（含 ian/iang、uan/uang）。输入侧展开等价
+音节后并集查询：`ni` 同时出「泥/里」，`zhu` 同时出「主/组」，
+声母+韵母可叠加（zhang → zang/zhan/zan）。残缺音节前缀查询不做
+模糊；变体组合每路径封顶 8 条。规则表见 `engine/fuzzy.go`。
 
 ## 快速开始（阶段 0 测试台）
 

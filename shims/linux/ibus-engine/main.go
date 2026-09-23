@@ -28,6 +28,7 @@ func main() {
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入）")
 	ibusFlag := flag.Bool("ibus", false, "由 ibus-daemon 启动时传入（兼容约定，无实际作用）")
 	userPath := flag.String("userdict", "", "用户词典路径（空串表示不落盘）")
+	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
@@ -46,6 +47,9 @@ func main() {
 	ibus, err := newIBusEngine(dict, user)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *fuzzy {
+		ibus.sess.SetFuzzy(true)
 	}
 	if err := ibus.run(); err != nil {
 		log.Fatal(err)

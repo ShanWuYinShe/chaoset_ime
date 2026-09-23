@@ -78,7 +78,12 @@ type Session struct {
 
 	lastPunct    rune // 上一次标点键（同键连按循环判定；0 = 无）
 	lastPunctIdx int  // 上一次循环位置
+
+	fuzzy bool // 模糊音：查询时展开声母/韵母等价音节（默认关闭）
 }
+
+// SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
+func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
 	return &Session{dict: dict, user: user}
@@ -323,18 +328,20 @@ func (s *Session) Compose() Composition {
 		})
 	}
 	for _, sylls := range paths {
-		var entries []*Entry
-		if frag == "" {
-			entries = s.dict.Query(sylls)
-		} else {
-			entries = s.dict.QueryPrefix(sylls, frag)
-		}
-		for _, e := range entries {
-			boost := 0
-			if s.user != nil {
-				boost = s.user.Score(e.Word, e.Syllables, s.prev)
+		for _, qp := range queryVariants(sylls, frag, s.fuzzy) {
+			var entries []*Entry
+			if frag == "" {
+				entries = s.dict.Query(qp)
+			} else {
+				entries = s.dict.QueryPrefix(qp, frag)
 			}
-			addCandidate(e, e.Freq+boost, boost > 0)
+			for _, e := range entries {
+				boost := 0
+				if s.user != nil {
+					boost = s.user.Score(e.Word, e.Syllables, s.prev)
+				}
+				addCandidate(e, e.Freq+boost, boost > 0)
+			}
 		}
 		if s.user != nil {
 			for _, e := range s.user.QueryPhrases(sylls, frag) {
