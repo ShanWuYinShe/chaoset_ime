@@ -2,6 +2,7 @@
 bin/
 /ibus-engine
 /chaoset-ibus-engine
+/build/
 shims/macos/build/
 shims/windows/build/
 
