@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	ibusBusName  = "org.freedesktop.IBus.Chaoset"
-	factoryPath  = "/org/freedesktop/IBus/Factory"
-	factoryIface = "org.freedesktop.IBus.Factory"
-	enginePath   = "/org/freedesktop/IBus/Engine/chaoset"
-	engineIface  = "org.freedesktop.IBus.Engine"
+	ibusBusName    = "org.freedesktop.IBus.Chaoset"
+	factoryPath    = "/org/freedesktop/IBus/Factory"
+	factoryIface   = "org.freedesktop.IBus.Factory"
+	enginePathBase = "/org/freedesktop/IBus/Engine/chaoset"
+	engineIface    = "org.freedesktop.IBus.Engine"
 
 	// ibus keysym（与 X keysym 一致）
 	keysymBackspace = 0xFF08
@@ -52,12 +52,15 @@ func newIBusText(text string) ibusText {
 	return ibusText{TypeName: "IBusText", Attachments: map[string]godbus.Variant{}, Text: text}
 }
 
-// ibusEngine 是导出给 ibus-daemon 的引擎对象（v0 单实例：
-// 单用户场景下所有 InputContext 共享同一组词状态）。
+// ibusEngine 是导出给 ibus-daemon 的单个引擎实例：每个 InputContext
+// 经工厂 CreateEngine 获得独立实例（独立组词会话/中英模式/Shift
+// 跟踪），多应用同时打字互不干扰。UserDict 与词典为全实例共享
+// （并发安全见 engine.UserDict 的锁）。
 type ibusEngine struct {
 	conn *godbus.Conn
 	dict *engine.Dictionary
 	user *engine.UserDict
+	path godbus.ObjectPath // 本实例的对象路径（信号发射目标）
 
 	mu     sync.Mutex
 	sess   *engine.Session
@@ -107,29 +110,34 @@ func (t *shiftTracker) feed(keyval, state uint32) bool {
 	return false
 }
 
-func newIBusEngine(dict *engine.Dictionary, user *engine.UserDict) (*ibusEngine, error) {
+// ibusFactory 是导出给 ibus-daemon 的工厂：CreateEngine 每次调用
+// 创建并导出一个独立的引擎实例（独立对象路径与组词会话）。
+type ibusFactory struct {
+	conn  *godbus.Conn
+	dict  *engine.Dictionary
+	user  *engine.UserDict
+	fuzzy bool
+	trad  bool
+	sp    string
+
+	mu  sync.Mutex
+	seq uint32 // 已创建的引擎实例计数（对象路径编号）
+}
+
+func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string) (*ibusFactory, error) {
 	conn, err := godbus.ConnectSessionBus()
 	if err != nil {
 		return nil, fmt.Errorf("连接 session bus 失败: %w", err)
 	}
-	return &ibusEngine{
-		conn: conn,
-		dict: dict,
-		user: user,
-		sess: engine.NewSession(dict, user),
-	}, nil
+	return &ibusFactory{conn: conn, dict: dict, user: user, fuzzy: fuzzy, trad: trad, sp: sp}, nil
 }
 
-func (e *ibusEngine) run() error {
-	// 引擎对象：ibus-daemon 与外部测试工具都直接调用其方法
-	if err := e.conn.Export(e, enginePath, engineIface); err != nil {
-		return fmt.Errorf("导出引擎对象失败: %w", err)
-	}
+func (f *ibusFactory) run() error {
 	// 工厂对象：ibus-daemon 激活组件时调用 CreateEngine
-	if err := e.conn.Export(e, factoryPath, factoryIface); err != nil {
+	if err := f.conn.Export(f, factoryPath, factoryIface); err != nil {
 		return fmt.Errorf("导出工厂对象失败: %w", err)
 	}
-	reply, err := e.conn.RequestName(ibusBusName, godbus.NameFlagAllowReplacement|godbus.NameFlagReplaceExisting)
+	reply, err := f.conn.RequestName(ibusBusName, godbus.NameFlagAllowReplacement|godbus.NameFlagReplaceExisting)
 	if err != nil {
 		return fmt.Errorf("请求总线名失败: %w", err)
 	}
@@ -139,7 +147,7 @@ func (e *ibusEngine) run() error {
 	signal.Notify(stop, os.Interrupt)
 	go func() {
 		<-stop
-		e.conn.Close()
+		f.conn.Close()
 		os.Exit(0)
 	}()
 
@@ -149,12 +157,40 @@ func (e *ibusEngine) run() error {
 
 // ---- org.freedesktop.IBus.Factory ----
 
-// CreateEngine 由 ibus-daemon 在激活引擎时调用；v0 返回共享单实例路径。
-func (e *ibusEngine) CreateEngine(name string) (godbus.ObjectPath, *godbus.Error) {
+// CreateEngine 由 ibus-daemon 在激活每个 InputContext 时调用：
+// 创建独立引擎实例（独立会话/中英模式/Shift 跟踪）并导出到唯一
+// 对象路径 /org/freedesktop/IBus/Engine/chaoset/<seq>。
+func (f *ibusFactory) CreateEngine(name string) (godbus.ObjectPath, *godbus.Error) {
 	if name != "chaoset" {
 		return "", godbus.MakeFailedError(fmt.Errorf("未知引擎 %q", name))
 	}
-	return godbus.ObjectPath(enginePath), nil
+	f.mu.Lock()
+	f.seq++
+	seq := f.seq
+	f.mu.Unlock()
+
+	path := godbus.ObjectPath(fmt.Sprintf("%s/%d", enginePathBase, seq))
+	eng := &ibusEngine{
+		conn: f.conn,
+		dict: f.dict,
+		user: f.user,
+		path: path,
+		sess: engine.NewSession(f.dict, f.user),
+	}
+	if f.fuzzy {
+		eng.sess.SetFuzzy(true)
+	}
+	if f.trad {
+		eng.sess.SetTraditional(true)
+	}
+	if f.sp != "" {
+		eng.sess.SetDoublePinyin(f.sp)
+	}
+	if err := f.conn.Export(eng, path, engineIface); err != nil {
+		return "", godbus.MakeFailedError(fmt.Errorf("导出引擎实例失败: %w", err))
+	}
+	log.Printf("已创建引擎实例 %d（%s）", seq, path)
+	return path, nil
 }
 
 // ---- org.freedesktop.IBus.Engine ----
@@ -288,12 +324,12 @@ func (e *ibusEngine) updatePreedit(preedit string, visible bool) {
 		e.hidePreedit()
 		return
 	}
-	e.conn.Emit(enginePath, engineIface+".UpdatePreeditText",
+	e.conn.Emit(e.path, engineIface+".UpdatePreeditText",
 		godbus.MakeVariant(newIBusText(preedit)), uint32(0), true, uint32(0))
 }
 
 func (e *ibusEngine) hidePreedit() {
-	e.conn.Emit(enginePath, engineIface+".UpdatePreeditText",
+	e.conn.Emit(e.path, engineIface+".UpdatePreeditText",
 		godbus.MakeVariant(newIBusText("")), uint32(0), false, uint32(0))
 }
 
@@ -341,12 +377,12 @@ func (e *ibusEngine) updateLookupTable(comp engine.Composition) {
 		e.hideLookupTable()
 		return
 	}
-	e.conn.Emit(enginePath, engineIface+".UpdateLookupTable",
+	e.conn.Emit(e.path, engineIface+".UpdateLookupTable",
 		godbus.MakeVariant(newIBusLookupTable(comp)), true)
 }
 
 func (e *ibusEngine) hideLookupTable() {
-	e.conn.Emit(enginePath, engineIface+".UpdateLookupTable",
+	e.conn.Emit(e.path, engineIface+".UpdateLookupTable",
 		godbus.MakeVariant(newIBusLookupTable(engine.Composition{})), false)
 }
 
@@ -357,7 +393,7 @@ func (e *ibusEngine) refresh(comp engine.Composition) {
 }
 
 func (e *ibusEngine) commit(text string) {
-	e.conn.Emit(enginePath, engineIface+".CommitText",
+	e.conn.Emit(e.path, engineIface+".CommitText",
 		godbus.MakeVariant(newIBusText(text)))
 	e.hidePreedit()
 	e.hideLookupTable()

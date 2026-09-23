@@ -43,6 +43,9 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
   dbus-monitor 确认载荷为 `IBusLookupTable` 元组（page_size=9、
   candidates 为 IBusText av），与 ibus_lookup_table_serialize 逐字段
   对应；数字键选择不再是盲选。
+- **多实例（端到端）**：`CreateEngine` 两次创建独立实例，交错打字
+  （实例 1=ni、实例 2=hao）后各自空格，`CommitText` 分别为 你好 / 好，
+  证明组词状态按 InputContext 分离、互不串扰。
 - 过程中修复一个真缺陷：引擎实例的 `engine.Session` 未初始化，
   首次按键即空指针崩溃。
 
@@ -50,8 +53,8 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
 
 - 预编辑与候选列表均经 ibus 面板显示（UpdatePreeditText /
   UpdateLookupTable 信号）；面板的具体渲染样式由 ibus 决定。
-- 引擎为单实例共享状态（多 InputContext 并发输入会互相干扰），
-  多上下文支持待真机桌面环境验证后实现。
+- 多 InputContext 已按实例隔离（每上下文独立会话/中英模式，
+  容器内验证状态分离）；焦点跟随（FocusIn/Out 精细化）待真机桌面。
 - 候选窗自绘贴图（candidateImage）在此壳的显示接入待做。
 
 ## 真机使用（Linux 桌面）

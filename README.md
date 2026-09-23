@@ -283,6 +283,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 - [x] 阶段 16：简繁转换升级——内嵌 OpenCC 官方数据（STCharacters
       4,029 单字 + STPhrases 49,270 词级，Apache-2.0），词级最长匹配
       消歧（头发→頭髮、出发→出發、公里→公里），惰性解析
+- [x] 阶段 17：ibus 引擎多实例——工厂按 InputContext 创建独立实例
+      （独立会话/中英模式/Shift 跟踪），容器内端到端验证状态分离
+      （两实例交错打字各自上屏 你好 / 好）
 
 ## 验收范围确认（2026-09-23）
 

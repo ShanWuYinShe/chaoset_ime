@@ -46,20 +46,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ibus, err := newIBusEngine(dict, user)
+	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if *fuzzy {
-		ibus.sess.SetFuzzy(true)
-	}
-	if *trad {
-		ibus.sess.SetTraditional(true)
-	}
-	if *sp != "" {
-		ibus.sess.SetDoublePinyin(*sp)
-	}
-	if err := ibus.run(); err != nil {
+	if err := factory.run(); err != nil {
 		log.Fatal(err)
 	}
 }
