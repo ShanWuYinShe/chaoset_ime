@@ -167,7 +167,12 @@ func Render(comp engine.Composition, skin Skin) ([]byte, error) {
 	}
 	var lines []line
 	if comp.Preedit != "" {
-		lines = append(lines, line{text: comp.Preedit, color: skin.PreeditColor})
+		preeditText := comp.Preedit
+		if comp.PageCount > 1 {
+			// 多页时在预编辑行尾附页码指示（与 CLI 输出格式一致）
+			preeditText += fmt.Sprintf("  [%d/%d]", comp.Page+1, comp.PageCount)
+		}
+		lines = append(lines, line{text: preeditText, color: skin.PreeditColor})
 	}
 	for i, cand := range comp.Candidates {
 		text := fmt.Sprintf("%d.%s", (i+1)%10, cand.Text)

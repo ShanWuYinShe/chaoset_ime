@@ -179,8 +179,10 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入；重复按键循环（。。）待做
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
-      每页 9 个）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入；
-      渲染器页码指示与 ibus UpdateLookupTable 待做
+      每页 9 个）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入
+- [x] 阶段 7：候选可视化收尾——渲染器预编辑行页码指示（样例目检
+      通过）；ibus 壳 UpdateLookupTable 候选表上报（容器内端到端
+      验证，数字键选择不再盲选）
 
 ## 验收范围确认（2026-09-23）
 

@@ -43,6 +43,13 @@ for kv in 110 105 104 97 111; do
       org.freedesktop.IBus.Engine.ProcessKeyEvent uint32:$kv uint32:0 uint32:0 2>&1 | grep -c "boolean true")
   echo "键 $kv handled=$R"
 done
+sleep 1
+# 组词中应已上报候选表（UpdateLookupTable 信号携带 IBusLookupTable 元组）
+if grep -q "UpdateLookupTable" /tmp/mon.log && grep -q "IBusLookupTable" /tmp/mon.log; then
+  echo "PASS: UpdateLookupTable 候选表信号已发出"
+else
+  echo "FAIL: 未捕获到候选表信号"; exit 1
+fi
 # 空格：首选候选上屏
 R=$(dbus-send --session --print-reply --dest=$UN /org/freedesktop/IBus/Engine/chaoset \
     org.freedesktop.IBus.Engine.ProcessKeyEvent uint32:32 uint32:0 uint32:0 2>&1 | grep -c "boolean true")

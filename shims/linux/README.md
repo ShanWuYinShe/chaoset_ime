@@ -22,7 +22,7 @@ ibus-engine/
 
 按键：字母组词、`1`-`9` 选候选、空格/回车首选上屏、退格删除、Esc 清空、
 标点键（`,` `.` `;` 等）输出中文标点（组词中先上屏首选；组词中的 `'` 为音节
-分隔符）、`-`/`=` 候选翻页（引擎侧页码已接，可视效果待 UpdateLookupTable）。
+分隔符）、`-`/`=` 候选翻页（候选表随页刷新）。
 带 Ctrl/Alt 修饰或未消费的按键一律放行给应用。
 
 ## 验证状态（2026-09-23，Docker linux/arm64 + ibus 1.5.29）
@@ -37,13 +37,17 @@ ibus-engine/
 - **按键行为（端到端）**：`test.sh` 向引擎对象直发
   `ProcessKeyEvent`——n/i/h/a/o 五键全部 handled=true，空格触发
   `CommitText` 信号，dbus-monitor 捕获到中文「你好」上屏。
+- **候选表（端到端）**：组词中引擎发出 `UpdateLookupTable` 信号，
+  dbus-monitor 确认载荷为 `IBusLookupTable` 元组（page_size=9、
+  candidates 为 IBusText av），与 ibus_lookup_table_serialize 逐字段
+  对应；数字键选择不再是盲选。
 - 过程中修复一个真缺陷：引擎实例的 `engine.Session` 未初始化，
   首次按键即空指针崩溃。
 
 ## 已知限制
 
-- v0 无候选窗图形：预编辑经 ibus 面板显示（UpdatePreeditText 信号），
-  候选列表未上报（`UpdateLookupTable` 待接）；数字键暂为盲选。
+- 预编辑与候选列表均经 ibus 面板显示（UpdatePreeditText /
+  UpdateLookupTable 信号）；面板的具体渲染样式由 ibus 决定。
 - 引擎为单实例共享状态（多 InputContext 并发输入会互相干扰），
   多上下文支持待真机桌面环境验证后实现。
 - 候选窗自绘贴图（candidateImage）在此壳的显示接入待做。

@@ -44,6 +44,29 @@ func TestRenderPNG(t *testing.T) {
 	}
 }
 
+// 多页组成时预编辑行附加页码指示，渲染图因此更宽。
+func TestRenderPageIndicator(t *testing.T) {
+	skin := DefaultSkin()
+	if skin.FontPath == "" {
+		t.Skip("本机无探测得到的 CJK 字体")
+	}
+	withPage := sampleComp()
+	withPage.Page, withPage.PageCount = 0, 2
+	a, err := Render(sampleComp(), skin)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	b, err := Render(withPage, skin)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	imgA, _ := png.Decode(bytes.NewReader(a))
+	imgB, _ := png.Decode(bytes.NewReader(b))
+	if imgB.Bounds().Dx() <= imgA.Bounds().Dx() {
+		t.Fatalf("页码指示应使图像更宽: %d vs %d", imgB.Bounds().Dx(), imgA.Bounds().Dx())
+	}
+}
+
 func TestRenderEmptyCandidates(t *testing.T) {
 	comp := engine.Composition{Input: "nihao", Preedit: "ni'hao"}
 	pngBytes, err := Render(comp, DefaultSkin())
@@ -69,16 +92,24 @@ func TestWriteVisualSample(t *testing.T) {
 	if skin.FontPath == "" {
 		t.Skip("本机无 CJK 字体")
 	}
-	pngBytes, err := Render(sampleComp(), skin)
-	if err != nil {
-		t.Fatal(err)
+	paged := sampleComp()
+	paged.Page, paged.PageCount = 1, 2
+	samples := map[string]engine.Composition{
+		"render-sample.png":       sampleComp(),
+		"render-sample-paged.png": paged,
 	}
-	out := filepath.Join("..", ".workwork", "render-sample.png")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		t.Fatal(err)
+	for name, comp := range samples {
+		pngBytes, err := Render(comp, skin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join("..", ".workwork", name)
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, pngBytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("样例已写入 %s", out)
 	}
-	if err := os.WriteFile(out, pngBytes, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("样例已写入 %s", out)
 }

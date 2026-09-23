@@ -125,17 +125,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	switch {
 	case keyval >= 'a' && keyval <= 'z':
 		comp, _ := e.sess.Input(string(rune(keyval)))
-		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		e.refresh(comp)
 		return true, nil
 
 	case keyval == keysymBackspace:
 		comp, _ := e.sess.Backspace()
-		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		e.refresh(comp)
 		return true, nil
 
 	case keyval == keysymEscape:
 		e.sess.Reset()
 		e.hidePreedit()
+		e.hideLookupTable()
 		return true, nil
 
 	case keyval >= '1' && keyval <= '9':
@@ -143,6 +144,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if err != nil {
 			// 无对应候选：不消费，让数字原样上屏
 			e.hidePreedit()
+			e.hideLookupTable()
 			return false, nil
 		}
 		e.commit(text)
@@ -155,6 +157,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		text, err := e.sess.Select(0)
 		if err != nil {
 			e.hidePreedit()
+			e.hideLookupTable()
 			return true, nil
 		}
 		e.commit(text)
@@ -171,13 +174,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		} else {
 			comp, _ = e.sess.NextPage()
 		}
-		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		e.refresh(comp)
 		return true, nil
 
 	case keyval == '\'' && isComposing(e.sess):
 		// 组词中的撇号是音节分隔符（0x27 不在 a-z 分支内，在此分流）
 		comp, _ := e.sess.Input("'")
-		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		e.refresh(comp)
 		return true, nil
 
 	case engine.IsPunctKey(rune(keyval)):
@@ -216,10 +219,70 @@ func (e *ibusEngine) hidePreedit() {
 		godbus.MakeVariant(newIBusText("")), uint32(0), false, uint32(0))
 }
 
+// ibusLookupTable 对应 libibus 的 IBusLookupTable 线缆序列化元组：
+// ("IBusLookupTable", a{sv}, u page_size, u cursor_pos, b cursor_visible,
+// b round, v candidates, v labels)，其中两个 v 均为 av（IBusText 变体
+// 数组），字段顺序与 ibus_lookup_table_serialize 一致。
+type ibusLookupTable struct {
+	TypeName      string
+	Attachments   map[string]godbus.Variant
+	PageSize      uint32
+	CursorPos     uint32
+	CursorVisible bool
+	Round         bool
+	Candidates    godbus.Variant
+	Labels        godbus.Variant
+}
+
+// ibusPageSize 与引擎的每页候选数一致（engine 内部常量 pageSize）。
+const ibusPageSize = 9
+
+func newIBusLookupTable(comp engine.Composition) ibusLookupTable {
+	cands := make([]godbus.Variant, 0, len(comp.Candidates))
+	labels := make([]godbus.Variant, 0, len(comp.Candidates))
+	for i, c := range comp.Candidates {
+		cands = append(cands, godbus.MakeVariant(newIBusText(c.Text)))
+		labels = append(labels, godbus.MakeVariant(newIBusText(fmt.Sprintf("%d.", (i+1)%10))))
+	}
+	return ibusLookupTable{
+		TypeName:      "IBusLookupTable",
+		Attachments:   map[string]godbus.Variant{},
+		PageSize:      ibusPageSize,
+		CursorPos:     0, // 首选高亮
+		CursorVisible: true,
+		Round:         false,
+		Candidates:    godbus.MakeVariant(cands),
+		Labels:        godbus.MakeVariant(labels),
+	}
+}
+
+// updateLookupTable 把当前页候选上报给 ibus 面板（预编辑之外的第二路
+// 展示，数字键选择由此从「盲选」变为可见）。
+func (e *ibusEngine) updateLookupTable(comp engine.Composition) {
+	if len(comp.Candidates) == 0 {
+		e.hideLookupTable()
+		return
+	}
+	e.conn.Emit(enginePath, engineIface+".UpdateLookupTable",
+		godbus.MakeVariant(newIBusLookupTable(comp)), true)
+}
+
+func (e *ibusEngine) hideLookupTable() {
+	e.conn.Emit(enginePath, engineIface+".UpdateLookupTable",
+		godbus.MakeVariant(newIBusLookupTable(engine.Composition{})), false)
+}
+
+// refresh 把组成状态同步到 ibus 面板：预编辑文本 + 当前页候选表。
+func (e *ibusEngine) refresh(comp engine.Composition) {
+	e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+	e.updateLookupTable(comp)
+}
+
 func (e *ibusEngine) commit(text string) {
 	e.conn.Emit(enginePath, engineIface+".CommitText",
 		godbus.MakeVariant(newIBusText(text)))
 	e.hidePreedit()
+	e.hideLookupTable()
 }
 
 // ---- 其余 Engine 方法：v0 为无操作，保持接口完整 ----
