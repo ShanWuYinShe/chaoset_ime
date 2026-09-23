@@ -95,16 +95,20 @@ bin/chaosetd -traditional       # 候选与上屏均为繁体
 
 ## 双拼
 
-默认关闭，`-shuangpin` 开启自然码双拼（daemon 与本地测试台均支持）：
+默认关闭，`-shuangpin zrm|mspy` 选择方案（daemon 与本地测试台均支持）：
 
 ```sh
-bin/chaosetd -shuangpin         # 两键一音节：nihao = n i h k
+bin/chaosetd -shuangpin zrm     # 自然码：两键一音节，nihao = n i h k
+bin/chaosetd -shuangpin mspy    # 微软双拼：nihao = n i h k；ing 在 ; 键
 ```
 
-键位表不手工维护——忠实转写 Rime 官方自然码 schema 的 speller
+键位表不手工维护——分别忠实转写 Rime 官方两份 schema 的 speller
 algebra 规则管线，对全部合法音节正向生成两键码后建反向表，完整性
 测试保证全表无冲突、逐音节可解码。首键暂存、成对解码，无效键码对
 整体丢弃；退格按按键事件粒度整段回滚。见 `engine/double_pinyin.go`。
+
+小鹤方案暂缺：Rime 的 flypy schema 与官方小鹤键位存在出入
+（ia/ua 键位等），官方键位图为图片无法文本核验，宁缺毋滥。
 
 ## 快速开始（阶段 0 测试台）
 
@@ -238,9 +242,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
       （引擎侧，组词合并行为不变）；ibus 容器验证路径同上
 - [x] 阶段 12：简繁转换——零错误单字映射（歧义字保留原形），
       候选与上屏整体转繁体，默认关闭 -traditional 开启
-- [x] 阶段 13：自然码双拼——Rime algebra 忠实转写管线 + 全音节
-      反向键码表（完整性测试兜底），流式两键解码，默认关闭
-      -shuangpin 开启
+- [x] 阶段 13：双拼——Rime algebra 忠实转写管线 + 全音节反向键码表
+      （完整性测试兜底），流式两键解码；方案 zrm（自然码）与 mspy
+      （微软），默认关闭 -shuangpin 开启；小鹤待官方键位可核验
 
 ## 验收范围确认（2026-09-23）
 

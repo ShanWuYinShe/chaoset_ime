@@ -2,11 +2,11 @@ package engine
 
 import "testing"
 
-// 已知键位抽查（与 Rime 自然码方案语义一致）：
+// 已知键位抽查——自然码（与 Rime 自然码方案语义一致）：
 // ni=ni、hao=hk、shi=ui、zhang=vh、zhuang=vd、liang=ld、kuai=ky、
 // juan=jr、lve=lt、jue=jt、zhong=vs、jiong=js、hua=hw、bei=bz、
 // niu=nq、dun=dp、a=aa、ai=al、ang=ah、en=ef、eng=eg、ou=ob、o=oo。
-func TestDoublePinyinKnownPairs(t *testing.T) {
+func TestDoublePinyinKnownPairsZRM(t *testing.T) {
 	cases := []struct {
 		syl, a, b string
 	}{
@@ -20,58 +20,85 @@ func TestDoublePinyinKnownPairs(t *testing.T) {
 		{"ou", "o", "b"}, {"o", "o", "o"},
 	}
 	for _, tc := range cases {
-		syl, ok := DoublePinyinDecode(tc.a[0], tc.b[0])
+		syl, ok := DoublePinyinDecode(DPSchemeZRM, tc.a[0], tc.b[0])
 		if !ok || syl != tc.syl {
-			t.Errorf("键码 %s%s 应解码为 %s, 得到 %q (ok=%v)", tc.a, tc.b, tc.syl, syl, ok)
+			t.Errorf("zrm 键码 %s%s 应解码为 %s, 得到 %q (ok=%v)", tc.a, tc.b, tc.syl, syl, ok)
 		}
 	}
 }
 
-// 反向表完整性：每个合法音节至少有一个两键码；键码冲突时「规则派生
-// 优先于透传」可消解（如 luo 派生键码 lo 优先于拟声字 lo），仅当双方
-// 同为派生或同为透传时才是不可消解的冲突（说明转录走样）。
+// 已知键位抽查——微软双拼（与 Rime mspy 方案语义一致）：
+// hao=hk、shi=ui、zhuang=vd、lv=ly、xue=xt/xv、lin=ln、ling=l;、
+// er=r（单键）、an=oj/aj、ai=ol/al、ou=ob、kuai=ky、juan=jr、
+// jiong=js、zhong=vs。
+func TestDoublePinyinKnownPairsMSPY(t *testing.T) {
+	cases := []struct {
+		syl, a, b string
+	}{
+		{"ni", "n", "i"}, {"hao", "h", "k"}, {"shi", "u", "i"},
+		{"zhuang", "v", "d"}, {"lv", "l", "y"}, {"xue", "x", "t"},
+		{"lin", "l", "n"}, {"er", "e", "r"}, {"an", "o", "j"},
+		{"an", "a", "j"}, {"ai", "o", "l"}, {"ai", "a", "l"},
+		{"ou", "o", "b"}, {"kuai", "k", "y"}, {"juan", "j", "r"},
+		{"jiong", "j", "s"}, {"zhong", "v", "s"}, {"ling", "l", ";"},
+	}
+	for _, tc := range cases {
+		syl, ok := DoublePinyinDecode(DPSchemeMSPY, tc.a[0], tc.b[0])
+		if !ok || syl != tc.syl {
+			t.Errorf("mspy 键码 %s%s 应解码为 %s, 得到 %q (ok=%v)", tc.a, tc.b, tc.syl, syl, ok)
+		}
+	}
+}
+
+// 反向表完整性（逐方案）：每个合法音节至少有一个两键码；键码冲突时
+// 「规则派生优先于透传」可消解（如自然码 luo 派生键码 lo 优先于拟声
+// 字 lo），仅当双方同为派生或同为透传时才是不可消解的冲突。
 func TestDoublePinyinTableIntegrity(t *testing.T) {
-	type entry struct {
-		syl     string
-		derived bool
-	}
-	reverse := map[string]entry{}
-	for _, syl := range syllableTable {
-		codes := dpApply(syl)
-		hit := false
-		for _, code := range codes {
-			if len(code) != 2 {
-				continue // 零声母派生长码不收录
+	for scheme := range dpSchemes {
+		t.Run(scheme, func(t *testing.T) {
+			type entry struct {
+				syl     string
+				derived bool
 			}
-			hit = true
-			transformed := code != syl
-			prev, dup := reverse[code]
-			if !dup {
-				reverse[code] = entry{syl: syl, derived: transformed}
-				continue
+			reverse := map[string]entry{}
+			for _, syl := range syllableTable {
+				codes := dpApply(scheme, syl)
+				hit := false
+				for _, code := range codes {
+					if len(code) != 2 {
+						continue // 零声母派生长码不收录
+					}
+					hit = true
+					transformed := code != syl
+					prev, dup := reverse[code]
+					if !dup {
+						reverse[code] = entry{syl: syl, derived: transformed}
+						continue
+					}
+					if prev.syl == syl {
+						continue
+					}
+					if transformed && !prev.derived {
+						reverse[code] = entry{syl: syl, derived: true}
+					} else if !transformed && prev.derived {
+						// 保留派生方
+					} else {
+						t.Errorf("键码 %q 不可消解冲突: %s 与 %s", code, prev.syl, syl)
+					}
+				}
+				if !hit {
+					t.Errorf("音节 %s 无两键编码", syl)
+				}
 			}
-			if prev.syl == syl {
-				continue
+			if scheme == DPSchemeZRM {
+				if got := reverse["lo"].syl; got != "luo" {
+					t.Errorf("zrm lo 键码应消解给 luo, 实际 %q", got)
+				}
 			}
-			if transformed && !prev.derived {
-				reverse[code] = entry{syl: syl, derived: true}
-			} else if !transformed && prev.derived {
-				// 保留派生方
-			} else {
-				t.Errorf("键码 %q 不可消解冲突: %s 与 %s", code, prev.syl, syl)
+			if len(reverse) < len(syllableTable)*9/10 {
+				t.Fatalf("反向表覆盖 %d 键码, 音节 %d 个, 覆盖率过低", len(reverse), len(syllableTable))
 			}
-		}
-		if !hit {
-			t.Errorf("音节 %s 无两键编码", syl)
-		}
-	}
-	// 冲突消解抽查：lo 键码应归 luo（uo→O 派生）而非拟声字 lo
-	if got := reverse["lo"].syl; got != "luo" {
-		t.Errorf("lo 键码应消解给 luo, 实际 %q", got)
-	}
-	// 表覆盖率下限（自然码应覆盖绝大多数音节）
-	if len(reverse) < len(syllableTable)*9/10 {
-		t.Fatalf("反向表覆盖 %d 键码, 音节 %d 个, 覆盖率过低", len(reverse), len(syllableTable))
+		})
 	}
 }
 
@@ -79,7 +106,7 @@ func TestDoublePinyinTableIntegrity(t *testing.T) {
 // 退格按「按键事件」粒度回滚。
 func TestDoublePinyinSession(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	s.SetDoublePinyin(true)
+	s.SetDoublePinyin(DPSchemeZRM)
 
 	comp, _ := s.Input("n")
 	if len(comp.Candidates) != 0 || comp.Input != "" {
@@ -108,6 +135,20 @@ func TestDoublePinyinSession(t *testing.T) {
 	}
 }
 
+// 未知方案按关闭处理；关闭后按键走全拼。
+func TestDoublePinyinSchemeValidation(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.SetDoublePinyin("flypy") // 尚未提供小鹤方案：未知方案按关闭处理
+	comp, _ := s.Input("n")
+	if comp.Input != "n" {
+		t.Fatalf("未知方案应按关闭处理, Input = %q", comp.Input)
+	}
+	s.SetDoublePinyin("")
+	if comp := func() Composition { c, _ := s.Input("i"); return c }(); comp.Input != "ni" {
+		t.Fatalf("关闭后应走全拼, Input = %q", comp.Input)
+	}
+}
+
 // 无效键码对整体丢弃。测试运行期探测一个未分配键码（qq 实为 qiu 的
 // 合法键码，不能硬编码）。
 func TestDoublePinyinInvalidPair(t *testing.T) {
@@ -115,7 +156,7 @@ func TestDoublePinyinInvalidPair(t *testing.T) {
 	found := false
 	for x := byte('a'); x <= 'z' && !found; x++ {
 		for y := byte('a'); y <= 'z' && !found; y++ {
-			if _, ok := DoublePinyinDecode(x, y); !ok {
+			if _, ok := DoublePinyinDecode(DPSchemeZRM, x, y); !ok {
 				a, b, found = x, y, true
 			}
 		}
@@ -124,7 +165,7 @@ func TestDoublePinyinInvalidPair(t *testing.T) {
 		t.Skip("676 键码全部已分配，无从构造无效对")
 	}
 	s := NewSession(mustDict(t), nil)
-	s.SetDoublePinyin(true)
+	s.SetDoublePinyin(DPSchemeZRM)
 	s.Input(string(a))
 	comp, _ := s.Input(string(b))
 	if comp.Input != "" {

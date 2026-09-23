@@ -24,7 +24,7 @@ type Server struct {
 	skin         *renderer.Skin // 可选：启用 candidateImage 候选窗渲染
 	fuzzy        bool           // 可选：新会话启用模糊音
 	traditional  bool           // 可选：新会话启用繁体输出
-	doublePinyin bool           // 可选：新会话启用自然码双拼
+	doublePinyin string         // 可选：新会话的双拼方案（空 = 关闭）
 }
 
 // Option 定制 Server 可选能力。
@@ -46,9 +46,10 @@ func WithTraditional(on bool) Option {
 	return func(s *Server) { s.traditional = on }
 }
 
-// WithDoublePinyin 为每个连接的新会话启用自然码双拼（见 engine/double_pinyin.go）。
-func WithDoublePinyin(on bool) Option {
-	return func(s *Server) { s.doublePinyin = on }
+// WithDoublePinyin 为每个连接的新会话启用指定双拼方案（zrm/mspy，
+// 见 engine/double_pinyin.go）。
+func WithDoublePinyin(scheme string) Option {
+	return func(s *Server) { s.doublePinyin = scheme }
 }
 
 func NewServer(ln net.Listener, dict *engine.Dictionary, user *engine.UserDict, opts ...Option) *Server {
@@ -95,8 +96,8 @@ func (s *Server) handleConn(conn net.Conn) {
 	if s.traditional {
 		sess.SetTraditional(true)
 	}
-	if s.doublePinyin {
-		sess.SetDoublePinyin(true)
+	if s.doublePinyin != "" {
+		sess.SetDoublePinyin(s.doublePinyin)
 	}
 	for {
 		var req Request

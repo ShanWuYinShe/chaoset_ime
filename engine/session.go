@@ -85,14 +85,22 @@ type Session struct {
 
 	traditional bool // 繁体输出：候选词经简繁映射（默认关闭，见 s2t.go）
 
-	dp        bool  // 双拼模式（自然码方案，见 double_pinyin.go）
-	dpPending rune  // 双拼首键（等待第二键成对解码；0 = 无）
-	dpLens    []int // 每次「按键事件」实际追加到 input 的字符数（退格回滚用）
+	dpScheme  string // 双拼方案（zrm/mspy，见 double_pinyin.go；空 = 关闭）
+	dpPending rune   // 双拼首键（等待第二键成对解码；0 = 无）
+	dpLens    []int  // 每次「按键事件」实际追加到 input 的字符数（退格回滚用）
 }
 
-// SetDoublePinyin 开关自然码双拼输入（键位表见 double_pinyin.go）。
-// 须在首次输入前设置。
-func (s *Session) SetDoublePinyin(on bool) { s.dp = on }
+// SetDoublePinyin 设置双拼方案（DPSchemeZRM / DPSchemeMSPY；
+// 空串关闭，未知方案按关闭处理）。须在首次输入前设置。
+func (s *Session) SetDoublePinyin(scheme string) {
+	if scheme == "" {
+		s.dpScheme = ""
+		return
+	}
+	if _, ok := dpSchemes[scheme]; ok {
+		s.dpScheme = scheme
+	}
+}
 
 // SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
 func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
@@ -122,7 +130,7 @@ func NewSession(dict *Dictionary, user *UserDict) *Session {
 // 首键暂存不产生组成变化，无效键码对整体丢弃。
 func (s *Session) Input(text string) (Composition, error) {
 	for _, r := range strings.ToLower(text) {
-		if s.dp {
+		if s.dpScheme != "" {
 			switch {
 			case r == '\'':
 				s.input += "'"
@@ -135,7 +143,7 @@ func (s *Session) Input(text string) (Composition, error) {
 				}
 				pair := string(s.dpPending) + string(r)
 				s.dpPending = 0
-				syl, ok := DoublePinyinDecode(pair[0], pair[1])
+				syl, ok := DoublePinyinDecode(s.dpScheme, pair[0], pair[1])
 				if !ok {
 					return s.Compose(), nil // 无效键码对：整体丢弃
 				}
@@ -185,7 +193,7 @@ func (s *Session) truncate() {
 // Backspace 删除最后一个输入字符。双拼模式下删除粒度是「按键事件」：
 // 暂存中的首键直接清除；已解码音节整段回滚（对应两键）。
 func (s *Session) Backspace() (Composition, error) {
-	if s.dp {
+	if s.dpScheme != "" {
 		if s.dpPending != 0 {
 			s.dpPending = 0
 			return s.Compose(), nil
