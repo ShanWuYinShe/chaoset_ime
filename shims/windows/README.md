@@ -47,6 +47,7 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json
 | 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
 | UAC 完整性级别：v0 无自绘候选窗（数字盲选 + 预编辑显示），规避候选窗完整性问题 | 已实现（编译级） |
 | `-` / `=` 候选翻页（US 布局，有候选时；边界 daemon 钳制） | 已实现（核心行为级） |
+| Shift 空按切换中英（英文模式全放行；跟踪在按键事件层完成） | 已实现（编译级） |
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 | 候选窗 UI（ITfCandidateListUIElement 或自绘） | v1 规划 |
 

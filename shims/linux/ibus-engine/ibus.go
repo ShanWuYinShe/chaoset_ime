@@ -56,8 +56,52 @@ type ibusEngine struct {
 	dict *engine.Dictionary
 	user *engine.UserDict
 
-	mu   sync.Mutex
-	sess *engine.Session
+	mu     sync.Mutex
+	sess   *engine.Session
+	enMode bool // 英文模式：按键全部放行，组词/标点映射不介入
+	shift  shiftTracker
+}
+
+// shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
+// 即释放。这是中文输入法惯用的中英切换方式（连按 Shift+字母不会误触发：
+// 其他任何按键事件都会取消本次空按窗口）。纯逻辑，可单测。
+type shiftTracker struct {
+	shiftDown  int  // 仍处于按下状态的 Shift 键数（左右两颗）
+	sinceShift bool // Shift 全部按下期间出现过其他按键事件
+}
+
+const (
+	keysymShiftLeft  = 0xFFE1
+	keysymShiftRight = 0xFFE2
+)
+
+func isShiftKeyval(keyval uint32) bool {
+	return keyval == keysymShiftLeft || keyval == keysymShiftRight
+}
+
+// feed 处理一次按键事件（含按下与释放），返回该事件是否为
+// 「Shift 空按释放」——即应触发中英切换。两颗 Shift 同时按住时，
+// 松开其中一颗不触发，全部松开才判定。
+func (t *shiftTracker) feed(keyval, state uint32) bool {
+	if isShiftKeyval(keyval) {
+		if state&ibusReleaseMask != 0 {
+			if t.shiftDown == 0 {
+				return false // 无按下的孤立释放（或重复释放）：不判定
+			}
+			t.shiftDown--
+			toggle := t.shiftDown == 0 && !t.sinceShift
+			if t.shiftDown == 0 {
+				t.sinceShift = false
+			}
+			return toggle
+		}
+		t.shiftDown++
+		t.sinceShift = false
+		return false
+	}
+	// 其他任何按键事件（按下或释放，含 Ctrl/Alt）都关闭空按窗口
+	t.sinceShift = true
+	return false
 }
 
 func newIBusEngine(dict *engine.Dictionary, user *engine.UserDict) (*ibusEngine, error) {
@@ -114,6 +158,18 @@ func (e *ibusEngine) CreateEngine(name string) (godbus.ObjectPath, *godbus.Error
 
 // ProcessKeyEvent 处理按键：返回 true 表示已消费（不再透传给应用）。
 func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godbus.Error) {
+	// Shift 空按释放：切换中英模式（英文模式下丢弃未上屏的组词）
+	if e.shift.feed(keyval, state) {
+		e.enMode = !e.enMode
+		e.sess.Reset()
+		e.hidePreedit()
+		e.hideLookupTable()
+		return true, nil
+	}
+	// 英文模式：全部放行，组词/选词/标点映射均不介入
+	if e.enMode {
+		return false, nil
+	}
 	// 释放事件与 Ctrl/Alt 组合键一律放行
 	if state&(ibusReleaseMask|ibusCtrlMask|ibusMod1Mask) != 0 {
 		return false, nil

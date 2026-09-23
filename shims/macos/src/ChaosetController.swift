@@ -16,6 +16,15 @@ final class ChaosetController: IMKInputController {
     private var current: Comp?
     private var candidateWindow: IMKCandidates?
 
+    // 中英模式：英文模式下按键全部放行（组词/选词/标点映射不介入）。
+    // 切换手势为 Shift 空按；IMK 是否把修饰键事件路由给 handle()
+    // 待真机验证（真机闭环验证清单项）。
+    private var enMode = false
+
+    /// 左/右 Shift 的 keyCode。组合键 Shift+字母 产生的是字母键事件，
+    /// 不会命中这里，因此不会误切换。
+    private static let shiftKeyCodes: Set<UInt16> = [56, 60]
+
     // 懒创建候选窗；IMKServer 未就绪时返回 nil，后续按键会再试。
     private func ensureCandidateWindow() -> IMKCandidates? {
         if candidateWindow == nil, let server = ChaosetController.sharedServer {
@@ -31,10 +40,24 @@ final class ChaosetController: IMKInputController {
     // MARK: - 按键处理
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
-            return passThrough(sender as? any IMKTextInput)
-        }
         let client = sender as? any IMKTextInput
+
+        // Shift 空按：切换中英（在 chars 判空之前——修饰键事件无文本）
+        if Self.shiftKeyCodes.contains(event.keyCode) {
+            enMode.toggle()
+            current = engine.reset()
+            refresh(client)
+            return true
+        }
+
+        // 英文模式：全部放行（passThrough 会先清掉未上屏的组词）
+        if enMode {
+            return passThrough(client)
+        }
+
+        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
+            return passThrough(client)
+        }
 
         // 退格
         if chars == "\u{7F}" {

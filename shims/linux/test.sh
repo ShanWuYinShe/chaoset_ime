@@ -60,4 +60,28 @@ if grep -q "CommitText" /tmp/mon.log && grep -q "你好" /tmp/mon.log; then
   echo "PASS: CommitText 信号已发出且包含中文上屏"
 else
   echo "FAIL: 未捕获到中文上屏信号"; exit 1
+fi
+
+# ---- 中英切换：Shift 空按（按下→释放，中间无其他键）----
+S=65505            # 0xFFE1 左 Shift
+REL=1073741825     # 释放掩码(1<<30) | Shift 掩码(1)
+press() { dbus-send --session --print-reply --dest=$UN /org/freedesktop/IBus/Engine/chaoset \
+    org.freedesktop.IBus.Engine.ProcessKeyEvent uint32:$1 uint32:0 uint32:$2 > /dev/null 2>&1; }
+key_n() { dbus-send --session --print-reply --dest=$UN /org/freedesktop/IBus/Engine/chaoset \
+    org.freedesktop.IBus.Engine.ProcessKeyEvent uint32:110 uint32:0 uint32:0 2>&1 | grep -c "boolean true"; }
+
+press $S 1; press $S $REL      # Shift 空按 → 切到英文
+R=$(key_n)
+if [ "$R" = "0" ]; then
+  echo "PASS: 英文模式按键放行（handled=0）"
+else
+  echo "FAIL: 英文模式仍拦截按键"; exit 1
+fi
+
+press $S 1; press $S $REL      # 再切回中文
+R=$(key_n)
+if [ "$R" = "1" ]; then
+  echo "PASS: 切回中文后恢复组词（handled=1）"
+else
+  echo "FAIL: 切回中文后按键未恢复"; exit 1
 fi'

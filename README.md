@@ -183,6 +183,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 - [x] 阶段 7：候选可视化收尾——渲染器预编辑行页码指示（样例目检
       通过）；ibus 壳 UpdateLookupTable 候选表上报（容器内端到端
       验证，数字键选择不再盲选）
+- [x] 阶段 8：中英切换——Shift 空按切换，英文模式全透传；ibus 壳
+      容器内端到端验证（含切回恢复），Windows 编译级，macOS 修饰键
+      事件路由待真机验证
 
 ## 验收范围确认（2026-09-23）
 

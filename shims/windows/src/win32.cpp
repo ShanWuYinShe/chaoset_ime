@@ -30,6 +30,7 @@ const GUID CLSID_ChaosetTIP = {
     0x8a5c7b31, 0x4e2d, 0x4c6a, {0x9f, 0x41, 0x77, 0xd0, 0xb3, 0xe5, 0xc1, 0xa8}};
 
 constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
+constexpr DWORD kVkShift = 0x10;
 constexpr DWORD kVkBackspace = 0x08;
 constexpr DWORD kVkEscape = 0x1B;
 constexpr DWORD kVkReturn = 0x0D;
@@ -269,24 +270,38 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
-        *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
+        // Shift 事件始终接住用于空按跟踪（最终不消费，见 OnKeyDown）
+        if (wParam == kVkShift) *pfEaten = TRUE;
+        else if (enMode_) *pfEaten = FALSE;           // 英文模式全放行
+        else *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                         BOOL* pfEaten) override {
+        if (wParam == kVkShift) {
+            onShiftEvent(false);
+            *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键不受影响
+            return S_OK;
+        }
+        sinceShift_ = true;  // 其他键按下：取消 Shift 空按窗口
         *pfEaten = handleKey(wParam, pic) ? TRUE : FALSE;
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* /*pic*/, WPARAM /*wParam*/, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
-        *pfEaten = FALSE;
+        *pfEaten = (wParam == kVkShift) ? TRUE : FALSE;
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* /*pic*/, WPARAM /*wParam*/, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
+        if (wParam == kVkShift) {
+            onShiftEvent(true);
+            *pfEaten = FALSE;  // 只跟踪不消费
+            return S_OK;
+        }
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -310,6 +325,31 @@ private:
 
     bool isComposing() const { return !comp_.input.empty(); }
     bool hasCandidates() const { return !comp_.candidates.empty(); }
+
+    // ---- 中英切换：Shift 空按（按下后未按其他键即释放）----
+    // 语义与 ibus 壳的 shiftTracker 一致；事件路径见 OnTestKeyDown 等分流。
+    bool enMode_ = false;
+    int shiftDown_ = 0;      // 仍按着的 Shift 键数（左右）
+    bool sinceShift_ = true; // 窗口外初始值：防止首个 Shift 释放误触发
+
+    void onShiftEvent(bool release) {
+        if (!release) {
+            ++shiftDown_;
+            sinceShift_ = false;
+            return;
+        }
+        if (shiftDown_ == 0) return;  // 无按下的孤立释放
+        --shiftDown_;
+        if (shiftDown_ == 0) {
+            if (!sinceShift_) {
+                enMode_ = !enMode_;
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+            }
+            sinceShift_ = false;
+        }
+    }
 
     // OEM 虚键 → 标点字符（与 engine.IsPunctKey 的直映子集对应；
     // shift+键产生的 ？!: 等需字符级识别，待真机联调时接 ToAscii）
