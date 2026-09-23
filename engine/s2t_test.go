@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// 单字转换：一对多歧义字（发/干/面/里/后/台）保留原形。
-func TestToTraditionalAmbiguousPreserved(t *testing.T) {
+// 词级消歧：OpenCC 词组表解决一对多字的上下文判定。
+func TestToTraditionalPhraseDisambiguation(t *testing.T) {
 	cases := map[string]string{
-		"头发": "頭发", // 发（髮/發）歧义保留；头→頭 无歧义转换
-		"出发": "出发", // 出发无映射字出? 出 无映射、发 保留
-		"公里": "公里", // 里 歧义保留
-		"台面": "台面", // 台/面 均歧义保留
+		"头发": "頭髮", // 词组表：发 在「头发」中为 髮
+		"出发": "出發", // 词组表：发 在「出发」中為 發
+		"公里": "公里", // 词组表：里 在「公里」中保留原形
+		"台面": "檯面", // 词组表：台 在「台面」中为 檯
 	}
 	for in, want := range cases {
 		if got := ToTraditional(in); got != want {
