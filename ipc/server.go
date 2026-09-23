@@ -151,6 +151,8 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "toggleHalfWidth":
+		return map[string]bool{"half_width": sess.ToggleHalfWidth()}, nil
 	case "userStats":
 		if s.user == nil {
 			return nil, fmt.Errorf("未启用用户词典")

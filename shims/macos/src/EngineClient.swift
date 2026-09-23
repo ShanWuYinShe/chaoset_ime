@@ -189,6 +189,13 @@ final class EngineClient {
         parseComp(call(method: "prevPage", params: [:]))
     }
 
+    // toggleHalfWidth 切换全角/半角标点模式，返回切换后是否为半角。
+    // 返回 nil 表示 daemon 不可达（调用方放行原键）。
+    func toggleHalfWidth() -> Bool? {
+        guard let result = call(method: "toggleHalfWidth", params: [:]) else { return nil }
+        return result["half_width"] as? Bool
+    }
+
     // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；
     // 返回 nil 表示 daemon 不可达或未启用渲染（调用方回退 IMKCandidates）。
     func candidateImage() -> CandidateImage? {

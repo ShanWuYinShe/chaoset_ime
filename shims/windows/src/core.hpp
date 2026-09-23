@@ -85,6 +85,8 @@ public:
     bool select(int index, std::string* committed);
     // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
     bool punct(const std::string& key, std::string* committed);
+    // 全角/半角标点模式切换，返回切换后是否为半角；通信失败返回 false。
+    bool toggleHalfWidth();
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);

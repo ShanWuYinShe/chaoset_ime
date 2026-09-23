@@ -44,7 +44,8 @@ func IsPunctKey(r rune) bool {
 //     再输出中文标点；无候选的残缺输入直接丢弃（保留学习上下文）。
 //
 // 组词中的 ' 是音节分隔符，不作为标点，返回错误（调用方应把组词中的
-// ' 送 Input）。映射表见 punctMap；双/单引号各自按开闭交替配对。
+// ' 送 Input）。映射表见 punctMap；双/单引号各自按开闭交替配对；
+// 句号/逗号支持同键连按循环；半角模式下标点原样输出（ToggleHalfWidth）。
 func (s *Session) Punct(key string) (string, error) {
 	runes := []rune(key)
 	if len(runes) != 1 {
@@ -56,6 +57,24 @@ func (s *Session) Punct(key string) (string, error) {
 	}
 	if s.input != "" && r == '\'' {
 		return "", fmt.Errorf("组词中的 ' 是音节分隔符，不作为标点提交")
+	}
+	// 半角模式：标点原样输出（无循环、引号不配对），组词合并行为不变
+	if s.halfWidth {
+		out := ""
+		if s.input != "" {
+			comp := s.Compose()
+			if len(comp.Candidates) > 0 {
+				committed, err := s.Select(0)
+				if err != nil {
+					return "", err
+				}
+				out = committed
+			} else {
+				s.input = ""
+			}
+		}
+		s.resetPunctCycle()
+		return out + string(r), nil
 	}
 	// 同键连按循环：上一次标点输出与本键相同（其间未被其他输入/上屏
 	// 打断——Input/Backspace/Reset/Select 会重置循环位置）则推进序列

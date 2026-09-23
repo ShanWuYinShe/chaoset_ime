@@ -421,6 +421,14 @@ private:
 
         if (!isComposing()) return false;
 
+        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；
+        // GetKeyState 查物理 Shift 状态，通信失败时 toggle 返回 false
+        // 仅表示未切到半角，不影响后续按键）
+        if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
+            session_.toggleHalfWidth();
+            return true;
+        }
+
         // - / =：候选翻页（有候选时；边界由 daemon 钳制，原地不动也消费）
         if (vk == kVkOemMinus || vk == kVkOemPlus) {
             comp_ = vk == kVkOemMinus ? session_.prevPage() : session_.nextPage();

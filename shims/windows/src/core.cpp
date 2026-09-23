@@ -361,4 +361,13 @@ bool Session::punct(const std::string& key, std::string* committed) {
     return true;
 }
 
+bool Session::toggleHalfWidth() {
+    bool ok = false;
+    JsonValue result = call("toggleHalfWidth", "", &ok);
+    if (!ok) return false;
+    const JsonValue* hw = result.find("half_width");
+    if (hw == nullptr || hw->type != JsonValue::Type::Bool) return false;
+    return hw->boolean;
+}
+
 }  // namespace chaoset

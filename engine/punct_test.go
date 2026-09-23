@@ -178,3 +178,54 @@ func TestPunctRejectsInvalid(t *testing.T) {
 		t.Fatalf("报错不应影响组词状态，Input = %q", comp.Input)
 	}
 }
+
+// 半角模式：标点原样输出、引号不配对；切回全角恢复映射。
+func TestHalfWidthMode(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	if s.HalfWidth() {
+		t.Fatal("默认应为全角")
+	}
+	if got, _ := s.Punct("."); got != "。" {
+		t.Fatalf("全角首按应得中文句号, 得到 %q", got)
+	}
+	if !s.ToggleHalfWidth() {
+		t.Fatal("切换后应为半角")
+	}
+	if got, _ := s.Punct("."); got != "." {
+		t.Fatalf("半角句号应原样输出, 得到 %q", got)
+	}
+	if got, _ := s.Punct(","); got != "," {
+		t.Fatalf("半角逗号应原样输出, 得到 %q", got)
+	}
+	// 引号不配对：两次输出相同
+	g1, _ := s.Punct("\"")
+	g2, _ := s.Punct("\"")
+	if g1 != "\"" || g2 != "\"" {
+		t.Fatalf("半角引号不应配对, 得到 %q %q", g1, g2)
+	}
+	// 切回全角
+	if s.ToggleHalfWidth() {
+		t.Fatal("再次切换应回到全角")
+	}
+	if got, _ := s.Punct("."); got != "。" {
+		t.Fatalf("切回全角应得中文句号, 得到 %q", got)
+	}
+}
+
+// 半角模式组词中：首选候选 + 半角标点合并上屏；半角下无循环。
+func TestHalfWidthComposing(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.Input("nihao")
+	s.ToggleHalfWidth()
+	got, err := s.Punct(",")
+	if err != nil {
+		t.Fatalf("Punct 失败: %v", err)
+	}
+	if got != "你好," {
+		t.Fatalf("半角组词合并 = %q, 期望 你好,", got)
+	}
+	got2, _ := s.Punct(",")
+	if got2 != "," {
+		t.Fatalf("半角逗号应固定原样, 得到 %q", got2)
+	}
+}

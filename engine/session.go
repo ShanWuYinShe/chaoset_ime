@@ -80,10 +80,23 @@ type Session struct {
 	lastPunctIdx int  // 上一次循环位置
 
 	fuzzy bool // 模糊音：查询时展开声母/韵母等价音节（默认关闭）
+
+	halfWidth bool // 半角模式：标点键原样输出（默认全角）
 }
 
 // SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
 func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
+
+// ToggleHalfWidth 切换全角/半角标点模式，返回切换后的状态
+// （true = 半角：标点键原样输出 ASCII）。
+func (s *Session) ToggleHalfWidth() bool {
+	s.halfWidth = !s.halfWidth
+	s.resetPunctCycle()
+	return s.halfWidth
+}
+
+// HalfWidth 报告当前是否为半角标点模式。
+func (s *Session) HalfWidth() bool { return s.halfWidth }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
 	return &Session{dict: dict, user: user}

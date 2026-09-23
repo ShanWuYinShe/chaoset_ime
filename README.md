@@ -193,7 +193,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
         样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
         Windows 壳贴图待真机环境
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
-      CLI 与三端壳转发接入；重复按键循环（。。）待做
+      CLI 与三端壳转发接入
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
       每页 9 个）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入
 - [x] 阶段 7：候选可视化收尾——渲染器预编辑行页码指示（样例目检
@@ -204,6 +204,10 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
       事件路由待真机验证
 - [x] 阶段 9：标点循环（句号/逗号同键连按全角⇄半角，引擎侧）+
       ibus Page Up/Down 键盘翻页（容器内端到端验证）
+- [x] 阶段 10：模糊音——声母/韵母等价展开查询（zh/z、ch/c、sh/s、
+      n/l、an/ang、en/eng、in/ing），默认关闭 -fuzzy 开启
+- [x] 阶段 11：全角/半角标点——Shift+空格切换，半角下标点原样输出
+      （引擎侧，组词合并行为不变）；ibus 容器验证路径同上
 
 ## 验收范围确认（2026-09-23）
 

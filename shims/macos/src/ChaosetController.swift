@@ -75,6 +75,15 @@ final class ChaosetController: IMKInputController {
 
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
 
+        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；
+        // daemon 不可达时放行空格）
+        if chars == " ", event.modifierFlags.contains(.shift) {
+            if engine.toggleHalfWidth() != nil {
+                return true
+            }
+            return passThrough(client)
+        }
+
         // 数字 1-9：选对应候选
         if hasCandidates, chars.count == 1,
            let scalar = chars.unicodeScalars.first,

@@ -38,6 +38,7 @@ const (
 	ibusReleaseMask = 1 << 30
 	ibusCtrlMask    = 1 << 2
 	ibusMod1Mask    = 1 << 3
+	ibusShiftMask   = 1 << 0
 )
 
 // ibusText 对应 libibus 的 IBusText 线缆序列化元组 (s, a{sv}, s)。
@@ -209,6 +210,11 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == keysymReturn || keyval == keysymSpace:
+		// Shift+空格：切换全角/半角标点模式（优先于首选上屏）
+		if keyval == keysymSpace && state&ibusShiftMask != 0 {
+			e.sess.ToggleHalfWidth()
+			return true, nil
+		}
 		if !hasCandidates(e.sess) {
 			return false, nil
 		}

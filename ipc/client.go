@@ -165,3 +165,14 @@ func (c *Client) UserExport(phrasesOnly bool) (string, error) {
 	}
 	return out.TSV, nil
 }
+
+// ToggleHalfWidth 切换全角/半角标点模式，返回切换后是否为半角。
+func (c *Client) ToggleHalfWidth() (bool, error) {
+	var out struct {
+		HalfWidth bool `json:"half_width"`
+	}
+	if err := c.call("toggleHalfWidth", nil, &out); err != nil {
+		return false, err
+	}
+	return out.HalfWidth, nil
+}
