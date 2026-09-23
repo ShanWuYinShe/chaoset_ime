@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // 空组词：标点键直接映射为中文标点（完整直映表）。
 func TestPunctIdleMapping(t *testing.T) {
@@ -104,6 +107,57 @@ func TestPunctApostropheWhileComposing(t *testing.T) {
 	}
 	if _, err := s.Punct("'"); err == nil {
 		t.Fatal("组词中 ' 作为标点应报错")
+	}
+}
+
+// 同键连按循环：句号 。/. 交替并回绕，逗号同理；引号不受影响。
+func TestPunctRepeatCycle(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	steps := []struct{ key, want string }{
+		{".", "。"}, {".", "."}, {".", "。"}, // 回绕
+		{",", "，"}, {",", ","}, // 逗号独立循环
+		{".", "。"}, // 换键后回到首项
+	}
+	for i, st := range steps {
+		got, err := s.Punct(st.key)
+		if err != nil {
+			t.Fatalf("第 %d 次 Punct(%q) 失败: %v", i+1, st.key, err)
+		}
+		if got != st.want {
+			t.Errorf("第 %d 次 Punct(%q) = %q, 期望 %q", i+1, st.key, got, st.want)
+		}
+	}
+}
+
+// 其他输入/上屏打断循环：下一次同键回到序列首项。
+func TestPunctCycleReset(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.Punct(".")             // 。
+	s.Input("nihao")         // 打断循环并进入组词
+	got, err := s.Punct(",") // 组词中：首选 + 逗号首项
+	if err != nil {
+		t.Fatalf("Punct 失败: %v", err)
+	}
+	if !strings.HasSuffix(got, "，") {
+		t.Fatalf("组词中标点应合并上屏，得到 %q", got)
+	}
+	got, err = s.Punct(".") // Select/Input 路径已重置 → 首项 。
+	if err != nil {
+		t.Fatalf("Punct 失败: %v", err)
+	}
+	if got != "。" {
+		t.Fatalf("打断后应回首项，得到 %q", got)
+	}
+}
+
+// 退格同样打断循环。
+func TestPunctCycleResetByBackspace(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.Punct(".")  // 。
+	s.Backspace() // 退格打断
+	got, _ := s.Punct(".")
+	if got != "。" {
+		t.Fatalf("退格打断后应回首项，得到 %q", got)
 	}
 }
 

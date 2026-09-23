@@ -31,6 +31,8 @@ const (
 	keysymReturn    = 0xFF0D
 	keysymEscape    = 0xFF1B
 	keysymSpace     = 0x20
+	keysymPageUp    = 0xFF55
+	keysymPageDown  = 0xFF56
 
 	// ibus 修饰键掩码（IBUS_MODIFIER_MASK 中的常用位）
 	ibusReleaseMask = 1 << 30
@@ -219,6 +221,20 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.commit(text)
 		return true, nil
 
+	case keyval == keysymPageUp || keyval == keysymPageDown:
+		// Page Up / Page Down 键盘翻页（组词中消费；空组词放行原键）
+		if !isComposing(e.sess) {
+			return false, nil
+		}
+		var comp engine.Composition
+		if keyval == keysymPageUp {
+			comp, _ = e.sess.PrevPage()
+		} else {
+			comp, _ = e.sess.NextPage()
+		}
+		e.refresh(comp)
+		return true, nil
+
 	case keyval == '-' || keyval == '=':
 		// 候选翻页（组词中消费；空组词放行原键；边界由 daemon 钳制）
 		if !isComposing(e.sess) {
@@ -353,10 +369,26 @@ func (e *ibusEngine) Reset() *godbus.Error {
 }
 func (e *ibusEngine) SetCursorLocation(x, y, w, h int32) *godbus.Error { return nil }
 func (e *ibusEngine) SetCapabilities(caps uint32) *godbus.Error        { return nil }
-func (e *ibusEngine) PageUp() *godbus.Error                            { return nil }
-func (e *ibusEngine) PageDown() *godbus.Error                          { return nil }
-func (e *ibusEngine) CursorUp() *godbus.Error                          { return nil }
-func (e *ibusEngine) CursorDown() *godbus.Error                        { return nil }
+
+// PageUp / PageDown 由 ibus-daemon 在面板翻页按钮点击时调用：
+// 翻动引擎页码并把当前页同步到候选表。
+func (e *ibusEngine) PageUp() *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	comp, _ := e.sess.PrevPage()
+	e.refresh(comp)
+	return nil
+}
+
+func (e *ibusEngine) PageDown() *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	comp, _ := e.sess.NextPage()
+	e.refresh(comp)
+	return nil
+}
+func (e *ibusEngine) CursorUp() *godbus.Error   { return nil }
+func (e *ibusEngine) CursorDown() *godbus.Error { return nil }
 func (e *ibusEngine) PropertyActivate(name string, state uint32) *godbus.Error {
 	return nil
 }

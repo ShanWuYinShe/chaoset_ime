@@ -22,6 +22,13 @@ var punctMap = map[rune]string{
 	'^':  "……",
 }
 
+// punctCycles 是同键连按的循环序列（微软拼音惯例：全角与半角交替，
+// 循环停留于末项——句号连按得 。.. ..）。不在表内的标点固定输出。
+var punctCycles = map[rune][]string{
+	'.': {"。", "."},
+	',': {"，", ","},
+}
+
 // IsPunctKey 报告该字符是否为引擎接管的标点键。
 // 注意 ' 的双重身份：组词中是音节分隔符（应送 Input），空组词时才是标点键。
 func IsPunctKey(r rune) bool {
@@ -50,6 +57,12 @@ func (s *Session) Punct(key string) (string, error) {
 	if s.input != "" && r == '\'' {
 		return "", fmt.Errorf("组词中的 ' 是音节分隔符，不作为标点提交")
 	}
+	// 同键连按循环：上一次标点输出与本键相同（其间未被其他输入/上屏
+	// 打断——Input/Backspace/Reset/Select 会重置循环位置）则推进序列
+	idx := 0
+	if s.lastPunct == r {
+		idx = s.lastPunctIdx + 1
+	}
 	out := ""
 	if s.input != "" {
 		comp := s.Compose()
@@ -63,11 +76,14 @@ func (s *Session) Punct(key string) (string, error) {
 			s.input = "" // 残缺输入无候选：丢弃，不清学习上下文
 		}
 	}
-	return out + s.mapPunct(r), nil
+	s.lastPunct = r
+	s.lastPunctIdx = idx
+	return out + s.mapPunct(r, idx), nil
 }
 
-// mapPunct 返回标点键对应的中文标点；引号按开闭交替翻转状态。
-func (s *Session) mapPunct(r rune) string {
+// mapPunct 返回标点键本次应输出的标点：引号按开闭交替翻转状态；
+// 配置了循环序列的键（句号/逗号）按同键连按次数轮转；其余固定映射。
+func (s *Session) mapPunct(r rune, idx int) string {
 	switch r {
 	case '"':
 		s.dquoteOpen = !s.dquoteOpen
@@ -81,6 +97,9 @@ func (s *Session) mapPunct(r rune) string {
 			return "‘"
 		}
 		return "’"
+	}
+	if cycle, ok := punctCycles[r]; ok {
+		return cycle[idx%len(cycle)]
 	}
 	return punctMap[r]
 }

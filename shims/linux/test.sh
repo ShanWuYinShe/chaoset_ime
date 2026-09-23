@@ -84,4 +84,15 @@ if [ "$R" = "1" ]; then
   echo "PASS: 切回中文后恢复组词（handled=1）"
 else
   echo "FAIL: 切回中文后按键未恢复"; exit 1
-fi'
+fi
+
+# ---- 键盘翻页：Page Down 组词中消费（yi 共 12 候选 → 2 页）----
+for kv in 121 105; do press $kv 0; done   # y i
+R=$(dbus-send --session --print-reply --dest=$UN /org/freedesktop/IBus/Engine/chaoset \
+    org.freedesktop.IBus.Engine.ProcessKeyEvent uint32:65366 uint32:0 uint32:0 2>&1 | grep -c "boolean true")
+if [ "$R" = "1" ]; then
+  echo "PASS: Page Down 组词中消费（翻页）"
+else
+  echo "FAIL: Page Down 未被处理"; exit 1
+fi
+press 65307 0                              # Esc 清空，结束'

@@ -75,6 +75,9 @@ type Session struct {
 	dquoteOpen bool // 中文双引号 “” 的开闭交替状态
 	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
 	page       int  // 当前候选页（0 起；输入变化时重置为 0）
+
+	lastPunct    rune // 上一次标点键（同键连按循环判定；0 = 无）
+	lastPunctIdx int  // 上一次循环位置
 }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
@@ -93,6 +96,7 @@ func (s *Session) Input(text string) (Composition, error) {
 	s.input += b.String()
 	s.truncate()
 	s.page = 0 // 组词内容变化，回到第一页
+	s.resetPunctCycle()
 	return s.Compose(), nil
 }
 
@@ -110,16 +114,25 @@ func (s *Session) Backspace() (Composition, error) {
 		s.input = string(runes[:len(runes)-1])
 	}
 	s.page = 0 // 组词内容变化，回到第一页
+	s.resetPunctCycle()
 	return s.Compose(), nil
 }
 
 // Reset 清空当前组词与学习上下文（对应 Esc / 失焦：
 // 输入流被切断后，相邻共现关系不再成立）。
+// resetPunctCycle 清除同键连按循环状态（任何非标点路径的输入/上屏
+// 都会打断循环，下一次标点回到序列首项）。
+func (s *Session) resetPunctCycle() {
+	s.lastPunct = 0
+	s.lastPunctIdx = 0
+}
+
 func (s *Session) Reset() (Composition, error) {
 	s.input = ""
 	s.prev = ""
 	s.history = nil
 	s.page = 0
+	s.resetPunctCycle()
 	return s.Compose(), nil
 }
 
@@ -167,6 +180,7 @@ func (s *Session) Select(index int) (string, error) {
 	}
 	s.prev = text
 	s.input = ""
+	s.resetPunctCycle()
 	return text, nil
 }
 
