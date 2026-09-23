@@ -33,6 +33,7 @@ cmd/
   chaosetd/          守护进程二进制（-dict 可多次叠加；-font/-fontsize 候选窗渲染）
   chaoset-cli/       阶段 0 终端测试台（本地内嵌引擎或连接 daemon）
   chaoset-import/    热词导入工具（合并输出 TSV）
+  chaoset-userdict/  用户词典管理工具（统计/清空/导出，IPC 或本地文件）
 data/
   dict_seed.tsv      种子词库（演示规模，词 \t 拼音 \t 词频）
 shims/
@@ -138,6 +139,26 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 
 重复词条默认取较大词频，`-replace` 以导入词频覆盖。
 封闭格式（搜狗 .scel 等）先用开源「深蓝词库转换」转成 Rime/TSV 再导入。
+
+## 用户词典管理
+
+```sh
+# 经运行中的 daemon 操作（推荐：清空同时生效于内存与磁盘）
+bin/chaoset-userdict -socket chaoset.sock stats
+bin/chaoset-userdict -socket chaoset.sock clear
+bin/chaoset-userdict -socket chaoset.sock export -o userdict-backup.tsv
+
+# daemon 未运行时直接操作文件（daemon 运行时清空会被其内存态覆盖）
+bin/chaoset-userdict -userdict chaoset-userdict.json stats
+
+# 只导出学到的词组（三列 TSV），回流词库：
+bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
+bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
+```
+
+全量导出为多段 TSV（词 / 词组 / 上下文，含次数与最近使用时间，
+按次数降序、UTC 时间，输出稳定可 diff）；空段省略。`clear` 不可撤销，
+建议先 `export` 备份。
 
 ## 路线图与验收结论
 

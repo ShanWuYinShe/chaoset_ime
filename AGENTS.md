@@ -14,7 +14,7 @@
 ## 本地构建与验证
 
 ```bash
-make build       # 编译 bin/ 下的 chaosetd, chaoset-cli, chaoset-import
+make build       # 编译 bin/ 下的 chaosetd, chaoset-cli, chaoset-import, chaoset-userdict
 make test        # 运行引擎与协议测试 (go test ./...)
 make vet         # 静态分析 (go vet ./...)
 make fmt         # 代码格式化 (gofmt -l -w .)

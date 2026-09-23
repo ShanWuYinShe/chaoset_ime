@@ -140,3 +140,28 @@ func (c *Client) Punct(key string) (string, error) {
 	}
 	return out.Committed, nil
 }
+
+// UserStats 查询用户词典三类学习记录的条目数。
+func (c *Client) UserStats() (engine.UserStats, error) {
+	var st engine.UserStats
+	err := c.call("userStats", nil, &st)
+	return st, err
+}
+
+// UserClear 清空 daemon 内存与磁盘上的全部学习记录（调频/词组/上下文）。
+func (c *Client) UserClear() error {
+	return c.call("userClear", nil, nil)
+}
+
+// UserExport 导出学习记录 TSV；phrasesOnly 只导出用户词组
+// （词\t拼音\t次数 三列，可直接作为 chaoset-import 输入）。
+func (c *Client) UserExport(phrasesOnly bool) (string, error) {
+	var out struct {
+		TSV string `json:"tsv"`
+	}
+	params := map[string]bool{"phrases_only": phrasesOnly}
+	if err := c.call("userExport", params, &out); err != nil {
+		return "", err
+	}
+	return out.TSV, nil
+}

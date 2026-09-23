@@ -138,6 +138,69 @@ func TestServerPunct(t *testing.T) {
 	}
 }
 
+// userStats/userClear/userExport 协议往返：统计、清空、导出全链路。
+func TestServerUserDictMgmt(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "ud.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	user, err := engine.NewUserDict(filepath.Join(dir, "user.json"))
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	// 预置学习数据：经同一对象写入（daemon 共享该指针）
+	if err := user.BumpWord("你好", []string{"ni", "hao"}); err != nil {
+		t.Fatalf("BumpWord 失败: %v", err)
+	}
+	if err := user.BumpBigram("你好", "你好"); err != nil {
+		t.Fatalf("BumpBigram 失败: %v", err)
+	}
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("连接 daemon 失败: %v", err)
+	}
+	defer client.Close()
+
+	st, err := client.UserStats()
+	if err != nil {
+		t.Fatalf("UserStats 失败: %v", err)
+	}
+	if st.Words != 1 || st.Bigrams != 1 || st.Phrases != 0 {
+		t.Fatalf("UserStats = %+v, 期望 words=1 bigrams=1 phrases=0", st)
+	}
+
+	tsv, err := client.UserExport(false)
+	if err != nil {
+		t.Fatalf("UserExport 失败: %v", err)
+	}
+	// 空段（词组）按设计省略
+	if !strings.Contains(tsv, "你好\tni hao\t1\t") || strings.Contains(tsv, "# 词组") {
+		t.Fatalf("导出内容不符：\n%s", tsv)
+	}
+
+	if err := client.UserClear(); err != nil {
+		t.Fatalf("UserClear 失败: %v", err)
+	}
+	if st, err = client.UserStats(); err != nil || st.Words != 0 {
+		t.Fatalf("清空后 UserStats = %+v err=%v", st, err)
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("关闭 server 失败: %v", err)
+	}
+}
+
 func waitForDial(sock string) (*Client, error) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {

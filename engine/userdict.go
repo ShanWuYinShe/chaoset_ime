@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -261,4 +264,150 @@ func (u *UserDict) Save() error {
 		return fmt.Errorf("替换用户词典失败: %w", err)
 	}
 	return nil
+}
+
+// UserStats 是用户词典三类学习记录的条目数。
+type UserStats struct {
+	Words   int `json:"words"`   // 静态词调频记录
+	Phrases int `json:"phrases"` // 用户合成词组
+	Bigrams int `json:"bigrams"` // 前后词共现
+}
+
+// Stats 返回三类学习记录的条目数。
+func (u *UserDict) Stats() UserStats {
+	return UserStats{
+		Words:   len(u.file.Words),
+		Phrases: len(u.file.Phrases),
+		Bigrams: len(u.file.Bigrams),
+	}
+}
+
+// Clear 清空全部学习记录（调频/词组/上下文）并立即落盘。
+// 运行中的 daemon 应经 IPC 调用本方法（userClear），直接改文件会被
+// daemon 内存态在下一次 bump 时覆盖。
+func (u *UserDict) Clear() error {
+	u.file = userFile{
+		Words:   make(map[string]*userRecord),
+		Phrases: make(map[string]*phraseRecord),
+		Bigrams: make(map[string]*userRecord),
+	}
+	return u.Save()
+}
+
+// ExportTSV 把学习记录导出为多段 TSV（# 开头为注释段头）：
+// 词 / 用户词组 / 上下文共现，条目按次数降序、同次数按键名排序，
+// 输出稳定可 diff。phrasesOnly 为 true 时只导出用户词组，且仅
+// 「词\t拼音\t次数」三列——可直接作为 chaoset-import 的输入词库。
+func (u *UserDict) ExportTSV(w io.Writer, phrasesOnly bool) error {
+	bw := bufio.NewWriter(w)
+
+	writeWords := func() error {
+		if len(u.file.Words) == 0 {
+			return nil
+		}
+		if _, err := fmt.Fprint(bw, "# 词\t拼音\t次数\t最近使用\n"); err != nil {
+			return err
+		}
+		type row struct {
+			word string
+			rec  *userRecord
+		}
+		rows := make([]row, 0, len(u.file.Words))
+		for key, rec := range u.file.Words {
+			word, sylls, _ := strings.Cut(key, "\x00")
+			rows = append(rows, row{word + "\t" + sylls, rec})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].rec.Count != rows[j].rec.Count {
+				return rows[i].rec.Count > rows[j].rec.Count
+			}
+			return rows[i].word < rows[j].word
+		})
+		for _, r := range rows {
+			when := time.Unix(r.rec.LastUsed, 0).UTC().Format(time.RFC3339)
+			if _, err := fmt.Fprintf(bw, "%s\t%d\t%s\n", r.word, r.rec.Count, when); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	writePhrases := func(header bool) error {
+		if len(u.file.Phrases) == 0 {
+			return nil
+		}
+		if header {
+			if _, err := fmt.Fprint(bw, "# 词组\t拼音\t次数\t最近使用\n"); err != nil {
+				return err
+			}
+		}
+		rows := make([]*phraseRecord, 0, len(u.file.Phrases))
+		for _, rec := range u.file.Phrases {
+			rows = append(rows, rec)
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].Count != rows[j].Count {
+				return rows[i].Count > rows[j].Count
+			}
+			return rows[i].Word < rows[j].Word
+		})
+		for _, r := range rows {
+			if header {
+				when := time.Unix(r.LastUsed, 0).UTC().Format(time.RFC3339)
+				if _, err := fmt.Fprintf(bw, "%s\t%s\t%d\t%s\n", r.Word, r.Sylls, r.Count, when); err != nil {
+					return err
+				}
+			} else if _, err := fmt.Fprintf(bw, "%s\t%s\t%d\n", r.Word, r.Sylls, r.Count); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	writeBigrams := func() error {
+		if len(u.file.Bigrams) == 0 {
+			return nil
+		}
+		if _, err := fmt.Fprint(bw, "# 上下文\t前词\t后词\t次数\n"); err != nil {
+			return err
+		}
+		type row struct {
+			pair string
+			rec  *userRecord
+		}
+		rows := make([]row, 0, len(u.file.Bigrams))
+		for key, rec := range u.file.Bigrams {
+			prev, next, _ := strings.Cut(key, "\x00")
+			rows = append(rows, row{prev + "\t" + next, rec})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].rec.Count != rows[j].rec.Count {
+				return rows[i].rec.Count > rows[j].rec.Count
+			}
+			return rows[i].pair < rows[j].pair
+		})
+		for _, r := range rows {
+			if _, err := fmt.Fprintf(bw, "%s\t%d\n", r.pair, r.rec.Count); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if phrasesOnly {
+		if err := writePhrases(false); err != nil {
+			return err
+		}
+		return bw.Flush()
+	}
+	if err := writeWords(); err != nil {
+		return err
+	}
+	if err := writePhrases(true); err != nil {
+		return err
+	}
+	if err := writeBigrams(); err != nil {
+		return err
+	}
+	return bw.Flush()
 }

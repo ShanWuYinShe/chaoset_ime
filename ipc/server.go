@@ -142,6 +142,36 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "userStats":
+		if s.user == nil {
+			return nil, fmt.Errorf("未启用用户词典")
+		}
+		return s.user.Stats(), nil
+	case "userClear":
+		if s.user == nil {
+			return nil, fmt.Errorf("未启用用户词典")
+		}
+		if err := s.user.Clear(); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"cleared": true}, nil
+	case "userExport":
+		if s.user == nil {
+			return nil, fmt.Errorf("未启用用户词典")
+		}
+		var p struct {
+			PhrasesOnly bool `json:"phrases_only"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				return nil, fmt.Errorf("解析 userExport 参数失败: %w", err)
+			}
+		}
+		var buf bytes.Buffer
+		if err := s.user.ExportTSV(&buf, p.PhrasesOnly); err != nil {
+			return nil, err
+		}
+		return map[string]string{"tsv": buf.String()}, nil
 	case "candidateImage":
 		if s.skin == nil {
 			return nil, fmt.Errorf("未启用候选窗渲染（daemon 未配置字体）")
