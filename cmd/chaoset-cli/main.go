@@ -31,7 +31,7 @@ func main() {
 	}
 	defer closeFn()
 
-	fmt.Println("chaoset 输入法测试台 —— 输入拼音回车看候选；单独数字 1-9 上屏对应候选；:b 退格；:r 重置；:q 退出")
+	fmt.Println("chaoset 输入法测试台 —— 输入拼音回车看候选；单独数字 1-9 上屏对应候选；标点键 , . ; : ? ! 等输出中文标点；:b 退格；:r 重置；:q 退出")
 	sc := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -60,6 +60,14 @@ func main() {
 			printComposition(comp)
 		case len(line) == 1 && line[0] >= '1' && line[0] <= '9':
 			text, err := ctrl.Select(int(line[0] - '1'))
+			if err != nil {
+				fmt.Println("错误:", err)
+				continue
+			}
+			fmt.Printf("上屏: %s\n", text)
+		case len(line) == 1 && engine.IsPunctKey(rune(line[0])):
+			// 标点键：组词中先上屏首选候选再出中文标点，空组词直接出标点
+			text, err := ctrl.Punct(line)
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue

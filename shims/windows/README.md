@@ -55,6 +55,9 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json
   系统候选窗 UI 是下一个里程碑。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
+- 中文标点按 US 布局 OEM 虚键直映（`,` `.` `;` `[` `]` `\` `'`，已接
+  core 行为测试）；shift 组合标点（`?` `!` `:` `"` `《》》` 等）需字符级
+  识别（ToAscii），待真机联调时接入。
 - mingw 头文件不含 `ITfCandidateListUIElement`（`ctffunc.h` 缺失），
   候选窗实施时需自带官方 SDK 接口声明（值从 Windows SDK 头文件原样提取）。
 - `GUID_TFCAT_CATEGORY_OF_TIP` 的值不在 mingw uuid 库中，注册分类暂只

@@ -78,6 +78,8 @@ public:
     Comp backspace();
     Comp reset();
     bool select(int index, std::string* committed);
+    // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
+    bool punct(const std::string& key, std::string* committed);
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);

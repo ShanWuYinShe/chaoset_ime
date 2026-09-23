@@ -173,6 +173,13 @@ final class EngineClient {
         return result["committed"] as? String
     }
 
+    // punct 提交标点键：组词中先上屏首选候选，随后输出映射后的中文标点。
+    // 返回 nil 表示 daemon 不可达或未知标点（调用方回退原键放行）。
+    func punct(_ key: String) -> String? {
+        guard let result = call(method: "punct", params: ["key": key]) else { return nil }
+        return result["committed"] as? String
+    }
+
     // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；
     // 返回 nil 表示 daemon 不可达或未启用渲染（调用方回退 IMKCandidates）。
     func candidateImage() -> CandidateImage? {

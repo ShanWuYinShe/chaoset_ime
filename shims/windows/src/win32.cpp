@@ -38,6 +38,14 @@ constexpr DWORD kVkFirstLetter = 0x41;  // 'A'
 constexpr DWORD kVkLastLetter = 0x5A;   // 'Z'
 constexpr DWORD kVkFirstDigit = 0x31;   // '1'
 constexpr DWORD kVkLastDigit = 0x39;    // '9'
+// OEM 标点虚键（US 键盘布局假设；真机联调时按实际布局核验）
+constexpr DWORD kVkOemSemicolon = 0xBA;      // ';'
+constexpr DWORD kVkOemComma = 0xBC;          // ','
+constexpr DWORD kVkOemPeriod = 0xBE;         // '.'
+constexpr DWORD kVkOemOpenBrackets = 0xDB;   // '['
+constexpr DWORD kVkOemBackslash = 0xDC;      // '\\'
+constexpr DWORD kVkOemCloseBrackets = 0xDD;  // ']'
+constexpr DWORD kVkOemQuotes = 0xDE;         // '\''
 
  volatile LONG g_liveObjects = 0;
 
@@ -301,10 +309,27 @@ private:
     bool isComposing() const { return !comp_.input.empty(); }
     bool hasCandidates() const { return !comp_.candidates.empty(); }
 
-    // 是否会吃掉该键：组词中吃字母/数字/空格/回车/退格/Esc；
-    // 未组词时只吃字母（启动新组词）。daemon 不可达时一律放行。
+    // OEM 虚键 → 标点字符（与 engine.IsPunctKey 的直映子集对应；
+    // shift+键产生的 ？!: 等需字符级识别，待真机联调时接 ToAscii）
+    static const char* oemPunctChar(WPARAM vk) {
+        switch (vk) {
+            case kVkOemComma: return ",";
+            case kVkOemPeriod: return ".";
+            case kVkOemSemicolon: return ";";
+            case kVkOemOpenBrackets: return "[";
+            case kVkOemBackslash: return "\\";
+            case kVkOemCloseBrackets: return "]";
+            case kVkOemQuotes: return "'";
+        }
+        return nullptr;
+    }
+
+    // 是否会吃掉该键：字母与标点键任意时刻都吃（标点由 daemon 映射，
+    // daemon 不可达时在 handleKey 里放行）；组词中再吃数字/空格/回车/
+    // 退格/Esc。
     bool wouldHandle(WPARAM vk) {
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
+        if (oemPunctChar(vk) != nullptr) return true;
         if (!isComposing()) return false;
         return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
                (vk >= kVkFirstDigit && vk <= kVkLastDigit);
@@ -321,6 +346,34 @@ private:
             }
             render(pic);
             return true;
+        }
+
+        // 标点键（US 布局 OEM 映射）：组词中先上屏首选再出中文标点，
+        // 空组词直接出中文标点；映射规则在 daemon 侧统一完成。
+        if (const char* key = oemPunctChar(vk)) {
+            if (vk == kVkOemQuotes && isComposing()) {
+                // 组词中的撇号是音节分隔符，走组词流程
+                comp_ = session_.input("'");
+                if (!comp_.ok) {
+                    endComposition();
+                    return false;
+                }
+                render(pic);
+                return true;
+            }
+            const bool composing = isComposing();
+            std::string committed;
+            if (session_.punct(key, &committed)) {
+                commit(pic, committed);
+                return true;
+            }
+            // daemon 不可达：清状态放行原键，不卡宿主应用
+            if (composing) {
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+            }
+            return false;
         }
 
         if (!isComposing()) return false;

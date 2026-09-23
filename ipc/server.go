@@ -126,6 +126,18 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "punct":
+		var p struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, fmt.Errorf("解析 punct 参数失败: %w", err)
+		}
+		text, err := sess.Punct(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"committed": text}, nil
 	case "candidateImage":
 		if s.skin == nil {
 			return nil, fmt.Errorf("未启用候选窗渲染（daemon 未配置字体）")

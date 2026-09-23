@@ -331,4 +331,14 @@ bool Session::select(int index, std::string* committed) {
     return true;
 }
 
+bool Session::punct(const std::string& key, std::string* committed) {
+    bool ok = false;
+    JsonValue result = call("punct", "{\"key\":\"" + jsonEscape(key) + "\"}", &ok);
+    if (!ok) return false;
+    std::string text = parseCommitted(result);
+    if (text.empty()) return false;
+    *committed = text;
+    return true;
+}
+
 }  // namespace chaoset

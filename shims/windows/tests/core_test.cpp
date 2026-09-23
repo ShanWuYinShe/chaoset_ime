@@ -171,6 +171,17 @@ int main(int argc, char** argv) {
     Comp c6 = session.input("ni");
     check(c6.ok && !c6.candidates.empty(), "业务错误后连接仍可用");
 
+    // 中文标点：组词中合并上屏、空组词直映、未知键判失败且连接可用
+    session.reset();  // 清掉上文遗留的未上屏组词，保证 nihao 从零开始
+    Comp p1 = session.input("nihao");
+    check(p1.ok, "标点用例前组词 nihao");
+    std::string punctOut;
+    check(session.punct(",", &punctOut) && punctOut == "你好，", "组词中标点 = 你好，");
+    check(session.punct(".", &punctOut) && punctOut == "。", "空组词标点直映 。");
+    check(!session.punct("@", &punctOut), "未知标点判失败");
+    Comp p2 = session.input("hao");
+    check(p2.ok && !p2.candidates.empty(), "标点错误后连接仍可用");
+
     // daemon 断开重连：杀掉的是外部进程，这里验证冷启动重连路径
     // （通过重新连接同一 daemon 即可）
     Comp c7 = session.input("hao");

@@ -85,6 +85,59 @@ func TestServerClientRoundTrip(t *testing.T) {
 	}
 }
 
+// punct 方法协议往返：组词中合并上屏、空组词直映、未知键报业务错误。
+func TestServerPunct(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "punct.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	user, err := engine.NewUserDict(filepath.Join(dir, "user.json"))
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("连接 daemon 失败: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Input("nihao"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	committed, err := client.Punct(",")
+	if err != nil {
+		t.Fatalf("Punct 失败: %v", err)
+	}
+	if committed != "你好，" {
+		t.Fatalf("组词中 Punct = %q, 期望 你好，", committed)
+	}
+
+	if committed, err = client.Punct("."); err != nil {
+		t.Fatalf("Punct 失败: %v", err)
+	}
+	if committed != "。" {
+		t.Fatalf("空组词 Punct = %q, 期望 。", committed)
+	}
+
+	if _, err := client.Punct("@"); err == nil {
+		t.Fatal("未知标点应返回业务错误")
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("关闭 server 失败: %v", err)
+	}
+}
+
 func waitForDial(sock string) (*Client, error) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {

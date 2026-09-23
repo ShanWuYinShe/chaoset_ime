@@ -159,6 +159,21 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 		e.commit(text)
 		return true, nil
+
+	case keyval == '\'' && isComposing(e.sess):
+		// 组词中的撇号是音节分隔符（0x27 不在 a-z 分支内，在此分流）
+		comp, _ := e.sess.Input("'")
+		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		return true, nil
+
+	case engine.IsPunctKey(rune(keyval)):
+		// 标点键：组词中先上屏首选再出中文标点，空组词直接出中文标点
+		text, err := e.sess.Punct(string(rune(keyval)))
+		if err != nil {
+			return false, nil // 未知标点：不消费，放行原键
+		}
+		e.commit(text)
+		return true, nil
 	}
 
 	return false, nil
@@ -167,6 +182,10 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 func hasCandidates(s *engine.Session) bool {
 	comp := s.Compose()
 	return len(comp.Candidates) > 0
+}
+
+func isComposing(s *engine.Session) bool {
+	return s.Compose().Input != ""
 }
 
 func (e *ibusEngine) updatePreedit(preedit string, visible bool) {

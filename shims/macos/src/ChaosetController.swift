@@ -66,6 +66,27 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
+        // 标点键：组词中先上屏首选再出中文标点，空组词直接出中文标点。
+        // 组词中的撇号仍是音节分隔符，交回组词流程。
+        if chars.count == 1, let scalar = chars.unicodeScalars.first,
+           Self.isPunctKey(scalar) {
+            if scalar == "'", current?.input.isEmpty == false {
+                current = engine.input(chars)
+                refresh(client)
+                return true
+            }
+            guard let committed = engine.punct(chars) else {
+                return passThrough(client) // daemon 不可达/未知标点：原键放行
+            }
+            current = nil
+            client?.insertText(
+                committed,
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            refresh(client)
+            return true
+        }
+
         // 字母与撇号：进组词流程
         if isCompositionChar(chars) {
             current = engine.input(chars)
@@ -91,6 +112,16 @@ final class ChaosetController: IMKInputController {
             if !isLower && scalar != "'" { return false }
         }
         return true
+    }
+
+    // 与 engine.IsPunctKey 一致的标点键集合（引号映射在引擎内开闭配对）
+    private static let punctScalars: Set<UInt32> = [
+        0x2C, 0x2E, 0x3B, 0x3A, 0x3F, 0x21, 0x28, 0x29, 0x5B, 0x5D,
+        0x3C, 0x3E, 0x5C, 0x7E, 0x5E, 0x22, 0x27,
+    ]
+
+    private static func isPunctKey(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.isASCII && punctScalars.contains(scalar.value)
     }
 
     private func commit(index: Int, client: (any IMKTextInput)?) {

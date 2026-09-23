@@ -28,6 +28,9 @@ type Controller interface {
 	Backspace() (Composition, error)
 	Reset() (Composition, error)
 	Select(index int) (string, error)
+	// Punct 提交一个标点键：组词中先上屏首选候选（无候选的残缺输入
+	// 丢弃），随后输出映射后的中文标点；空组词直接输出中文标点。
+	Punct(key string) (string, error)
 }
 
 const (
@@ -56,19 +59,21 @@ type learnEntry struct {
 // （词组进化）。不保证并发安全：IPC 服务端为每个连接建独立
 // Session，本地使用方自行串行化。
 type Session struct {
-	dict    *Dictionary
-	user    *UserDict
-	input   string // 仅小写字母与 '
-	prev    string
-	history []learnEntry
+	dict       *Dictionary
+	user       *UserDict
+	input      string // 仅小写字母与 '
+	prev       string
+	history    []learnEntry
+	dquoteOpen bool // 中文双引号 “” 的开闭交替状态
+	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
 }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
 	return &Session{dict: dict, user: user}
 }
 
-// Input 追加输入。非小写字母与 ' 的字符被过滤（阶段 0 无符号处理，
-// 标点经平台壳直接上屏，不进引擎）。
+// Input 追加输入。非小写字母与 ' 的字符被过滤；标点键走 Punct
+// （引擎侧统一映射为中文标点，壳只负责转发标点键）。
 func (s *Session) Input(text string) (Composition, error) {
 	var b strings.Builder
 	for _, r := range strings.ToLower(text) {
