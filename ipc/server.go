@@ -114,6 +114,10 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		return sess.Backspace()
 	case "reset":
 		return sess.Reset()
+	case "nextPage":
+		return sess.NextPage()
+	case "prevPage":
+		return sess.PrevPage()
 	case "select":
 		var p struct {
 			Index int `json:"index"`

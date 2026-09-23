@@ -46,6 +46,8 @@ constexpr DWORD kVkOemOpenBrackets = 0xDB;   // '['
 constexpr DWORD kVkOemBackslash = 0xDC;      // '\\'
 constexpr DWORD kVkOemCloseBrackets = 0xDD;  // ']'
 constexpr DWORD kVkOemQuotes = 0xDE;         // '\''
+constexpr DWORD kVkOemPlus = 0xBB;           // '='（US 布局；shift 为 '+'）
+constexpr DWORD kVkOemMinus = 0xBD;          // '-'
 
  volatile LONG g_liveObjects = 0;
 
@@ -331,6 +333,7 @@ private:
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
         if (oemPunctChar(vk) != nullptr) return true;
         if (!isComposing()) return false;
+        if (vk == kVkOemMinus || vk == kVkOemPlus) return hasCandidates();
         return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
                (vk >= kVkFirstDigit && vk <= kVkLastDigit);
     }
@@ -377,6 +380,17 @@ private:
         }
 
         if (!isComposing()) return false;
+
+        // - / =：候选翻页（有候选时；边界由 daemon 钳制，原地不动也消费）
+        if (vk == kVkOemMinus || vk == kVkOemPlus) {
+            comp_ = vk == kVkOemMinus ? session_.prevPage() : session_.nextPage();
+            if (!comp_.ok) {
+                endComposition();
+                return true;
+            }
+            render(pic);
+            return true;
+        }
 
         if (vk == kVkBackspace) {
             comp_ = session_.backspace();

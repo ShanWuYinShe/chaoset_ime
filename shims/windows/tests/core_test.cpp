@@ -182,6 +182,22 @@ int main(int argc, char** argv) {
     Comp p2 = session.input("hao");
     check(p2.ok && !p2.candidates.empty(), "标点错误后连接仍可用");
 
+    // 候选翻页：yi 共 12 个候选 → 2 页（9+3）；边界钳制、页内序号选词
+    session.reset();
+    Comp g1 = session.input("yi");
+    check(g1.ok && g1.pageCount == 2 && g1.page == 0 && g1.candidates.size() == 9,
+          "yi 第一页：page 0/2，9 个候选");
+    Comp g2 = session.nextPage();
+    check(g2.ok && g2.page == 1 && g2.candidates.size() == 3, "下一页：page 1，3 个候选");
+    Comp g3 = session.nextPage();
+    check(g3.ok && g3.page == 1, "末页下翻钳制不动");
+    Comp g4 = session.prevPage();
+    check(g4.ok && g4.page == 0 && g4.candidates.size() == 9, "上翻回首页");
+    session.nextPage();
+    std::string pageSel;
+    check(session.select(0, &pageSel) && pageSel == g2.candidates[0].text,
+          "第二页选 1 得页内首选");
+
     // daemon 断开重连：杀掉的是外部进程，这里验证冷启动重连路径
     // （通过重新连接同一 daemon 即可）
     Comp c7 = session.input("hao");

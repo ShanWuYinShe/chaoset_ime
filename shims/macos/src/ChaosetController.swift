@@ -66,6 +66,13 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
+        // - / =：候选翻页（组词中且有候选时消费；空组词放行原键）
+        if (chars == "-" || chars == "=") && hasCandidates {
+            current = chars == "-" ? engine.prevPage() : engine.nextPage()
+            refresh(client)
+            return true
+        }
+
         // 标点键：组词中先上屏首选再出中文标点，空组词直接出中文标点。
         // 组词中的撇号仍是音节分隔符，交回组词流程。
         if chars.count == 1, let scalar = chars.unicodeScalars.first,

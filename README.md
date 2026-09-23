@@ -73,7 +73,8 @@ go run ./cmd/chaoset-cli --socket chaoset.sock
 ```
 
 测试台操作：输入拼音回车看候选（如 `nihao`、`xian`、`xi'an`、`nih`）；
-单独一个数字 `1`–`9` 选择对应候选并「上屏」；标点键（如 `,` `.` `\` `"`）
+单独一个数字 `1`–`9` 选择对应候选并「上屏」；`=` 下一页 / `-` 上一页
+（每页 9 个，超出部分可翻页查看）；标点键（如 `,` `.` `\` `"`）
 输出中文标点，组词中先上屏首选；`:b` 退格；`:r` 重置；`:q` 退出。
 带 `*` 的候选表示被用户数据（调频/词组/上下文）加权过。
 
@@ -100,7 +101,8 @@ TSV，每行三列（`#` 开头为注释）：
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法：`ping` / `input` / `backspace` / `reset` / `select`（`{"index":0}`，
-返回 `{"committed":"你好"}`）/ `punct`（`{"key":","}` 中文标点：组词中
+返回 `{"committed":"你好"}`）/ `nextPage` / `prevPage`（候选翻页，返回
+current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：组词中
 返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
 `candidateImage`（v2 统一候选窗：返回
 `{"width","height","png":<base64>}`，daemon 以 `-font` 启用；无候选时
@@ -155,6 +157,9 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
         Windows 壳贴图待真机环境
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入；重复按键循环（。。）待做
+- [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
+      每页 9 个）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入；
+      渲染器页码指示与 ibus UpdateLookupTable 待做
 
 ## 验收范围确认（2026-09-23）
 

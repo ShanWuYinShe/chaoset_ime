@@ -236,6 +236,12 @@ Comp parseComposition(const JsonValue& result) {
     c.ok = true;
     result.isString("input", &c.input);
     result.isString("preedit", &c.preedit);
+    if (const JsonValue* p = result.find("page"); p != nullptr && p->type == JsonValue::Type::Num) {
+        c.page = static_cast<int>(p->number);
+    }
+    if (const JsonValue* pc = result.find("page_count"); pc != nullptr && pc->type == JsonValue::Type::Num) {
+        c.pageCount = static_cast<int>(pc->number);
+    }
     const JsonValue* cands = result.find("candidates");
     if (cands != nullptr && cands->type == JsonValue::Type::Arr) {
         for (const JsonValue& item : cands->arr) {
@@ -317,6 +323,20 @@ Comp Session::backspace() {
 Comp Session::reset() {
     bool ok = false;
     JsonValue result = call("reset", "", &ok);
+    if (!ok) return Comp();
+    return parseComposition(result);
+}
+
+Comp Session::nextPage() {
+    bool ok = false;
+    JsonValue result = call("nextPage", "", &ok);
+    if (!ok) return Comp();
+    return parseComposition(result);
+}
+
+Comp Session::prevPage() {
+    bool ok = false;
+    JsonValue result = call("prevPage", "", &ok);
     if (!ok) return Comp();
     return parseComposition(result);
 }

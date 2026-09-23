@@ -160,6 +160,20 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.commit(text)
 		return true, nil
 
+	case keyval == '-' || keyval == '=':
+		// 候选翻页（组词中消费；空组词放行原键；边界由 daemon 钳制）
+		if !isComposing(e.sess) {
+			return false, nil
+		}
+		var comp engine.Composition
+		if keyval == '-' {
+			comp, _ = e.sess.PrevPage()
+		} else {
+			comp, _ = e.sess.NextPage()
+		}
+		e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+		return true, nil
+
 	case keyval == '\'' && isComposing(e.sess):
 		// 组词中的撇号是音节分隔符（0x27 不在 a-z 分支内，在此分流）
 		comp, _ := e.sess.Input("'")

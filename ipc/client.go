@@ -106,6 +106,19 @@ func (c *Client) Reset() (engine.Composition, error) {
 	return comp, err
 }
 
+// NextPage / PrevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
+func (c *Client) NextPage() (engine.Composition, error) {
+	var comp engine.Composition
+	err := c.call("nextPage", nil, &comp)
+	return comp, err
+}
+
+func (c *Client) PrevPage() (engine.Composition, error) {
+	var comp engine.Composition
+	err := c.call("prevPage", nil, &comp)
+	return comp, err
+}
+
 func (c *Client) Select(index int) (string, error) {
 	var out struct {
 		Committed string `json:"committed"`

@@ -22,6 +22,8 @@ struct Comp {
     std::string input;
     std::string preedit;
     std::vector<Candidate> candidates;
+    int page = 0;       // 当前候选页（0 起）
+    int pageCount = 0;  // 总页数（无候选为 0）
 };
 
 // 传输抽象：Windows 下是 TCP 回环（与 daemon -tcp 配对），
@@ -77,6 +79,9 @@ public:
     Comp input(const std::string& text);
     Comp backspace();
     Comp reset();
+    // 候选翻页：daemon 钳制边界；通信失败返回 ok=false。
+    Comp nextPage();
+    Comp prevPage();
     bool select(int index, std::string* committed);
     // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
     bool punct(const std::string& key, std::string* committed);

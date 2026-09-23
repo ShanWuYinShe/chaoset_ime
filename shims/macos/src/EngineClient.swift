@@ -180,6 +180,15 @@ final class EngineClient {
         return result["committed"] as? String
     }
 
+    // nextPage / prevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
+    func nextPage() -> Comp? {
+        parseComp(call(method: "nextPage", params: [:]))
+    }
+
+    func prevPage() -> Comp? {
+        parseComp(call(method: "prevPage", params: [:]))
+    }
+
     // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；
     // 返回 nil 表示 daemon 不可达或未启用渲染（调用方回退 IMKCandidates）。
     func candidateImage() -> CandidateImage? {

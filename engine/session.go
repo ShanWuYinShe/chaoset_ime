@@ -14,11 +14,14 @@ type Candidate struct {
 	FromUser  bool   `json:"from_user,omitempty"` // 是否被用户数据（调频/词组/上下文）加权
 }
 
-// Composition 是当前组词状态：原始输入、预编辑串与候选列表。
+// Composition 是当前组词状态：原始输入、预编辑串、当前页候选与分页信息。
+// Page 为 0 起页码，PageCount 为总页数（每页 pageSize 个候选；无候选时为 0）。
 type Composition struct {
 	Input      string      `json:"input"`
 	Preedit    string      `json:"preedit"`
 	Candidates []Candidate `json:"candidates"`
+	Page       int         `json:"page"`
+	PageCount  int         `json:"page_count"`
 }
 
 // Controller 是会话的统一操作接口。本地 Session 与 IPC Client 都实现它，
@@ -31,6 +34,10 @@ type Controller interface {
 	// Punct 提交一个标点键：组词中先上屏首选候选（无候选的残缺输入
 	// 丢弃），随后输出映射后的中文标点；空组词直接输出中文标点。
 	Punct(key string) (string, error)
+	// NextPage / PrevPage 翻动候选页：组词中移动页码并返回当前页组成
+	// 状态；空组词为无操作。页码在边界钳制，不回绕。
+	NextPage() (Composition, error)
+	PrevPage() (Composition, error)
 }
 
 const (
@@ -38,7 +45,8 @@ const (
 	maxSyllableLength = 6
 	maxPathsPerChunk  = 16
 	maxSegmentations  = 64
-	maxCandidates     = 9
+	// pageSize：每页候选数。翻页状态在 Session.page，边界在 Compose 钳制。
+	pageSize = 9
 
 	// learnThreshold：相邻两词共现多少次后固化为用户词组（词组进化）。
 	learnThreshold = 2
@@ -66,6 +74,7 @@ type Session struct {
 	history    []learnEntry
 	dquoteOpen bool // 中文双引号 “” 的开闭交替状态
 	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
+	page       int  // 当前候选页（0 起；输入变化时重置为 0）
 }
 
 func NewSession(dict *Dictionary, user *UserDict) *Session {
@@ -83,6 +92,7 @@ func (s *Session) Input(text string) (Composition, error) {
 	}
 	s.input += b.String()
 	s.truncate()
+	s.page = 0 // 组词内容变化，回到第一页
 	return s.Compose(), nil
 }
 
@@ -99,6 +109,7 @@ func (s *Session) Backspace() (Composition, error) {
 		runes := []rune(s.input)
 		s.input = string(runes[:len(runes)-1])
 	}
+	s.page = 0 // 组词内容变化，回到第一页
 	return s.Compose(), nil
 }
 
@@ -108,6 +119,21 @@ func (s *Session) Reset() (Composition, error) {
 	s.input = ""
 	s.prev = ""
 	s.history = nil
+	s.page = 0
+	return s.Compose(), nil
+}
+
+// NextPage 翻到下一页候选，返回当前页组成状态。空组词为无操作；
+// 已在末页时页码被 Compose 钳制（返回内容不变，Page 保持）。
+func (s *Session) NextPage() (Composition, error) {
+	s.page++
+	return s.Compose(), nil
+}
+
+// PrevPage 翻到上一页候选，返回当前页组成状态。空组词为无操作；
+// 已在首页时页码被 Compose 钳制（返回内容不变，Page 保持）。
+func (s *Session) PrevPage() (Composition, error) {
+	s.page--
 	return s.Compose(), nil
 }
 
@@ -312,8 +338,19 @@ func (s *Session) Compose() Composition {
 		}
 		return a.Text < b.Text
 	})
-	if len(merged) > maxCandidates {
-		merged = merged[:maxCandidates]
+	// 分页：按 pageSize 切片返回当前页；页码越界（组词变短等）在此钳制
+	pageCount := (len(merged) + pageSize - 1) / pageSize
+	if pageCount == 0 {
+		s.page = 0
+	} else if s.page >= pageCount {
+		s.page = pageCount - 1
+	} else if s.page < 0 {
+		s.page = 0
+	}
+	start := s.page * pageSize
+	end := start + pageSize
+	if end > len(merged) {
+		end = len(merged)
 	}
 
 	preedit := s.input
@@ -330,6 +367,8 @@ func (s *Session) Compose() Composition {
 		}
 	}
 	comp.Preedit = preedit
-	comp.Candidates = merged
+	comp.Page = s.page
+	comp.PageCount = pageCount
+	comp.Candidates = merged[start:end]
 	return comp
 }

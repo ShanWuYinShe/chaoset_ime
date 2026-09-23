@@ -31,7 +31,7 @@ func main() {
 	}
 	defer closeFn()
 
-	fmt.Println("chaoset 输入法测试台 —— 输入拼音回车看候选；单独数字 1-9 上屏对应候选；标点键 , . ; : ? ! 等输出中文标点；:b 退格；:r 重置；:q 退出")
+	fmt.Println("chaoset 输入法测试台 —— 输入拼音回车看候选；单独数字 1-9 上屏对应候选；= 下一页 / - 上一页；标点键 , . ; : ? ! 等输出中文标点；:b 退格；:r 重置；:q 退出")
 	sc := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -53,6 +53,20 @@ func main() {
 			printComposition(comp)
 		case line == ":r":
 			comp, err := ctrl.Reset()
+			if err != nil {
+				fmt.Println("错误:", err)
+				continue
+			}
+			printComposition(comp)
+		case line == "=":
+			comp, err := ctrl.NextPage()
+			if err != nil {
+				fmt.Println("错误:", err)
+				continue
+			}
+			printComposition(comp)
+		case line == "-":
+			comp, err := ctrl.PrevPage()
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue
@@ -133,7 +147,11 @@ func printComposition(comp engine.Composition) {
 		fmt.Println("(空)")
 		return
 	}
-	fmt.Printf("输入: %s   预编辑: %s\n", comp.Input, comp.Preedit)
+	pageInfo := ""
+	if comp.PageCount > 1 {
+		pageInfo = fmt.Sprintf("   [%d/%d 页]", comp.Page+1, comp.PageCount)
+	}
+	fmt.Printf("输入: %s   预编辑: %s%s\n", comp.Input, comp.Preedit, pageInfo)
 	if len(comp.Candidates) == 0 {
 		fmt.Println("  (无候选)")
 		return
