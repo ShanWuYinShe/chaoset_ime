@@ -24,6 +24,7 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   syllable.go        无声调标准音节表（ü 以 v 输入：nv=女、lve=略）
   dict.go            音节 Trie 词典 + TSV 词库解析 + 多词库合并加载
   session.go         组词会话状态机（输入/退格/重置/选候选/词组进化）
+  punct.go           中文标点映射（直映表 + 引号开闭配对）
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
@@ -37,7 +38,7 @@ data/
 shims/
   macos/             InputMethodKit 薄壳（Swift，已实现，见其 README）
   windows/           TSF COM 薄壳（已实现，核心层行为级 + DLL 编译级验证）
-  linux/             ibus engine 胶水（规划中）
+  linux/             ibus engine 胶水（已实现，见其 README）
 ```
 
 ## 越用越顺手：三层自学习
@@ -52,6 +53,14 @@ shims/
    之后整词输入 `jianpanshubiao` 直接出「键盘鼠标」。
    所有学习数据随 daemon 即时原子落盘，重启不丢。
 
+## 中文标点
+
+标点键由引擎统一映射（`engine.IsPunctKey` / `Session.Punct`），三端壳只转发按键：
+组词中打标点先上屏首选候选再出标点（`nihao` + `,` → `你好，`）；空组词直接映射
+（`,` → `，`、`\` → `、`、`<` → `《`）；双/单引号各自按开闭交替配对。
+组词中的 `'` 仍是音节分隔符，不作为标点。完整映射表见 `engine/punct.go`；
+重复按键循环（`。。`）暂未实现。
+
 ## 快速开始（阶段 0 测试台）
 
 ```sh
@@ -64,7 +73,8 @@ go run ./cmd/chaoset-cli --socket chaoset.sock
 ```
 
 测试台操作：输入拼音回车看候选（如 `nihao`、`xian`、`xi'an`、`nih`）；
-单独一个数字 `1`–`9` 选择对应候选并「上屏」；`:b` 退格；`:r` 重置；`:q` 退出。
+单独一个数字 `1`–`9` 选择对应候选并「上屏」；标点键（如 `,` `.` `\` `"`）
+输出中文标点，组词中先上屏首选；`:b` 退格；`:r` 重置；`:q` 退出。
 带 `*` 的候选表示被用户数据（调频/词组/上下文）加权过。
 
 试一下词组进化：`jianpan` → `1`、`shubiao` → `1`，分字打两轮「键盘鼠标」，
@@ -90,7 +100,9 @@ TSV，每行三列（`#` 开头为注释）：
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法：`ping` / `input` / `backspace` / `reset` / `select`（`{"index":0}`，
-返回 `{"committed":"你好"}`）/ `candidateImage`（v2 统一候选窗：返回
+返回 `{"committed":"你好"}`）/ `punct`（`{"key":","}` 中文标点：组词中
+返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
+`candidateImage`（v2 统一候选窗：返回
 `{"width","height","png":<base64>}`，daemon 以 `-font` 启用；无候选时
 `png` 为空；未配置字体时报错，壳回退 v1 系统候选 UI）。候选与预编辑
 结构见 `engine.Candidate` / `engine.Composition` 的 JSON 标签。
@@ -102,13 +114,14 @@ TSV，每行三列（`#` 开头为注释）：
 
 | 平台 | 壳 | 状态 |
 |---|---|---|
-| Linux | ibus engine（daemon 直接注册为 ibus 引擎进程） | 规划中 |
-| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon | 规划中 |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；v1 用系统候选窗 UI | 规划中 |
+| Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
+| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon | 已实现（编译 + IPC 运行时验证；打字闭环待真机启用） |
+| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；预编辑合成 + 数字盲选 | 已实现（核心行为级 + DLL 编译级；真机联调待环境） |
 
-Windows 薄壳已知健壮性清单（实施时逐条落实）：daemon 未就绪时按键直接放行；
-回调带超时防卡宿主；候选窗 v1 走系统 UI Element 规避 UAC 完整性级别问题；
-命名管道 ACL 兼容 UWP/AppContainer 宿主；多登录会话每会话一个 daemon。
+Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
+行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输走 TCP 回环
+（替代早期命名管道方案）；自绘候选窗与 UWP/AppContainer 场景待真机。
+逐项状态见 shims/windows/README。
 
 ## 热词导入
 
@@ -140,6 +153,8 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
       - 统一候选窗：已实现——daemon 侧渲染（renderer + candidateImage，
         样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
         Windows 壳贴图待真机环境
+- [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
+      CLI 与三端壳转发接入；重复按键循环（。。）待做
 
 ## 验收范围确认（2026-09-23）
 
