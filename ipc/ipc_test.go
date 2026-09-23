@@ -5,6 +5,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +195,65 @@ func TestServerUserDictMgmt(t *testing.T) {
 	}
 	if st, err = client.UserStats(); err != nil || st.Words != 0 {
 		t.Fatalf("清空后 UserStats = %+v err=%v", st, err)
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("关闭 server 失败: %v", err)
+	}
+}
+
+// 多客户端并发访问共享 UserDict：打字、统计、导出交错执行。
+// 配合 go test -race 验证 Server 共享 UserDict 的并发安全。
+func TestServerConcurrentAccess(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "conc.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	user, err := engine.NewUserDict(filepath.Join(dir, "user.json"))
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+
+	clients := make([]*Client, 0, 4)
+	for i := 0; i < 4; i++ {
+		c, err := waitForDial(sock)
+		if err != nil {
+			t.Fatalf("客户端 %d 连接失败: %v", i, err)
+		}
+		defer c.Close()
+		clients = append(clients, c)
+	}
+
+	var wg sync.WaitGroup
+	for i, c := range clients {
+		wg.Add(1)
+		go func(i int, c *Client) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				c.Input("nihao")
+				c.Select(0)
+				c.Input("shi")
+				c.Punct(",")
+				c.Input("zhong")
+				c.Select(0)
+				_, _ = c.UserStats()
+				_, _ = c.UserExport(j%2 == 0)
+			}
+		}(i, c)
+	}
+	wg.Wait()
+
+	if st, err := clients[0].UserStats(); err != nil || st.Words == 0 {
+		t.Fatalf("并发后 UserStats = %+v err=%v", st, err)
 	}
 
 	if err := srv.Close(); err != nil {

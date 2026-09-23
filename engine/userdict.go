@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,7 +63,10 @@ type userFile struct {
 
 // UserDict 是用户行为数据：静态词调频、合成词组、上下文共现。
 // path 为空串时仅驻留内存；所有 bump 即时原子落盘。
+// 多连接并发安全：daemon 的所有连接共享同一 UserDict，读（Score/
+// QueryPhrases/Stats/Export）与写（Bump*/Clear/Save）经 mu 互斥。
 type UserDict struct {
+	mu   sync.RWMutex
 	path string
 	now  func() time.Time
 	file userFile
@@ -128,6 +132,8 @@ func (u *UserDict) touch(rec *userRecord) {
 
 // BumpWord 记录一次静态词上屏。
 func (u *UserDict) BumpWord(word string, syllables []string) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	key := userKey(word, syllables)
 	rec := u.file.Words[key]
 	if rec == nil {
@@ -135,7 +141,7 @@ func (u *UserDict) BumpWord(word string, syllables []string) error {
 		u.file.Words[key] = rec
 	}
 	u.touch(rec)
-	return u.Save()
+	return u.saveLocked()
 }
 
 // BumpBigram 记录一对前后词共现。
@@ -143,6 +149,8 @@ func (u *UserDict) BumpBigram(prev, next string) error {
 	if prev == "" || next == "" {
 		return nil
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	key := prev + "\x00" + next
 	rec := u.file.Bigrams[key]
 	if rec == nil {
@@ -150,11 +158,13 @@ func (u *UserDict) BumpBigram(prev, next string) error {
 		u.file.Bigrams[key] = rec
 	}
 	u.touch(rec)
-	return u.Save()
+	return u.saveLocked()
 }
 
 // PairCount 返回前后词共现次数。
 func (u *UserDict) PairCount(prev, next string) int {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	if rec := u.file.Bigrams[prev+"\x00"+next]; rec != nil {
 		return rec.Count
 	}
@@ -163,6 +173,8 @@ func (u *UserDict) PairCount(prev, next string) int {
 
 // BumpPhrase 记录（或创建）一个用户合成词组的一次使用。
 func (u *UserDict) BumpPhrase(word string, syllables []string) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	key := userKey(word, syllables)
 	rec := u.file.Phrases[key]
 	if rec == nil {
@@ -171,11 +183,13 @@ func (u *UserDict) BumpPhrase(word string, syllables []string) error {
 	}
 	rec.Count++
 	rec.LastUsed = u.now().Unix()
-	return u.Save()
+	return u.saveLocked()
 }
 
 // PhraseCount 返回用户合成词组的使用次数（不存在为 0）。
 func (u *UserDict) PhraseCount(word string, syllables []string) int {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	if rec := u.file.Phrases[userKey(word, syllables)]; rec != nil {
 		return rec.Count
 	}
@@ -186,6 +200,8 @@ func (u *UserDict) PhraseCount(word string, syllables []string) int {
 // 上屏次数 × 权重 × 时间衰减 + 上下文加成（后者独立生效，
 // 顺着前文的词即使从未上屏过也能加分）。无任何记录返回 0。
 func (u *UserDict) Score(word string, syllables []string, prev string) int {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	score := 0
 	if rec := u.file.Words[userKey(word, syllables)]; rec != nil {
 		score = int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
@@ -209,6 +225,8 @@ func (u *UserDict) phraseScore(rec *phraseRecord) int {
 // QueryPhrases 返回匹配「音节序列（+末尾残缺音节前缀）」的用户合成词组。
 // 词组规模在数千以内时线性扫描足够；量级上来后再建音节索引。
 func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	joined := strings.Join(syllables, " ")
 	prefix := ""
 	if joined != "" {
@@ -244,6 +262,13 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。
 func (u *UserDict) Save() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.saveLocked()
+}
+
+// saveLocked 落盘（调用方须已持有写锁）。
+func (u *UserDict) saveLocked() error {
 	if u.path == "" {
 		return nil
 	}
@@ -275,6 +300,8 @@ type UserStats struct {
 
 // Stats 返回三类学习记录的条目数。
 func (u *UserDict) Stats() UserStats {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return UserStats{
 		Words:   len(u.file.Words),
 		Phrases: len(u.file.Phrases),
@@ -286,12 +313,14 @@ func (u *UserDict) Stats() UserStats {
 // 运行中的 daemon 应经 IPC 调用本方法（userClear），直接改文件会被
 // daemon 内存态在下一次 bump 时覆盖。
 func (u *UserDict) Clear() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.file = userFile{
 		Words:   make(map[string]*userRecord),
 		Phrases: make(map[string]*phraseRecord),
 		Bigrams: make(map[string]*userRecord),
 	}
-	return u.Save()
+	return u.saveLocked()
 }
 
 // ExportTSV 把学习记录导出为多段 TSV（# 开头为注释段头）：
@@ -299,6 +328,8 @@ func (u *UserDict) Clear() error {
 // 输出稳定可 diff。phrasesOnly 为 true 时只导出用户词组，且仅
 // 「词\t拼音\t次数」三列——可直接作为 chaoset-import 的输入词库。
 func (u *UserDict) ExportTSV(w io.Writer, phrasesOnly bool) error {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	bw := bufio.NewWriter(w)
 
 	writeWords := func() error {
