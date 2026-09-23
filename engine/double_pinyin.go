@@ -17,8 +17,9 @@ import (
 // 小鹤键位存在出入（如 ia/ua 键位），官方键位图暂无法以文本核验，
 // 故暂不提供小鹤方案。
 const (
-	DPSchemeZRM  = "zrm"  // 自然码双拼
-	DPSchemeMSPY = "mspy" // 微软双拼
+	DPSchemeZRM   = "zrm"   // 自然码双拼
+	DPSchemeMSPY  = "mspy"  // 微软双拼
+	DPSchemeFLYPY = "flypy" // 小鹤双拼（Rime double_pinyin_flypy 方案键位）
 )
 
 // dpOp 是单条后缀替换规则：命中 suffix 时把该后缀替换为 key。
@@ -182,6 +183,61 @@ var dpSchemes = map[string]dpSchemeDef{
 			{suffix: "ou", key: 'B', keepHead: true},
 			{suffix: "in", key: 'N'},
 			{suffix: "ing", key: ';'},
+		},
+	},
+	// 小鹤双拼：double_pinyin_flypy.schema.yaml 的 algebra。
+	// 特征：iu→Q、ei→W、uan→R、ue/v→T、un→Y、ing/uai→K、uo→O、
+	// ie→P、ong（含 iong）→S、ai→D、ang→H、ian→M、an→J、ou→Z、
+	// ia/ua→X、iao→N、ao→C、ui→V、in→B。
+	DPSchemeFLYPY: {
+		derives: []dpDerive{
+			// derive /^([jqxy])u$/$1v/
+			func(sp string) (string, bool) {
+				if len(sp) == 2 && isOneOf(sp[0], "jqxy") && sp[1] == 'u' {
+					return string(sp[0]) + "v", true
+				}
+				return "", false
+			},
+			// derive /^([aoe])([ioun])$/$1$1$2/（ai→aai、an→aan、ou→oou）
+			func(sp string) (string, bool) {
+				if len(sp) == 2 && isOneOf(sp[0], "aoe") && isOneOf(sp[1], "ioun") {
+					return sp[0:1] + sp[0:1] + sp[1:2], true
+				}
+				return "", false
+			},
+		},
+		xforms: []dpXform{dpXformZrmDouble},
+		ops: []dpOp{
+			{suffix: "iu", key: 'Q'},
+			{suffix: "ei", key: 'W', keepHead: true},
+			{suffix: "uan", key: 'R'},
+			{suffix: "ue", key: 'T'},
+			{suffix: "ve", key: 'T'},
+			{suffix: "un", key: 'Y'},
+			{prefix: "sh", key: 'U'},
+			{prefix: "ch", key: 'I'},
+			{prefix: "zh", key: 'V'},
+			{suffix: "uo", key: 'O'},
+			{suffix: "ie", key: 'P'},
+			{suffix: "iong", key: 'S'}, // iong 先于 ong（对应 i?ong$）
+			{suffix: "ong", key: 'S'},
+			{suffix: "ing", key: 'K'},
+			{suffix: "uai", key: 'K'},
+			{suffix: "ai", key: 'D', keepHead: true},
+			{suffix: "en", key: 'F', keepHead: true},
+			{suffix: "eng", key: 'G', keepHead: true},
+			{suffix: "iang", key: 'L'},
+			{suffix: "uang", key: 'L'},
+			{suffix: "ang", key: 'H', keepHead: true},
+			{suffix: "ian", key: 'M'},
+			{suffix: "an", key: 'J', keepHead: true},
+			{suffix: "ou", key: 'Z', keepHead: true},
+			{suffix: "ia", key: 'X'},
+			{suffix: "ua", key: 'X'},
+			{suffix: "iao", key: 'N'},
+			{suffix: "ao", key: 'C', keepHead: true},
+			{suffix: "ui", key: 'V'},
+			{suffix: "in", key: 'B'},
 		},
 	},
 }

@@ -135,10 +135,36 @@ func TestDoublePinyinSession(t *testing.T) {
 	}
 }
 
+// 已知键位抽查——小鹤（与 Rime double_pinyin_flypy 方案语义一致）：
+// hao=hc、shi=ui、zhang=vh、zhuang=vl、xian=xm、kuai=kk、jiong=js、
+// hua=hx、bei=bw、dui=dv、xun=xy、ying=yk、an=aj、ang=ah、ai=ad、
+// ei=ew、ou=oz、en=ef、eng=eg、guan=gr、jia=jx、o=oo、a=aa。
+func TestDoublePinyinKnownPairsFLYPY(t *testing.T) {
+	cases := []struct {
+		syl, a, b string
+	}{
+		{"ni", "n", "i"}, {"hao", "h", "c"}, {"shi", "u", "i"},
+		{"zhang", "v", "h"}, {"zhuang", "v", "l"}, {"xian", "x", "m"},
+		{"kuai", "k", "k"}, {"jiong", "j", "s"}, {"hua", "h", "x"},
+		{"bei", "b", "w"}, {"dui", "d", "v"}, {"xun", "x", "y"},
+		{"ying", "y", "k"}, {"er", "e", "r"}, {"an", "a", "j"},
+		{"ang", "a", "h"}, {"ai", "a", "d"}, {"ei", "e", "w"},
+		{"ou", "o", "z"}, {"o", "o", "o"}, {"a", "a", "a"},
+		{"en", "e", "f"}, {"eng", "e", "g"}, {"guan", "g", "r"},
+		{"jia", "j", "x"},
+	}
+	for _, tc := range cases {
+		syl, ok := DoublePinyinDecode(DPSchemeFLYPY, tc.a[0], tc.b[0])
+		if !ok || syl != tc.syl {
+			t.Errorf("flypy 键码 %s%s 应解码为 %s, 得到 %s (ok=%v)", tc.a, tc.b, tc.syl, syl, ok)
+		}
+	}
+}
+
 // 未知方案按关闭处理；关闭后按键走全拼。
 func TestDoublePinyinSchemeValidation(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	s.SetDoublePinyin("flypy") // 尚未提供小鹤方案：未知方案按关闭处理
+	s.SetDoublePinyin("xiaohe") // 尚未实现小鹤：未知方案按关闭处理
 	comp, _ := s.Input("n")
 	if comp.Input != "n" {
 		t.Fatalf("未知方案应按关闭处理, Input = %q", comp.Input)
@@ -207,11 +233,11 @@ func TestDoublePinyinTruncateBackspaceAlignment(t *testing.T) {
 // DoublePinyinSchemes 应列出全部已实现方案。
 func TestDoublePinyinSchemesList(t *testing.T) {
 	schemes := DoublePinyinSchemes()
-	if len(schemes) != 2 {
-		t.Fatalf("方案数 = %d, 期望 2", len(schemes))
+	if len(schemes) != 3 {
+		t.Fatalf("方案数 = %d, 期望 3", len(schemes))
 	}
-	have := map[string]bool{schemes[0]: true, schemes[1]: true}
-	if !have[DPSchemeZRM] || !have[DPSchemeMSPY] {
+	have := map[string]bool{schemes[0]: true, schemes[1]: true, schemes[2]: true}
+	if !have[DPSchemeZRM] || !have[DPSchemeMSPY] || !have[DPSchemeFLYPY] {
 		t.Fatalf("方案列表缺项: %v", schemes)
 	}
 }
