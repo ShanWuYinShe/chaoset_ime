@@ -23,13 +23,16 @@ var specialSylls = map[string]string{
 	"nue": "nve",
 }
 
-// ParseDictAuto 解析 TSV 或 Rime dict.yaml 词库（自动识别），
-// 面向热词导入场景：宽容模式，拼音无法归一化为合法音节的行
-// 跳过并计数，不中断整个文件。
+// ParseDictAuto 解析 TSV、Rime dict.yaml 或 CC-CEDICT 词库（自动
+// 识别），面向热词导入场景：宽容模式，拼音无法归一化为合法音节的
+// 行跳过并计数，不中断整个文件。
 func ParseDictAuto(r io.Reader) (*Dictionary, int, error) {
 	content, err := io.ReadAll(r)
 	if err != nil {
 		return nil, 0, fmt.Errorf("读取词库失败: %w", err)
+	}
+	if looksLikeCCCEDICT(string(content)) {
+		return ParseCCCEDICT(strings.NewReader(string(content)))
 	}
 	d := NewDictionary()
 	skipped, err := parseInto(d, strings.NewReader(stripYAMLHeader(string(content))), false)

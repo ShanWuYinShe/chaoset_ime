@@ -142,6 +142,24 @@ TSV，每行三列（`#` 开头为注释）：
 拼音为无声调小写，音节间空格分隔；一字多音写多行；重复词条取较大词频。
 非法音节会导致解析报错（防止脏数据静默进入词库）。
 
+### 接入 CC-CEDICT 开源词库
+
+`chaoset-import` 与 `-dict` 直接识别 [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict)
+u8 格式（繁体 简体 [拼音] /释义/，空格分隔），无需转换：
+
+```sh
+curl -o cedict.txt.gz \
+  https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz
+gunzip cedict.txt.gz
+bin/chaoset-import -o dict-full.tsv data/dict_seed.tsv cedict.txt
+bin/chaosetd -dict dict-full.tsv
+```
+
+CC-CEDICT 约 12 万词条，导入耗时亚秒；词条按固定词频 30 合成（用户
+自有词库优先），非汉字词条自动过滤。**许可**：CC-CEDICT 为
+CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享，
+请一并查阅文件头部声明。
+
 ## IPC 协议
 
 帧格式：4 字节大端长度 + JSON 载荷（上限 1 MiB）。
@@ -245,6 +263,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 - [x] 阶段 13：双拼——Rime algebra 忠实转写管线 + 全音节反向键码表
       （完整性测试兜底），流式两键解码；方案 zrm（自然码）与 mspy
       （微软），默认关闭 -shuangpin 开启；小鹤待官方键位可核验
+- [x] 阶段 14：CC-CEDICT 开源词库直连导入（约 12 万词条，自动识别
+      格式、声调数字/u: 记法归一、非汉字过滤、合成词频让用户词库优先）
 
 ## 验收范围确认（2026-09-23）
 
