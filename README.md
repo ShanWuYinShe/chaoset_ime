@@ -27,6 +27,7 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   punct.go           中文标点映射（直映表 + 引号开闭配对 + 循环）
   fuzzy.go           模糊音等价展开（zh/z、n/l、an/ang 等，默认关闭）
   s2t.go             简繁单字映射（零错误策略，默认关闭）
+  double_pinyin.go   自然码双拼键码管线（Rime algebra 忠实转写，默认关闭）
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
@@ -91,6 +92,19 @@ bin/chaosetd -traditional       # 候选与上屏均为繁体
 一对多歧义字（发/干/面/里/后/台 等）保留原形——这些字在繁体文本中
 多为同形合法字，保留比猜错稳妥。完整 OpenCC 式词级转换留待后续。
 映射表见 `engine/s2t.go`，追加条目前请核对权威字形。
+
+## 双拼
+
+默认关闭，`-shuangpin` 开启自然码双拼（daemon 与本地测试台均支持）：
+
+```sh
+bin/chaosetd -shuangpin         # 两键一音节：nihao = n i h k
+```
+
+键位表不手工维护——忠实转写 Rime 官方自然码 schema 的 speller
+algebra 规则管线，对全部合法音节正向生成两键码后建反向表，完整性
+测试保证全表无冲突、逐音节可解码。首键暂存、成对解码，无效键码对
+整体丢弃；退格按按键事件粒度整段回滚。见 `engine/double_pinyin.go`。
 
 ## 快速开始（阶段 0 测试台）
 
@@ -224,6 +238,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
       （引擎侧，组词合并行为不变）；ibus 容器验证路径同上
 - [x] 阶段 12：简繁转换——零错误单字映射（歧义字保留原形），
       候选与上屏整体转繁体，默认关闭 -traditional 开启
+- [x] 阶段 13：自然码双拼——Rime algebra 忠实转写管线 + 全音节
+      反向键码表（完整性测试兜底），流式两键解码，默认关闭
+      -shuangpin 开启
 
 ## 验收范围确认（2026-09-23）
 

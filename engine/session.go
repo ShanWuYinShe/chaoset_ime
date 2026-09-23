@@ -84,7 +84,15 @@ type Session struct {
 	halfWidth bool // 半角模式：标点键原样输出（默认全角）
 
 	traditional bool // 繁体输出：候选词经简繁映射（默认关闭，见 s2t.go）
+
+	dp        bool  // 双拼模式（自然码方案，见 double_pinyin.go）
+	dpPending rune  // 双拼首键（等待第二键成对解码；0 = 无）
+	dpLens    []int // 每次「按键事件」实际追加到 input 的字符数（退格回滚用）
 }
+
+// SetDoublePinyin 开关自然码双拼输入（键位表见 double_pinyin.go）。
+// 须在首次输入前设置。
+func (s *Session) SetDoublePinyin(on bool) { s.dp = on }
 
 // SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
 func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
@@ -110,18 +118,61 @@ func NewSession(dict *Dictionary, user *UserDict) *Session {
 
 // Input 追加输入。非小写字母与 ' 的字符被过滤；标点键走 Punct
 // （引擎侧统一映射为中文标点，壳只负责转发标点键）。
+// 双拼模式下按键两两成对解码为音节（见 double_pinyin.go）；
+// 首键暂存不产生组成变化，无效键码对整体丢弃。
 func (s *Session) Input(text string) (Composition, error) {
-	var b strings.Builder
 	for _, r := range strings.ToLower(text) {
+		if s.dp {
+			switch {
+			case r == '\'':
+				s.input += "'"
+				s.dpLens = append(s.dpLens, 1)
+				s.afterAppend()
+			case r >= 'a' && r <= 'z':
+				if s.dpPending == 0 {
+					s.dpPending = r
+					return s.Compose(), nil
+				}
+				pair := string(s.dpPending) + string(r)
+				s.dpPending = 0
+				syl, ok := DoublePinyinDecode(pair[0], pair[1])
+				if !ok {
+					return s.Compose(), nil // 无效键码对：整体丢弃
+				}
+				s.input += syl
+				s.dpLens = append(s.dpLens, len(syl))
+				s.afterAppend()
+			}
+			continue
+		}
 		if (r >= 'a' && r <= 'z') || r == '\'' {
-			b.WriteRune(r)
+			s.input += string(r)
+			s.afterAppend()
 		}
 	}
-	s.input += b.String()
+	return s.Compose(), nil
+}
+
+// afterAppend 处理追加后的公共状态：截断、回第一页、打断标点循环。
+func (s *Session) afterAppend() {
 	s.truncate()
+	s.reconcileDpLens()
 	s.page = 0 // 组词内容变化，回到第一页
 	s.resetPunctCycle()
-	return s.Compose(), nil
+}
+
+// reconcileDpLens 让双拼退格栈的累计追加数与截断后的 input 长度
+// 保持一致（输入超过 maxInputRunes 被截断时栈可能超出）。
+func (s *Session) reconcileDpLens() {
+	runes := []rune(s.input)
+	total := 0
+	for _, n := range s.dpLens {
+		total += n
+	}
+	for total > len(runes) && len(s.dpLens) > 0 {
+		total -= s.dpLens[0]
+		s.dpLens = s.dpLens[1:]
+	}
 }
 
 func (s *Session) truncate() {
@@ -131,8 +182,27 @@ func (s *Session) truncate() {
 	}
 }
 
-// Backspace 删除最后一个输入字符。
+// Backspace 删除最后一个输入字符。双拼模式下删除粒度是「按键事件」：
+// 暂存中的首键直接清除；已解码音节整段回滚（对应两键）。
 func (s *Session) Backspace() (Composition, error) {
+	if s.dp {
+		if s.dpPending != 0 {
+			s.dpPending = 0
+			return s.Compose(), nil
+		}
+		if n := len(s.dpLens); n > 0 {
+			cnt := s.dpLens[n-1]
+			s.dpLens = s.dpLens[:n-1]
+			runes := []rune(s.input)
+			if cnt > len(runes) {
+				cnt = len(runes)
+			}
+			s.input = string(runes[:len(runes)-cnt])
+		}
+		s.page = 0
+		s.resetPunctCycle()
+		return s.Compose(), nil
+	}
 	if s.input != "" {
 		runes := []rune(s.input)
 		s.input = string(runes[:len(runes)-1])
@@ -157,6 +227,8 @@ func (s *Session) Reset() (Composition, error) {
 	s.history = nil
 	s.page = 0
 	s.resetPunctCycle()
+	s.dpPending = 0
+	s.dpLens = nil
 	return s.Compose(), nil
 }
 
