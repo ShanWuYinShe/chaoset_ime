@@ -34,12 +34,13 @@ func main() {
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
+	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
 	}
 
-	if err := run(*socket, *tcpAddr, *fontPath, *fontSize, dicts, *userPath, *fuzzy); err != nil {
+	if err := run(*socket, *tcpAddr, *fontPath, *fontSize, dicts, *userPath, *fuzzy, *trad); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -65,7 +66,7 @@ func serverOptions(fontPath string, fontSize float64) []ipc.Option {
 	return []ipc.Option{ipc.WithSkin(skin)}
 }
 
-func run(socket, tcpAddr, fontPath string, fontSize float64, dicts []string, userPath string, fuzzy bool) error {
+func run(socket, tcpAddr, fontPath string, fontSize float64, dicts []string, userPath string, fuzzy bool, trad bool) error {
 	dict, err := engine.LoadDictFiles(dicts)
 	if err != nil {
 		return err
@@ -100,6 +101,10 @@ func run(socket, tcpAddr, fontPath string, fontSize float64, dicts []string, use
 	if fuzzy {
 		opts = append(opts, ipc.WithFuzzy(true))
 		log.Printf("模糊音已启用")
+	}
+	if trad {
+		opts = append(opts, ipc.WithTraditional(true))
+		log.Printf("繁体输出已启用")
 	}
 	srv := ipc.NewServer(ln, dict, user, opts...)
 

@@ -18,11 +18,12 @@ import (
 // Server 在一条监听套接字上为每个连接维护独立的 engine.Session。
 // 单连接内请求串行处理（输入法按键天然是顺序的），多连接互不影响。
 type Server struct {
-	ln    net.Listener
-	dict  *engine.Dictionary
-	user  *engine.UserDict
-	skin  *renderer.Skin // 可选：启用 candidateImage 候选窗渲染
-	fuzzy bool           // 可选：新会话启用模糊音
+	ln          net.Listener
+	dict        *engine.Dictionary
+	user        *engine.UserDict
+	skin        *renderer.Skin // 可选：启用 candidateImage 候选窗渲染
+	fuzzy       bool           // 可选：新会话启用模糊音
+	traditional bool           // 可选：新会话启用繁体输出
 }
 
 // Option 定制 Server 可选能力。
@@ -37,6 +38,11 @@ func WithSkin(skin renderer.Skin) Option {
 // WithFuzzy 为每个连接的新会话启用模糊音（规则见 engine/fuzzy.go）。
 func WithFuzzy(on bool) Option {
 	return func(s *Server) { s.fuzzy = on }
+}
+
+// WithTraditional 为每个连接的新会话启用繁体输出（见 engine/s2t.go）。
+func WithTraditional(on bool) Option {
+	return func(s *Server) { s.traditional = on }
 }
 
 func NewServer(ln net.Listener, dict *engine.Dictionary, user *engine.UserDict, opts ...Option) *Server {
@@ -79,6 +85,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	sess := engine.NewSession(s.dict, s.user)
 	if s.fuzzy {
 		sess.SetFuzzy(true)
+	}
+	if s.traditional {
+		sess.SetTraditional(true)
 	}
 	for {
 		var req Request

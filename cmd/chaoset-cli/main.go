@@ -21,12 +21,13 @@ func main() {
 	flag.Var(&dicts, "dict", "主词典 TSV 路径，可多次传入（仅本地模式）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（仅本地模式；daemon 模式由 chaosetd 的 -fuzzy 决定）")
+	trad := flag.Bool("traditional", false, "候选输出繁体（仅本地模式；daemon 模式由 chaosetd 的 -traditional 决定）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
 	}
 
-	ctrl, closeFn, err := buildController(*socket, dicts, *userPath, *fuzzy)
+	ctrl, closeFn, err := buildController(*socket, dicts, *userPath, *fuzzy, *trad)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func (f *repeatFlag) Set(v string) error {
 	return nil
 }
 
-func buildController(socket string, dicts []string, userPath string, fuzzy bool) (engine.Controller, func(), error) {
+func buildController(socket string, dicts []string, userPath string, fuzzy bool, trad bool) (engine.Controller, func(), error) {
 	if socket != "" {
 		c, err := ipc.Dial("unix", socket)
 		if err != nil {
@@ -137,6 +138,7 @@ func buildController(socket string, dicts []string, userPath string, fuzzy bool)
 	}
 	sess := engine.NewSession(dict, user)
 	sess.SetFuzzy(fuzzy)
+	sess.SetTraditional(trad)
 	return sess, func() {
 		// 退出时兜底保存（bump 本身已即时落盘，这里只覆盖异常路径）
 		if err := user.Save(); err != nil {

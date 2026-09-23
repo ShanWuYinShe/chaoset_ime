@@ -29,6 +29,7 @@ func main() {
 	ibusFlag := flag.Bool("ibus", false, "由 ibus-daemon 启动时传入（兼容约定，无实际作用）")
 	userPath := flag.String("userdict", "", "用户词典路径（空串表示不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
+	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
@@ -50,6 +51,9 @@ func main() {
 	}
 	if *fuzzy {
 		ibus.sess.SetFuzzy(true)
+	}
+	if *trad {
+		ibus.sess.SetTraditional(true)
 	}
 	if err := ibus.run(); err != nil {
 		log.Fatal(err)

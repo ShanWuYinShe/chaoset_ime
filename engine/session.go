@@ -82,10 +82,16 @@ type Session struct {
 	fuzzy bool // 模糊音：查询时展开声母/韵母等价音节（默认关闭）
 
 	halfWidth bool // 半角模式：标点键原样输出（默认全角）
+
+	traditional bool // 繁体输出：候选词经简繁映射（默认关闭，见 s2t.go）
 }
 
 // SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
 func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
+
+// SetTraditional 开关繁体输出（零错误单字映射，见 s2t.go）。
+// 须在首次查询前设置。
+func (s *Session) SetTraditional(on bool) { s.traditional = on }
 
 // ToggleHalfWidth 切换全角/半角标点模式，返回切换后的状态
 // （true = 半角：标点键原样输出 ASCII）。
@@ -322,7 +328,11 @@ func (s *Session) Compose() Composition {
 	var merged []Candidate
 	seen := make(map[string]int)
 	addCandidate := func(e *Entry, score int, fromUser bool) {
-		key := e.Word + "\x00" + strings.Join(e.Syllables, " ")
+		word := e.Word
+		if s.traditional {
+			word = ToTraditional(word) // 候选显示与上屏均为繁体
+		}
+		key := word + "\x00" + strings.Join(e.Syllables, " ")
 		if prev, ok := seen[key]; ok {
 			if score > merged[prev].Score {
 				merged[prev].Score = score
@@ -334,7 +344,7 @@ func (s *Session) Compose() Composition {
 		}
 		seen[key] = len(merged)
 		merged = append(merged, Candidate{
-			Text:      e.Word,
+			Text:      word,
 			Syllables: strings.Join(e.Syllables, "'"),
 			Score:     score,
 			FromUser:  fromUser,
