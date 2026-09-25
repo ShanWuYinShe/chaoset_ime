@@ -5,17 +5,18 @@ import (
 	"strings"
 )
 
-// 双拼方案：自然码（zrm）与微软双拼（mspy）。
+// 双拼方案：自然码（zrm）、微软双拼（mspy）与小鹤双拼（flypy）。
 //
 // 键位表**不手工编写**——分别忠实转写 Rime 官方
-// rime-double-pinyin 仓库两个 schema（double_pinyin.schema.yaml 与
-// double_pinyin_mspy.schema.yaml）的 speller.algebra 规则管线，
-// 对全部合法音节正向生成两键码后建反向表。转录是否走样，由完整性
-// 测试（全表无冲突、逐音节可解码、已知键位抽查）兜底。
+// rime-double-pinyin 仓库三份 schema（double_pinyin.schema.yaml、
+// double_pinyin_mspy.schema.yaml 与 double_pinyin_flypy.schema.yaml）
+// 的 speller.algebra 规则管线，对全部合法音节正向生成两键码后建反向表。
+// 转录是否走样，由完整性测试（全表无冲突、逐音节可解码、已知键位抽查）
+// 兜底。
 //
-// 已知差异并如实标注：Rime 的 double_pinyin_flypy（小鹤）与官方
-// 小鹤键位存在出入（如 ia/ua 键位），官方键位图暂无法以文本核验，
-// 故暂不提供小鹤方案。
+// 已知差异并如实标注：小鹤按 Rime double_pinyin_flypy schema 键位实现；
+// 该 schema 与官方小鹤键位存在出入（如 ia/ua 键位），官方键位图为图片
+// 暂无法文本核验，故以可核验的 schema 语义为准。
 const (
 	DPSchemeZRM   = "zrm"   // 自然码双拼
 	DPSchemeMSPY  = "mspy"  // 微软双拼

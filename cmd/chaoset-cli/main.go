@@ -22,7 +22,7 @@ func main() {
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（仅本地模式；daemon 模式由 chaosetd 的 -fuzzy 决定）")
 	trad := flag.Bool("traditional", false, "候选输出繁体（仅本地模式；daemon 模式由 chaosetd 的 -traditional 决定）")
-	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）；空关闭（仅本地模式；daemon 模式由 chaosetd 的 -shuangpin 决定）")
+	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）/ flypy（小鹤）；空关闭（仅本地模式；daemon 模式由 chaosetd 的 -shuangpin 决定）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_seed.tsv"}
