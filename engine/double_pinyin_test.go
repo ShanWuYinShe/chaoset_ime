@@ -164,7 +164,7 @@ func TestDoublePinyinKnownPairsFLYPY(t *testing.T) {
 // 未知方案按关闭处理；关闭后按键走全拼。
 func TestDoublePinyinSchemeValidation(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	s.SetDoublePinyin("xiaohe") // 尚未实现小鹤：未知方案按关闭处理
+	s.SetDoublePinyin("xiaohe") // 未知方案名（小鹤的合法名是 flypy）按关闭处理
 	comp, _ := s.Input("n")
 	if comp.Input != "n" {
 		t.Fatalf("未知方案应按关闭处理, Input = %q", comp.Input)
@@ -172,6 +172,29 @@ func TestDoublePinyinSchemeValidation(t *testing.T) {
 	s.SetDoublePinyin("")
 	if comp := func() Composition { c, _ := s.Input("i"); return c }(); comp.Input != "ni" {
 		t.Fatalf("关闭后应走全拼, Input = %q", comp.Input)
+	}
+}
+
+// 整行输入（CLI/IPC 的一次 Input 传入多键）：应逐对解码全部键码，
+// 而非只暂存首键丢弃剩余文本。
+func TestDoublePinyinWholeLineInput(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.SetDoublePinyin(DPSchemeZRM)
+	comp, _ := s.Input("nihk") // 自然码：ni + hk(hao)
+	if comp.Input != "nihao" {
+		t.Fatalf("zrm 整行 nihk 应解码为 nihao, Input = %q", comp.Input)
+	}
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "你好" {
+		t.Fatalf("zrm nihk 应出候选 你好, 得到 %+v", comp.Candidates)
+	}
+	f := NewSession(mustDict(t), nil)
+	f.SetDoublePinyin(DPSchemeFLYPY)
+	comp, _ = f.Input("nihc") // 小鹤：ni + hc(hao)，ao 在 c 键
+	if comp.Input != "nihao" {
+		t.Fatalf("flypy 整行 nihc 应解码为 nihao, Input = %q", comp.Input)
+	}
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "你好" {
+		t.Fatalf("flypy nihc 应出候选 你好, 得到 %+v", comp.Candidates)
 	}
 }
 

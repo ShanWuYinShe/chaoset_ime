@@ -139,7 +139,7 @@ func (s *Session) Input(text string) (Composition, error) {
 			case r >= 'a' && r <= 'z':
 				if s.dpPending == 0 {
 					s.dpPending = r
-					return s.Compose(), nil
+					continue // 首键暂存；同一文本中的后续键继续成对解码
 				}
 				pair := string(s.dpPending) + string(r)
 				s.dpPending = 0
