@@ -107,12 +107,16 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
   即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
   单一 zh-Hans 模式（`…ChaosetIME.Hans`）修复。
+- **2026-09-28 显示名本地化**：输入源显示名定名「Chaoset 拼音」
+  （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
+  提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
+  （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
 
 剩余需要**注销重登后人工完成**：
 
 1. 注销并重新登录（macOS 行为：新装输入法重登后才进输入源列表，
    Squirrel 官方安装流程同样要求注销）。
-2. 系统设置 → 键盘 → 输入法 → 添加「ChaosetIME」，切换到它。
+2. 系统设置 → 键盘 → 输入法 → 添加「Chaoset 拼音」，切换到它。
 3. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
 
 若重登后列表仍无 ChaosetIME：`./build/tis list` 查看注册状态，
