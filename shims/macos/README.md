@@ -101,6 +101,12 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   已实现（编译级验证）。组词时优先显示 daemon 渲染的统一候选窗图，
   daemon 未启用渲染时回退 IMKCandidates（v1）。面板跟随鼠标定位；
   光标精确坐标需 IMK 深度 API，作为后续优化项。
+- **2026-09-28 真机反馈修复**：Info.plist 此前缺 `ComponentInputModeDict`
+  （输入模式声明），TIS 不把本壳枚举为可添加输入源——已装进
+  `~/Library/Input Methods` 且注销重登，系统设置仍无此输入法，
+  `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
+  即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
+  单一 zh-Hans 模式（`…ChaosetIME.Hans`）修复。
 
 剩余需要**注销重登后人工完成**：
 
