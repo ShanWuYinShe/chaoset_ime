@@ -141,6 +141,15 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 重要机制发现：文件变化触发的重建"不新增"第三方输入法**。
+  实测：把本项目 app（20:26:16 装入）以及随后的 4 个对照 bundle（含一个改名的官方
+  Squirrel，21:43 正确签名装入）放进 `~/Library/Input Methods`，用户级输入源缓存
+  仍随之被重建（mtime 20:26:19 → 21:42:24 → 21:43:37，均由文件监视触发），但**始终
+  没有新增任何第三方条目**（头部计数保持 66 = 系统输入源数，大小恒为 138,876 B）。
+  即：FS 事件重建负责**移除/刷新**，而**新增第三方输入法只能在登录扫描
+  （`LoginLogoutSCNotificationCallback` → `kCacheRebuildAll`）时发生**——这与
+  macOS 不允许应用在运行期"热插"输入法的安全设计一致。因此 20:26 那次重建没有收录
+  本项目，**不能**说明本 bundle 被拒绝；判定依旧要靠一次登录。
 - **2026-10-06 安装产物体检**：已装 app 的可执行文件为 `0755`、Mach-O arm64；
   `codesign --verify --deep --strict` → *valid on disk / satisfies its Designated Requirement*；
   xattr 只有 `com.apple.provenance`（与官方 Squirrel 样本一致）；`spctl` 两者同为
