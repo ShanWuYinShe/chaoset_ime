@@ -187,6 +187,11 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   macOS 没有 `MSG_NOSIGNAL`，按 BSD 惯例设 `SO_NOSIGPIPE` 后写入返回 EPIPE，客户端按既有
   逻辑断开并降级（按键透传）。差分实测（连接→正常调用→杀掉 daemon→再调用）：
   **修复前 exit=141（被 SIGPIPE 杀死），修复后 exit=0 且第二次调用返回 nil**。
+- **2026-10-06 候选窗字体实测**：本机（macOS 15.8.1）`/System/Library/Fonts/PingFang.ttc`
+  **不存在**，renderer 的平台探测实际命中 `/System/Library/Fonts/Hiragino Sans GB.ttc`（覆盖率好：
+  同一组 9 个候选全部有字形）。**不要把系统宋体加入探测序列**：`Supplemental/Songti.ttc` 的
+  第 0 号 face 覆盖不全，实测同一组候选里有 6 个画成空白（像素统计：含文字行数 50 vs
+  Hiragino 的 114）。若要换字体请用 `-font` 指定并先用候选窗实渲染验证覆盖率。
 - **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
   直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
   `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
