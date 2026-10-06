@@ -17,12 +17,14 @@ final class ChaosetController: IMKInputController {
     private var candidateWindow: IMKCandidates?
 
     // 中英模式：英文模式下按键全部放行（组词/选词/标点映射不介入）。
-    // 切换手势为 Shift 空按；IMK 是否把修饰键事件路由给 handle()
-    // 待真机验证（真机闭环验证清单项）。
+    // 切换手势为 Shift **空按**：按下先装填，松开时若期间没有其它按键才切换。
+    // 这样即便系统把 Shift 的按下与松开都路由进来也只切一次，Shift+A 之类的
+    // 组合也不会误切换（旧实现按下/松开各切一次，净效果为不切换）。
     private var enMode = false
+    private var shiftArmed = false
 
-    /// 左/右 Shift 的 keyCode。组合键 Shift+字母 产生的是字母键事件，
-    /// 不会命中这里，因此不会误切换。
+    /// 左/右 Shift 的 keyCode（56/60）。系统可能以 flagsChanged 或 keyDown/keyUp
+    /// 投递，两种都按"按下→装填、松开→判定"处理，不依赖具体投递方式。
     private static let shiftKeyCodes: Set<UInt16> = [56, 60]
 
     // 懒创建候选窗；IMKServer 未就绪时返回 nil，后续按键会再试。
@@ -42,13 +44,33 @@ final class ChaosetController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         let client = sender as? any IMKTextInput
 
-        // Shift 空按：切换中英（在 chars 判空之前——修饰键事件无文本）
+        // 只处理 keyDown 与 flagsChanged；keyUp 一律放行，
+        // 否则同一个按键会被处理两次（重复组词／重复上屏）。
+        if event.type != .keyDown && event.type != .flagsChanged {
+            return false
+        }
+
+        // 带 Command/Control/Option 的组合键一律放行（快捷键不能被输入法吞掉）
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if mods.contains(.command) || mods.contains(.control) || mods.contains(.option) {
+            return passThrough(client)
+        }
+
+        // Shift 空按：按下装填、松开且期间无其它按键时才切换中英
         if Self.shiftKeyCodes.contains(event.keyCode) {
-            enMode.toggle()
-            current = engine.reset()
-            refresh(client)
+            if mods.contains(.shift) {
+                shiftArmed = true
+                return true
+            }
+            if shiftArmed {
+                shiftArmed = false
+                enMode.toggle()
+                current = engine.reset()
+                refresh(client)
+            }
             return true
         }
+        shiftArmed = false // 出现其它按键 → 不是"空按"，取消待判定
 
         // 英文模式：全部放行（passThrough 会先清掉未上屏的组词）
         if enMode {

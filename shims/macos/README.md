@@ -176,6 +176,12 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `…CharacterRepertoireKey`、`…AlternateMenuIconFileKey`）。本壳覆盖其中 11 个，
   未用的两个（KeyEquivalentKey / DefaultUINameKey）官方 Squirrel 同样没有——即不存在
   "漏写某个必需键"这一可能，剩余变量只剩登录扫描时机与旧 id 的记忆问题。
+- **2026-10-06 按键路由修复与回归测试**：`tests/key_routing/main.swift` 用合成 NSEvent
+  直接驱动 `ChaosetController.handle`：**新实现 8/8 通过**，同一套检查下**修复前旧实现
+  4/8 不通过**（keyUp 未放行、Cmd+S/Ctrl+A 被输入法吞、Shift 空按根本没切换）。
+  三处修复：① 只处理 keyDown/flagsChanged，keyUp 一律放行（否则同一按键可能被处理两次）；
+  ② 带 Command/Control/Option 的组合键一律放行；③ Shift 空按改为"按下装填、松开判定、
+  期间出现其它按键即取消"，Shift+字母 不再误切换。用法见测试文件头部注释。
 - **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
   直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
   `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
