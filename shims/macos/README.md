@@ -27,8 +27,10 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ```sh
 ./build.sh          # 产出 build/ChaosetIME.app 与 build/chaosetd（ad-hoc 签名）
+                    # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
 
-# 1. 安装输入法 app
+# 1. 安装输入法 app（换新版前先移除旧输入法，避免系统沿用旧 bundle）
+rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 cp -R build/ChaosetIME.app ~/Library/Input\ Methods/
 
 # 2. 部署 daemon 与词库
@@ -42,8 +44,26 @@ cp ../../data/dict_seed.tsv "$HOME/Library/Application Support/chaoset/dict.tsv"
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
 
-# 4. 系统设置 → 键盘 → 输入法 → 添加「ChaosetIME」，切到它开始打字
+# 4. 命令行先核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
+./build/tis list | grep -i chaoset
+
+# 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset 拼音」，切到它开始打字
 ```
+
+## 输入源标识与显示名
+
+| 项 | 值 |
+|---|---|
+| `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod`（**两者必须一致**） |
+| 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.Hans`（父 ID + `.Hans`） |
+| 显示名 | 「Chaoset 拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
+| 图标 | `ChaosetIME.icns`（应用图标）+ `ChaosetIME.pdf`（输入源菜单图标），由 `tools/make-icon.swift` 生成 |
+
+> ⚠️ 系统「输入法」列表里若出现**鼠须管**，那是官方 Rime/Squirrel 应用
+> （`im.rime.inputmethod.Squirrel`）。2026-10-05 排障时曾把官方 Squirrel 1.1.2
+> 下载、ad-hoc 重签后放进 `~/Library/Input Methods/SquirrelAdhoc.app`，用作
+> 「同目录第三方输入法能否被枚举」的对照样本；它**不是本项目**，其源码、图标与
+> 名称都不得复用。本项目自身可被枚举后即可删除该样本。
 
 ## 开机自启（LaunchAgent）
 
@@ -111,6 +131,21 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 枚举失败根因排查（待系统级复验）**：本机 macOS 15.8.1 实测，
+  输入法目录里的 ChaosetIME.app（已有 ComponentInputModeDict、`codesign -v`
+  通过、当天 08:27 重启登录过）在 `tis list` 的 313 个输入源里**依然没有**；
+  而**同目录**下 ad-hoc 重签的官方 Squirrel 1.1.2 能被正常枚举（3 条：
+  `im.rime.inputmethod.Squirrel[.Hans/.Hant]`）。即：不是签名、不是
+  LaunchServices、不是缓存没刷新，而是 TIS 对本 bundle 的 Info.plist 审讯不通过。
+  对照已知可用样本，本壳原有三处结构性差异：① `TISInputSourceID`
+  （`…ChaosetIME`）与 `CFBundleIdentifier`（`…inputmethod`）不一致；
+  ② 完全没有图标键与图标资源；③ 缺 `LSMinimumSystemVersion`、
+  `CFBundleSupportedPlatforms`、`CFBundleSignature`、`LSBackgroundOnly`、
+  `TICapsLockLanguageSwitchCapable`、`InputMethodServerDelegateClass` 等
+  样板键（`CFBundleDevelopmentRegion` 也从 `zh_CN` 改为 `en`）。
+  已按「逐键对齐可用样本」重写 `build.sh` 的 plist 模板并把 ID 对齐为
+  `ime.chaoset.inputmethod[.Hans]`，同时新增自有图标生成器；
+  装入输入法目录后用 `./build/tis list | grep -i chaoset` 复验。
 
 剩余需要**注销重登后人工完成**：
 
