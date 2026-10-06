@@ -141,6 +141,14 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
+  直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
+  `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
+  即装在输入法目录里的这份 bundle 能正常作为输入法服务起来。注意 `IMKServer(name:bundleIdentifier:)`
+  的连接名由 **bundle id 推导**（`<bundleID>_Connection`）：实测同一份 plist 连接名、
+  换 bundle id 后注册名随之改变，官方 Squirrel 亦同（其 plist 写 `Squirrel_Connection`，
+  实际注册名仍按 bundle id 推导），故 `InputMethodConnectionName` 只需保持与
+  `CFBundleIdentifier` 同源即可，系统两侧一致。
 - **2026-10-06 枚举失败根因排查（待系统级复验）**：本机 macOS 15.8.1 实测，
   输入法目录里的 ChaosetIME.app（已有 ComponentInputModeDict、`codesign -v`
   通过、当天 08:27 重启登录过）在 `tis list` 的 313 个输入源里**依然没有**；
