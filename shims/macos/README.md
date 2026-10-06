@@ -141,6 +141,16 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 缓存重建机制取证**：从本机 dyld 共享缓存的 HIToolbox 字符串确认，
+  TIS 输入源表是**缓存 + 按需重建**：
+  `LoginLogoutSCNotificationCallback -> islcRebuildInputSourceCache( kCacheRebuildAll )`
+  （登录/登出重建）、`InputSourceFSEventCallback -> TISUpdateIntlFileCache`
+  （被监视目录有文件变化时重建，监视列表含 `~/Library/Input Methods/`、`~/Library/Keyboard Layouts/`、
+  `~/Library/Components/`、`/Library/Input Methods/` 等）。用户级主缓存在
+  `$TMPDIR/C/com.apple.IntlDataCache.le.kbdx`（138,876 B）；对照 19:11 的旧副本（139,548 B）
+  可见第三方输入法**确实会进这份表**（当时有 3 条 `im.rime.inputmethod.Squirrel*`）。
+  该缓存与所在目录对本会话均不可写，`killall TextInputMenuAgent`、打开系统设置也不触发重建
+  （系统设置自己的缓存副本停在 19:11），故"重建一次看结果"只能靠登录。
 - **2026-10-06 键集完备性取证**：从本机 dyld 共享缓存的 HIToolbox 字符串里提取系统认识的
   全部 `tsInputMode*` 键共 12 个（`tsInputModeListKey`、`…KeyEquivalentModifiersKey`、
   `…KeyEquivalentKey`、`…ScriptKey`、`…PrimaryInScriptKey`、`…PaletteIconFileKey`、
