@@ -141,6 +141,13 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 安装产物体检**：已装 app 的可执行文件为 `0755`、Mach-O arm64；
+  `codesign --verify --deep --strict` → *valid on disk / satisfies its Designated Requirement*；
+  xattr 只有 `com.apple.provenance`（与官方 Squirrel 样本一致）；`spctl` 两者同为
+  *rejected*（ad-hoc 签名皆然，非差异项）。即**文件级问题（权限/签名/扩展属性）可排除**。
+  另：TIS 缓存头部计数对照，19:11（含 Squirrel）为 69 个输入源、20:26 重建后为 66 个
+  （正好少 3 条 `im.rime.inputmethod.Squirrel*`），其中仍无本项目条目——本项目是否在
+  该次重建中被跳过（竞态）还是被审讯拒绝，只有下一次登录重建才能区分。
 - **2026-10-06 缓存重建机制取证**：从本机 dyld 共享缓存的 HIToolbox 字符串确认，
   TIS 输入源表是**缓存 + 按需重建**：
   `LoginLogoutSCNotificationCallback -> islcRebuildInputSourceCache( kCacheRebuildAll )`
