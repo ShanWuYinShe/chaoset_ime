@@ -141,6 +141,13 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
   （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
+- **2026-10-06 键集完备性取证**：从本机 dyld 共享缓存的 HIToolbox 字符串里提取系统认识的
+  全部 `tsInputMode*` 键共 12 个（`tsInputModeListKey`、`…KeyEquivalentModifiersKey`、
+  `…KeyEquivalentKey`、`…ScriptKey`、`…PrimaryInScriptKey`、`…PaletteIconFileKey`、
+  `…MenuIconFileKey`、`…IsVisibleKey`、`…DefaultUINameKey`、`…DefaultStateKey`、
+  `…CharacterRepertoireKey`、`…AlternateMenuIconFileKey`）。本壳覆盖其中 11 个，
+  未用的两个（KeyEquivalentKey / DefaultUINameKey）官方 Squirrel 同样没有——即不存在
+  "漏写某个必需键"这一可能，剩余变量只剩登录扫描时机与旧 id 的记忆问题。
 - **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
   直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
   `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
