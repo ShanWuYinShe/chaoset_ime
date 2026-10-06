@@ -39,8 +39,10 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
 
-# 3. 核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
-./build/tis list | grep -i chaoset
+# 3. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
+./verify.sh
+#    单独看枚举也可：./build/tis list | grep -i chaoset
+#    期望出现 ime.chaoset.inputmethod 与 ime.chaoset.inputmethod.Hans 两行
 
 # 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
 ```
