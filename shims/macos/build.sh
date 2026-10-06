@@ -129,7 +129,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # 输入源显示名走 bundle 的本地化 InfoPlist.strings（对照 Squirrel 的
 # InfoPlist.xcstrings：除 CFBundleDisplayName 外，还按输入源 ID 逐模式
 # 命名）。缺省名与系统组件难分辨，定名「Chaoset 拼音 / Chaoset Pinyin」。
-NAME_ZH="Chaoset 拼音"
+NAME_ZH="超集拼音"
 NAME_EN="Chaoset Pinyin"
 for spec in "en:$NAME_EN" "zh-Hans:$NAME_ZH" "zh_CN:$NAME_ZH"; do
   lang="${spec%%:*}"

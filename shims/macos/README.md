@@ -46,7 +46,7 @@ cp ../../data/dict_seed.tsv "$HOME/Library/Application Support/chaoset/dict.tsv"
 # 4. 核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
 ./build/tis list | grep -i chaoset
 
-# 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset 拼音」，切到它开始打字
+# 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
 ```
 
 > ⚠️ **第 1 步与第 4 步之间必须注销并重新登录。** macOS 的输入源表在**登录时**才
@@ -66,8 +66,8 @@ cp ../../data/dict_seed.tsv "$HOME/Library/Application Support/chaoset/dict.tsv"
 |---|---|
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod`（**两者必须一致**） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.Hans`（父 ID + `.Hans`） |
-| 显示名 | 「Chaoset 拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | `ChaosetIME.icns`（应用图标）+ `ChaosetIME.pdf`（输入源菜单图标），由 `tools/make-icon.swift` 生成 |
+| 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
+| 图标 | 中国印章风格：中国红底 + 白色双框 + 宋体「超」+ 云纹暗纹（大尺寸）；`ChaosetIME.icns`（应用图标）与 `ChaosetIME.pdf`（输入源菜单图标）都由 `tools/make-icon.swift` 现场绘制，不依赖任何外部素材 |
 
 > ⚠️ 系统「输入法」列表里若出现**鼠须管**，那是官方 Rime/Squirrel 应用
 > （`im.rime.inputmethod.Squirrel`）。2026-10-05 排障时曾把官方 Squirrel 1.1.2
@@ -137,6 +137,10 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
   即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
   单一 zh-Hans 模式（`…ChaosetIME.Hans`）修复。
+- **2026-10-06 视觉与命名融入中国元素**：图标改为中国印章语汇——中国红渐变底、
+  `0.022em` 白色外框 + 细内框、宋体（STSongti-SC-Bold，取不到则退系统中文字重）「超」字、
+  大尺寸再叠三枚圆弧组成的如意云纹暗纹；中文显示名定为「超集拼音」（英文仍为
+  Chaoset Pinyin）。小尺寸（16/32px）自动退化为干净的印章徽标，保证输入源列表里可辨识。
 - **2026-09-28 显示名本地化**：输入源显示名定名「Chaoset 拼音」
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
@@ -202,7 +206,7 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 
 1. 注销并重新登录（macOS 行为：新装输入法重登后才进输入源列表，
    Squirrel 官方安装流程同样要求注销）。
-2. 系统设置 → 键盘 → 输入法 → 添加「Chaoset 拼音」，切换到它。
+2. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（印章图标），切换到它。
 3. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
 
 若重登后列表仍无 ChaosetIME：`./build/tis list` 查看注册状态，
