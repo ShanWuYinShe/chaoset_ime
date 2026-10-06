@@ -7,11 +7,16 @@ mkdir -p build
 echo "[1/4] 编译 Go daemon..."
 (cd ../.. && go build -o shims/macos/build/chaosetd ./cmd/chaosetd)
 
-echo "[2/4] 编译 Swift 输入法壳..."
+echo "[2/4] 编译 Swift 输入法壳与验证工具..."
 APP=build/ChaosetIME.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 swiftc -O -framework InputMethodKit -framework AppKit src/*.swift -o "$APP/Contents/MacOS/ChaosetIME"
+# README 的两步核验都用这两个工具，随构建一起产出：
+#   tis   —— 注册/枚举 TIS 输入源（判断系统是否收录本输入法）
+#   smoke —— 与 daemon 的 IPC 全链路自检（需要先跑起 daemon）
+swiftc -O -framework Carbon tools/tis.swift -o build/tis
+swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/EngineClient.swift -o build/smoke
 
 echo "[3/4] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources

@@ -26,12 +26,11 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 ## 构建与安装
 
 ```sh
-./build.sh          # 产出 build/ChaosetIME.app 与 build/chaosetd（ad-hoc 签名）
+./build.sh          # 产出 build/ChaosetIME.app、build/chaosetd 与验证工具 build/tis、build/smoke
                     # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
 
-# 1. 安装输入法 app（换新版前先移除旧输入法，避免系统沿用旧 bundle）
-rm -rf ~/Library/Input\ Methods/ChaosetIME.app
-cp -R build/ChaosetIME.app ~/Library/Input\ Methods/
+# 1. 安装输入法 app（内部会先移除旧版，再拷入并登记；换新版一律走它）
+./install.sh
 
 # 2. 部署 daemon 与词库
 mkdir -p "$HOME/Library/Application Support/chaoset"
@@ -44,11 +43,22 @@ cp ../../data/dict_seed.tsv "$HOME/Library/Application Support/chaoset/dict.tsv"
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
 
-# 4. 命令行先核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
+# 4. 核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
 ./build/tis list | grep -i chaoset
 
 # 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset 拼音」，切到它开始打字
 ```
+
+> ⚠️ **第 1 步与第 4 步之间必须注销并重新登录。** macOS 的输入源表在**登录时**才
+> 扩充新输入法，`TISRegisterInputSource` 只是"登记"：未重登前 `tis list` 里不会
+> 有本输入法，系统设置里也看不到。官方 Squirrel 安装包同理——它的 `PackageInfo`
+> 写着 `postinstall-action="logout"`，postinstall 还调用 `--register-input-source`
+> 与 `--enable-input-source`/`--select-input-source`。
+>
+> 2026-10-06 实测（macOS 15.8.1）：装好后仅靠 `TISRegisterInputSource`、
+> `lsregister -f`、`killall TextInputMenuAgent`、甚至直接 `open` 该 app，
+> 都不会让它在当前会话进入输入源列表；而移走一个已在表里的输入法后，其条目
+> 会先变成无名字（`?`）再消失——即"删除是懒校验、新增只在登录扫描"。
 
 ## 输入源标识与显示名
 
