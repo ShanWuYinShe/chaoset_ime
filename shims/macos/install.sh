@@ -26,7 +26,28 @@ else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi
 
+# 2) 部署 daemon 与种子词库（壳靠它出候选；已存在则备份旧版并热替换）
+SUPPORT="$HOME/Library/Application Support/chaoset"
+if [ -x build/chaosetd ]; then
+  mkdir -p "$SUPPORT"
+  if [ -f "$SUPPORT/chaosetd" ]; then
+    cp "$SUPPORT/chaosetd" "$SUPPORT/chaosetd.prev"
+  fi
+  cp build/chaosetd "$SUPPORT/chaosetd"
+  chmod 755 "$SUPPORT/chaosetd"
+  if [ ! -f "$SUPPORT/dict.tsv" ]; then
+    cp ../../data/dict_seed.tsv "$SUPPORT/dict.tsv"
+  fi
+  # LaunchAgent（KeepAlive）会自动拉起新版本；未配置自启时手动启动即可：
+  #   "$SUPPORT/chaosetd" -socket "$SUPPORT/chaoset.sock" \
+  #     -dict "$SUPPORT/dict.tsv" -userdict "$SUPPORT/userdict.json"
+  killall chaosetd 2>/dev/null || true
+  echo "已部署 daemon: $SUPPORT/chaosetd（旧版备份为 chaosetd.prev）"
+else
+  echo "（未找到 build/chaosetd，跳过 daemon 部署）"
+fi
+
 echo
-echo "下一步（必须）：注销并重新登录，然后到「系统设置 → 键盘 → 输入法」添加「Chaoset 拼音」。"
+echo "下一步（必须）：注销并重新登录，然后到「系统设置 → 键盘 → 输入法」添加「超集拼音」。"
 echo "重登后核验：./build/tis list | grep -i chaoset"
 echo "           期望出现 ime.chaoset.inputmethod 与 ime.chaoset.inputmethod.Hans 两行。"

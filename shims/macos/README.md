@@ -29,21 +29,17 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 ./build.sh          # 产出 build/ChaosetIME.app、build/chaosetd 与验证工具 build/tis、build/smoke
                     # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
 
-# 1. 安装输入法 app（内部会先移除旧版，再拷入并登记；换新版一律走它）
+# 1. 一键安装：输入法 app（移除旧版→拷入→TIS 登记）+ daemon 与种子词库
+#    （daemon 已在跑的话会 killall 让其由 LaunchAgent 拉起新版）
 ./install.sh
 
-# 2. 部署 daemon 与词库
-mkdir -p "$HOME/Library/Application Support/chaoset"
-cp build/chaosetd "$HOME/Library/Application Support/chaoset/"
-cp ../../data/dict_seed.tsv "$HOME/Library/Application Support/chaoset/dict.tsv"
-
-# 3. 启动 daemon（前台先试通）
+# 2. 若没有配 LaunchAgent，手动前台启动 daemon 先试通
 "$HOME/Library/Application Support/chaoset/chaosetd" \
   -socket "$HOME/Library/Application Support/chaoset/chaoset.sock" \
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
 
-# 4. 核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
+# 3. 核验是否被 TIS 枚举（出现 ime.chaoset.inputmethod[.Hans] 才算成功）
 ./build/tis list | grep -i chaoset
 
 # 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
