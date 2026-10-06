@@ -61,6 +61,10 @@ final class EngineClient {
             lastFailAt = now
             return false
         }
+        // daemon 在写入途中消失时不能触发 SIGPIPE：否则整个输入法进程会被信号杀死
+        //（macOS 没有 MSG_NOSIGNAL，BSD 的做法是给套接字设 SO_NOSIGPIPE）。
+        var nosigpipe: Int32 = 1
+        setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(socketPath.utf8)

@@ -182,6 +182,11 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   三处修复：① 只处理 keyDown/flagsChanged，keyUp 一律放行（否则同一按键可能被处理两次）；
   ② 带 Command/Control/Option 的组合键一律放行；③ Shift 空按改为"按下装填、松开判定、
   期间出现其它按键即取消"，Shift+字母 不再误切换。用法见测试文件头部注释。
+- **2026-10-06 IPC 韧性修复**：客户端连接后设 `SO_NOSIGPIPE`。daemon 在写入途中退出时，
+  `send()` 到已关闭套接字会触发 SIGPIPE（默认终止进程），**整个输入法进程会被信号杀死**；
+  macOS 没有 `MSG_NOSIGNAL`，按 BSD 惯例设 `SO_NOSIGPIPE` 后写入返回 EPIPE，客户端按既有
+  逻辑断开并降级（按键透传）。差分实测（连接→正常调用→杀掉 daemon→再调用）：
+  **修复前 exit=141（被 SIGPIPE 杀死），修复后 exit=0 且第二次调用返回 nil**。
 - **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
   直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
   `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
