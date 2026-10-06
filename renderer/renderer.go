@@ -1,6 +1,10 @@
 // Package renderer 把组词状态渲染为候选窗 PNG——「daemon 渲染、壳贴图」
 // 的统一候选窗方案：三端壳显示同一张图，皮肤与布局只收敛在 daemon 一处。
 // 纯 Go（x/image 栅格化 + stdlib PNG），渲染结果可单测、可人工目检。
+//
+// 默认皮肤取中国传统色与中国印章的双框语汇：宣纸底（#F7F2E7）、
+// 朱红外框 + 米金内框、浓墨候选、淡墨预编辑、朱红首选高亮、石青学习标记。
+// 三端共用同一张图，故视觉风格在一处收敛、一处调整。
 package renderer
 
 import (
@@ -23,31 +27,37 @@ import (
 
 // Skin 是候选窗皮肤。零值不可用：用 DefaultSkin() 并按需覆盖字段。
 type Skin struct {
-	FontPath      string      // CJK 字体（TTF/TTC）；空串则按平台常见路径探测
-	FontSize      float64     // 字号（pt）
-	Padding       int         // 内边距（px）
-	LineSpacing   int         // 行间距（px）
-	BgColor       color.NRGBA // 背景半透明
-	BorderColor   color.NRGBA
-	PreeditColor  color.NRGBA // 预编辑行文字
-	FgColor       color.NRGBA // 候选文字
-	HighlightBg   color.NRGBA // 首选候选底色
-	UserMarkColor color.NRGBA // 用户学习标记（*）颜色
+	FontPath          string      // CJK 字体（TTF/TTC）；空串则按平台常见路径探测
+	FontSize          float64     // 字号（pt）
+	Padding           int         // 内边距（px）
+	LineSpacing       int         // 行间距（px）
+	BgColor           color.NRGBA // 背景半透明
+	BorderColor       color.NRGBA // 外框
+	InnerBorderColor  color.NRGBA // 内框细线（宣纸/印章双框语汇）；Alpha=0 时不画
+	PreeditColor      color.NRGBA // 预编辑行文字
+	FgColor           color.NRGBA // 候选文字
+	HighlightBg       color.NRGBA // 首选候选底色
+	HighlightBarColor color.NRGBA // 首选候选左侧「朱批」竖记；Alpha=0 时不画
+	UserMarkColor     color.NRGBA // 用户学习标记（*）颜色
 }
 
 // DefaultSkin 返回按当前平台探测字体路径的默认皮肤。
+// 配色取中国传统色：宣纸底、朱红外框 + 米金内框、浓墨候选、淡墨预编辑、
+// 朱红首选高亮、石青学习标记（见 renderer 包注释）。
 func DefaultSkin() Skin {
 	return Skin{
-		FontPath:      probeFontPath(),
-		FontSize:      16,
-		Padding:       10,
-		LineSpacing:   6,
-		BgColor:       color.NRGBA{0xFA, 0xFA, 0xFA, 0xF2},
-		BorderColor:   color.NRGBA{0xC8, 0xC8, 0xC8, 0xFF},
-		PreeditColor:  color.NRGBA{0x88, 0x88, 0x88, 0xFF},
-		FgColor:       color.NRGBA{0x22, 0x22, 0x22, 0xFF},
-		HighlightBg:   color.NRGBA{0x3B, 0x82, 0xF6, 0x33},
-		UserMarkColor: color.NRGBA{0x16, 0x96, 0x50, 0xFF},
+		FontPath:          probeFontPath(),
+		FontSize:          16,
+		Padding:           10,
+		LineSpacing:       6,
+		BgColor:           color.NRGBA{0xF7, 0xF2, 0xE7, 0xF2}, // 宣纸
+		BorderColor:       color.NRGBA{0xB2, 0x3A, 0x2E, 0xFF}, // 朱红
+		InnerBorderColor:  color.NRGBA{0xE0, 0xCF, 0xA8, 0xCC}, // 米金细内框
+		PreeditColor:      color.NRGBA{0x9A, 0x8F, 0x7D, 0xFF}, // 淡墨
+		FgColor:           color.NRGBA{0x2B, 0x2A, 0x26, 0xFF}, // 浓墨
+		HighlightBg:       color.NRGBA{0xC1, 0x27, 0x2D, 0x33}, // 朱红高亮
+		HighlightBarColor: color.NRGBA{0xB2, 0x3A, 0x2E, 0xFF}, // 朱批竖记
+		UserMarkColor:     color.NRGBA{0x1B, 0x6B, 0x8C, 0xFF}, // 石青
 	}
 }
 
@@ -218,6 +228,11 @@ func Render(comp engine.Composition, skin Skin) ([]byte, error) {
 			// 首选高亮：整行底色（从行顶到行底，宽度铺满内区）
 			rect := image.Rect(pad/2, y-face.Metrics().Ascent.Ceil(), width-pad/2, y+face.Metrics().Descent.Ceil())
 			draw.Draw(img, rect, &image.Uniform{skin.HighlightBg}, image.Point{}, draw.Over)
+			// 朱批：首选行左侧一道朱红竖记（中国传统批注记号）
+			if skin.HighlightBarColor.A != 0 && rect.Dy() >= 3 {
+				bar := image.Rect(rect.Min.X, rect.Min.Y, rect.Min.X+3, rect.Max.Y)
+				draw.Draw(img, bar, &image.Uniform{skin.HighlightBarColor}, image.Point{}, draw.Over)
+			}
 		}
 		d.Src = image.NewUniform(ln.color)
 		d.Dot = fixed.P(pad, y)
@@ -232,11 +247,30 @@ func Render(comp engine.Composition, skin Skin) ([]byte, error) {
 		y += lineH
 	}
 
+	// 内框细线后画，保证在朱红高亮之上仍清晰（双框 = 印章/宣纸装帧语汇）
+	drawInnerBorder(img, skin.InnerBorderColor, 3)
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, fmt.Errorf("编码 PNG 失败: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// drawInnerBorder 在距边缘 inset 像素处画一圈 1px 细线（Alpha=0 时跳过）。
+func drawInnerBorder(img *image.NRGBA, c color.NRGBA, inset int) {
+	if c.A == 0 || inset <= 0 {
+		return
+	}
+	b := img.Bounds()
+	if b.Dx() <= inset*2+1 || b.Dy() <= inset*2+1 {
+		return
+	}
+	u := &image.Uniform{c}
+	draw.Draw(img, image.Rect(b.Min.X+inset, b.Min.Y+inset, b.Max.X-inset, b.Min.Y+inset+1), u, image.Point{}, draw.Over)
+	draw.Draw(img, image.Rect(b.Min.X+inset, b.Max.Y-inset-1, b.Max.X-inset, b.Max.Y-inset), u, image.Point{}, draw.Over)
+	draw.Draw(img, image.Rect(b.Min.X+inset, b.Min.Y+inset+1, b.Min.X+inset+1, b.Max.Y-inset-1), u, image.Point{}, draw.Over)
+	draw.Draw(img, image.Rect(b.Max.X-inset-1, b.Min.Y+inset+1, b.Max.X-inset, b.Max.Y-inset-1), u, image.Point{}, draw.Over)
 }
 
 func drawBorder(img *image.NRGBA, c color.NRGBA) {

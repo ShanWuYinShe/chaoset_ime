@@ -32,6 +32,7 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
 renderer/          统一候选窗渲染（v2）：把组词状态画成 PNG，三端壳贴图显示
+                   皮肤为中国传统配色（宣纸底/朱红双框/浓墨候选/朱批首选竖记）
 cmd/
   chaosetd/          守护进程二进制（-dict 可多次叠加；-font/-fontsize 候选窗渲染）
   chaoset-cli/       阶段 0 终端测试台（本地内嵌引擎或连接 daemon）
@@ -278,6 +279,10 @@ bin/chaoset-import -o dict-merged.tsv data/dict_seed.tsv learned.tsv
 - [x] 阶段 13：双拼——Rime algebra 忠实转写管线 + 全音节反向键码表
       （完整性测试兜底），流式两键解码；方案 zrm（自然码）与 mspy
       （微软），默认关闭 -shuangpin 开启；小鹤后于阶段 18 落地
+- [x] 阶段 19：中国风视觉——应用图标改为**中国印章**语汇（中国红底、白色双框、
+      宋体「超」、云纹暗纹，详见 shims/macos/README），候选窗默认皮肤同步取中国传统色：
+      宣纸底 #F7F2E7、朱红外框 + 米金细内框（双框）、浓墨候选、淡墨预编辑、
+      朱红首选高亮 + 左侧「朱批」竖记、石青学习标记；样例见 .workwork/render-sample.png
 - [x] 阶段 14：CC-CEDICT 开源词库直连导入（约 12 万词条，自动识别
       格式、声调数字/u: 记法归一、非汉字过滤、合成词频让用户词库优先）
 - [x] 阶段 15：规模化验证与基准固化——10 万级词库加载 42ms、组词
