@@ -192,6 +192,18 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   同一组 9 个候选全部有字形）。**不要把系统宋体加入探测序列**：`Supplemental/Songti.ttc` 的
   第 0 号 face 覆盖不全，实测同一组候选里有 6 个画成空白（像素统计：含文字行数 50 vs
   Hiragino 的 114）。若要换字体请用 `-font` 指定并先用候选窗实渲染验证覆盖率。
+- **2026-10-06 本地化与"系统确实读过我们的 bundle"复核**：
+  - `InfoPlist.strings` 按输入源 ID 逐模式命名（`CFBundleDisplayName`、`CFBundleName`、
+    `ime.chaoset.inputmethod`、`ime.chaoset.inputmethod.Hans`），与官方 Squirrel 的命名方式
+    一致（Squirrel 同样按 `im.rime.inputmethod.Squirrel[.Hans|.Hant]` 命名），故系统设置里
+    显示的是「超集拼音 / Chaoset Pinyin」，不会露出裸 ID。
+  - `launchctl print gui/$(id -u)` 里有 `application.ime.chaoset.inputmethod.<...>` 处于
+    **running**（program 指向 `~/Library/Input Methods/ChaosetIME.app`，immediate reason =
+    launch job demand）：系统（runningboardd）**已按需拉起过我们的 bundle**，说明它能读到这个
+    app；但输入源**表**（`$TMPDIR/C/…IntlDataCache.le.kbdx`）里仍无条目，佐证"表只在登录时扩充"。
+  - 用 TIS 公共 API 做**过滤**查询（`TISCreateInputSourceList(filter, true)`）在本沙盒进程里
+    一律返回 NULL（不带过滤的查询正常返回 310 条），所以无法在会话内直接
+    `TISEnableInputSource` 把本输入法塞进已启用列表——只能走"注销重登"。
 - **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
   直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
   `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
