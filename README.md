@@ -17,6 +17,23 @@ macOS InputMethodKit 本身就是进程间模型）。
   (Swift)           (C++，仅转发+上报)
 ```
 
+## 与 Squirrel / Rime 的关系（本项目不含其代码）
+
+本项目是**从零实现**的：Go 引擎（`engine/`）、IPC（`ipc/`）、候选窗渲染
+（`renderer/`）、三端薄壳（`shims/`）全部为本仓库自研代码，
+`git ls-files` 中没有任何 Squirrel / librime 源码，也没有引用其图标素材。
+来自第三方的只有**数据**：
+
+- OpenCC 简繁词典（Apache-2.0，内嵌于 `engine/dp_data/`，见其 README）；
+- 可选导入的 CC-CEDICT 词库（CC-BY-SA 4.0，仓库不分发，由用户自行下载后合并）；
+- `engine/double_pinyin.go` 的双拼键位按 Rime schema 的 speller algebra 规则
+  **转写生成**（表由本项目正向生成并做完整性测试，不是拷贝实现）。
+
+> 排障提示：系统「输入法」列表里若出现**鼠须管**（`im.rime.inputmethod.Squirrel`），
+> 那是官方 Rime/Squirrel 应用。2026-10-05 排查"macOS 为何不枚举本输入法"时，
+> 曾把官方 Squirrel 重签后放进 `~/Library/Input Methods` 作为对照样本；
+> 它**不属于本项目**，其代码、名称与图标都不得复用。详见 `shims/macos/README.md`。
+
 ## 目录结构
 
 ```
@@ -207,6 +224,14 @@ Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（�
 行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输走 TCP 回环
 （替代早期命名管道方案）；自绘候选窗与 UWP/AppContainer 场景待真机。
 逐项状态见 shims/windows/README。
+
+> **2026-10-06 macOS 输入源枚举**：已按同目录下可正常枚举的第三方输入法
+> （官方 Squirrel 1.1.2）逐键对齐修复——输入源 ID 与 `CFBundleIdentifier` 统一为
+> `ime.chaoset.inputmethod`（模式为 `.Hans`）、补图标键与本家图标、补 Xcode 样板键；
+> 并新增 `shims/macos/install.sh` 一键安装（含 `TISRegisterInputSource`）。
+> 注意 macOS 的输入源表**在登录时才扩充新输入法**（官方 Squirrel 安装包同样声明
+> `postinstall-action="logout"`）：装入后必须注销重登，`tis list` 里才会出现
+> `ime.chaoset.inputmethod[.Hans]`。详见 shims/macos/README 的验证状态一节。
 
 ## 热词导入
 
