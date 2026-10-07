@@ -39,7 +39,12 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
 
-# 3. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
+# 3a.（可选，免重登尝试）在普通终端里尽力登记并启用；沙盒进程做不了这件事
+./reregister.sh
+#     它会：重新登记 → 查系统输入源表是否可见 → 可见则 enable + select。
+#     不可见就说明依旧只能走"注销重登"。
+
+# 3b. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
 ./verify.sh
 #    单独看枚举也可：./build/tis list | grep -i chaoset
 #    期望出现 ime.chaoset.inputmethod 与 ime.chaoset.inputmethod.Hans 两行

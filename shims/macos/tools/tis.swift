@@ -6,6 +6,7 @@ import CoreFoundation
 // 用法：
 //   tis register <app 路径>   注册新安装的输入法 bundle
 //   tis list                  列出全部键盘输入源（chaoset 相关加 [*] 标记）
+//   tis enable <输入源ID>     把输入源加入"已启用"列表（AppleEnabledInputSources）
 //   tis select <输入源ID>     切换到指定输入源
 
 func prop(_ source: TISInputSource, _ key: CFString) -> String {
@@ -31,6 +32,20 @@ case "register":
     let status = TISRegisterInputSource(url)
     print("register status: \(status) \(status == noErr ? "(成功)" : "(失败)")")
     exit(status == noErr ? 0 : 1)
+
+case "enable":
+    guard args.count >= 3 else {
+        FileHandle.standardError.write(Data("用法: tis enable <输入源ID>\n".utf8))
+        exit(2)
+    }
+    let want = args[2]
+    for source in allSources() where prop(source, kTISPropertyInputSourceID) == want {
+        let status = TISEnableInputSource(source)
+        print("enable \(want): \(status) \(status == noErr ? "(成功)" : "(失败)")")
+        exit(status == noErr ? 0 : 1)
+    }
+    FileHandle.standardError.write(Data("未找到输入源 \(want)（表里没有就无法启用）\n".utf8))
+    exit(1)
 
 case "select":
     guard args.count >= 3 else {
