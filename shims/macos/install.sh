@@ -22,6 +22,12 @@ echo "已安装: $IM/ChaosetIME.app"
 
 if [ -x build/tis ]; then
   build/tis register "$IM/ChaosetIME.app" || true
+  # 与官方 Squirrel postinstall 的 --enable-input-source / --select-input-source 对应：
+  # 尽力把本输入法加入"已启用"列表并选中。系统输入源表尚未收录时这两步会失败，
+  # 属正常现象（表只在登录时扩充），失败不影响后续流程。
+  build/tis enable "ime.chaoset.inputmethod" || true
+  build/tis enable "ime.chaoset.inputmethod.Hans" || true
+  build/tis select "ime.chaoset.inputmethod.Hans" || true
 else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi
