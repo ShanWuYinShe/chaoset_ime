@@ -84,6 +84,24 @@ func TestWriteTSVRoundtrip(t *testing.T) {
 	}
 }
 
+// 别人编辑的词典常把拼音连写（hundun、shurufa）：整串能切成合法音节时应自动切分。
+func TestParseDictAutoRunOnPinyin(t *testing.T) {
+	const src = "混沌输入法\thundun shurufa\t88\n好朋友\thaopengyou\t77\n坏词\tzzz\t10\n"
+	d, skipped, err := ParseDictAuto(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if skipped != 1 {
+		t.Fatalf("只应跳过 zzz 一行，得到 %d", skipped)
+	}
+	if got := d.Query([]string{"hun", "dun", "shu", "ru", "fa"}); len(got) != 1 || got[0].Word != "混沌输入法" {
+		t.Fatalf("hundun shurufa 应切成 hun dun shu ru fa: %+v", got)
+	}
+	if got := d.Query([]string{"hao", "peng", "you"}); len(got) != 1 || got[0].Word != "好朋友" {
+		t.Fatalf("haopengyou 应切成 hao peng you: %+v", got)
+	}
+}
+
 func TestLoadDictFiles(t *testing.T) {
 	dir := t.TempDir()
 	p1 := filepath.Join(dir, "a.tsv")

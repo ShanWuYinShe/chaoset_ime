@@ -81,9 +81,40 @@ func normalizePinyin(code string) []string {
 			tok = alt
 		}
 		if !IsSyllable(tok) {
-			return nil
+			// 别人编辑/导出的词库常见"连写拼音"（hundun、shurufa）：整串能
+			// 切成合法音节就自动切分，切不干净才按无效行跳过。
+			parts := segmentRunon(tok)
+			if parts == nil {
+				return nil
+			}
+			sylls = append(sylls, parts...)
+			continue
 		}
 		sylls = append(sylls, tok)
 	}
 	return sylls
+}
+
+// segmentRunon 把连写拼音整串切成合法音节（hundunshurufa → hun dun shu ru fa）。
+// 仅当整串都能切完才返回切片，否则返回 nil；切法取"最长首音节优先"。
+func segmentRunon(s string) []string {
+	const maxRunOn = 64 // 异常长串直接放弃，避免 O(n²) 退化
+	if s == "" || len(s) > maxRunOn {
+		return nil
+	}
+	n := len(s)
+	dp := make([][]string, n+1)
+	dp[0] = []string{}
+	for i := 1; i <= n; i++ {
+		for j := 0; j < i; j++ {
+			if dp[j] == nil {
+				continue
+			}
+			if IsSyllable(s[j:i]) {
+				dp[i] = append(append([]string{}, dp[j]...), s[j:i])
+				break // j 递增 → 首音节最长者优先
+			}
+		}
+	}
+	return dp[n]
 }

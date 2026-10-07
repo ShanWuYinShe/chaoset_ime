@@ -247,6 +247,18 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 重复词条默认取较大词频，`-replace` 以导入词频覆盖。
 封闭格式（搜狗 .scel 等）先用开源「深蓝词库转换」转成 Rime/TSV 再导入。
 
+别人编辑好的词库可以直接导入：拼音**连写**（`hundun shurufa`、`haopengyou`）会
+自动切成合法音节，只有切不干净的行才跳过并汇报——从各类导出工具拿到的词库
+不必先手工规范格式。
+
+### 一条命令导入（普通用户，macOS）
+
+```sh
+sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个文件
+# 流程：合并（种子词 + 现用词库 + 新词库）→ 备份旧词库 → 原子替换 →
+#       重启 daemon 生效 → 复核 IPC；加 --no-current 则只并入新词库
+```
+
 ## 用户词典管理
 
 ```sh
