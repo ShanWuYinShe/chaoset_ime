@@ -4,10 +4,10 @@ set -e
 cd "$(dirname "$0")"
 
 mkdir -p build
-echo "[1/4] 编译 Go daemon..."
+echo "[1/5] 编译 Go daemon..."
 (cd ../.. && go build -o shims/macos/build/chaosetd ./cmd/chaosetd)
 
-echo "[2/4] 编译 Swift 输入法壳与验证工具..."
+echo "[2/5] 编译 Swift 输入法壳与验证工具..."
 APP=build/ChaosetIME.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -18,12 +18,12 @@ swiftc -O -framework InputMethodKit -framework AppKit src/*.swift -o "$APP/Conte
 swiftc -O -framework Carbon tools/tis.swift -o build/tis
 swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/EngineClient.swift -o build/smoke
 
-echo "[3/4] 生成图标（本家徽标，不复用第三方素材）..."
+echo "[3/5] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources
 swift tools/make-icon.swift build/Resources
 iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIME.icns
 
-echo "[4/4] 组装 app bundle..."
+echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns build/Resources/ChaosetIME.pdf "$APP/Contents/Resources/"
 
@@ -148,4 +148,58 @@ plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings
 plutil -lint "$APP/Contents/Info.plist"
 codesign --force -s - "$APP"
 
-echo "已生成 $(pwd)/$APP (daemon: build/chaosetd)"
+echo "[5/5] 组装图形化安装/设置 app（超集输入法.app）..."
+# 面向不用命令行的用户：双击即可安装/更新、导入词库、看状态。
+# 随包携带输入法壳、daemon、导入工具与种子词库，全部操作在 app 内完成。
+SETUP=build/ChaosetSetup.app
+rm -rf "$SETUP"
+mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
+swiftc -O -framework AppKit -framework Carbon -framework UniformTypeIdentifiers \
+  setup/main.swift -o "$SETUP/Contents/MacOS/ChaosetSetup"
+(cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
+cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.app"
+cp build/chaosetd build/chaoset-import ../../data/dict_seed.tsv "$SETUP/Contents/Resources/"
+cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"
+cat > "$SETUP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleDisplayName</key>
+	<string>超集输入法</string>
+	<key>CFBundleExecutable</key>
+	<string>ChaosetSetup</string>
+	<key>CFBundleIconFile</key>
+	<string>ChaosetIME</string>
+	<key>CFBundleIdentifier</key>
+	<string>ime.chaoset.setup</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>ChaosetSetup</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+cat > "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STR'
+"CFBundleDisplayName" = "超集输入法";
+"CFBundleName" = "超集输入法";
+STR
+printf 'APPL????' > "$SETUP/Contents/PkgInfo"
+plutil -lint "$SETUP/Contents/Info.plist" "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
+codesign --force -s - "$SETUP"
+
+echo "已生成 $(pwd)/$APP (daemon: build/chaosetd) 与 $(pwd)/$SETUP"

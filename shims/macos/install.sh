@@ -53,7 +53,16 @@ else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"
 fi
 
-# 3) 自检并给出结论（一条命令跑完就能知道下一步）
+# 3) 安装图形化工具到 ~/Applications —— 之后安装/更新、导入词库、看状态都能点界面完成，
+#    不必再用终端（面向不用命令行的用户）。
+if [ -d build/ChaosetSetup.app ]; then
+  mkdir -p "$HOME/Applications"
+  rm -rf "$HOME/Applications/ChaosetSetup.app"
+  cp -R build/ChaosetSetup.app "$HOME/Applications/"
+  echo "已安装图形界面工具: ~/Applications/超集输入法.app（Finder/启动台里双击打开）"
+fi
+
+# 4) 自检并给出结论（一条命令跑完就能知道下一步）
 echo
 if [ -x build/tis ] && build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
   echo "✓ 系统输入源表里已能看到本输入法。"

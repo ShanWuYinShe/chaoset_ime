@@ -251,9 +251,14 @@ bin/chaosetd -dict data/dict_seed.tsv -dict dict-merged.tsv
 自动切成合法音节，只有切不干净的行才跳过并汇报——从各类导出工具拿到的词库
 不必先手工规范格式。
 
-### 一条命令导入（普通用户，macOS）
+### 导入词库：图形界面（推荐）或一条命令（macOS）
+
+安装脚本会把图形化工具放进 `~/Applications/超集输入法.app`：**安装 / 更新输入法**、
+**导入词库…**（文件选择器，可多选 Rime dict.yaml / CC-CEDICT txt / TSV）、**重新检查**、
+**打开数据文件夹**——全部点界面完成，不必打开终端。
 
 ```sh
+# 命令行等价物（给习惯终端的用户）
 sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个文件
 # 流程：合并（种子词 + 现用词库 + 新词库）→ 备份旧词库 → 原子替换 →
 #       重启 daemon 生效 → 复核 IPC；加 --no-current 则只并入新词库
