@@ -53,7 +53,13 @@ else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"
 fi
 
+# 3) 自检并给出结论（一条命令跑完就能知道下一步）
 echo
-echo "下一步（必须）：注销并重新登录，然后到「系统设置 → 键盘 → 输入法」添加「超集拼音」。"
-echo "重登后核验：./build/tis list | grep -i chaoset"
-echo "           期望出现 ime.chaoset.inputmethod 与 ime.chaoset.inputmethod.Hans 两行。"
+if [ -x build/tis ] && build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
+  echo "✓ 系统输入源表里已能看到本输入法。"
+  echo "  下一步：系统设置 → 键盘 → 输入法 → 添加「超集拼音」（图标为中国印章）。"
+else
+  echo "✗ 系统输入源表里还看不到本输入法——这是正常现象：macOS 的输入源表只在【登录时】扩充。"
+  echo "  下一步（必须）：注销并重新登录，然后运行 ./verify.sh 复核（第 2 段应变成「OK: 系统已收录」）。"
+  echo "  想先试免重登：在普通终端里运行 ./reregister.sh（它会查权威输入源表，可见则自动 enable+select）。"
+fi
