@@ -314,6 +314,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
 }
 
+// 无界面状态查询：ChaosetSetup --status
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--status" {
+    print(statusText())
+    exit(0)
+}
+
 // 无界面自检：ChaosetSetup --selftest <supportDir> [词库文件...]
 if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--selftest" {
     let support = CommandLine.arguments[2]
