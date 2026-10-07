@@ -158,7 +158,8 @@ swiftc -O -framework AppKit -framework Carbon -framework UniformTypeIdentifiers 
   setup/main.swift -o "$SETUP/Contents/MacOS/ChaosetSetup"
 (cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
 cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.app"
-cp build/chaosetd build/chaoset-import ../../data/dict_seed.tsv "$SETUP/Contents/Resources/"
+cp build/chaosetd build/chaoset-import build/tis build/smoke \
+  ../../data/dict_seed.tsv "$SETUP/Contents/Resources/"
 cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"
 cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

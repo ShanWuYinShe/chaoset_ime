@@ -103,7 +103,10 @@ func importDictionaries(files: [String], support: String, importer: String, seed
 
     let lines = (try? String(contentsOfFile: dictPath, encoding: .utf8))?.split(separator: "\n").count ?? 0
     log += "词库已更新：\(dictPath)（\(lines) 行）\n"
-    if restart { log += restartDaemon(support: support) }
+    if restart {
+        log += restartDaemon(support: support)
+        log += smokeCheck()
+    }
     return log
 }
 
@@ -175,6 +178,79 @@ func installIME() -> String {
         out += "请注销并重新登录，然后回到本工具点「重新检查」；届时到「系统设置 → 键盘 →\n"
         out += "输入法」添加「超集拼音」即可。\n"
     }
+    return out
+}
+
+// ---- IPC 六项自检：与 verify.sh 第 4 段同用随包 smoke（同一实现，保证等价） ----
+func smokeCheck() -> String {
+    let sock = socketPath()
+    guard FileManager.default.fileExists(atPath: sock),
+          FileManager.default.isExecutableFile(atPath: res("smoke")) else {
+        return "IPC 自检跳过（缺 smoke 或套接字）\n"
+    }
+    let r = runTool(res("smoke"), [sock])
+    let last = r.output.split(separator: "\n").last.map(String.init) ?? ""
+    return "IPC 自检：\(last)\n"
+}
+
+// ---- 深度核验：与 shims/macos/verify.sh 四段一一对应 ----
+// 约定：GUI 与 CLI 必须等价，本函数与 --verify 就是 GUI 侧的 verify.sh。
+// 第 2 段特意用「内嵌 TIS API」与「随包 tis list」双重判定并互相对照，
+// tests/equivalence.sh 会持续断言两者结论一致。
+func verifyText() -> String {
+    let fm = FileManager.default
+    var fails = 0
+    var out = ""
+
+    // 1) 输入法装入（且 Info.plist 键齐全——与 verify.sh 的 plutil 检查等价）
+    let app = imeAppPath()
+    let keys = fm.fileExists(atPath: app)
+        ? Bundle(url: URL(fileURLWithPath: app))?
+            .object(forInfoDictionaryKey: "TISInputSourceID") as? String : nil
+    if keys == sourceID {
+        out += "PASS 1) 输入法已装入，Info.plist 输入源键齐全\n"
+    } else {
+        fails += 1
+        out += "FAIL 1) 输入法未装入或 Info.plist 缺输入源键\n"
+    }
+
+    // 2) TIS 收录：内嵌 API 与随包 tis list 两条实现，结论必须一致
+    let inline = findSource() != nil
+    let cli = runTool(res("tis"), ["list"]).output.lowercased().contains(sourceID)
+    if inline != cli {
+        fails += 1
+        out += "FAIL 2) 两条 TIS 查询实现结论不一致（内嵌=\(inline)，tis list=\(cli)）——等价性破坏\n"
+    } else if inline {
+        out += "PASS 2) 系统输入源表已收录（内嵌 API 与 tis list 结论一致）\n"
+    } else {
+        fails += 1
+        out += "FAIL 2) 系统输入源表未收录 —— 需注销重登（两条实现结论一致）\n"
+    }
+
+    // 3) daemon + IPC 六项
+    if fm.fileExists(atPath: socketPath()) {
+        let r = runTool(res("smoke"), [socketPath()])
+        let last = r.output.split(separator: "\n").last.map(String.init) ?? ""
+        if r.status == 0, last.contains("PASS") {
+            out += "PASS 3) daemon 在运行，\(last)\n"
+        } else {
+            fails += 1
+            out += "FAIL 3) daemon 套接字在但 IPC 自检失败：\(last)\n"
+        }
+    } else {
+        fails += 1
+        out += "FAIL 3) daemon 未运行\n"
+    }
+
+    // 4) 词库
+    if let c = try? String(contentsOfFile: supportDir() + "/dict.tsv", encoding: .utf8) {
+        out += "PASS 4) 当前词库 \(c.split(separator: "\n").count) 行\n"
+    } else {
+        fails += 1
+        out += "FAIL 4) 尚未部署词库\n"
+    }
+
+    out += fails == 0 ? "结论：全部通过\n" : "结论：\(fails) 项未过\n"
     return out
 }
 
@@ -318,6 +394,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--status" {
     print(statusText())
     exit(0)
+}
+
+// 无界面核验：ChaosetSetup --verify —— 与 verify.sh 四段一一对应；
+// 全过退出 0，任何一段不过退出 1（可被 tests/equivalence.sh 与 CI 断言）。
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--verify" {
+    let out = verifyText()
+    print(out)
+    exit(out.contains("FAIL") ? 1 : 0)
 }
 
 // 无界面自检：ChaosetSetup --selftest <supportDir> [词库文件...]

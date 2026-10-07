@@ -12,11 +12,16 @@ cd "$(dirname "$0")"
 APP=build/ChaosetIME.app
 IM="$HOME/Library/Input Methods"
 
-[ -d "$APP" ] || { echo "缺少 $APP，请先运行 ./build.sh"; exit 1; }
+[ -d "$APP" ] || { echo "缺少 ${APP}，请先运行 ./build.sh"; exit 1; }
 
 mkdir -p "$IM"
-# 同名 bundle 并存时系统可能沿用旧缓存，先移除旧输入法再拷入
-rm -rf "$IM/ChaosetIME.app"
+# 同名 bundle 并存时系统可能沿用旧缓存，先移除旧输入法再拷入；
+# 旧版备份（与图形工具「安装 / 更新」的行为保持一致）
+if [ -d "$IM/ChaosetIME.app" ]; then
+  bak="$IM/ChaosetIME.app.bak.$(date +%Y%m%d-%H%M%S)"
+  mv "$IM/ChaosetIME.app" "$bak"
+  echo "旧输入法已备份: $bak"
+fi
 cp -R "$APP" "$IM/"
 echo "已安装: $IM/ChaosetIME.app"
 
