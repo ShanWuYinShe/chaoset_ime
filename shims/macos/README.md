@@ -52,16 +52,13 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 # 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
 ```
 
-> ⚠️ **第 1 步与第 4 步之间必须注销并重新登录。** macOS 的输入源表在**登录时**才
-> 扩充新输入法，`TISRegisterInputSource` 只是"登记"：未重登前 `tis list` 里不会
-> 有本输入法，系统设置里也看不到。官方 Squirrel 安装包同理——它的 `PackageInfo`
-> 写着 `postinstall-action="logout"`，postinstall 还调用 `--register-input-source`
-> 与 `--enable-input-source`/`--select-input-source`。
->
-> 2026-10-06 实测（macOS 15.8.1）：装好后仅靠 `TISRegisterInputSource`、
-> `lsregister -f`、`killall TextInputMenuAgent`、甚至直接 `open` 该 app，
-> 都不会让它在当前会话进入输入源列表；而移走一个已在表里的输入法后，其条目
-> 会先变成无名字（`?`）再消失——即"删除是懒校验、新增只在登录扫描"。
+> ℹ️ **2026-10-21 更正：bundle 有效时不需要注销重登。** 装好并调用
+> `TISRegisterInputSource` 后，TIS 立即枚举到本输入法，系统设置「输入法」
+> 里直接可添加、可切换（当日实测）。此前"新增输入法只能靠登录扫描"的结论是
+> 误判：当时 bundle id 以 `inputmethod` 结尾，TIS 审讯不通过——注册返回 noErr
+> 但不会收录（根因与修法见「输入源标识与显示名」）。历史观察（2026-10-06，
+> 对象是无效 bundle）保留如下：`TISRegisterInputSource`、`lsregister -f`、
+> `killall TextInputMenuAgent`、直接 `open` 都不会让它进入输入源列表。
 
 ## 输入源标识与显示名
 
@@ -259,15 +256,23 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `./build/tis list | grep chaoset` 应出现两条，再用系统设置添加或
   `./reregister.sh` 启用+选中。
 
-剩余需要**注销重登后人工完成**：
+- **2026-10-21 候选窗残留修复**：真机使用反馈——输入后点击文本框外或切换应用，
+  v2 贴图候选窗会残留在屏幕上、点不掉也关不掉（`CGWindowList` 实测 owner
+  「超集拼音」累计数十个 on-screen 窗口）。根因有两点：① 系统结束输入会话
+  （点击文本框外、切换应用/输入法）走的是 `commitComposition:`，而壳只实现了
+  `deactivateServer:`；② 每个控制器实例各持一个 `NSPanel`，会话结束后无人
+  `orderOut`，窗口被 AppKit 的窗口表保留成"孤儿"。修复：候选面板改为全进程
+  共用（静态），`commitComposition:`/`activateServer:`/`deactivateServer:`/
+  `deinit` 全部收起面板，并设 `ignoresMouseEvents` 让点击穿透到宿主应用、
+  触发正常的会话提交。
 
-1. 注销并重新登录（macOS 行为：新装输入法重登后才进输入源列表，
-   Squirrel 官方安装流程同样要求注销）。
-2. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（印章图标），切换到它。
-3. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
+安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 
-若重登后列表仍无 ChaosetIME：`./build/tis list` 查看注册状态，
-并把 `shims/macos/build/tis` 的输出反馈给开发者。
+1. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（印章图标）并切换过去；
+   不想用系统设置时，可运行 `./reregister.sh`（尽力启用+选中）。
+2. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
+3. 若系统设置里仍看不到：`./build/tis list | grep chaoset` 查看枚举状态，
+   必要时注销重登一次刷新菜单缓存。
 
 ## 已知限制
 

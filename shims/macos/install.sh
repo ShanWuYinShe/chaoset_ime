@@ -1,11 +1,10 @@
 #!/bin/sh
 # 把构建好的 ChaosetIME.app 安装为当前用户的输入法，并登记给 TIS。
 #
-# ⚠️ 必须注销重登：TISRegisterInputSource 只完成"登记"，macOS 的输入源表在
-# **登录时**才扩充新输入法。未重登前 build/tis list 里不会有本输入法，系统
-# 设置里也看不到。官方 Squirrel 安装包同样如此（PackageInfo 里
-# postinstall-action="logout"；其 postinstall 亦调用 --register-input-source
-# 与 --enable-input-source / --select-input-source）。
+# 2026-10-21 实测：bundle id 有效时无需注销重登——拷入 + TISRegisterInputSource
+# 后系统立即枚举到本输入法，可直接在系统设置里添加。早前"必须注销重登"的结论
+# 源于无效 bundle id（以 inputmethod 结尾）导致的 TIS 审讯拒绝，详见 README。
+# 若改过 bundle id 后列表暂不可见，注销重登一次即可刷新。
 set -e
 cd "$(dirname "$0")"
 

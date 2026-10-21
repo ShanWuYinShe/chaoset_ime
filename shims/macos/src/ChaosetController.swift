@@ -206,7 +206,7 @@ final class ChaosetController: IMKInputController {
         )
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
         if !hasCandidates {
-            imagePanel?.orderOut(nil)
+            Self.hideCandidatePanel()
             candidateWindow?.hide()
             return
         }
@@ -222,17 +222,26 @@ final class ChaosetController: IMKInputController {
 
     // ---- v2 统一候选窗贴图面板 ----
 
-    private var imagePanel: NSPanel?
+    // 全进程共用一个贴图面板：IMK 会为不同客户端/输入上下文创建多个控制器
+    // 实例，若每个实例各持有一个 NSPanel，而会话结束时系统只发
+    // commitComposition:（点击文本框外）而没有 deactivateServer:，旧面板就会
+    // 永远留在屏幕上、点不掉也关不掉（2026-10-21 实测同时残留多个候选窗）。
+    // 改为共用面板 + 在全部会话结束路径收起，保证任何时刻最多一个可见候选窗。
+    private static var imagePanel: NSPanel?
+
+    private static func hideCandidatePanel() {
+        imagePanel?.orderOut(nil)
+    }
 
     /// 显示 daemon 渲染的候选窗贴图；返回 false 表示不可用（回退 v1）。
     private func showImagePanel() -> Bool {
         guard let image = engine.candidateImage(), let png = image.png,
               let nsImage = NSImage(data: png) else {
-            imagePanel?.orderOut(nil)
+            Self.hideCandidatePanel()
             return false
         }
         let panel: NSPanel
-        if let existing = imagePanel {
+        if let existing = Self.imagePanel {
             panel = existing
         } else {
             panel = NSPanel(
@@ -244,10 +253,13 @@ final class ChaosetController: IMKInputController {
             panel.level = .floating
             panel.isOpaque = false
             panel.backgroundColor = .clear
+            // 候选窗只负责展示：不拦截鼠标，点击应落到宿主应用并触发会话提交
+            panel.ignoresMouseEvents = true
             let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
             imageView.autoresizingMask = [.width, .height]
             imageView.imageScaling = .scaleNone
             panel.contentView = imageView
+            Self.imagePanel = panel
         }
         let size = nsImage.size
         panel.setContentSize(size)
@@ -275,9 +287,28 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 生命周期
 
+    // 输入会话被提交（点击文本框外、切换应用/输入法时系统调用）：必须清空
+    // 会话状态并收起候选窗，否则 v2 贴图面板会残留在屏幕上且无法关闭。
+    override func commitComposition(_ sender: Any!) {
+        current = engine.reset()
+        Self.hideCandidatePanel()
+        candidateWindow?.hide()
+    }
+
+    override func activateServer(_ sender: Any!) {
+        // 新的输入上下文：先收掉上一个上下文可能残留的候选窗
+        Self.hideCandidatePanel()
+        candidateWindow?.hide()
+    }
+
     override func deactivateServer(_ sender: Any!) {
         current = engine.reset()
+        Self.hideCandidatePanel()
         candidateWindow?.hide()
-        imagePanel?.orderOut(nil)
+    }
+
+    deinit {
+        Self.hideCandidatePanel()
+        candidateWindow?.hide()
     }
 }
