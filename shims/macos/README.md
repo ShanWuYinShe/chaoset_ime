@@ -47,7 +47,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 # 3b. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
 ./verify.sh
 #    单独看枚举也可：./build/tis list | grep -i chaoset
-#    期望出现 ime.chaoset.inputmethod 与 ime.chaoset.inputmethod.Hans 两行
+#    期望出现 ime.chaoset.inputmethod.ChaosetIME 与 ime.chaoset.inputmethod.ChaosetIME.Hans 两行
 
 # 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
 ```
@@ -67,11 +67,20 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 | 项 | 值 |
 |---|---|
-| `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod`（**两者必须一致**） |
-| 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.Hans`（父 ID + `.Hans`） |
+| `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
+| 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
 | 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
 | 图标 | 中国印章风格：中国红底 + 白色双框 + 宋体「超」+ 云纹暗纹（大尺寸）；`ChaosetIME.icns`（应用图标）与 `ChaosetIME.pdf`（输入源菜单图标）都由 `tools/make-icon.swift` 现场绘制，不依赖任何外部素材 |
 
+> ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
+> `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
+> 仅以 `inputmethod` 结尾（如曾经的 `ime.chaoset.inputmethod`）**不会生效**：
+> 2026-10-21 本机（macOS 15.8.1）重启登录复验，TIS 输入源缓存（138,876 B，
+> 与纯系统表等大）里仍无该 identifier，系统设置也看不到；这正是此前
+> 「plist 键逐一对齐 Squirrel 仍不收录」的真正原因。依据：
+> `TextInputSources.h`（InputSourceID 推导规则含 "ends in `.inputmethod.`"）、
+> rdar://21376022（结尾写法实测无效、改到中间才生效）、SO 8960016。
+>
 > ⚠️ 系统「输入法」列表里若出现**鼠须管**，那是官方 Rime/Squirrel 应用
 > （`im.rime.inputmethod.Squirrel`）。2026-10-05 排障时曾把官方 Squirrel 1.1.2
 > 下载、ad-hoc 重签后放进 `~/Library/Input Methods/SquirrelAdhoc.app`，用作
@@ -232,6 +241,23 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   已按「逐键对齐可用样本」重写 `build.sh` 的 plist 模板并把 ID 对齐为
   `ime.chaoset.inputmethod[.Hans]`，同时新增自有图标生成器；
   装入输入法目录后用 `./build/tis list | grep -i chaoset` 复验。
+- **2026-10-21 根因确认（键集对齐不是充分条件）**：用户重启系统（12:37 重启、
+  12:38 登录）后复验，TIS 输入源缓存仍为 138,876 B（=纯系统表大小，无第三方
+  条目），`tis list` 310 条里无本输入法——即键集对齐后的 plist 依旧被拒。
+  对照同一台机器上曾被枚举的 ad-hoc Squirrel（`im.rime.inputmethod.Squirrel`）
+  与官方/同类实现（`app.msime.inputmethod.MetasequoiaIME` 等）后确认：
+  **bundle id 缺少内层 `.inputmethod.` 段**（当时为 `ime.chaoset.inputmethod`，
+  inputmethod 在末尾）是剩余唯一结构性差异。检索证据：
+  - `TextInputSources.h`（本机 SDK）：InputSourceID 由 BundleID 推导时，
+    InputModeID 后缀的裁剪规则写作 "…or that ends in `.inputmethod.`"；
+  - rdar://21376022（Open Radar）：bundle id 为 `…MyInputMethodName.inputmethod`
+    （结尾写法）时注销重登也不显示，改到中间 `…inputmethod.MyInputMethodName`
+    后才出现；
+  - SO 8960016 的公认答案：bundle id 必须含 `inputmethod` 段（`com.blugs.inputmethod.IPAPalette`）。
+  已把 bundle id / TISInputSourceID / 模式 ID / 本地化键统一改为
+  `ime.chaoset.inputmethod.ChaosetIME[.Hans]`，需再注销重登一次让登录扫描收录；登录后
+  `./build/tis list | grep chaoset` 应出现两条，再用系统设置添加或
+  `./reregister.sh` 启用+选中。
 
 剩余需要**注销重登后人工完成**：
 

@@ -28,11 +28,18 @@ mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns build/Resources/ChaosetIME.pdf "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
-# 枚举为可添加的输入源。除该字典外，以下两组键对齐同目录下可正常枚举的
+# 枚举为可添加的输入源。除该字典外，以下三组键对齐同目录下可正常枚举的
 # 第三方输入法（2026-10-06 以官方 Squirrel 1.1.2 为对照取证）：
-#   ① 输入源 ID 与 CFBundleIdentifier 一致（bundle 与顶层 TISInputSourceID
-#      都是 ime.chaoset.inputmethod，输入模式为其加 .Hans 后缀）；
-#   ② 图标键与 Xcode 样板键（CFBundleIconFile/…、LSMinimumSystemVersion、
+#   ① **CFBundleIdentifier 必须含内层 ".inputmethod." 段**——即 inputmethod
+#      前后都还有别的段（如 im.rime.inputmethod.Squirrel），仅以 inputmethod
+#      结尾不生效。2026-10-21 本机（macOS 15.8.1）登录复验：以
+#      "…chaoset.inputmethod" 结尾的 bundle 重启登录后仍不被 TIS 收录；
+#      同目录 ad-hoc 签名的 Squirrel 1.1.2 可正常收录。依据：
+#      TextInputSources.h 的 InputSourceID 推导规则（"ends in .inputmethod."）、
+#      rdar://21376022（结尾写法实测无效）、SO 8960016。
+#   ② 输入源 ID 与 CFBundleIdentifier 一致（bundle 与顶层 TISInputSourceID
+#      相同，输入模式为其加 .Hans 后缀）；
+#   ③ 图标键与 Xcode 样板键（CFBundleIconFile/…、LSMinimumSystemVersion、
 #      CFBundleSupportedPlatforms、CFBundleSignature、LSBackgroundOnly、
 #      TICapsLockLanguageSwitchCapable、InputMethodServerDelegateClass）。
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -47,7 +54,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleIconFile</key>
 	<string>ChaosetIME</string>
 	<key>CFBundleIdentifier</key>
-	<string>ime.chaoset.inputmethod</string>
+	<string>ime.chaoset.inputmethod.ChaosetIME</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -81,17 +88,17 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>TICapsLockLanguageSwitchCapable</key>
 	<true/>
 	<key>TISInputSourceID</key>
-	<string>ime.chaoset.inputmethod</string>
+	<string>ime.chaoset.inputmethod.ChaosetIME</string>
 	<key>TISIntendedLanguage</key>
 	<string>zh-Hans</string>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
 		<dict>
-			<key>ime.chaoset.inputmethod.Hans</key>
+			<key>ime.chaoset.inputmethod.ChaosetIME.Hans</key>
 			<dict>
 				<key>TISInputSourceID</key>
-				<string>ime.chaoset.inputmethod.Hans</string>
+				<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
 				<key>TISIntendedLanguage</key>
 				<string>zh-Hans</string>
 				<key>tsInputModeAlternateMenuIconFileKey</key>
@@ -118,7 +125,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>
 		<array>
-			<string>ime.chaoset.inputmethod.Hans</string>
+			<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
 		</array>
 	</dict>
 </dict>
@@ -139,8 +146,8 @@ for spec in "en:$NAME_EN" "zh-Hans:$NAME_ZH" "zh_CN:$NAME_ZH"; do
   cat > "$dir/InfoPlist.strings" <<STR
 "CFBundleDisplayName" = "$name";
 "CFBundleName" = "$name";
-"ime.chaoset.inputmethod" = "$name";
-"ime.chaoset.inputmethod.Hans" = "$name";
+"ime.chaoset.inputmethod.ChaosetIME" = "$name";
+"ime.chaoset.inputmethod.ChaosetIME.Hans" = "$name";
 STR
 done
 plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings

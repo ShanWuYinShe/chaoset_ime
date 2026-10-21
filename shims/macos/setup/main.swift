@@ -14,8 +14,8 @@ import UniformTypeIdentifiers
 // 全部操作都在自身进程内完成，不依赖仓库路径与终端。
 
 let imeBundleName = "ChaosetIME.app"
-let sourceID = "ime.chaoset.inputmethod"
-let modeID = "ime.chaoset.inputmethod.Hans"
+let sourceID = "ime.chaoset.inputmethod.ChaosetIME"
+let modeID = "ime.chaoset.inputmethod.ChaosetIME.Hans"
 
 func res(_ name: String) -> String { (Bundle.main.resourcePath ?? ".") + "/" + name }
 func supportDir() -> String { NSHomeDirectory() + "/Library/Application Support/chaoset" }

@@ -7,7 +7,7 @@ import InputMethodKit
 let connectionName = Bundle.main.object(forInfoDictionaryKey: "InputMethodConnectionName")
     as? String ?? "ChaosetIME_Connection"
 let bundleID = Bundle.main.object(forInfoDictionaryKey: "CFBundleIdentifier")
-    as? String ?? "ime.chaoset.inputmethod"
+    as? String ?? "ime.chaoset.inputmethod.ChaosetIME"
 let server = IMKServer(name: connectionName, bundleIdentifier: bundleID)
 ChaosetController.sharedServer = server
 

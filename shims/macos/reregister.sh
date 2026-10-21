@@ -8,8 +8,8 @@ set -e
 cd "$(dirname "$0")"
 
 APP="$HOME/Library/Input Methods/ChaosetIME.app"
-ID=ime.chaoset.inputmethod
-MODE=ime.chaoset.inputmethod.Hans
+ID=ime.chaoset.inputmethod.ChaosetIME
+MODE=ime.chaoset.inputmethod.ChaosetIME.Hans
 
 [ -d "$APP" ] || { echo "未装入：请先运行 ./install.sh"; exit 1; }
 [ -x build/tis ] || { echo "缺 build/tis：请先运行 ./build.sh"; exit 1; }
