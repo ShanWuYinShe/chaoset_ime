@@ -1,4 +1,4 @@
-// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源菜单图标 .pdf。
+// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源菜单/状态栏图标 .tiff。
 // 用法: swift tools/make-icon.swift <输出目录>
 //
 // 全部用 AppKit 现场绘制，不依赖任何外部素材，也不复用第三方图标
@@ -9,6 +9,7 @@
 //       大尺寸四角叠加回纹（雷纹）角饰；小尺寸自动退化为干净的印章徽标。
 import AppKit
 import CoreGraphics
+import ImageIO
 
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
@@ -70,6 +71,11 @@ func drawSeal(_ s: CGFloat, ornament: Bool) {
     inner.stroke()
 
     // 隶书「超」
+    drawSealGlyph(s)
+}
+
+/// 只画印章里的「超」字（模板图标做 alpha 挖空时复用）
+func drawSealGlyph(_ s: CGFloat) {
     let text = NSAttributedString(string: "超", attributes: [
         .font: sealFont(s * 0.50),
         .foregroundColor: NSColor.white,
@@ -90,19 +96,39 @@ func png(_ px: Int) -> Data {
     return rep.representation(using: .png, properties: [:])!
 }
 
-func pdf(_ size: CGFloat, to path: String) {
-    var box = CGRect(x: 0, y: 0, width: size, height: size)
-    let data = NSMutableData()
-    let consumer = CGDataConsumer(data: data as CFMutableData)!
-    let ctx = CGContext(consumer: consumer, mediaBox: &box, nil)!
-    ctx.beginPDFPage(nil)
+/// 输入源菜单/状态栏图标：系统按**模板图**（只取 alpha 通道着色）渲染，必须把
+/// 「超」字从色块里挖成透明；否则整块 alpha 不透明，菜单里只显示一个空白圆角
+/// 方块（2026-10-21 实测：对照 Squirrel 的 rime.pdf 中心区域 42% 透明像素，
+/// 本图标改前为 0%）。.icns 应用图标仍保留白字彩底，不受影响。
+func templateRep(_ px: Int) -> NSBitmapImageRep {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
+                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                               isPlanar: false, colorSpaceName: .deviceRGB,
+                               bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
-    drawSeal(size, ornament: false)
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    drawSeal(CGFloat(px), ornament: false)
+    // destinationOut：在位图 alpha 里挖出字形
+    NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
+    drawSealGlyph(CGFloat(px))
+    NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
     NSGraphicsContext.restoreGraphicsState()
-    ctx.endPDFPage()
-    ctx.closePDF()
-    try! (data as Data).write(to: URL(fileURLWithPath: path))
+    return rep
+}
+
+/// 多分辨率 TIFF（16/32/64 px 各一页），系统按 Retina 需要挑页面。
+/// 用 TIFF 而非 PDF：TextInputSources.h 明确 "TIFF files are the normal icon
+/// format for input modes"，且系统取图标走 NSBundle imageForResource:。
+func tiff(_ path: String) {
+    let url = URL(fileURLWithPath: path)
+    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.tiff" as CFString, 3, nil) else {
+        fatalError("无法创建 TIFF: \(path)")
+    }
+    for px in [16, 32, 64] {
+        guard let cg = templateRep(px).cgImage else { fatalError("TIFF 编码失败 \(px)px") }
+        CGImageDestinationAddImage(dest, cg, nil)
+    }
+    guard CGImageDestinationFinalize(dest) else { fatalError("TIFF 写盘失败: \(path)") }
 }
 
 let iconset = URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME.iconset")
@@ -114,5 +140,5 @@ for base in [16, 32, 128, 256, 512] {
         try! png(base * scale).write(to: iconset.appendingPathComponent(name))
     }
 }
-pdf(22, to: URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME.pdf").path)
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME.pdf")
+tiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME.tiff").path)
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME.tiff")

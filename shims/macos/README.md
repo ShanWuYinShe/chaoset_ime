@@ -67,7 +67,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
 | 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 中国印章风格：中国红底 + 白色双框 + 宋体「超」+ 云纹暗纹（大尺寸）；`ChaosetIME.icns`（应用图标）与 `ChaosetIME.pdf`（输入源菜单图标）都由 `tools/make-icon.swift` 现场绘制，不依赖任何外部素材 |
+| 图标 | 中国印章风格：中国红底 + 白色双框 + 宋体「超」+ 云纹暗纹（大尺寸）；`ChaosetIME.icns`（应用图标）与 `ChaosetIME.tiff`（输入源菜单/状态栏图标，多分辨率 16/32/64）都由 `tools/make-icon.swift` 现场绘制，不依赖任何外部素材。**菜单图标必须把字形从 alpha 里挖空**（模板图渲染只取 alpha），否则菜单里只显示一个空白圆角方块 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
 > `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
@@ -265,6 +265,16 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   共用（静态），`commitComposition:`/`activateServer:`/`deactivateServer:`/
   `deinit` 全部收起面板，并设 `ignoresMouseEvents` 让点击穿透到宿主应用、
   触发正常的会话提交。
+
+- **2026-10-21 输入源图标空白修复**：输入菜单与系统设置里「超集拼音」只显示一个空白
+  圆角方块。根因不是图标文件加载失败（`NSBundle.image(forResource: "ChaosetIME.pdf")`
+  能正常取到 22×22 图），而是系统把输入源图标当**模板图**渲染——只取 alpha 通道着色。
+  原印章 PDF 的 alpha 在字形处也是不透明（中心区域透明像素 0%），整块被涂成白色；
+  对照 Squirrel 的 rime.pdf 中心区域有 42% 透明像素（「鼠」字是挖空的）。
+  修复：菜单/状态栏图标改为**多分辨率 TIFF（16/32/64）并用 `destinationOut` 把「超」
+  字从 alpha 挖空**（TIFF 也是 TextInputSources.h 声明的输入模式图标常规格式）；.icns
+  应用图标保持白字彩底不变。验证：TIFF 三页中心透明像素占 17%–22%，装回后菜单图标
+  呈现「超」字形。
 
 安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 
