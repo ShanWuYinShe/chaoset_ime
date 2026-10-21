@@ -289,9 +289,21 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   - **为什么必须两个文件**：输入菜单按模板图渲染（只取 alpha），系统设置按彩色渲染；
     同一张图无法同时满足（挖空字形在彩色浅色界面会"隐形"，实心彩色图在模板路径会成
     实心方块）。
-  - 灰色条目的处理：重启 `TextInputMenuAgent` 后菜单图标缓存会刷新；若条目仍灰，
-    在系统设置里把「超集拼音」移除后重新添加一次（写入
-    `com.apple.inputsources.AppleEnabledThirdPartyInputSources`）。
+  - 灰色条目的真因（2026-10-22 定位）：输入菜单里的灰色条目 = **系统 TIS 输入源表
+    里没有本 bundle，但 `~/Library/Preferences/com.apple.inputsources.plist` 的
+    `AppleEnabledThirdPartyInputSources` 里仍有启用记录**（菜单按启用记录画出占位项，
+    因查不到输入源元数据而置灰不可选）。而 TIS 表缺失，是**重装 bundle 的竞态**造成：
+    替换 `~/Library/Input Methods` 里的文件会触发 TIS 缓存（`$TMPDIR/../C/
+    com.apple.IntlDataCache.le.kbdx`）重建，重建只移除/刷新、**不新增第三方输入源**；
+    登记动作若落在重建落盘之前就会被随后覆盖。
+  - 判定：在**普通终端（无沙盒）**执行 `build/tis list | grep chaoset` 看不到条目，
+    缓存大小是 138,876 B（纯系统表）；而 `defaults read`/`plutil` 里仍有启用记录。
+    注意：沙盒进程读不到系统缓存，会临时扫描目录凑出一份列表（能"看到"本输入法），
+    所以**必须在无沙盒终端判断**。
+  - 恢复：普通终端执行 `build/tis register "$HOME/Library/Input Methods/ChaosetIME.app"`，
+    缓存应变为 139,3xx B 并出现 `…ChaosetIME` / `…ChaosetIME.Hans` 两条，
+    菜单里的灰色条目随即恢复可选，**无需注销重登**。`install.sh` 已改为拷贝后
+    `sleep 2` 再登记并重试校验，避免再次踩到。
 
 安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 

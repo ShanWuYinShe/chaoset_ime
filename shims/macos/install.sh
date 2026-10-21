@@ -25,10 +25,22 @@ cp -R "$APP" "$IM/"
 echo "已安装: $IM/ChaosetIME.app"
 
 if [ -x build/tis ]; then
-  build/tis register "$IM/ChaosetIME.app" || true
+  # 拷贝/替换 bundle 会触发 TIS 缓存（IntlDataCache）重建，而该重建只移除/刷新、
+  # 不新增第三方输入源。若登记动作落在重建落盘之前，条目会被随后覆盖：表现为
+  # 输入菜单里本输入法变灰/不可用（com.apple.inputsources 里仍有启用记录）。
+  # 所以先等重建结束，再登记并确认系统表里能看到（2026-10-22 实测）。
+  sleep 2
+  for i in 1 2 3; do
+    build/tis register "$IM/ChaosetIME.app" || true
+    sleep 1
+    if build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
+      break
+    fi
+    echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
+  done
   # 与官方 Squirrel postinstall 的 --enable-input-source / --select-input-source 对应：
   # 尽力把本输入法加入"已启用"列表并选中。系统输入源表尚未收录时这两步会失败，
-  # 属正常现象（表只在登录时扩充），失败不影响后续流程。
+  # 属正常现象，失败不影响后续流程。
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
