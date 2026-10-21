@@ -82,7 +82,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>InputMethodConnectionName</key>
-	<string>ChaosetIME_Connection</string>
+	<string>ime.chaoset.inputmethod.ChaosetIME_Connection</string>
 	<key>tsInputMethodIconFileKey</key>
 	<string>ChaosetIME-palette.tiff</string>
 	<key>tsInputMethodAlternateIconFileKey</key>

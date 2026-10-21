@@ -24,6 +24,12 @@ fi
 cp -R "$APP" "$IM/"
 echo "已安装: $IM/ChaosetIME.app"
 
+# 让 LaunchServices 认识新拷贝的 bundle：imklaunchagent 按需拉起输入法走
+# LaunchServices，未重新登记时会出现「菜单里能选，但选中后进程不启动、打字没反应」
+# （2026-10-22 实测）。
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -f "$IM/ChaosetIME.app" 2>/dev/null || true
+
 if [ -x build/tis ]; then
   # 拷贝/替换 bundle 会触发 TIS 缓存（IntlDataCache）重建，而该重建只移除/刷新、
   # 不新增第三方输入源。若登记动作落在重建落盘之前，条目会被随后覆盖：表现为
@@ -69,7 +75,35 @@ else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"
 fi
 
-# 3) 安装图形化工具到 ~/Applications —— 之后安装/更新、导入词库、看状态都能点界面完成，
+# 3) 输入法进程常驻（LaunchAgent）
+# 本机 macOS 15.8.1 实测：imklaunchagent 无法按需拉起本输入法（日志
+# `LaunchInputMethod() Error, status=-50`；调试期反复结束进程还可能触发它
+# "异常退出就禁止拉起"的保护，见 man imklaunchagent）。输入法进程常驻时客户端
+# 能正常连接（实测 Activate Server → 打字正常），所以让 IME 常驻，避免"选中后
+# 打字没反应"。
+LA="$HOME/Library/LaunchAgents/ime.chaoset.inputmethod.plist"
+mkdir -p "$HOME/Library/LaunchAgents"
+cat > "$LA" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>ime.chaoset.inputmethod</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$IM/ChaosetIME.app/Contents/MacOS/ChaosetIME</string>
+	</array>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+</dict>
+</plist>
+PLIST
+plutil -lint "$LA" >/dev/null
+launchctl bootout "gui/$(id -u)/ime.chaoset.inputmethod" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$LA" 2>/dev/null || true
+echo "已配置输入法常驻: $LA"
+
+# 4) 安装图形化工具到 ~/Applications —— 之后安装/更新、导入词库、看状态都能点界面完成，
 #    不必再用终端（面向不用命令行的用户）。
 if [ -d build/ChaosetSetup.app ]; then
   mkdir -p "$HOME/Applications"

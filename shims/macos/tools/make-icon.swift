@@ -84,6 +84,9 @@ func drawSealGlyph(_ s: CGFloat) {
     text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.035))
 }
 
+/// 应用图标（.icns）也采用 keycap 设计：系统设置的输入法列表与切换快捷键 HUD
+/// 取的是 bundle 的 application icon（IconRef），不是 mode 的菜单图标。方形画布
+/// 内居中放 20:16 的 keycap；字形同样挖空，这样按模板图渲染的 HUD 也不会变成实心方块。
 func png(_ px: Int) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
@@ -91,7 +94,11 @@ func png(_ px: Int) -> Data {
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    drawSeal(CGFloat(px), ornament: px >= 128)
+    let side = CGFloat(px)
+    let w = side * 0.94
+    let h = w * 0.8
+    NSGraphicsContext.current?.cgContext.translateBy(x: (side - w) / 2, y: (side - h) / 2)
+    drawKeycap(w: w, h: h, knockout: true)
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }
@@ -179,5 +186,6 @@ for base in [16, 32, 128, 256, 512] {
     }
 }
 keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-menu.tiff").path, knockout: true)
-keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-palette.tiff").path, knockout: false)
+// palette 也做成挖空：切换输入法的 HUD 对图标按模板图渲染，实心版本会显示成白方块
+keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-palette.tiff").path, knockout: true)
 print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-menu.tiff 与 ChaosetIME-palette.tiff")

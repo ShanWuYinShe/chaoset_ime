@@ -29,8 +29,9 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 ./build.sh          # 产出 build/ChaosetIME.app、build/chaosetd 与验证工具 build/tis、build/smoke
                     # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
 
-# 1. 一键安装：输入法 app（移除旧版→拷入→TIS 登记）+ daemon 与种子词库
-#    （daemon 已在跑的话会 killall 让其由 LaunchAgent 拉起新版）
+# 1. 一键安装：输入法 app（移除旧版→拷入→lsregister→TIS 登记）
+#    + daemon 与种子词库 + 输入法进程常驻 LaunchAgent
+#    （daemon/输入法已在跑的话会重新拉起新版）
 ./install.sh
 
 # 2. 若没有配 LaunchAgent，手动前台启动 daemon 先试通
@@ -67,7 +68,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
 | 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 应用图标 `ChaosetIME.icns`：中国印章（红底白框隶书「超」）。**输入源图标**：与系统输入法同款的扁平 keycap——20×16 圆角矩形 + 系统字体「Cs」，多分辨率 20×16/40×32/60×48，分两个变体：`ChaosetIME-menu.tiff`（字形 alpha 挖空，供按模板图渲染的输入菜单）与 `ChaosetIME-palette.tiff`（白底深字，供彩色渲染路径）。全部由 `tools/make-icon.swift` 现场绘制，不依赖外部素材。**不要用方形彩色大图当输入源图标**：尺寸与系统 keycap 不一致，且菜单模板渲染会把它涂成实心方块 |
+| 图标 | 统一为与系统输入法同款的扁平 keycap：20×16 圆角矩形 + 系统字体「Cs」（Chaoset），全部字形 alpha 挖空。`ChaosetIME.icns`（应用图标，方形画布内居中放 keycap）与 `ChaosetIME-menu.tiff` / `ChaosetIME-palette.tiff`（输入模式图标，多分辨率 20×16/40×32/60×48）都由 `tools/make-icon.swift` 现场绘制，不依赖外部素材。**系统设置列表与「切换输入法」HUD 取的是应用图标（.icns / IconRef），输入菜单取的是 mode 图标**，所以两处都要做、且都要挖空（模板渲染只取 alpha，实心图会被涂成白方块）。**不要用方形彩色大图当输入源图标** |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
 > `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
@@ -85,6 +86,16 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 > 名称都不得复用。本项目自身可被枚举后即可删除该样本。
 
 ## 开机自启（LaunchAgent）
+
+本机 macOS 15.8.1 实测存在一个 IMK 侧限制：**imklaunchagent 无法按需拉起本输入法**
+（统一日志：`LaunchInputMethod() Error, status=-50`；且 `man imklaunchagent` 写明它会
+对"短时间内反复异常退出"的输入法**直接禁止拉起**——调试期反复 `killall` 会踩到）。
+表现就是输入菜单里选中本输入法后**打字完全没反应**（进程没被拉起，按键被吞）。
+规避方式：**让输入法进程常驻**（实测常驻时客户端能正常 Activate Server，打字正常）。
+因此 `install.sh` 会额外安装两个 LaunchAgent：
+
+- `ime.chaoset.inputmethod` → 直接运行 `ChaosetIME.app/Contents/MacOS/ChaosetIME`（常驻，KeepAlive）；
+- `ime.chaoset.daemon` → 引擎 daemon（见下）。
 
 `~/Library/LaunchAgents/ime.chaoset.daemon.plist`（把路径里的 `you` 换成实际值）：
 
@@ -117,7 +128,9 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 ## 卸载
 
 ```sh
+launchctl bootout gui/$(id -u)/ime.chaoset.inputmethod
 launchctl bootout gui/$(id -u)/ime.chaoset.daemon
+rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
 rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 ```
@@ -280,15 +293,18 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   图标与 ABC/简体拼音的扁平 keycap 尺寸风格不一致，希望改用「Cs」（Chaoset）字标。
   对应调整：
   - 输入源图标改为 **20×16 扁平圆角 keycap + 系统字体「Cs」**（多分辨率
-    20×16/40×32/60×48），与应用图标（.icns 印章）彻底分开；
-  - 生成两个变体：`ChaosetIME-menu.tiff`（字形 alpha 挖空）与
-    `ChaosetIME-palette.tiff`（白底深字），分别挂到
-    `tsInputModeMenuIconFileKey`/`…AlternateMenu…` 与 `…Palette…`；
+    20×16/40×32/60×48）；应用图标 `.icns` 也改为同一 keycap 设计（方形画布居中）；
+  - 生成两个模式图标变体 `ChaosetIME-menu.tiff` / `ChaosetIME-palette.tiff`
+    （均为字形 alpha 挖空），分别挂到 `tsInputModeMenuIconFileKey`/`…AlternateMenu…`
+    与 `…Palette…`；
   - 补 bundle 级 `tsInputMethodIconFileKey`/`…AlternateIconFileKey`（指向 palette），
     让父输入源也有图标，避免菜单/系统设置里出现空白或裸 ID。
   - **为什么必须两个文件**：输入菜单按模板图渲染（只取 alpha），系统设置按彩色渲染；
     同一张图无法同时满足（挖空字形在彩色浅色界面会"隐形"，实心彩色图在模板路径会成
     实心方块）。
+  - 系统设置列表与切换 HUD 的图标来源：两者取的是**应用图标**（`.icns` / TIS
+    IconRef），不是 mode 图标；HUD 还按模板图渲染。所以 `.icns` 必须一起改成
+    keycap 并挖空字形，否则系统设置显示旧印章、HUD 显示白方块（2026-10-22 实测）。
   - 灰色条目的真因（2026-10-22 定位）：输入菜单里的灰色条目 = **系统 TIS 输入源表
     里没有本 bundle，但 `~/Library/Preferences/com.apple.inputsources.plist` 的
     `AppleEnabledThirdPartyInputSources` 里仍有启用记录**（菜单按启用记录画出占位项，
@@ -304,6 +320,20 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
     缓存应变为 139,3xx B 并出现 `…ChaosetIME` / `…ChaosetIME.Hans` 两条，
     菜单里的灰色条目随即恢复可选，**无需注销重登**。`install.sh` 已改为拷贝后
     `sleep 2` 再登记并重试校验，避免再次踩到。
+
+- **2026-10-22 IMK 连接名与按需拉起限制**：
+  - `InputMethodConnectionName` 必须是 **`<CFBundleIdentifier>_Connection`** 形式
+    （本壳为 `ime.chaoset.inputmethod.ChaosetIME_Connection`，main.swift 直接读 plist，
+    两处不会再不一致）。不满足时 `imklaunchagent` 记录
+    `Refusing connection name for bundle: unrecognized 'InputMethodConnectionName' value`。
+    依据：imklaunchagent 行为实测 + metasequoiaime/msime PR #2989（同一坑的修复记录）。
+  - 本机（macOS 15.8.1）实测 **imklaunchagent 仍无法按需拉起本输入法**：
+    `LaunchInputMethod() Error, status=-50` → 客户端拿不到 endpoint → 选中后打字
+    完全没反应。`man imklaunchagent` 还写明：对"短时间内反复异常退出"的输入法会
+    **直接禁止拉起**——调试时反复 `killall` 很容易踩到。
+  - 规避（已落地）：`install.sh` 安装 **`ime.chaoset.inputmethod` LaunchAgent**
+    让输入法进程常驻；实测常驻时客户端能正常 `Activate Server`、打字正常。
+    排查时不要把常驻进程当作"泄漏"随手 kill（会触发上面的禁启保护）。
 
 安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 
