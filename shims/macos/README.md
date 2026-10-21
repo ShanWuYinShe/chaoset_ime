@@ -67,7 +67,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
 | 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 中国印章风格：中国红底 + 白色双框 + 宋体「超」+ 云纹暗纹（大尺寸）；`ChaosetIME.icns`（应用图标）与 `ChaosetIME.tiff`（输入源菜单/状态栏图标，多分辨率 16/32/64）都由 `tools/make-icon.swift` 现场绘制，不依赖任何外部素材。**菜单图标必须把字形从 alpha 里挖空**（模板图渲染只取 alpha），否则菜单里只显示一个空白圆角方块 |
+| 图标 | 应用图标 `ChaosetIME.icns`：中国印章（红底白框隶书「超」）。**输入源图标**：与系统输入法同款的扁平 keycap——20×16 圆角矩形 + 系统字体「Cs」，多分辨率 20×16/40×32/60×48，分两个变体：`ChaosetIME-menu.tiff`（字形 alpha 挖空，供按模板图渲染的输入菜单）与 `ChaosetIME-palette.tiff`（白底深字，供彩色渲染路径）。全部由 `tools/make-icon.swift` 现场绘制，不依赖外部素材。**不要用方形彩色大图当输入源图标**：尺寸与系统 keycap 不一致，且菜单模板渲染会把它涂成实心方块 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
 > `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
@@ -275,6 +275,23 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   字从 alpha 挖空**（TIFF 也是 TextInputSources.h 声明的输入模式图标常规格式）；.icns
   应用图标保持白字彩底不变。验证：TIFF 三页中心透明像素占 17%–22%，装回后菜单图标
   呈现「超」字形。
+- **2026-10-22 输入源图标改为系统同款 keycap「Cs」+ 双变体**：真机反馈——① 输入菜单
+  里本输入法条目呈灰色、图标仍是空白方块，而系统设置里能显示红色印章图；② 方形印章
+  图标与 ABC/简体拼音的扁平 keycap 尺寸风格不一致，希望改用「Cs」（Chaoset）字标。
+  对应调整：
+  - 输入源图标改为 **20×16 扁平圆角 keycap + 系统字体「Cs」**（多分辨率
+    20×16/40×32/60×48），与应用图标（.icns 印章）彻底分开；
+  - 生成两个变体：`ChaosetIME-menu.tiff`（字形 alpha 挖空）与
+    `ChaosetIME-palette.tiff`（白底深字），分别挂到
+    `tsInputModeMenuIconFileKey`/`…AlternateMenu…` 与 `…Palette…`；
+  - 补 bundle 级 `tsInputMethodIconFileKey`/`…AlternateIconFileKey`（指向 palette），
+    让父输入源也有图标，避免菜单/系统设置里出现空白或裸 ID。
+  - **为什么必须两个文件**：输入菜单按模板图渲染（只取 alpha），系统设置按彩色渲染；
+    同一张图无法同时满足（挖空字形在彩色浅色界面会"隐形"，实心彩色图在模板路径会成
+    实心方块）。
+  - 灰色条目的处理：重启 `TextInputMenuAgent` 后菜单图标缓存会刷新；若条目仍灰，
+    在系统设置里把「超集拼音」移除后重新添加一次（写入
+    `com.apple.inputsources.AppleEnabledThirdPartyInputSources`）。
 
 安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 

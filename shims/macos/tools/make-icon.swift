@@ -1,4 +1,4 @@
-// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源菜单/状态栏图标 .tiff。
+// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源 keycap 图标（menu/palette）。
 // 用法: swift tools/make-icon.swift <输出目录>
 //
 // 全部用 AppKit 现场绘制，不依赖任何外部素材，也不复用第三方图标
@@ -96,36 +96,74 @@ func png(_ px: Int) -> Data {
     return rep.representation(using: .png, properties: [:])!
 }
 
-/// 输入源菜单/状态栏图标：系统按**模板图**（只取 alpha 通道着色）渲染，必须把
-/// 「超」字从色块里挖成透明；否则整块 alpha 不透明，菜单里只显示一个空白圆角
-/// 方块（2026-10-21 实测：对照 Squirrel 的 rime.pdf 中心区域 42% 透明像素，
-/// 本图标改前为 0%）。.icns 应用图标仍保留白字彩底，不受影响。
-func templateRep(_ px: Int) -> NSBitmapImageRep {
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
+/// 输入源图标（与 macOS 系统输入法一致的扁平 keycap 风格）：
+/// 20×16 圆角矩形 + 系统字体「Cs」（Chaoset）字标。
+///
+/// 2026-10-22 用户反馈：方形印章图标在系统设置/输入菜单里和 ABC、简体拼音的
+/// 扁平 keycap 尺寸/风格都不一致，且菜单里显示空白。故改成 keycap 风格，并分别
+/// 产出两个变体：
+/// - **menu** 变体（tsInputModeMenuIconFileKey / …Alternate…）：字形挖成透明。
+///   输入菜单按模板图渲染（只取 alpha 通道），挖空后在深色菜单里呈现为白底
+///   keycap + 深色「Cs」（与 ABC 的「A」、简体拼音的「拼」一致）。
+/// - **palette** 变体（tsInputModePaletteIconFileKey）：白底 + 深色字形，供按
+///   彩色渲染的界面（系统设置「所有输入法」列表）使用，两种渲染方式都不露馅。
+func drawKeycap(w: CGFloat, h: CGFloat, knockout: Bool) {
+    let rect = NSRect(x: 0.5, y: 0.5, width: w - 1, height: h - 1)
+    let path = NSBezierPath(roundedRect: rect, xRadius: h * 0.22, yRadius: h * 0.22)
+    NSColor.white.setFill()
+    path.fill()
+    if !knockout {
+        NSColor(white: 0, alpha: 0.35).setStroke()
+        path.lineWidth = max(0.8, h * 0.05)
+        path.stroke()
+    }
+    func attrs(_ size: CGFloat) -> [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: size, weight: .semibold),
+         .foregroundColor: knockout ? NSColor.white : NSColor(white: 0.10, alpha: 1)]
+    }
+    var size = h * 0.62
+    var text = NSAttributedString(string: "Cs", attributes: attrs(size))
+    while text.size().width > w * 0.74 && size > h * 0.30 {
+        size -= 0.5
+        text = NSAttributedString(string: "Cs", attributes: attrs(size))
+    }
+    let ts = text.size()
+    let origin = NSPoint(x: (w - ts.width) / 2, y: (h - ts.height) / 2 + h * 0.02)
+    if knockout {
+        // destinationOut：在位图 alpha 里挖出字形
+        NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
+        text.draw(at: origin)
+        NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
+    } else {
+        text.draw(at: origin)
+    }
+}
+
+func keycapRep(w: CGFloat, h: CGFloat, knockout: Bool) -> NSBitmapImageRep {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(w), pixelsHigh: Int(h),
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                isPlanar: false, colorSpaceName: .deviceRGB,
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    drawSeal(CGFloat(px), ornament: false)
-    // destinationOut：在位图 alpha 里挖出字形
-    NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
-    drawSealGlyph(CGFloat(px))
-    NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
+    drawKeycap(w: w, h: h, knockout: knockout)
     NSGraphicsContext.restoreGraphicsState()
     return rep
 }
 
-/// 多分辨率 TIFF（16/32/64 px 各一页），系统按 Retina 需要挑页面。
+/// 多分辨率 TIFF（20×16 / 40×32 / 60×48），系统按 Retina 需要挑页面。
 /// 用 TIFF 而非 PDF：TextInputSources.h 明确 "TIFF files are the normal icon
 /// format for input modes"，且系统取图标走 NSBundle imageForResource:。
-func tiff(_ path: String) {
+func keycapTiff(_ path: String, knockout: Bool) {
     let url = URL(fileURLWithPath: path)
-    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.tiff" as CFString, 3, nil) else {
+    let sizes: [(CGFloat, CGFloat)] = [(20, 16), (40, 32), (60, 48)]
+    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.tiff" as CFString, sizes.count, nil) else {
         fatalError("无法创建 TIFF: \(path)")
     }
-    for px in [16, 32, 64] {
-        guard let cg = templateRep(px).cgImage else { fatalError("TIFF 编码失败 \(px)px") }
+    for (w, h) in sizes {
+        guard let cg = keycapRep(w: w, h: h, knockout: knockout).cgImage else {
+            fatalError("TIFF 编码失败 \(w)x\(h)")
+        }
         CGImageDestinationAddImage(dest, cg, nil)
     }
     guard CGImageDestinationFinalize(dest) else { fatalError("TIFF 写盘失败: \(path)") }
@@ -140,5 +178,6 @@ for base in [16, 32, 128, 256, 512] {
         try! png(base * scale).write(to: iconset.appendingPathComponent(name))
     }
 }
-tiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME.tiff").path)
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME.tiff")
+keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-menu.tiff").path, knockout: true)
+keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-palette.tiff").path, knockout: false)
+print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-menu.tiff 与 ChaosetIME-palette.tiff")
