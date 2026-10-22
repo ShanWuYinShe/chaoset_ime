@@ -107,52 +107,50 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// 系统输入法（SCIM pinyin.tiff / KoreanIM 等）的输入源图标实测规格
-//（2026-10-22 用 16×16 与 32×32 两帧逐像素标定）：
-//   - 双帧 TIFF：16×16@72dpi + 32×32@144dpi，LZW 压缩；
+// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标实测规格：
+//   - 尺寸与比例：扁平 keycap（宽 22 pt × 高 16 pt，长宽比 1.375，圆角半径 ≈ 3.2 pt）；
+//   - 双帧 TIFF：22×16@72dpi (1x) + 44×32@144dpi (2x)，LZW 压缩；
 //   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**。用 CGImageDestination
-//     直接写多帧会写成 1（预乘），系统按模板渲染时边缘颜色被重复相乘，
-//     表现为图标偏亮/偏暗、与别的输入法不一致；
+//     直接写多帧会写成 1（预乘），系统按模板渲染时边缘颜色被重复相乘；
 //   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 表达（系统按模板图只取 alpha 着色）；
-//   - 方块**满幅**，圆角 ≈ 0.13×边长（首行 alpha = [6,145,237,255…]）；
-//   - 字形挖空占第 2–12 行（11/16 ≈ 0.69×边长），且**只用单个字符**：
-//     ABC 是「A」、简体拼音是「拼」、韩文是「한」。两字符（此前的「Cs」）
-//     在 16px 下必然模糊且视觉重量不足，这正是用户反馈「风格/大小不一样」的原因。
+//   - 按键满幅扁平圆角（宽 22 pt × 高 16 pt），圆角半径 0.20 × 高度；
+//   - 字形挖空单字符「C」（占高度 ≈ 0.72×高度），与 ABC「A」、简体拼音「拼」的扁平按键视觉重量一致。
 //
-// 实现要点：直接在 16×16 上画字体，笔画只有 1px 会断裂（实测「C」被切成 4 段）。
-// 所以先在 8× 超采样画布上用 CGBitmapContext 画「圆角方块挖去字形」，
+// 实现要点：直接在小画布上画字体，笔画会断裂且边缘锯齿严重。
+// 先在 8× 超采样画布上用 CGBitmapContext 画「圆角按键挖去字形」，
 // 再降采样到目标尺寸，最后逐像素写入 NSBitmapImageRep。
+// 特别注意：CGBitmapContext 原点在左下角，读出字节缓冲时第 0 行在底部，
+// 降采样写入 NSBitmapImageRep（第 0 行在顶部）时进行 Y 轴反转，防止字形颠倒。
 
-func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
-    let ss = 8                      // 超采样倍数
-    let big = px * ss
-    let sideBig = CGFloat(big)
-    let bytesPerRow = big * 4
+func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
+    let pxW = ptW * scale
+    let pxH = ptH * scale
+    let ss = 8                      // 针对当前 scale 的超采样倍数
+    let bigW = pxW * ss
+    let bigH = pxH * ss
+    let bytesPerRow = bigW * 4
 
     let cs = CGColorSpace(name: CGColorSpace.sRGB)!
-    guard let ctx = CGContext(data: nil, width: big, height: big,
+    guard let ctx = CGContext(data: nil, width: bigW, height: bigH,
                               bitsPerComponent: 8, bytesPerRow: bytesPerRow,
                               space: cs,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
         fatalError("无法创建 CGContext（输入源图标）")
     }
     ctx.setShouldAntialias(true)
-    ctx.clear(CGRect(x: 0, y: 0, width: sideBig, height: sideBig))
+    ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    // 1) 满幅圆角方块（圆角 0.13×边长）
-    let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: sideBig, height: sideBig),
-                      cornerWidth: sideBig * 0.20, cornerHeight: sideBig * 0.20,
+    // 1) 满幅圆角扁平 keycap（圆角 0.20×高度，在 16pt 下约 3.2pt）
+    let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bigW, height: bigH),
+                      cornerWidth: CGFloat(bigH) * 0.20, cornerHeight: CGFloat(bigH) * 0.20,
                       transform: nil)
     ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
     ctx.addPath(body)
     ctx.fillPath()
 
-    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.69×边长（二分调字号得到）
+    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.72×高度
     ctx.setBlendMode(.destinationOut)
-    let targetH = sideBig * 0.78
-    // 用**墨迹高度**（glyph path bounds）而非行高来二分：
-    // NSAttributedString.size() 返回的是行高（含上下留白），直接拿它当
-    // 字形高度会让实际墨迹偏小（实测 32px 帧只占 16 行，期望 22 行）。
+    let targetH = CGFloat(bigH) * 0.72
     func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
         let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
         let a = NSAttributedString(string: "C", attributes: [
@@ -161,55 +159,54 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
         let l = CTLineCreateWithAttributedString(a)
         return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
     }
-    var lo = sideBig * 0.4
-    var hi = sideBig * 5.0
-    var bestLine = metrics(sideBig).line
-    var bestBounds = metrics(sideBig).bounds
+    var lo = CGFloat(bigH) * 0.3
+    var hi = CGFloat(bigH) * 4.0
+    var bestLine = metrics(CGFloat(bigH)).line
+    var bestBounds = metrics(CGFloat(bigH)).bounds
     for _ in 0..<32 {
         let mid = (lo + hi) / 2
         let (l, b) = metrics(mid)
-        if b.height < targetH { lo = mid } else { hi = mid }
+        if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
         bestLine = l
         bestBounds = b
     }
     let line = bestLine
     let glyphBounds = bestBounds
-    // CGBitmapContext 原点在左下角，CTLineDraw 也按这个坐标系画；
-    // 而像素缓冲按「第 0 行在上」读回，两者必须一致，否则字形会整体偏下。
-    ctx.textPosition = CGPoint(x: (sideBig - glyphBounds.width) / 2 - glyphBounds.minX,
-                               y: (sideBig - glyphBounds.height) / 2 - glyphBounds.minY)
+    ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
+                               y: (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY)
     CTLineDraw(line, ctx)
     ctx.setBlendMode(.normal)
 
     // 3) 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
-    //（直接读 CGContext 的 data 会踩字节序/预乘的坑，实测 alpha 全 0）
     guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
-    var alphaBuf = [UInt8](repeating: 0, count: big * big)
+    var alphaBuf = [UInt8](repeating: 0, count: bigW * bigH)
     alphaBuf.withUnsafeMutableBytes { raw in
-        let readCtx = CGContext(data: raw.baseAddress, width: big, height: big,
-                                bitsPerComponent: 8, bytesPerRow: big,
+        let readCtx = CGContext(data: raw.baseAddress, width: bigW, height: bigH,
+                                bitsPerComponent: 8, bytesPerRow: bigW,
                                 space: CGColorSpaceCreateDeviceGray(),
                                 bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue)!
-        readCtx.draw(bigImage, in: CGRect(x: 0, y: 0, width: big, height: big))
+        readCtx.draw(bigImage, in: CGRect(x: 0, y: 0, width: bigW, height: bigH))
     }
 
-    // 4) 降采样并直接写 bitmapData（6) 说明：用 setColor 写入时 RGB=0 的
-    //    预乘像素会被算成整块透明（实测 alpha 全 0），直接写字节最可靠。
-    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
+    // 4) 降采样并写入 NSBitmapImageRep
+    // 注意：readCtx 原点在左下角，alphaBuf 第 0 行是图像底部；
+    // NSBitmapImageRep 第 0 行是图像顶部，因此读取时做 Y 轴翻转。
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pxW, pixelsHigh: pxH,
                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                      isPlanar: false, colorSpaceName: .deviceRGB,
-                                     bytesPerRow: px * 4, bitsPerPixel: 32),
+                                     bytesPerRow: pxW * 4, bitsPerPixel: 32),
           let data = rep.bitmapData else {
         fatalError("无法创建输入源图标位图")
     }
     let bpr = rep.bytesPerRow
     let count = Double(ss * ss)
-    for y in 0..<px {
-        for x in 0..<px {
+    for y in 0..<pxH {
+        let srcY = (pxH - 1 - y) * ss
+        for x in 0..<pxW {
             var sum = 0.0
             for dy in 0..<ss {
                 for dx in 0..<ss {
-                    sum += Double(alphaBuf[(y * ss + dy) * big + (x * ss + dx)])
+                    sum += Double(alphaBuf[(srcY + dy) * bigW + (x * ss + dx)])
                 }
             }
             let a = UInt8(max(0, min(255, (sum / count).rounded())))
@@ -225,7 +222,10 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
 }
 
 func writeInputSourceTiff(_ path: String) {
-    let frames: [(px: Int, dpi: Int)] = [(16, 72), (32, 144)]
+    let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
+        (22, 16, 1, 72),
+        (22, 16, 2, 144)
+    ]
     let tmpDir = NSTemporaryDirectory() + "chaoset-icon-\(ProcessInfo.processInfo.processIdentifier)"
     try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: tmpDir) }
@@ -233,15 +233,12 @@ func writeInputSourceTiff(_ path: String) {
     // 每一步先把像素写成 PNG，再由 tiffutil 合成多帧 TIFF。
     var pngPaths: [String] = []
     for frame in frames {
-        // 用 CGImageDestination 写 PNG，并显式带上 DPI：
-        // tiffutil -cathidpicheck 依赖输入的 DPI 判断哪张是 2x；若两帧都无 DPI
-        // 或都为 72，它就把两帧都标成 72，系统在 HiDPI 下会拿 16×16 拉伸，
-        // 表现为图标模糊、字形位置偏（2026-10-22 实测）。
-        // 系统图标实测：16×16 → 72dpi，32×32 → 144dpi。
-        guard let rep = inputSourceRep(frame.px).cgImage else {
+        let pxW = frame.ptW * frame.scale
+        let pxH = frame.ptH * frame.scale
+        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale).cgImage else {
             fatalError("输入源图标取 CGImage 失败")
         }
-        let pngPath = tmpDir + "/icon_\(frame.px).png"
+        let pngPath = tmpDir + "/icon_\(pxW)x\(pxH).png"
         let url = URL(fileURLWithPath: pngPath)
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
             fatalError("创建 PNG 失败: \(pngPath)")
@@ -252,9 +249,6 @@ func writeInputSourceTiff(_ path: String) {
         ] as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { fatalError("PNG 写盘失败: \(pngPath)") }
         pngPaths.append(pngPath)
-        // 调试留档，便于逐像素核对（不影响产物）
-        try? FileManager.default.removeItem(atPath: "/tmp/dbg-icon_\(frame.px).png")
-        try? FileManager.default.copyItem(atPath: pngPath, toPath: "/tmp/dbg-icon_\(frame.px).png")
     }
 
     // tiffutil -cathidpicheck <1x> <2x> -out <目标>：写出的 TIFF 与系统图同规格
@@ -272,9 +266,7 @@ func writeInputSourceTiff(_ path: String) {
         fatalError("tiffutil 合成 TIFF 失败: \(msg)")
     }
 
-    // tiffutil 不读 PNG 的 pHYs，两帧都写成 72dpi。系统靠第二帧的 Resolution
-    // 标签识别「这是 2x」，否则 HiDPI 下会拿 16×16 拉伸显示（图标糊、字形偏）。
-    // 这里直接改 TIFF 二进制里的 Resolution 标签（282/283）。
+    // 改写多帧 TIFF 中每帧的 XResolution/YResolution 标签（282/283）。
     resolveTagsInTiff(path: path, firstDPI: 72, secondDPI: 144)
 }
 
@@ -345,4 +337,4 @@ for base in [16, 32, 128, 256, 512] {
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
     .appendingPathComponent("ChaosetIME-icon2.tiff").path)
 
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（16×16+32×32 模板图）")
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（22×16+44×32 扁平按键模板图）")

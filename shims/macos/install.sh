@@ -15,12 +15,17 @@ IM="$HOME/Library/Input Methods"
 
 mkdir -p "$IM"
 # 同名 bundle 并存时系统可能沿用旧缓存，先移除旧输入法再拷入；
-# 旧版备份（与图形工具「安装 / 更新」的行为保持一致）
+# 旧版备份移至 .workwork/backups（不能以 .app 后缀残留在 Input Methods 目录，
+# 否则 LaunchServices 会并存多个同 ID 的 app，导致系统设置和图标服务持续命中旧备份）。
 if [ -d "$IM/ChaosetIME.app" ]; then
-  bak="$IM/ChaosetIME.app.bak.$(date +%Y%m%d-%H%M%S)"
+  BAK_DIR="../../.workwork/backups"
+  mkdir -p "$BAK_DIR"
+  bak="$BAK_DIR/ChaosetIME-$(date +%Y%m%d-%H%M%S)"
   mv "$IM/ChaosetIME.app" "$bak"
   echo "旧输入法已备份: $bak"
 fi
+# 清理可能遗留的旧备份 app
+rm -rf "$IM"/ChaosetIME.app.bak.* "$IM"/ChaosetIME.app.old.* 2>/dev/null || true
 cp -R "$APP" "$IM/"
 echo "已安装: $IM/ChaosetIME.app"
 
@@ -50,6 +55,14 @@ if [ -x build/tis ]; then
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
+
+  # 刷新系统输入菜单、系统设置与快捷键切换 HUD（杀掉常驻进程后系统会按需自动拉起最新进程，
+  # 彻底清除内存中残留的旧图标缓存，避免切换 HUD 仍显示旧版白块，避免系统设置显示旧图标）。
+  killall "System Settings" 2>/dev/null || true
+  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
+  pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
+  pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
+  pkill -9 -f "CursorUIViewService" 2>/dev/null || true
 else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi

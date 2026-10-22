@@ -88,6 +88,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<string>NSApplication</string>
 	<key>InputMethodConnectionName</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME_Connection</string>
+	<key>TISIconIsTemplate</key>
+	<true/>
+	<key>TISIconLabels</key>
+	<dict>
+		<key>Primary</key>
+		<string>C</string>
+	</dict>
 	<key>tsInputMethodIconFileKey</key>
 	<string>ChaosetIME-icon2.tiff</string>
 	<key>tsInputMethodAlternateIconFileKey</key>
@@ -108,6 +115,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 		<dict>
 			<key>ime.chaoset.inputmethod.ChaosetIME.Hans</key>
 			<dict>
+				<key>TISIconIsTemplate</key>
+				<true/>
+				<key>TISIconLabels</key>
+				<dict>
+					<key>Primary</key>
+					<string>C</string>
+				</dict>
 				<key>TISInputSourceID</key>
 				<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
 				<key>TISIntendedLanguage</key>

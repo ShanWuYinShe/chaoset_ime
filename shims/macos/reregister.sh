@@ -25,6 +25,11 @@ if build/tis list | grep -q "$ID"; then
   build/tis enable "$ID" || true
   build/tis enable "$MODE" || true
   build/tis select "$MODE" || true
+  killall "System Settings" 2>/dev/null || true
+  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
+  pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
+  pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
+  pkill -9 -f "CursorUIViewService" 2>/dev/null || true
   printf '\n若菜单栏输入法菜单里已出现「Chaoset」即可直接使用；\n'
   printf '若仍看不到，请注销重登一次（系统菜单缓存可能需要重登刷新）。\n'
 else
