@@ -4,6 +4,7 @@ build:
 	go build -o bin/chaosetd ./cmd/chaosetd
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
 	go build -o bin/chaoset-import ./cmd/chaoset-import
+	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
 	go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
 
 test:

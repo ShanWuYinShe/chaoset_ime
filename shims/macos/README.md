@@ -50,7 +50,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 #    单独看枚举也可：./build/tis list | grep -i chaoset
 #    期望出现 ime.chaoset.inputmethod.ChaosetIME 与 ime.chaoset.inputmethod.ChaosetIME.Hans 两行
 
-# 5. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（英文环境 Chaoset Pinyin），切到它开始打字
+# 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset」，切到它开始打字
 ```
 
 > ℹ️ **2026-10-21 更正：bundle 有效时不需要注销重登。** 装好并调用
@@ -67,8 +67,9 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 |---|---|
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
-| 显示名 | 「超集拼音」（英文环境 Chaoset Pinyin），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 统一为与系统输入法同款的扁平 keycap：20×16 圆角矩形 + 系统字体「Cs」（Chaoset），全部字形 alpha 挖空。`ChaosetIME.icns`（应用图标，方形画布内居中放 keycap）与 `ChaosetIME-menu.tiff` / `ChaosetIME-palette.tiff`（输入模式图标，多分辨率 20×16/40×32/60×48）都由 `tools/make-icon.swift` 现场绘制，不依赖外部素材。**系统设置列表与「切换输入法」HUD 取的是应用图标（.icns / IconRef），输入菜单取的是 mode 图标**，所以两处都要做、且都要挖空（模板渲染只取 alpha，实心图会被涂成白方块）。**不要用方形彩色大图当输入源图标** |
+| 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
+| 图标 | 输入源图标是**模板图** `ChaosetIME-input.tiff`：**16×16（72dpi）+ 32×32（144dpi）双帧 TIFF、RGB 恒为 (0,0,0)、形状全部由 alpha 表达**（圆角方块轮廓 + 挖空的「Cs」字形）。该规格是逐像素对照系统 `SCIM.app/…/pinyin.tiff` 定的——系统在输入菜单、切换输入法 HUD、系统设置里都按模板图渲染（**只取 alpha 通道再着色**），彩色图或非模板规格会被涂成一块实心/空白方块。Info.plist 的五个图标键（`tsInputMethodIconFileKey`、`tsInputMethodAlternateIconFileKey`、`tsInputModeMenuIconFileKey`、`tsInputModeAlternateMenuIconFileKey`、`tsInputModePaletteIconFileKey`）全部指向它。应用图标 `ChaosetIME.icns` 仍是彩色中国印章，只用于访达/启动台/系统设置的应用列表（不进输入源图标位）。 |
+| 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
 > `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
@@ -150,19 +151,28 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
   `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
 - **v2 统一候选窗贴图**：`candidateImage` 客户端方法 + NSPanel 贴图面板
-  已实现（编译级验证）。组词时优先显示 daemon 渲染的统一候选窗图，
-  daemon 未启用渲染时回退 IMKCandidates（v1）。面板跟随鼠标定位；
-  光标精确坐标需 IMK 深度 API，作为后续优化项。
+  已实现。组词时优先显示 daemon 渲染的统一候选窗图，daemon 未启用渲染时
+  回退 IMKCandidates（v1）。
+  **2026-10-22 起面板跟随光标而非鼠标**：经
+  `client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)` 取插入点
+  矩形，优先放在光标行**下方**（`rect.minY - 6`）、下方空间不足时翻到**上方**
+  （`rect.maxY + 6`），并用 `NSScreen.visibleFrame` 钳制不出屏；仅在矩形全零/
+  非有限值时退回鼠标位置（部分 Electron、远程桌面客户端会返回零矩形）。
+  同时按 `effectiveAppearance` 传 `dark`、按屏幕 `backingScaleFactor` 传 `scale`
+  （只传 1 或 2），并按响应里的实际 `scale` 换算 `NSImage.size`，Retina 下 1:1 物理像素。
 - **2026-09-28 真机反馈修复**：Info.plist 此前缺 `ComponentInputModeDict`
   （输入模式声明），TIS 不把本壳枚举为可添加输入源——已装进
   `~/Library/Input Methods` 且注销重登，系统设置仍无此输入法，
   `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
   即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
   单一 zh-Hans 模式（`…ChaosetIME.Hans`）修复。
-- **2026-10-06 视觉与命名融入中国元素**：图标改为中国印章语汇——中国红渐变底、
+- **2026-10-06 视觉与命名融入中国元素（显示名与图标部分已被 2026-10-22 取代）**：图标改为中国印章语汇——中国红渐变底、
   `0.022em` 白色外框 + 细内框、宋体（STSongti-SC-Bold，取不到则退系统中文字重）「超」字、
-  大尺寸再叠三枚圆弧组成的如意云纹暗纹；中文显示名定为「超集拼音」（英文仍为
-  Chaoset Pinyin）。小尺寸（16/32px）自动退化为干净的印章徽标，保证输入源列表里可辨识。
+  大尺寸再叠三枚圆弧组成的如意云纹暗纹；当时中文显示名定为「超集拼音」（英文
+  Chaoset Pinyin）。小尺寸（16/32px）自动退化为干净的印章徽标。
+  **2026-10-22 更正**：项目名是 chaos + set（不是 chao + set），「超集」是误读，
+  显示名已改为中英同名的 **Chaoset**；印章图标只保留为应用图标（.icns），
+  输入源图标改为系统规格的模板图（见上表）。
 - **2026-09-28 显示名本地化**：输入源显示名定名「Chaoset 拼音」
   （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
   提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
@@ -220,7 +230,7 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   - `InfoPlist.strings` 按输入源 ID 逐模式命名（`CFBundleDisplayName`、`CFBundleName`、
     `ime.chaoset.inputmethod`、`ime.chaoset.inputmethod.Hans`），与官方 Squirrel 的命名方式
     一致（Squirrel 同样按 `im.rime.inputmethod.Squirrel[.Hans|.Hant]` 命名），故系统设置里
-    显示的是「超集拼音 / Chaoset Pinyin」，不会露出裸 ID。
+    显示的是「超集拼音 / Chaoset Pinyin」（当时显示名；现为 Chaoset），不会露出裸 ID。
   - `launchctl print gui/$(id -u)` 里有 `application.ime.chaoset.inputmethod.<...>` 处于
     **running**（program 指向 `~/Library/Input Methods/ChaosetIME.app`，immediate reason =
     launch job demand）：系统（runningboardd）**已按需拉起过我们的 bundle**，说明它能读到这个
@@ -271,7 +281,7 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 
 - **2026-10-21 候选窗残留修复**：真机使用反馈——输入后点击文本框外或切换应用，
   v2 贴图候选窗会残留在屏幕上、点不掉也关不掉（`CGWindowList` 实测 owner
-  「超集拼音」累计数十个 on-screen 窗口）。根因有两点：① 系统结束输入会话
+  「超集拼音」（当时显示名）累计数十个 on-screen 窗口）。根因有两点：① 系统结束输入会话
   （点击文本框外、切换应用/输入法）走的是 `commitComposition:`，而壳只实现了
   `deactivateServer:`；② 每个控制器实例各持一个 `NSPanel`，会话结束后无人
   `orderOut`，窗口被 AppKit 的窗口表保留成"孤儿"。修复：候选面板改为全进程
@@ -279,7 +289,7 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `deinit` 全部收起面板，并设 `ignoresMouseEvents` 让点击穿透到宿主应用、
   触发正常的会话提交。
 
-- **2026-10-21 输入源图标空白修复**：输入菜单与系统设置里「超集拼音」只显示一个空白
+- **2026-10-21 输入源图标空白修复（已被 2026-10-22 的模板图方案取代，历史记录）**：输入菜单与系统设置里本输入法只显示一个空白
   圆角方块。根因不是图标文件加载失败（`NSBundle.image(forResource: "ChaosetIME.pdf")`
   能正常取到 22×22 图），而是系统把输入源图标当**模板图**渲染——只取 alpha 通道着色。
   原印章 PDF 的 alpha 在字形处也是不透明（中心区域透明像素 0%），整块被涂成白色；
@@ -337,14 +347,28 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 
 安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
 
-1. 系统设置 → 键盘 → 输入法 → 添加「超集拼音」（印章图标）并切换过去；
+1. 系统设置 → 键盘 → 输入法 → 添加「Chaoset」并切换过去；
    不想用系统设置时，可运行 `./reregister.sh`（尽力启用+选中）。
-2. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随。
+2. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随光标（在窗口最下方输入时应翻到光标上方）。
 3. 若系统设置里仍看不到：`./build/tis list | grep chaoset` 查看枚举状态，
    必要时注销重登一次刷新菜单缓存。
 
+- **2026-10-22 输入源图标对齐系统规格（切换 HUD 空白方块的真正根因）**：
+  真机反馈「用 ⌃空格 切换输入法时，系统弹窗里本输入法没有图标（一块空白圆角方块）」。
+  逐像素对照系统 `SCIM.app/…/pinyin.tiff` 后定位到规格差异：
+  ① 系统图标是 **16×16（72dpi）+ 32×32（144dpi）双帧 TIFF**，我们此前是 20×16/40×32/60×48
+  三帧（尺寸与 Retina 帧比例都不符）；② 系统图标 **RGB 恒为 (0,0,0)**、形状只由 alpha 表达，
+  我们此前是白底 RGB 图；③ 系统 plist 用 `tsInputMethodIconFileKey` 同时给父输入源与模式，
+  我们此前父级指向 palette 变体、模式指向 menu 变体，两处不一致。
+  修复：`tools/make-icon.swift` 改为生成 `ChaosetIME-input.tiff`（16×16+32×32、RGB 全黑、
+  alpha 表达圆角方块 + 挖空「Cs」），Info.plist 五个图标键全部指向它，并补 `CFBundleIconName`。
+  **验证**：`file` 确认 LZW 双帧、Pillow 确认 RGB=(0,0,0) 且 alpha 0/255 双峰、
+  `tis` 确认 `kTISPropertyIconImageURL` 指向新文件。HUD 实际显示需重装后由人工确认。
+
 ## 已知限制
 
-- 候选窗跟随光标依赖 IMK 默认定位，某些应用里位置可能不理想。
+- 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；
+  少数客户端（个别 Electron 应用、远程桌面）返回零矩形，此时退回鼠标位置，
+  位置可能不理想。
 - 修改 app 后重装，需要先把输入法从列表移除再重新添加。
 - 打字闭环尚未人工验证（需要 GUI 交互与注销重登，无法脚本化）。

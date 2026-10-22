@@ -63,8 +63,40 @@ if [ -x build/chaosetd ]; then
   fi
   cp build/chaosetd "$SUPPORT/chaosetd"
   chmod 755 "$SUPPORT/chaosetd"
-  if [ ! -f "$SUPPORT/dict.tsv" ]; then
-    cp ../../data/dict_seed.tsv "$SUPPORT/dict.tsv"
+  # 词库部署：内置常用词库（data/dict_common.tsv，约 14 万条）是默认词库。
+  # 已存在的旧词库不能盲目覆盖（用户可能导入过自己的词库），但 2026-10 之前的
+  # 早期安装会留下只含 Rime terra 单字表的旧 dict.tsv（约 7 万条、缺「经常」等
+  # 常用二字词，表现为「输入 jingchang 无候选」）——这类明显退化的词库要自动升级。
+  # 判据（可验证、不猜）：旧词库缺「经常」条目，且条目数不到内置词库的一半。
+  BUILTIN_DICT=../../data/dict_common.tsv
+  if [ -f "$BUILTIN_DICT" ]; then
+    need_upgrade=no
+    reason=""
+    if [ ! -f "$SUPPORT/dict.tsv" ]; then
+      need_upgrade=yes
+      reason="原本没有词库"
+    elif grep -q "^经常	" "$SUPPORT/dict.tsv"; then
+      reason="旧词库已含「经常」，保留用户现用词库"
+    else
+      old_lines=$(grep -c "" "$SUPPORT/dict.tsv" || true)
+      builtin_lines=$(grep -c "" "$BUILTIN_DICT" || true)
+      if [ "$old_lines" -lt $((builtin_lines / 2)) ]; then
+        need_upgrade=yes
+        reason="旧词库只有 ${old_lines} 行（内置 ${builtin_lines} 行）且缺「经常」"
+      else
+        reason="旧词库条目足够（${old_lines} 行），保留用户现用词库"
+      fi
+    fi
+    if [ "$need_upgrade" = yes ]; then
+      if [ -f "$SUPPORT/dict.tsv" ]; then
+        cp "$SUPPORT/dict.tsv" "$SUPPORT/dict.tsv.bak.$(date +%Y%m%d-%H%M%S)"
+        echo "   旧词库已备份"
+      fi
+      cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
+      echo "   已部署内置常用词库（$reason）"
+    else
+      echo "   词库保持不变（$reason）"
+    fi
   fi
   # LaunchAgent（KeepAlive）会自动拉起新版本；未配置自启时手动启动即可：
   #   "$SUPPORT/chaosetd" -socket "$SUPPORT/chaoset.sock" \
@@ -109,14 +141,14 @@ if [ -d build/ChaosetSetup.app ]; then
   mkdir -p "$HOME/Applications"
   rm -rf "$HOME/Applications/ChaosetSetup.app"
   cp -R build/ChaosetSetup.app "$HOME/Applications/"
-  echo "已安装图形界面工具: ~/Applications/超集输入法.app（Finder/启动台里双击打开）"
+  echo "已安装图形界面工具: ~/Applications/Chaoset.app（Finder/启动台里双击打开）"
 fi
 
 # 4) 自检并给出结论（一条命令跑完就能知道下一步）
 echo
 if [ -x build/tis ] && build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
   echo "✓ 系统输入源表里已能看到本输入法。"
-  echo "  下一步：系统设置 → 键盘 → 输入法 → 添加「超集拼音」（图标为中国印章）。"
+  echo "  下一步：系统设置 → 键盘 → 输入法 → 添加「Chaoset」。"
 else
   echo "✗ 系统输入源表里还看不到本输入法——这是正常现象：macOS 的输入源表只在【登录时】扩充。"
   echo "  下一步（必须）：注销并重新登录，然后运行 ./verify.sh 复核（第 2 段应变成「OK: 系统已收录」）。"

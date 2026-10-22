@@ -206,12 +206,29 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		if s.skin == nil {
 			return nil, fmt.Errorf("未启用候选窗渲染（daemon 未配置字体）")
 		}
+		// 可选参数：dark 选深色皮肤，scale 取 2 时按 2 倍像素渲染（Retina）。
+		// 不带参数 = 与旧行为一致（皮肤原样、scale=1）。
+		var p struct {
+			Dark  *bool `json:"dark"` // 指针：区分「未传」与显式 false
+			Scale int   `json:"scale"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				return nil, fmt.Errorf("解析 candidateImage 参数失败: %w", err)
+			}
+		}
+		// Skin 是值类型：按请求复制一份改字段，绝不改 s.skin（多连接并发）。
+		skin := *s.skin
+		if p.Dark != nil {
+			skin = renderer.WithDarkMode(skin, *p.Dark)
+		}
+		skin = renderer.ScaleSkin(skin, p.Scale)
 		comp := sess.Compose()
-		data, err := renderer.Render(comp, *s.skin)
+		data, err := renderer.Render(comp, skin)
 		if err != nil {
 			return nil, fmt.Errorf("渲染候选窗失败: %w", err)
 		}
-		out := map[string]any{"width": 0, "height": 0, "png": ""}
+		out := map[string]any{"width": 0, "height": 0, "png": "", "scale": renderer.EffectiveScale(p.Scale)}
 		if len(data) > 0 {
 			cfg, derr := png.DecodeConfig(bytes.NewReader(data))
 			if derr != nil {

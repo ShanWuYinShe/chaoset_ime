@@ -34,13 +34,18 @@ check(c2?.candidates.first?.text == "你好", "第一候选 你好（实际 \(c2
 let committed = client.select(0)
 check(committed == "你好", "上屏 你好（实际 \(committed ?? "nil")）")
 
-// 4. 歧义切分
-let c3 = client.input("xian")
-check(c3?.candidates.contains(where: { $0.text == "西安" }) == true, "xian 歧义切分候选含 西安")
+// 4. 撇号强制音节边界：xi'an 走 [xi an] 切分，应直接出「西安」。
+// （不用裸 xian 断言：真实词库里 xian 的单字候选太多，西安会排到十几页之后，
+//  那是正常排序，不能作为链路是否正常的判据。）
+_ = client.reset()
+let c3 = client.input("xi'an")
+check(c3?.preedit == "xi'an", "预编辑 xi'an（实际 \(c3?.preedit ?? "nil")）")
+check(c3?.candidates.first?.text == "西安", "xi'an 第一候选 西安（实际 \(c3?.candidates.first?.text ?? "nil")）")
+// 退格留在本次组词内（Reset 会清空输入，退格才对组词生效），故此处不 Reset
 
 // 5. 退格
 let c4 = client.backspace()
-check(c4?.input == "xia", "退格后输入 xia（实际 \(c4?.input ?? "nil")）")
+check(c4?.input == "xi'a", "退格后输入 xi'a（实际 \(c4?.input ?? "nil")）")
 
 // 6. 重置
 let c5 = client.reset()

@@ -1,4 +1,4 @@
-# chaoset 种子词库（演示规模，阶段 3 会接入完整词库与热词导入）
+# chaoset 种子词库（演示/回归用小词库；默认词库见 data/dict_common.tsv，由 cmd/chaoset-dictgen 生成）
 # 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 词频
 # 一字多音写多行；# 开头为注释
 

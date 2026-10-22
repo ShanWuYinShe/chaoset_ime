@@ -25,7 +25,7 @@ if build/tis list | grep -q "$ID"; then
   build/tis enable "$ID" || true
   build/tis enable "$MODE" || true
   build/tis select "$MODE" || true
-  printf '\n若菜单栏输入法菜单里已出现「超集拼音」即可直接使用；\n'
+  printf '\n若菜单栏输入法菜单里已出现「Chaoset」即可直接使用；\n'
   printf '若仍看不到，请注销重登一次（系统菜单缓存可能需要重登刷新）。\n'
 else
   printf '  不可见 —— 系统尚未把本输入法收进输入源表。\n'

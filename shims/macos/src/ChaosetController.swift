@@ -211,7 +211,7 @@ final class ChaosetController: IMKInputController {
             return
         }
         // v2 优先：daemon 渲染的统一候选窗贴图；失败回退 IMKCandidates（v1）
-        if showImagePanel() {
+        if showImagePanel(client: client) {
             candidateWindow?.hide()
             return
         }
@@ -229,46 +229,142 @@ final class ChaosetController: IMKInputController {
     // 改为共用面板 + 在全部会话结束路径收起，保证任何时刻最多一个可见候选窗。
     private static var imagePanel: NSPanel?
 
+    // 候选窗与光标行的间距（pt）：太贴会压住行下沿的下伸部，太远又像飘着。
+    private static let candidateGap: CGFloat = 6
+
     private static func hideCandidatePanel() {
         imagePanel?.orderOut(nil)
     }
 
+    /// 懒创建全进程共用的贴图面板（首次显示时建一次）。
+    private static func ensureImagePanel() -> NSPanel {
+        if let existing = imagePanel { return existing }
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        // 候选窗只负责展示：不拦截鼠标，点击应落到宿主应用并触发会话提交
+        panel.ignoresMouseEvents = true
+        // 贴图本身已含 1px 细边框与圆角，系统投影按贴图 alpha 生成，与系统候选窗观感一致
+        panel.hasShadow = true
+        let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        imageView.autoresizingMask = [.width, .height]
+        imageView.imageScaling = .scaleNone
+        panel.contentView = imageView
+        imagePanel = panel
+        return panel
+    }
+
     /// 显示 daemon 渲染的候选窗贴图；返回 false 表示不可用（回退 v1）。
-    private func showImagePanel() -> Bool {
-        guard let image = engine.candidateImage(), let png = image.png,
+    /// client 用于取插入点矩形，取不到时退回鼠标位置。
+    private func showImagePanel(client: (any IMKTextInput)?) -> Bool {
+        // 深色/浅色皮肤跟随候选窗自身的外观（继承自 App，即系统外观）。
+        // 倍率取光标所在屏幕的 backingScaleFactor，**只传 1 或 2**：daemon 对其它
+        // 值一律按 1 渲染，传原值反而会让 NSImage.size 与像素对不上。
+        let panel = Self.ensureImagePanel()
+        let dark = Self.isDarkAppearance(panel.effectiveAppearance)
+        let screen = Self.screenForCursor(client) ?? panel.screen ?? NSScreen.main
+        let scale = (screen?.backingScaleFactor ?? 1) >= 1.5 ? 2 : 1
+        guard let image = engine.candidateImage(dark: dark, scale: scale), let png = image.png,
               let nsImage = NSImage(data: png) else {
             Self.hideCandidatePanel()
             return false
         }
-        let panel: NSPanel
-        if let existing = Self.imagePanel {
-            panel = existing
-        } else {
-            panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            panel.level = .floating
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            // 候选窗只负责展示：不拦截鼠标，点击应落到宿主应用并触发会话提交
-            panel.ignoresMouseEvents = true
-            let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
-            imageView.autoresizingMask = [.width, .height]
-            imageView.imageScaling = .scaleNone
-            panel.contentView = imageView
-            Self.imagePanel = panel
-        }
-        let size = nsImage.size
+        // daemon 已按 scale 倍像素渲染，点尺寸 = 像素/scale（Retina 下才不发虚）
+        let pixelScale = CGFloat(max(1, image.scale))
+        let size = NSSize(width: CGFloat(image.width) / pixelScale,
+                          height: CGFloat(image.height) / pixelScale)
+        // NSImage.size 显式设成点尺寸：图片自带 72dpi，不设会被按像素当点
+        nsImage.size = size
         panel.setContentSize(size)
-        (panel.contentView as? NSImageView)?.image = nsImage
-        // 定位：跟随鼠标附近（光标精确坐标需 IMK 深度 API，作为已知限制记录）
-        let mouse = NSEvent.mouseLocation
-        panel.setFrameTopLeftPoint(NSPoint(x: mouse.x + 8, y: mouse.y - 4))
+        if let view = panel.contentView as? NSImageView {
+            view.image = nsImage
+            view.imageScaling = .scaleAxesIndependently
+        }
+        panel.setFrameTopLeftPoint(
+            Self.candidateOrigin(size: size, client: client, screen: screen)
+        )
         panel.orderFront(nil)
         return true
+    }
+
+    // MARK: - 候选窗定位（跟随光标、不遮挡正在输入的行）
+
+    /// 取插入点矩形（屏幕坐标）。IMK 的 attributesForCharacterIndex:lineHeightRectangle:
+    /// 返回"宽 1px、高为行高"的矩形；index=0 表示取当前选区（无内联会话时）。
+    /// 取不到或返回异常值时返回 nil（调用方退回鼠标位置）。
+    private static func caretRect(client: (any IMKTextInput)?) -> NSRect? {
+        guard let client else { return nil }
+        var rect = NSRect.zero
+        _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
+        // 全零 / 非有限值 / 尺寸不合理都视为"取不到"：某些客户端会返回零矩形，
+        // 直接拿来定位会把候选窗丢到屏幕左下角。
+        guard rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.size.width.isFinite, rect.size.height.isFinite,
+              rect.size.height > 0, rect.size.height < 1000,
+              !(rect.origin.x == 0 && rect.origin.y == 0) else {
+            return nil
+        }
+        return rect
+    }
+
+    /// 候选窗左上角坐标：优先放光标行**下方**，下方空间不足放**上方**，
+    /// 最后用屏幕可见区域钳制，保证整块候选窗都在屏内。
+    private static func candidateOrigin(size: NSSize, client: (any IMKTextInput)?,
+                                        screen: NSScreen?) -> NSPoint {
+        let visible = (screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        guard let caret = caretRect(client: client) else {
+            // 兜底：光标矩形取不到时才退回鼠标位置（旧行为）
+            let mouse = NSEvent.mouseLocation
+            return clampTopLeft(NSPoint(x: mouse.x + 8, y: mouse.y - 4), size: size, in: visible)
+        }
+        // 下方：面板顶边在光标行底边之下 gap；上方：面板底边在光标行顶边之上 gap。
+        let below = caret.minY - candidateGap            // 顶边 y（向下生长）
+        let above = caret.maxY + candidateGap + size.height // 顶边 y（向上放时顶边更高）
+        // 空间判断用「放得下整块」为判据：下方剩余 = caret.minY - visible.minY
+        let spaceBelow = caret.minY - visible.minY
+        let spaceAbove = visible.maxY - caret.maxY
+        var top = below
+        if spaceBelow < size.height + candidateGap && spaceAbove > spaceBelow {
+            top = above
+        }
+        return clampTopLeft(NSPoint(x: caret.minX, y: top), size: size, in: visible)
+    }
+
+    /// 把面板左上角钳制到屏幕可见区域内（不超出左右与上下边界）。
+    private static func clampTopLeft(_ topLeft: NSPoint, size: NSSize, in visible: NSRect) -> NSPoint {
+        var x = topLeft.x
+        var top = topLeft.y
+        // 左边越界 → 贴左边；右边越界 → 右移（优先保持左侧对齐光标起点）
+        if x + size.width > visible.maxX { x = visible.maxX - size.width }
+        if x < visible.minX { x = visible.minX }
+        // 顶边越界 → 下拉；底边越界 → 上推
+        if top > visible.maxY { top = visible.maxY }
+        if top - size.height < visible.minY { top = visible.minY + size.height }
+        return NSPoint(x: x, y: top)
+    }
+
+    /// 光标所在屏幕：按插入点矩形中心点找屏幕，取不到用鼠标所在屏幕。
+    private static func screenForCursor(_ client: (any IMKTextInput)?) -> NSScreen? {
+        if let caret = caretRect(client: client),
+           let hit = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x: caret.midX, y: caret.midY)) }) {
+            return hit
+        }
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
+    }
+
+    /// 是否深色外观（候选窗贴图按此选皮肤）。
+    /// 取候选窗自身的 effectiveAppearance：面板是 NSAppearanceCustomization，
+    /// 未显式设 appearance 时继承 App（即系统）外观。NSScreen 没有该属性。
+    private static func isDarkAppearance(_ appearance: NSAppearance?) -> Bool {
+        let resolved = appearance ?? NSApplication.shared.effectiveAppearance
+        return resolved.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     // MARK: - IMKCandidates 数据源

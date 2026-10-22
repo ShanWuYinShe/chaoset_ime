@@ -33,7 +33,7 @@ func main() {
 	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）；空关闭（键位表见 engine/double_pinyin.go）")
 	flag.Parse()
 	if len(dicts) == 0 {
-		dicts = repeatFlag{"data/dict_seed.tsv"}
+		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 	_ = *ibusFlag
 

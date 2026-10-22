@@ -4,7 +4,7 @@
 # 用法（在 shims/macos 目录下）:
 #   ./import-dict.sh 别人给的词库.yaml            # 保留现用词库，并入新词库
 #   ./import-dict.sh 词库A.yaml 词库B.tsv         # 可一次给多个
-#   ./import-dict.sh --no-current 新词库.yaml     # 不并入现用词库（只 种子 + 新词库）
+#   ./import-dict.sh --no-current 新词库.yaml     # 不并入现用词库（只 内置常用词库 + 新词库）
 #
 # 支持格式：Rime *.dict.yaml / CC-CEDICT 风格 txt / 原生 TSV（词<TAB>拼音<TAB>词频）。
 # 环境变量（测试用）：CHAOSET_SUPPORT_DIR 覆盖用户数据目录，CHAOSET_SOCKET 覆盖套接字路径。
@@ -13,7 +13,8 @@ cd "$(dirname "$0")"
 
 ROOT="../.."
 IMPORTER="$ROOT/bin/chaoset-import"
-SEED="$ROOT/data/dict_seed.tsv"
+SEED="$ROOT/data/dict_common.tsv"
+SEED_LABEL="内置常用词库"
 SUPPORT="${CHAOSET_SUPPORT_DIR:-$HOME/Library/Application Support/chaoset}"
 DICT="$SUPPORT/dict.tsv"
 SOCK="${CHAOSET_SOCKET:-$SUPPORT/chaoset.sock}"
@@ -26,7 +27,7 @@ use_current=yes
 if [ "$1" = "--no-current" ]; then use_current=no; shift; fi
 [ "$#" -ge 1 ] || { echo "用法: ./import-dict.sh [--no-current] <词库文件> [更多词库文件...]"; exit 2; }
 [ -x "$IMPORTER" ] || { echo "缺少 ${IMPORTER}，请先在仓库根目录运行 make build"; exit 1; }
-[ -f "$SEED" ] || { echo "缺少种子词库 $SEED"; exit 1; }
+[ -f "$SEED" ] || { echo "缺少${SEED_LABEL} $SEED"; exit 1; }
 for f in "$@"; do [ -f "$f" ] || { echo "找不到词库文件: $f"; exit 1; }; done
 
 mkdir -p "$SUPPORT"

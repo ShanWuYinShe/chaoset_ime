@@ -20,14 +20,17 @@ swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/Engin
 
 echo "[3/5] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources
+# 清掉上一版遗留的资源：旧版曾生成 ChaosetIME-menu/palette.tiff 与 ChaosetIME.pdf，
+# 残留在目录里会让人误以为仍是当前图标（也避免被打进 setup.app）。
+rm -rf build/Resources/ChaosetIME.iconset build/Resources/ChaosetIME-menu.tiff \
+       build/Resources/ChaosetIME-palette.tiff build/Resources/ChaosetIME.pdf
 swift tools/make-icon.swift build/Resources
 iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIME.icns
 
 echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns \
-   build/Resources/ChaosetIME-menu.tiff \
-   build/Resources/ChaosetIME-palette.tiff "$APP/Contents/Resources/"
+   build/Resources/ChaosetIME-input.tiff "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
 # 枚举为可添加的输入源。除该字典外，以下三组键对齐同目录下可正常枚举的
@@ -54,6 +57,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleExecutable</key>
 	<string>ChaosetIME</string>
 	<key>CFBundleIconFile</key>
+	<string>ChaosetIME</string>
+	<key>CFBundleIconName</key>
 	<string>ChaosetIME</string>
 	<key>CFBundleIdentifier</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME</string>
@@ -84,9 +89,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>InputMethodConnectionName</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME_Connection</string>
 	<key>tsInputMethodIconFileKey</key>
-	<string>ChaosetIME-palette.tiff</string>
+	<string>ChaosetIME-input.tiff</string>
 	<key>tsInputMethodAlternateIconFileKey</key>
-	<string>ChaosetIME-palette.tiff</string>
+	<string>ChaosetIME-input.tiff</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>ChaosetController</string>
 	<key>InputMethodServerDelegateClass</key>
@@ -108,7 +113,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>TISIntendedLanguage</key>
 				<string>zh-Hans</string>
 				<key>tsInputModeAlternateMenuIconFileKey</key>
-				<string>ChaosetIME-menu.tiff</string>
+				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModeCharacterRepertoireKey</key>
 				<array>
 					<string>Hans</string>
@@ -120,9 +125,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModeKeyEquivalentModifiersKey</key>
 				<integer>4608</integer>
 				<key>tsInputModeMenuIconFileKey</key>
-				<string>ChaosetIME-menu.tiff</string>
+				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModePaletteIconFileKey</key>
-				<string>ChaosetIME-palette.tiff</string>
+				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
@@ -141,9 +146,11 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # 输入源显示名走 bundle 的本地化 InfoPlist.strings（对照 Squirrel 的
 # InfoPlist.xcstrings：除 CFBundleDisplayName 外，还按输入源 ID 逐模式
-# 命名）。缺省名与系统组件难分辨，定名「Chaoset 拼音 / Chaoset Pinyin」。
-NAME_ZH="超集拼音"
-NAME_EN="Chaoset Pinyin"
+# 命名）。
+# 定名「Chaoset」：项目名是 chaos + set（混沌 + 集合），不是 chao + set，
+# 故中英文统一用专名 Chaoset，不做「超集」这类音译（2026-10-22 用户确认）。
+NAME_ZH="Chaoset"
+NAME_EN="Chaoset"
 for spec in "en:$NAME_EN" "zh-Hans:$NAME_ZH" "zh_CN:$NAME_ZH"; do
   lang="${spec%%:*}"
   name="${spec#*:}"
@@ -161,9 +168,9 @@ plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings
 plutil -lint "$APP/Contents/Info.plist"
 codesign --force -s - "$APP"
 
-echo "[5/5] 组装图形化安装/设置 app（超集输入法.app）..."
+echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."
 # 面向不用命令行的用户：双击即可安装/更新、导入词库、看状态。
-# 随包携带输入法壳、daemon、导入工具与种子词库，全部操作在 app 内完成。
+# 随包携带输入法壳、daemon、导入工具与内置常用词库，全部操作在 app 内完成。
 SETUP=build/ChaosetSetup.app
 rm -rf "$SETUP"
 mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
@@ -172,7 +179,7 @@ swiftc -O -framework AppKit -framework Carbon -framework UniformTypeIdentifiers 
 (cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
 cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.app"
 cp build/chaosetd build/chaoset-import build/tis build/smoke \
-  ../../data/dict_seed.tsv "$SETUP/Contents/Resources/"
+  ../../data/dict_common.tsv "$SETUP/Contents/Resources/"
 cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"
 cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -182,7 +189,7 @@ cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>超集输入法</string>
+	<string>Chaoset</string>
 	<key>CFBundleExecutable</key>
 	<string>ChaosetSetup</string>
 	<key>CFBundleIconFile</key>
@@ -209,8 +216,8 @@ cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 cat > "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STR'
-"CFBundleDisplayName" = "超集输入法";
-"CFBundleName" = "超集输入法";
+"CFBundleDisplayName" = "Chaoset";
+"CFBundleName" = "Chaoset";
 STR
 printf 'APPL????' > "$SETUP/Contents/PkgInfo"
 plutil -lint "$SETUP/Contents/Info.plist" "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"

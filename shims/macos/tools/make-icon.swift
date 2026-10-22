@@ -1,18 +1,24 @@
-// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源 keycap 图标（menu/palette）。
+// 生成 ChaosetIME 的图标资源：应用图标 .icns + 输入源模板图标 .tiff。
 // 用法: swift tools/make-icon.swift <输出目录>
 //
 // 全部用 AppKit 现场绘制，不依赖任何外部素材，也不复用第三方图标
 // （2026-10-05 排障时放进 ~/Library/Input Methods 的「鼠须管」是官方
 //  Rime/Squirrel 应用，与本项目无关，其 Rime.icns/rime.pdf 一律不可用）。
 //
-// 视觉：中国印章（朱文/白文语汇）——中国红底、白色双框、隶书「超」，
-//       大尺寸四角叠加回纹（雷纹）角饰；小尺寸自动退化为干净的印章徽标。
+// 两套视觉，用途完全不同：
+// - **应用图标 .icns**：中国印章（朱文语汇）——中国红渐变底、白色双框、隶书「超」，
+//   大尺寸四角叠回纹（雷纹）角饰。它是彩色的，用在访达/启动台/系统设置的应用列表。
+// - **输入源图标 .tiff**：**模板图**，形状全由 alpha 表达、RGB 恒为 (0,0,0)。
+//   系统在输入菜单、切换输入法 HUD 里按模板渲染（只取 alpha 再着色），
+//   所以彩色图会被涂成一块实心方块——必须是模板图。
 import AppKit
 import CoreGraphics
 import ImageIO
 
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+
+// MARK: - 应用图标（.icns，彩色印章）
 
 /// 隶书优先（蚕头燕尾，最有"中国印章"味），依次退回楷体、宋体、系统中文字重。
 /// 本机可用性已实测：Libian SC 有、Kaiti SC 有、Songti SC 有（见 shims/macos/README）。
@@ -43,6 +49,16 @@ func drawCornerMeander(in rect: NSRect, _ s: CGFloat) {
     }
 }
 
+/// 只画印章里的「超」字
+func drawSealGlyph(_ s: CGFloat) {
+    let text = NSAttributedString(string: "超", attributes: [
+        .font: sealFont(s * 0.50),
+        .foregroundColor: NSColor.white,
+    ])
+    let size = text.size()
+    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.035))
+}
+
 /// 印章徽标：中国红底 + 白色双框 + 隶书「超」（大尺寸再加四角回纹）
 func drawSeal(_ s: CGFloat, ornament: Bool) {
     let inset = s * 0.055
@@ -70,111 +86,103 @@ func drawSeal(_ s: CGFloat, ornament: Bool) {
     NSColor(white: 1, alpha: 0.55).setStroke()
     inner.stroke()
 
-    // 隶书「超」
     drawSealGlyph(s)
 }
 
-/// 只画印章里的「超」字（模板图标做 alpha 挖空时复用）
-func drawSealGlyph(_ s: CGFloat) {
-    let text = NSAttributedString(string: "超", attributes: [
-        .font: sealFont(s * 0.50),
-        .foregroundColor: NSColor.white,
-    ])
-    let size = text.size()
-    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.035))
-}
-
-/// 应用图标（.icns）也采用 keycap 设计：系统设置的输入法列表与切换快捷键 HUD
-/// 取的是 bundle 的 application icon（IconRef），不是 mode 的菜单图标。方形画布
-/// 内居中放 20:16 的 keycap；字形同样挖空，这样按模板图渲染的 HUD 也不会变成实心方块。
-func png(_ px: Int) -> Data {
+/// 应用图标单帧：方形画布上居中画印章徽标。
+func appIconRep(_ px: Int) -> NSBitmapImageRep {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                isPlanar: false, colorSpaceName: .deviceRGB,
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    let side = CGFloat(px)
-    let w = side * 0.94
-    let h = w * 0.8
-    NSGraphicsContext.current?.cgContext.translateBy(x: (side - w) / 2, y: (side - h) / 2)
-    drawKeycap(w: w, h: h, knockout: true)
+    drawSeal(CGFloat(px), ornament: px >= 128)
     NSGraphicsContext.restoreGraphicsState()
-    return rep.representation(using: .png, properties: [:])!
+    return rep
 }
 
-/// 输入源图标（与 macOS 系统输入法一致的扁平 keycap 风格）：
-/// 20×16 圆角矩形 + 系统字体「Cs」（Chaoset）字标。
-///
-/// 2026-10-22 用户反馈：方形印章图标在系统设置/输入菜单里和 ABC、简体拼音的
-/// 扁平 keycap 尺寸/风格都不一致，且菜单里显示空白。故改成 keycap 风格，并分别
-/// 产出两个变体：
-/// - **menu** 变体（tsInputModeMenuIconFileKey / …Alternate…）：字形挖成透明。
-///   输入菜单按模板图渲染（只取 alpha 通道），挖空后在深色菜单里呈现为白底
-///   keycap + 深色「Cs」（与 ABC 的「A」、简体拼音的「拼」一致）。
-/// - **palette** 变体（tsInputModePaletteIconFileKey）：白底 + 深色字形，供按
-///   彩色渲染的界面（系统设置「所有输入法」列表）使用，两种渲染方式都不露馅。
-func drawKeycap(w: CGFloat, h: CGFloat, knockout: Bool) {
-    let rect = NSRect(x: 0.5, y: 0.5, width: w - 1, height: h - 1)
-    let path = NSBezierPath(roundedRect: rect, xRadius: h * 0.22, yRadius: h * 0.22)
-    NSColor.white.setFill()
-    path.fill()
-    if !knockout {
-        NSColor(white: 0, alpha: 0.35).setStroke()
-        path.lineWidth = max(0.8, h * 0.05)
-        path.stroke()
-    }
-    func attrs(_ size: CGFloat) -> [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: size, weight: .semibold),
-         .foregroundColor: knockout ? NSColor.white : NSColor(white: 0.10, alpha: 1)]
-    }
-    var size = h * 0.62
-    var text = NSAttributedString(string: "Cs", attributes: attrs(size))
-    while text.size().width > w * 0.74 && size > h * 0.30 {
-        size -= 0.5
-        text = NSAttributedString(string: "Cs", attributes: attrs(size))
-    }
-    let ts = text.size()
-    let origin = NSPoint(x: (w - ts.width) / 2, y: (h - ts.height) / 2 + h * 0.02)
-    if knockout {
-        // destinationOut：在位图 alpha 里挖出字形
-        NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
-        text.draw(at: origin)
-        NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
-    } else {
-        text.draw(at: origin)
-    }
-}
+// MARK: - 输入源图标（模板图，系统规格）
 
-func keycapRep(w: CGFloat, h: CGFloat, knockout: Bool) -> NSBitmapImageRep {
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(w), pixelsHigh: Int(h),
+// 系统输入法（SCIM pinyin.tiff / Squirrel rime.pdf 同源做法）的输入源图标规格：
+//   帧：16×16@72dpi + 32×32@144dpi 两帧，LZW 压缩，RGB 通道恒为 (0,0,0)，
+//       形状（圆角方块 + 挖空字形）完全由 alpha 表达。
+//   系统在输入菜单与「切换输入法」HUD 里按模板图渲染：只读 alpha 再着色，
+//   所以彩色/白色 RGB 的图会被涂成一整块。2026-10-22 实测对照
+//   /System/Library/Input Methods/SCIM.app/…/pinyin.tiff 逐像素确认。
+//
+// 形状：16×16 满幅圆角方块（圆角半径 ≈ 边长的 0.18，与系统图的 alpha 轮廓一致：
+//   首行 alpha ≈ [6,145,237,255…]），中心用系统字体挖空「Cs」（Chaoset 字标）。
+
+/// 输入源模板图单帧：满幅圆角方块 + 挖空字形。
+/// - 底色画成纯黑：模板图只取 alpha，RGB 值本身不参与渲染，但必须统一为
+///   (0,0,0)，否则一旦被按彩色渲染（个别系统设置页面）就会露出杂色。
+func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
+    let side = CGFloat(px)
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                isPlanar: false, colorSpaceName: .deviceRGB,
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    drawKeycap(w: w, h: h, knockout: knockout)
+    let ctx = NSGraphicsContext.current!.cgContext
+    ctx.setShouldAntialias(true)
+
+    // 满幅圆角方块：不留边距，与系统图一致（系统图 alpha 覆盖到第 0/15 行）
+    let body = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: side, height: side),
+                            xRadius: side * 0.18, yRadius: side * 0.18)
+    NSColor.black.setFill()
+    body.fill()
+
+    // 字形挖空：destinationOut 在位图 alpha 里挖出「Cs」。
+    // 字号取 0.62em、bold：16×16 下仍是可辨识的两字形（实测比 0.58/0.72 更清楚）。
+    let font = NSFont.systemFont(ofSize: side * 0.62, weight: .bold)
+    let text = NSAttributedString(string: "Cs", attributes: [
+        .font: font,
+        .foregroundColor: NSColor.white,
+    ])
+    let ts = text.size()
+    ctx.setBlendMode(.destinationOut)
+    text.draw(at: NSPoint(x: (side - ts.width) / 2, y: (side - ts.height) / 2))
+    ctx.setBlendMode(.normal)
+
     NSGraphicsContext.restoreGraphicsState()
     return rep
 }
 
-/// 多分辨率 TIFF（20×16 / 40×32 / 60×48），系统按 Retina 需要挑页面。
-/// 用 TIFF 而非 PDF：TextInputSources.h 明确 "TIFF files are the normal icon
-/// format for input modes"，且系统取图标走 NSBundle imageForResource:。
-func keycapTiff(_ path: String, knockout: Bool) {
-    let url = URL(fileURLWithPath: path)
-    let sizes: [(CGFloat, CGFloat)] = [(20, 16), (40, 32), (60, 48)]
-    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.tiff" as CFString, sizes.count, nil) else {
+/// 双帧模板 TIFF（16×16@72dpi + 32×32@144dpi，LZW）。
+/// 用 ImageIO 直接写：DPI 逐帧写进 TIFF 标签，NSImage 才能按"点尺寸"正确挑帧；
+/// 两帧的像素尺寸比必须是 2:1（tiffutil -cathidpicheck 的 hidpi 约定）。
+func writeInputSourceTiff(_ path: String) {
+    let frames: [(px: Int, dpi: Int)] = [(16, 72), (32, 144)]
+    guard let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL,
+                                                     "public.tiff" as CFString,
+                                                     frames.count, nil) else {
         fatalError("无法创建 TIFF: \(path)")
     }
-    for (w, h) in sizes {
-        guard let cg = keycapRep(w: w, h: h, knockout: knockout).cgImage else {
-            fatalError("TIFF 编码失败 \(w)x\(h)")
+    for frame in frames {
+        guard let cg = inputSourceRep(frame.px).cgImage else {
+            fatalError("TIFF 编码失败 \(frame.px)x\(frame.px)")
         }
-        CGImageDestinationAddImage(dest, cg, nil)
+        let props: [CFString: Any] = [
+            kCGImagePropertyDPIWidth: frame.dpi,
+            kCGImagePropertyDPIHeight: frame.dpi,
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFXResolution: frame.dpi,
+                kCGImagePropertyTIFFYResolution: frame.dpi,
+                kCGImagePropertyTIFFResolutionUnit: 2, // 2 = 英寸
+                kCGImagePropertyTIFFCompression: 5,     // 5 = LZW，与系统图一致
+                kCGImagePropertyTIFFSoftware: "chaoset-make-icon",
+                kCGImagePropertyTIFFImageDescription:
+                    frame.px == 16 ? "ChaosetIME-input.png" : "ChaosetIME-input@2x.png",
+            ],
+        ]
+        CGImageDestinationAddImage(dest, cg, props as CFDictionary)
     }
     guard CGImageDestinationFinalize(dest) else { fatalError("TIFF 写盘失败: \(path)") }
 }
+
+// MARK: - 产出
 
 let iconset = URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME.iconset")
 try? FileManager.default.removeItem(at: iconset)
@@ -182,10 +190,14 @@ try! FileManager.default.createDirectory(at: iconset, withIntermediateDirectorie
 for base in [16, 32, 128, 256, 512] {
     for scale in [1, 2] {
         let name = scale == 1 ? "icon_\(base)x\(base).png" : "icon_\(base)x\(base)@2x.png"
-        try! png(base * scale).write(to: iconset.appendingPathComponent(name))
+        let png = appIconRep(base * scale).representation(using: .png, properties: [:])!
+        try! png.write(to: iconset.appendingPathComponent(name))
     }
 }
-keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-menu.tiff").path, knockout: true)
-// palette 也做成挖空：切换输入法的 HUD 对图标按模板图渲染，实心版本会显示成白方块
-keycapTiff(URL(fileURLWithPath: outDir).appendingPathComponent("ChaosetIME-palette.tiff").path, knockout: true)
-print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-menu.tiff 与 ChaosetIME-palette.tiff")
+
+// 输入源图标：plist 的四个图标键（tsInputMethodIconFileKey / …AlternateIconFileKey /
+// tsInputModeMenuIconFileKey / tsInputModePaletteIconFileKey）全部指向这一个文件。
+writeInputSourceTiff(URL(fileURLWithPath: outDir)
+    .appendingPathComponent("ChaosetIME-input.tiff").path)
+
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-input.tiff（16×16+32×32 模板图）")

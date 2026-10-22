@@ -45,4 +45,4 @@ else
   printf '   跳过（缺 build/smoke 或 socket）\n'
 fi
 
-printf '\n下一步：系统设置 → 键盘 → 输入法 → 添加「超集拼音」（图标为中国印章）\n'
+printf '\n下一步：系统设置 → 键盘 → 输入法 → 添加「Chaoset」\n'

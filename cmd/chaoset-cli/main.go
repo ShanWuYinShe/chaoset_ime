@@ -25,7 +25,7 @@ func main() {
 	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）/ flypy（小鹤）；空关闭（仅本地模式；daemon 模式由 chaosetd 的 -shuangpin 决定）")
 	flag.Parse()
 	if len(dicts) == 0 {
-		dicts = repeatFlag{"data/dict_seed.tsv"}
+		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 
 	ctrl, closeFn, err := buildController(*socket, dicts, *userPath, *fuzzy, *trad, *sp)

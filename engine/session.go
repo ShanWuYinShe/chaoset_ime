@@ -405,20 +405,29 @@ func (s *Session) Compose() Composition {
 	}
 	paths, frag := combineChunks(chunks)
 
+	// exact 与 merged 平行：标记该候选的音节数是否与「输入完整音节数」一致。
+	// 用户打满一串拼音时（如 jingchang），整词候选（经常）应排在
+	// 「以该序列开头的更长词」（经常化）前面；反之打一个音节时（jing），
+	// 单字（经/京）应排在多字词（经济）前面——与主流输入法一致。
 	var merged []Candidate
+	var exact []bool
 	seen := make(map[string]int)
-	addCandidate := func(e *Entry, score int, fromUser bool) {
+	addCandidate := func(e *Entry, score int, fromUser bool, want int) {
 		word := e.Word
 		if s.traditional {
 			word = ToTraditional(word) // 候选显示与上屏均为繁体
 		}
 		key := word + "\x00" + strings.Join(e.Syllables, " ")
+		isExact := len(e.Syllables) == want
 		if prev, ok := seen[key]; ok {
 			if score > merged[prev].Score {
 				merged[prev].Score = score
 				merged[prev].FromUser = fromUser
 			} else if fromUser {
 				merged[prev].FromUser = true
+			}
+			if isExact {
+				exact[prev] = true
 			}
 			return
 		}
@@ -429,31 +438,50 @@ func (s *Session) Compose() Composition {
 			Score:     score,
 			FromUser:  fromUser,
 		})
+		exact = append(exact, isExact)
 	}
 	for _, sylls := range paths {
 		for _, qp := range queryVariants(sylls, frag, s.fuzzy) {
+			// want：该查询路径对应的完整音节数（残缺音节也算一个）。
+			want := len(qp)
 			var entries []*Entry
 			if frag == "" {
 				entries = s.dict.Query(qp)
 			} else {
 				entries = s.dict.QueryPrefix(qp, frag)
+				want++
 			}
 			for _, e := range entries {
 				boost := 0
 				if s.user != nil {
 					boost = s.user.Score(e.Word, e.Syllables, s.prev)
 				}
-				addCandidate(e, e.Freq+boost, boost > 0)
+				addCandidate(e, e.Freq+boost, boost > 0, want)
 			}
 		}
 		if s.user != nil {
+			want := len(sylls)
+			if frag != "" {
+				want++
+			}
 			for _, e := range s.user.QueryPhrases(sylls, frag) {
-				addCandidate(e, e.Freq, true)
+				addCandidate(e, e.Freq, true, want)
 			}
 		}
 	}
+	// 排序（稳定，保证同分同长时结果可复现）：
+	//   ① 用户数据加权的候选最前——调频/上下文一次上屏 +500，必须压过静态词频；
+	//   ② 音节数与输入完全一致的候选次之——打满 jingchang 时「经常」先于「经常化」，
+	//      打单个音节 jing 时单字先于多字词，符合主流输入法直觉；
+	//   ③ 其余按得分（基础词频 + 用户加成）、词长、字典序。
 	sort.SliceStable(merged, func(i, j int) bool {
 		a, b := merged[i], merged[j]
+		if a.FromUser != b.FromUser {
+			return a.FromUser
+		}
+		if exact[i] != exact[j] {
+			return exact[i]
+		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}

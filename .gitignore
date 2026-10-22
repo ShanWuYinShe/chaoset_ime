@@ -14,3 +14,8 @@ chaoset-userdict.json.tmp
 # 中间产物与 worktree
 .worktrees/
 .workwork/
+
+# macOS 系统文件（Finder 在任意目录层级生成，含仓库根目录）
+# 单条 .DS_Store 已能匹配任意层级，**/.DS_Store 为显式写法，便于一眼看出覆盖全仓
+.DS_Store
+**/.DS_Store

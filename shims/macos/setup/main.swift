@@ -3,14 +3,14 @@ import Carbon
 import Foundation
 import UniformTypeIdentifiers
 
-// ChaosetSetup —— 超集输入法的图形化安装 / 词库导入工具。
+// ChaosetSetup —— Chaoset 输入法的图形化安装 / 词库导入工具。
 // 目标：不用命令行的用户也能完成「安装/更新 → 导入词库 → 看状态 → 按提示注销重登」。
 //
 // 启动方式：
 //   直接双击 = 图形界面
 //   ChaosetSetup --selftest <supportDir> [词库文件...]  = 无界面自检（会话内验证用）
 //
-// 本 app 随包携带 ChaosetIME.app / chaosetd / chaoset-import / dict_seed.tsv，
+// 本 app 随包携带 ChaosetIME.app / chaosetd / chaoset-import / dict_common.tsv，
 // 全部操作都在自身进程内完成，不依赖仓库路径与终端。
 
 let imeBundleName = "ChaosetIME.app"
@@ -163,8 +163,8 @@ func installIME() -> String {
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: daemonDst)
         out += "已部署 daemon\n"
     }
-    if !fm.fileExists(atPath: support + "/dict.tsv"), fm.fileExists(atPath: res("dict_seed.tsv")) {
-        try? fm.copyItem(atPath: res("dict_seed.tsv"), toPath: support + "/dict.tsv")
+    if !fm.fileExists(atPath: support + "/dict.tsv"), fm.fileExists(atPath: res("dict_common.tsv")) {
+        try? fm.copyItem(atPath: res("dict_common.tsv"), toPath: support + "/dict.tsv")
         out += "已写入种子词库（可用「导入词库…」换成自己的）\n"
     }
     out += restartDaemon(support: support)
@@ -176,7 +176,7 @@ func installIME() -> String {
     } else {
         out += "\n注意：系统输入源表里还看不到本输入法。macOS 只在【登录时】扩充输入源表，\n"
         out += "请注销并重新登录，然后回到本工具点「重新检查」；届时到「系统设置 → 键盘 →\n"
-        out += "输入法」添加「超集拼音」即可。\n"
+        out += "输入法」添加「Chaoset」即可。\n"
     }
     return out
 }
@@ -285,10 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
-        w.title = "超集输入法"
+        w.title = "Chaoset"
         w.center()
 
-        let title = NSTextField(labelWithString: "超集输入法 · 设置与词库导入")
+        let title = NSTextField(labelWithString: "Chaoset · 设置与词库导入")
         title.font = NSFont.boldSystemFont(ofSize: 16)
 
         statusField = NSTextField(wrappingLabelWithString: "正在检查…")
@@ -377,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         busy = true
         append("\n=== 导入词库 ===\n")
         let r = importDictionaries(files: panel.urls.map { $0.path }, support: supportDir(),
-                                   importer: res("chaoset-import"), seed: res("dict_seed.tsv"))
+                                   importer: res("chaoset-import"), seed: res("dict_common.tsv"))
         append(r + "\n")
         refresh()
         busy = false
@@ -410,7 +410,7 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--selftest" {
     let files = Array(CommandLine.arguments.dropFirst(3))
     // 自检模式不碰用户的 daemon，只验证"合并 → 备份 → 原子替换"这条链路
     print(importDictionaries(files: files, support: support,
-                             importer: res("chaoset-import"), seed: res("dict_seed.tsv"),
+                             importer: res("chaoset-import"), seed: res("dict_common.tsv"),
                              restart: false))
     exit(0)
 }

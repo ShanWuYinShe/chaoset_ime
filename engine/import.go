@@ -95,6 +95,11 @@ func normalizePinyin(code string) []string {
 	return sylls
 }
 
+// NormalizePinyin 把拼音编码归一化为音节切片（全小写、去音调符号、
+// ü→v、去音调数字后缀、连写自动切分）；任一首节无法归一化时返回 nil。
+// 词库生成工具（cmd/chaoset-dictgen）复用它，保证生成与导入走同一套规则。
+func NormalizePinyin(code string) []string { return normalizePinyin(code) }
+
 // segmentRunon 把连写拼音整串切成合法音节（hundunshurufa → hun dun shu ru fa）。
 // 仅当整串都能切完才返回切片，否则返回 nil；切法取"最长首音节优先"。
 func segmentRunon(s string) []string {

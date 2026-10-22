@@ -38,7 +38,7 @@ func main() {
 	shuangpin := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）/ flypy（小鹤）；空关闭（键位表见 engine/double_pinyin.go）")
 	flag.Parse()
 	if len(dicts) == 0 {
-		dicts = repeatFlag{"data/dict_seed.tsv"}
+		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 
 	if err := run(*socket, *tcpAddr, *fontPath, *fontSize, dicts, *userPath, *fuzzy, *trad, *shuangpin); err != nil {
