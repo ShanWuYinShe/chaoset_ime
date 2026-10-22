@@ -141,7 +141,7 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
 
     // 1) 满幅圆角方块（圆角 0.13×边长）
     let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: sideBig, height: sideBig),
-                      cornerWidth: sideBig * 0.13, cornerHeight: sideBig * 0.13,
+                      cornerWidth: sideBig * 0.20, cornerHeight: sideBig * 0.20,
                       transform: nil)
     ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
     ctx.addPath(body)
@@ -149,7 +149,7 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
 
     // 2) 挖空单字符「C」：墨迹高度 ≈ 0.69×边长（二分调字号得到）
     ctx.setBlendMode(.destinationOut)
-    let targetH = sideBig * 0.69
+    let targetH = sideBig * 0.78
     // 用**墨迹高度**（glyph path bounds）而非行高来二分：
     // NSAttributedString.size() 返回的是行高（含上下留白），直接拿它当
     // 字形高度会让实际墨迹偏小（实测 32px 帧只占 16 行，期望 22 行）。
@@ -161,8 +161,8 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
         let l = CTLineCreateWithAttributedString(a)
         return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
     }
-    var lo = sideBig * 0.3
-    var hi = sideBig * 4.0
+    var lo = sideBig * 0.4
+    var hi = sideBig * 5.0
     var bestLine = metrics(sideBig).line
     var bestBounds = metrics(sideBig).bounds
     for _ in 0..<32 {
@@ -343,6 +343,6 @@ for base in [16, 32, 128, 256, 512] {
 // 输入源图标：plist 的四个图标键（tsInputMethodIconFileKey / …AlternateIconFileKey /
 // tsInputModeMenuIconFileKey / tsInputModePaletteIconFileKey）全部指向这一个文件。
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-input.tiff").path)
+    .appendingPathComponent("ChaosetIME-icon2.tiff").path)
 
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-input.tiff（16×16+32×32 模板图）")
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（16×16+32×32 模板图）")

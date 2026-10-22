@@ -30,7 +30,7 @@ iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIM
 echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns \
-   build/Resources/ChaosetIME-input.tiff "$APP/Contents/Resources/"
+   build/Resources/ChaosetIME-icon2.tiff "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
 # 枚举为可添加的输入源。除该字典外，以下三组键对齐同目录下可正常枚举的
@@ -89,9 +89,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>InputMethodConnectionName</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME_Connection</string>
 	<key>tsInputMethodIconFileKey</key>
-	<string>ChaosetIME-input.tiff</string>
+	<string>ChaosetIME-icon2.tiff</string>
 	<key>tsInputMethodAlternateIconFileKey</key>
-	<string>ChaosetIME-input.tiff</string>
+	<string>ChaosetIME-icon2.tiff</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>ChaosetController</string>
 	<key>InputMethodServerDelegateClass</key>
@@ -113,7 +113,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>TISIntendedLanguage</key>
 				<string>zh-Hans</string>
 				<key>tsInputModeAlternateMenuIconFileKey</key>
-				<string>ChaosetIME-input.tiff</string>
+				<string>ChaosetIME-icon2.tiff</string>
 				<key>tsInputModeCharacterRepertoireKey</key>
 				<array>
 					<string>Hans</string>
@@ -125,9 +125,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModeKeyEquivalentModifiersKey</key>
 				<integer>4608</integer>
 				<key>tsInputModeMenuIconFileKey</key>
-				<string>ChaosetIME-input.tiff</string>
+				<string>ChaosetIME-icon2.tiff</string>
 				<key>tsInputModePaletteIconFileKey</key>
-				<string>ChaosetIME-input.tiff</string>
+				<string>ChaosetIME-icon2.tiff</string>
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
