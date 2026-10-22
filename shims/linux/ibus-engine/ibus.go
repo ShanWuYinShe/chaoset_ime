@@ -245,9 +245,24 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.commit(text)
 		return true, nil
 
-	case keyval == keysymReturn || keyval == keysymSpace:
+	case keyval == keysymReturn:
+		// 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
+		if e.sess != nil {
+			comp := e.sess.Compose()
+			if comp.Input != "" {
+				raw := comp.Input
+				e.sess.Reset()
+				e.hidePreedit()
+				e.hideLookupTable()
+				e.commit(raw)
+				return true, nil
+			}
+		}
+		return false, nil
+
+	case keyval == keysymSpace:
 		// Shift+空格：切换全角/半角标点模式（优先于首选上屏）
-		if keyval == keysymSpace && state&ibusShiftMask != 0 {
+		if state&ibusShiftMask != 0 {
 			e.sess.ToggleHalfWidth()
 			return true, nil
 		}

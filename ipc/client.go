@@ -157,6 +157,17 @@ func (c *Client) Select(index int) (string, error) {
 	return out.Committed, nil
 }
 
+// CommitRaw 清空当前组词并返回用户输入的原始拼音（供回车直接上屏使用）。
+func (c *Client) CommitRaw() (string, error) {
+	var out struct {
+		Committed string `json:"committed"`
+	}
+	if err := c.call("commitRaw", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Committed, nil
+}
+
 // Punct 提交一个标点键：组词中先上屏首选候选，随后输出映射后的
 // 中文标点；空组词直接输出中文标点（映射规则见 engine.Session.Punct）。
 func (c *Client) Punct(key string) (string, error) {

@@ -125,8 +125,20 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
-        // 空格 / 回车：首选上屏；无候选时放行
-        if (chars == " " || chars == "\r") && hasCandidates {
+        // 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
+        if (chars == "\r" || chars == "\n"), let cur = current, !cur.input.isEmpty {
+            let raw = engine.commitRaw() ?? cur.input
+            current = nil
+            client?.insertText(
+                raw,
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            refresh(client)
+            return true
+        }
+
+        // 空格：首选上屏；无候选时放行
+        if chars == " " && hasCandidates {
             commit(index: 0, client: client)
             return true
         }

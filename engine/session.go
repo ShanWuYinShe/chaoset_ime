@@ -240,6 +240,13 @@ func (s *Session) Reset() (Composition, error) {
 	return s.Compose(), nil
 }
 
+// CommitRaw 清空当前组词并返回用户输入的原始拼音（供回车直接上屏使用）。
+func (s *Session) CommitRaw() (string, error) {
+	raw := s.input
+	_, err := s.Reset()
+	return raw, err
+}
+
 // NextPage 翻到下一页候选，返回当前页组成状态。空组词为无操作；
 // 已在末页时页码被 Compose 钳制（返回内容不变，Page 保持）。
 func (s *Session) NextPage() (Composition, error) {
@@ -440,13 +447,15 @@ func (s *Session) Compose() Composition {
 		rank = append(rank, r)
 	}
 	// 匹配层级（数字越小越优先）：
-	//   rankExact   —— 音节数与输入完全一致（打满 jingchang 命中「经常」）
-	//   rankPartial —— 末段残缺音节匹配成功（打 shix 时的「史学」）
-	//   rankPrefix  —— 偏长词的续接（打 jing 时的「经济」）
-	//   rankBackoff —— 末段拼音打错了/无法续接，退回到「已完整音节」本身的候选
-	//                  （打 nihaox 非但不出候选，还应能打出「你好」）
+	//   rankExact    —— 单词完全匹配（打满 jingchang 命中「经常」）
+	//   rankSentence —— 多词 DP 拼接复合候选（打 womende 命中「我们的」）
+	//   rankPartial  —— 末段残缺音节匹配成功（打 shix 时的「史学」）
+	//   rankPrefix   —— 偏长词的续接（打 jing 时的「经济」）
+	//   rankBackoff  —— 末段拼音打错了/无法续接，退回到「已完整音节」本身的候选
+	//                   （打 nihaox 非但不出候选，还应能打出「你好」）
 	const (
 		rankExact = iota
+		rankSentence
 		rankPartial
 		rankPrefix
 		rankBackoff
@@ -476,43 +485,110 @@ func (s *Session) Compose() Composition {
 					addCandidate(e, e.Freq+boost, boost > 0, r)
 					hit++
 				}
+				if len(qp) >= 2 {
+					for _, sc := range FindSentenceCandidates(s.dict, s.user, qp, 6) {
+						if len(sc.Words) > 1 {
+							boost := 0
+							fromUser := false
+							if s.user != nil {
+								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
+								if boost > 0 {
+									fromUser = true
+								}
+							}
+							e := &Entry{
+								Word:      sc.Text,
+								Syllables: sc.Syllables,
+								Freq:      sc.Score,
+							}
+							addCandidate(e, sc.Score+boost, fromUser, rankSentence)
+							hit++
+						}
+					}
+				}
+				// 为多音节输入叠加「逐级回退前缀」（例如输入 womende 时不仅出「我们的」，
+				// 也把已完整的「我们」加入候选；打 zhongguoo 时也包含「中国」）
+				limit := len(sylls) - 1
+				if limit > 8 {
+					limit = 8
+				}
+				for drop := 1; drop <= limit; drop++ {
+					shorter := sylls[:len(sylls)-drop]
+					if len(shorter) == 0 {
+						break
+					}
+					for _, sqp := range queryVariants(shorter, "", s.fuzzy) {
+						if len(sqp) == 0 {
+							continue
+						}
+						for _, e := range s.dict.Query(sqp) {
+							if len(e.Syllables) == len(sqp) {
+								boost := 0
+								if s.user != nil {
+									boost = s.user.Score(e.Word, e.Syllables, s.prev)
+								}
+								addCandidate(e, e.Freq+boost, boost > 0, rankBackoff+drop)
+							}
+						}
+					}
+					if s.user != nil {
+						for _, e := range s.user.QueryPhrases(shorter, "") {
+							if len(e.Syllables) == len(shorter) {
+								addCandidate(e, e.Freq, true, rankBackoff+drop)
+							}
+						}
+					}
+				}
 				continue
 			}
 			// 末段有残缺音节：先查「下一个音节以 frag 开头」的续接候选。
-			// 注意 len(qp)==0 时 Query/QueryPrefix 会从 Trie 根开始返回**全部**词条
-			//（zzz 这类无法切分的输入就是这种情况），必须跳过，否则输入法会
-			// 对任意乱码吐出整本词库的候选。
-			if len(qp) == 0 {
-				continue
-			}
-			for _, e := range s.dict.QueryPrefix(qp, frag) {
-				boost := 0
-				if s.user != nil {
-					boost = s.user.Score(e.Word, e.Syllables, s.prev)
+			// 当 len(qp)==0 且 frag!="" 时（如用户刚输入首字母 'n'/'c'/'w'），
+			// QueryPrefix([], frag) 从根节点筛选以该字母开头的音节（合法音节前缀），
+			// 乱码输入（如 zzz）因无任何音节以此为前缀自然返回空。
+			if len(qp) > 0 || frag != "" {
+				for _, e := range s.dict.QueryPrefix(qp, frag) {
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					}
+					addCandidate(e, e.Freq+boost, boost > 0, rankPartial)
+					hit++
 				}
-				addCandidate(e, e.Freq+boost, boost > 0, rankPartial)
-				hit++
 			}
-			// 再叠加「音节在 qp 处正好结束」的候选：用户多打了一个（或几个）
-			// 对不上的字母时，仍应能打出前面已经完整的部分（nihaox → 你好）。
+			// 再叠加「音节在 qp 处正好结束」的候选（必须 len(qp)>0，避免空序列查根节点吐出整库）：
+			// 用户多打了一个（或几个）对不上的字母时，仍应能打出前面已经完整的部分（nihaox → 你好）。
 			// 这类候选排在 rankPartial 之后，不影响正常续接匹配的顺序。
-			for _, e := range s.dict.Query(qp) {
-				boost := 0
-				if s.user != nil {
-					boost = s.user.Score(e.Word, e.Syllables, s.prev)
+			if len(qp) > 0 {
+				for _, e := range s.dict.Query(qp) {
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					}
+					addCandidate(e, e.Freq+boost, boost > 0, rankBackoff)
+					hit++
 				}
-				addCandidate(e, e.Freq+boost, boost > 0, rankBackoff)
-				hit++
 			}
 		}
-		if hit == 0 && frag == "" {
-			// 整条路径无候选 → 逐级去掉尾部音节重查（最多 8 级）。
-			//
-			// 触发条件严格限定为「末尾多打了对不上的字母」：
-			//   - 至少保留一个完整音节（len(sylls) >= 2），单音节输入查不到就是
-			//     查不到，不能退化成一堆无关候选（zzz 曾被切分成 z'z'z 后逐级
-			//     丢光，最终返回「你好/西安」这种完全无关的结果）；
-			//   - 只有**尾部**被丢弃，前缀必须逐字相同（只可能是用户多打了字）。
+		if hit == 0 {
+			// 整条路径无候选：
+			// 1. 若已有 2 个及以上完整音节（如 nizaig 中的 nizai），先用 DP 生成前缀复合短语（如「你在」）
+			if len(sylls) >= 2 {
+				for _, sc := range FindSentenceCandidates(s.dict, s.user, sylls, 6) {
+					avgFreq := sc.Score / len(sc.Syllables)
+					if avgFreq > 99 {
+						avgFreq = 99
+					}
+					e := &Entry{
+						Word:      sc.Text,
+						Syllables: sc.Syllables,
+						Freq:      avgFreq,
+					}
+					addCandidate(e, avgFreq, false, rankBackoff)
+				}
+			}
+			// 2. 逐级去掉尾部音节重查（最多 8 级）。
+			// 触发条件限定为「多打了对不上的音节或残缺音节」：
+			// 至少保留一个完整音节（len(sylls) >= 2），单音节查不到就是查不到。
 			limit := len(sylls) - 1
 			if limit > 8 {
 				limit = 8
@@ -527,6 +603,16 @@ func (s *Session) Compose() Composition {
 					if len(qp) == 0 {
 						continue
 					}
+					if frag != "" {
+						for _, e := range s.dict.QueryPrefix(qp, frag) {
+							boost := 0
+							if s.user != nil {
+								boost = s.user.Score(e.Word, e.Syllables, s.prev)
+							}
+							addCandidate(e, e.Freq+boost, boost > 0, rankBackoff+drop)
+							found++
+						}
+					}
 					for _, e := range s.dict.Query(qp) {
 						boost := 0
 						if s.user != nil {
@@ -537,6 +623,12 @@ func (s *Session) Compose() Composition {
 					}
 				}
 				if s.user != nil {
+					if frag != "" {
+						for _, e := range s.user.QueryPhrases(shorter, frag) {
+							addCandidate(e, e.Freq, true, rankBackoff+drop)
+							found++
+						}
+					}
 					for _, e := range s.user.QueryPhrases(shorter, "") {
 						addCandidate(e, e.Freq, true, rankBackoff+drop)
 						found++
@@ -567,13 +659,17 @@ func (s *Session) Compose() Composition {
 		}
 	}
 	// 排序（稳定，保证同分同长时结果可复现）。优先级：
-	//   ① 用户数据加权（调频/上下文）——一次上屏 +500，必须压过静态词频；
-	//   ② 匹配层级：完全匹配 > 末段续接 > 偏长前缀 > 回退到已完整前缀。
-	//      这保证打满 jingchang 时「经常」先于「经常化」，打 nihaox 时
-	//      「你好」仍然出得来（而不是一个候选都没有）；
-	//   ③ 得分（基础词频 + 用户加成）、词长、字典序。
+	//   ① 匹配了完整音节（精确匹配/整句候选）的候选永远优先于丢弃尾部音节的回退候选；
+	//   ② 用户数据加权（调频/上下文）——一次上屏 +500，必须压过静态词频；
+	//   ③ 匹配层级：完全匹配 > 整句拼接 > 末段续接 > 偏长前缀 > 回退到已完整前缀。
+	//   ④ 得分（基础词频 + 用户加成）、词长、字典序。
 	sort.SliceStable(merged, func(i, j int) bool {
 		a, b := merged[i], merged[j]
+		aBackoff := rank[i] >= rankBackoff
+		bBackoff := rank[j] >= rankBackoff
+		if aBackoff != bBackoff {
+			return !aBackoff
+		}
 		if a.FromUser != b.FromUser {
 			return a.FromUser
 		}

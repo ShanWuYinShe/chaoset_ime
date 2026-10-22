@@ -175,6 +175,11 @@ final class EngineClient {
         parseComp(call(method: "reset", params: [:]))
     }
 
+    func commitRaw() -> String? {
+        guard let result = call(method: "commitRaw", params: [:]) else { return nil }
+        return result["committed"] as? String
+    }
+
     func select(_ index: Int) -> String? {
         guard let result = call(method: "select", params: ["index": index]) else { return nil }
         return result["committed"] as? String

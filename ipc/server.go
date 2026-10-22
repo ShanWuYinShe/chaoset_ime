@@ -142,6 +142,12 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		return sess.Backspace()
 	case "reset":
 		return sess.Reset()
+	case "commitRaw":
+		text, err := sess.CommitRaw()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"committed": text}, nil
 	case "nextPage":
 		return sess.NextPage()
 	case "prevPage":

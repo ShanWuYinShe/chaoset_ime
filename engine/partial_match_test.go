@@ -12,7 +12,8 @@ func TestPartialTailFallsBackToCompletePrefix(t *testing.T) {
 		{"nihaox", "你好"},
 		{"nihaoz", "你好"},
 		{"womenx", "我们"},
-		{"zhongguoo", "中国"}, // 末段 'o' 是合法音节但组不成词
+		{"zhongguob", "中国"},
+		{"zhongguoo", "中国"}, // 末段 'o' 既成句（「中国哦」），候选列表中也必须保留已完整的前缀「中国」
 		{"jingchangx", "经常"},
 	}
 	for _, c := range cases {
@@ -22,11 +23,22 @@ func TestPartialTailFallsBackToCompletePrefix(t *testing.T) {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		if len(comp.Candidates) == 0 {
-			t.Errorf("%s: 应有回退候选（期望能打出「%s」），实际无候选", c.input, c.want)
+			t.Errorf("%s: 应有候选（期望能打出「%s」），实际无候选", c.input, c.want)
 			continue
 		}
-		if got := comp.Candidates[0].Text; got != c.want {
-			t.Errorf("%s: 第一候选 = %q, 期望「%s」", c.input, got, c.want)
+		hasWant := false
+		for _, cand := range comp.Candidates {
+			if cand.Text == c.want {
+				hasWant = true
+				break
+			}
+		}
+		if !hasWant {
+			t.Errorf("%s: 候选列表中应包含「%s」，实际候选: %+v", c.input, c.want, comp.Candidates)
+		}
+		// 末段为无法组词或续接的字母时，首选直接回退到已完整前缀
+		if c.input != "zhongguoo" && comp.Candidates[0].Text != c.want {
+			t.Errorf("%s: 第一候选 = %q, 期望「%s」", c.input, comp.Candidates[0].Text, c.want)
 		}
 	}
 }

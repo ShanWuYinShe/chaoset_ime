@@ -261,6 +261,42 @@ func TestServerConcurrentAccess(t *testing.T) {
 	}
 }
 
+func TestCommitRaw(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "test.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, nil)
+	go srv.Serve()
+	defer srv.Close()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("Dial 失败: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Input("nizaiganma"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+
+	raw, err := client.CommitRaw()
+	if err != nil {
+		t.Fatalf("CommitRaw 失败: %v", err)
+	}
+	if raw != "nizaiganma" {
+		t.Errorf("CommitRaw = %q, 期望 nizaiganma", raw)
+	}
+}
+
 func waitForDial(sock string) (*Client, error) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {

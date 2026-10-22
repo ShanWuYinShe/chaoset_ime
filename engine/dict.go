@@ -98,6 +98,19 @@ func (d *Dictionary) QueryPrefix(syllables []string, frag string) []*Entry {
 	return out
 }
 
+// QueryExact 返回音节序列与 syllables 恰好完全一致的词条（不含子树衍生更长的词）。
+func (d *Dictionary) QueryExact(syllables []string) []*Entry {
+	node := d.walk(syllables)
+	if node == nil || len(node.ids) == 0 {
+		return nil
+	}
+	out := make([]*Entry, len(node.ids))
+	for i, id := range node.ids {
+		out[i] = d.entries[id]
+	}
+	return out
+}
+
 // Contains 判断主词典是否已存在「词 + 精确音节序列」一致的词条。
 // 词组进化用它避免把主词典已有的词重复学一遍。
 func (d *Dictionary) Contains(word string, syllables []string) bool {

@@ -467,7 +467,14 @@ private:
             return true;
         }
 
-        if ((vk == kVkSpace || vk == kVkReturn) && hasCandidates()) {
+        if (vk == kVkReturn && isComposing()) {
+            std::string raw = comp_.input;
+            session_.reset();
+            commit(pic, raw);
+            return true;
+        }
+
+        if (vk == kVkSpace && hasCandidates()) {
             std::string committed;
             if (session_.select(0, &committed)) {
                 commit(pic, committed);
