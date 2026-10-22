@@ -365,6 +365,24 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   **验证**：`file` 确认 LZW 双帧、Pillow 确认 RGB=(0,0,0) 且 alpha 0/255 双峰、
   `tis` 确认 `kTISPropertyIconImageURL` 指向新文件。HUD 实际显示需重装后由人工确认。
 
+- **2026-10-22 第三次修正：2x 帧 DPI 与字形度量（系统设置里仍显示不一致）**：
+  用户反馈系统设置「添加输入法」列表里图标仍与其他输入法风格不符。逐项排查后
+  又发现三处：
+  ① **2x 帧的 Resolution 标签必须是 144**——`tiffutil -cathidpicheck` 会沿用
+     输入 PNG 的 DPI，而 `NSBitmapImageRep.representation` 写的 PNG 不带 pHYs，
+     结果两帧都标成 72dpi。系统据此认不出 32×32 是 2x，HiDPI 下拿 16×16 拉伸，
+     表现为图标糊、字形位置偏。修法：PNG 用 `CGImageDestination` 带 DPI 写出，
+     并在 tiffutil 之后**直接改 TIFF 二进制的 282/283 标签**（逐帧 72/144）。
+  ② **字形高度必须按墨迹（glyph path bounds）二分，不能用行高**——
+     `NSAttributedString.size()` 含上下留白，用它当目标高度会让实际墨迹偏小
+     （实测 32×32 帧只占 16 行，期望 22 行）。改用
+     `CTLineGetBoundsWithOptions(.useGlyphPathBounds)` 二分字号。
+  ③ **CGBitmapContext 原点在左下**——像素缓冲按「第 0 行在上」读回时必须翻转 y，
+     否则字形整体偏移。
+  验证：与系统 `pinyin.tiff` 逐帧比对，`n_frames`、两帧尺寸、`282/283`、
+  `ExtraSamples`、`compress`、`SamplesPerPixel`、`BitsPerSample` 全部一致；
+  AppKit 解码路径下 alpha 网格与 `拼` 同构。
+
 - **2026-10-22 输入源图标规格再修正（用户反馈颜色/大小/hover 不一致）**：
   系统设置与菜单栏里本输入法图标比 ABC、简体拼音偏亮、字形偏小、hover 无变化。
   逐标签比对系统 `pinyin.tiff` / `Korean.tiff` / `Katakana.tiff` 后确认三处差异：

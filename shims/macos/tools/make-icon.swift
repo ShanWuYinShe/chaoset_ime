@@ -150,24 +150,32 @@ func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
     // 2) 挖空单字符「C」：墨迹高度 ≈ 0.69×边长（二分调字号得到）
     ctx.setBlendMode(.destinationOut)
     let targetH = sideBig * 0.69
-    var lo = sideBig * 0.3
-    var hi = sideBig * 3.0
-    var fontSize = sideBig
-    for _ in 0..<30 {
-        let mid = (lo + hi) / 2
-        let f = CTFontCreateWithName("Helvetica-Bold" as CFString, mid, nil)
+    // 用**墨迹高度**（glyph path bounds）而非行高来二分：
+    // NSAttributedString.size() 返回的是行高（含上下留白），直接拿它当
+    // 字形高度会让实际墨迹偏小（实测 32px 帧只占 16 行，期望 22 行）。
+    func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
+        let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
         let a = NSAttributedString(string: "C", attributes: [
             .font: f, .foregroundColor: NSColor.white,
         ])
-        if a.size().height < targetH { lo = mid } else { hi = mid }
-        fontSize = mid
+        let l = CTLineCreateWithAttributedString(a)
+        return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
     }
-    let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
-    let text = NSAttributedString(string: "C", attributes: [
-        .font: font, .foregroundColor: NSColor.white,
-    ])
-    let line = CTLineCreateWithAttributedString(text)
-    let glyphBounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+    var lo = sideBig * 0.3
+    var hi = sideBig * 4.0
+    var bestLine = metrics(sideBig).line
+    var bestBounds = metrics(sideBig).bounds
+    for _ in 0..<32 {
+        let mid = (lo + hi) / 2
+        let (l, b) = metrics(mid)
+        if b.height < targetH { lo = mid } else { hi = mid }
+        bestLine = l
+        bestBounds = b
+    }
+    let line = bestLine
+    let glyphBounds = bestBounds
+    // CGBitmapContext 原点在左下角，CTLineDraw 也按这个坐标系画；
+    // 而像素缓冲按「第 0 行在上」读回，两者必须一致，否则字形会整体偏下。
     ctx.textPosition = CGPoint(x: (sideBig - glyphBounds.width) / 2 - glyphBounds.minX,
                                y: (sideBig - glyphBounds.height) / 2 - glyphBounds.minY)
     CTLineDraw(line, ctx)
@@ -225,10 +233,28 @@ func writeInputSourceTiff(_ path: String) {
     // 每一步先把像素写成 PNG，再由 tiffutil 合成多帧 TIFF。
     var pngPaths: [String] = []
     for frame in frames {
-        let png = inputSourceRep(frame.px).representation(using: .png, properties: [:])!
+        // 用 CGImageDestination 写 PNG，并显式带上 DPI：
+        // tiffutil -cathidpicheck 依赖输入的 DPI 判断哪张是 2x；若两帧都无 DPI
+        // 或都为 72，它就把两帧都标成 72，系统在 HiDPI 下会拿 16×16 拉伸，
+        // 表现为图标模糊、字形位置偏（2026-10-22 实测）。
+        // 系统图标实测：16×16 → 72dpi，32×32 → 144dpi。
+        guard let rep = inputSourceRep(frame.px).cgImage else {
+            fatalError("输入源图标取 CGImage 失败")
+        }
         let pngPath = tmpDir + "/icon_\(frame.px).png"
-        try! png.write(to: URL(fileURLWithPath: pngPath))
+        let url = URL(fileURLWithPath: pngPath)
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            fatalError("创建 PNG 失败: \(pngPath)")
+        }
+        CGImageDestinationAddImage(dest, rep, [
+            kCGImagePropertyDPIWidth: frame.dpi,
+            kCGImagePropertyDPIHeight: frame.dpi,
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { fatalError("PNG 写盘失败: \(pngPath)") }
         pngPaths.append(pngPath)
+        // 调试留档，便于逐像素核对（不影响产物）
+        try? FileManager.default.removeItem(atPath: "/tmp/dbg-icon_\(frame.px).png")
+        try? FileManager.default.copyItem(atPath: pngPath, toPath: "/tmp/dbg-icon_\(frame.px).png")
     }
 
     // tiffutil -cathidpicheck <1x> <2x> -out <目标>：写出的 TIFF 与系统图同规格
@@ -245,6 +271,60 @@ func writeInputSourceTiff(_ path: String) {
         let msg = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         fatalError("tiffutil 合成 TIFF 失败: \(msg)")
     }
+
+    // tiffutil 不读 PNG 的 pHYs，两帧都写成 72dpi。系统靠第二帧的 Resolution
+    // 标签识别「这是 2x」，否则 HiDPI 下会拿 16×16 拉伸显示（图标糊、字形偏）。
+    // 这里直接改 TIFF 二进制里的 Resolution 标签（282/283）。
+    resolveTagsInTiff(path: path, firstDPI: 72, secondDPI: 144)
+}
+
+/// 直接改写多帧 TIFF 中每帧的 XResolution/YResolution（标签 282/283）。
+/// 用 tiffutil 保证 ExtraSamples=2 与 LZW 结构，只补它没做对的 DPI 标记。
+private func resolveTagsInTiff(path: String, firstDPI: Double, secondDPI: Double) {
+    guard var data = FileManager.default.contents(atPath: path) else { return }
+    let isLE = data.count >= 2 && data[0] == 0x49 && data[1] == 0x49
+    func rd16(_ o: Int) -> Int { isLE ? Int(data[o]) | Int(data[o+1]) << 8 : Int(data[o]) << 8 | Int(data[o+1]) }
+    func rd32(_ o: Int) -> Int { isLE
+        ? Int(data[o]) | Int(data[o+1]) << 8 | Int(data[o+2]) << 16 | Int(data[o+3]) << 24
+        : Int(data[o]) << 24 | Int(data[o+1]) << 16 | Int(data[o+2]) << 8 | Int(data[o+3]) }
+    func wrRational(_ o: Int, _ v: Double) {
+        let num = UInt32((v * 100).rounded())
+        let den: UInt32 = 100
+        if isLE {
+            data[o] = UInt8(num & 0xFF); data[o+1] = UInt8((num >> 8) & 0xFF)
+            data[o+2] = UInt8((num >> 16) & 0xFF); data[o+3] = UInt8((num >> 24) & 0xFF)
+            data[o+4] = UInt8(den & 0xFF); data[o+5] = UInt8((den >> 8) & 0xFF)
+            data[o+6] = UInt8((den >> 16) & 0xFF); data[o+7] = UInt8((den >> 24) & 0xFF)
+        } else {
+            data[o] = UInt8((num >> 24) & 0xFF); data[o+1] = UInt8((num >> 16) & 0xFF)
+            data[o+2] = UInt8((num >> 8) & 0xFF); data[o+3] = UInt8(num & 0xFF)
+            data[o+4] = UInt8((den >> 24) & 0xFF); data[o+5] = UInt8((den >> 16) & 0xFF)
+            data[o+6] = UInt8((den >> 8) & 0xFF); data[o+7] = UInt8(den & 0xFF)
+        }
+    }
+
+    var offset = rd32(4)
+    var frameIndex = 0
+    let targetDPI = [firstDPI, secondDPI]
+    while offset > 0 && offset + 2 <= data.count && frameIndex < targetDPI.count {
+        let count = rd16(offset)
+        var i = 0
+        while i < count {
+            let entry = offset + 2 + i * 12
+            guard entry + 12 <= data.count else { break }
+            let tag = rd16(entry)
+            if tag == 282 || tag == 283 {          // XResolution / YResolution
+                let valueOffset = rd32(entry + 8)  // RATIONAL 直接存在值域里
+                if valueOffset + 8 <= data.count {
+                    wrRational(valueOffset, targetDPI[frameIndex])
+                }
+            }
+            i += 1
+        }
+        frameIndex += 1
+        offset = rd32(offset + 2 + count * 12)     // 下一帧 IFD 偏移
+    }
+    try? data.write(to: URL(fileURLWithPath: path))
 }
 
 // MARK: - 产出
