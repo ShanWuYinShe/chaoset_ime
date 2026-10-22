@@ -90,6 +90,9 @@ func drawSeal(_ s: CGFloat, ornament: Bool) {
 }
 
 /// 应用图标单帧：方形画布上居中画印章徽标。
+
+
+/// 应用图标单帧：方形画布上居中画印章徽标（彩色，用于访达/启动台/系统设置应用列表）。
 func appIconRep(_ px: Int) -> NSBitmapImageRep {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
@@ -102,84 +105,146 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
     return rep
 }
 
-// MARK: - 输入源图标（模板图，系统规格）
+// MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// 系统输入法（SCIM pinyin.tiff / Squirrel rime.pdf 同源做法）的输入源图标规格：
-//   帧：16×16@72dpi + 32×32@144dpi 两帧，LZW 压缩，RGB 通道恒为 (0,0,0)，
-//       形状（圆角方块 + 挖空字形）完全由 alpha 表达。
-//   系统在输入菜单与「切换输入法」HUD 里按模板图渲染：只读 alpha 再着色，
-//   所以彩色/白色 RGB 的图会被涂成一整块。2026-10-22 实测对照
-//   /System/Library/Input Methods/SCIM.app/…/pinyin.tiff 逐像素确认。
+// 系统输入法（SCIM pinyin.tiff / KoreanIM 等）的输入源图标实测规格
+//（2026-10-22 用 16×16 与 32×32 两帧逐像素标定）：
+//   - 双帧 TIFF：16×16@72dpi + 32×32@144dpi，LZW 压缩；
+//   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**。用 CGImageDestination
+//     直接写多帧会写成 1（预乘），系统按模板渲染时边缘颜色被重复相乘，
+//     表现为图标偏亮/偏暗、与别的输入法不一致；
+//   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 表达（系统按模板图只取 alpha 着色）；
+//   - 方块**满幅**，圆角 ≈ 0.13×边长（首行 alpha = [6,145,237,255…]）；
+//   - 字形挖空占第 2–12 行（11/16 ≈ 0.69×边长），且**只用单个字符**：
+//     ABC 是「A」、简体拼音是「拼」、韩文是「한」。两字符（此前的「Cs」）
+//     在 16px 下必然模糊且视觉重量不足，这正是用户反馈「风格/大小不一样」的原因。
 //
-// 形状：16×16 满幅圆角方块（圆角半径 ≈ 边长的 0.18，与系统图的 alpha 轮廓一致：
-//   首行 alpha ≈ [6,145,237,255…]），中心用系统字体挖空「Cs」（Chaoset 字标）。
+// 实现要点：直接在 16×16 上画字体，笔画只有 1px 会断裂（实测「C」被切成 4 段）。
+// 所以先在 8× 超采样画布上用 CGBitmapContext 画「圆角方块挖去字形」，
+// 再降采样到目标尺寸，最后逐像素写入 NSBitmapImageRep。
 
-/// 输入源模板图单帧：满幅圆角方块 + 挖空字形。
-/// - 底色画成纯黑：模板图只取 alpha，RGB 值本身不参与渲染，但必须统一为
-///   (0,0,0)，否则一旦被按彩色渲染（个别系统设置页面）就会露出杂色。
 func inputSourceRep(_ px: Int) -> NSBitmapImageRep {
-    let side = CGFloat(px)
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
-                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-                               isPlanar: false, colorSpaceName: .deviceRGB,
-                               bytesPerRow: 0, bitsPerPixel: 0)!
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    let ctx = NSGraphicsContext.current!.cgContext
+    let ss = 8                      // 超采样倍数
+    let big = px * ss
+    let sideBig = CGFloat(big)
+    let bytesPerRow = big * 4
+
+    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+    guard let ctx = CGContext(data: nil, width: big, height: big,
+                              bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                              space: cs,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+        fatalError("无法创建 CGContext（输入源图标）")
+    }
     ctx.setShouldAntialias(true)
+    ctx.clear(CGRect(x: 0, y: 0, width: sideBig, height: sideBig))
 
-    // 满幅圆角方块：不留边距，与系统图一致（系统图 alpha 覆盖到第 0/15 行）
-    let body = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: side, height: side),
-                            xRadius: side * 0.18, yRadius: side * 0.18)
-    NSColor.black.setFill()
-    body.fill()
+    // 1) 满幅圆角方块（圆角 0.13×边长）
+    let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: sideBig, height: sideBig),
+                      cornerWidth: sideBig * 0.13, cornerHeight: sideBig * 0.13,
+                      transform: nil)
+    ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+    ctx.addPath(body)
+    ctx.fillPath()
 
-    // 字形挖空：destinationOut 在位图 alpha 里挖出「Cs」。
-    // 字号取 0.62em、bold：16×16 下仍是可辨识的两字形（实测比 0.58/0.72 更清楚）。
-    let font = NSFont.systemFont(ofSize: side * 0.62, weight: .bold)
-    let text = NSAttributedString(string: "Cs", attributes: [
-        .font: font,
-        .foregroundColor: NSColor.white,
-    ])
-    let ts = text.size()
+    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.69×边长（二分调字号得到）
     ctx.setBlendMode(.destinationOut)
-    text.draw(at: NSPoint(x: (side - ts.width) / 2, y: (side - ts.height) / 2))
+    let targetH = sideBig * 0.69
+    var lo = sideBig * 0.3
+    var hi = sideBig * 3.0
+    var fontSize = sideBig
+    for _ in 0..<30 {
+        let mid = (lo + hi) / 2
+        let f = CTFontCreateWithName("Helvetica-Bold" as CFString, mid, nil)
+        let a = NSAttributedString(string: "C", attributes: [
+            .font: f, .foregroundColor: NSColor.white,
+        ])
+        if a.size().height < targetH { lo = mid } else { hi = mid }
+        fontSize = mid
+    }
+    let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+    let text = NSAttributedString(string: "C", attributes: [
+        .font: font, .foregroundColor: NSColor.white,
+    ])
+    let line = CTLineCreateWithAttributedString(text)
+    let glyphBounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+    ctx.textPosition = CGPoint(x: (sideBig - glyphBounds.width) / 2 - glyphBounds.minX,
+                               y: (sideBig - glyphBounds.height) / 2 - glyphBounds.minY)
+    CTLineDraw(line, ctx)
     ctx.setBlendMode(.normal)
 
-    NSGraphicsContext.restoreGraphicsState()
+    // 3) 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
+    //（直接读 CGContext 的 data 会踩字节序/预乘的坑，实测 alpha 全 0）
+    guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
+    var alphaBuf = [UInt8](repeating: 0, count: big * big)
+    alphaBuf.withUnsafeMutableBytes { raw in
+        let readCtx = CGContext(data: raw.baseAddress, width: big, height: big,
+                                bitsPerComponent: 8, bytesPerRow: big,
+                                space: CGColorSpaceCreateDeviceGray(),
+                                bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue)!
+        readCtx.draw(bigImage, in: CGRect(x: 0, y: 0, width: big, height: big))
+    }
+
+    // 4) 降采样并直接写 bitmapData（6) 说明：用 setColor 写入时 RGB=0 的
+    //    预乘像素会被算成整块透明（实测 alpha 全 0），直接写字节最可靠。
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                     isPlanar: false, colorSpaceName: .deviceRGB,
+                                     bytesPerRow: px * 4, bitsPerPixel: 32),
+          let data = rep.bitmapData else {
+        fatalError("无法创建输入源图标位图")
+    }
+    let bpr = rep.bytesPerRow
+    let count = Double(ss * ss)
+    for y in 0..<px {
+        for x in 0..<px {
+            var sum = 0.0
+            for dy in 0..<ss {
+                for dx in 0..<ss {
+                    sum += Double(alphaBuf[(y * ss + dy) * big + (x * ss + dx)])
+                }
+            }
+            let a = UInt8(max(0, min(255, (sum / count).rounded())))
+            let off = y * bpr + x * 4
+            // 模板图：RGB 恒为 0，只有 alpha 有信息
+            data[off] = 0
+            data[off + 1] = 0
+            data[off + 2] = 0
+            data[off + 3] = a
+        }
+    }
     return rep
 }
 
-/// 双帧模板 TIFF（16×16@72dpi + 32×32@144dpi，LZW）。
-/// 用 ImageIO 直接写：DPI 逐帧写进 TIFF 标签，NSImage 才能按"点尺寸"正确挑帧；
-/// 两帧的像素尺寸比必须是 2:1（tiffutil -cathidpicheck 的 hidpi 约定）。
 func writeInputSourceTiff(_ path: String) {
     let frames: [(px: Int, dpi: Int)] = [(16, 72), (32, 144)]
-    guard let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL,
-                                                     "public.tiff" as CFString,
-                                                     frames.count, nil) else {
-        fatalError("无法创建 TIFF: \(path)")
-    }
+    let tmpDir = NSTemporaryDirectory() + "chaoset-icon-\(ProcessInfo.processInfo.processIdentifier)"
+    try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+
+    // 每一步先把像素写成 PNG，再由 tiffutil 合成多帧 TIFF。
+    var pngPaths: [String] = []
     for frame in frames {
-        guard let cg = inputSourceRep(frame.px).cgImage else {
-            fatalError("TIFF 编码失败 \(frame.px)x\(frame.px)")
-        }
-        let props: [CFString: Any] = [
-            kCGImagePropertyDPIWidth: frame.dpi,
-            kCGImagePropertyDPIHeight: frame.dpi,
-            kCGImagePropertyTIFFDictionary: [
-                kCGImagePropertyTIFFXResolution: frame.dpi,
-                kCGImagePropertyTIFFYResolution: frame.dpi,
-                kCGImagePropertyTIFFResolutionUnit: 2, // 2 = 英寸
-                kCGImagePropertyTIFFCompression: 5,     // 5 = LZW，与系统图一致
-                kCGImagePropertyTIFFSoftware: "chaoset-make-icon",
-                kCGImagePropertyTIFFImageDescription:
-                    frame.px == 16 ? "ChaosetIME-input.png" : "ChaosetIME-input@2x.png",
-            ],
-        ]
-        CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+        let png = inputSourceRep(frame.px).representation(using: .png, properties: [:])!
+        let pngPath = tmpDir + "/icon_\(frame.px).png"
+        try! png.write(to: URL(fileURLWithPath: pngPath))
+        pngPaths.append(pngPath)
     }
-    guard CGImageDestinationFinalize(dest) else { fatalError("TIFF 写盘失败: \(path)") }
+
+    // tiffutil -cathidpicheck <1x> <2x> -out <目标>：写出的 TIFF 与系统图同规格
+    //（双帧 + 逐帧 DPI + ExtraSamples=2 + LZW）。
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/tiffutil")
+    proc.arguments = ["-cathidpicheck", pngPaths[0], pngPaths[1], "-out", path]
+    let pipe = Pipe()
+    proc.standardError = pipe
+    proc.standardOutput = pipe
+    try! proc.run()
+    proc.waitUntilExit()
+    if proc.terminationStatus != 0 {
+        let msg = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        fatalError("tiffutil 合成 TIFF 失败: \(msg)")
+    }
 }
 
 // MARK: - 产出

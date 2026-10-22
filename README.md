@@ -463,6 +463,22 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       （两实例交错打字各自上屏 你好 / 好）
 - [x] 阶段 18：小鹤双拼（flypy）——依 Rime double_pinyin_flypy
       schema 键位接入三方案体系，已知键位 25 项抽查全过
+- [x] 阶段 21：输入体验修复（用户真机反馈）
+      - **末段打错仍能出候选**：此前多打一个对不上的字母就整串「无候选」
+        （nihaox / womenx / zhongguoo 全空，观感是输入法坏了）。现在按匹配层级
+        排序：完全匹配 > 末段续接 > 偏长前缀 > **回退到已完整的前缀**，
+        所以 nihaox 仍能打出「你好」。同时加了 Trie 根保护——无法切分的
+        乱码（zzz）曾因 `Query([])` 从根节点返回整本词库，现在正确报无候选。
+      - **退格不再删掉已上屏内容**：壳侧退格改为「有组词才消费、无组词放行」，
+        且 `setMarkedText` 的 selectionRange 从「全选」改为「光标在末尾」、
+        组词结束时用 `insertText("")` 收掉 inline session。此前无条件吞掉退格键，
+        既删不动文档里的字，又可能在收尾时连带替换掉相邻已上屏文本。
+      - **输入源图标与系统一致**：改为 16×16+32×32 双帧、**ExtraSamples=2
+        （非预乘 alpha）**、RGB 恒 0、单字符「C」字形，并用 8× 超采样后降采样
+        生成（16px 直接画字体笔画会断裂）。此前用 CGImageDestination 写多帧
+        得到 ExtraSamples=1，系统按模板渲染时 alpha 计算不同，表现为颜色/明暗
+        与 ABC、简体拼音不一致、hover 也不跟随；字形用「Cs」两字符则让图标
+        看起来比系统图标更胖更小。
 - [x] 阶段 20：可用性修复（本轮 5 项）
       - **内置常用词库**：默认词库由 `data/dict_seed.tsv` 换成 `data/dict_common.tsv`，
         解决「jingchang 打不出经常」与生僻字淹没常用字的问题；新增 `cmd/chaoset-dictgen`

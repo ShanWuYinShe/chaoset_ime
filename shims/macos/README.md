@@ -365,6 +365,23 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   **验证**：`file` 确认 LZW 双帧、Pillow 确认 RGB=(0,0,0) 且 alpha 0/255 双峰、
   `tis` 确认 `kTISPropertyIconImageURL` 指向新文件。HUD 实际显示需重装后由人工确认。
 
+- **2026-10-22 输入源图标规格再修正（用户反馈颜色/大小/hover 不一致）**：
+  系统设置与菜单栏里本输入法图标比 ABC、简体拼音偏亮、字形偏小、hover 无变化。
+  逐标签比对系统 `pinyin.tiff` / `Korean.tiff` / `Katakana.tiff` 后确认三处差异：
+  ① **ExtraSamples 标签**——系统是 `2`（UNASSOCIATED，非预乘 alpha），
+     我们用 `CGImageDestination` 直接写多帧得到 `1`（ASSOCIATED，预乘），
+     系统按模板图取 alpha 着色时两者观感不同。改用 `tiffutil -cathidpicheck`
+     合成，输出与系统逐标签一致（`ExtraSamples=(2,)`、`tiffutil v350`、LZW）。
+  ② **字形必须是单字符**——系统内置输入源全部单字符（ABC「A」、简体拼音「拼」、
+     韩文「한」、假名「あ」）。此前的「Cs」两字符在 16px 里只能占一半宽度，
+     视觉重量明显轻于系统图标。改为单字符「C」。
+  ③ **字形高度 0.69×边长**（系统图实测 11/16 行）。直接在 16×16 上画字体笔画
+     只有 1px 会断成 4 段，故先在 8× 超采样画布上用 `CGBitmapContext` 绘制
+     「圆角方块挖去字形」，再用 alphaOnly 灰度上下文读回 alpha、降采样写入。
+  验证：`file` 确认双帧 LZW、Pillow 确认 `ExtraSamples=(2,)` 且 RGB 恒 0、
+  模板渲染目检与系统图标同款。**hover 是系统对模板图自动加的高亮，图标本身是
+  纯 alpha 后即由系统统一处理。**
+
 ## 已知限制
 
 - 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；

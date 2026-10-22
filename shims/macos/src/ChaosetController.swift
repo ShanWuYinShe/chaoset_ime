@@ -81,9 +81,20 @@ final class ChaosetController: IMKInputController {
             return passThrough(client)
         }
 
-        // 退格
+        // 退格：只有「正在组词」时才由输入法消费（删拼音）。
+        // 无组词时必须放行，否则退格被输入法吃掉，宿主应用永远删不掉字；
+        // 旧实现无条件 return true，导致「退格删不动」与「一次退格连
+        // 上屏的中文一起消失」两种症状（2026-10-22 用户实测反馈）。
         if chars == "\u{7F}" {
+            guard let cur = current, !cur.input.isEmpty else {
+                current = nil
+                refresh(client)
+                return false // 放行：交给宿主应用删文档里的字符
+            }
             current = engine.backspace()
+            if current?.input.isEmpty == true {
+                current = nil // 组词结束：不留「空会话」，避免后续按键被误吞
+            }
             refresh(client)
             return true
         }
@@ -199,11 +210,21 @@ final class ChaosetController: IMKInputController {
 
     private func refresh(_ client: (any IMKTextInput)?) {
         let marked = current?.preedit ?? ""
-        client?.setMarkedText(
-            marked,
-            selectionRange: NSRange(location: 0, length: (marked as NSString).length),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
+        if marked.isEmpty {
+            // 组词结束：用 insertText("") 收掉 inline session。
+            // 直接 setMarkedText("") 在多数客户端里等于「留一个空标记区」，
+            // 之后的退格可能被继续路由到输入法或把相邻文本一起替换掉
+            //（2026-10-22 用户反馈「退格把已输入的词和拼音一起删了」）。
+            client?.insertText("", replacementRange: NSRange(location: NSNotFound, length: 0))
+        } else {
+            // selectionRange 用 (0,0) 而不是 (0,length)：整段全选会让部分客户端
+            // 把后续输入当成「替换整个选区」，退格时连带删掉已上屏内容。
+            client?.setMarkedText(
+                marked,
+                selectionRange: NSRange(location: (marked as NSString).length, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        }
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
         if !hasCandidates {
             Self.hideCandidatePanel()
