@@ -260,6 +260,83 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 	return out
 }
 
+// QueryTokens 返回匹配 tokens 序列的用户词组与用户词。
+func (u *UserDict) QueryTokens(tokens []Token, maxResults int) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if len(tokens) == 0 {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	var out []*Entry
+	seen := make(map[string]bool)
+
+	// 1. 查询用户短语
+	for _, rec := range u.file.Phrases {
+		sylls := strings.Fields(rec.Sylls)
+		if len(sylls) < len(tokens) {
+			continue
+		}
+		ok := true
+		for i, tok := range tokens {
+			if !matchSyllable(sylls[i], tok) {
+				ok = false
+				break
+			}
+		}
+		if ok && !seen[rec.Word] {
+			seen[rec.Word] = true
+			out = append(out, &Entry{
+				Word:      rec.Word,
+				Syllables: sylls,
+				Freq:      u.phraseScore(rec),
+			})
+		}
+	}
+
+	// 2. 查询用户调频单字/词
+	for key, rec := range u.file.Words {
+		parts := strings.SplitN(key, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		word := parts[0]
+		sylls := strings.Fields(parts[1])
+		if len(sylls) < len(tokens) {
+			continue
+		}
+		ok := true
+		for i, tok := range tokens {
+			if !matchSyllable(sylls[i], tok) {
+				ok = false
+				break
+			}
+		}
+		if ok && !seen[word] {
+			seen[word] = true
+			out = append(out, &Entry{
+				Word:      word,
+				Syllables: sylls,
+				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+			})
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Freq != out[j].Freq {
+			return out[i].Freq > out[j].Freq
+		}
+		return len(out[i].Word) < len(out[j].Word)
+	})
+
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
+}
+
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。
 func (u *UserDict) Save() error {
 	u.mu.Lock()

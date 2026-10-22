@@ -320,30 +320,35 @@ func (s *Session) learnPhrase() {
 	_ = s.user.BumpPhrase(word, sylls)
 }
 
-// chunkSeg 是一段（以 ' 分隔的）连续字母的切分结果：
-// paths 为完整音节路径；maxReach/tailPath 是最长可切前缀（其余为残缺音节）。
-type chunkSeg struct {
-	chunk    string
-	paths    [][]string
-	maxReach int
-	tailPath []string
+func isInitial(s string) bool {
+	if s == "zh" || s == "ch" || s == "sh" {
+		return true
+	}
+	if len(s) == 1 {
+		b := s[0]
+		return (b >= 'a' && b <= 'z') && b != 'v' && b != 'u' && b != 'i'
+	}
+	return false
 }
 
-// enumerateChunk 枚举一段字母的全部音节切分（先试长音节，保证
-// 第一条路径是贪心最长，用于预编辑展示），并记录最长可切前缀。
-func enumerateChunk(chunk string) chunkSeg {
-	seg := chunkSeg{chunk: chunk}
-	var path []string
-	var dfs func(pos int)
-	dfs = func(pos int) {
-		if pos > seg.maxReach {
-			seg.maxReach = pos
-			seg.tailPath = append(seg.tailPath[:0], path...)
-		}
+// tokenizeChunk 枚举一段拼音的音节切分。
+// 优先寻找能够完整覆盖该片段的纯全拼音节序列（最长贪心）；
+// 仅当无法纯全拼切分时（如简拼 zg/bj/jsj、混拼 zhongg/womd/chifl），才启用声母简拼约束。
+func tokenizeChunk(chunk string) [][]Token {
+	if len(chunk) == 0 {
+		return nil
+	}
+
+	// 1. 优先纯全拼切分（长音节优先，贪心最长）
+	var fullPaths [][]Token
+	var cur []Token
+	var dfsFull func(pos int)
+	dfsFull = func(pos int) {
 		if pos == len(chunk) {
-			if len(seg.paths) < maxPathsPerChunk {
-				seg.paths = append(seg.paths, append([]string(nil), path...))
-			}
+			fullPaths = append(fullPaths, append([]Token(nil), cur...))
+			return
+		}
+		if len(fullPaths) >= maxPathsPerChunk {
 			return
 		}
 		maxLen := len(chunk) - pos
@@ -351,74 +356,166 @@ func enumerateChunk(chunk string) chunkSeg {
 			maxLen = maxSyllableLength
 		}
 		for l := maxLen; l >= 1; l-- {
-			frag := chunk[pos : pos+l]
-			if IsSyllable(frag) {
-				path = append(path, frag)
-				dfs(pos + l)
-				path = path[:len(path)-1]
+			sub := chunk[pos : pos+l]
+			if IsSyllable(sub) {
+				cur = append(cur, Token{Text: sub, IsExact: true})
+				dfsFull(pos + l)
+				cur = cur[:len(cur)-1]
 			}
 		}
 	}
-	dfs(0)
-	return seg
+	dfsFull(0)
+
+	if len(fullPaths) > 0 {
+		// 单字母零声母（a/o/e）本身是独立音节（啊/哦/饿），
+		// 亦作为该元音开头的音节（an/ai/ao、ou、en/er）的简拼声母（如 x'a 匹配「西安」，b'a 匹配「保安」）。
+		if len(chunk) == 1 && (chunk == "a" || chunk == "o" || chunk == "e") {
+			fullPaths = append(fullPaths, []Token{{Text: chunk, IsExact: false}})
+		}
+		return fullPaths
+	}
+
+	// 2. 无法完整纯全拼切分时，尝试简拼与混拼切分
+	var mixedPaths [][]Token
+	var curMixed []Token
+	var dfsMixed func(pos int)
+	dfsMixed = func(pos int) {
+		if pos == len(chunk) {
+			mixedPaths = append(mixedPaths, append([]Token(nil), curMixed...))
+			return
+		}
+		if len(mixedPaths) >= maxPathsPerChunk {
+			return
+		}
+		maxLen := len(chunk) - pos
+		if maxLen > maxSyllableLength {
+			maxLen = maxSyllableLength
+		}
+
+		foundMultiSyllable := false
+		for l := maxLen; l >= 1; l-- {
+			sub := chunk[pos : pos+l]
+			if IsSyllable(sub) {
+				if l >= 2 {
+					foundMultiSyllable = true
+				}
+				curMixed = append(curMixed, Token{Text: sub, IsExact: true})
+				dfsMixed(pos + l)
+				curMixed = curMixed[:len(curMixed)-1]
+			}
+		}
+
+		if !foundMultiSyllable {
+			if pos+2 <= len(chunk) {
+				sub := chunk[pos : pos+2]
+				if sub == "zh" || sub == "ch" || sub == "sh" {
+					curMixed = append(curMixed, Token{Text: sub, IsExact: false})
+					dfsMixed(pos + 2)
+					curMixed = curMixed[:len(curMixed)-1]
+				}
+			}
+			if pos+1 <= len(chunk) {
+				sub := chunk[pos : pos+1]
+				if isInitial(sub) {
+					curMixed = append(curMixed, Token{Text: sub, IsExact: false})
+					dfsMixed(pos + 1)
+					curMixed = curMixed[:len(curMixed)-1]
+				}
+			}
+		}
+	}
+	dfsMixed(0)
+	return mixedPaths
 }
 
-// combineChunks 把各段的切分路径做笛卡尔积（' 只是强制音节边界，
-// 词可以跨段，如 xi'an=西安），超出上限时截断。残缺音节只可能出现在
-// 末段，以 frag 返回。
-func combineChunks(chunks []chunkSeg) ([][]string, string) {
-	opts := [][]string{{}}
-	frag := ""
-	for i, cs := range chunks {
-		last := i == len(chunks)-1
-		var next [][]string
-		appendOpt := func(sylls []string) {
-			for _, base := range opts {
+// enumerateAllTokens 将以 ' 分隔的各段切分路径做笛卡尔积，生成音节约束序列切分方案。
+func enumerateAllTokens(rawChunks []string) [][]Token {
+	opts := [][]Token{{}}
+	for _, c := range rawChunks {
+		if c == "" {
+			continue
+		}
+		chunkPaths := tokenizeChunk(c)
+		if len(chunkPaths) == 0 {
+			return nil
+		}
+		var next [][]Token
+		for _, base := range opts {
+			for _, cp := range chunkPaths {
 				if len(next) >= maxSegmentations {
-					return
+					break
 				}
-				merged := make([]string, 0, len(base)+len(sylls))
-				merged = append(merged, base...)
-				merged = append(merged, sylls...)
+				merged := append([]Token(nil), base...)
+				merged = append(merged, cp...)
 				next = append(next, merged)
 			}
 		}
-		for _, p := range cs.paths {
-			appendOpt(p)
-		}
-		if last && cs.maxReach < len(cs.chunk) {
-			appendOpt(cs.tailPath)
-			frag = cs.chunk[cs.maxReach:]
-		}
-		if len(next) == 0 {
-			return nil, ""
-		}
 		opts = next
 	}
-	return opts, frag
+	return opts
 }
 
-// Compose 基于当前输入生成组词状态：枚举全部音节切分、查主词典与
-// 用户词组、合并去重，按「基础词频 + 用户得分（调频/上下文加权）」排序。
+// expandTokenVariants 在开启模糊音时，展开完整音节（IsExact=true）的模糊音变体。
+func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
+	if !fuzzy || len(tokens) == 0 {
+		return [][]Token{tokens}
+	}
+	sets := make([][]Token, len(tokens))
+	for i, tok := range tokens {
+		if tok.IsExact {
+			fuzzies := fuzzyVariants(tok.Text)
+			var list []Token
+			for _, fz := range fuzzies {
+				list = append(list, Token{Text: fz, IsExact: true})
+			}
+			sets[i] = list
+		} else {
+			sets[i] = []Token{tok}
+		}
+	}
+	out := make([][]Token, 0, maxFuzzyPaths)
+	cur := make([]Token, 0, len(tokens))
+	var build func(i int)
+	build = func(i int) {
+		if len(out) >= maxFuzzyPaths {
+			return
+		}
+		if i == len(sets) {
+			out = append(out, append([]Token(nil), cur...))
+			return
+		}
+		for _, v := range sets[i] {
+			cur = append(cur, v)
+			build(i + 1)
+			cur = cur[:len(cur)-1]
+		}
+	}
+	build(0)
+	return out
+}
+
+// Compose 基于当前输入生成组词状态：枚举全部音节约束切分（支持全拼、简拼与混拼）、
+// 查主词典与用户词库、生成整句候选、合并去重，并按匹配优先级与综合得分排序。
 func (s *Session) Compose() Composition {
 	comp := Composition{Input: s.input}
 	if s.input == "" {
 		return comp
 	}
 	rawChunks := strings.Split(s.input, "'")
-	chunks := make([]chunkSeg, len(rawChunks))
-	for i, c := range rawChunks {
-		chunks[i] = enumerateChunk(c)
+	tokenPatterns := enumerateAllTokens(rawChunks)
+	if len(tokenPatterns) == 0 {
+		comp.Preedit = s.input
+		return comp
 	}
-	paths, frag := combineChunks(chunks)
 
-	// rank 与 merged 平行，记录候选的匹配层级（0 最高）。层级只用于排序，
-	// 语义见下方排序注释。
-	var merged []Candidate
-	var rank []int
+	// candItem 将候选与匹配层级绑定，确保排序时 rank 与候选始终保持一致。
+	type candItem struct {
+		cand Candidate
+		rank int
+	}
+	var items []candItem
 	seen := make(map[string]int)
-	// addCandidate 合并一个候选。r 是本次匹配的层级，同一候选多次命中取最优。
-	// 合并时 Score 取大、rank 取小，保证「更贴近用户输入」的那次匹配胜出。
+
 	addCandidate := func(e *Entry, score int, fromUser bool, r int) {
 		word := e.Word
 		if s.traditional {
@@ -426,67 +523,72 @@ func (s *Session) Compose() Composition {
 		}
 		key := word + "\x00" + strings.Join(e.Syllables, " ")
 		if prev, ok := seen[key]; ok {
-			if score > merged[prev].Score {
-				merged[prev].Score = score
-				merged[prev].FromUser = fromUser
+			if score > items[prev].cand.Score {
+				items[prev].cand.Score = score
+				items[prev].cand.FromUser = fromUser
 			} else if fromUser {
-				merged[prev].FromUser = true
+				items[prev].cand.FromUser = true
 			}
-			if r < rank[prev] {
-				rank[prev] = r
+			if r < items[prev].rank {
+				items[prev].rank = r
 			}
 			return
 		}
-		seen[key] = len(merged)
-		merged = append(merged, Candidate{
-			Text:      word,
-			Syllables: strings.Join(e.Syllables, "'"),
-			Score:     score,
-			FromUser:  fromUser,
+		seen[key] = len(items)
+		items = append(items, candItem{
+			cand: Candidate{
+				Text:      word,
+				Syllables: strings.Join(e.Syllables, "'"),
+				Score:     score,
+				FromUser:  fromUser,
+			},
+			rank: r,
 		})
-		rank = append(rank, r)
 	}
-	// 匹配层级（数字越小越优先）：
-	//   rankExact    —— 单词完全匹配（打满 jingchang 命中「经常」）
-	//   rankSentence —— 多词 DP 拼接复合候选（打 womende 命中「我们的」）
-	//   rankPartial  —— 末段残缺音节匹配成功（打 shix 时的「史学」）
-	//   rankPrefix   —— 偏长词的续接（打 jing 时的「经济」）
-	//   rankBackoff  —— 末段拼音打错了/无法续接，退回到「已完整音节」本身的候选
-	//                   （打 nihaox 非但不出候选，还应能打出「你好」）
+
 	const (
-		rankExact = iota
-		rankSentence
-		rankPartial
-		rankPrefix
-		rankBackoff
+		rankExact           = 0 // 全拼单词完全匹配（如 jingchang -> 经常，ba -> 把）
+		rankSentence        = 1 // 全拼多词 DP 拼接复合候选（如 womende -> 我们的）
+		rankInitialExact    = 2 // 简拼/混拼单词完全匹配（如 zg -> 中国，bj -> 北京，jsj -> 计算机，rmb -> 人民币，zhongg -> 中国）
+		rankInitialSentence = 3 // 简拼/混拼多词 DP 拼接复合候选（如 wmd/womd -> 我们的）
+		rankPartial         = 4 // 末段残缺续接（如 shix -> 史学）
+		rankInitialPrefix   = 5 // 简拼偏长词（如 zg -> 中国人民，中关村）
+		rankPrefix          = 6 // 全拼偏长词续接（如 jing -> 经济）
+		rankBackoff         = 7 // 逐级回退前缀（如 nihaox -> 你好）
 	)
-	for _, sylls := range paths {
-		// 空路径（整段都无法切分成合法音节，如 zzz）不查询：
-		// Query([]) 会从 Trie 根返回全部词条，等于把整本词库当候选吐出来。
-		if len(sylls) == 0 && frag == "" {
-			continue
+
+	minPatternLen := len(tokenPatterns[0])
+	for _, pat := range tokenPatterns {
+		if len(pat) < minPatternLen {
+			minPatternLen = len(pat)
 		}
-		// 一条切分路径先按原样查；如果连一个候选都查不到，说明用户多打的
-		// 字母凑成了合法音节却组不成词（zhongguoo 的末段 'o'）：此时逐级
-		// 去掉尾部音节再查，让「中国」这类已完整的前缀仍有候选。
-		// 逐级最长保留 8 个音节，避免长输入退化成大量查询。
-		hit := 0
-		for _, qp := range queryVariants(sylls, frag, s.fuzzy) {
-			if frag == "" {
-				for _, e := range s.dict.Query(qp) {
+	}
+
+	for _, pat := range tokenPatterns {
+		for _, qp := range expandTokenVariants(pat, s.fuzzy) {
+			hasInitials := false
+			for _, tok := range qp {
+				if !tok.IsExact {
+					hasInitials = true
+					break
+				}
+			}
+
+			exacts, prefixes := s.dict.QueryTokens(qp, 20)
+
+			if !hasInitials {
+				// 纯全拼匹配
+				for _, e := range exacts {
 					boost := 0
 					if s.user != nil {
 						boost = s.user.Score(e.Word, e.Syllables, s.prev)
 					}
-					r := rankPrefix
-					if len(e.Syllables) == len(qp) {
-						r = rankExact
-					}
-					addCandidate(e, e.Freq+boost, boost > 0, r)
-					hit++
+					addCandidate(e, e.Freq+boost, boost > 0, rankExact)
 				}
-				if len(qp) >= 2 {
-					for _, sc := range FindSentenceCandidates(s.dict, s.user, qp, 6) {
+				// 整句合成（DP）仅在最少音节数（即未将拼音过度碎片化）的切分路径上执行，
+				// 避免生成如「看以西啊」(4音节) 压过「看一下」(3音节)、「地安娜哦上」(5音节) 压过「电脑上」(3音节)
+				if len(qp) == minPatternLen && len(qp) >= 2 {
+					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
 						if len(sc.Words) > 1 {
 							boost := 0
 							fromUser := false
@@ -502,179 +604,179 @@ func (s *Session) Compose() Composition {
 								Freq:      sc.Score,
 							}
 							addCandidate(e, sc.Score+boost, fromUser, rankSentence)
-							hit++
 						}
 					}
 				}
-				// 为多音节输入叠加「逐级回退前缀」（例如输入 womende 时不仅出「我们的」，
-				// 也把已完整的「我们」加入候选；打 zhongguoo 时也包含「中国」）
-				limit := len(sylls) - 1
-				if limit > 8 {
-					limit = 8
-				}
-				for drop := 1; drop <= limit; drop++ {
-					shorter := sylls[:len(sylls)-drop]
-					if len(shorter) == 0 {
-						break
+				for _, e := range prefixes {
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
 					}
-					for _, sqp := range queryVariants(shorter, "", s.fuzzy) {
-						if len(sqp) == 0 {
-							continue
-						}
-						for _, e := range s.dict.Query(sqp) {
-							if len(e.Syllables) == len(sqp) {
-								boost := 0
-								if s.user != nil {
-									boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					addCandidate(e, e.Freq+boost, boost > 0, rankPrefix)
+				}
+			} else {
+				// 简拼 / 混拼匹配
+				for _, e := range exacts {
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					}
+					addCandidate(e, e.Freq+boost, boost > 0, rankInitialExact)
+				}
+				if len(qp) == minPatternLen && len(qp) >= 2 {
+					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
+						if len(sc.Words) > 1 {
+							avgScore := sc.Score / len(sc.Words)
+							boost := 0
+							fromUser := false
+							if s.user != nil {
+								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
+								if boost > 0 {
+									fromUser = true
 								}
-								addCandidate(e, e.Freq+boost, boost > 0, rankBackoff+drop)
 							}
-						}
-					}
-					if s.user != nil {
-						for _, e := range s.user.QueryPhrases(shorter, "") {
-							if len(e.Syllables) == len(shorter) {
-								addCandidate(e, e.Freq, true, rankBackoff+drop)
+							e := &Entry{
+								Word:      sc.Text,
+								Syllables: sc.Syllables,
+								Freq:      avgScore,
 							}
+							addCandidate(e, avgScore+boost, fromUser, rankInitialSentence)
 						}
 					}
 				}
-				continue
-			}
-			// 末段有残缺音节：先查「下一个音节以 frag 开头」的续接候选。
-			// 当 len(qp)==0 且 frag!="" 时（如用户刚输入首字母 'n'/'c'/'w'），
-			// QueryPrefix([], frag) 从根节点筛选以该字母开头的音节（合法音节前缀），
-			// 乱码输入（如 zzz）因无任何音节以此为前缀自然返回空。
-			if len(qp) > 0 || frag != "" {
-				for _, e := range s.dict.QueryPrefix(qp, frag) {
+				for _, e := range prefixes {
 					boost := 0
 					if s.user != nil {
 						boost = s.user.Score(e.Word, e.Syllables, s.prev)
 					}
-					addCandidate(e, e.Freq+boost, boost > 0, rankPartial)
-					hit++
+					addCandidate(e, e.Freq+boost, boost > 0, rankInitialPrefix)
 				}
 			}
-			// 再叠加「音节在 qp 处正好结束」的候选（必须 len(qp)>0，避免空序列查根节点吐出整库）：
-			// 用户多打了一个（或几个）对不上的字母时，仍应能打出前面已经完整的部分（nihaox → 你好）。
-			// 这类候选排在 rankPartial 之后，不影响正常续接匹配的顺序。
-			if len(qp) > 0 {
-				for _, e := range s.dict.Query(qp) {
-					boost := 0
-					if s.user != nil {
-						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+
+			// 查询用户词库中的自定义短语/自学习词
+			if s.user != nil {
+				for _, e := range s.user.QueryTokens(qp, 10) {
+					r := rankExact
+					if hasInitials {
+						r = rankInitialExact
 					}
-					addCandidate(e, e.Freq+boost, boost > 0, rankBackoff)
-					hit++
+					addCandidate(e, e.Freq, true, r)
 				}
 			}
-		}
-		if hit == 0 {
-			// 整条路径无候选：
-			// 1. 若已有 2 个及以上完整音节（如 nizaig 中的 nizai），先用 DP 生成前缀复合短语（如「你在」）
-			if len(sylls) >= 2 {
-				for _, sc := range FindSentenceCandidates(s.dict, s.user, sylls, 6) {
-					avgFreq := sc.Score / len(sc.Syllables)
-					if avgFreq > 99 {
-						avgFreq = 99
-					}
-					e := &Entry{
-						Word:      sc.Text,
-						Syllables: sc.Syllables,
-						Freq:      avgFreq,
-					}
-					addCandidate(e, avgFreq, false, rankBackoff)
-				}
-			}
-			// 2. 逐级去掉尾部音节重查（最多 8 级）。
-			// 触发条件限定为「多打了对不上的音节或残缺音节」：
-			// 至少保留一个完整音节（len(sylls) >= 2），单音节查不到就是查不到。
-			limit := len(sylls) - 1
-			if limit > 8 {
-				limit = 8
+
+			// 逐级回退前缀：多音节输入叠加更短的前缀匹配（如输入 womende 时也出「我们」；
+			// 打 nihaox 时，因已完整的「你好」之后是残缺声母，将「你好」置顶推出）
+			limit := len(qp) - 1
+			if limit > 6 {
+				limit = 6
 			}
 			for drop := 1; drop <= limit; drop++ {
-				shorter := sylls[:len(sylls)-drop]
-				if len(shorter) == 0 {
-					break
+				shorter := qp[:len(qp)-drop]
+				allExactShorter := true
+				for _, t := range shorter {
+					if !t.IsExact {
+						allExactShorter = false
+						break
+					}
 				}
-				found := 0
-				for _, qp := range queryVariants(shorter, "", s.fuzzy) {
-					if len(qp) == 0 {
-						continue
-					}
-					if frag != "" {
-						for _, e := range s.dict.QueryPrefix(qp, frag) {
-							boost := 0
-							if s.user != nil {
-								boost = s.user.Score(e.Word, e.Syllables, s.prev)
+				sExacts, _ := s.dict.QueryTokens(shorter, 10)
+				for _, e := range sExacts {
+					r := rankBackoff + drop
+					if allExactShorter && drop == 1 && len(exacts) == 0 {
+						hasDroppedInitial := false
+						for _, t := range qp[len(qp)-drop:] {
+							if !t.IsExact {
+								hasDroppedInitial = true
+								break
 							}
-							addCandidate(e, e.Freq+boost, boost > 0, rankBackoff+drop)
-							found++
+						}
+						if hasDroppedInitial {
+							r = rankExact
 						}
 					}
-					for _, e := range s.dict.Query(qp) {
-						boost := 0
-						if s.user != nil {
-							boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					}
+					addCandidate(e, e.Freq+boost, boost > 0, r)
+				}
+				if len(shorter) >= 2 && len(qp) == minPatternLen {
+					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, shorter, 4) {
+						if len(sc.Words) > 1 {
+							r := rankBackoff + drop + 1
+							boost := 0
+							fromUser := false
+							if s.user != nil {
+								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
+								if boost > 0 {
+									fromUser = true
+								}
+							}
+							e := &Entry{
+								Word:      sc.Text,
+								Syllables: sc.Syllables,
+								Freq:      sc.Score,
+							}
+							addCandidate(e, sc.Score+boost, fromUser, r)
 						}
-						addCandidate(e, e.Freq+boost, boost > 0, rankBackoff+drop)
-						found++
 					}
 				}
 				if s.user != nil {
-					if frag != "" {
-						for _, e := range s.user.QueryPhrases(shorter, frag) {
-							addCandidate(e, e.Freq, true, rankBackoff+drop)
-							found++
+					for _, e := range s.user.QueryTokens(shorter, 5) {
+						r := rankBackoff + drop
+						if allExactShorter && drop == 1 && len(exacts) == 0 {
+							hasDroppedInitial := false
+							for _, t := range qp[len(qp)-drop:] {
+								if !t.IsExact {
+									hasDroppedInitial = true
+									break
+								}
+							}
+							if hasDroppedInitial {
+								r = rankExact
+							}
 						}
+						addCandidate(e, e.Freq, true, r)
 					}
-					for _, e := range s.user.QueryPhrases(shorter, "") {
-						addCandidate(e, e.Freq, true, rankBackoff+drop)
-						found++
-					}
-				}
-				if found > 0 {
-					break // 找到最近一级可用前缀即止，避免把更短的前缀也塞进来
-				}
-			}
-		}
-		if s.user != nil {
-			// 用户词组：完整匹配优先，其次是末段续接，最后是回退到前缀本身。
-			for _, e := range s.user.QueryPhrases(sylls, frag) {
-				r := rankExact
-				if frag != "" {
-					r = rankPartial
-					if len(e.Syllables) == len(sylls) {
-						r = rankBackoff
-					}
-				}
-				addCandidate(e, e.Freq, true, r)
-			}
-			if frag != "" {
-				for _, e := range s.user.QueryPhrases(sylls, "") {
-					addCandidate(e, e.Freq, true, rankBackoff)
 				}
 			}
 		}
 	}
-	// 排序（稳定，保证同分同长时结果可复现）。优先级：
+
+	// 排序（稳定）：
 	//   ① 匹配了完整音节（精确匹配/整句候选）的候选永远优先于丢弃尾部音节的回退候选；
-	//   ② 用户数据加权（调频/上下文）——一次上屏 +500，必须压过静态词频；
-	//   ③ 匹配层级：完全匹配 > 整句拼接 > 末段续接 > 偏长前缀 > 回退到已完整前缀。
-	//   ④ 得分（基础词频 + 用户加成）、词长、字典序。
-	sort.SliceStable(merged, func(i, j int) bool {
-		a, b := merged[i], merged[j]
-		aBackoff := rank[i] >= rankBackoff
-		bBackoff := rank[j] >= rankBackoff
+	//   ② 用户数据加权（调频/上下文/词组）——优先提升用户常用词；
+	//   ③ 匹配层级（完全匹配 > 整句拼接 > 简拼完全匹配 > 简拼整句 > 偏长前缀 > 回退前缀）；
+	//   ④ 简拼低频单字 vs 高频整句权衡：当简拼命中极低频词（Freq<20，如 wmd 命中「无目的」）
+	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
+	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
+	//   ⑥ 综合得分、词长、字典序。
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i].cand, items[j].cand
+		aRank, bRank := items[i].rank, items[j].rank
+		aBackoff := aRank >= rankBackoff
+		bBackoff := bRank >= rankBackoff
 		if aBackoff != bBackoff {
 			return !aBackoff
 		}
 		if a.FromUser != b.FromUser {
 			return a.FromUser
 		}
-		if rank[i] != rank[j] {
-			return rank[i] < rank[j]
+		if aRank != bRank {
+			if aRank == rankInitialExact && bRank == rankInitialSentence && a.Score < 20 && b.Score >= 100 {
+				return false
+			}
+			if bRank == rankInitialExact && aRank == rankInitialSentence && b.Score < 20 && a.Score >= 100 {
+				return true
+			}
+			return aRank < bRank
+		}
+		if aRank == rankSentence && bRank == rankSentence && len([]rune(a.Text)) == len([]rune(b.Text)) {
+			aCount := strings.Count(a.Syllables, "'")
+			bCount := strings.Count(b.Syllables, "'")
+			if aCount != bCount {
+				return aCount < bCount
+			}
 		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
@@ -684,7 +786,13 @@ func (s *Session) Compose() Composition {
 		}
 		return a.Text < b.Text
 	})
-	// 分页：按 pageSize 切片返回当前页；页码越界（组词变短等）在此钳制
+
+	merged := make([]Candidate, len(items))
+	for i, it := range items {
+		merged[i] = it.cand
+	}
+
+	// 分页处理
 	pageCount := (len(merged) + pageSize - 1) / pageSize
 	if pageCount == 0 {
 		s.page = 0
@@ -700,18 +808,14 @@ func (s *Session) Compose() Composition {
 	}
 
 	preedit := s.input
-	if len(paths) > 0 {
-		pre := strings.Join(paths[0], "'")
-		if frag != "" {
-			if pre != "" {
-				pre += "'"
-			}
-			pre += frag
+	if len(merged) > 0 && len(tokenPatterns) > 0 && len(tokenPatterns[0]) > 0 {
+		var parts []string
+		for _, tok := range tokenPatterns[0] {
+			parts = append(parts, tok.Text)
 		}
-		if pre != "" {
-			preedit = pre
-		}
+		preedit = strings.Join(parts, "'")
 	}
+
 	comp.Preedit = preedit
 	comp.Page = s.page
 	comp.PageCount = pageCount

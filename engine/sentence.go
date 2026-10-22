@@ -14,13 +14,23 @@ type SentenceCandidate struct {
 
 // FindSentenceCandidates 使用动态规划（Viterbi Beam Search）在词典与用户词库中
 // 寻找能够完整拼合指定多音节序列（len(sylls) >= 2）的最优整句/复合短语候选。
+func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, beamWidth int) []SentenceCandidate {
+	tokens := make([]Token, len(sylls))
+	for i, s := range sylls {
+		tokens[i] = Token{Text: s, IsExact: true}
+	}
+	return FindSentenceCandidatesTokens(dict, user, tokens, beamWidth)
+}
+
+// FindSentenceCandidatesTokens 使用动态规划（Viterbi Beam Search）在词典与用户词库中
+// 根据音节约束序列（支持全拼、简拼与混拼）寻找能够完整拼合的最优整句/复合短语候选。
 //
 // 评分策略：
 //   - 多音节词奖励：鼓励组成词组（如「吃饭」而不是「吃」+「饭」）；
 //   - 连续单字惩罚：避免把完整词拆成孤立碎字；
 //   - 用户词库/上下文加成：结合 UserDict 的调频与 Bigram 上下文得分。
-func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, beamWidth int) []SentenceCandidate {
-	n := len(sylls)
+func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Token, beamWidth int) []SentenceCandidate {
+	n := len(tokens)
 	if n < 2 || dict == nil {
 		return nil
 	}
@@ -42,13 +52,34 @@ func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, be
 			if len(dp[i]) == 0 {
 				continue
 			}
-			part := sylls[i:j]
-			entries := dict.QueryExact(part)
+			part := tokens[i:j]
 
-			if user != nil {
-				userEntries := user.QueryPhrases(part, "")
-				if len(userEntries) > 0 {
-					entries = append(append([]*Entry(nil), entries...), userEntries...)
+			allExact := true
+			partSylls := make([]string, len(part))
+			for k, tok := range part {
+				partSylls[k] = tok.Text
+				if !tok.IsExact {
+					allExact = false
+				}
+			}
+
+			var entries []*Entry
+			if allExact {
+				entries = dict.QueryExact(partSylls)
+				if user != nil {
+					userEntries := user.QueryPhrases(partSylls, "")
+					if len(userEntries) > 0 {
+						entries = append(append([]*Entry(nil), entries...), userEntries...)
+					}
+				}
+			} else {
+				exacts, _ := dict.QueryTokens(part, 6)
+				entries = exacts
+				if user != nil {
+					userEntries := user.QueryTokens(part, 6)
+					if len(userEntries) > 0 {
+						entries = append(append([]*Entry(nil), entries...), userEntries...)
+					}
 				}
 			}
 
@@ -101,8 +132,8 @@ func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, be
 			continue
 		}
 
-		sort.Slice(candidates, func(a, b int) bool {
-			return candidates[a].Score > candidates[b].Score
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].Score > candidates[j].Score
 		})
 
 		seen := make(map[string]bool)

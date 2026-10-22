@@ -111,6 +111,113 @@ func (d *Dictionary) QueryExact(syllables []string) []*Entry {
 	return out
 }
 
+// Token 表示音节约束（用于全拼、简拼与混拼匹配）：
+// IsExact=true 时必须完全匹配 Text 音节（如 "zhong"）；
+// IsExact=false 时匹配以此为前缀的音节（如 "z" 匹配 z/zh 开头，"b" 匹配 b 开头）。
+type Token struct {
+	Text    string
+	IsExact bool
+}
+
+func matchSyllable(s string, tok Token) bool {
+	if tok.IsExact {
+		return s == tok.Text
+	}
+	if strings.HasPrefix(s, tok.Text) {
+		return true
+	}
+	if tok.Text == "z" && strings.HasPrefix(s, "zh") {
+		return true
+	}
+	if tok.Text == "c" && strings.HasPrefix(s, "ch") {
+		return true
+	}
+	if tok.Text == "s" && strings.HasPrefix(s, "sh") {
+		return true
+	}
+	return false
+}
+
+// QueryTokens 在 Trie 中根据音节约束序列匹配词条。
+// 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
+// 两组结果均已按词频降序排序。
+func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Entry) {
+	if len(tokens) == 0 || d.root == nil {
+		return nil, nil
+	}
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+
+	curr := []*dictNode{d.root}
+
+	for _, tok := range tokens {
+		var next []*dictNode
+		if tok.IsExact {
+			for _, node := range curr {
+				if node.children == nil {
+					continue
+				}
+				if child := node.children[tok.Text]; child != nil {
+					next = append(next, child)
+				}
+			}
+		} else {
+			for _, node := range curr {
+				if node.children == nil {
+					continue
+				}
+				for s, child := range node.children {
+					if matchSyllable(s, tok) {
+						next = append(next, child)
+					}
+				}
+			}
+		}
+		if len(next) == 0 {
+			return nil, nil
+		}
+		curr = next
+	}
+
+	var exactMatches []*Entry
+	seen := make(map[int]bool)
+
+	for _, node := range curr {
+		for _, id := range node.ids {
+			if !seen[id] {
+				seen[id] = true
+				exactMatches = append(exactMatches, d.entries[id])
+			}
+		}
+	}
+
+	sort.Slice(exactMatches, func(i, j int) bool {
+		if exactMatches[i].Freq != exactMatches[j].Freq {
+			return exactMatches[i].Freq > exactMatches[j].Freq
+		}
+		return exactMatches[i].Word < exactMatches[j].Word
+	})
+
+	var prefixMatches []*Entry
+	for _, node := range curr {
+		for _, e := range d.collect(node) {
+			if len(e.Syllables) > len(tokens) {
+				prefixMatches = append(prefixMatches, e)
+			}
+		}
+	}
+
+	sort.Slice(prefixMatches, func(i, j int) bool {
+		if prefixMatches[i].Freq != prefixMatches[j].Freq {
+			return prefixMatches[i].Freq > prefixMatches[j].Freq
+		}
+		return len(prefixMatches[i].Word) < len(prefixMatches[j].Word)
+	})
+
+	return exactMatches, prefixMatches
+}
+
 // Contains 判断主词典是否已存在「词 + 精确音节序列」一致的词条。
 // 词组进化用它避免把主词典已有的词重复学一遍。
 func (d *Dictionary) Contains(word string, syllables []string) bool {
