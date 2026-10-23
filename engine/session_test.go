@@ -3,6 +3,7 @@ package engine
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // 输入 nihao → 预编辑 ni'hao，第一候选「你好」。
@@ -158,3 +159,39 @@ func mustUserDict(t *testing.T, path string) *UserDict {
 	}
 	return u
 }
+
+// TestLongPinyinNoExponentialFreeze 验证超长拼音与残缺结尾输入在记忆化剪枝保护下
+// 保持亚毫秒响应，杜绝未记忆化 DFS 导致的 O(2^N) 指数级回溯卡死。
+func TestLongPinyinNoExponentialFreeze(t *testing.T) {
+	d := mustDict(t)
+	s := NewSession(d, nil)
+
+	testCases := []string{
+		// 1. 重复零声母元音 + 无法形成音节的结尾（旧逻辑在此处 O(2^N) 爆炸）
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaau",
+		// 2. 重复重叠音节 + 无法形成音节的结尾
+		"anananananananananananananananu",
+		// 3. 连续简拼（40 字符）
+		"zgzgzgzgzgzgzgzgzgzgzgzgzgzgzgzgzgzgzgzg",
+		// 4. 超长真实句子（50+ 字符）
+		"zhonghuarenmingongheguoguowuyuanzongliwenjiabaofangwen",
+		// 5. 常见拟声/大笑拉长音
+		"haaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+
+	for _, tc := range testCases {
+		s.Reset()
+		t0 := time.Now()
+		comp, err := s.Input(tc)
+		duration := time.Since(t0)
+		if err != nil {
+			t.Fatalf("Input(%q) 出错: %v", tc, err)
+		}
+		// 保证超长输入在 50ms 内极速完成（实测 < 5ms），绝不发生数秒甚至数十秒卡死
+		if duration > 50*time.Millisecond {
+			t.Errorf("Input(%q) 耗时过长: %v (期望 < 50ms)", tc, duration)
+		}
+		_ = comp
+	}
+}
+

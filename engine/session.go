@@ -47,8 +47,8 @@ type Controller interface {
 const (
 	maxInputRunes     = 64
 	maxSyllableLength = 6
-	maxPathsPerChunk  = 16
-	maxSegmentations  = 64
+	maxPathsPerChunk  = 8
+	maxSegmentations  = 16
 	// pageSize：每页候选数。翻页状态在 Session.page，边界在 Compose 钳制。
 	pageSize = 9
 
@@ -389,6 +389,10 @@ func isInitial(s string) bool {
 // tokenizeChunk 枚举一段拼音的音节切分。
 // 优先寻找能够完整覆盖该片段的纯全拼音节序列（最长贪心）；
 // 仅当无法纯全拼切分时（如简拼 zg/bj/jsj、混拼 zhongg/womd/chifl），才启用声母简拼约束。
+//
+// 复杂度保证：使用 dead-end 记忆化剪枝（failedFull / failedMixed），
+// 保证任意长度（包括输入残缺、无法完全切分的超长串）搜索在 O(N) 线性时间内完成，
+// 彻底杜绝指数级回溯导致的 CPU 飙高与卡死。
 func tokenizeChunk(chunk string) [][]Token {
 	if len(chunk) == 0 {
 		return nil
@@ -397,27 +401,41 @@ func tokenizeChunk(chunk string) [][]Token {
 	// 1. 优先纯全拼切分（长音节优先，贪心最长）
 	var fullPaths [][]Token
 	var cur []Token
-	var dfsFull func(pos int)
-	dfsFull = func(pos int) {
+	failedFull := make([]bool, len(chunk)+1)
+	var dfsFull func(pos int) bool
+	dfsFull = func(pos int) bool {
 		if pos == len(chunk) {
 			fullPaths = append(fullPaths, append([]Token(nil), cur...))
-			return
+			return true
 		}
 		if len(fullPaths) >= maxPathsPerChunk {
-			return
+			return true
+		}
+		if failedFull[pos] {
+			return false
 		}
 		maxLen := len(chunk) - pos
 		if maxLen > maxSyllableLength {
 			maxLen = maxSyllableLength
 		}
+		anySuccess := false
 		for l := maxLen; l >= 1; l-- {
 			sub := chunk[pos : pos+l]
 			if IsSyllable(sub) {
 				cur = append(cur, Token{Text: sub, IsExact: true})
-				dfsFull(pos + l)
+				if dfsFull(pos + l) {
+					anySuccess = true
+				}
 				cur = cur[:len(cur)-1]
+				if len(fullPaths) >= maxPathsPerChunk {
+					return true
+				}
 			}
 		}
+		if !anySuccess {
+			failedFull[pos] = true
+		}
+		return anySuccess
 	}
 	dfsFull(0)
 
@@ -433,20 +451,25 @@ func tokenizeChunk(chunk string) [][]Token {
 	// 2. 无法完整纯全拼切分时，尝试简拼与混拼切分
 	var mixedPaths [][]Token
 	var curMixed []Token
-	var dfsMixed func(pos int)
-	dfsMixed = func(pos int) {
+	failedMixed := make([]bool, len(chunk)+1)
+	var dfsMixed func(pos int) bool
+	dfsMixed = func(pos int) bool {
 		if pos == len(chunk) {
 			mixedPaths = append(mixedPaths, append([]Token(nil), curMixed...))
-			return
+			return true
 		}
 		if len(mixedPaths) >= maxPathsPerChunk {
-			return
+			return true
+		}
+		if failedMixed[pos] {
+			return false
 		}
 		maxLen := len(chunk) - pos
 		if maxLen > maxSyllableLength {
 			maxLen = maxSyllableLength
 		}
 
+		anySuccess := false
 		foundMultiSyllable := false
 		for l := maxLen; l >= 1; l-- {
 			sub := chunk[pos : pos+l]
@@ -455,8 +478,13 @@ func tokenizeChunk(chunk string) [][]Token {
 					foundMultiSyllable = true
 				}
 				curMixed = append(curMixed, Token{Text: sub, IsExact: true})
-				dfsMixed(pos + l)
+				if dfsMixed(pos + l) {
+					anySuccess = true
+				}
 				curMixed = curMixed[:len(curMixed)-1]
+				if len(mixedPaths) >= maxPathsPerChunk {
+					return true
+				}
 			}
 		}
 
@@ -465,19 +493,34 @@ func tokenizeChunk(chunk string) [][]Token {
 				sub := chunk[pos : pos+2]
 				if sub == "zh" || sub == "ch" || sub == "sh" {
 					curMixed = append(curMixed, Token{Text: sub, IsExact: false})
-					dfsMixed(pos + 2)
+					if dfsMixed(pos + 2) {
+						anySuccess = true
+					}
 					curMixed = curMixed[:len(curMixed)-1]
+					if len(mixedPaths) >= maxPathsPerChunk {
+						return true
+					}
 				}
 			}
 			if pos+1 <= len(chunk) {
 				sub := chunk[pos : pos+1]
 				if isInitial(sub) {
 					curMixed = append(curMixed, Token{Text: sub, IsExact: false})
-					dfsMixed(pos + 1)
+					if dfsMixed(pos + 1) {
+						anySuccess = true
+					}
 					curMixed = curMixed[:len(curMixed)-1]
+					if len(mixedPaths) >= maxPathsPerChunk {
+						return true
+					}
 				}
 			}
 		}
+
+		if !anySuccess {
+			failedMixed[pos] = true
+		}
+		return anySuccess
 	}
 	dfsMixed(0)
 	return mixedPaths
@@ -549,6 +592,20 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 	return out
 }
 
+func tokensKey(tokens []Token) string {
+	var b strings.Builder
+	for i, t := range tokens {
+		if i > 0 {
+			b.WriteByte('\'')
+		}
+		b.WriteString(t.Text)
+		if !t.IsExact {
+			b.WriteByte('?')
+		}
+	}
+	return b.String()
+}
+
 // Compose 基于当前输入生成组词状态：枚举全部音节约束切分（支持全拼、简拼与混拼）、
 // 查主词典与用户词库、生成整句候选、合并去重，并按匹配优先级与综合得分排序。
 func (s *Session) Compose() Composition {
@@ -570,6 +627,7 @@ func (s *Session) Compose() Composition {
 	}
 	var items []candItem
 	seen := make(map[string]int)
+	seenShorter := make(map[string]bool)
 
 	addCandidate := func(e *Entry, score int, fromUser bool, r int) {
 		word := e.Word
@@ -735,6 +793,12 @@ func (s *Session) Compose() Composition {
 			}
 			for drop := 1; drop <= limit; drop++ {
 				shorter := qp[:len(qp)-drop]
+				sKey := tokensKey(shorter)
+				if seenShorter[sKey] {
+					continue
+				}
+				seenShorter[sKey] = true
+
 				allExactShorter := true
 				for _, t := range shorter {
 					if !t.IsExact {
