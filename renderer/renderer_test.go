@@ -390,12 +390,33 @@ func TestWithDarkMode(t *testing.T) {
 	if dark.BgColor != DefaultSkinFor(true).BgColor || dark.FgColor != DefaultSkinFor(true).FgColor {
 		t.Fatal("WithDarkMode(true) 未套用深色配色")
 	}
+	if dark.IndexColor != DefaultSkinFor(true).IndexColor {
+		t.Fatal("WithDarkMode(true) 未套用深色 IndexColor")
+	}
 	if dark.FontSize != 22 || dark.MaxWidth != 999 || dark.Horizontal != skin.Horizontal {
 		t.Fatalf("WithDarkMode 不应改动字体与布局: %+v", dark)
 	}
 	light := WithDarkMode(dark, false)
 	if light.BgColor != DefaultSkinFor(false).BgColor {
 		t.Fatal("WithDarkMode(false) 未套用浅色配色")
+	}
+	if light.IndexColor != DefaultSkinFor(false).IndexColor {
+		t.Fatal("WithDarkMode(false) 未套用浅色 IndexColor")
+	}
+}
+
+// 序号色彩独立层级测试：确保 IndexColor 非零且生效。
+func TestRenderIndexColorHierarchy(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		skin := DefaultSkinFor(dark)
+		requireFont(t, skin)
+		if skin.IndexColor.A == 0 {
+			t.Fatalf("dark=%v 时 IndexColor 必须配置", dark)
+		}
+		img := renderDecode(t, sampleComp(), skin)
+		if img == nil {
+			t.Fatal("渲染结果为空")
+		}
 	}
 }
 

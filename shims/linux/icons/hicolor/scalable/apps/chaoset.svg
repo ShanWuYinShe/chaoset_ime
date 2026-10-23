@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cinnabarGrad" x1="256" y1="32" x2="256" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#DC3538"/>
+      <stop offset="100%" stop-color="#8A1117"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="8" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  
+  <!-- Squircle Base with Drop Shadow -->
+  <rect x="32" y="32" width="448" height="448" rx="100" ry="100" fill="url(#cinnabarGrad)" filter="url(#shadow)"/>
+  
+  <!-- Subtle specular highlight rim -->
+  <rect x="33" y="33" width="446" height="446" rx="99" ry="99" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="2"/>
+  
+  <!-- Outer Seal Frame -->
+  <rect x="68" y="68" width="376" height="376" rx="72" ry="72" stroke="#FFFFFF" stroke-opacity="0.92" stroke-width="10"/>
+  
+  <!-- Inner Seal Frame -->
+  <rect x="94" y="94" width="324" height="324" rx="50" ry="50" stroke="#FFFFFF" stroke-opacity="0.58" stroke-width="4.5"/>
+  
+  <!-- Corner Meander Patterns -->
+  <g stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="3" fill="none">
+    <!-- Top-Left -->
+    <path d="M120 156 V120 H156"/>
+    <path d="M128 156 V128 H156"/>
+    <path d="M136 156 V136 H156"/>
+    <!-- Top-Right -->
+    <path d="M392 156 V120 H356"/>
+    <path d="M384 156 V128 H356"/>
+    <path d="M376 156 V136 H356"/>
+    <!-- Bottom-Left -->
+    <path d="M120 356 V392 H156"/>
+    <path d="M128 356 V384 H156"/>
+    <path d="M136 356 V376 H156"/>
+    <!-- Bottom-Right -->
+    <path d="M392 356 V392 H356"/>
+    <path d="M384 356 V384 H356"/>
+    <path d="M376 356 V376 H356"/>
+  </g>
+  
+  <!-- Center Seal Character "超" -->
+  <text x="256" y="332" text-anchor="middle" font-family="'Libian SC', 'Kaiti SC', 'STKaiti', 'Noto Serif CJK SC', 'Source Han Serif SC', serif" font-size="240" font-weight="bold" fill="#FFFFFF">超</text>
+</svg>

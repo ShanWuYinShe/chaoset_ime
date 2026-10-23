@@ -16,6 +16,7 @@
       <layout>us</layout>
       <rank>99</rank>
       <symbol>中</symbol>
+      <icon>chaoset</icon>
     </engine>
   </engines>
 </component>

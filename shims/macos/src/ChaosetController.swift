@@ -314,7 +314,7 @@ final class ChaosetController: IMKInputController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .popUpMenu
         panel.isOpaque = false
         panel.backgroundColor = .clear
         // 候选窗只负责展示：不拦截鼠标，点击应落到宿主应用并触发会话提交

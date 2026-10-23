@@ -50,6 +50,8 @@ type Skin struct {
 	HighlightBg       color.NRGBA // 首选候选底色
 	HighlightBarColor color.NRGBA // 首选候选左侧「朱批」竖记；Alpha=0 时不画
 	UserMarkColor     color.NRGBA // 用户学习标记（*）颜色
+	IndexColor        color.NRGBA // 候选序号颜色；Alpha=0 时退回 PreeditColor
+	HighlightFg       color.NRGBA // 首选项文字高亮色；Alpha=0 时退回 FgColor
 
 	// Horizontal 为 true 时渲染横排候选栏（系统输入法风格）：不再画预编辑行，
 	// 候选按「序号+文本」横向流式排列，页码指示作为末尾一项。零值 false =
@@ -81,16 +83,20 @@ func DefaultSkinFor(dark bool) Skin {
 		skin.BgColor = color.NRGBA{0x1C, 0x1C, 0x1E, 0xF2}       // 近黑底
 		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x20}   // 白色细边
 		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xFF}  // 次级文字
+		skin.IndexColor = color.NRGBA{0x98, 0x98, 0x9F, 0xFF}    // 序号采用静音灰，与候选字层次分明
 		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}       // 白字
 		skin.HighlightBg = color.NRGBA{0x3A, 0x3A, 0x3C, 0xFF}   // 首选高亮
+		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}   // 首选高亮文字
 		skin.UserMarkColor = color.NRGBA{0x0A, 0x84, 0xFF, 0xFF} // 学习标记
 		return skin
 	}
 	skin.BgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xF2}       // 白底
 	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x18}   // 黑色细边
 	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xFF}  // 次级文字
+	skin.IndexColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xFF}    // 序号采用系统次级灰，扫视更轻松
 	skin.FgColor = color.NRGBA{0x1C, 0x1C, 0x1E, 0xFF}       // 深灰字
 	skin.HighlightBg = color.NRGBA{0xE5, 0xE5, 0xEA, 0xFF}   // 首选高亮（浅灰，文字保持深色）
+	skin.HighlightFg = color.NRGBA{0x1C, 0x1C, 0x1E, 0xFF}   // 首选高亮文字
 	skin.UserMarkColor = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF} // 学习标记
 	return skin
 }
@@ -112,8 +118,10 @@ func WithDarkMode(skin Skin, dark bool) Skin {
 	skin.PreeditColor = theme.PreeditColor
 	skin.FgColor = theme.FgColor
 	skin.HighlightBg = theme.HighlightBg
+	skin.HighlightFg = theme.HighlightFg
 	skin.HighlightBarColor = theme.HighlightBarColor
 	skin.UserMarkColor = theme.UserMarkColor
+	skin.IndexColor = theme.IndexColor
 	return skin
 }
 
@@ -284,19 +292,24 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 		gap = 2
 	}
 
+	idxColor := skin.IndexColor
+	if idxColor.A == 0 {
+		idxColor = skin.PreeditColor
+	}
+
 	items := make([]barItem, 0, len(comp.Candidates)+1)
 	for i, cand := range comp.Candidates {
-		// 横排每项「序号 + 空格 + 文本」；用户学习候选尾附 *（单独着色）
-		text := fmt.Sprintf("%d %s", i+1, cand.Text)
-		if cand.FromUser {
-			text += "*"
+		idxText := fmt.Sprintf("%d", i+1)
+		candFg := skin.FgColor
+		if i == 0 && skin.HighlightFg.A != 0 {
+			candFg = skin.HighlightFg
 		}
-		items = append(items, newBarItem(face, text, skin.FgColor, itemPadX, i == 0, cand.FromUser))
+		items = append(items, newBarCandidateItem(face, idxText, cand.Text, candFg, idxColor, itemPadX, i == 0, cand.FromUser))
 	}
 	// 多页时页码指示作为末尾一项，用淡色（与旧竖排的 [1/2] 语义一致）
 	if comp.PageCount > 1 {
 		text := pageIndicator(face, comp.Page+1, comp.PageCount)
-		items = append(items, newBarItem(face, text, skin.PreeditColor, itemPadX, false, false))
+		items = append(items, newBarSimpleItem(face, text, skin.PreeditColor, itemPadX))
 	}
 	if len(items) == 0 {
 		return nil
@@ -334,7 +347,7 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 	}
 	if next < len(items) {
 		// 3 行仍放不下：末行尾补省略号（必要时先丢弃末行末尾项）
-		ell := newBarItem(face, "…", skin.PreeditColor, itemPadX, false, false)
+		ell := newBarSimpleItem(face, "…", skin.PreeditColor, itemPadX)
 		last := len(rows) - 1
 		for len(rows[last]) > 0 && maxContent > 0 &&
 			rowWidth(rows[last], gap)+gap+ell.boxW > maxContent {
@@ -364,17 +377,28 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 		for _, it := range row {
 			box := image.Rect(x, y, x+it.boxW, y+textH)
 			if it.highlight {
-				// 首选高亮：圆角内缩块（CornerRadius=0 时即整项直角底色）
-				drawRoundRect(img, box, clampRadius(box, skin.CornerRadius), skin.HighlightBg, draw.Over)
+				// 首选高亮：圆角微胶囊块（CornerRadius=0 时即整项直角底色）
+				pillR := clampRadius(box, skin.CornerRadius)
+				if pillR > 6 {
+					pillR = 6
+				}
+				drawRoundRect(img, box, pillR, skin.HighlightBg, draw.Over)
+			}
+			curX := x + itemPadX
+			if it.indexText != "" {
+				d.Src = image.NewUniform(it.idxColor)
+				d.Dot = fixed.P(curX, y+ascent)
+				d.DrawString(it.indexText)
+				curX += it.indexW + it.gapW
 			}
 			d.Src = image.NewUniform(it.color)
-			d.Dot = fixed.P(x+itemPadX, y+ascent)
+			d.Dot = fixed.P(curX, y+ascent)
 			d.DrawString(it.text)
+			curX += it.textW
 			if it.userMark && skin.UserMarkColor.A != 0 {
-				// 学习标记：行尾 * 换色强调（文本本身已含 *）
-				markW := font.MeasureString(face, "*").Ceil()
+				// 学习标记：行尾 * 换色强调（单独绘制）
 				d.Src = image.NewUniform(skin.UserMarkColor)
-				d.Dot = fixed.P(x+itemPadX+it.textW-markW, y+ascent)
+				d.Dot = fixed.P(curX, y+ascent)
 				d.DrawString("*")
 			}
 			x += it.boxW + gap
@@ -407,17 +431,52 @@ func hasGlyph(face font.Face, r rune) bool {
 
 // barItem 是横排候选栏的一项（候选或页码指示）。
 type barItem struct {
-	text      string
-	color     color.NRGBA
+	indexText string      // 序号（如 "1"）；非候选项时为空
+	text      string      // 候选主体文本或页码指示
+	color     color.NRGBA // 主体文字颜色
+	idxColor  color.NRGBA // 序号颜色
 	highlight bool
 	userMark  bool
-	textW     int // 文本像素宽（不含左右留白）
+	indexW    int // 序号像素宽
+	gapW      int // 序号与候选词间距像素宽
+	textW     int // 文本像素宽（不含序号、留白与标记）
+	markW     int // 学习标记宽
 	boxW      int // 含左右留白的整项宽
 }
 
-func newBarItem(face font.Face, text string, c color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
+func newBarCandidateItem(face font.Face, idxText, text string, c, idxC color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
+	iw := font.MeasureString(face, idxText).Ceil()
+	// 序号与候选词微间隙：约为序号宽度的 35%（微小精细空隙，比空格更紧凑整齐）
+	gw := max(3, iw*35/100)
 	tw := font.MeasureString(face, text).Ceil()
-	return barItem{text: text, color: c, highlight: highlight, userMark: userMark, textW: tw, boxW: tw + itemPadX*2}
+	mw := 0
+	if userMark {
+		mw = font.MeasureString(face, "*").Ceil()
+	}
+	boxW := itemPadX*2 + iw + gw + tw + mw
+	return barItem{
+		indexText: idxText,
+		text:      text,
+		color:     c,
+		idxColor:  idxC,
+		highlight: highlight,
+		userMark:  userMark,
+		indexW:    iw,
+		gapW:      gw,
+		textW:     tw,
+		markW:     mw,
+		boxW:      boxW,
+	}
+}
+
+func newBarSimpleItem(face font.Face, text string, c color.NRGBA, itemPadX int) barItem {
+	tw := font.MeasureString(face, text).Ceil()
+	return barItem{
+		text:  text,
+		color: c,
+		textW: tw,
+		boxW:  tw + itemPadX*2,
+	}
 }
 
 // rowWidth 是一行内容宽（项宽之和 + 项间距）。

@@ -49,41 +49,69 @@ func drawCornerMeander(in rect: NSRect, _ s: CGFloat) {
     }
 }
 
-/// 只画印章里的「超」字
+/// 只画印章里的「超」字（带精细浮雕微投影，立体雅致）
 func drawSealGlyph(_ s: CGFloat) {
+    let font = sealFont(s * 0.48)
+    let glyphShadow = NSShadow()
+    glyphShadow.shadowBlurRadius = max(1.0, s * 0.015)
+    glyphShadow.shadowOffset = NSSize(width: 0, height: -max(0.5, s * 0.009))
+    glyphShadow.shadowColor = NSColor(srgbRed: 0.35, green: 0.04, blue: 0.06, alpha: 0.55)
+
     let text = NSAttributedString(string: "超", attributes: [
-        .font: sealFont(s * 0.50),
+        .font: font,
         .foregroundColor: NSColor.white,
+        .shadow: glyphShadow,
     ])
     let size = text.size()
-    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.035))
+    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.026))
 }
 
-/// 印章徽标：中国红底 + 白色双框 + 隶书「超」（大尺寸再加四角回纹）
+/// 印章徽标：现代 macOS 连贯圆角超椭圆（Squircle）+ 朱砂漆艺渐变 + 典雅双框 + 篆隶「超」
 func drawSeal(_ s: CGFloat, ornament: Bool) {
-    let inset = s * 0.055
+    let inset = s * 0.065
     let rect = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let body = NSBezierPath(roundedRect: rect, xRadius: s * 0.13, yRadius: s * 0.13)
+    let squircleR = rect.width * 0.224 // 苹果官方标准连续平滑圆角半径
+    let body = NSBezierPath(roundedRect: rect, xRadius: squircleR, yRadius: squircleR)
 
-    // 朱砂印泥：上浅下深
+    // 大尺寸应用图标增加柔和自然的环境微投影，完美融入 macOS 现代图标网格
+    if s >= 128 {
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = s * 0.038
+        shadow.shadowOffset = NSSize(width: 0, height: -s * 0.018)
+        shadow.shadowColor = NSColor(white: 0, alpha: 0.28)
+        shadow.set()
+    }
+
+    // 传统朱砂印泥色彩：深邃通透的渐变
     let grad = NSGradient(colors: [
-        NSColor(srgbRed: 0.80, green: 0.15, blue: 0.16, alpha: 1),
-        NSColor(srgbRed: 0.52, green: 0.06, blue: 0.09, alpha: 1),
+        NSColor(srgbRed: 0.86, green: 0.18, blue: 0.19, alpha: 1),
+        NSColor(srgbRed: 0.54, green: 0.07, blue: 0.10, alpha: 1),
     ])!
     grad.draw(in: body, angle: -90)
+
+    // 清除外层投影，避免影响后续精致描边与文字
+    if s >= 128 {
+        NSShadow().set()
+    }
+
+    // 顶部微弱透光高光细边（提升材质质感）
+    let rim = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: squircleR - 0.5, yRadius: squircleR - 0.5)
+    rim.lineWidth = max(0.8, s * 0.008)
+    NSColor(white: 1.0, alpha: 0.20).setStroke()
+    rim.stroke()
 
     if ornament { drawCornerMeander(in: rect, s) }
 
     // 印章双框（外粗内细）
     let outer = NSBezierPath(roundedRect: rect.insetBy(dx: s * 0.075, dy: s * 0.075),
-                             xRadius: s * 0.085, yRadius: s * 0.085)
+                             xRadius: rect.width * 0.16, yRadius: rect.width * 0.16)
     outer.lineWidth = max(1, s * 0.022)
     NSColor(white: 1, alpha: 0.92).setStroke()
     outer.stroke()
     let inner = NSBezierPath(roundedRect: rect.insetBy(dx: s * 0.125, dy: s * 0.125),
-                             xRadius: s * 0.06, yRadius: s * 0.06)
+                             xRadius: rect.width * 0.11, yRadius: rect.width * 0.11)
     inner.lineWidth = max(0.6, s * 0.010)
-    NSColor(white: 1, alpha: 0.55).setStroke()
+    NSColor(white: 1, alpha: 0.58).setStroke()
     inner.stroke()
 
     drawSealGlyph(s)
@@ -140,17 +168,18 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    // 1) 满幅圆角扁平 keycap（圆角 0.20×高度，在 16pt 下约 3.2pt）
+    // 1) 满幅圆角扁平 keycap（圆角 0.22×高度，在 16pt 下约 3.5pt，贴合系统原生按键）
+    let cornerR = CGFloat(bigH) * 0.22
     let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bigW, height: bigH),
-                      cornerWidth: CGFloat(bigH) * 0.20, cornerHeight: CGFloat(bigH) * 0.20,
+                      cornerWidth: cornerR, cornerHeight: cornerR,
                       transform: nil)
     ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
     ctx.addPath(body)
     ctx.fillPath()
 
-    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.72×高度
+    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.70×高度
     ctx.setBlendMode(.destinationOut)
-    let targetH = CGFloat(bigH) * 0.72
+    let targetH = CGFloat(bigH) * 0.70
     func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
         let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
         let a = NSAttributedString(string: "C", attributes: [
@@ -172,8 +201,10 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     }
     let line = bestLine
     let glyphBounds = bestBounds
+    // 光学居中：微调 +0.015*bigH 纠正大写弧形字底的视觉下坠感
+    let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
     ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
-                               y: (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY)
+                               y: optY)
     CTLineDraw(line, ctx)
     ctx.setBlendMode(.normal)
 
