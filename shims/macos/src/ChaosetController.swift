@@ -50,11 +50,7 @@ final class ChaosetController: IMKInputController {
             return false
         }
 
-        // 带 Command/Control/Option 的组合键一律放行（快捷键不能被输入法吞掉）
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if mods.contains(.command) || mods.contains(.control) || mods.contains(.option) {
-            return passThrough(client)
-        }
 
         // Shift 空按：按下装填、松开且期间无其它按键时才切换中英
         if Self.shiftKeyCodes.contains(event.keyCode) {
@@ -77,33 +73,71 @@ final class ChaosetController: IMKInputController {
             return passThrough(client)
         }
 
-        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
-            return passThrough(client)
+        let isComposing = !(current?.input.isEmpty ?? true)
+
+        // Esc 键（keyCode 53）：直接全部删除（清空当前组词并关闭候选窗）
+        if event.keyCode == 53 {
+            if isComposing {
+                current = engine.reset()
+                refresh(client)
+                return true
+            }
+            return false
         }
 
-        // 退格：只有「正在组词」时才由输入法消费（删拼音）。
-        // 无组词时必须放行，否则退格被输入法吃掉，宿主应用永远删不掉字；
-        // 旧实现无条件 return true，导致「退格删不动」与「一次退格连
-        // 上屏的中文一起消失」两种症状（2026-10-22 用户实测反馈）。
-        if chars == "\u{7F}" {
-            guard let cur = current, !cur.input.isEmpty else {
+        // 退格键判定（Backspace/Delete: keyCode 51, ForwardDelete: keyCode 117, chars: \u{7F} / \u{08}）
+        let rawChars = event.charactersIgnoringModifiers ?? ""
+        let isDeleteChar = rawChars == "\u{7F}" || rawChars == "\u{08}"
+        let isDeleteKey = event.keyCode == 51 || event.keyCode == 117 || isDeleteChar
+
+        if isDeleteKey {
+            if !isComposing {
                 current = nil
                 refresh(client)
-                return false // 放行：交给宿主应用删文档里的字符
+                return false // 无组词：放行给宿主应用正常删除已有文本
             }
+
+            // 组词中按退格，独立分为全部删除与部分删除两种行为：
+            // A. 直接全部删除（清空全部拼音）：Cmd+Delete / Ctrl+Delete / Shift+Delete
+            if mods.contains(.command) || mods.contains(.control) || mods.contains(.shift) {
+                current = engine.reset()
+                refresh(client)
+                return true // 必须消费，绝不让快捷删除穿透到宿主应用误删文档内容
+            }
+
+            // B. 按音节部分删除（整词/音节回退）：Option+Delete (⌥⌫)
+            if mods.contains(.option) {
+                current = engine.backspaceWord()
+                if current?.input.isEmpty == true {
+                    current = nil
+                }
+                refresh(client)
+                return true
+            }
+
+            // C. 慢慢部分删除（逐字符退格）：普通退格键单按，每按一次退一个拼音字母
             current = engine.backspace()
             if current?.input.isEmpty == true {
-                current = nil // 组词结束：不留「空会话」，避免后续按键被误吞
+                current = nil
             }
             refresh(client)
             return true
         }
 
-        // Esc：清空组词并隐藏候选窗
-        if event.keyCode == 53 {
+        // Ctrl+U：类终端整行清空，组词中直接全部删除
+        if isComposing, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
             current = engine.reset()
             refresh(client)
             return true
+        }
+
+        // 带 Command/Control/Option 的系统快捷键（如 Cmd+C/Cmd+V）一律放行
+        if mods.contains(.command) || mods.contains(.control) || mods.contains(.option) {
+            return passThrough(client)
+        }
+
+        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
+            return passThrough(client)
         }
 
         let hasCandidates = !(current?.candidates.isEmpty ?? true)

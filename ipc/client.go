@@ -128,6 +128,12 @@ func (c *Client) Backspace() (engine.Composition, error) {
 	return comp, err
 }
 
+func (c *Client) BackspaceWord() (engine.Composition, error) {
+	var comp engine.Composition
+	err := c.call("backspaceWord", nil, &comp)
+	return comp, err
+}
+
 func (c *Client) Reset() (engine.Composition, error) {
 	var comp engine.Composition
 	err := c.call("reset", nil, &comp)

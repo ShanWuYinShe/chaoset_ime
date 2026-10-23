@@ -171,6 +171,10 @@ final class EngineClient {
         parseComp(call(method: "backspace", params: [:]))
     }
 
+    func backspaceWord() -> Comp? {
+        parseComp(call(method: "backspaceWord", params: [:]))
+    }
+
     func reset() -> Comp? {
         parseComp(call(method: "reset", params: [:]))
     }

@@ -297,6 +297,42 @@ func TestCommitRaw(t *testing.T) {
 	}
 }
 
+func TestBackspaceWord(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "test.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, nil)
+	go srv.Serve()
+	defer srv.Close()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("Dial 失败: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Input("nihaoma"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+
+	comp, err := client.BackspaceWord()
+	if err != nil {
+		t.Fatalf("BackspaceWord 失败: %v", err)
+	}
+	if comp.Input != "nihao" {
+		t.Errorf("BackspaceWord 后 input = %q, 期望 nihao", comp.Input)
+	}
+}
+
 func waitForDial(sock string) (*Client, error) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {

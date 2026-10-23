@@ -95,3 +95,47 @@ func TestBackspaceWorksWhenNoCandidates(t *testing.T) {
 		t.Fatal("组词中预编辑不应为空")
 	}
 }
+
+// 测试 BackspaceWord 逐音节/逐词回退（对应 Option+Backspace）。
+func TestBackspaceWordSyllableRollback(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+
+	// 1. 无撇号多音节：nihaoma -> nihao -> ni -> 空
+	s.Input("nihaoma")
+	comp, err := s.BackspaceWord()
+	if err != nil || comp.Input != "nihao" {
+		t.Fatalf("BackspaceWord 1 期望 nihao, 得到 %q (err=%v)", comp.Input, err)
+	}
+	comp, err = s.BackspaceWord()
+	if err != nil || comp.Input != "ni" {
+		t.Fatalf("BackspaceWord 2 期望 ni, 得到 %q (err=%v)", comp.Input, err)
+	}
+	comp, err = s.BackspaceWord()
+	if err != nil || comp.Input != "" {
+		t.Fatalf("BackspaceWord 3 期望空, 得到 %q (err=%v)", comp.Input, err)
+	}
+
+	// 2. 显式撇号多音节：wo'men'de -> wo'men -> wo -> 空
+	s.Reset()
+	s.Input("wo'men'de")
+	comp, _ = s.BackspaceWord()
+	if comp.Input != "wo'men" {
+		t.Fatalf("BackspaceWord 带撇号 1 期望 wo'men, 得到 %q", comp.Input)
+	}
+	comp, _ = s.BackspaceWord()
+	if comp.Input != "wo" {
+		t.Fatalf("BackspaceWord 带撇号 2 期望 wo, 得到 %q", comp.Input)
+	}
+	comp, _ = s.BackspaceWord()
+	if comp.Input != "" {
+		t.Fatalf("BackspaceWord 带撇号 3 期望空, 得到 %q", comp.Input)
+	}
+
+	// 3. 末段残缺声母：nihaox -> nihao
+	s.Reset()
+	s.Input("nihaox")
+	comp, _ = s.BackspaceWord()
+	if comp.Input != "nihao" {
+		t.Fatalf("BackspaceWord 末段残缺 期望 nihao, 得到 %q", comp.Input)
+	}
+}

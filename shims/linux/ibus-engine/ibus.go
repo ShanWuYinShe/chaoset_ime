@@ -209,8 +209,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	if e.enMode {
 		return false, nil
 	}
-	// 释放事件与 Ctrl/Alt 组合键一律放行
-	if state&(ibusReleaseMask|ibusCtrlMask|ibusMod1Mask) != 0 {
+	if state&ibusReleaseMask != 0 {
+		return false, nil
+	}
+	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
+		if isComposing(e.sess) && keyval == keysymBackspace {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
+			return true, nil
+		}
 		return false, nil
 	}
 
@@ -224,15 +234,23 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == keysymBackspace:
+		if !isComposing(e.sess) {
+			return false, nil
+		}
+		// 普通 Backspace：慢慢部分删除（逐字符）
 		comp, _ := e.sess.Backspace()
 		e.refresh(comp)
 		return true, nil
 
 	case keyval == keysymEscape:
-		e.sess.Reset()
-		e.hidePreedit()
-		e.hideLookupTable()
-		return true, nil
+		// Esc：直接全部删除
+		if isComposing(e.sess) {
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
+			return true, nil
+		}
+		return false, nil
 
 	case keyval >= '1' && keyval <= '9':
 		text, err := e.sess.Select(int(keyval - '1'))

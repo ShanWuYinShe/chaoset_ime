@@ -54,7 +54,14 @@ func main() {
 				continue
 			}
 			printComposition(comp)
-		case line == ":r":
+		case line == ":bw":
+			comp, err := ctrl.BackspaceWord()
+			if err != nil {
+				fmt.Println("错误:", err)
+				continue
+			}
+			printComposition(comp)
+		case line == ":r" || line == ":c":
 			comp, err := ctrl.Reset()
 			if err != nil {
 				fmt.Println("错误:", err)

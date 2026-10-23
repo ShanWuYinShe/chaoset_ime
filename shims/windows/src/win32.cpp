@@ -450,6 +450,14 @@ private:
         }
 
         if (vk == kVkBackspace) {
+            if (GetKeyState(VK_CONTROL) & 0x8000) {
+                // Ctrl+Backspace：直接全部删除（清空全部拼音）
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+                return true;
+            }
+            // 普通 Backspace：慢慢部分删除（逐字符回退）
             comp_ = session_.backspace();
             if (!comp_.ok) {
                 endComposition();
@@ -461,6 +469,7 @@ private:
         }
 
         if (vk == kVkEscape) {
+            // Esc：直接全部删除（清空全部拼音）
             session_.reset();
             endComposition();
             comp_ = chaoset::Comp();

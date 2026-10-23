@@ -29,6 +29,8 @@ type Composition struct {
 type Controller interface {
 	Input(text string) (Composition, error)
 	Backspace() (Composition, error)
+	// BackspaceWord 逐词/逐音节回退：删除末尾的一个音节或词段。
+	BackspaceWord() (Composition, error)
 	Reset() (Composition, error)
 	Select(index int) (string, error)
 	// Punct 提交一个标点键：组词中先上屏首选候选（无候选的残缺输入
@@ -218,6 +220,57 @@ func (s *Session) Backspace() (Composition, error) {
 		s.input = string(runes[:len(runes)-1])
 	}
 	s.page = 0 // 组词内容变化，回到第一页
+	s.resetPunctCycle()
+	return s.Compose(), nil
+}
+
+// BackspaceWord 删除末尾的一个完整音节或词段（对应 Option+Backspace）。
+// 若输入包含显式撇号或完整音节切分，回退到前一个音节边界；仅剩单音节或无法切分时清空。
+func (s *Session) BackspaceWord() (Composition, error) {
+	if s.dpScheme != "" {
+		// 双拼模式下单次 Backspace 已是完整音节回滚，直接复用
+		return s.Backspace()
+	}
+	if s.input == "" {
+		return s.Compose(), nil
+	}
+
+	trimmed := strings.TrimRight(s.input, "'")
+	if trimmed == "" {
+		s.input = ""
+		s.page = 0
+		s.resetPunctCycle()
+		return s.Compose(), nil
+	}
+
+	// 若输入含有显式撇号，优先回退到最后一个撇号处
+	if idx := strings.LastIndexByte(trimmed, '\''); idx >= 0 {
+		s.input = trimmed[:idx]
+		s.page = 0
+		s.resetPunctCycle()
+		return s.Compose(), nil
+	}
+
+	// 根据音节切分方案找到最后一个音节的长度
+	rawChunks := strings.Split(trimmed, "'")
+	tokenPatterns := enumerateAllTokens(rawChunks)
+	if len(tokenPatterns) > 0 && len(tokenPatterns[0]) > 1 {
+		best := tokenPatterns[0]
+		lastTok := best[len(best)-1]
+		delLen := len([]rune(lastTok.Text))
+		runes := []rune(trimmed)
+		if delLen > 0 && delLen < len(runes) {
+			s.input = string(runes[:len(runes)-delLen])
+			s.input = strings.TrimRight(s.input, "'")
+			s.page = 0
+			s.resetPunctCycle()
+			return s.Compose(), nil
+		}
+	}
+
+	// 仅剩一个音节或无法切分时全部清空
+	s.input = ""
+	s.page = 0
 	s.resetPunctCycle()
 	return s.Compose(), nil
 }

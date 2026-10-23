@@ -140,6 +140,8 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		return sess.Input(p.Text)
 	case "backspace":
 		return sess.Backspace()
+	case "backspaceWord":
+		return sess.BackspaceWord()
 	case "reset":
 		return sess.Reset()
 	case "commitRaw":
