@@ -742,7 +742,7 @@ func (s *Session) Compose() Composition {
 						break
 					}
 				}
-				sExacts, _ := s.dict.QueryTokens(shorter, 10)
+				sExacts := s.dict.QueryTokensExact(shorter, 10)
 				for _, e := range sExacts {
 					r := rankBackoff + drop
 					if allExactShorter && drop == 1 && len(exacts) == 0 {
@@ -763,7 +763,7 @@ func (s *Session) Compose() Composition {
 					}
 					addCandidate(e, e.Freq+boost, boost > 0, r)
 				}
-				if len(shorter) >= 2 && len(qp) == minPatternLen {
+				if drop == 1 && len(shorter) >= 2 && len(qp) == minPatternLen {
 					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, shorter, 4) {
 						if len(sc.Words) > 1 {
 							r := rankBackoff + drop + 1
@@ -785,7 +785,7 @@ func (s *Session) Compose() Composition {
 					}
 				}
 				if s.user != nil {
-					uExacts, _ := s.user.QueryTokens(shorter, 5)
+					uExacts := s.user.QueryTokensExact(shorter, 5)
 					for _, e := range uExacts {
 						r := rankBackoff + drop
 						if allExactShorter && drop == 1 && len(exacts) == 0 {

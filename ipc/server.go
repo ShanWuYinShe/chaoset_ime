@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image/png"
 	"io"
 	"log"
 	"net"
@@ -232,18 +231,14 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		}
 		skin = renderer.ScaleSkin(skin, p.Scale)
 		comp := sess.Compose()
-		data, err := renderer.Render(comp, skin)
+		data, width, height, err := renderer.RenderWithBounds(comp, skin)
 		if err != nil {
 			return nil, fmt.Errorf("渲染候选窗失败: %w", err)
 		}
 		out := map[string]any{"width": 0, "height": 0, "png": "", "scale": renderer.EffectiveScale(p.Scale)}
 		if len(data) > 0 {
-			cfg, derr := png.DecodeConfig(bytes.NewReader(data))
-			if derr != nil {
-				return nil, fmt.Errorf("解析渲染结果失败: %w", derr)
-			}
-			out["width"] = cfg.Width
-			out["height"] = cfg.Height
+			out["width"] = width
+			out["height"] = height
 			out["png"] = base64.StdEncoding.EncodeToString(data)
 		}
 		return out, nil

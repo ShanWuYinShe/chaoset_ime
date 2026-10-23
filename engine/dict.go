@@ -138,19 +138,11 @@ func matchSyllable(s string, tok Token) bool {
 	return false
 }
 
-// QueryTokens 在 Trie 中根据音节约束序列匹配词条。
-// 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
-// 两组结果均已按词频降序排序。
-func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Entry) {
+func (d *Dictionary) walkTokens(tokens []Token) []*dictNode {
 	if len(tokens) == 0 || d.root == nil {
-		return nil, nil
+		return nil
 	}
-	if maxResults <= 0 {
-		maxResults = 50
-	}
-
 	curr := []*dictNode{d.root}
-
 	for _, tok := range tokens {
 		var next []*dictNode
 		if tok.IsExact {
@@ -175,14 +167,25 @@ func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*E
 			}
 		}
 		if len(next) == 0 {
-			return nil, nil
+			return nil
 		}
 		curr = next
 	}
+	return curr
+}
 
+// QueryTokensExact 返回音节数恰好等于 len(tokens) 的完全匹配词条（按词频降序，最多 maxResults 条）。
+// 不遍历子树，专供整句规划（DP）与逐级回退等高频路径极速调用。
+func (d *Dictionary) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+	curr := d.walkTokens(tokens)
+	if len(curr) == 0 {
+		return nil
+	}
 	var exactMatches []*Entry
 	seen := make(map[int]bool)
-
 	for _, node := range curr {
 		for _, id := range node.ids {
 			if !seen[id] {
@@ -191,21 +194,73 @@ func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*E
 			}
 		}
 	}
-
 	sort.Slice(exactMatches, func(i, j int) bool {
 		if exactMatches[i].Freq != exactMatches[j].Freq {
 			return exactMatches[i].Freq > exactMatches[j].Freq
 		}
 		return exactMatches[i].Word < exactMatches[j].Word
 	})
+	if len(exactMatches) > maxResults {
+		exactMatches = exactMatches[:maxResults]
+	}
+	return exactMatches
+}
 
-	var prefixMatches []*Entry
+// QueryTokens 在 Trie 中根据音节约束序列匹配词条。
+// 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
+// 两组结果均已按词频降序排序，数量分别以 maxResults 为上限。
+func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Entry) {
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+	curr := d.walkTokens(tokens)
+	if len(curr) == 0 {
+		return nil, nil
+	}
+
+	var exactMatches []*Entry
+	seen := make(map[int]bool)
 	for _, node := range curr {
-		for _, e := range d.collect(node) {
-			if len(e.Syllables) > len(tokens) {
-				prefixMatches = append(prefixMatches, e)
+		for _, id := range node.ids {
+			if !seen[id] {
+				seen[id] = true
+				exactMatches = append(exactMatches, d.entries[id])
 			}
 		}
+	}
+	sort.Slice(exactMatches, func(i, j int) bool {
+		if exactMatches[i].Freq != exactMatches[j].Freq {
+			return exactMatches[i].Freq > exactMatches[j].Freq
+		}
+		return exactMatches[i].Word < exactMatches[j].Word
+	})
+	if len(exactMatches) > maxResults {
+		exactMatches = exactMatches[:maxResults]
+	}
+
+	// 衍生偏长词（前缀匹配）：采用逐层探索（最多向下深入 2 层，即多 1~2 个音节），
+	// 避免在宽泛节点下触发全树无上限递归与万级对象巨型排序。
+	var prefixMatches []*Entry
+	prefixSeen := make(map[int]bool)
+	levelNodes := curr
+	maxPrefixScan := maxResults * 4
+	for depth := 0; depth < 2 && len(levelNodes) > 0 && len(prefixMatches) < maxPrefixScan; depth++ {
+		var nextLevel []*dictNode
+		for _, node := range levelNodes {
+			if node.children == nil {
+				continue
+			}
+			for _, child := range node.children {
+				nextLevel = append(nextLevel, child)
+				for _, id := range child.ids {
+					if !prefixSeen[id] {
+						prefixSeen[id] = true
+						prefixMatches = append(prefixMatches, d.entries[id])
+					}
+				}
+			}
+		}
+		levelNodes = nextLevel
 	}
 
 	sort.Slice(prefixMatches, func(i, j int) bool {
@@ -214,6 +269,9 @@ func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*E
 		}
 		return len(prefixMatches[i].Word) < len(prefixMatches[j].Word)
 	})
+	if len(prefixMatches) > maxResults {
+		prefixMatches = prefixMatches[:maxResults]
+	}
 
 	return exactMatches, prefixMatches
 }

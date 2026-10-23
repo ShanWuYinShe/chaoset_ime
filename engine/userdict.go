@@ -260,6 +260,82 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 	return out
 }
 
+// QueryTokensExact 返回音节数恰好等于 len(tokens) 的完全匹配用户词条（按得分降序，最多 maxResults 条）。
+func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if len(tokens) == 0 {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	var exacts []*Entry
+	seen := make(map[string]bool)
+
+	// 1. 查询用户短语
+	for _, rec := range u.file.Phrases {
+		sylls := strings.Fields(rec.Sylls)
+		if len(sylls) != len(tokens) {
+			continue
+		}
+		ok := true
+		for i, tok := range tokens {
+			if !matchSyllable(sylls[i], tok) {
+				ok = false
+				break
+			}
+		}
+		if ok && !seen[rec.Word] {
+			seen[rec.Word] = true
+			exacts = append(exacts, &Entry{
+				Word:      rec.Word,
+				Syllables: sylls,
+				Freq:      u.phraseScore(rec),
+			})
+		}
+	}
+
+	// 2. 查询用户调频单字/词
+	for key, rec := range u.file.Words {
+		parts := strings.SplitN(key, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		word := parts[0]
+		sylls := strings.Fields(parts[1])
+		if len(sylls) != len(tokens) {
+			continue
+		}
+		ok := true
+		for i, tok := range tokens {
+			if !matchSyllable(sylls[i], tok) {
+				ok = false
+				break
+			}
+		}
+		if ok && !seen[word] {
+			seen[word] = true
+			exacts = append(exacts, &Entry{
+				Word:      word,
+				Syllables: sylls,
+				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+			})
+		}
+	}
+
+	sort.Slice(exacts, func(i, j int) bool {
+		if exacts[i].Freq != exacts[j].Freq {
+			return exacts[i].Freq > exacts[j].Freq
+		}
+		return len(exacts[i].Word) < len(exacts[j].Word)
+	})
+	if len(exacts) > maxResults {
+		exacts = exacts[:maxResults]
+	}
+	return exacts
+}
+
 // QueryTokens 返回匹配 tokens 序列的用户词组与用户词。
 // 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
 // 两组结果均已按词频降序排序。

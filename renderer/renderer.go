@@ -235,17 +235,17 @@ func parseFont(data []byte) (*opentype.Font, error) {
 
 var renderMu sync.Mutex // 字体面并发不安全；渲染串行化（耗时微秒级）
 
-// Render 把组词状态画成候选窗 PNG。
-// 无候选时返回 (nil, nil)（壳应隐藏窗口）；字体不可用时返回错误，
-// 壳应回退到各平台 v1 候选 UI。
-// Skin.Horizontal=true 走横排候选栏，否则走旧的竖排列表。
-func Render(comp engine.Composition, skin Skin) ([]byte, error) {
+var pngFastEncoder = png.Encoder{CompressionLevel: png.BestSpeed}
+
+// RenderWithBounds 把组词状态画成候选窗 PNG，并直接返回像素宽高。
+// 无候选时返回 (nil, 0, 0, nil)；字体不可用时返回错误。
+func RenderWithBounds(comp engine.Composition, skin Skin) ([]byte, int, int, error) {
 	face, err := loadFace(skin)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 	if len(comp.Candidates) == 0 {
-		return nil, nil
+		return nil, 0, 0, nil
 	}
 
 	renderMu.Lock()
@@ -258,14 +258,24 @@ func Render(comp engine.Composition, skin Skin) ([]byte, error) {
 		img = renderList(comp, skin, face)
 	}
 	if img == nil {
-		return nil, nil
+		return nil, 0, 0, nil
 	}
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("编码 PNG 失败: %w", err)
+	if err := pngFastEncoder.Encode(&buf, img); err != nil {
+		return nil, 0, 0, fmt.Errorf("编码 PNG 失败: %w", err)
 	}
-	return buf.Bytes(), nil
+	b := img.Bounds()
+	return buf.Bytes(), b.Dx(), b.Dy(), nil
+}
+
+// Render 把组词状态画成候选窗 PNG。
+// 无候选时返回 (nil, nil)（壳应隐藏窗口）；字体不可用时返回错误，
+// 壳应回退到各平台 v1 候选 UI。
+// Skin.Horizontal=true 走横排候选栏，否则走旧的竖排列表。
+func Render(comp engine.Composition, skin Skin) ([]byte, error) {
+	data, _, _, err := RenderWithBounds(comp, skin)
+	return data, err
 }
 
 // renderBar 画横排候选栏：候选横向流式排列，首项圆角高亮，页码指示为末尾淡色项。

@@ -73,10 +73,10 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 					}
 				}
 			} else {
-				exacts, _ := dict.QueryTokens(part, 6)
+				exacts := dict.QueryTokensExact(part, 6)
 				entries = exacts
 				if user != nil {
-					userExacts, _ := user.QueryTokens(part, 6)
+					userExacts := user.QueryTokensExact(part, 6)
 					if len(userExacts) > 0 {
 						entries = append(append([]*Entry(nil), entries...), userExacts...)
 					}
