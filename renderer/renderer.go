@@ -15,6 +15,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"os"
 	"runtime"
 	"sync"
@@ -52,6 +53,7 @@ type Skin struct {
 	UserMarkColor     color.NRGBA // 用户学习标记（*）颜色
 	IndexColor        color.NRGBA // 候选序号颜色；Alpha=0 时退回 PreeditColor
 	HighlightFg       color.NRGBA // 首选项文字高亮色；Alpha=0 时退回 FgColor
+	HighlightIndexColor color.NRGBA // 首选项序号颜色；Alpha=0 时退回 HighlightFg
 
 	// Horizontal 为 true 时渲染横排候选栏（系统输入法风格）：不再画预编辑行，
 	// 候选按「序号+文本」横向流式排列，页码指示作为末尾一项。零值 false =
@@ -66,38 +68,40 @@ type Skin struct {
 
 // DefaultSkinFor 返回系统输入法风格的皮肤：dark=false 浅色、true 深色。
 // 字体仍走 probeFontPath() 的平台探测；布局为横排候选栏 + 圆角。
-// 配色取系统语义色：浅色 白底/深灰字/浅灰首选高亮，深色 近黑底/白字/深灰高亮，
-// 两者都是 1px 半透明细边框（贴图叠在任意桌面背景上都自然）。
+// 配色取 macOS 原生输入法语义色：首选苹果经典高亮蓝（#0066EB/#007AFF），
+// 序号精细小字号并垂直居中，右侧带极简折叠指示符。
 func DefaultSkinFor(dark bool) Skin {
 	skin := Skin{
 		FontPath:          probeFontPath(),
 		FontSize:          15,
-		Padding:           8,
+		Padding:           7,
 		LineSpacing:       4,
 		Horizontal:        true,
 		MaxWidth:          defaultMaxWidth,
-		CornerRadius:      defaultCornerRadius,
+		CornerRadius:      8,
 		HighlightBarColor: color.NRGBA{}, // 系统风格不画朱批竖记
 	}
 	if dark {
-		skin.BgColor = color.NRGBA{0x1C, 0x1C, 0x1E, 0xF2}       // 近黑底
-		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x20}   // 白色细边
-		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xFF}  // 次级文字
-		skin.IndexColor = color.NRGBA{0x98, 0x98, 0x9F, 0xFF}    // 序号采用静音灰，与候选字层次分明
-		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}       // 白字
-		skin.HighlightBg = color.NRGBA{0x3A, 0x3A, 0x3C, 0xFF}   // 首选高亮
-		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}   // 首选高亮文字
-		skin.UserMarkColor = color.NRGBA{0x0A, 0x84, 0xFF, 0xFF} // 学习标记
+		skin.BgColor = color.NRGBA{0x2C, 0x2C, 0x2E, 0xF5}             // macOS 深色 HUD 底（半透深灰）
+		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x24}         // 1px 半透明高光边框
+		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}        // 次级文字
+		skin.IndexColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}          // 序号静音灰，与候选字层次分明
+		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}             // 候选纯白文字
+		skin.HighlightBg = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}         // 苹果原生高亮蓝
+		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}         // 首选纯白文字
+		skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xDD} // 首选序号浅白
+		skin.UserMarkColor = color.NRGBA{0x30, 0xD1, 0x58, 0xFF}       // 学习标记绿
 		return skin
 	}
-	skin.BgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xF2}       // 白底
-	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x18}   // 黑色细边
-	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xFF}  // 次级文字
-	skin.IndexColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xFF}    // 序号采用系统次级灰，扫视更轻松
-	skin.FgColor = color.NRGBA{0x1C, 0x1C, 0x1E, 0xFF}       // 深灰字
-	skin.HighlightBg = color.NRGBA{0xE5, 0xE5, 0xEA, 0xFF}   // 首选高亮（浅灰，文字保持深色）
-	skin.HighlightFg = color.NRGBA{0x1C, 0x1C, 0x1E, 0xFF}   // 首选高亮文字
-	skin.UserMarkColor = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF} // 学习标记
+	skin.BgColor = color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}             // macOS 浅色毛玻璃底
+	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x1A}         // 黑色细边
+	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}        // 次级文字
+	skin.IndexColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}          // 序号系统次级灰
+	skin.FgColor = color.NRGBA{0x1D, 0x1D, 0x1F, 0xFF}             // 苹果深黑字
+	skin.HighlightBg = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF}         // 苹果原生高亮蓝
+	skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}         // 首选纯白文字
+	skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xDD} // 首选序号浅白
+	skin.UserMarkColor = color.NRGBA{0x34, 0xC7, 0x59, 0xFF}       // 学习标记绿
 	return skin
 }
 
@@ -122,6 +126,7 @@ func WithDarkMode(skin Skin, dark bool) Skin {
 	skin.HighlightBarColor = theme.HighlightBarColor
 	skin.UserMarkColor = theme.UserMarkColor
 	skin.IndexColor = theme.IndexColor
+	skin.HighlightIndexColor = theme.HighlightIndexColor
 	return skin
 }
 
@@ -188,34 +193,39 @@ type faceKey struct {
 }
 
 var (
-	faceMu  sync.Mutex
-	faceMon = map[faceKey]font.Face{}
+	faceMu      sync.Mutex
+	parsedFonts = map[string]*opentype.Font{}
+	faceMon     = map[faceKey]font.Face{}
 )
 
-func loadFace(s Skin) (font.Face, error) {
-	if s.FontPath == "" {
+func loadFaceWithSize(path string, size float64) (font.Face, error) {
+	if path == "" {
 		return nil, fmt.Errorf("未找到 CJK 字体（请用 -font 指定路径）")
 	}
-	if s.FontSize <= 0 {
+	if size <= 0 {
 		return nil, fmt.Errorf("字号必须为正")
 	}
 	faceMu.Lock()
 	defer faceMu.Unlock()
-	key := faceKey{s.FontPath, s.FontSize}
+	key := faceKey{path, size}
 	if f, ok := faceMon[key]; ok {
 		return f, nil
 	}
-	data, err := os.ReadFile(s.FontPath)
-	if err != nil {
-		return nil, fmt.Errorf("读取字体失败: %w", err)
+	ft, ok := parsedFonts[path]
+	if !ok {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("读取字体失败: %w", err)
+		}
+		var ferr error
+		ft, ferr = parseFont(data)
+		if ferr != nil {
+			return nil, fmt.Errorf("解析字体 %s 失败: %w", path, ferr)
+		}
+		parsedFonts[path] = ft
 	}
-	// TTC 字体集取第一个 face；解析失败则按单字体 TTF 再试
-	faceFont, ferr := parseFont(data)
-	if ferr != nil {
-		return nil, fmt.Errorf("解析字体 %s 失败: %w", s.FontPath, ferr)
-	}
-	face, err := opentype.NewFace(faceFont, &opentype.FaceOptions{
-		Size:    s.FontSize,
+	face, err := opentype.NewFace(ft, &opentype.FaceOptions{
+		Size:    size,
 		DPI:     72,
 		Hinting: font.HintingFull,
 	})
@@ -224,6 +234,15 @@ func loadFace(s Skin) (font.Face, error) {
 	}
 	faceMon[key] = face
 	return face, nil
+}
+
+func loadFace(s Skin) (font.Face, error) {
+	return loadFaceWithSize(s.FontPath, s.FontSize)
+}
+
+// loadIndexFace 加载用于序号与页码的小字号面（主字号约 70%），贴合系统原生输入法排版层级。
+func loadIndexFace(s Skin) (font.Face, error) {
+	return loadFaceWithSize(s.FontPath, s.FontSize*0.70)
 }
 
 func parseFont(data []byte) (*opentype.Font, error) {
@@ -244,6 +263,10 @@ func RenderWithBounds(comp engine.Composition, skin Skin) ([]byte, int, int, err
 	if err != nil {
 		return nil, 0, 0, err
 	}
+	indexFace, err := loadIndexFace(skin)
+	if err != nil {
+		indexFace = face
+	}
 	if len(comp.Candidates) == 0 {
 		return nil, 0, 0, nil
 	}
@@ -253,7 +276,7 @@ func RenderWithBounds(comp engine.Composition, skin Skin) ([]byte, int, int, err
 
 	var img *image.NRGBA
 	if skin.Horizontal {
-		img = renderBar(comp, skin, face)
+		img = renderBar(comp, skin, face, indexFace)
 	} else {
 		img = renderList(comp, skin, face)
 	}
@@ -278,13 +301,14 @@ func Render(comp engine.Composition, skin Skin) ([]byte, error) {
 	return data, err
 }
 
-// renderBar 画横排候选栏：候选横向流式排列，首项圆角高亮，页码指示为末尾淡色项。
-// 横排不画预编辑行（预编辑由壳的 marked text 承担）。
-func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA {
+// renderBar 画横排候选栏：macOS 原生风格，首项苹果蓝圆角高亮，
+// 序号采用精细小字号并垂直居中对齐，右侧包含系统折叠指示符。
+func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *image.NRGBA {
 	pad := skin.Padding
 	if pad <= 0 {
-		pad = 8
+		pad = 7
 	}
+	scale := EffectiveScale(int(math.Round(skin.FontSize / 15.0)))
 	metrics := face.Metrics()
 	ascent, descent := metrics.Ascent.Ceil(), metrics.Descent.Ceil()
 	textH := ascent + descent
@@ -295,37 +319,49 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 
 	lineH := textH + spacing
 
-	// 水平节奏与留白：胶囊内文字左右留白与相邻候选项间距更通透
-	itemPadX := max(6, pad*3/4)
-	gap := max(7, pad*7/8)
+	// macOS 原生风格排版留白参数：
+	firstPadLeft := 9 * scale
+	itemPadX := 7 * scale
+	gap := 11 * scale
+	chevronBoxW := 20 * scale
 
 	idxColor := skin.IndexColor
 	if idxColor.A == 0 {
 		idxColor = skin.PreeditColor
+	}
+	highIdxColor := skin.HighlightIndexColor
+	if highIdxColor.A == 0 {
+		highIdxColor = skin.HighlightFg
 	}
 
 	items := make([]barItem, 0, len(comp.Candidates)+1)
 	for i, cand := range comp.Candidates {
 		idxText := fmt.Sprintf("%d", i+1)
 		candFg := skin.FgColor
-		if i == 0 && skin.HighlightFg.A != 0 {
-			candFg = skin.HighlightFg
+		cIdx := idxColor
+		px := itemPadX
+		if i == 0 {
+			if skin.HighlightFg.A != 0 {
+				candFg = skin.HighlightFg
+			}
+			cIdx = highIdxColor
+			px = firstPadLeft
 		}
-		items = append(items, newBarCandidateItem(face, idxText, cand.Text, candFg, idxColor, itemPadX, i == 0, cand.FromUser))
+		items = append(items, newBarCandidateItem(face, indexFace, idxText, cand.Text, candFg, cIdx, px, i == 0, cand.FromUser))
 	}
-	// 多页时页码指示作为末尾一项，用淡色（与旧竖排的 [1/2] 语义一致）
+	// 多页时在末尾附页码指示，如 1/4
 	if comp.PageCount > 1 {
 		text := pageIndicator(face, comp.Page+1, comp.PageCount)
-		items = append(items, newBarSimpleItem(face, text, skin.PreeditColor, itemPadX))
+		items = append(items, newBarSimpleItem(indexFace, text, skin.PreeditColor, itemPadX))
 	}
 	if len(items) == 0 {
 		return nil
 	}
 
-	// maxContent = 单行可用内容宽（不含左右内边距）；0 表示不换行
+	// maxContent = 单行可用内容宽（不含左右内边距与右侧折叠区）；0 表示不换行
 	maxContent := 0
 	if skin.MaxWidth > 0 {
-		maxContent = skin.MaxWidth - pad*2
+		maxContent = skin.MaxWidth - pad*2 - chevronBoxW
 		if maxContent < 1 {
 			maxContent = 1
 		}
@@ -353,7 +389,6 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 		rows = append(rows, row)
 	}
 	if next < len(items) {
-		// 3 行仍放不下：末行尾补省略号（必要时先丢弃末行末尾项）
 		ell := newBarSimpleItem(face, "…", skin.PreeditColor, itemPadX)
 		last := len(rows) - 1
 		for len(rows[last]) > 0 && maxContent > 0 &&
@@ -365,7 +400,7 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 
 	width := 0
 	for _, row := range rows {
-		if w := rowWidth(row, gap) + pad*2; w > width {
+		if w := rowWidth(row, gap) + pad*2 + chevronBoxW; w > width {
 			width = w
 		}
 	}
@@ -377,33 +412,49 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	drawPanel(img, skin)
 
-	// pillPadY 为首选胶囊垂直外扩呼吸留白（避免贴着汉字笔画上下沿）
-	pillPadY := max(2, pad/4)
-	d := &font.Drawer{Dst: img, Face: face}
+	// 计算小序号垂直光学居中位置
+	indexMetrics := indexFace.Metrics()
+	indexH := indexMetrics.Ascent.Ceil() + indexMetrics.Descent.Ceil()
+	indexAscent := indexMetrics.Ascent.Ceil()
+
+	pillMargin := 2 * scale
+	pillR := clampRadius(image.Rect(0, 0, 100, height), 6*scale)
+	panelR := clampRadius(img.Bounds(), skin.CornerRadius)
+
+	d := &font.Drawer{Dst: img}
 	y := pad
 	for _, row := range rows {
 		x := pad
+		baseY := y + ascent
+		indexBaseY := y + (textH-indexH)/2 + indexAscent
 		for _, it := range row {
-			box := image.Rect(x, y-pillPadY, x+it.boxW, y+textH+pillPadY)
+			box := image.Rect(x-pillMargin, y-pillMargin, x+it.boxW, y+textH+pillMargin)
 			if it.highlight {
-				// 首选高亮：圆角微胶囊块
-				pillR := clampRadius(box, 6)
-				drawRoundRect(img, box, pillR, skin.HighlightBg, draw.Over)
+				// macOS 原生高亮胶囊：贴合面板内侧，左圆角承接面板圆角、右圆角微收
+				leftR := panelR - pillMargin
+				if leftR < 4*scale {
+					leftR = 4 * scale
+				}
+				drawCapsule(img, box, leftR, pillR, skin.HighlightBg)
 			}
-			curX := x + itemPadX
-			baseY := y + ascent
+
+			curX := x + it.padX
+
 			if it.indexText != "" {
+				d.Face = indexFace
 				d.Src = image.NewUniform(it.idxColor)
-				d.Dot = fixed.P(curX, baseY)
+				d.Dot = fixed.P(curX, indexBaseY)
 				d.DrawString(it.indexText)
 				curX += it.indexW + it.gapW
 			}
+
+			d.Face = face
 			d.Src = image.NewUniform(it.color)
 			d.Dot = fixed.P(curX, baseY)
 			d.DrawString(it.text)
 			curX += it.textW
+
 			if it.userMark && skin.UserMarkColor.A != 0 {
-				// 学习标记：行尾 * 换色强调（单独绘制）
 				d.Src = image.NewUniform(skin.UserMarkColor)
 				d.Dot = fixed.P(curX+1, baseY)
 				d.DrawString("*")
@@ -412,6 +463,27 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 		}
 		y += lineH
 	}
+
+	// 绘制右侧折叠区：1px 细分割线 + 下拉指示箭头 ⌄
+	dividerColor := color.NRGBA{0xFF, 0xFF, 0xFF, 0x1E}
+	chevronColor := color.NRGBA{0x98, 0x98, 0x9F, 0xB8}
+	if skin.BgColor.R > 200 { // 浅色皮肤
+		dividerColor = color.NRGBA{0x00, 0x00, 0x00, 0x14}
+		chevronColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}
+	}
+	dividerX := width - chevronBoxW + (2 * scale)
+	divH := textH * 55 / 100
+	divY0 := (height - divH) / 2
+	for dy := 0; dy < divH; dy++ {
+		for dx := 0; dx < scale; dx++ {
+			blendPixel(img, dividerX+dx, divY0+dy, dividerColor)
+		}
+	}
+
+	chevX := dividerX + ((chevronBoxW - 2*scale) / 2)
+	chevY := height / 2
+	drawChevron(img, chevX, chevY, 3*scale, chevronColor)
+
 	return img
 }
 
@@ -434,6 +506,7 @@ type barItem struct {
 	idxColor  color.NRGBA // 序号颜色
 	highlight bool
 	userMark  bool
+	padX      int // 内部左侧留白
 	indexW    int // 序号像素宽
 	gapW      int // 序号与候选词间距像素宽
 	textW     int // 文本像素宽（不含序号、留白与标记）
@@ -441,10 +514,13 @@ type barItem struct {
 	boxW      int // 含左右留白的整项宽
 }
 
-func newBarCandidateItem(face font.Face, idxText, text string, c, idxC color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
-	iw := font.MeasureString(face, idxText).Ceil()
-	// 序号与候选词微间隙：适度清晰，比单纯空格更规整
-	gw := max(4, iw*45/100)
+func newBarCandidateItem(face, indexFace font.Face, idxText, text string, c, idxC color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
+	iw := 0
+	gw := 0
+	if idxText != "" {
+		iw = font.MeasureString(indexFace, idxText).Ceil()
+		gw = max(3, iw*45/100)
+	}
 	tw := font.MeasureString(face, text).Ceil()
 	mw := 0
 	if userMark {
@@ -458,6 +534,7 @@ func newBarCandidateItem(face font.Face, idxText, text string, c, idxC color.NRG
 		idxColor:  idxC,
 		highlight: highlight,
 		userMark:  userMark,
+		padX:      itemPadX,
 		indexW:    iw,
 		gapW:      gw,
 		textW:     tw,
@@ -471,6 +548,7 @@ func newBarSimpleItem(face font.Face, text string, c color.NRGBA, itemPadX int) 
 	return barItem{
 		text:  text,
 		color: c,
+		padX:  itemPadX,
 		textW: tw,
 		boxW:  tw + itemPadX*2,
 	}
@@ -750,5 +828,93 @@ func drawBorder(img *image.NRGBA, c color.NRGBA) {
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		img.Set(b.Min.X, y, c)
 		img.Set(b.Max.X-1, y, c)
+	}
+}
+
+// blendPixel 将 src 颜色以 Alpha 混合到 (x, y) 像素上。
+func blendPixel(dst *image.NRGBA, x, y int, src color.NRGBA) {
+	if src.A == 0 {
+		return
+	}
+	b := dst.Bounds()
+	if x < b.Min.X || x >= b.Max.X || y < b.Min.Y || y >= b.Max.Y {
+		return
+	}
+	bg := dst.NRGBAAt(x, y)
+	if bg.A == 0 {
+		dst.SetNRGBA(x, y, src)
+		return
+	}
+	sa := float64(src.A) / 255.0
+	ba := float64(bg.A) / 255.0
+	outA := sa + ba*(1.0-sa)
+	if outA <= 0 {
+		return
+	}
+	r := (float64(src.R)*sa + float64(bg.R)*ba*(1.0-sa)) / outA
+	g := (float64(src.G)*sa + float64(bg.G)*ba*(1.0-sa)) / outA
+	bVal := (float64(src.B)*sa + float64(bg.B)*ba*(1.0-sa)) / outA
+	dst.SetNRGBA(x, y, color.NRGBA{
+		R: uint8(math.Round(r)),
+		G: uint8(math.Round(g)),
+		B: uint8(math.Round(bVal)),
+		A: uint8(math.Round(outA * 255)),
+	})
+}
+
+// drawCapsule 绘制带有独立左右圆角的高亮背景胶囊（首选承接面板左侧圆角）。
+func drawCapsule(dst *image.NRGBA, r image.Rectangle, rLeft, rRight int, c color.NRGBA) {
+	r = r.Intersect(dst.Bounds())
+	if r.Empty() {
+		return
+	}
+	w, h := r.Dx(), r.Dy()
+	if rLeft <= 0 && rRight <= 0 {
+		draw.Draw(dst, r, &image.Uniform{c}, image.Point{}, draw.Over)
+		return
+	}
+	rlf, rrf := float64(rLeft), float64(rRight)
+	for dy := 0; dy < h; dy++ {
+		py := r.Min.Y + dy
+		for dx := 0; dx < w; dx++ {
+			px := r.Min.X + dx
+			var cx, cy, rad float64
+			inCorner := false
+			if dx < rLeft && dy < rLeft {
+				cx, cy, rad = rlf-0.5, rlf-0.5, rlf
+				inCorner = true
+			} else if dx >= w-rRight && dy < rRight {
+				cx, cy, rad = float64(w)-rrf-0.5, rrf-0.5, rrf
+				inCorner = true
+			} else if dx < rLeft && dy >= h-rLeft {
+				cx, cy, rad = rlf-0.5, float64(h)-rlf-0.5, rlf
+				inCorner = true
+			} else if dx >= w-rRight && dy >= h-rRight {
+				cx, cy, rad = float64(w)-rrf-0.5, float64(h)-rrf-0.5, rrf
+				inCorner = true
+			}
+			alpha := float64(c.A) / 255.0
+			if inCorner {
+				dist := math.Hypot(float64(dx)-cx, float64(dy)-cy)
+				if dist > rad+0.5 {
+					continue
+				} else if dist > rad-0.5 {
+					cov := rad + 0.5 - dist
+					alpha *= cov
+				}
+			}
+			outColor := c
+			outColor.A = uint8(math.Round(alpha * 255))
+			blendPixel(dst, px, py, outColor)
+		}
+	}
+}
+
+// drawChevron 绘制 macOS 系统风格的极简折叠下拉箭头 ⌄。
+func drawChevron(dst *image.NRGBA, cx, cy int, arm int, c color.NRGBA) {
+	for dx := -arm; dx <= arm; dx++ {
+		dy := int(math.Abs(float64(dx)) * 0.7)
+		blendPixel(dst, cx+dx, cy+dy-1, c)
+		blendPixel(dst, cx+dx, cy+dy, c)
 	}
 }

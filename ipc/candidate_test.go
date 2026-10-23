@@ -3,7 +3,6 @@ package ipc
 import (
 	"bytes"
 	"image"
-	"image/color"
 	"image/png"
 	"net"
 	"os"
@@ -161,8 +160,9 @@ func TestCandidateImageDarkScale(t *testing.T) {
 		t.Fatal("有候选时应返回 PNG")
 	}
 	lightImg := decodeImage(t, light)
-	if got := lightImg.At(lightImg.Bounds().Dx()/2, h1-2); got != (color.NRGBA{0xFF, 0xFF, 0xFF, 0xF2}) {
-		t.Fatalf("默认皮肤背景像素 = %v, 期望浅色 #FFFFFF F2", got)
+	wantLight := renderer.DefaultSkinFor(false).BgColor
+	if got := lightImg.At(lightImg.Bounds().Dx()/2, h1-2); got != wantLight {
+		t.Fatalf("默认皮肤背景像素 = %v, 期望 %v", got, wantLight)
 	}
 
 	// dark=true：深色背景
@@ -171,8 +171,9 @@ func TestCandidateImageDarkScale(t *testing.T) {
 		t.Fatalf("dark 参数 CandidateImage 失败: %v", err)
 	}
 	darkImg := decodeImage(t, dark)
-	if got := darkImg.At(darkImg.Bounds().Dx()/2, hd-2); got != (color.NRGBA{0x1C, 0x1C, 0x1E, 0xF2}) {
-		t.Fatalf("深色皮肤背景像素 = %v, 期望 #1C1C1E F2", got)
+	wantDark := renderer.DefaultSkinFor(true).BgColor
+	if got := darkImg.At(darkImg.Bounds().Dx()/2, hd-2); got != wantDark {
+		t.Fatalf("深色皮肤背景像素 = %v, 期望 %v", got, wantDark)
 	}
 
 	// scale=2：宽高约翻倍，返回的 scale 字段为 2
@@ -215,7 +216,7 @@ func TestCandidateImageDarkScale(t *testing.T) {
 		t.Fatalf("后续请求 scale = %d, 期望 1（全局皮肤被污染）", scaleAgain)
 	}
 	againImg := decodeImage(t, lightAgain)
-	if got := againImg.At(againImg.Bounds().Dx()/2, againImg.Bounds().Dy()-2); got != (color.NRGBA{0xFF, 0xFF, 0xFF, 0xF2}) {
+	if got := againImg.At(againImg.Bounds().Dx()/2, againImg.Bounds().Dy()-2); got != wantLight {
 		t.Fatalf("后续请求背景像素 = %v, 期望仍是浅色（全局皮肤被污染）", got)
 	}
 }

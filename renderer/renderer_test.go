@@ -208,8 +208,8 @@ func TestRenderSkinBackground(t *testing.T) {
 		dark bool
 		want color.NRGBA
 	}{
-		{false, color.NRGBA{0xFF, 0xFF, 0xFF, 0xF2}},
-		{true, color.NRGBA{0x1C, 0x1C, 0x1E, 0xF2}},
+		{false, color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}},
+		{true, color.NRGBA{0x2C, 0x2C, 0x2E, 0xF5}},
 	}
 	for _, c := range cases {
 		skin := DefaultSkinFor(c.dark)
