@@ -282,15 +282,12 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 	if spacing < 0 {
 		spacing = 0
 	}
+
 	lineH := textH + spacing
-	itemPadX := pad / 2 // 高亮块内文字左右留白
-	if itemPadX < 2 {
-		itemPadX = 2
-	}
-	gap := pad / 2 // 相邻候选项间距
-	if gap < 2 {
-		gap = 2
-	}
+
+	// 水平节奏与留白：胶囊内文字左右留白与相邻候选项间距更通透
+	itemPadX := max(6, pad*3/4)
+	gap := max(7, pad*7/8)
 
 	idxColor := skin.IndexColor
 	if idxColor.A == 0 {
@@ -370,35 +367,35 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	drawPanel(img, skin)
 
+	// pillPadY 为首选胶囊垂直外扩呼吸留白（避免贴着汉字笔画上下沿）
+	pillPadY := max(2, pad/4)
 	d := &font.Drawer{Dst: img, Face: face}
 	y := pad
 	for _, row := range rows {
 		x := pad
 		for _, it := range row {
-			box := image.Rect(x, y, x+it.boxW, y+textH)
+			box := image.Rect(x, y-pillPadY, x+it.boxW, y+textH+pillPadY)
 			if it.highlight {
-				// 首选高亮：圆角微胶囊块（CornerRadius=0 时即整项直角底色）
-				pillR := clampRadius(box, skin.CornerRadius)
-				if pillR > 6 {
-					pillR = 6
-				}
+				// 首选高亮：圆角微胶囊块
+				pillR := clampRadius(box, 6)
 				drawRoundRect(img, box, pillR, skin.HighlightBg, draw.Over)
 			}
 			curX := x + itemPadX
+			baseY := y + ascent
 			if it.indexText != "" {
 				d.Src = image.NewUniform(it.idxColor)
-				d.Dot = fixed.P(curX, y+ascent)
+				d.Dot = fixed.P(curX, baseY)
 				d.DrawString(it.indexText)
 				curX += it.indexW + it.gapW
 			}
 			d.Src = image.NewUniform(it.color)
-			d.Dot = fixed.P(curX, y+ascent)
+			d.Dot = fixed.P(curX, baseY)
 			d.DrawString(it.text)
 			curX += it.textW
 			if it.userMark && skin.UserMarkColor.A != 0 {
 				// 学习标记：行尾 * 换色强调（单独绘制）
 				d.Src = image.NewUniform(skin.UserMarkColor)
-				d.Dot = fixed.P(curX, y+ascent)
+				d.Dot = fixed.P(curX+1, baseY)
 				d.DrawString("*")
 			}
 			x += it.boxW + gap
@@ -408,19 +405,9 @@ func renderBar(comp engine.Composition, skin Skin, face font.Face) *image.NRGBA 
 	return img
 }
 
-// pageIndicator 生成页码指示文本，形如 ‹1/5›。
-// 并非所有 CJK 字体都含 U+2039/U+203A（本机 Hiragino Sans GB 即缺，
-// 直接用会渲染成缺字方块），故按可用性回退到 CJK 尖括号 〈〉、再退 ASCII 尖括号。
+// pageIndicator 生成页码指示文本，形如 1/5（现代输入法简约规范）。
 func pageIndicator(face font.Face, page, pageCount int) string {
-	pairs := [][2]string{{"‹", "›"}, {"〈", "〉"}, {"<", ">"}}
-	l, r := "<", ">"
-	for _, pair := range pairs {
-		if hasGlyph(face, []rune(pair[0])[0]) && hasGlyph(face, []rune(pair[1])[0]) {
-			l, r = pair[0], pair[1]
-			break
-		}
-	}
-	return fmt.Sprintf("%s%d/%d%s", l, page, pageCount, r)
+	return fmt.Sprintf("%d/%d", page, pageCount)
 }
 
 // hasGlyph 报告字体面是否含该字符的字形（缺字形时 font.Face 返回 ok=false）。
@@ -446,12 +433,12 @@ type barItem struct {
 
 func newBarCandidateItem(face font.Face, idxText, text string, c, idxC color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
 	iw := font.MeasureString(face, idxText).Ceil()
-	// 序号与候选词微间隙：约为序号宽度的 35%（微小精细空隙，比空格更紧凑整齐）
-	gw := max(3, iw*35/100)
+	// 序号与候选词微间隙：适度清晰，比单纯空格更规整
+	gw := max(4, iw*45/100)
 	tw := font.MeasureString(face, text).Ceil()
 	mw := 0
 	if userMark {
-		mw = font.MeasureString(face, "*").Ceil()
+		mw = font.MeasureString(face, "*").Ceil() + 2
 	}
 	boxW := itemPadX*2 + iw + gw + tw + mw
 	return barItem{
