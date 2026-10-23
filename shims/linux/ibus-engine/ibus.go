@@ -292,13 +292,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.refresh(comp)
 		return true, nil
 
-	case keyval == '-' || keyval == '=':
+	case keyval == '-' || keyval == '=' || keyval == '[' || keyval == ']':
 		// 候选翻页（组词中消费；空组词放行原键；边界由 daemon 钳制）
 		if !isComposing(e.sess) {
 			return false, nil
 		}
 		var comp engine.Composition
-		if keyval == '-' {
+		if keyval == '-' || keyval == '[' {
 			comp, _ = e.sess.PrevPage()
 		} else {
 			comp, _ = e.sess.NextPage()

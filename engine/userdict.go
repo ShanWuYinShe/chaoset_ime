@@ -261,16 +261,19 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 }
 
 // QueryTokens 返回匹配 tokens 序列的用户词组与用户词。
-func (u *UserDict) QueryTokens(tokens []Token, maxResults int) []*Entry {
+// 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
+// 两组结果均已按词频降序排序。
+func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Entry) {
 	u.mu.RLock()
 	defer u.mu.RUnlock()
 	if len(tokens) == 0 {
-		return nil
+		return nil, nil
 	}
 	if maxResults <= 0 {
 		maxResults = 20
 	}
-	var out []*Entry
+	var exacts []*Entry
+	var prefixes []*Entry
 	seen := make(map[string]bool)
 
 	// 1. 查询用户短语
@@ -288,11 +291,16 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) []*Entry {
 		}
 		if ok && !seen[rec.Word] {
 			seen[rec.Word] = true
-			out = append(out, &Entry{
+			e := &Entry{
 				Word:      rec.Word,
 				Syllables: sylls,
 				Freq:      u.phraseScore(rec),
-			})
+			}
+			if len(sylls) == len(tokens) {
+				exacts = append(exacts, e)
+			} else {
+				prefixes = append(prefixes, e)
+			}
 		}
 	}
 
@@ -316,25 +324,38 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) []*Entry {
 		}
 		if ok && !seen[word] {
 			seen[word] = true
-			out = append(out, &Entry{
+			e := &Entry{
 				Word:      word,
 				Syllables: sylls,
 				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
-			})
+			}
+			if len(sylls) == len(tokens) {
+				exacts = append(exacts, e)
+			} else {
+				prefixes = append(prefixes, e)
+			}
 		}
 	}
 
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Freq != out[j].Freq {
-			return out[i].Freq > out[j].Freq
-		}
-		return len(out[i].Word) < len(out[j].Word)
-	})
-
-	if len(out) > maxResults {
-		out = out[:maxResults]
+	sortSlice := func(entries []*Entry) {
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].Freq != entries[j].Freq {
+				return entries[i].Freq > entries[j].Freq
+			}
+			return len(entries[i].Word) < len(entries[j].Word)
+		})
 	}
-	return out
+
+	sortSlice(exacts)
+	sortSlice(prefixes)
+
+	if len(exacts) > maxResults {
+		exacts = exacts[:maxResults]
+	}
+	if len(prefixes) > maxResults {
+		prefixes = prefixes[:maxResults]
+	}
+	return exacts, prefixes
 }
 
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。

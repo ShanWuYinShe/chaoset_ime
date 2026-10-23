@@ -143,9 +143,11 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
-        // - / =：候选翻页（组词中且有候选时消费；空组词放行原键）
-        if (chars == "-" || chars == "=") && hasCandidates {
-            current = chars == "-" ? engine.prevPage() : engine.nextPage()
+        // - / =、[ / ]、PageUp / PageDown：候选翻页（组词中且有候选时消费；空组词放行原键/出标点）
+        let isPageUp = chars == "-" || chars == "[" || event.keyCode == 116 || chars == "\u{F72C}"
+        let isPageDown = chars == "=" || chars == "]" || event.keyCode == 121 || chars == "\u{F72D}"
+        if (isPageUp || isPageDown) && hasCandidates {
+            current = isPageUp ? engine.prevPage() : engine.nextPage()
             refresh(client)
             return true
         }

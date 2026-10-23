@@ -35,6 +35,8 @@ constexpr DWORD kVkBackspace = 0x08;
 constexpr DWORD kVkEscape = 0x1B;
 constexpr DWORD kVkReturn = 0x0D;
 constexpr DWORD kVkSpace = 0x20;
+constexpr DWORD kVkPrior = 0x21;           // Page Up
+constexpr DWORD kVkNext = 0x22;            // Page Down
 constexpr DWORD kVkFirstLetter = 0x41;  // 'A'
 constexpr DWORD kVkLastLetter = 0x5A;   // 'Z'
 constexpr DWORD kVkFirstDigit = 0x31;   // '1'
@@ -368,12 +370,15 @@ private:
 
     // 是否会吃掉该键：字母与标点键任意时刻都吃（标点由 daemon 映射，
     // daemon 不可达时在 handleKey 里放行）；组词中再吃数字/空格/回车/
-    // 退格/Esc。
+    // 退格/Esc/翻页。
     bool wouldHandle(WPARAM vk) {
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
+        const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
+                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
+                                vk == kVkPrior || vk == kVkNext);
+        if (isPageKey && isComposing()) return hasCandidates();
         if (oemPunctChar(vk) != nullptr) return true;
         if (!isComposing()) return false;
-        if (vk == kVkOemMinus || vk == kVkOemPlus) return hasCandidates();
         return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
                (vk >= kVkFirstDigit && vk <= kVkLastDigit);
     }
@@ -386,6 +391,21 @@ private:
                 // daemon 不可达：清状态放行，绝不让宿主应用卡住
                 endComposition();
                 return false;
+            }
+            render(pic);
+            return true;
+        }
+
+        // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费；空组词放行原键/出标点）
+        const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
+                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
+                                vk == kVkPrior || vk == kVkNext);
+        if (isPageKey && isComposing() && hasCandidates()) {
+            bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
+            comp_ = isPrev ? session_.prevPage() : session_.nextPage();
+            if (!comp_.ok) {
+                endComposition();
+                return true;
             }
             render(pic);
             return true;
@@ -426,17 +446,6 @@ private:
         // 仅表示未切到半角，不影响后续按键）
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
             session_.toggleHalfWidth();
-            return true;
-        }
-
-        // - / =：候选翻页（有候选时；边界由 daemon 钳制，原地不动也消费）
-        if (vk == kVkOemMinus || vk == kVkOemPlus) {
-            comp_ = vk == kVkOemMinus ? session_.prevPage() : session_.nextPage();
-            if (!comp_.ok) {
-                endComposition();
-                return true;
-            }
-            render(pic);
             return true;
         }
 

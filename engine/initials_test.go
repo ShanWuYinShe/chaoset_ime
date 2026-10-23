@@ -225,3 +225,82 @@ func TestInitialsUserLearning(t *testing.T) {
 		t.Errorf("第一候选应带有 FromUser 标记")
 	}
 }
+
+// 测试用户词库中单字频繁使用时，简拼复合句依然优先输出高频多字词组（如 wmd 优先输出「我们的」，而非碎字「我没的」）。
+func TestInitialsUserDictSingleCharSuppression(t *testing.T) {
+	udPath := filepath.Join(t.TempDir(), "user_wmd.json")
+	d := mustCommonDict(t)
+	u := mustUserDict(t, udPath)
+
+	// 模拟用户日常高频输入过单个汉字「我」、「没」、「的」
+	for i := 0; i < 5; i++ {
+		_ = u.BumpWord("我", []string{"wo"})
+		_ = u.BumpWord("没", []string{"mei"})
+		_ = u.BumpWord("的", []string{"de"})
+	}
+
+	s := NewSession(d, u)
+	comp, err := s.Input("wmd")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if len(comp.Candidates) == 0 {
+		t.Fatalf("wmd 应出候选，实际无候选")
+	}
+	if comp.Candidates[0].Text != "我们的" {
+		t.Fatalf("存在高频单字学习记录时，wmd 第一候选仍应为「我们的」，实际得到 %q (候选列表: %+v)",
+			comp.Candidates[0].Text, comp.Candidates)
+	}
+}
+
+// 测试用户短语匹配严格受音节槽位数约束：
+// 用户短语「如果我」(3音节) 绝不应泄漏至 1 音节声母槽中，拼出「如果我没不」等 5 字乱码。
+func TestInitialsUserDictPhraseLengthConstraint(t *testing.T) {
+	udPath := filepath.Join(t.TempDir(), "user_rmb.json")
+	d := mustCommonDict(t)
+	u := mustUserDict(t, udPath)
+
+	// 模拟用户学习了 3 音节词组「如果我」
+	_ = u.BumpPhrase("如果我", []string{"ru", "guo", "wo"})
+
+	s := NewSession(d, u)
+	comp, err := s.Input("rmb")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if len(comp.Candidates) == 0 {
+		t.Fatalf("rmb 应出候选，实际无候选")
+	}
+	if comp.Candidates[0].Text != "人民币" {
+		t.Fatalf("rmb 第一候选应为「人民币」，实际得到 %q (候选列表: %+v)",
+			comp.Candidates[0].Text, comp.Candidates)
+	}
+	for _, c := range comp.Candidates {
+		if c.Text == "如果我没不" {
+			t.Fatalf("rmb 候选不应包含单字槽泄漏生成的用户短语碎字拼接: %q", c.Text)
+		}
+	}
+}
+
+// 测试 UserDict.QueryTokens 正确区分 exactMatches 与 prefixMatches。
+func TestUserDictQueryTokensExactAndPrefix(t *testing.T) {
+	udPath := filepath.Join(t.TempDir(), "user_tokens.json")
+	u := mustUserDict(t, udPath)
+
+	_ = u.BumpPhrase("人民", []string{"ren", "min"})
+	_ = u.BumpPhrase("人民币", []string{"ren", "min", "bi"})
+	_ = u.BumpPhrase("人民日报", []string{"ren", "min", "ri", "bao"})
+
+	tokens := []Token{
+		{Text: "r", IsExact: false},
+		{Text: "m", IsExact: false},
+	}
+
+	exacts, prefixes := u.QueryTokens(tokens, 10)
+	if len(exacts) != 1 || exacts[0].Word != "人民" {
+		t.Fatalf("exactMatches 期望包含且仅包含「人民」，实际: %+v", exacts)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("prefixMatches 期望包含 2 个词（人民币、人民日报），实际: %+v", prefixes)
+	}
+}

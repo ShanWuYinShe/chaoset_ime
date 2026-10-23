@@ -61,14 +61,21 @@ func main() {
 				continue
 			}
 			printComposition(comp)
-		case line == "=":
+		case line == ":enter":
+			text, err := ctrl.CommitRaw()
+			if err != nil {
+				fmt.Println("错误:", err)
+				continue
+			}
+			fmt.Printf("上屏: %s\n", text)
+		case line == "=" || line == "]":
 			comp, err := ctrl.NextPage()
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue
 			}
 			printComposition(comp)
-		case line == "-":
+		case line == "-" || line == "[":
 			comp, err := ctrl.PrevPage()
 			if err != nil {
 				fmt.Println("错误:", err)

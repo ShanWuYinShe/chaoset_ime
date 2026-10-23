@@ -38,6 +38,8 @@ type Controller interface {
 	// 状态；空组词为无操作。页码在边界钳制，不回绕。
 	NextPage() (Composition, error)
 	PrevPage() (Composition, error)
+	// CommitRaw 清空当前组词并返回用户输入的原始拼音（供回车直接上屏使用）。
+	CommitRaw() (string, error)
 }
 
 const (
@@ -655,10 +657,18 @@ func (s *Session) Compose() Composition {
 
 			// 查询用户词库中的自定义短语/自学习词
 			if s.user != nil {
-				for _, e := range s.user.QueryTokens(qp, 10) {
+				uExacts, uPrefixes := s.user.QueryTokens(qp, 10)
+				for _, e := range uExacts {
 					r := rankExact
 					if hasInitials {
 						r = rankInitialExact
+					}
+					addCandidate(e, e.Freq, true, r)
+				}
+				for _, e := range uPrefixes {
+					r := rankPrefix
+					if hasInitials {
+						r = rankInitialPrefix
 					}
 					addCandidate(e, e.Freq, true, r)
 				}
@@ -722,7 +732,8 @@ func (s *Session) Compose() Composition {
 					}
 				}
 				if s.user != nil {
-					for _, e := range s.user.QueryTokens(shorter, 5) {
+					uExacts, _ := s.user.QueryTokens(shorter, 5)
+					for _, e := range uExacts {
 						r := rankBackoff + drop
 						if allExactShorter && drop == 1 && len(exacts) == 0 {
 							hasDroppedInitial := false

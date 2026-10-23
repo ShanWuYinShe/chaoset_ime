@@ -76,9 +76,9 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 				exacts, _ := dict.QueryTokens(part, 6)
 				entries = exacts
 				if user != nil {
-					userEntries := user.QueryTokens(part, 6)
-					if len(userEntries) > 0 {
-						entries = append(append([]*Entry(nil), entries...), userEntries...)
+					userExacts, _ := user.QueryTokens(part, 6)
+					if len(userExacts) > 0 {
+						entries = append(append([]*Entry(nil), entries...), userExacts...)
 					}
 				}
 			}
@@ -106,12 +106,38 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 				for _, entry := range entries {
 					wordScore := entry.Freq * l
 					if l > 1 {
-						wordScore += (l - 1) * 80
-					} else if len(prev.Words) > 0 && len([]rune(prevWord)) == 1 {
-						wordScore -= 20
+						wordScore += (l - 1) * 100
 					}
+
+					// 碎字惩罚：若当前词是单字，且前驱已连续出现单字，则施加累进惩罚
+					consecSingle := 0
+					for k := len(prev.Words) - 1; k >= 0; k-- {
+						if len([]rune(prev.Words[k])) == 1 {
+							consecSingle++
+						} else {
+							break
+						}
+					}
+					if l == 1 && consecSingle > 0 {
+						// 连续单字累进惩罚（第 2 个单字 -120，第 3 个单字 -180...）
+						wordScore -= (consecSingle + 1) * 60
+					}
+
 					if user != nil {
-						wordScore += user.Score(entry.Word, entry.Syllables, prevWord)
+						uScore := user.Score(entry.Word, entry.Syllables, prevWord)
+						if l == 1 && uScore > 50 {
+							// 单字独立频次过高容易压制多字词组，非相邻共现加成时限制单字独立频次提权
+							bigramBonus := 0
+							if prevWord != "" {
+								bigramBonus = user.PairCount(prevWord, entry.Word) * BigramBonusPerCount
+							}
+							wordBoost := uScore - bigramBonus
+							if wordBoost > 50 {
+								wordBoost = 50
+							}
+							uScore = wordBoost + bigramBonus
+						}
+						wordScore += uScore
 					}
 					totalScore := prev.Score + wordScore
 
