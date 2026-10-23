@@ -216,12 +216,12 @@ func verifyText() -> String {
 
     // 2) TIS 收录：内嵌 API 与随包 tis list 两条实现，结论必须一致
     let inline = findSource() != nil
-    let cli = runTool(res("tis"), ["list"]).output.lowercased().contains(sourceID)
+    let cli = runTool(res("tis"), ["list"]).output.lowercased().contains(sourceID.lowercased())
     if inline != cli {
         fails += 1
         out += "FAIL 2) 两条 TIS 查询实现结论不一致（内嵌=\(inline)，tis list=\(cli)）——等价性破坏\n"
     } else if inline {
-        out += "PASS 2) 系统输入源表已收录（内嵌 API 与 tis list 结论一致）\n"
+        out += "PASS 2) 系统输入源表已收录（两条实现结论一致）\n"
     } else {
         fails += 1
         out += "FAIL 2) 系统输入源表未收录 —— 需注销重登（两条实现结论一致）\n"

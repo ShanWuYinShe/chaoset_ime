@@ -55,6 +55,11 @@ if [ -x build/tis ]; then
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
+  build/tis sync || true
+
+  # 杀掉可能正在运行的旧版 IME 进程以让常驻 LaunchAgent 重新拉起新 bundle
+  pkill -9 -f "ChaosetIME.app/Contents/MacOS/ChaosetIME" 2>/dev/null || true
+  pkill -9 -f "ChaosetIME" 2>/dev/null || true
 
   # 刷新系统输入菜单、系统设置与快捷键切换 HUD（杀掉常驻进程后系统会按需自动拉起最新进程，
   # 彻底清除内存中残留的旧图标缓存，避免切换 HUD 仍显示旧版白块，避免系统设置显示旧图标）。

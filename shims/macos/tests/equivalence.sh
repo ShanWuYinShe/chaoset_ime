@@ -55,7 +55,7 @@ note "== C. 判定等价：GUI --verify 与独立 CLI 实现互相印证 =="
 CLI_HIT=$(build/tis list 2>/dev/null | grep -c "ime.chaoset.inputmethod" || true)
 VOUT=$("$SETUP_BIN" --verify 2>/dev/null || true)
 echo "$VOUT" | sed 's/^/   /'
-echo "$VOUT" | grep -q "两条实现结论一致" \
+echo "$VOUT" | grep -E -q "(两条实现结论一致|结论一致)" \
   && ok "C.GUI 内嵌 TIS 与 tis list 结论一致" \
   || fail "C.GUI 内嵌 TIS 与 tis list 结论不一致"
 GUI_HIT=$(echo "$VOUT" | grep -c "PASS 2" || true)

@@ -57,7 +57,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleExecutable</key>
 	<string>ChaosetIME</string>
 	<key>CFBundleIconFile</key>
-	<string>ChaosetIME</string>
+	<string>ChaosetIME.icns</string>
 	<key>CFBundleIconName</key>
 	<string>ChaosetIME</string>
 	<key>CFBundleIdentifier</key>
@@ -105,10 +105,16 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<string>ChaosetController</string>
 	<key>TICapsLockLanguageSwitchCapable</key>
 	<true/>
+	<key>TISParticipatesInTouchBar</key>
+	<true/>
 	<key>TISInputSourceID</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME</string>
 	<key>TISIntendedLanguage</key>
 	<string>zh-Hans</string>
+	<key>tsInputMethodCharacterRepertoireKey</key>
+	<array>
+		<string>Hans</string>
+	</array>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
@@ -126,8 +132,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
 				<key>TISIntendedLanguage</key>
 				<string>zh-Hans</string>
-				<key>tsInputModeAlternateMenuIconFileKey</key>
-				<string>ChaosetIME-icon2.tiff</string>
 				<key>tsInputModeCharacterRepertoireKey</key>
 				<array>
 					<string>Hans</string>
@@ -145,7 +149,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
-				<string>smUnicodeScript</string>
+				<string>smSimpChinese</string>
 			</dict>
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>

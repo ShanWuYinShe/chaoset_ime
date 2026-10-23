@@ -25,6 +25,8 @@ if build/tis list | grep -q "$ID"; then
   build/tis enable "$ID" || true
   build/tis enable "$MODE" || true
   build/tis select "$MODE" || true
+  build/tis sync || true
+  pkill -9 -f "ChaosetIME" 2>/dev/null || true
   killall "System Settings" 2>/dev/null || true
   pkill -9 -f "KeyboardSettings" 2>/dev/null || true
   pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
