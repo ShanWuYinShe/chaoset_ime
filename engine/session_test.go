@@ -194,4 +194,3 @@ func TestLongPinyinNoExponentialFreeze(t *testing.T) {
 		_ = comp
 	}
 }
-

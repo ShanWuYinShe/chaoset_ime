@@ -39,20 +39,20 @@ const (
 
 // Skin 是候选窗皮肤。零值不可用：用 DefaultSkin() 并按需覆盖字段。
 type Skin struct {
-	FontPath          string      // CJK 字体（TTF/TTC）；空串则按平台常见路径探测
-	FontSize          float64     // 字号（pt）
-	Padding           int         // 内边距（px）
-	LineSpacing       int         // 行间距（px）
-	BgColor           color.NRGBA // 背景半透明
-	BorderColor       color.NRGBA // 外框
-	InnerBorderColor  color.NRGBA // 内框细线（竖排/印章双框语汇）；Alpha=0 时不画
-	PreeditColor      color.NRGBA // 预编辑行文字；横排时兼作页码指示等淡色文字
-	FgColor           color.NRGBA // 候选文字
-	HighlightBg       color.NRGBA // 首选候选底色
-	HighlightBarColor color.NRGBA // 首选候选左侧「朱批」竖记；Alpha=0 时不画
-	UserMarkColor     color.NRGBA // 用户学习标记（*）颜色
-	IndexColor        color.NRGBA // 候选序号颜色；Alpha=0 时退回 PreeditColor
-	HighlightFg       color.NRGBA // 首选项文字高亮色；Alpha=0 时退回 FgColor
+	FontPath            string      // CJK 字体（TTF/TTC）；空串则按平台常见路径探测
+	FontSize            float64     // 字号（pt）
+	Padding             int         // 内边距（px）
+	LineSpacing         int         // 行间距（px）
+	BgColor             color.NRGBA // 背景半透明
+	BorderColor         color.NRGBA // 外框
+	InnerBorderColor    color.NRGBA // 内框细线（竖排/印章双框语汇）；Alpha=0 时不画
+	PreeditColor        color.NRGBA // 预编辑行文字；横排时兼作页码指示等淡色文字
+	FgColor             color.NRGBA // 候选文字
+	HighlightBg         color.NRGBA // 首选候选底色
+	HighlightBarColor   color.NRGBA // 首选候选左侧「朱批」竖记；Alpha=0 时不画
+	UserMarkColor       color.NRGBA // 用户学习标记（*）颜色
+	IndexColor          color.NRGBA // 候选序号颜色；Alpha=0 时退回 PreeditColor
+	HighlightFg         color.NRGBA // 首选项文字高亮色；Alpha=0 时退回 FgColor
 	HighlightIndexColor color.NRGBA // 首选项序号颜色；Alpha=0 时退回 HighlightFg
 
 	// Horizontal 为 true 时渲染横排候选栏（系统输入法风格）：不再画预编辑行，

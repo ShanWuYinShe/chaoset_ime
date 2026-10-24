@@ -52,14 +52,14 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 | 候选窗 UI（ITfCandidateListUIElement 或自绘） | v1 规划 |
 
-## 图标与设置界面（2026-10-22，由 macOS 排障沉淀，实施时必看）
+## 图标与设置界面
 
-- **语言栏图标要自己实现**：TSF 不会自动显示应用图标。需实现
+- **应用与资源图标**：`resources/chaoset.ico` 提供包含 16×16、24×24、32×32、48×48、64×64、256×256
+  六帧合一的 Windows 标准 ICO 资源，图标统一为极光电光蓝底板 + 纯白与霓虹青「Cs」组合标志 + 顶部拼音声调符号。
+- **语言栏图标**：TSF 不会自动显示应用图标。需实现
   `ITfLangBarItemButton::GetIcon`（返回 `HICON`），并在 DLL 资源中提供
   16×16 与 32×32（高 DPI）两档图标；`ITfInputProcessorProfileMgr::RegisterProfile`
   的 `pszIconFile`/`iconIndex` 也要指向该资源，否则语言栏只有系统默认图标。
-- **图标风格与系统一致**：用扁平 keycap（约 20×16、圆角、单色字形），不要用方形彩色
-  大图——macOS 实测方形大图在输入菜单被模板渲染成实心方块，且尺寸与系统输入法不一致。
 - **设置界面不会自动生成**：Windows 不会给第三方 TSF 输入法提供配置页；需要自己做
   设置窗口，并从语言栏菜单/托盘入口打开，配置项经 daemon IPC 下发。
 

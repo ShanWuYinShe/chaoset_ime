@@ -57,12 +57,11 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
   容器内验证状态分离）；焦点跟随（FocusIn/Out 精细化）待真机桌面。
 - 候选窗自绘贴图（candidateImage）在此壳的显示接入待做。
 
-## 图标与设置界面（2026-10-22，由 macOS 排障沉淀，实施时必看）
+## 图标与设置界面
 
-- **引擎图标**：component XML 的 `<engine>` 支持 `<icon>路径</icon>`（PNG/SVG 均可，
-  建议 48px、透明背景、扁平 keycap 风格），不写则面板只显示 `<symbol>` 文字（当前为
-  「中」）。不要用方形彩色大图——macOS 实测方形大图在输入菜单被模板渲染成实心方块，
-  且尺寸与系统输入法不一致。
+- **引擎与应用图标**：component XML 的 `<engine>` 声明 `<icon>chaoset</icon>`，
+  对应 `icons/hicolor/{48x48,128x128,256x256,scalable}/apps/chaoset.{png,svg}`。
+  全套图标统一为跨端新品牌标识：极光电光蓝渐变底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），在桌面环境与应用列表均保持高辨识度与现代质感。
 - **设置入口**：`<engine>` 还支持 `<setup>命令</setup>`，ibus-setup 会据此显示该引擎的
   Preferences 按钮；系统不会自动生成配置项，当前引擎也没有配置界面。
 - 已核对 IBus 上游源码（`ibusenginedesc.c` 的 XML 解析字段表，2026-10-22）：

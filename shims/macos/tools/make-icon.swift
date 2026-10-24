@@ -399,3 +399,140 @@ writeInputSourceTiff(URL(fileURLWithPath: outDir)
     .appendingPathComponent("ChaosetIME-icon2.tiff").path)
 
 print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（22×16+44×32 扁平按键模板图）")
+
+// MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
+
+func writeWindowsIco(to path: String) {
+    let sizes = [16, 24, 32, 48, 64, 256]
+    var data = Data()
+
+    var reserved: UInt16 = 0
+    var iconType: UInt16 = 1
+    var count: UInt16 = UInt16(sizes.count)
+    data.append(contentsOf: withUnsafeBytes(of: &reserved) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: &iconType) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: &count) { Array($0) })
+
+    var currentOffset = 6 + sizes.count * 16
+    var pngMap: [Int: Data] = [:]
+
+    for sz in sizes {
+        let png = appIconRep(sz).representation(using: .png, properties: [:])!
+        pngMap[sz] = png
+
+        var bWidth: UInt8 = sz >= 256 ? 0 : UInt8(sz)
+        var bHeight: UInt8 = sz >= 256 ? 0 : UInt8(sz)
+        var bColorCount: UInt8 = 0
+        var bReserved: UInt8 = 0
+        var wPlanes: UInt16 = 1
+        var wBitCount: UInt16 = 32
+        var dwBytesInRes: UInt32 = UInt32(png.count)
+        var dwImageOffset: UInt32 = UInt32(currentOffset)
+
+        data.append(contentsOf: withUnsafeBytes(of: &bWidth) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &bHeight) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &bColorCount) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &bReserved) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &wPlanes) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &wBitCount) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &dwBytesInRes) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: &dwImageOffset) { Array($0) })
+
+        currentOffset += png.count
+    }
+
+    for sz in sizes {
+        data.append(pngMap[sz]!)
+    }
+
+    try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! data.write(to: URL(fileURLWithPath: path))
+    print("已同步 Windows 图标: \(path)")
+}
+
+func writeLinuxIcons(baseDir: String) {
+    let sizes = [48, 128, 256]
+    for sz in sizes {
+        let dir = "\(baseDir)/\(sz)x\(sz)/apps"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let png = appIconRep(sz).representation(using: .png, properties: [:])!
+        let path = "\(dir)/chaoset.png"
+        try! png.write(to: URL(fileURLWithPath: path))
+        print("已同步 Linux 图标: \(path)")
+    }
+}
+
+func writeLinuxSvg(to path: String) {
+    let svgContent = """
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="azureGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2494FF"/>
+      <stop offset="52%" stop-color="#145AF0"/>
+      <stop offset="100%" stop-color="#0F2AAD"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="8" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.36"/>
+    </filter>
+    <filter id="toneGlow" x="120" y="90" width="200" height="80" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#4DE2FF" flood-opacity="0.9"/>
+    </filter>
+    <filter id="glyphShadow" x="100" y="100" width="350" height="300" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#051052" flood-opacity="0.65"/>
+    </filter>
+    <clipPath id="squircleClip">
+      <rect x="41" y="41" width="430" height="430" rx="96" ry="96"/>
+    </clipPath>
+  </defs>
+
+  <!-- 1. Squircle Base with Soft Drop Shadow -->
+  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#azureGrad)" filter="url(#shadow)"/>
+
+  <!-- 2. Clipped Texture & Highlights -->
+  <g clip-path="url(#squircleClip)">
+    <!-- Acoustic Wave Ripples -->
+    <circle cx="256" cy="256" r="120" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="189" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="258" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
+    
+    <!-- Top-edge Specular Rim Line -->
+    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="2" fill="none"/>
+  </g>
+
+  <!-- 3. Glowing Macron Pinyin Tone Mark -->
+  <g filter="url(#toneGlow)">
+    <rect x="180" y="132" width="94" height="9" rx="4.5" ry="4.5" fill="#D8F6FF"/>
+  </g>
+
+  <!-- 4. Monogram "Cs" Typography -->
+  <g filter="url(#glyphShadow)">
+    <text x="216" y="322" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="220" font-weight="900" fill="#FFFFFF">C</text>
+    <text x="328" y="318" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="154" font-weight="bold" fill="#59E0FF">s</text>
+  </g>
+
+  <!-- 5. Bottom Subtext "PINYIN" -->
+  <text x="256" y="424" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="17" font-weight="bold" letter-spacing="4" fill="#FFFFFF" fill-opacity="0.75">PINYIN</text>
+</svg>
+"""
+    try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! svgContent.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+    print("已同步 Linux 矢量 SVG 图标: \(path)")
+}
+
+if CommandLine.arguments.contains("--sync-all") {
+    // 自动寻找仓库根目录并同步 Windows 与 Linux 图标
+    let scriptPath = URL(fileURLWithPath: CommandLine.arguments[0]).standardized.path
+    var rootDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    if scriptPath.contains("/shims/macos/tools/") {
+        let prefix = scriptPath.components(separatedBy: "/shims/macos/tools/")[0]
+        rootDir = URL(fileURLWithPath: prefix)
+    }
+    let winIcoPath = rootDir.appendingPathComponent("shims/windows/resources/chaoset.ico").path
+    let linuxHicolor = rootDir.appendingPathComponent("shims/linux/icons/hicolor").path
+    let linuxSvgPath = rootDir.appendingPathComponent("shims/linux/icons/hicolor/scalable/apps/chaoset.svg").path
+
+    writeWindowsIco(to: winIcoPath)
+    writeLinuxIcons(baseDir: linuxHicolor)
+    writeLinuxSvg(to: linuxSvgPath)
+}

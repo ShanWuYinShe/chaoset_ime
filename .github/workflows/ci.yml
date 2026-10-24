@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -30,3 +32,124 @@ jobs:
 
       - name: 构建
         run: make build
+
+  package-macos:
+    name: 打包 macOS (ChaosetIME.app + ChaosetSetup.app)
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 构建 Go 二进制与 macOS app
+        run: |
+          make build
+          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh
+          ./shims/macos/build.sh
+          ./shims/macos/tests/equivalence.sh
+
+      - name: 打包 ZIP
+        run: |
+          mkdir -p dist
+          (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaoset-macos
+          path: dist/chaoset-macos.zip
+          retention-days: 14
+
+  package-linux:
+    name: 打包 Linux (IBus Engine + 资源)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 编译与打包
+        run: |
+          make build
+          make package-linux
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaoset-linux-x86_64
+          path: dist/chaoset-linux-x86_64.tar.gz
+          retention-days: 14
+
+  package-windows:
+    name: 打包 Windows (TSF DLL + TCP Daemon)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 安装 mingw-w64 交叉编译器
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64
+
+      - name: 编译与打包
+        run: |
+          make package-windows
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaoset-windows-x64
+          path: dist/chaoset-windows-x64.zip
+          retention-days: 14
+
+  release:
+    name: 发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package-macos, package-linux, package-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 macOS 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: chaoset-macos
+          path: dist
+
+      - name: 下载 Linux 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: chaoset-linux-x86_64
+          path: dist
+
+      - name: 下载 Windows 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: chaoset-windows-x64
+          path: dist
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/chaoset-macos.zip
+            dist/chaoset-linux-x86_64.tar.gz
+            dist/chaoset-windows-x64.zip
+          generate_release_notes: true
+
