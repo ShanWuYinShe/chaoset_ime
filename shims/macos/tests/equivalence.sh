@@ -75,40 +75,41 @@ if [ "$fails" -eq 0 ]; then
     [ ! -e "$APP/Contents/Resources/$f" ] && ok "D.$f 旧资源已移除" || fail "D.$f 旧资源仍残留"
   done
 
-  # 1) input.tiff 必须是系统同款扁平 keycap：满幅实心圆角按键 + 挖空字形（不是描边空心块）
+  # 1) input.tiff 必须是系统同款「22×16 宽扁 keycap」：实心圆角按键 + 挖空字形
+  #    （16×16 正方形会被 System Settings 显示成方块，与系统原生 22×16 扁平按键不一致）
   swift -e '
   import AppKit
   let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-input.tiff"
   guard let img = NSImage(contentsOfFile: p),
-        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep,
-        img.representations.contains(where: { $0.pixelsWide == 32 }) else { exit(1) }
+        let rep = img.representations.first(where: { $0.pixelsWide == 22 && $0.pixelsHigh == 16 }) as? NSBitmapImageRep,
+        img.representations.contains(where: { $0.pixelsWide == 44 && $0.pixelsHigh == 32 }) else { exit(1) }
   func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
   var sum = 0.0
   var holes = 0
   for y in 2..<14 {
-    for x in 2..<14 {
+    for x in 2..<20 {
       let v = a(x, y)
       sum += Double(v)
       if v < 0.1 { holes += 1 }
     }
   }
-  let mean = sum / 144.0
-  let corner = [a(0, 0), a(15, 0), a(0, 15), a(15, 15)].max()!
-  let edge = [a(0, 8), a(15, 8), a(8, 0), a(8, 15)].min()!
-  if mean >= 0.60 && holes >= 8 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
-  ' && ok "D.input.tiff 符合「实心圆角按键 + 挖空 C」系统同款扁平 keycap 契约" || fail "D.input.tiff 不是系统同款扁平 keycap"
+  let mean = sum / 216.0
+  let corner = [a(0, 0), a(21, 0), a(0, 15), a(21, 15)].max()!
+  let edge = [a(0, 8), a(21, 8), a(11, 0), a(11, 15)].min()!
+  if mean >= 0.60 && holes >= 10 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
+  ' && ok "D.input.tiff 符合「22×16 实心圆角按键 + 挖空 C」系统同款扁平 keycap 契约" || fail "D.input.tiff 不是系统同款 22×16 扁平 keycap"
 
-  # 2) palette.tiff 必须无边框且无背景（仅单字符 C，供快捷键切换 HUD 使用）
+  # 2) palette.tiff 必须无边框且无背景（仅单字符 C，22×16 同尺寸，供快捷键切换 HUD 使用）
   swift -e '
   import AppKit
   let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-palette.tiff"
   guard let img = NSImage(contentsOfFile: p),
-        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep else { exit(1) }
-  let edgeAlpha1 = rep.colorAt(x: 0, y: 7)!.alphaComponent
-  let edgeAlpha2 = rep.colorAt(x: 3, y: 3)!.alphaComponent
-  let cAlpha = rep.colorAt(x: 4, y: 8)!.alphaComponent
-  if edgeAlpha1 == 0 && edgeAlpha2 == 0 && cAlpha > 0.8 { exit(0) } else { exit(2) }
-  ' && ok "D.palette.tiff 符合「无边框仅单字符 C」契约" || fail "D.palette.tiff 未通过契约检查"
+        let rep = img.representations.first(where: { $0.pixelsWide == 22 && $0.pixelsHigh == 16 }) as? NSBitmapImageRep else { exit(1) }
+  func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
+  var maxAlpha: CGFloat = 0
+  for y in 0..<16 { for x in 0..<22 { maxAlpha = max(maxAlpha, a(x, y)) } }
+  if a(0, 8) == 0 && a(3, 3) == 0 && maxAlpha > 0.8 { exit(0) } else { exit(2) }
+  ' && ok "D.palette.tiff 符合「22×16 无边框仅单字符 C」契约" || fail "D.palette.tiff 未通过契约检查"
 
   # 3) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
   swift -e '

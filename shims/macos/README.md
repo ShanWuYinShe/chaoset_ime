@@ -68,7 +68,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`，采用标准拼音模式命名避免与系统合成模式冲突） |
 | 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **系统设置 / 菜单栏 / 状态栏（`ChaosetIME-input.tiff`）**：与系统原生输入法**完全同款的扁平 keycap**——16×16 双帧模板 TIFF（16×16@72dpi + 32×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为**满幅实心圆角按键**并把单字符「C」从 alpha 中**挖空**；模板渲染后就是 ABC「A」/ 简体拼音「拼」那种「实心按键 + 反白字形」。**不要**做成描边空心块（用户会看成系统通用占位图标）。<br>2. **快捷键切换 HUD（`ChaosetIME-palette.tiff`）**：透明底仅单字符「C」（同规格双帧模板 TIFF），用于光标旁胶囊 HUD。<br>3. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
+| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **系统设置 / 菜单栏 / 状态栏（`ChaosetIME-input.tiff`）**：与系统原生输入法**实际渲染尺寸完全一致**的 **22×16 宽扁 keycap**——双帧模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为**满幅实心圆角按键**并把单字符「C」从 alpha 中**挖空**；模板渲染后就是 ABC「A」/ 简体拼音「拼」那种「实心宽扁按键 + 反白字形」。**不要**做成 16×16 正方形（System Settings 的 `IPInputSource.iconImage` 对系统输入源返回 22×16，第三方图标按文件原尺寸显示，正方形会变成方块），也**不要**描边空心块。<br>2. **快捷键切换 HUD（`ChaosetIME-palette.tiff`）**：22×16 透明底仅单字符「C」（同规格双帧模板 TIFF），用于光标旁胶囊 HUD。<br>3. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
@@ -422,6 +422,11 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   - **机器自证**：`tests/equivalence.sh` 的图标契约改为断言 input.tiff 的
     「实心按键 + 挖空字形」（alpha 均值、边角、内部镂空像素数、双帧尺寸），并校验
     Info.plist 五个图标键全部指向预期文件。
+  - **追加修正（同日，用户第二次反馈「应该是扁平的，而不是正方形」）**：系统设置/菜单栏
+    实际按 **22×16（44×32@2x）宽扁 keycap** 渲染——用 `IPInputSource.iconImage` 实测
+    系统输入源统一返回 22×16，第三方输入源则按 TIS 图标文件原尺寸显示；此前提供的
+    16×16 正方形因此被显示成方块。已把 `ChaosetIME-input.tiff`/`palette.tiff` 全部改为
+    22×16 宽扁画布，`tests/equivalence.sh` 同步断言 22×16/44×32 尺寸。
 
 ## 已知限制
 

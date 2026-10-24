@@ -165,17 +165,21 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标规格（2026-10-24 逐像素复核）：
-//   - 尺寸：16 pt × 16 pt 正方形，双帧 TIFF：16×16@72dpi (1x) + 32×32@144dpi (2x)，LZW 压缩；
+// 系统输入法输入源图标的**实际渲染规格**（2026-10-24 以 IPInputSource.iconImage 复核）：
+//   - 系统设置/输入菜单按 **22 pt × 16 pt 的宽扁 keycap** 渲染：系统输入源的
+//     `IPInputSource.iconImage` 实测统一为 22×16（44×32 @2x）扁平按键；第三方输入源
+//     则按 TIS 图标文件的**原尺寸**显示。若提供 16×16 正方形，System Settings 里就会
+//     显示成方块而不是系统同款扁平按键（用户已两次指出）。
+//   - 双帧 TIFF：22×16@72dpi (1x) + 44×32@144dpi (2x)，LZW 压缩；
 //   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**；
 //   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 通道表达；
 //   - **扁平 keycap 形态（唯一正确形态）**：满幅实心圆角按键（按键区域 alpha≈1），
 //     把单字符「C」**从 alpha 通道里挖空**（字形处 alpha=0）。模板渲染后就是系统
-//     ABC「A」/ 简体拼音「拼」那种「实心按键 + 反白字形」的扁平按键，
-//     而不是描边空心方块（后者在系统设置与菜单栏里会显得像通用占位图标，用户已明确否定）。
+//     ABC「A」/ 简体拼音「拼」那种「实心宽扁按键 + 反白字形」，
+//     而不是描边空心方块/正方形按键（都会与系统原生图标不一致）。
 //   - 字形只用单字符：系统内置输入源全部单字符（ABC「A」、简体拼音「拼」、韩文「한」、假名「あ」）；
 //     墨迹高度 ≈ 0.72×画布高，居中。
-//   - Palette 变体（快捷键切换 HUD 胶囊）保持透明底纯字形，不带按键底板。
+//   - Palette 变体（快捷键切换 HUD 胶囊）同尺寸 22×16，但保持透明底纯字形、不带按键底板。
 //
 // 实现要点：先在 8× 超采样画布上用 CGBitmapContext 画「圆角按键挖去字形」，
 // 再用 alphaOnly 灰度上下文读出 alpha、降采样写入 NSBitmapImageRep。
@@ -211,8 +215,8 @@ private func drawCenteredGlyph(_ text: String, targetH: CGFloat, maxWidth: CGFlo
     CTLineDraw(bestLine, ctx)
 }
 
-/// 生成输入源模板图单帧。keycap=true 为系统同款扁平按键（实心圆角 + 挖空字形），
-/// false 为透明底纯字形（仅用于快捷键切换 HUD）。
+/// 生成输入源模板图单帧（22×16 宽扁画布）。keycap=true 为系统同款扁平按键
+/// （实心圆角 + 挖空字形），false 为透明底纯字形（仅用于快捷键切换 HUD）。
 func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapImageRep {
     let pxW = ptW * scale
     let pxH = ptH * scale
@@ -295,9 +299,10 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapIma
 }
 
 func writeInputSourceTiff(_ path: String, keycap: Bool) {
+    // 22×16 宽扁 keycap：与系统输入源 IPInputSource.iconImage 的实际渲染尺寸一致
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
-        (16, 16, 1, 72),
-        (16, 16, 2, 144)
+        (22, 16, 1, 72),
+        (22, 16, 2, 144)
     ]
     let tmpDir = NSTemporaryDirectory() + "chaoset-icon-\(ProcessInfo.processInfo.processIdentifier)"
     try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
