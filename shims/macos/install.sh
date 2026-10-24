@@ -45,7 +45,11 @@ if [ -x build/tis ]; then
   "$LSREGISTER" -u "$(pwd)/build/ChaosetIME.app" 2>/dev/null || true
   "$LSREGISTER" -u "$(pwd)/build/ChaosetSetup.app" 2>/dev/null || true
   "$LSREGISTER" -u "$HOME/Applications/ChaosetSetup.app/Contents/Resources/ChaosetIME.app" 2>/dev/null || true
-  rm -f /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
+  killall "System Settings" 2>/dev/null || true
+  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
+  pkill -9 -f "com.apple.Keyboard-Settings" 2>/dev/null || true
+  find /var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  rm -f /var/folders/*/*/*/*/com.apple.IntlDataCache* /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
 
   for i in 1 2 3; do
     build/tis register "$IM/ChaosetIME.app" || true
@@ -55,9 +59,9 @@ if [ -x build/tis ]; then
     fi
     echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
   done
-  # 禁用旧模式与父级容器 bundle，仅启用全新的单一 Pinyin 模式
+  # 禁用旧模式并启用全新的单一 Pinyin 模式及其父级容器
   build/tis disable "ime.chaoset.inputmethod.ChaosetIME.Hans" 2>/dev/null || true
-  build/tis disable "ime.chaoset.inputmethod.ChaosetIME" 2>/dev/null || true
+  build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
   build/tis sync || true
@@ -71,9 +75,12 @@ if [ -x build/tis ]; then
   # 刷新系统输入菜单、系统设置与快捷键切换 HUD（彻底清除内存中残留的旧图标缓存）
   killall "System Settings" 2>/dev/null || true
   pkill -9 -f "KeyboardSettings" 2>/dev/null || true
+  pkill -9 -f "com.apple.Keyboard-Settings" 2>/dev/null || true
   pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
   pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
   pkill -9 -f "CursorUIViewService" 2>/dev/null || true
+  find /var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  rm -f /var/folders/*/*/*/*/com.apple.IntlDataCache* /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
 else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi
