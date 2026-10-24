@@ -88,17 +88,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<string>NSApplication</string>
 	<key>InputMethodConnectionName</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME_Connection</string>
-	<key>TISIconIsTemplate</key>
-	<true/>
-	<key>TISIconLabels</key>
-	<dict>
-		<key>Primary</key>
-		<string>C</string>
-	</dict>
-	<key>tsInputMethodIconFileKey</key>
-	<string>ChaosetIME-icon2.tiff</string>
-	<key>tsInputMethodAlternateIconFileKey</key>
-	<string>ChaosetIME-icon2.tiff</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>ChaosetController</string>
 	<key>InputMethodServerDelegateClass</key>
@@ -109,12 +98,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<true/>
 	<key>TISInputSourceID</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME</string>
-	<key>TISIntendedLanguage</key>
-	<string>zh-Hans</string>
-	<key>tsInputMethodCharacterRepertoireKey</key>
-	<array>
-		<string>Hans</string>
-	</array>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
@@ -195,7 +178,7 @@ mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
 swiftc -O -framework AppKit -framework Carbon -framework UniformTypeIdentifiers \
   setup/main.swift -o "$SETUP/Contents/MacOS/ChaosetSetup"
 (cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
-cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.app"
+cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.embedded"
 cp build/chaosetd build/chaoset-import build/tis build/smoke \
   ../../data/dict_common.tsv "$SETUP/Contents/Resources/"
 cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"

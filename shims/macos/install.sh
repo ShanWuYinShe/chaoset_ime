@@ -41,8 +41,11 @@ if [ -x build/tis ]; then
   # 输入菜单里本输入法变灰/不可用（com.apple.inputsources 里仍有启用记录）。
   # 所以先等重建结束，再登记并确认系统表里能看到（2026-10-22 实测）。
   sleep 2
-  # 清理本地 build 目录在 LaunchServices 中的旧登记，杜绝多路径被 TIS 索引导致重复输入法
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u build/ChaosetIME.app 2>/dev/null || true
+  # 清理本地 build 目录与历史嵌套 app 在 LaunchServices 中的旧登记，杜绝多路径被 TIS 索引导致重复输入法
+  "$LSREGISTER" -u "$(pwd)/build/ChaosetIME.app" 2>/dev/null || true
+  "$LSREGISTER" -u "$(pwd)/build/ChaosetSetup.app" 2>/dev/null || true
+  "$LSREGISTER" -u "$HOME/Applications/ChaosetSetup.app/Contents/Resources/ChaosetIME.app" 2>/dev/null || true
+  rm -f /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
 
   for i in 1 2 3; do
     build/tis register "$IM/ChaosetIME.app" || true

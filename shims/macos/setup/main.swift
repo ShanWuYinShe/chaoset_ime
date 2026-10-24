@@ -13,14 +13,15 @@ import UniformTypeIdentifiers
 // 本 app 随包携带 ChaosetIME.app / chaosetd / chaoset-import / dict_common.tsv，
 // 全部操作都在自身进程内完成，不依赖仓库路径与终端。
 
-let imeBundleName = "ChaosetIME.app"
+let imeTargetBundleName = "ChaosetIME.app"
+let imeResourceBundleName = "ChaosetIME.embedded"
 let sourceID = "ime.chaoset.inputmethod.ChaosetIME"
 let modeID = "ime.chaoset.inputmethod.ChaosetIME.Hans"
 
 func res(_ name: String) -> String { (Bundle.main.resourcePath ?? ".") + "/" + name }
 func supportDir() -> String { NSHomeDirectory() + "/Library/Application Support/chaoset" }
 func inputMethodsDir() -> String { NSHomeDirectory() + "/Library/Input Methods" }
-func imeAppPath() -> String { inputMethodsDir() + "/" + imeBundleName }
+func imeAppPath() -> String { inputMethodsDir() + "/" + imeTargetBundleName }
 func socketPath() -> String { supportDir() + "/chaoset.sock" }
 func stamp() -> String {
     let f = DateFormatter()
@@ -137,8 +138,8 @@ func restartDaemon(support: String) -> String {
 func installIME() -> String {
     let fm = FileManager.default
     var out = ""
-    let src = res(imeBundleName)
-    guard fm.fileExists(atPath: src) else { return "随包缺少 \(imeBundleName)，请重新构建。" }
+    let src = res(imeResourceBundleName)
+    guard fm.fileExists(atPath: src) else { return "随包缺少 \(imeResourceBundleName)，请重新构建。" }
     try? fm.createDirectory(atPath: inputMethodsDir(), withIntermediateDirectories: true)
     let dst = imeAppPath()
     if fm.fileExists(atPath: dst) {

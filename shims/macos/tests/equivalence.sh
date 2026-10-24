@@ -27,7 +27,7 @@ note "== A. 同源检查：GUI 随包工具与构建产物的 CLI 版本逐字�
 for b in tis smoke chaoset-import chaosetd; do
   if cmp -s "$RES/$b" "build/$b"; then ok "A.$b 与 CLI 同源"; else fail "A.$b 与 CLI 版本不同源"; fi
 done
-if cmp -s "$RES/ChaosetIME.app/Contents/MacOS/ChaosetIME" build/ChaosetIME.app/Contents/MacOS/ChaosetIME; then
+if cmp -s "$RES/ChaosetIME.embedded/Contents/MacOS/ChaosetIME" build/ChaosetIME.app/Contents/MacOS/ChaosetIME; then
   ok "A.ChaosetIME 主程序与 CLI 构建同源"
 else
   fail "A.ChaosetIME 主程序不同源"
