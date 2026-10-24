@@ -61,6 +61,38 @@ func sourceFlag(_ s: TISInputSource, _ k: CFString) -> Bool {
 func findSource() -> TISInputSource? {
     allSources().first { sourceProp($0, kTISPropertyInputSourceID).hasPrefix(sourceID) }
 }
+func chaosetSourceCount() -> Int {
+    allSources().filter { sourceProp($0, kTISPropertyInputSourceID).hasPrefix(sourceID) }.count
+}
+
+// ---- 系统 UI / TIS 缓存刷新（与 install.sh 同一套动作，保持 GUI 与 CLI 等价） ----
+// TIS 输入源缓存是「每进程一份」的 IntlDataCache.le[.kbdx]。只重启进程不删缓存，
+// 系统设置/输入菜单会继续显示旧图标或重复条目（旧版 GUI 安装缺这一步）。
+func killInputSourceUI() {
+    _ = runTool("/usr/bin/killall", ["System Settings"])
+    for pat in ["KeyboardSettings", "com.apple.Keyboard-Settings", "TextInputSwitcher",
+                "TextInputMenuAgent", "CursorUIViewService"] {
+        _ = runTool("/usr/bin/pkill", ["-9", "-f", pat])
+    }
+}
+
+func clearTISCache() {
+    let fm = FileManager.default
+    let cacheRoot = (NSTemporaryDirectory() as NSString).deletingLastPathComponent + "/C"
+    guard let en = fm.enumerator(atPath: cacheRoot) else { return }
+    for case let rel as String in en {
+        let name = (rel as NSString).lastPathComponent
+        guard name.hasPrefix("com.apple.IntlDataCache") else { continue }
+        try? fm.removeItem(atPath: cacheRoot + "/" + rel)
+    }
+}
+
+func disableLegacyModes() {
+    let legacy = "ime.chaoset.inputmethod.ChaosetIME.Hans"
+    for s in allSources() where sourceProp(s, kTISPropertyInputSourceID) == legacy {
+        _ = TISDisableInputSource(s)
+    }
+}
 
 // ---- 词库导入：种子 + 现用 + 用户所选 → 备份 → 原子替换 ----
 func importDictionaries(files: [String], support: String, importer: String, seed: String,
@@ -150,6 +182,11 @@ func installIME() -> String {
     do { try fm.copyItem(atPath: src, toPath: dst) } catch { return "装入失败：\(error)" }
     out += "已装入：\(dst)\n"
 
+    // 替换 bundle 后先清掉各进程的 TIS 缓存并重启系统设置，避免旧图标/重复条目残留
+    killInputSourceUI()
+    clearTISCache()
+    Thread.sleep(forTimeInterval: 1.0)
+
     let st = TISRegisterInputSource(URL(fileURLWithPath: dst) as CFURL)
     out += st == noErr ? "已向系统登记（TISRegisterInputSource）\n" : "登记失败（状态码 \(st)）\n"
 
@@ -170,6 +207,7 @@ func installIME() -> String {
     }
     out += restartDaemon(support: support)
 
+    disableLegacyModes()
     if let s = findSource() {
         _ = TISEnableInputSource(s)
         _ = TISSelectInputSource(s)
@@ -178,6 +216,13 @@ func installIME() -> String {
         out += "\n注意：系统输入源表里还看不到本输入法。macOS 只在【登录时】扩充输入源表，\n"
         out += "请注销并重新登录，然后回到本工具点「重新检查」；届时到「系统设置 → 键盘 →\n"
         out += "输入法」添加「Chaoset」即可。\n"
+    }
+    // 收起系统设置/输入菜单进程，保证下次打开看到的是新图标与新列表，而不是旧快照
+    killInputSourceUI()
+    let n = chaosetSourceCount()
+    out += "系统输入源表 Chaoset 条目：\(n) 条（预期 2：父容器 + Pinyin 模式）\n"
+    if n > 2 {
+        out += "⚠ 发现重复条目：请注销重登一次重建输入源表，或在本机终端运行 ./reregister.sh 清理。\n"
     }
     return out
 }
@@ -226,6 +271,15 @@ func verifyText() -> String {
     } else {
         fails += 1
         out += "FAIL 2) 系统输入源表未收录 —— 需注销重登（两条实现结论一致）\n"
+    }
+
+    // 2b) 重复条目巡检：系统设置「添加输入法」里出现多条 Chaoset 的直接判据
+    let n = chaosetSourceCount()
+    if n == 2 {
+        out += "PASS 2b) 无重复条目（父容器 + Pinyin 模式各 1 条）\n"
+    } else {
+        fails += 1
+        out += "FAIL 2b) 系统表内 Chaoset 条目为 \(n) 条（预期 2；重复会让系统设置列表出现多条）\n"
     }
 
     // 3) daemon + IPC 六项

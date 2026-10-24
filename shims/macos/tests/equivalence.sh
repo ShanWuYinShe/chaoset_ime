@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 SETUP_APP=build/ChaosetSetup.app
 SETUP_BIN="$SETUP_APP/Contents/MacOS/ChaosetSetup"
 RES="$SETUP_APP/Contents/Resources"
+APP=build/ChaosetIME.app
 fails=0
 note() { printf '%s\n' "$*"; }
 fail() { fails=$((fails + 1)); printf 'FAIL %s\n' "$*"; }
@@ -66,20 +67,38 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
-  note "== D. 图标规范检查：三大图标契约机器自证，防止样式回退 =="
-  # 1) menu.tiff 必须有边框与背景（扁平 C + 有背景有边框）
+  note "== D. 图标规范检查：系统同款扁平 keycap / 纯字形 / 应用图标三大契约 =="
+  for f in ChaosetIME-input.tiff ChaosetIME-palette.tiff; do
+    [ -f "$APP/Contents/Resources/$f" ] && ok "D.$f 已随 app 打包" || fail "D.$f 缺失"
+  done
+  for f in ChaosetIME-menu.tiff ChaosetIME-icon2.tiff; do
+    [ ! -e "$APP/Contents/Resources/$f" ] && ok "D.$f 旧资源已移除" || fail "D.$f 旧资源仍残留"
+  done
+
+  # 1) input.tiff 必须是系统同款扁平 keycap：满幅实心圆角按键 + 挖空字形（不是描边空心块）
   swift -e '
   import AppKit
-  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-menu.tiff"
+  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-input.tiff"
   guard let img = NSImage(contentsOfFile: p),
-        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep else { exit(1) }
-  let borderAlpha = rep.colorAt(x: 0, y: 7)!.alphaComponent
-  let bgAlpha = rep.colorAt(x: 3, y: 3)!.alphaComponent
-  let cAlpha = rep.colorAt(x: 4, y: 8)!.alphaComponent
-  if borderAlpha > 0.5 && bgAlpha >= 0.15 && bgAlpha <= 0.35 && cAlpha > 0.8 { exit(0) } else { exit(2) }
-  ' && ok "D.menu.tiff 符合「扁平 C，有背景有边框」契约" || fail "D.menu.tiff 未通过契约检查"
+        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep,
+        img.representations.contains(where: { $0.pixelsWide == 32 }) else { exit(1) }
+  func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
+  var sum = 0.0
+  var holes = 0
+  for y in 2..<14 {
+    for x in 2..<14 {
+      let v = a(x, y)
+      sum += Double(v)
+      if v < 0.1 { holes += 1 }
+    }
+  }
+  let mean = sum / 144.0
+  let corner = [a(0, 0), a(15, 0), a(0, 15), a(15, 15)].max()!
+  let edge = [a(0, 8), a(15, 8), a(8, 0), a(8, 15)].min()!
+  if mean >= 0.60 && holes >= 8 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
+  ' && ok "D.input.tiff 符合「实心圆角按键 + 挖空 C」系统同款扁平 keycap 契约" || fail "D.input.tiff 不是系统同款扁平 keycap"
 
-  # 2) palette.tiff 必须无边框且无背景（仅单字符 C）
+  # 2) palette.tiff 必须无边框且无背景（仅单字符 C，供快捷键切换 HUD 使用）
   swift -e '
   import AppKit
   let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-palette.tiff"
@@ -105,6 +124,20 @@ if [ "$fails" -eq 0 ]; then
   let isCyanS = sCol.greenComponent > 0.7 && sCol.blueComponent > 0.8 && sCol.redComponent < 0.5
   if isBgBlue && isWhiteC && isCyanS { exit(0) } else { exit(2) }
   ' && ok "D.ChaosetIME.icns 符合「方案3与方案4结合版」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
+
+  # 4) Info.plist 的输入源图标键必须全部指向上述两份模板图（系统设置/菜单栏/系统栏取这里）
+  PB=/usr/libexec/PlistBuddy
+  P="$APP/Contents/Info.plist"
+  MODE="ComponentInputModeDict:tsInputModeListKey:ime.chaoset.inputmethod.ChaosetIME.Pinyin"
+  expect_plist() {
+    got=$($PB -c "Print :$1" "$P" 2>/dev/null || true)
+    if [ "$got" = "$2" ]; then ok "D.plist $1 -> $2"; else fail "D.plist $1 = ${got:-<空>}（期望 $2）"; fi
+  }
+  expect_plist "tsInputMethodIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "tsInputMethodAlternateIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "$MODE:tsInputModeMenuIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "$MODE:tsInputModeAlternateMenuIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-palette.tiff"
 fi
 
 if [ "$fails" -eq 0 ]; then

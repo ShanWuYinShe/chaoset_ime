@@ -68,7 +68,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`，采用标准拼音模式命名避免与系统合成模式冲突） |
 | 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标契约 | 严格沉淀三层图标规范，由 `tests/equivalence.sh` 机器断言，杜绝反复：<br>1. **系统状态栏与系统设置（`ChaosetIME-menu.tiff`）**：扁平单字符「C」，带按键微圆角外边框与半透明按键背景底色（16×16 双帧模板 TIFF，外边框 alpha=1.0、底色 alpha≈0.22、字形 alpha=1.0），与原生 ABC `[A]` 及 简体拼音 `[拼]` 视觉统一。<br>2. **输入法选择器悬浮状态（`ChaosetIME-palette.tiff`）**：无边框仅单字符「C」（16×16 双帧纯字形模板 TIFF，背景完全透明、仅 C 区域 alpha=1.0），适配快捷键切换时的光标旁胶囊 HUD 风格。<br>3. **应用程序图标（`ChaosetIME.icns`）**：方案 3 与方案 4 结合版本。极光电光蓝全幅底板 + 扩散声波环 + 纯白与霓虹青「Cs」双字母标识 + 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
+| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **系统设置 / 菜单栏 / 状态栏（`ChaosetIME-input.tiff`）**：与系统原生输入法**完全同款的扁平 keycap**——16×16 双帧模板 TIFF（16×16@72dpi + 32×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为**满幅实心圆角按键**并把单字符「C」从 alpha 中**挖空**；模板渲染后就是 ABC「A」/ 简体拼音「拼」那种「实心按键 + 反白字形」。**不要**做成描边空心块（用户会看成系统通用占位图标）。<br>2. **快捷键切换 HUD（`ChaosetIME-palette.tiff`）**：透明底仅单字符「C」（同规格双帧模板 TIFF），用于光标旁胶囊 HUD。<br>3. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
@@ -400,10 +400,35 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   模板渲染目检与系统图标同款。**hover 是系统对模板图自动加的高亮，图标本身是
   纯 alpha 后即由系统统一处理。**
 
+- **2026-10-24 输入源图标回归系统同款扁平 keycap + 刷新链路可验证化**：
+  真机反馈——系统设置「添加输入法」列表与菜单栏/状态栏里的本输入法图标呈
+  「细描边空心底座 + 实心 C」，与系统 ABC / 简体拼音的实心扁平按键不一致，像系统
+  通用占位图；同时添加列表里出现多条 Chaoset 重复条目。逐像素对照后定位并修复：
+  - **图标**：系统 `SCIM/.../pinyin.tiff` 的 alpha 是**满幅实心圆角按键 + 字形挖空**
+    （alpha 均值 187.7），而此前的 `ChaosetIME-menu.tiff` 是**描边 + 半透明底 + 实心 C**
+    （alpha 均值 117.0），模板渲染后必然呈「空心按键」。已改回系统同款
+    `ChaosetIME-input.tiff`（实心按键 + 挖空 C，alpha 均值 192，双帧尺寸/DPI/
+    ExtraSamples 与系统逐标签一致），Info.plist 五个图标键统一指向它（palette 键
+    仍指向纯字形 HUD 图），并删除 menu/icon2 两个历史变体。
+  - **重复条目**：在全新进程里用 InputMethodKit 同源的
+    `IPAddInputSourceSheetController`（PreferencePanesSupport 私有类）枚举
+    「简体中文」候选，只有 1 条 Chaoset + 5 条系统输入源——说明 bundle/TIS 本身
+    不产生重复；重复来自安装/刷新期间系统设置进程沿用旧 TIS 快照（旧版 install.sh 的
+    `find /var/folders ... -delete`、`pkill System Settings` 等步骤在沙盒/受限进程里
+    会静默失败，且未清理「每进程一份」的 `com.apple.IntlDataCache`）。install.sh 已改：
+    运行前探测写权限（受限时明确报错退出）、登记幂等（已收录不重复 register）、
+    按用户临时目录清理**全部** TIS 缓存副本并重启 System Settings / 键盘设置扩展 /
+    HUD 相关进程、结束前校验 TIS 表中恰好 2 条（父容器 + Pinyin 模式）。
+  - **机器自证**：`tests/equivalence.sh` 的图标契约改为断言 input.tiff 的
+    「实心按键 + 挖空字形」（alpha 均值、边角、内部镂空像素数、双帧尺寸），并校验
+    Info.plist 五个图标键全部指向预期文件。
+
 ## 已知限制
 
 - 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；
   少数客户端（个别 Electron 应用、远程桌面）返回零矩形，此时退回鼠标位置，
   位置可能不理想。
-- 修改 app 后重装，需要先把输入法从列表移除再重新添加。
+- 修改 app 后重装：`install.sh` 结束时会清 TIS 缓存并重启系统设置相关进程；重装期间
+  如果系统设置正开着，请关掉后重新打开再看「添加输入法」列表（旧窗口可能停留在装前快照）。
+  已经添加过的本输入法在该列表里呈灰色是正常现象（表示已启用，不能再添加一次）。
 - 打字闭环尚未人工验证（需要 GUI 交互与注销重登，无法脚本化）。

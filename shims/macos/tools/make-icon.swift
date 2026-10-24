@@ -165,16 +165,55 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标规格：
-//   - 尺寸与比例：16 pt × 16 pt 正方形（与系统 ABC / 拼 在菜单栏与输入法悬浮切换器中完全一致）；
-//   - 双帧 TIFF：16×16@72dpi (1x) + 32×32@144dpi (2x)，LZW 压缩；
+// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标规格（2026-10-24 逐像素复核）：
+//   - 尺寸：16 pt × 16 pt 正方形，双帧 TIFF：16×16@72dpi (1x) + 32×32@144dpi (2x)，LZW 压缩；
 //   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**；
 //   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 通道表达；
-//   - 双重形态：
-//     1. **Menu 图标 (ChaosetIME-menu.tiff)**：满幅微圆角按键底板 + 镂空字形「C」，用于系统状态栏和系统设置列表（与 ABC [A]、拼音 [拼] 保持完全一致）；
-//     2. **Palette 图标 (ChaosetIME-palette.tiff)**：透明底纯字母「C」模板，无外框按键，用于切换输入法时的光标旁悬浮指示器（图2胶囊 HUD）。
+//   - **扁平 keycap 形态（唯一正确形态）**：满幅实心圆角按键（按键区域 alpha≈1），
+//     把单字符「C」**从 alpha 通道里挖空**（字形处 alpha=0）。模板渲染后就是系统
+//     ABC「A」/ 简体拼音「拼」那种「实心按键 + 反白字形」的扁平按键，
+//     而不是描边空心方块（后者在系统设置与菜单栏里会显得像通用占位图标，用户已明确否定）。
+//   - 字形只用单字符：系统内置输入源全部单字符（ABC「A」、简体拼音「拼」、韩文「한」、假名「あ」）；
+//     墨迹高度 ≈ 0.72×画布高，居中。
+//   - Palette 变体（快捷键切换 HUD 胶囊）保持透明底纯字形，不带按键底板。
+//
+// 实现要点：先在 8× 超采样画布上用 CGBitmapContext 画「圆角按键挖去字形」，
+// 再用 alphaOnly 灰度上下文读出 alpha、降采样写入 NSBitmapImageRep。
+// CGBitmapContext 原点在左下，读回第 0 行是图像底部，写 NSBitmapImageRep（顶部为第 0 行）时需 Y 反转。
 
-func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapImageRep {
+/// 在给定上下文中绘制水平/垂直居中的单字符字形；用**墨迹高度**（glyph path bounds）
+/// 二分字号而不是行高（NSAttributedString.size() 含上下留白，会让实际墨迹偏小）。
+private func drawCenteredGlyph(_ text: String, targetH: CGFloat, maxWidth: CGFloat, in ctx: CGContext) {
+    func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
+        let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+        let a = NSAttributedString(string: text, attributes: [
+            .font: f, .foregroundColor: NSColor.white,
+        ])
+        let l = CTLineCreateWithAttributedString(a)
+        return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
+    }
+    var lo = targetH * 0.3
+    var hi = targetH * 6.0
+    var bestLine = metrics(targetH).line
+    var bestBounds = metrics(targetH).bounds
+    for _ in 0..<40 {
+        let mid = (lo + hi) / 2
+        let (l, b) = metrics(mid)
+        if b.height < targetH && b.width < maxWidth { lo = mid } else { hi = mid }
+        bestLine = l
+        bestBounds = b
+    }
+    let bounds = bestBounds
+    ctx.textPosition = CGPoint(
+        x: (CGFloat(ctx.width) - bounds.width) / 2 - bounds.minX,
+        y: (CGFloat(ctx.height) - bounds.height) / 2 - bounds.minY
+    )
+    CTLineDraw(bestLine, ctx)
+}
+
+/// 生成输入源模板图单帧。keycap=true 为系统同款扁平按键（实心圆角 + 挖空字形），
+/// false 为透明底纯字形（仅用于快捷键切换 HUD）。
+func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapImageRep {
     let pxW = ptW * scale
     let pxH = ptH * scale
     let ss = 8                      // 针对当前 scale 的超采样倍数
@@ -192,79 +231,23 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapIma
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    if framed {
-        // 状态栏与系统设置图标规范：扁平的单字符「C」，带圆角按键外边框与半透明按键背景底色
-        let inset = CGFloat(bigH) * 0.055
-        let keyRect = CGRect(x: inset, y: inset, width: CGFloat(bigW) - inset * 2, height: CGFloat(bigH) - inset * 2)
-        let cornerR = keyRect.height * 0.18
-        let keyPath = CGPath(roundedRect: keyRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
-
-        // 1. 半透明扁平按键面底色（alpha ≈ 0.22）
-        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 0.22)
-        ctx.addPath(keyPath)
+    if keycap {
+        // 1) 满幅实心圆角按键：圆角半径 0.20×高度（系统 pinyin.tiff 实测约 3/16）
+        let radius = CGFloat(bigH) * 0.20
+        let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: CGFloat(bigW), height: CGFloat(bigH)),
+                          cornerWidth: radius, cornerHeight: radius, transform: nil)
+        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+        ctx.addPath(body)
         ctx.fillPath()
 
-        // 2. 实体微圆角按键外边框（alpha = 1.0）
-        ctx.setStrokeColor(red: 0, green: 0, blue: 0, alpha: 1.0)
-        ctx.setLineWidth(max(1.0, CGFloat(bigH) * 0.065))
-        ctx.addPath(keyPath)
-        ctx.strokePath()
-
-        // 3. 居中实心单字符「C」（alpha = 1.0）
-        let targetH = keyRect.height * 0.62
-        func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
-            let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
-            let a = NSAttributedString(string: "C", attributes: [
-                .font: f, .foregroundColor: NSColor.white,
-            ])
-            let l = CTLineCreateWithAttributedString(a)
-            return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
-        }
-        var lo = targetH * 0.5
-        var hi = targetH * 2.0
-        var bestLine = metrics(targetH).line
-        var bestBounds = metrics(targetH).bounds
-        for _ in 0..<32 {
-            let mid = (lo + hi) / 2
-            let (l, b) = metrics(mid)
-            if b.height < targetH && b.width < keyRect.width * 0.80 { lo = mid } else { hi = mid }
-            bestLine = l
-            bestBounds = b
-        }
-        let line = bestLine
-        let glyphBounds = bestBounds
-        let optY = (keyRect.height - glyphBounds.height) / 2 - glyphBounds.minY + keyRect.minY + keyRect.height * 0.015
-        ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
-                                   y: optY)
-        CTLineDraw(line, ctx)
+        // 2) 把单字符「C」从 alpha 里挖空（destinationOut）：字形处 alpha=0，
+        //    模板渲染后即「实心按键 + 反白字形」，与系统 ABC / 简体拼音一致。
+        ctx.setBlendMode(.destinationOut)
+        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.72, maxWidth: CGFloat(bigW) * 0.62, in: ctx)
+        ctx.setBlendMode(.normal)
     } else {
-        // 快捷键切换悬浮指示器（图2胶囊 HUD）图标规范：透明底无外框纯字母「C」，墨迹高度 ≈ 0.74×画布高
-        let targetH = CGFloat(bigH) * 0.74
-        func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
-            let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
-            let a = NSAttributedString(string: "C", attributes: [
-                .font: f, .foregroundColor: NSColor.white,
-            ])
-            let l = CTLineCreateWithAttributedString(a)
-            return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
-        }
-        var lo = CGFloat(bigH) * 0.3
-        var hi = CGFloat(bigH) * 4.0
-        var bestLine = metrics(CGFloat(bigH)).line
-        var bestBounds = metrics(CGFloat(bigH)).bounds
-        for _ in 0..<32 {
-            let mid = (lo + hi) / 2
-            let (l, b) = metrics(mid)
-            if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
-            bestLine = l
-            bestBounds = b
-        }
-        let line = bestLine
-        let glyphBounds = bestBounds
-        let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
-        ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
-                                   y: optY)
-        CTLineDraw(line, ctx)
+        // 快捷键切换悬浮指示器（HUD 胶囊）：透明底无外框纯字形「C」，墨迹高度 ≈ 0.74×画布高
+        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.74, maxWidth: CGFloat(bigW) * 0.82, in: ctx)
     }
 
     // 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
@@ -311,7 +294,7 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapIma
     return rep
 }
 
-func writeInputSourceTiff(_ path: String, framed: Bool) {
+func writeInputSourceTiff(_ path: String, keycap: Bool) {
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
         (16, 16, 1, 72),
         (16, 16, 2, 144)
@@ -325,7 +308,7 @@ func writeInputSourceTiff(_ path: String, framed: Bool) {
     for frame in frames {
         let pxW = frame.ptW * frame.scale
         let pxH = frame.ptH * frame.scale
-        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale, framed: framed).cgImage else {
+        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale, keycap: keycap).cgImage else {
             fatalError("输入源图标取 CGImage 失败")
         }
         let pngPath = tmpDir + "/icon_\(pxW)x\(pxH).png"
@@ -424,19 +407,16 @@ for base in [16, 32, 128, 256, 512] {
     }
 }
 
-// 1. 状态栏与系统设置图标（带圆角按键底板框，对齐 ABC [A] 与 拼音 [拼] 原生样式）
+// 1. 系统状态栏、菜单栏与系统设置添加列表的输入源图标：系统同款扁平 keycap
+//    （实心圆角按键 + 挖空「C」；模板渲染后与 ABC「A」/ 简体拼音「拼」完全同款）
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-menu.tiff").path, framed: true)
+    .appendingPathComponent("ChaosetIME-input.tiff").path, keycap: true)
 
-// 2. 悬浮切换指示器（HUD）图标（透明底无外框纯 C 字形，对齐图2悬浮胶囊原生风格）
+// 2. 快捷键切换悬浮指示器（HUD 胶囊）图标：透明底无外框纯字形「C」
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-palette.tiff").path, framed: false)
+    .appendingPathComponent("ChaosetIME-palette.tiff").path, keycap: false)
 
-// 3. 兼容旧版键名（默认使用带框按键）
-writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-icon2.tiff").path, framed: true)
-
-print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-menu.tiff（有外框）与 ChaosetIME-palette.tiff（无外框）")
+print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-input.tiff（扁平 keycap）与 ChaosetIME-palette.tiff（纯字形）")
 
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 

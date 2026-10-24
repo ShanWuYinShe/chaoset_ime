@@ -13,7 +13,19 @@ IM="$HOME/Library/Input Methods"
 
 [ -d "$APP" ] || { echo "缺少 ${APP}，请先运行 ./build.sh"; exit 1; }
 
-mkdir -p "$IM"
+mkdir -p "$IM" 2>/dev/null || true
+# —— 运行环境预检 ——
+# 本脚本要写 ~/Library/Input Methods、清 TIS 缓存并重启系统设置进程；这些操作在
+# 沙盒/受限进程里会静默失败，表现就是「装完了但系统设置里的条目/图标还是旧的」。
+# 因此先探测写权限，受限时直接给出明确指引，避免制造「看似成功」的假象。
+if ! ( : > "$IM/.chaoset-write-test" ) 2>/dev/null; then
+  echo "✗ 当前进程无权写入 $IM。"
+  echo "  请在普通终端里直接运行：./shims/macos/install.sh"
+  echo "  （沙盒/受限进程无法安装输入法，也无法可靠刷新 TIS 缓存与系统设置。）"
+  exit 1
+fi
+rm -f "$IM/.chaoset-write-test"
+
 # 同名 bundle 并存时系统可能沿用旧缓存，先移除旧输入法再拷入；
 # 旧版备份移至 .workwork/backups（不能以 .app 后缀残留在 Input Methods 目录，
 # 否则 LaunchServices 会并存多个同 ID 的 app，导致系统设置和图标服务持续命中旧备份）。
@@ -35,30 +47,53 @@ echo "已安装: $IM/ChaosetIME.app"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$LSREGISTER" -f "$IM/ChaosetIME.app" 2>/dev/null || true
 
+# —— 系统 UI / TIS 缓存刷新 ——
+# TIS 输入源表是「每进程一份」的 IntlDataCache.le[.kbdx]：系统设置、键盘设置扩展、
+# 输入菜单与切换 HUD 各自持有一份。只清全局那份不够——旧图标/重复条目会留在
+# 各进程的内存或容器缓存里。必须清掉全部副本并重启这些进程。
+TIS_CACHE_DIR="$(dirname "${TMPDIR:-/tmp}")/C"
+
+kill_input_source_ui() {
+  killall "System Settings" 2>/dev/null || true
+  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
+  pkill -9 -f "com.apple.Keyboard-Settings" 2>/dev/null || true
+  pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
+  pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
+  pkill -9 -f "CursorUIViewService" 2>/dev/null || true
+}
+
+clear_tis_caches() {
+  [ -d "$TIS_CACHE_DIR" ] || return 0
+  find "$TIS_CACHE_DIR" -maxdepth 2 -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+}
+
 if [ -x build/tis ]; then
   # 拷贝/替换 bundle 会触发 TIS 缓存（IntlDataCache）重建，而该重建只移除/刷新、
   # 不新增第三方输入源。若登记动作落在重建落盘之前，条目会被随后覆盖：表现为
   # 输入菜单里本输入法变灰/不可用（com.apple.inputsources 里仍有启用记录）。
-  # 所以先等重建结束，再登记并确认系统表里能看到（2026-10-22 实测）。
+  # 所以先清缓存/重启 UI、等重建结束，再登记并确认系统表里能看到（2026-10-22 实测）。
+  kill_input_source_ui
+  clear_tis_caches
   sleep 2
-  # 清理本地 build 目录与历史嵌套 app 在 LaunchServices 中的旧登记，杜绝多路径被 TIS 索引导致重复输入法
+
+  # 清理本地 build 目录与历史嵌套 app 在 LaunchServices 中的旧登记，
+  # 杜绝同一 bundle ID 从多个路径被 TIS/系统设置索引（会表现为重复条目）。
   "$LSREGISTER" -u "$(pwd)/build/ChaosetIME.app" 2>/dev/null || true
   "$LSREGISTER" -u "$(pwd)/build/ChaosetSetup.app" 2>/dev/null || true
   "$LSREGISTER" -u "$HOME/Applications/ChaosetSetup.app/Contents/Resources/ChaosetIME.app" 2>/dev/null || true
-  killall "System Settings" 2>/dev/null || true
-  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
-  pkill -9 -f "com.apple.Keyboard-Settings" 2>/dev/null || true
-  find /var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
-  rm -f /var/folders/*/*/*/*/com.apple.IntlDataCache* /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
 
-  for i in 1 2 3; do
-    build/tis register "$IM/ChaosetIME.app" || true
-    sleep 1
-    if build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
-      break
-    fi
-    echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
-  done
+  # 登记是幂等的：系统表里已有就跳过，避免重复 TISRegisterInputSource 触发多余通知。
+  if ! build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
+    for i in 1 2 3; do
+      build/tis register "$IM/ChaosetIME.app" || true
+      sleep 1
+      if build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
+        break
+      fi
+      echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
+    done
+  fi
+
   # 禁用旧模式并启用全新的单一 Pinyin 模式及其父级容器
   build/tis disable "ime.chaoset.inputmethod.ChaosetIME.Hans" 2>/dev/null || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
@@ -72,15 +107,21 @@ if [ -x build/tis ]; then
   sleep 1
   open -a "$IM/ChaosetIME.app" 2>/dev/null || true
 
-  # 刷新系统输入菜单、系统设置与快捷键切换 HUD（彻底清除内存中残留的旧图标缓存）
-  killall "System Settings" 2>/dev/null || true
-  pkill -9 -f "KeyboardSettings" 2>/dev/null || true
-  pkill -9 -f "com.apple.Keyboard-Settings" 2>/dev/null || true
-  pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
-  pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
-  pkill -9 -f "CursorUIViewService" 2>/dev/null || true
-  find /var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
-  rm -f /var/folders/*/*/*/*/com.apple.IntlDataCache* /var/folders/*/*/*/com.apple.IntlDataCache* 2>/dev/null || true
+  # 收起所有系统输入源 UI 并清掉各进程的 TIS 缓存，保证下次打开系统设置是全新状态
+  kill_input_source_ui
+  clear_tis_caches
+
+  # 自检：系统表里应恰好 2 条（父容器 + Pinyin 模式）。>2 说明有历史残留，
+  # 系统设置「添加输入法」里就会看到重复条目，需要再清一次缓存或注销重登。
+  CHAOSET_COUNT=$(build/tis list 2>/dev/null | grep -c "ime.chaoset.inputmethod" || true)
+  if [ "$CHAOSET_COUNT" -eq 2 ]; then
+    echo "✓ TIS 输入源表：恰好 2 条（父容器 + Pinyin 模式）"
+  elif [ "$CHAOSET_COUNT" -gt 2 ]; then
+    echo "⚠ TIS 输入源表里出现 ${CHAOSET_COUNT} 条 Chaoset 条目（预期 2）。"
+    echo "  已清缓存并重启系统设置进程；若仍见重复，请注销重登一次重建输入源表。"
+  else
+    echo "⚠ TIS 输入源表里只有 ${CHAOSET_COUNT} 条 Chaoset 条目（预期 2），可能尚未登记完成。"
+  fi
 else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi

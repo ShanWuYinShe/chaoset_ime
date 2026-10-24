@@ -20,19 +20,19 @@ swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/Engin
 
 echo "[3/5] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources
-# 清掉上一版遗留的资源：旧版曾生成 ChaosetIME-menu/palette.tiff 与 ChaosetIME.pdf，
+# 清掉上一版遗留的资源：旧版曾生成 menu/palette/icon2/pdf 等文件，
 # 残留在目录里会让人误以为仍是当前图标（也避免被打进 setup.app）。
 rm -rf build/Resources/ChaosetIME.iconset build/Resources/ChaosetIME-menu.tiff \
-       build/Resources/ChaosetIME-palette.tiff build/Resources/ChaosetIME.pdf
+       build/Resources/ChaosetIME-input.tiff build/Resources/ChaosetIME-palette.tiff \
+       build/Resources/ChaosetIME-icon2.tiff build/Resources/ChaosetIME.pdf
 swift tools/make-icon.swift build/Resources
 iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIME.icns
 
 echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns \
-   build/Resources/ChaosetIME-menu.tiff \
-   build/Resources/ChaosetIME-palette.tiff \
-   build/Resources/ChaosetIME-icon2.tiff "$APP/Contents/Resources/"
+   build/Resources/ChaosetIME-input.tiff \
+   build/Resources/ChaosetIME-palette.tiff "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
 # 枚举为可添加的输入源。除该字典外，以下三组键对齐同目录下可正常枚举的
@@ -106,9 +106,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 		<string>C</string>
 	</dict>
 	<key>tsInputMethodIconFileKey</key>
-	<string>ChaosetIME-menu.tiff</string>
+	<string>ChaosetIME-input.tiff</string>
 	<key>tsInputMethodAlternateIconFileKey</key>
-	<string>ChaosetIME-menu.tiff</string>
+	<string>ChaosetIME-input.tiff</string>
 	<key>TISInputSourceID</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME</string>
 	<key>ComponentInputModeDict</key>
@@ -139,7 +139,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModeKeyEquivalentModifiersKey</key>
 				<integer>4608</integer>
 				<key>tsInputModeMenuIconFileKey</key>
-				<string>ChaosetIME-menu.tiff</string>
+				<string>ChaosetIME-input.tiff</string>
+				<key>tsInputModeAlternateMenuIconFileKey</key>
+				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModePaletteIconFileKey</key>
 				<string>ChaosetIME-palette.tiff</string>
 				<key>tsInputModePrimaryInScriptKey</key>
