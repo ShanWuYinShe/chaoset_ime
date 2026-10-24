@@ -169,13 +169,12 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 //   - 尺寸与比例：16 pt × 16 pt 正方形（与系统 ABC / 拼 在菜单栏与输入法悬浮切换器中完全一致）；
 //   - 双帧 TIFF：16×16@72dpi (1x) + 32×32@144dpi (2x)，LZW 压缩；
 //   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**；
-//   - RGB 通道恒为 (0,0,0)，无按键外框，纯粹由 alpha 通道表达单字母「C」字形；
-//   - 背景 100% 透明，悬浮切换器（HUD）选中时由系统自动施加蓝色圆圈胶囊高亮，未选中时纯文字呈现。
-//
-// 实现要点：先在 8× 超采样画布上用 CGBitmapContext 精密绘制纯字符「C」，
-// 再做高品质超采样滤波降采样至目标尺寸，最后逐像素写入 NSBitmapImageRep。
+//   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 通道表达；
+//   - 双重形态：
+//     1. **Menu 图标 (ChaosetIME-menu.tiff)**：满幅微圆角按键底板 + 镂空字形「C」，用于系统状态栏和系统设置列表（与 ABC [A]、拼音 [拼] 保持完全一致）；
+//     2. **Palette 图标 (ChaosetIME-palette.tiff)**：透明底纯字母「C」模板，无外框按键，用于切换输入法时的光标旁悬浮指示器（图2胶囊 HUD）。
 
-func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
+func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapImageRep {
     let pxW = ptW * scale
     let pxH = ptH * scale
     let ss = 8                      // 针对当前 scale 的超采样倍数
@@ -193,34 +192,74 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    // 绘制纯字符「C」（无外框按键），墨迹高度 ≈ 0.74×画布高，与系统 A / 拼 视觉分量一致
-    let targetH = CGFloat(bigH) * 0.74
-    func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
-        let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
-        let a = NSAttributedString(string: "C", attributes: [
-            .font: f, .foregroundColor: NSColor.white,
-        ])
-        let l = CTLineCreateWithAttributedString(a)
-        return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
+    if framed {
+        // 满幅微圆角按键底板（对齐系统 pinyin.tiff 规范：满幅微圆角，圆角半径 ≈ 0.16×高度）
+        let cornerR = CGFloat(bigH) * 0.16
+        let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bigW, height: bigH),
+                          cornerWidth: cornerR, cornerHeight: cornerR,
+                          transform: nil)
+        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+        ctx.addPath(body)
+        ctx.fillPath()
+
+        // 挖空单字符「C」：墨迹高度 ≈ 0.70×画布高
+        ctx.setBlendMode(.destinationOut)
+        let targetH = CGFloat(bigH) * 0.70
+        func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
+            let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+            let a = NSAttributedString(string: "C", attributes: [
+                .font: f, .foregroundColor: NSColor.white,
+            ])
+            let l = CTLineCreateWithAttributedString(a)
+            return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
+        }
+        var lo = CGFloat(bigH) * 0.3
+        var hi = CGFloat(bigH) * 4.0
+        var bestLine = metrics(CGFloat(bigH)).line
+        var bestBounds = metrics(CGFloat(bigH)).bounds
+        for _ in 0..<32 {
+            let mid = (lo + hi) / 2
+            let (l, b) = metrics(mid)
+            if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
+            bestLine = l
+            bestBounds = b
+        }
+        let line = bestLine
+        let glyphBounds = bestBounds
+        let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
+        ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
+                                   y: optY)
+        CTLineDraw(line, ctx)
+        ctx.setBlendMode(.normal)
+    } else {
+        // 绘制纯字符「C」（无外框按键），墨迹高度 ≈ 0.74×画布高，与系统 A / 拼 视觉分量一致
+        let targetH = CGFloat(bigH) * 0.74
+        func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
+            let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+            let a = NSAttributedString(string: "C", attributes: [
+                .font: f, .foregroundColor: NSColor.white,
+            ])
+            let l = CTLineCreateWithAttributedString(a)
+            return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
+        }
+        var lo = CGFloat(bigH) * 0.3
+        var hi = CGFloat(bigH) * 4.0
+        var bestLine = metrics(CGFloat(bigH)).line
+        var bestBounds = metrics(CGFloat(bigH)).bounds
+        for _ in 0..<32 {
+            let mid = (lo + hi) / 2
+            let (l, b) = metrics(mid)
+            if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
+            bestLine = l
+            bestBounds = b
+        }
+        let line = bestLine
+        let glyphBounds = bestBounds
+        let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
+        ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
+                                   y: optY)
+        CTLineDraw(line, ctx)
     }
-    var lo = CGFloat(bigH) * 0.3
-    var hi = CGFloat(bigH) * 4.0
-    var bestLine = metrics(CGFloat(bigH)).line
-    var bestBounds = metrics(CGFloat(bigH)).bounds
-    for _ in 0..<32 {
-        let mid = (lo + hi) / 2
-        let (l, b) = metrics(mid)
-        if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
-        bestLine = l
-        bestBounds = b
-    }
-    let line = bestLine
-    let glyphBounds = bestBounds
-    // 光学居中：微调 +0.015*bigH 纠正大写弧形字底的视觉下坠感
-    let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
-    ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
-                               y: optY)
-    CTLineDraw(line, ctx)
 
     // 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
     guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
@@ -266,7 +305,7 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     return rep
 }
 
-func writeInputSourceTiff(_ path: String) {
+func writeInputSourceTiff(_ path: String, framed: Bool) {
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
         (16, 16, 1, 72),
         (16, 16, 2, 144)
@@ -280,7 +319,7 @@ func writeInputSourceTiff(_ path: String) {
     for frame in frames {
         let pxW = frame.ptW * frame.scale
         let pxH = frame.ptH * frame.scale
-        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale).cgImage else {
+        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale, framed: framed).cgImage else {
             fatalError("输入源图标取 CGImage 失败")
         }
         let pngPath = tmpDir + "/icon_\(pxW)x\(pxH).png"
@@ -314,6 +353,8 @@ func writeInputSourceTiff(_ path: String) {
     // 改写多帧 TIFF 中每帧的 XResolution/YResolution 标签（282/283）。
     resolveTagsInTiff(path: path, firstDPI: 72, secondDPI: 144)
 }
+
+
 
 /// 直接改写多帧 TIFF 中每帧的 XResolution/YResolution（标签 282/283）。
 /// 用 tiffutil 保证 ExtraSamples=2 与 LZW 结构，只补它没做对的 DPI 标记。
@@ -377,12 +418,19 @@ for base in [16, 32, 128, 256, 512] {
     }
 }
 
-// 输入源图标：plist 的四个图标键（tsInputMethodIconFileKey / …AlternateIconFileKey /
-// tsInputModeMenuIconFileKey / tsInputModePaletteIconFileKey）全部指向这一个文件。
+// 1. 状态栏与系统设置图标（带圆角按键底板框，对齐 ABC [A] 与 拼音 [拼] 原生样式）
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-icon2.tiff").path)
+    .appendingPathComponent("ChaosetIME-menu.tiff").path, framed: true)
 
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（16×16+32×32 纯字形模板图）")
+// 2. 悬浮切换指示器（HUD）图标（透明底无外框纯 C 字形，对齐图2悬浮胶囊原生风格）
+writeInputSourceTiff(URL(fileURLWithPath: outDir)
+    .appendingPathComponent("ChaosetIME-palette.tiff").path, framed: false)
+
+// 3. 兼容旧版键名（默认使用带框按键）
+writeInputSourceTiff(URL(fileURLWithPath: outDir)
+    .appendingPathComponent("ChaosetIME-icon2.tiff").path, framed: true)
+
+print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-menu.tiff（有外框）与 ChaosetIME-palette.tiff（无外框）")
 
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 

@@ -30,6 +30,8 @@ iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIM
 echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns \
+   build/Resources/ChaosetIME-menu.tiff \
+   build/Resources/ChaosetIME-palette.tiff \
    build/Resources/ChaosetIME-icon2.tiff "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
@@ -126,9 +128,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModeKeyEquivalentModifiersKey</key>
 				<integer>4608</integer>
 				<key>tsInputModeMenuIconFileKey</key>
-				<string>ChaosetIME-icon2.tiff</string>
+				<string>ChaosetIME-menu.tiff</string>
 				<key>tsInputModePaletteIconFileKey</key>
-				<string>ChaosetIME-icon2.tiff</string>
+				<string>ChaosetIME-palette.tiff</string>
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
