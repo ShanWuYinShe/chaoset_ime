@@ -13,16 +13,17 @@
 
 ## macOS 输入源图标（用户明确要求，禁止回退）
 
-系统设置「添加输入法」列表、菜单栏与系统栏里的输入源图标必须是**系统原生同款的
-22×16 宽扁 keycap**：实心圆角按键 + alpha 挖空的单字符「C」模板图
-（`ChaosetIME-input.tiff`，22×16@72dpi + 44×32@144dpi 双帧、RGB 全黑、ExtraSamples=2）；
-`ChaosetIME-palette.tiff` 为同尺寸纯字形 HUD 变体。
+系统设置「添加输入法」列表、菜单栏（系统栏）与快捷键切换 HUD 共用同一份 TIS 输入源图标
+（macOS 不给第三方输入法分场景图标），因此它必须是**唯一自洽的 22×16 无边框纯字形「C」**：
+透明底、无按键底板、无描边（`ChaosetIME-input.tiff`，22×16@72dpi + 44×32@144dpi 双帧、
+RGB 全黑、ExtraSamples=2、模板图）。
 
-- **不要**改回 16×16 正方形、描边空心块或纯色方块——2026-10-24 用户已两次纠正。
-- 依据：System Settings 对系统输入源按 `IPInputSource.iconImage` 实测的 **22×16** 渲染，
-  第三方输入源按 TIS 图标文件原尺寸显示；给 16×16 就会显示成方块。
+- **不要**改成 keycap、正方形、描边空心块或纯色方块——2026-10-24 用户经三轮纠正，
+  最终明确快捷键切换 HUD 必须是「无边框的 C」，系统设置/菜单栏也因此跟随同一形态。
+- 依据：`IPInputSource.iconImage` 对系统输入源实测渲染为 22×16，第三方输入源按
+  TIS 图标文件原尺寸显示；16×16 会显示成方块。
 - 改动图标（尺寸/形态/配色）**前必须先问用户**；改完必须跑
-  `./shims/macos/tests/equivalence.sh`（D 段尺寸/形态断言 + E 段与系统渲染尺寸比对）
+  `./shims/macos/tests/equivalence.sh`（D 段尺寸/无边框断言 + E 段与系统渲染尺寸比对）
   与 `./shims/macos/build/icon-size`，不许改测试/降断言来“通过”。
 - 详细要求与验收清单见 `shims/macos/README.md`「图标要求（用户确认，禁止回退）」。
 

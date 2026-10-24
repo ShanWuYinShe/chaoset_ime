@@ -67,16 +67,17 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
-  note "== D. 图标规范检查：系统同款扁平 keycap / 纯字形 / 应用图标三大契约 =="
-  for f in ChaosetIME-input.tiff ChaosetIME-palette.tiff; do
+  note "== D. 图标规范检查：22×16 无边框字形 / 应用图标两大契约 =="
+  for f in ChaosetIME-input.tiff; do
     [ -f "$APP/Contents/Resources/$f" ] && ok "D.$f 已随 app 打包" || fail "D.$f 缺失"
   done
-  for f in ChaosetIME-menu.tiff ChaosetIME-icon2.tiff; do
+  for f in ChaosetIME-palette.tiff ChaosetIME-menu.tiff ChaosetIME-icon2.tiff; do
     [ ! -e "$APP/Contents/Resources/$f" ] && ok "D.$f 旧资源已移除" || fail "D.$f 旧资源仍残留"
   done
 
-  # 1) input.tiff 必须是系统同款「22×16 宽扁 keycap」：实心圆角按键 + 挖空字形
-  #    （16×16 正方形会被 System Settings 显示成方块，与系统原生 22×16 扁平按键不一致）
+  # 1) input.tiff 必须是「22×16 无边框纯字形 C」：
+  #    透明底、无按键底板/描边（系统设置、菜单栏、快捷键切换 HUD 三处共用这一份 TIS 图标；
+  #    HUD 要求无边框字形，系统设置与菜单栏也因此跟随同一形态）。
   swift -e '
   import AppKit
   let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-input.tiff"
@@ -84,34 +85,22 @@ if [ "$fails" -eq 0 ]; then
         let rep = img.representations.first(where: { $0.pixelsWide == 22 && $0.pixelsHigh == 16 }) as? NSBitmapImageRep,
         img.representations.contains(where: { $0.pixelsWide == 44 && $0.pixelsHigh == 32 }) else { exit(1) }
   func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
-  var sum = 0.0
-  var holes = 0
-  for y in 2..<14 {
-    for x in 2..<20 {
-      let v = a(x, y)
-      sum += Double(v)
-      if v < 0.1 { holes += 1 }
-    }
-  }
-  let mean = sum / 216.0
-  let corner = [a(0, 0), a(21, 0), a(0, 15), a(21, 15)].max()!
-  let edge = [a(0, 8), a(21, 8), a(11, 0), a(11, 15)].min()!
-  if mean >= 0.60 && holes >= 10 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
-  ' && ok "D.input.tiff 符合「22×16 实心圆角按键 + 挖空 C」系统同款扁平 keycap 契约" || fail "D.input.tiff 不是系统同款 22×16 扁平 keycap"
-
-  # 2) palette.tiff 必须无边框且无背景（仅单字符 C，22×16 同尺寸，供快捷键切换 HUD 使用）
-  swift -e '
-  import AppKit
-  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-palette.tiff"
-  guard let img = NSImage(contentsOfFile: p),
-        let rep = img.representations.first(where: { $0.pixelsWide == 22 && $0.pixelsHigh == 16 }) as? NSBitmapImageRep else { exit(1) }
-  func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
   var maxAlpha: CGFloat = 0
-  for y in 0..<16 { for x in 0..<22 { maxAlpha = max(maxAlpha, a(x, y)) } }
-  if a(0, 8) == 0 && a(3, 3) == 0 && maxAlpha > 0.8 { exit(0) } else { exit(2) }
-  ' && ok "D.palette.tiff 符合「22×16 无边框仅单字符 C」契约" || fail "D.palette.tiff 未通过契约检查"
+  var opaque = 0
+  for y in 0..<16 { for x in 0..<22 {
+    let v = a(x, y)
+    maxAlpha = max(maxAlpha, v)
+    if v > 0.9 { opaque += 1 }
+  } }
+  // 无边框/无底板：四角与四条边中点必须完全透明
+  let edge = [a(0, 0), a(21, 0), a(0, 15), a(21, 15), a(0, 8), a(21, 8), a(11, 0), a(11, 15)]
+  let edgeClear = edge.allSatisfy { $0 == 0 }
+  // 纯字形：不透明像素只占字形本身（远小于满幅按键），且字形存在
+  let glyphOnly = maxAlpha > 0.8 && opaque > 15 && opaque < 124
+  if edgeClear && glyphOnly { exit(0) } else { exit(2) }
+  ' && ok "D.input.tiff 符合「22×16 无边框纯字形 C」契约" || fail "D.input.tiff 不是 22×16 无边框纯字形"
 
-  # 3) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
+  # 2) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
   swift -e '
   import AppKit
   let p = "build/Resources/ChaosetIME.icns"
@@ -126,7 +115,7 @@ if [ "$fails" -eq 0 ]; then
   if isBgBlue && isWhiteC && isCyanS { exit(0) } else { exit(2) }
   ' && ok "D.ChaosetIME.icns 符合「方案3与方案4结合版」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
 
-  # 4) Info.plist 的输入源图标键必须全部指向上述两份模板图（系统设置/菜单栏/系统栏取这里）
+  # 3) Info.plist 的五个输入源图标键必须全部指向同一份无边框字形模板图
   PB=/usr/libexec/PlistBuddy
   P="$APP/Contents/Info.plist"
   MODE="ComponentInputModeDict:tsInputModeListKey:ime.chaoset.inputmethod.ChaosetIME.Pinyin"
@@ -138,11 +127,11 @@ if [ "$fails" -eq 0 ]; then
   expect_plist "tsInputMethodAlternateIconFileKey" "ChaosetIME-input.tiff"
   expect_plist "$MODE:tsInputModeMenuIconFileKey" "ChaosetIME-input.tiff"
   expect_plist "$MODE:tsInputModeAlternateMenuIconFileKey" "ChaosetIME-input.tiff"
-  expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-palette.tiff"
+  expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-input.tiff"
 fi
 
 # E. 渲染尺寸对齐：System Settings / 菜单栏显示的不是文件像素尺寸，而是
-#    IPInputSource.iconImage 的尺寸（系统输入源统一为宽扁 keycap；第三方按文件原尺寸）。
+#    IPInputSource.iconImage 的尺寸（系统输入源统一为 22×16；第三方按文件原尺寸）。
 #    这一步直接拿已安装的输入法与系统参考源比对，防止「文件看着对、系统里显示成方块」。
 if [ "$fails" -eq 0 ]; then
   note "== E. 输入源图标实际渲染尺寸（系统设置/菜单栏取的就是这个尺寸） =="

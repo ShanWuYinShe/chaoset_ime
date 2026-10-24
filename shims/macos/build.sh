@@ -34,8 +34,7 @@ iconutil -c icns build/Resources/ChaosetIME.iconset -o build/Resources/ChaosetIM
 echo "[4/5] 组装 app bundle..."
 mkdir -p "$APP/Contents/Resources"
 cp build/Resources/ChaosetIME.icns \
-   build/Resources/ChaosetIME-input.tiff \
-   build/Resources/ChaosetIME-palette.tiff "$APP/Contents/Resources/"
+   build/Resources/ChaosetIME-input.tiff "$APP/Contents/Resources/"
 
 # Info.plist 必须声明 ComponentInputModeDict（输入模式），TIS 才会把本壳
 # 枚举为可添加的输入源。除该字典外，以下三组键对齐同目录下可正常枚举的
@@ -146,7 +145,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModeAlternateMenuIconFileKey</key>
 				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModePaletteIconFileKey</key>
-				<string>ChaosetIME-palette.tiff</string>
+				<string>ChaosetIME-input.tiff</string>
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
