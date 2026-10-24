@@ -66,6 +66,48 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
+  note "== D. 图标规范检查：三大图标契约机器自证，防止样式回退 =="
+  # 1) menu.tiff 必须有边框与背景（扁平 C + 有背景有边框）
+  swift -e '
+  import AppKit
+  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-menu.tiff"
+  guard let img = NSImage(contentsOfFile: p),
+        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep else { exit(1) }
+  let borderAlpha = rep.colorAt(x: 0, y: 7)!.alphaComponent
+  let bgAlpha = rep.colorAt(x: 3, y: 3)!.alphaComponent
+  let cAlpha = rep.colorAt(x: 4, y: 8)!.alphaComponent
+  if borderAlpha > 0.5 && bgAlpha >= 0.15 && bgAlpha <= 0.35 && cAlpha > 0.8 { exit(0) } else { exit(2) }
+  ' && ok "D.menu.tiff 符合「扁平 C，有背景有边框」契约" || fail "D.menu.tiff 未通过契约检查"
+
+  # 2) palette.tiff 必须无边框且无背景（仅单字符 C）
+  swift -e '
+  import AppKit
+  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-palette.tiff"
+  guard let img = NSImage(contentsOfFile: p),
+        let rep = img.representations.first(where: { $0.pixelsWide == 16 }) as? NSBitmapImageRep else { exit(1) }
+  let edgeAlpha1 = rep.colorAt(x: 0, y: 7)!.alphaComponent
+  let edgeAlpha2 = rep.colorAt(x: 3, y: 3)!.alphaComponent
+  let cAlpha = rep.colorAt(x: 4, y: 8)!.alphaComponent
+  if edgeAlpha1 == 0 && edgeAlpha2 == 0 && cAlpha > 0.8 { exit(0) } else { exit(2) }
+  ' && ok "D.palette.tiff 符合「无边框仅单字符 C」契约" || fail "D.palette.tiff 未通过契约检查"
+
+  # 3) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
+  swift -e '
+  import AppKit
+  let p = "build/Resources/ChaosetIME.icns"
+  guard let img = NSImage(contentsOfFile: p),
+        let rep = img.representations.first(where: { $0.pixelsWide == 256 }) as? NSBitmapImageRep else { exit(1) }
+  let bgCol = rep.colorAt(x: 128, y: 200)!
+  let cCol = rep.colorAt(x: 84, y: 128)!
+  let sCol = rep.colorAt(x: 156, y: 128)!
+  let isBgBlue = bgCol.blueComponent > 0.7 && bgCol.redComponent < 0.3
+  let isWhiteC = cCol.redComponent > 0.9 && cCol.greenComponent > 0.9 && cCol.blueComponent > 0.9
+  let isCyanS = sCol.greenComponent > 0.7 && sCol.blueComponent > 0.8 && sCol.redComponent < 0.5
+  if isBgBlue && isWhiteC && isCyanS { exit(0) } else { exit(2) }
+  ' && ok "D.ChaosetIME.icns 符合「方案3与方案4结合版」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
+fi
+
+if [ "$fails" -eq 0 ]; then
   note "等价性检查全部通过"
 else
   note "等价性检查失败 $fails 项"

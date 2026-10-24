@@ -68,7 +68,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`，采用标准拼音模式命名避免与系统合成模式冲突） |
 | 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 采用分场景双重输入源图标：菜单与系统设置图标 `ChaosetIME-menu.tiff`（16×16 双帧带框按键底板模板，对齐 ABC `[A]` 与 拼音 `[拼]` 风格，系统设置列表与状态栏完全一致）；悬浮切换器图标 `ChaosetIME-palette.tiff`（16×16 透明底无外框纯字母「C」模板，对齐光标悬浮胶囊 HUD 原生风格）；应用图标 `ChaosetIME.icns` 采用极光电光蓝全幅底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），用于访达/启动台/活动监视器/系统设置的应用列表。 |
+| 图标契约 | 严格沉淀三层图标规范，由 `tests/equivalence.sh` 机器断言，杜绝反复：<br>1. **系统状态栏与系统设置（`ChaosetIME-menu.tiff`）**：扁平单字符「C」，带按键微圆角外边框与半透明按键背景底色（16×16 双帧模板 TIFF，外边框 alpha=1.0、底色 alpha≈0.22、字形 alpha=1.0），与原生 ABC `[A]` 及 简体拼音 `[拼]` 视觉统一。<br>2. **输入法选择器悬浮状态（`ChaosetIME-palette.tiff`）**：无边框仅单字符「C」（16×16 双帧纯字形模板 TIFF，背景完全透明、仅 C 区域 alpha=1.0），适配快捷键切换时的光标旁胶囊 HUD 风格。<br>3. **应用程序图标（`ChaosetIME.icns`）**：方案 3 与方案 4 结合版本。极光电光蓝全幅底板 + 扩散声波环 + 纯白与霓虹青「Cs」双字母标识 + 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如

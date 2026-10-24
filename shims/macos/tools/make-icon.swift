@@ -193,18 +193,25 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapIma
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
     if framed {
-        // 满幅微圆角按键底板（对齐系统 pinyin.tiff 规范：满幅微圆角，圆角半径 ≈ 0.16×高度）
-        let cornerR = CGFloat(bigH) * 0.16
-        let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bigW, height: bigH),
-                          cornerWidth: cornerR, cornerHeight: cornerR,
-                          transform: nil)
-        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
-        ctx.addPath(body)
+        // 状态栏与系统设置图标规范：扁平的单字符「C」，带圆角按键外边框与半透明按键背景底色
+        let inset = CGFloat(bigH) * 0.055
+        let keyRect = CGRect(x: inset, y: inset, width: CGFloat(bigW) - inset * 2, height: CGFloat(bigH) - inset * 2)
+        let cornerR = keyRect.height * 0.18
+        let keyPath = CGPath(roundedRect: keyRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
+
+        // 1. 半透明扁平按键面底色（alpha ≈ 0.22）
+        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 0.22)
+        ctx.addPath(keyPath)
         ctx.fillPath()
 
-        // 挖空单字符「C」：墨迹高度 ≈ 0.70×画布高
-        ctx.setBlendMode(.destinationOut)
-        let targetH = CGFloat(bigH) * 0.70
+        // 2. 实体微圆角按键外边框（alpha = 1.0）
+        ctx.setStrokeColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        ctx.setLineWidth(max(1.0, CGFloat(bigH) * 0.065))
+        ctx.addPath(keyPath)
+        ctx.strokePath()
+
+        // 3. 居中实心单字符「C」（alpha = 1.0）
+        let targetH = keyRect.height * 0.62
         func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
             let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
             let a = NSAttributedString(string: "C", attributes: [
@@ -213,26 +220,25 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, framed: Bool) -> NSBitmapIma
             let l = CTLineCreateWithAttributedString(a)
             return (l, CTLineGetBoundsWithOptions(l, .useGlyphPathBounds))
         }
-        var lo = CGFloat(bigH) * 0.3
-        var hi = CGFloat(bigH) * 4.0
-        var bestLine = metrics(CGFloat(bigH)).line
-        var bestBounds = metrics(CGFloat(bigH)).bounds
+        var lo = targetH * 0.5
+        var hi = targetH * 2.0
+        var bestLine = metrics(targetH).line
+        var bestBounds = metrics(targetH).bounds
         for _ in 0..<32 {
             let mid = (lo + hi) / 2
             let (l, b) = metrics(mid)
-            if b.height < targetH && b.width < CGFloat(bigW) * 0.82 { lo = mid } else { hi = mid }
+            if b.height < targetH && b.width < keyRect.width * 0.80 { lo = mid } else { hi = mid }
             bestLine = l
             bestBounds = b
         }
         let line = bestLine
         let glyphBounds = bestBounds
-        let optY = (CGFloat(bigH) - glyphBounds.height) / 2 - glyphBounds.minY + CGFloat(bigH) * 0.015
+        let optY = (keyRect.height - glyphBounds.height) / 2 - glyphBounds.minY + keyRect.minY + keyRect.height * 0.015
         ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
                                    y: optY)
         CTLineDraw(line, ctx)
-        ctx.setBlendMode(.normal)
     } else {
-        // 绘制纯字符「C」（无外框按键），墨迹高度 ≈ 0.74×画布高，与系统 A / 拼 视觉分量一致
+        // 快捷键切换悬浮指示器（图2胶囊 HUD）图标规范：透明底无外框纯字母「C」，墨迹高度 ≈ 0.74×画布高
         let targetH = CGFloat(bigH) * 0.74
         func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
             let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)

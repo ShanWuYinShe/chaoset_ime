@@ -151,8 +151,9 @@ fi
 #    不必再用终端（面向不用命令行的用户）。
 if [ -d build/ChaosetSetup.app ]; then
   mkdir -p "$HOME/Applications"
-  rm -rf "$HOME/Applications/ChaosetSetup.app"
-  cp -R build/ChaosetSetup.app "$HOME/Applications/"
+  rm -rf "$HOME/Applications/ChaosetSetup.app" "$HOME/Applications/Chaoset.app"
+  cp -R build/ChaosetSetup.app "$HOME/Applications/Chaoset.app"
+  ln -sfn "$HOME/Applications/Chaoset.app" "$HOME/Applications/ChaosetSetup.app"
   echo "已安装图形界面工具: ~/Applications/Chaoset.app（Finder/启动台里双击打开）"
 fi
 
