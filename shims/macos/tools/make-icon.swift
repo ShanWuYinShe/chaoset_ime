@@ -18,57 +18,136 @@ import ImageIO
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 
-// MARK: - 应用图标（.icns，彩色 C 按键风格）
+// MARK: - 应用图标（.icns，极光蓝全幅底板 + Cs 组合标志 + 拼音声调）
 
-/// 应用图标：深灰圆角按键底 + 白色粗体「C」，与输入源菜单栏模板图标的设计语言统一，
-/// 用于访达/启动台/活动监视器/系统设置等处。
+/// 应用图标：极光电光蓝渐变底板 + 声波光环 + 纯白立体「C」+ 霓虹青「s」+ 顶部拼音声调标志 + 底部 PINYIN。
+/// 完美融合现代双字母品牌标识（Cs）与输入法专属声调语言，质感通透、层次丰富、兼具视觉辨识度。
 func drawAppIcon(_ s: CGFloat) {
-    let inset = s * 0.065
-    let rect = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+    let inset = s * 0.08
+    let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
     let squircleR = rect.width * 0.224
+    guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-    // 大尺寸应用图标增加柔和自然的环境微投影
+    // 1. 底板柔和环境多层阴影
     if s >= 128 {
-        let shadow = NSShadow()
-        shadow.shadowBlurRadius = s * 0.038
-        shadow.shadowOffset = NSSize(width: 0, height: -s * 0.018)
-        shadow.shadowColor = NSColor(white: 0, alpha: 0.28)
-        shadow.set()
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.035), blur: s * 0.05, color: NSColor(white: 0, alpha: 0.38).cgColor)
+        let bgPath = CGPath(roundedRect: rect, cornerWidth: squircleR, cornerHeight: squircleR, transform: nil)
+        ctx.addPath(bgPath)
+        ctx.fillPath()
+        ctx.restoreGState()
     }
 
-    let body = NSBezierPath(roundedRect: rect, xRadius: squircleR, yRadius: squircleR)
+    // 2. 底板极光渐变 (Electric Azure -> Royal Blue -> Deep Sapphire)
+    ctx.saveGState()
+    let bgPath = CGPath(roundedRect: rect, cornerWidth: squircleR, cornerHeight: squircleR, transform: nil)
+    ctx.addPath(bgPath)
+    ctx.clip()
+    let bgGrad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                            colors: [
+                                NSColor(srgbRed: 0.14, green: 0.58, blue: 1.0, alpha: 1.0).cgColor,  // #2494FF
+                                NSColor(srgbRed: 0.08, green: 0.35, blue: 0.94, alpha: 1.0).cgColor, // #145AF0
+                                NSColor(srgbRed: 0.06, green: 0.16, blue: 0.68, alpha: 1.0).cgColor  // #0F2AAD
+                            ] as CFArray, locations: [0.0, 0.52, 1.0])!
+    ctx.drawLinearGradient(bgGrad, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
 
-    // 深灰渐变底色（与系统 ABC/拼 的按键色调一致）
-    let grad = NSGradient(colors: [
-        NSColor(srgbRed: 0.30, green: 0.30, blue: 0.32, alpha: 1),
-        NSColor(srgbRed: 0.18, green: 0.18, blue: 0.20, alpha: 1),
-    ])!
-    grad.draw(in: body, angle: -90)
+    // 3. 背景同心声波扩散光弧 (大于 64 像素时呈现精密纹理，小尺寸保持纯净)
+    if s >= 64 {
+        ctx.setLineWidth(max(0.8, s * 0.005))
+        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.13).cgColor)
+        for rStep in [0.28, 0.44, 0.60] {
+            let arcR = rect.width * CGFloat(rStep)
+            let arcRect = CGRect(x: rect.midX - arcR, y: rect.midY - arcR, width: arcR * 2, height: arcR * 2)
+            ctx.addEllipse(in: arcRect)
+            ctx.strokePath()
+        }
+    }
 
-    if s >= 128 { NSShadow().set() }
+    // 顶沿透光玻璃细线
+    let rim = CGPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerWidth: squircleR - 1, cornerHeight: squircleR - 1, transform: nil)
+    ctx.setLineWidth(max(1.0, s * 0.008))
+    ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.45).cgColor)
+    ctx.addPath(rim)
+    ctx.strokePath()
+    ctx.restoreGState()
 
-    // 顶部微弱透光高光细边
-    let rim = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: squircleR - 0.5, yRadius: squircleR - 0.5)
-    rim.lineWidth = max(0.8, s * 0.008)
-    NSColor(white: 1.0, alpha: 0.18).setStroke()
-    rim.stroke()
+    // 4. 「Cs」核心字母排版（大写立体纯白 C + 荧光霓虹青 s）
+    let cFontSize = rect.height * 0.50
+    let cFont = NSFont(name: "AvenirNext-Heavy", size: cFontSize)
+        ?? NSFont(name: "HelveticaNeue-Bold", size: cFontSize)
+        ?? NSFont.boldSystemFont(ofSize: cFontSize)
 
-    // 白色粗体「C」（与菜单栏小图标统一）
-    let fontSize = s * 0.52
-    let font = NSFont(name: "Helvetica-Bold", size: fontSize) ?? NSFont.boldSystemFont(ofSize: fontSize)
-    let glyphShadow = NSShadow()
-    glyphShadow.shadowBlurRadius = max(1.0, s * 0.012)
-    glyphShadow.shadowOffset = NSSize(width: 0, height: -max(0.5, s * 0.008))
-    glyphShadow.shadowColor = NSColor(white: 0, alpha: 0.5)
+    let cShadow = NSShadow()
+    if s >= 64 {
+        cShadow.shadowBlurRadius = max(2.0, s * 0.03)
+        cShadow.shadowOffset = NSSize(width: 0, height: -max(1.0, s * 0.012))
+        cShadow.shadowColor = NSColor(srgbRed: 0.02, green: 0.06, blue: 0.45, alpha: 0.65)
+    }
 
-    let text = NSAttributedString(string: "C", attributes: [
-        .font: font,
+    let cAttr: [NSAttributedString.Key: Any] = [
+        .font: cFont,
         .foregroundColor: NSColor.white,
-        .shadow: glyphShadow,
-    ])
-    let size = text.size()
-    // 光学居中：大写 C 弧形底部视觉偏低，微调 +0.02s 提升
-    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.02))
+        .shadow: cShadow
+    ]
+    let cText = NSAttributedString(string: "C", attributes: cAttr)
+    let cSize = cText.size()
+
+    let sFontSize = cFontSize * 0.70
+    let sFont = NSFont(name: "AvenirNext-Bold", size: sFontSize)
+        ?? NSFont.systemFont(ofSize: sFontSize, weight: .bold)
+    let sShadow = NSShadow()
+    if s >= 64 {
+        sShadow.shadowBlurRadius = max(1.5, s * 0.025)
+        sShadow.shadowOffset = NSSize(width: 0, height: -max(0.8, s * 0.01))
+        sShadow.shadowColor = NSColor(srgbRed: 0.02, green: 0.06, blue: 0.45, alpha: 0.55)
+    }
+
+    let sAttr: [NSAttributedString.Key: Any] = [
+        .font: sFont,
+        .foregroundColor: NSColor(srgbRed: 0.35, green: 0.88, blue: 1.0, alpha: 1.0),
+        .shadow: sShadow
+    ]
+    let sText = NSAttributedString(string: "s", attributes: sAttr)
+    let sSize = sText.size()
+
+    let totalW = cSize.width + sSize.width * 0.90
+    let startX = (s - totalW) / 2
+    let cY = rect.midY - cSize.height / 2 + s * 0.012
+    let sY = rect.midY - sSize.height / 2 - s * 0.005
+
+    cText.draw(at: NSPoint(x: startX, y: cY))
+    sText.draw(at: NSPoint(x: startX + cSize.width - sSize.width * 0.10, y: sY))
+
+    // 5. 顶部拼音声调标志（Macron 平声音调 `¯`）
+    let toneW = cSize.width * 0.60
+    let toneH = max(3.5, s * 0.018)
+    let toneX = startX + (cSize.width - toneW) / 2
+    let toneY = cY + cSize.height * 0.88
+    let toneRect = CGRect(x: toneX, y: toneY, width: toneW, height: toneH)
+    let tonePath = CGPath(roundedRect: toneRect, cornerWidth: toneH / 2, cornerHeight: toneH / 2, transform: nil)
+
+    ctx.saveGState()
+    if s >= 64 {
+        ctx.setShadow(offset: CGSize(width: 0, height: 0), blur: s * 0.02, color: NSColor(srgbRed: 0.3, green: 0.85, blue: 1.0, alpha: 0.85).cgColor)
+    }
+    ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.96, blue: 1.0, alpha: 1.0).cgColor)
+    ctx.addPath(tonePath)
+    ctx.fillPath()
+    ctx.restoreGState()
+
+    // 6. 底部微标「PINYIN」字标（在大于等于 128 像素尺寸显示，小尺寸自动隐去以保清晰）
+    if s >= 128 {
+        let subFont = NSFont(name: "SF Pro Text Bold", size: s * 0.038)
+            ?? NSFont.systemFont(ofSize: s * 0.038, weight: .bold)
+        let subAttr: [NSAttributedString.Key: Any] = [
+            .font: subFont,
+            .foregroundColor: NSColor(white: 1.0, alpha: 0.75),
+            .kern: 3.0
+        ]
+        let subText = NSAttributedString(string: "PINYIN", attributes: subAttr)
+        let subSize = subText.size()
+        subText.draw(at: NSPoint(x: (s - subSize.width) / 2, y: rect.minY + rect.height * 0.11))
+    }
 }
 
 /// 应用图标单帧：方形画布上居中画 C 键帽徽标（彩色，用于访达/启动台/活动监视器/系统设置应用列表）。
