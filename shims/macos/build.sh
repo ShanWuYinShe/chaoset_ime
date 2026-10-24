@@ -102,7 +102,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<dict>
 		<key>tsInputModeListKey</key>
 		<dict>
-			<key>ime.chaoset.inputmethod.ChaosetIME.Hans</key>
+			<key>ime.chaoset.inputmethod.ChaosetIME.Pinyin</key>
 			<dict>
 				<key>TISIconIsTemplate</key>
 				<true/>
@@ -112,7 +112,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 					<string>C</string>
 				</dict>
 				<key>TISInputSourceID</key>
-				<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
+				<string>ime.chaoset.inputmethod.ChaosetIME.Pinyin</string>
 				<key>TISIntendedLanguage</key>
 				<string>zh-Hans</string>
 				<key>tsInputModeCharacterRepertoireKey</key>
@@ -132,12 +132,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
-				<string>smSimpChinese</string>
+				<string>smUnicodeScript</string>
 			</dict>
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>
 		<array>
-			<string>ime.chaoset.inputmethod.ChaosetIME.Hans</string>
+			<string>ime.chaoset.inputmethod.ChaosetIME.Pinyin</string>
 		</array>
 	</dict>
 </dict>
@@ -162,6 +162,7 @@ for spec in "en:$NAME_EN" "zh-Hans:$NAME_ZH" "zh_CN:$NAME_ZH"; do
 "CFBundleName" = "$name";
 "ime.chaoset.inputmethod.ChaosetIME" = "$name";
 "ime.chaoset.inputmethod.ChaosetIME.Hans" = "$name";
+"ime.chaoset.inputmethod.ChaosetIME.Pinyin" = "$name";
 STR
 done
 plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings

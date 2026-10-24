@@ -16,7 +16,7 @@ import UniformTypeIdentifiers
 let imeTargetBundleName = "ChaosetIME.app"
 let imeResourceBundleName = "ChaosetIME.embedded"
 let sourceID = "ime.chaoset.inputmethod.ChaosetIME"
-let modeID = "ime.chaoset.inputmethod.ChaosetIME.Hans"
+let modeID = "ime.chaoset.inputmethod.ChaosetIME.Pinyin"
 
 func res(_ name: String) -> String { (Bundle.main.resourcePath ?? ".") + "/" + name }
 func supportDir() -> String { NSHomeDirectory() + "/Library/Application Support/chaoset" }

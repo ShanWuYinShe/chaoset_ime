@@ -25,8 +25,8 @@ if [ -d "$IM/ChaosetIME.app" ]; then
   echo "旧输入法已备份: $bak"
 fi
 # 清理可能遗留的旧备份 app
-rm -rf "$IM"/ChaosetIME.app.bak.* "$IM"/ChaosetIME.app.old.* 2>/dev/null || true
-cp -R "$APP" "$IM/"
+rm -rf "$IM"/ChaosetIME.app.bak.* "$IM"/ChaosetIME.app.old.* "$IM/ChaosetIME.app" 2>/dev/null || true
+ditto "$APP" "$IM/ChaosetIME.app"
 echo "已安装: $IM/ChaosetIME.app"
 
 # 让 LaunchServices 认识新拷贝的 bundle：imklaunchagent 按需拉起输入法走
@@ -55,9 +55,11 @@ if [ -x build/tis ]; then
     fi
     echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
   done
-  # 仅启用具体的输入模式 Hans，绝不单独启用父级容器 bundle（否则状态栏与切换 HUD 会出现两个相同的 Chaoset 图标）
-  build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
-  build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
+  # 禁用旧模式与父级容器 bundle，仅启用全新的单一 Pinyin 模式
+  build/tis disable "ime.chaoset.inputmethod.ChaosetIME.Hans" 2>/dev/null || true
+  build/tis disable "ime.chaoset.inputmethod.ChaosetIME" 2>/dev/null || true
+  build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
+  build/tis select "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
   build/tis sync || true
 
   # 重启输入法进程以加载新 bundle（使用 open -a 单实例拉起，杜绝多重进程）

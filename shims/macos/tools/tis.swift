@@ -33,6 +33,13 @@ func syncHIToolboxPreferences(enableSourceID: String) {
 
     var current = (CFPreferencesCopyAppValue(key, appID) as? [[String: Any]]) ?? []
 
+    // 清理旧版本可能残留的历史模式条目（如 Hans）
+    current.removeAll {
+        ($0["Bundle ID"] as? String) == "ime.chaoset.inputmethod.ChaosetIME" &&
+        ($0["Input Mode"] as? String) != nil &&
+        ($0["Input Mode"] as? String) != enableSourceID
+    }
+
     for source in allSources() where prop(source, kTISPropertyInputSourceID) == enableSourceID {
         let bId = prop(source, kTISPropertyBundleID)
         let type = prop(source, kTISPropertyInputSourceType)
@@ -155,13 +162,34 @@ case "select":
     FileHandle.standardError.write(Data("未找到输入源 \(want)\n".utf8))
     exit(1)
 
-case "sync":
-    // 禁用父容器输入源（仅保留具体 Mode），防止父容器被误识别为第二套输入法从而在状态栏和切换器中重复出现
-    for source in allSources() where prop(source, kTISPropertyInputSourceID) == "ime.chaoset.inputmethod.ChaosetIME" {
-        _ = TISDisableInputSource(source)
+case "disable":
+    guard args.count >= 3 else {
+        FileHandle.standardError.write(Data("用法: tis disable <输入源ID>\n".utf8))
+        exit(2)
     }
-    syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Hans")
-    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项（已排除父容器冗余项）")
+    let want = args[2]
+    var found = false
+    for source in allSources() where prop(source, kTISPropertyInputSourceID) == want {
+        let status = TISDisableInputSource(source)
+        print("disable \(want): \(status) \(status == noErr ? "(成功)" : "(失败)")")
+        found = true
+        break
+    }
+    if !found {
+        print("未找到输入源 \(want)（跳过禁用）")
+    }
+    exit(0)
+
+case "sync":
+    // 禁用父容器及旧模式输入源，仅保留单一具体的 Pinyin Mode
+    for source in allSources() {
+        let id = prop(source, kTISPropertyInputSourceID)
+        if id == "ime.chaoset.inputmethod.ChaosetIME" || id == "ime.chaoset.inputmethod.ChaosetIME.Hans" {
+            _ = TISDisableInputSource(source)
+        }
+    }
+    syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")
+    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项（已排除父容器与旧模式冗余项）")
     exit(0)
 
 case "list":
