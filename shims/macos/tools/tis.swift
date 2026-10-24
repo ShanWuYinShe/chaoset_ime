@@ -156,9 +156,12 @@ case "select":
     exit(1)
 
 case "sync":
-    syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME")
+    // 禁用父容器输入源（仅保留具体 Mode），防止父容器被误识别为第二套输入法从而在状态栏和切换器中重复出现
+    for source in allSources() where prop(source, kTISPropertyInputSourceID) == "ime.chaoset.inputmethod.ChaosetIME" {
+        _ = TISDisableInputSource(source)
+    }
     syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Hans")
-    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项")
+    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项（已排除父容器冗余项）")
     exit(0)
 
 case "list":

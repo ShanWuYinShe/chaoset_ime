@@ -41,6 +41,9 @@ if [ -x build/tis ]; then
   # 输入菜单里本输入法变灰/不可用（com.apple.inputsources 里仍有启用记录）。
   # 所以先等重建结束，再登记并确认系统表里能看到（2026-10-22 实测）。
   sleep 2
+  # 清理本地 build 目录在 LaunchServices 中的旧登记，杜绝多路径被 TIS 索引导致重复输入法
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u build/ChaosetIME.app 2>/dev/null || true
+
   for i in 1 2 3; do
     build/tis register "$IM/ChaosetIME.app" || true
     sleep 1
@@ -49,10 +52,7 @@ if [ -x build/tis ]; then
     fi
     echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
   done
-  # 与官方 Squirrel postinstall 的 --enable-input-source / --select-input-source 对应：
-  # 尽力把本输入法加入"已启用"列表并选中。系统输入源表尚未收录时这两步会失败，
-  # 属正常现象，失败不影响后续流程。
-  build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
+  # 仅启用具体的输入模式 Hans，绝不单独启用父级容器 bundle（否则状态栏与切换 HUD 会出现两个相同的 Chaoset 图标）
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis sync || true
