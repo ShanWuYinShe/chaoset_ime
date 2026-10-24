@@ -11,12 +11,12 @@ on:
 jobs:
   test:
     name: 格式 / 静态检查 / 测试 / 构建
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -38,10 +38,10 @@ jobs:
     runs-on: macos-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -58,7 +58,7 @@ jobs:
           (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaoset-macos
           path: dist/chaoset-macos.zip
@@ -66,13 +66,13 @@ jobs:
 
   package-linux:
     name: 打包 Linux (IBus Engine + 资源)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -82,7 +82,7 @@ jobs:
           make package-linux
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaoset-linux-x86_64
           path: dist/chaoset-linux-x86_64.tar.gz
@@ -90,13 +90,13 @@ jobs:
 
   package-windows:
     name: 打包 Windows (TSF DLL + TCP Daemon)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -110,7 +110,7 @@ jobs:
           make package-windows
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaoset-windows-x64
           path: dist/chaoset-windows-x64.zip
@@ -120,32 +120,32 @@ jobs:
     name: 发布 GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [package-macos, package-linux, package-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 下载 macOS 产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: chaoset-macos
           path: dist
 
       - name: 下载 Linux 产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: chaoset-linux-x86_64
           path: dist
 
       - name: 下载 Windows 产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: chaoset-windows-x64
           path: dist
 
       - name: 创建 Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/chaoset-macos.zip
