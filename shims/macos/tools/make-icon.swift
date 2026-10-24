@@ -165,23 +165,32 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// ⚠️ 用户最终明确要求（2026-10-24 三次纠正），禁止回退：
-//    输入源图标 = **22×16 无边框纯字形「C」**（透明底，无按键底板、无描边、无方框）。
-//    它在三个场景共用同一份 TIS 图标，macOS 不会给第三方输入法做场景区分：
-//      1) 系统设置「添加输入法」列表 / 输入源列表；
-//      2) 菜单栏（系统栏）输入菜单；
-//      3) 快捷键切换时光标旁的输入法选择器 HUD。
-//    用户先是否定了「描边空心块」，再否定「正方形」，最后明确 HUD 必须是「无边框的 C」——
-//    因为 HUD / 系统设置 / 菜单栏读的是同一个 TIS 图标，所以唯一自洽的形态就是无边框字形。
-//    不要改成 keycap/方块；动尺寸/形态/配色前必须先问用户，并同步 README 与测试。
+// ⚠️ 用户最终明确要求（2026-10-24 四次纠正），禁止回退：
+//    同一个输入法在**不同场景用不同 TIS 图标键**，需要两份 22×16 模板图：
+//      1) System Settings「添加输入法」列表 → 读 bundle 级图标
+//         （tsInputMethodIconFileKey / tsInputMethodAlternateIconFileKey）
+//         → `ChaosetIME-input.tiff`：**22×16 宽扁 keycap**（实心圆角按键 + alpha 挖空「C」），
+//         与系统 ABC「A」/ 简体拼音「拼」在 System Settings 里的样式一致；
+//      2) 快捷键切换 HUD（光标旁选择器）→ 读 mode 级图标
+//         （tsInputModeMenuIconFileKey / tsInputModeAlternateMenuIconFileKey）
+//         → `ChaosetIME-hud.tiff`：**22×16 无边框纯字形「C」**（透明底、无底板、无描边）；
+//      3) mode palette 键同用 hud 图（输入法调色板/菜单系 UI 与 HUD 同风格）。
+//    实测依据（2026-10-24，本机 macOS 15.8.1，探针验证）：
+//      - 把 bundle 级图标设为 keycap、mode 级设为字形后：
+//        `IPInputSource.iconImage` 取到 keycap（System Settings 显示 keycap），
+//        合成 HUD 显示无边框字形 —— 两处确实读不同的键，可以分别满足。
+//      - 早前把五个键都指向同一文件，才会出现「改一处另一处跟着变」。
+//    不要合并回单文件、不要改成 16×16 正方形/描边空心块；
+//    动尺寸/形态/配色前必须先问用户，并同步 README 与 equivalence 断言。
 //
-// 规格依据（2026-10-24 实测）：
+// 规格依据：
 //   - 尺寸：系统输入源的 `IPInputSource.iconImage` 实测为 22×16（44×32 @2x）；第三方
 //     输入源按 TIS 图标文件**原尺寸**显示（16×16 会显示成方块，22×16 才是系统同款比例）。
 //   - 双帧模板 TIFF：22×16@72dpi (1x) + 44×32@144dpi (2x)、LZW、ExtraSamples=2（非预乘）；
 //   - RGB 恒为 (0,0,0)，形状完全由 alpha 表达；template 渲染后即随浅/深色自动反色；
-//   - 字形只用单字符「C」：系统内置输入源全部单字符（ABC「A」、简体拼音「拼」…）；
-//     墨迹高度 ≈ 0.74×画布高，居中；无任何背景/边框。
+//   - 字形只用单字符「C」：系统内置输入源全部单字符（ABC「A」、简体拼音「拼」…）。
+//   - keycap：满幅实心圆角按键（半径 0.20×高），字形从 alpha 挖空（destinationOut）；
+//   - 字形：墨迹高度 ≈ 0.74×画布高，居中；无任何背景/边框。
 //
 // 实现要点：先在 8× 超采样画布上用 CGBitmapContext 画字形，再用 alphaOnly 灰度上下文
 // 读出 alpha、降采样写入 NSBitmapImageRep。CGBitmapContext 原点在左下，读回第 0 行是
@@ -217,8 +226,9 @@ private func drawCenteredGlyph(_ text: String, targetH: CGFloat, maxWidth: CGFlo
     CTLineDraw(bestLine, ctx)
 }
 
-/// 生成输入源模板图单帧（22×16 画布）：透明底无边框纯字形「C」。
-func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
+/// 生成输入源模板图单帧（22×16 画布）。keycap=true 为系统同款扁平按键
+/// （实心圆角 + 挖空字形，供 System Settings）；false 为透明底无边框纯字形（供 HUD）。
+func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapImageRep {
     let pxW = ptW * scale
     let pxH = ptH * scale
     let ss = 8                      // 针对当前 scale 的超采样倍数
@@ -236,8 +246,24 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    // 透明底无边框纯字形「C」：系统设置 / 菜单栏 / 快捷键切换 HUD 共用同一份 TIS 图标
-    drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.74, maxWidth: CGFloat(bigW) * 0.82, in: ctx)
+    if keycap {
+        // 1) 满幅实心圆角按键：圆角半径 0.20×高度（系统 pinyin.tiff 实测约 3/16）
+        let radius = CGFloat(bigH) * 0.20
+        let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: CGFloat(bigW), height: CGFloat(bigH)),
+                          cornerWidth: radius, cornerHeight: radius, transform: nil)
+        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+        ctx.addPath(body)
+        ctx.fillPath()
+
+        // 2) 把单字符「C」从 alpha 里挖空（destinationOut）：字形处 alpha=0，
+        //    模板渲染后即「实心按键 + 反白字形」，与系统 ABC / 简体拼音一致。
+        ctx.setBlendMode(.destinationOut)
+        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.72, maxWidth: CGFloat(bigW) * 0.62, in: ctx)
+        ctx.setBlendMode(.normal)
+    } else {
+        // HUD：透明底无边框纯字形「C」，墨迹高度 ≈ 0.74×画布高
+        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.74, maxWidth: CGFloat(bigW) * 0.82, in: ctx)
+    }
 
     // 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
     guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
@@ -283,7 +309,7 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     return rep
 }
 
-func writeInputSourceTiff(_ path: String) {
+func writeInputSourceTiff(_ path: String, keycap: Bool) {
     // 22×16：与系统输入源 IPInputSource.iconImage 的实际渲染尺寸一致
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
         (22, 16, 1, 72),
@@ -298,7 +324,7 @@ func writeInputSourceTiff(_ path: String) {
     for frame in frames {
         let pxW = frame.ptW * frame.scale
         let pxH = frame.ptH * frame.scale
-        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale).cgImage else {
+        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale, keycap: keycap).cgImage else {
             fatalError("输入源图标取 CGImage 失败")
         }
         let pngPath = tmpDir + "/icon_\(pxW)x\(pxH).png"
@@ -397,12 +423,17 @@ for base in [16, 32, 128, 256, 512] {
     }
 }
 
-// 输入源图标：系统设置 / 菜单栏 / 快捷键切换 HUD 共用同一份 22×16 无边框纯字形「C」
-//（macOS 不给第三方输入法做场景区分，同一 TIS 图标会被三处共用）
+// 1. System Settings「添加输入法」列表 / 输入源列表：bundle 级图标键读这份
+//    → 系统同款 22×16 宽扁 keycap（实心圆角按键 + 挖空「C」）
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-input.tiff").path)
+    .appendingPathComponent("ChaosetIME-input.tiff").path, keycap: true)
 
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-input.tiff（22×16 无边框纯字形 C）")
+// 2. 快捷键切换 HUD（光标旁选择器）/ 输入菜单 mode 图标：mode 级图标键读这份
+//    → 22×16 无边框纯字形「C」（透明底、无底板/描边）
+writeInputSourceTiff(URL(fileURLWithPath: outDir)
+    .appendingPathComponent("ChaosetIME-hud.tiff").path, keycap: false)
+
+print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-input.tiff（System Settings keycap）与 ChaosetIME-hud.tiff（HUD 无边框字形）")
 
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 
