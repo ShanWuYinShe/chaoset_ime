@@ -68,40 +68,44 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`，采用标准拼音模式命名避免与系统合成模式冲突） |
 | 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **System Settings 输入源图标（`ChaosetIME-input.tiff`，bundle 级键）**：**22×16 宽扁 keycap**——双帧模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为满幅实心圆角按键并把「C」挖空，系统设置里的显示样式与系统输入法一致。<br>2. **快捷键切换 HUD 图标（`ChaosetIME-hud.tiff`，mode 级菜单/调色板键）**：**22×16 无边框纯字形「C」**——同规格双帧模板 TIFF，透明底、无底板/描边，光标旁选择器显示为无边框 C。<br>3. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
+| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **输入源图标（`ChaosetIME-input.tiff`，五个 TIS 图标键全部指向它）**：**22×16 宽扁 keycap**——双帧模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为满幅实心圆角按键并把「C」挖空。System Settings、菜单栏（系统栏）、快捷键切换 HUD 统一同一形态（macOS 只有 bundle/mode 两套图标记号，菜单栏与 HUD 共用 mode 级，无法再分）。<br>2. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 ### 图标要求（用户确认，禁止回退）
 
-同一输入法在**不同场景使用不同 TIS 图标键**，因此需要两份 22×16 模板图（2026-10-24 探针验证）：
+**输入源图标 = 22×16 宽扁 keycap**：满幅实心圆角按键 + alpha 挖空单字符「C」，
+五个 TIS 图标键（bundle 级 + mode 级）全部指向 `ChaosetIME-input.tiff`。
+System Settings「添加输入法」列表、菜单栏（系统栏）、快捷键切换 HUD 统一同一形态。
 
-| 场景 | 读取的 TIS 键 | 图标文件 | 形态 |
-| --- | --- | --- | --- |
-| System Settings「添加输入法」列表 / 输入源列表 | bundle 级 `tsInputMethodIconFileKey` / `tsInputMethodAlternateIconFileKey` | `ChaosetIME-input.tiff` | **22×16 宽扁 keycap**（实心圆角按键 + 挖空「C」） |
-| 快捷键切换 HUD（光标旁选择器） | mode 级 `tsInputModeMenuIconFileKey` / `tsInputModeAlternateMenuIconFileKey` | `ChaosetIME-hud.tiff` | **22×16 无边框纯字形「C」** |
-| 输入法调色板 | mode 级 `tsInputModePaletteIconFileKey` | `ChaosetIME-hud.tiff` | 同 HUD |
-
-这是用户 2026-10-24 经四轮反馈后的最终要求：System Settings 保持系统同款扁平 keycap，
-快捷键切换 HUD 里必须是无边框的 C。
+为什么不做分场景拆分（2026-10-25 探针实测，结论已用户确认）：
+- macOS 对第三方输入法只有 **两套**图标记号：
+  - bundle 级 `tsInputMethodIconFileKey` / `tsInputMethodAlternateIconFileKey`
+    → System Settings「添加输入法」列表 / 输入源列表；
+  - mode 级 `tsInputModeMenuIconFileKey` / `tsInputModeAlternateMenuIconFileKey` / palette
+    → 快捷键切换 HUD **以及**菜单栏（系统栏）/ 输入菜单。
+- 验证方式：bundle 级 = keycap、mode 级 = 无边框字形、palette = 第三个标记字形，
+  分别测量 `IPInputSource.iconImage`（System Settings 结果键）与合成
+  `TUINSCursorUISwitcher`（HUD 读 mode 键）；另用 `TextInputMenuUI` 的 `InputSource`
+  确认菜单栏标题图取 mode 级图标（`kTISPropertyIconImageURL` 对 mode 返回 mode 级文件）。
+- 因此 **没有** 第三套键可把「菜单栏」与「HUD」再分开：无法做到
+  「系统设置+系统栏 keycap、HUD 无边框字形」。
+- 用户 2026-10-25 确认该限制后选择：**统一为扁平带边框 keycap 版本**，
+  避免同一输入法在不同系统位置形态不一致。
 
 关键事实（实测，勿凭记忆）：
 - 尺寸：`IPInputSource -iconImage` 对系统输入源实测渲染为 **22×16 pt（44×32 @2x）**；
   第三方输入源按 TIS 图标文件的**原始尺寸**显示（16×16 会显示成方块）。
-- 场景拆分：把 bundle 级键指向 keycap、mode 级键指向字形后，
-  `IPInputSource.iconImage` 取到 keycap（System Settings），合成 HUD
-  （`TUINSCursorUISwitcher`）显示无边框字形——两者读的是不同键，可同时满足。
-  早期把五个键都指向同一文件，才会出现「改 HUD 连带改系统设置」。
-- 渲染方式：`TISIconIsTemplate=true`，系统按 alpha 着色；图标只需用 alpha 表达「C」，
-  RGB 恒 0；keycap 用满幅圆角 alpha + 字形挖空，字形用透明底无边框。
+- 渲染方式：`TISIconIsTemplate=true`，系统按 alpha 着色；图标只需用 alpha 表达形状，
+  RGB 恒 0；keycap 用满幅圆角 alpha + 字形挖空。
 - 复核命令：`./build/icon-size`（与本机 System Settings `iconImage` 尺寸比对）；
-  `tiffutil -info build/Resources/ChaosetIME-{input,hud}.tiff` 复核双帧与 DPI。
+  `tiffutil -info build/Resources/ChaosetIME-input.tiff` 复核双帧与 DPI。
 
 改动与验收清单（**动尺寸/形态/配色/键映射前先问用户**）：
 1. 只改 `tools/make-icon.swift` 的 `inputSourceRep` / `writeInputSourceTiff` 与
-   `build.sh` 的图标键映射，保持两份图 22×16 + 44×32 双帧、72/144 DPI、RGB=0、
-   ExtraSamples=2；input=keycap、hud=无边框字形；
-2. `./build.sh` → `./tests/equivalence.sh`（D 段断言两份图契约 + 键映射，E 段比对渲染尺寸）；
-3. `./install.sh`（普通终端）后重开系统设置 / 触发一次快捷键切换，目检两处图标；
+   `build.sh` 的图标键映射，保持 22×16 + 44×32 双帧、72/144 DPI、RGB=0、
+   ExtraSamples=2、实心按键 + 挖空「C」，五个键指向同一文件；
+2. `./build.sh` → `./tests/equivalence.sh`（D 段断言 keycap 契约 + 键映射，E 段比对渲染尺寸）；
+3. `./install.sh`（普通终端）后重开系统设置 / 触发一次快捷键切换，目检各处图标一致；
 4. **禁止**改测试或降低断言来“通过”。
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
@@ -478,6 +482,17 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
     `ChaosetIME-hud.tiff`（无边框字形，mode 级键），mode palette 键同用 hud 图。
     `tests/equivalence.sh` 改为双契约 + 键映射断言（并保留 E 段渲染尺寸比对），
     `AGENTS.md` 与本 README 同步更新；System Settings 与 HUD 现在各自正确。
+  - **2026-10-25 最终统一（用户确认 macOS 限制后决定）**：用户要求先确认 macOS 是否
+    不支持「系统设置+系统栏 keycap、HUD 无边框字形」这种区分。探针实测结论：
+    - System Settings → bundle 级图标键；
+    - 快捷键切换 HUD **与菜单栏（系统栏）** → mode 级图标键
+      （`TISGetInputSourceProperty(kTISPropertyIconImageURL)` 对 mode 返回 mode 级文件；
+      `TextInputMenuUI` 的 `InputSource` 菜单栏标题图也取 mode 级图标）；
+    - macOS 只有 bundle/mode 两套图标记号，**没有第三套**可把菜单栏与 HUD 分开，
+      所以第三方输入法无法同时满足「系统栏 keycap + HUD 无边框字形」。
+    用户确认后选择「统一用扁平的带边框版本」：恢复单一 `ChaosetIME-input.tiff`
+    （22×16 实心圆角 keycap + 挖空 C），五个图标键全部指向它，删除 hud 变体；
+    `tests/equivalence.sh` 改为单 keycap 契约 + 五键一致断言，`AGENTS.md` 与本 README 同步。
 
 ## 已知限制
 

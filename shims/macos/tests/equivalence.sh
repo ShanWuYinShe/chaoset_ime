@@ -67,16 +67,17 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
-  note "== D. 图标规范检查：System Settings keycap / HUD 字形双契约 + 应用图标 =="
-  for f in ChaosetIME-input.tiff ChaosetIME-hud.tiff; do
+  note "== D. 图标规范检查：22×16 扁平 keycap（全场景统一）+ 应用图标 =="
+  for f in ChaosetIME-input.tiff; do
     [ -f "$APP/Contents/Resources/$f" ] && ok "D.$f 已随 app 打包" || fail "D.$f 缺失"
   done
-  for f in ChaosetIME-palette.tiff ChaosetIME-menu.tiff ChaosetIME-icon2.tiff; do
+  for f in ChaosetIME-hud.tiff ChaosetIME-palette.tiff ChaosetIME-menu.tiff ChaosetIME-icon2.tiff; do
     [ ! -e "$APP/Contents/Resources/$f" ] && ok "D.$f 旧资源已移除" || fail "D.$f 旧资源仍残留"
   done
 
-  # 1) input.tiff（bundle 级图标键，System Settings「添加输入法」列表读它）
-  #    必须是系统同款「22×16 宽扁 keycap」：实心圆角按键 + 挖空字形。
+  # 1) input.tiff 必须是系统同款「22×16 宽扁 keycap」：实心圆角按键 + 挖空字形。
+  #    五个 TIS 图标键（bundle 级 + mode 级）全部指向它：System Settings、菜单栏、
+  #    快捷键切换 HUD 统一同一形态（macOS 没有第三套键区分菜单栏与 HUD）。
   swift -e '
   import AppKit
   let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-input.tiff"
@@ -97,31 +98,7 @@ if [ "$fails" -eq 0 ]; then
   let corner = [a(0, 0), a(21, 0), a(0, 15), a(21, 15)].max()!
   let edge = [a(0, 8), a(21, 8), a(11, 0), a(11, 15)].min()!
   if mean >= 0.60 && holes >= 10 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
-  ' && ok "D.input.tiff 符合「22×16 实心圆角按键 + 挖空 C」System Settings keycap 契约" || fail "D.input.tiff 不是 22×16 扁平 keycap"
-
-  # 2) hud.tiff（mode 级菜单/调色板图标键，快捷键切换 HUD 读它）
-  #    必须是「22×16 无边框纯字形 C」：透明底、无按键底板/描边。
-  swift -e '
-  import AppKit
-  let p = "build/ChaosetIME.app/Contents/Resources/ChaosetIME-hud.tiff"
-  guard let img = NSImage(contentsOfFile: p),
-        let rep = img.representations.first(where: { $0.pixelsWide == 22 && $0.pixelsHigh == 16 }) as? NSBitmapImageRep,
-        img.representations.contains(where: { $0.pixelsWide == 44 && $0.pixelsHigh == 32 }) else { exit(1) }
-  func a(_ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)!.alphaComponent }
-  var maxAlpha: CGFloat = 0
-  var opaque = 0
-  for y in 0..<16 { for x in 0..<22 {
-    let v = a(x, y)
-    maxAlpha = max(maxAlpha, v)
-    if v > 0.9 { opaque += 1 }
-  } }
-  // 无边框/无底板：四角与四条边中点必须完全透明
-  let edge = [a(0, 0), a(21, 0), a(0, 15), a(21, 15), a(0, 8), a(21, 8), a(11, 0), a(11, 15)]
-  let edgeClear = edge.allSatisfy { $0 == 0 }
-  // 纯字形：不透明像素只占字形本身（远小于满幅按键），且字形存在
-  let glyphOnly = maxAlpha > 0.8 && opaque > 15 && opaque < 124
-  if edgeClear && glyphOnly { exit(0) } else { exit(2) }
-  ' && ok "D.hud.tiff 符合「22×16 无边框纯字形 C」契约" || fail "D.hud.tiff 不是 22×16 无边框纯字形"
+  ' && ok "D.input.tiff 符合「22×16 实心圆角按键 + 挖空 C」扁平 keycap 契约" || fail "D.input.tiff 不是 22×16 扁平 keycap"
 
   # 2) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
   swift -e '
@@ -138,8 +115,7 @@ if [ "$fails" -eq 0 ]; then
   if isBgBlue && isWhiteC && isCyanS { exit(0) } else { exit(2) }
   ' && ok "D.ChaosetIME.icns 符合「方案3与方案4结合版」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
 
-  # 4) Info.plist 图标键必须按场景指向正确文件（实测：System Settings 读 bundle 级键，
-  #    HUD 读 mode 级菜单键；两者混用会互相覆盖）
+  # 4) Info.plist 五个图标键必须全部指向同一份模板图（全场景统一 keycap）
   PB=/usr/libexec/PlistBuddy
   P="$APP/Contents/Info.plist"
   MODE="ComponentInputModeDict:tsInputModeListKey:ime.chaoset.inputmethod.ChaosetIME.Pinyin"
@@ -149,9 +125,9 @@ if [ "$fails" -eq 0 ]; then
   }
   expect_plist "tsInputMethodIconFileKey" "ChaosetIME-input.tiff"
   expect_plist "tsInputMethodAlternateIconFileKey" "ChaosetIME-input.tiff"
-  expect_plist "$MODE:tsInputModeMenuIconFileKey" "ChaosetIME-hud.tiff"
-  expect_plist "$MODE:tsInputModeAlternateMenuIconFileKey" "ChaosetIME-hud.tiff"
-  expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-hud.tiff"
+  expect_plist "$MODE:tsInputModeMenuIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "$MODE:tsInputModeAlternateMenuIconFileKey" "ChaosetIME-input.tiff"
+  expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-input.tiff"
 fi
 
 # E. 渲染尺寸对齐：System Settings / 菜单栏显示的不是文件像素尺寸，而是

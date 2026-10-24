@@ -165,23 +165,22 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// ⚠️ 用户最终明确要求（2026-10-24 四次纠正），禁止回退：
-//    同一个输入法在**不同场景用不同 TIS 图标键**，需要两份 22×16 模板图：
-//      1) System Settings「添加输入法」列表 → 读 bundle 级图标
-//         （tsInputMethodIconFileKey / tsInputMethodAlternateIconFileKey）
-//         → `ChaosetIME-input.tiff`：**22×16 宽扁 keycap**（实心圆角按键 + alpha 挖空「C」），
-//         与系统 ABC「A」/ 简体拼音「拼」在 System Settings 里的样式一致；
-//      2) 快捷键切换 HUD（光标旁选择器）→ 读 mode 级图标
-//         （tsInputModeMenuIconFileKey / tsInputModeAlternateMenuIconFileKey）
-//         → `ChaosetIME-hud.tiff`：**22×16 无边框纯字形「C」**（透明底、无底板、无描边）；
-//      3) mode palette 键同用 hud 图（输入法调色板/菜单系 UI 与 HUD 同风格）。
-//    实测依据（2026-10-24，本机 macOS 15.8.1，探针验证）：
-//      - 把 bundle 级图标设为 keycap、mode 级设为字形后：
-//        `IPInputSource.iconImage` 取到 keycap（System Settings 显示 keycap），
-//        合成 HUD 显示无边框字形 —— 两处确实读不同的键，可以分别满足。
-//      - 早前把五个键都指向同一文件，才会出现「改一处另一处跟着变」。
-//    不要合并回单文件、不要改成 16×16 正方形/描边空心块；
-//    动尺寸/形态/配色前必须先问用户，并同步 README 与 equivalence 断言。
+// ⚠️ 用户最终决定（2026-10-25），禁止回退：
+//    输入源图标统一为 **22×16 宽扁 keycap**（满幅实心圆角按键 + alpha 挖空单字符「C」），
+//    五个 TIS 图标键全部指向这一份模板图 —— System Settings、菜单栏（系统栏）、
+//    快捷键切换 HUD 共用同一形态。
+//
+//    为什么不再按场景拆分（2026-10-25 探针实测，本机 macOS 15.8.1）：
+//    - System Settings「添加输入法」列表 → 读 **bundle 级**图标键
+//      （tsInputMethodIconFileKey / tsInputMethodAlternateIconFileKey）；
+//    - 快捷键切换 HUD 与菜单栏（系统栏）→ 读 **mode 级**图标键
+//      （tsInputModeMenuIconFileKey / Alternate、palette 键）；
+//    - macOS 没有第三套图标键把「菜单栏」与「HUD」再分开，所以第三方输入法
+//      **无法**做到「系统设置+系统栏 keycap、HUD 无边框字形」；
+//    - 用户确认该限制后要求统一为扁平的带边框 keycap 版本（2026-10-25 指示）。
+//
+//    不要改回 16×16 正方形、描边空心块或纯色方块；动尺寸/形态/配色前先问用户，
+//    改完必须跑 tests/equivalence.sh（D 段 keycap 契约 + 五个键指向同一文件）。
 //
 // 规格依据：
 //   - 尺寸：系统输入源的 `IPInputSource.iconImage` 实测为 22×16（44×32 @2x）；第三方
@@ -226,9 +225,8 @@ private func drawCenteredGlyph(_ text: String, targetH: CGFloat, maxWidth: CGFlo
     CTLineDraw(bestLine, ctx)
 }
 
-/// 生成输入源模板图单帧（22×16 画布）。keycap=true 为系统同款扁平按键
-/// （实心圆角 + 挖空字形，供 System Settings）；false 为透明底无边框纯字形（供 HUD）。
-func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapImageRep {
+/// 生成输入源模板图单帧（22×16 画布）：满幅实心圆角按键 + alpha 挖空单字符「C」。
+func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     let pxW = ptW * scale
     let pxH = ptH * scale
     let ss = 8                      // 针对当前 scale 的超采样倍数
@@ -246,24 +244,19 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapIma
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    if keycap {
-        // 1) 满幅实心圆角按键：圆角半径 0.20×高度（系统 pinyin.tiff 实测约 3/16）
-        let radius = CGFloat(bigH) * 0.20
-        let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: CGFloat(bigW), height: CGFloat(bigH)),
-                          cornerWidth: radius, cornerHeight: radius, transform: nil)
-        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
-        ctx.addPath(body)
-        ctx.fillPath()
+    // 1) 满幅实心圆角按键：圆角半径 0.20×高度（系统 pinyin.tiff 实测约 3/16）
+    let radius = CGFloat(bigH) * 0.20
+    let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: CGFloat(bigW), height: CGFloat(bigH)),
+                      cornerWidth: radius, cornerHeight: radius, transform: nil)
+    ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+    ctx.addPath(body)
+    ctx.fillPath()
 
-        // 2) 把单字符「C」从 alpha 里挖空（destinationOut）：字形处 alpha=0，
-        //    模板渲染后即「实心按键 + 反白字形」，与系统 ABC / 简体拼音一致。
-        ctx.setBlendMode(.destinationOut)
-        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.72, maxWidth: CGFloat(bigW) * 0.62, in: ctx)
-        ctx.setBlendMode(.normal)
-    } else {
-        // HUD：透明底无边框纯字形「C」，墨迹高度 ≈ 0.74×画布高
-        drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.74, maxWidth: CGFloat(bigW) * 0.82, in: ctx)
-    }
+    // 2) 把单字符「C」从 alpha 里挖空（destinationOut）：字形处 alpha=0，
+    //    模板渲染后即「实心按键 + 反白字形」，与系统 ABC / 简体拼音一致。
+    ctx.setBlendMode(.destinationOut)
+    drawCenteredGlyph("C", targetH: CGFloat(bigH) * 0.72, maxWidth: CGFloat(bigW) * 0.62, in: ctx)
+    ctx.setBlendMode(.normal)
 
     // 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
     guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
@@ -309,7 +302,7 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int, keycap: Bool) -> NSBitmapIma
     return rep
 }
 
-func writeInputSourceTiff(_ path: String, keycap: Bool) {
+func writeInputSourceTiff(_ path: String) {
     // 22×16：与系统输入源 IPInputSource.iconImage 的实际渲染尺寸一致
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
         (22, 16, 1, 72),
@@ -324,7 +317,7 @@ func writeInputSourceTiff(_ path: String, keycap: Bool) {
     for frame in frames {
         let pxW = frame.ptW * frame.scale
         let pxH = frame.ptH * frame.scale
-        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale, keycap: keycap).cgImage else {
+        guard let rep = inputSourceRep(ptW: frame.ptW, ptH: frame.ptH, scale: frame.scale).cgImage else {
             fatalError("输入源图标取 CGImage 失败")
         }
         let pngPath = tmpDir + "/icon_\(pxW)x\(pxH).png"
@@ -425,15 +418,12 @@ for base in [16, 32, 128, 256, 512] {
 
 // 1. System Settings「添加输入法」列表 / 输入源列表：bundle 级图标键读这份
 //    → 系统同款 22×16 宽扁 keycap（实心圆角按键 + 挖空「C」）
+//    五个 TIS 图标键（bundle 级 + mode 级）统一指向这一份文件：
+//    macOS 没有第三套键把「菜单栏」与「HUD」分开，统一形态是用户确认后的最终方案。
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-input.tiff").path, keycap: true)
+    .appendingPathComponent("ChaosetIME-input.tiff").path)
 
-// 2. 快捷键切换 HUD（光标旁选择器）/ 输入菜单 mode 图标：mode 级图标键读这份
-//    → 22×16 无边框纯字形「C」（透明底、无底板/描边）
-writeInputSourceTiff(URL(fileURLWithPath: outDir)
-    .appendingPathComponent("ChaosetIME-hud.tiff").path, keycap: false)
-
-print("已生成 \(outDir)/ChaosetIME.iconset、ChaosetIME-input.tiff（System Settings keycap）与 ChaosetIME-hud.tiff（HUD 无边框字形）")
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-input.tiff（22×16 扁平 keycap，全场景统一）")
 
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 

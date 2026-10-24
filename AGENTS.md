@@ -13,28 +13,24 @@
 
 ## macOS 输入源图标（用户明确要求，禁止回退）
 
-macOS 对第三方输入法按 **bundle 级 / mode 级两套 TIS 图标键**取图，实测可以分别满足两个场景
-（2026-10-24 探针验证）：
+输入源图标统一为 **22×16 宽扁 keycap**（满幅实心圆角按键 + alpha 挖空单字符「C」），
+五个 TIS 图标键全部指向 `ChaosetIME-input.tiff`：System Settings、菜单栏（系统栏）、
+快捷键切换 HUD 共用同一形态。这是用户 2026-10-25 确认 macOS 限制后的最终要求。
 
-- **System Settings「添加输入法」列表 / 输入源列表** → 读 bundle 级键
-  （`tsInputMethodIconFileKey` / `tsInputMethodAlternateIconFileKey`）→
-  `ChaosetIME-input.tiff`：**22×16 宽扁 keycap**（实心圆角按键 + alpha 挖空「C」），
-  与系统输入法在系统设置里的样式一致；
-- **快捷键切换 HUD（光标旁选择器）** → 读 mode 级键
-  （`tsInputModeMenuIconFileKey` / `tsInputModeAlternateMenuIconFileKey`）→
-  `ChaosetIME-hud.tiff`：**22×16 无边框纯字形「C」**（透明底、无底板、无描边）；
-- mode palette 键同用 hud 图。
+为什么不做「系统设置+系统栏 keycap、HUD 无边框字形」的拆分（2026-10-25 探针实测）：
+- System Settings → 读 **bundle 级**图标键（`tsInputMethodIconFileKey` / `Alternate`）；
+- 快捷键切换 HUD 与**菜单栏（系统栏）** → 读 **mode 级**图标键
+  （`tsInputModeMenuIconFileKey` / `Alternate`、palette 键）；
+- macOS 没有第三套图标键可把「菜单栏」与「HUD」再分开（`InputSource`
+  的菜单栏标题图取 mode 级图标；`kTISPropertyIconImageURL` 对 mode 返回 mode 级文件），
+  因此第三方输入法无法同时满足「系统栏 keycap + HUD 无边框字形」；
+- 用户选择统一为扁平带边框 keycap 版本（避免同一输入法在不同系统位置形态不一致）。
 
-两份图均为 22×16@72dpi + 44×32@144dpi 双帧、RGB 全黑、ExtraSamples=2 模板 TIFF。
-
-- **不要**把五个图标键合并回同一个文件（那会导致改一处、另一处跟着变，正是用户
-  2026-10-24 反馈「HUD 对了但系统设置也被改了」的根因），也**不要**改成 16×16
-  正方形、描边空心块或纯色方块。
-- 依据：16×16 会被系统设置显示成方块；`IPInputSource.iconImage` 实测 System Settings
-  走 bundle 级图标键，合成 HUD（`TUINSCursorUISwitcher`）实测走 mode 级菜单图标键。
+- 规格：22×16@72dpi + 44×32@144dpi 双帧、RGB 全黑、ExtraSamples=2、LZW 模板 TIFF；
+  不要改成 16×16 正方形、描边空心块或纯色方块。
 - 改动图标（尺寸/形态/配色/键映射）**前必须先问用户**；改完必须跑
-  `./shims/macos/tests/equivalence.sh`（D 段双图标契约 + 键映射断言、E 段渲染尺寸比对）
-  与 `./shims/macos/build/icon-size`，不许改测试/降断言来“通过”。
+  `./shims/macos/tests/equivalence.sh`（D 段 keycap 契约 + 五个键指向同一文件断言、
+  E 段与系统渲染尺寸比对）与 `./shims/macos/build/icon-size`，不许改测试/降断言来“通过”。
 - 详细要求与验收清单见 `shims/macos/README.md`「图标要求（用户确认，禁止回退）」。
 
 ## 本地构建与验证

@@ -1,14 +1,14 @@
 // 输入源图标「实际渲染尺寸」自检工具（macOS）。
 //
-// 背景（2026-10-24 实测，用户四轮纠正后沉淀）：
-// System Settings / 快捷键切换 HUD 显示输入源图标时，**不是**直接按像素尺寸绘制：
+// 背景（2026-10-24/25 实测，用户多轮纠正后沉淀）：
+// System Settings / 菜单栏 / 快捷键切换 HUD 显示输入源图标时，**不是**直接按像素尺寸绘制：
 //   - 系统输入源（ABC、简体拼音、双拼…）由私有的 IPInputSource -(NSImage *)iconImage
 //     统一渲染，本机 macOS 15.8.1 实测为 22×16 pt（44×32 @2x 快照）；
 //   - 第三方输入源按 TIS 图标文件的**原始尺寸**显示：System Settings 读 bundle 级
-//     图标键（tsInputMethodIconFileKey / Alternate），快捷键切换 HUD 读 mode 级
-//     菜单图标键（tsInputModeMenuIconFileKey / Alternate）——两者可分别提供。
-// 因此两份图标文件都必须提供与系统参考源完全相同的点尺寸（22×16），
-// 否则会在系统设置/菜单栏里显示成正方形或比例不对。
+//     图标键，菜单栏与快捷键切换 HUD 共用 mode 级图标键（没有第三套键可再区分）；
+//     因此五个图标键统一指向同一份 22×16 模板图。
+// 图标文件必须提供与系统参考源完全相同的点尺寸（22×16），
+// 否则会在系统设置/菜单栏/HUD 里显示成正方形或比例不对。
 //
 // 本工具读取 IPInputSource +inputSources（PreferencePanesSupport 私有类，与 System Settings
 // 同源），对比本输入法与系统参考源的 iconImage.size。
