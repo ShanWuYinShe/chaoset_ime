@@ -57,12 +57,13 @@ if [ -x build/tis ]; then
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Hans" || true
   build/tis sync || true
 
-  # 杀掉可能正在运行的旧版 IME 进程以让常驻 LaunchAgent 重新拉起新 bundle
+  # 重启输入法进程以加载新 bundle（使用 open -a 单实例拉起，杜绝多重进程）
   pkill -9 -f "ChaosetIME.app/Contents/MacOS/ChaosetIME" 2>/dev/null || true
   pkill -9 -f "ChaosetIME" 2>/dev/null || true
+  sleep 1
+  open -a "$IM/ChaosetIME.app" 2>/dev/null || true
 
-  # 刷新系统输入菜单、系统设置与快捷键切换 HUD（杀掉常驻进程后系统会按需自动拉起最新进程，
-  # 彻底清除内存中残留的旧图标缓存，避免切换 HUD 仍显示旧版白块，避免系统设置显示旧图标）。
+  # 刷新系统输入菜单、系统设置与快捷键切换 HUD（彻底清除内存中残留的旧图标缓存）
   killall "System Settings" 2>/dev/null || true
   pkill -9 -f "KeyboardSettings" 2>/dev/null || true
   pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
@@ -125,33 +126,14 @@ else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"
 fi
 
-# 3) 输入法进程常驻（LaunchAgent）
-# 本机 macOS 15.8.1 实测：imklaunchagent 无法按需拉起本输入法（日志
-# `LaunchInputMethod() Error, status=-50`；调试期反复结束进程还可能触发它
-# "异常退出就禁止拉起"的保护，见 man imklaunchagent）。输入法进程常驻时客户端
-# 能正常连接（实测 Activate Server → 打字正常），所以让 IME 常驻，避免"选中后
-# 打字没反应"。
+# 3) 清理旧版 LaunchAgent（已弃用：系统 IMK 框架会自动拉起输入法进程，
+# 额外的 LaunchAgent 会导致活动监视器中出现两个 ChaosetIME 进程）。
 LA="$HOME/Library/LaunchAgents/ime.chaoset.inputmethod.plist"
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$LA" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>ime.chaoset.inputmethod</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>$IM/ChaosetIME.app/Contents/MacOS/ChaosetIME</string>
-	</array>
-	<key>RunAtLoad</key><true/>
-	<key>KeepAlive</key><true/>
-</dict>
-</plist>
-PLIST
-plutil -lint "$LA" >/dev/null
-launchctl bootout "gui/$(id -u)/ime.chaoset.inputmethod" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$LA" 2>/dev/null || true
-echo "已配置输入法常驻: $LA"
+if [ -f "$LA" ]; then
+  launchctl bootout "gui/$(id -u)/ime.chaoset.inputmethod" 2>/dev/null || true
+  rm -f "$LA"
+  echo "已清理旧版输入法常驻 LaunchAgent（系统会自动管理输入法进程）"
+fi
 
 # 4) 安装图形化工具到 ~/Applications —— 之后安装/更新、导入词库、看状态都能点界面完成，
 #    不必再用终端（面向不用命令行的用户）。

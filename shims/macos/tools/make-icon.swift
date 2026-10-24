@@ -18,62 +18,16 @@ import ImageIO
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 
-// MARK: - 应用图标（.icns，彩色印章）
+// MARK: - 应用图标（.icns，彩色 C 按键风格）
 
-/// 隶书优先（蚕头燕尾，最有"中国印章"味），依次退回楷体、宋体、系统中文字重。
-/// 本机可用性已实测：Libian SC 有、Kaiti SC 有、Songti SC 有（见 shims/macos/README）。
-func sealFont(_ size: CGFloat) -> NSFont {
-    for name in ["Libian SC", "Kaiti SC", "STKaiti", "STSongti-SC-Bold", "Songti SC", "PingFangSC-Semibold"] {
-        if let f = NSFont(name: name, size: size) { return f }
-    }
-    return NSFont.systemFont(ofSize: size, weight: .semibold)
-}
-
-/// 回纹（雷纹）角饰：四角各画三层嵌套直角，是中国器物边缘的典型纹样
-func drawCornerMeander(in rect: NSRect, _ s: CGFloat) {
-    let lw = max(0.8, s * 0.014)
-    NSColor(white: 1, alpha: 0.55).setStroke()
-    let base = rect.insetBy(dx: s * 0.155, dy: s * 0.155)
-    let len = s * 0.10
-    for (cx, cy, dx, dy) in [(base.minX, base.minY, 1.0, 1.0), (base.maxX, base.minY, -1.0, 1.0),
-                             (base.minX, base.maxY, 1.0, -1.0), (base.maxX, base.maxY, -1.0, -1.0)] {
-        for k in 1...3 {
-            let g = CGFloat(k) * s * 0.028
-            let path = NSBezierPath()
-            path.lineWidth = lw
-            path.move(to: NSPoint(x: cx + dx * g, y: cy + dy * (g + len)))
-            path.line(to: NSPoint(x: cx + dx * g, y: cy + dy * g))
-            path.line(to: NSPoint(x: cx + dx * (g + len), y: cy + dy * g))
-            path.stroke()
-        }
-    }
-}
-
-/// 只画印章里的「超」字（带精细浮雕微投影，立体雅致）
-func drawSealGlyph(_ s: CGFloat) {
-    let font = sealFont(s * 0.48)
-    let glyphShadow = NSShadow()
-    glyphShadow.shadowBlurRadius = max(1.0, s * 0.015)
-    glyphShadow.shadowOffset = NSSize(width: 0, height: -max(0.5, s * 0.009))
-    glyphShadow.shadowColor = NSColor(srgbRed: 0.35, green: 0.04, blue: 0.06, alpha: 0.55)
-
-    let text = NSAttributedString(string: "超", attributes: [
-        .font: font,
-        .foregroundColor: NSColor.white,
-        .shadow: glyphShadow,
-    ])
-    let size = text.size()
-    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.026))
-}
-
-/// 印章徽标：现代 macOS 连贯圆角超椭圆（Squircle）+ 朱砂漆艺渐变 + 典雅双框 + 篆隶「超」
-func drawSeal(_ s: CGFloat, ornament: Bool) {
+/// 应用图标：深灰圆角按键底 + 白色粗体「C」，与输入源菜单栏模板图标的设计语言统一，
+/// 用于访达/启动台/活动监视器/系统设置等处。
+func drawAppIcon(_ s: CGFloat) {
     let inset = s * 0.065
     let rect = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let squircleR = rect.width * 0.224 // 苹果官方标准连续平滑圆角半径
-    let body = NSBezierPath(roundedRect: rect, xRadius: squircleR, yRadius: squircleR)
+    let squircleR = rect.width * 0.224
 
-    // 大尺寸应用图标增加柔和自然的环境微投影，完美融入 macOS 现代图标网格
+    // 大尺寸应用图标增加柔和自然的环境微投影
     if s >= 128 {
         let shadow = NSShadow()
         shadow.shadowBlurRadius = s * 0.038
@@ -82,45 +36,42 @@ func drawSeal(_ s: CGFloat, ornament: Bool) {
         shadow.set()
     }
 
-    // 传统朱砂印泥色彩：深邃通透的渐变
+    let body = NSBezierPath(roundedRect: rect, xRadius: squircleR, yRadius: squircleR)
+
+    // 深灰渐变底色（与系统 ABC/拼 的按键色调一致）
     let grad = NSGradient(colors: [
-        NSColor(srgbRed: 0.86, green: 0.18, blue: 0.19, alpha: 1),
-        NSColor(srgbRed: 0.54, green: 0.07, blue: 0.10, alpha: 1),
+        NSColor(srgbRed: 0.30, green: 0.30, blue: 0.32, alpha: 1),
+        NSColor(srgbRed: 0.18, green: 0.18, blue: 0.20, alpha: 1),
     ])!
     grad.draw(in: body, angle: -90)
 
-    // 清除外层投影，避免影响后续精致描边与文字
-    if s >= 128 {
-        NSShadow().set()
-    }
+    if s >= 128 { NSShadow().set() }
 
-    // 顶部微弱透光高光细边（提升材质质感）
+    // 顶部微弱透光高光细边
     let rim = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: squircleR - 0.5, yRadius: squircleR - 0.5)
     rim.lineWidth = max(0.8, s * 0.008)
-    NSColor(white: 1.0, alpha: 0.20).setStroke()
+    NSColor(white: 1.0, alpha: 0.18).setStroke()
     rim.stroke()
 
-    if ornament { drawCornerMeander(in: rect, s) }
+    // 白色粗体「C」（与菜单栏小图标统一）
+    let fontSize = s * 0.52
+    let font = NSFont(name: "Helvetica-Bold", size: fontSize) ?? NSFont.boldSystemFont(ofSize: fontSize)
+    let glyphShadow = NSShadow()
+    glyphShadow.shadowBlurRadius = max(1.0, s * 0.012)
+    glyphShadow.shadowOffset = NSSize(width: 0, height: -max(0.5, s * 0.008))
+    glyphShadow.shadowColor = NSColor(white: 0, alpha: 0.5)
 
-    // 印章双框（外粗内细）
-    let outer = NSBezierPath(roundedRect: rect.insetBy(dx: s * 0.075, dy: s * 0.075),
-                             xRadius: rect.width * 0.16, yRadius: rect.width * 0.16)
-    outer.lineWidth = max(1, s * 0.022)
-    NSColor(white: 1, alpha: 0.92).setStroke()
-    outer.stroke()
-    let inner = NSBezierPath(roundedRect: rect.insetBy(dx: s * 0.125, dy: s * 0.125),
-                             xRadius: rect.width * 0.11, yRadius: rect.width * 0.11)
-    inner.lineWidth = max(0.6, s * 0.010)
-    NSColor(white: 1, alpha: 0.58).setStroke()
-    inner.stroke()
-
-    drawSealGlyph(s)
+    let text = NSAttributedString(string: "C", attributes: [
+        .font: font,
+        .foregroundColor: NSColor.white,
+        .shadow: glyphShadow,
+    ])
+    let size = text.size()
+    // 光学居中：大写 C 弧形底部视觉偏低，微调 +0.02s 提升
+    text.draw(at: NSPoint(x: (s - size.width) / 2, y: (s - size.height) / 2 + s * 0.02))
 }
 
-/// 应用图标单帧：方形画布上居中画印章徽标。
-
-
-/// 应用图标单帧：方形画布上居中画印章徽标（彩色，用于访达/启动台/系统设置应用列表）。
+/// 应用图标单帧：方形画布上居中画 C 键帽徽标（彩色，用于访达/启动台/活动监视器/系统设置应用列表）。
 func appIconRep(_ px: Int) -> NSBitmapImageRep {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
@@ -128,7 +79,7 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    drawSeal(CGFloat(px), ornament: px >= 128)
+    drawAppIcon(CGFloat(px))
     NSGraphicsContext.restoreGraphicsState()
     return rep
 }
