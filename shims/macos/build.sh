@@ -98,6 +98,17 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<true/>
 	<key>TISParticipatesInTouchBar</key>
 	<true/>
+	<key>TISIconIsTemplate</key>
+	<true/>
+	<key>TISIconLabels</key>
+	<dict>
+		<key>Primary</key>
+		<string>C</string>
+	</dict>
+	<key>tsInputMethodIconFileKey</key>
+	<string>ChaosetIME-menu.tiff</string>
+	<key>tsInputMethodAlternateIconFileKey</key>
+	<string>ChaosetIME-menu.tiff</string>
 	<key>TISInputSourceID</key>
 	<string>ime.chaoset.inputmethod.ChaosetIME</string>
 	<key>ComponentInputModeDict</key>
