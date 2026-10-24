@@ -165,20 +165,15 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
-// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标实测规格：
-//   - 尺寸与比例：扁平 keycap（宽 22 pt × 高 16 pt，长宽比 1.375，圆角半径 ≈ 3.2 pt）；
-//   - 双帧 TIFF：22×16@72dpi (1x) + 44×32@144dpi (2x)，LZW 压缩；
-//   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**。用 CGImageDestination
-//     直接写多帧会写成 1（预乘），系统按模板渲染时边缘颜色被重复相乘；
-//   - RGB 通道恒为 (0,0,0)，形状完全由 alpha 表达（系统按模板图只取 alpha 着色）；
-//   - 按键满幅扁平圆角（宽 22 pt × 高 16 pt），圆角半径 0.20 × 高度；
-//   - 字形挖空单字符「C」（占高度 ≈ 0.72×高度），与 ABC「A」、简体拼音「拼」的扁平按键视觉重量一致。
+// 系统输入法（SCIM pinyin.tiff / ABC / KoreanIM 等）的输入源图标规格：
+//   - 尺寸与比例：16 pt × 16 pt 正方形（与系统 ABC / 拼 在菜单栏与输入法悬浮切换器中完全一致）；
+//   - 双帧 TIFF：16×16@72dpi (1x) + 32×32@144dpi (2x)，LZW 压缩；
+//   - **ExtraSamples = 2（UNASSOCIATED，非预乘 alpha）**；
+//   - RGB 通道恒为 (0,0,0)，无按键外框，纯粹由 alpha 通道表达单字母「C」字形；
+//   - 背景 100% 透明，悬浮切换器（HUD）选中时由系统自动施加蓝色圆圈胶囊高亮，未选中时纯文字呈现。
 //
-// 实现要点：直接在小画布上画字体，笔画会断裂且边缘锯齿严重。
-// 先在 8× 超采样画布上用 CGBitmapContext 画「圆角按键挖去字形」，
-// 再降采样到目标尺寸，最后逐像素写入 NSBitmapImageRep。
-// 特别注意：CGBitmapContext 原点在左下角，读出字节缓冲时第 0 行在底部，
-// 降采样写入 NSBitmapImageRep（第 0 行在顶部）时进行 Y 轴反转，防止字形颠倒。
+// 实现要点：先在 8× 超采样画布上用 CGBitmapContext 精密绘制纯字符「C」，
+// 再做高品质超采样滤波降采样至目标尺寸，最后逐像素写入 NSBitmapImageRep。
 
 func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     let pxW = ptW * scale
@@ -198,18 +193,8 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     ctx.setShouldAntialias(true)
     ctx.clear(CGRect(x: 0, y: 0, width: bigW, height: bigH))
 
-    // 1) 满幅圆角扁平 keycap（圆角 0.22×高度，在 16pt 下约 3.5pt，贴合系统原生按键）
-    let cornerR = CGFloat(bigH) * 0.22
-    let body = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bigW, height: bigH),
-                      cornerWidth: cornerR, cornerHeight: cornerR,
-                      transform: nil)
-    ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
-    ctx.addPath(body)
-    ctx.fillPath()
-
-    // 2) 挖空单字符「C」：墨迹高度 ≈ 0.70×高度
-    ctx.setBlendMode(.destinationOut)
-    let targetH = CGFloat(bigH) * 0.70
+    // 绘制纯字符「C」（无外框按键），墨迹高度 ≈ 0.74×画布高，与系统 A / 拼 视觉分量一致
+    let targetH = CGFloat(bigH) * 0.74
     func metrics(_ size: CGFloat) -> (line: CTLine, bounds: CGRect) {
         let f = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
         let a = NSAttributedString(string: "C", attributes: [
@@ -236,9 +221,8 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
     ctx.textPosition = CGPoint(x: (CGFloat(bigW) - glyphBounds.width) / 2 - glyphBounds.minX,
                                y: optY)
     CTLineDraw(line, ctx)
-    ctx.setBlendMode(.normal)
 
-    // 3) 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
+    // 取 CGImage，用 alphaOnly 灰度上下文读出干净的 alpha 通道
     guard let bigImage = ctx.makeImage() else { fatalError("超采样画布取图失败") }
     var alphaBuf = [UInt8](repeating: 0, count: bigW * bigH)
     alphaBuf.withUnsafeMutableBytes { raw in
@@ -249,7 +233,7 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
         readCtx.draw(bigImage, in: CGRect(x: 0, y: 0, width: bigW, height: bigH))
     }
 
-    // 4) 降采样并写入 NSBitmapImageRep
+    // 降采样并写入 NSBitmapImageRep
     // 注意：readCtx 原点在左下角，alphaBuf 第 0 行是图像底部；
     // NSBitmapImageRep 第 0 行是图像顶部，因此读取时做 Y 轴翻转。
     guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pxW, pixelsHigh: pxH,
@@ -284,8 +268,8 @@ func inputSourceRep(ptW: Int, ptH: Int, scale: Int) -> NSBitmapImageRep {
 
 func writeInputSourceTiff(_ path: String) {
     let frames: [(ptW: Int, ptH: Int, scale: Int, dpi: Int)] = [
-        (22, 16, 1, 72),
-        (22, 16, 2, 144)
+        (16, 16, 1, 72),
+        (16, 16, 2, 144)
     ]
     let tmpDir = NSTemporaryDirectory() + "chaoset-icon-\(ProcessInfo.processInfo.processIdentifier)"
     try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
@@ -398,7 +382,7 @@ for base in [16, 32, 128, 256, 512] {
 writeInputSourceTiff(URL(fileURLWithPath: outDir)
     .appendingPathComponent("ChaosetIME-icon2.tiff").path)
 
-print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（22×16+44×32 扁平按键模板图）")
+print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-icon2.tiff（16×16+32×32 纯字形模板图）")
 
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 

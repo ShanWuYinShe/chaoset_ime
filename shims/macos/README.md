@@ -68,7 +68,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
 | 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Hans`（父 ID + `.Hans`） |
 | 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标 | 采用双层设计：输入源图标为系统菜单栏同款模板图 `ChaosetIME-icon2.tiff`（22×16 双帧 TIFF、alpha 挖空字形）；应用图标 `ChaosetIME.icns` 采用极光电光蓝全幅底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），用于访达/启动台/活动监视器/系统设置的应用列表，辨识度高且富有现代感。 |
+| 图标 | 采用双层设计：输入源图标为系统同款纯字形模板图 `ChaosetIME-icon2.tiff`（16×16 双帧 TIFF、无外框纯字母「C」模板，透明背景，与系统 ABC / 拼 音 在悬浮输入法切换器及菜单栏中风格完全一致）；应用图标 `ChaosetIME.icns` 采用极光电光蓝全幅底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），用于访达/启动台/活动监视器/系统设置的应用列表。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
