@@ -53,6 +53,13 @@ else
   printf '   跳过（缺 build/tis）\n'
 fi
 
+printf '== 2c) 输入源图标实际渲染尺寸（系统设置/菜单栏取的就是这个尺寸） ==\n'
+if [ -x build/icon-size ]; then
+  build/icon-size 2>/dev/null | sed 's/^/   /'
+else
+  printf '   （缺 build/icon-size，先运行 ./build.sh）\n'
+fi
+
 printf '== 3) daemon 套接字 ==\n'
 if [ -S "$SOCK" ]; then
   printf '   OK: %s\n' "$SOCK"

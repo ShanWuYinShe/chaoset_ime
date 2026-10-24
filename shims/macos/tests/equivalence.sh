@@ -141,6 +141,24 @@ if [ "$fails" -eq 0 ]; then
   expect_plist "$MODE:tsInputModePaletteIconFileKey" "ChaosetIME-palette.tiff"
 fi
 
+# E. 渲染尺寸对齐：System Settings / 菜单栏显示的不是文件像素尺寸，而是
+#    IPInputSource.iconImage 的尺寸（系统输入源统一为宽扁 keycap；第三方按文件原尺寸）。
+#    这一步直接拿已安装的输入法与系统参考源比对，防止「文件看着对、系统里显示成方块」。
+if [ "$fails" -eq 0 ]; then
+  note "== E. 输入源图标实际渲染尺寸（系统设置/菜单栏取的就是这个尺寸） =="
+  if [ -x build/icon-size ] && [ -d "$HOME/Library/Input Methods/ChaosetIME.app" ]; then
+    IOSIZE=$(build/icon-size 2>/dev/null || true)
+    echo "$IOSIZE" | sed 's/^/   /'
+    case "$IOSIZE" in
+      *"PASS:"*) ok "E.图标实际渲染尺寸与系统原生输入源一致" ;;
+      *"skip:"*) note "   跳过（未安装/未收录本输入法）" ;;
+      *) fail "E.图标实际渲染尺寸与系统原生输入源不一致（系统设置里会显示成方块/比例不对）" ;;
+    esac
+  else
+    note "   跳过（未安装输入法或未构建 build/icon-size）"
+  fi
+fi
+
 if [ "$fails" -eq 0 ]; then
   note "等价性检查全部通过"
 else

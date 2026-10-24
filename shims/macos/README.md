@@ -71,6 +71,27 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 | 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **系统设置 / 菜单栏 / 状态栏（`ChaosetIME-input.tiff`）**：与系统原生输入法**实际渲染尺寸完全一致**的 **22×16 宽扁 keycap**——双帧模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为**满幅实心圆角按键**并把单字符「C」从 alpha 中**挖空**；模板渲染后就是 ABC「A」/ 简体拼音「拼」那种「实心宽扁按键 + 反白字形」。**不要**做成 16×16 正方形（System Settings 的 `IPInputSource.iconImage` 对系统输入源返回 22×16，第三方图标按文件原尺寸显示，正方形会变成方块），也**不要**描边空心块。<br>2. **快捷键切换 HUD（`ChaosetIME-palette.tiff`）**：22×16 透明底仅单字符「C」（同规格双帧模板 TIFF），用于光标旁胶囊 HUD。<br>3. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
 | 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
 
+### 图标要求（用户确认，禁止回退）
+
+**系统设置「添加输入法」列表、菜单栏与系统栏里的输入源图标 = 系统原生同款的 22×16 宽扁 keycap**
+（实心圆角按键 + alpha 挖空的单字符「C」）。这是用户 2026-10-24 两次纠正后的最终要求：
+**不要**改成 16×16 正方形、描边空心块或纯色方块。
+
+为什么是 22×16（实测方法，勿凭记忆）：
+- System Settings 的图标不是直接按 TIS 文件像素绘制——系统输入源由私有
+  `IPInputSource -iconImage` 统一渲染为宽扁 keycap，本机 macOS 15.8.1 实测为
+  **22×16 pt（44×32 @2x）**；第三方输入源按 TIS 图标文件的**原始尺寸**显示。
+  所以第三方要显示成系统同款，图标文件本身就必须提供 22×16 的模板 TIFF。
+- 复核命令：`./build/icon-size`（打印本输入法与系统参考源 SCIM Pinyin 的 `iconImage`
+  尺寸并断言一致）；`tiffutil -info build/Resources/ChaosetIME-input.tiff` 复核双帧与 DPI。
+
+改动与验收清单（**动尺寸/形态/配色前先问用户**）：
+1. 只改 `tools/make-icon.swift` 的 `inputSourceRep` / `writeInputSourceTiff`，保持
+   22×16 + 44×32 双帧、72/144 DPI、RGB=0、ExtraSamples=2、实心按键 + 挖空「C」；
+2. `./build.sh` → `./tests/equivalence.sh`（D 段断言尺寸/形态，E 段比对系统渲染尺寸）；
+3. `./install.sh`（普通终端）后重开系统设置目检「添加输入法」列表与菜单栏；
+4. **禁止**改测试或降低断言来“通过”。
+
 > ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
 > `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
 > 仅以 `inputmethod` 结尾（如曾经的 `ime.chaoset.inputmethod`）**不会生效**：

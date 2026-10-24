@@ -11,6 +11,21 @@
 - **统一候选窗渲染（v2）**：`renderer/` 负责将候选词组绘制为内存 PNG 贴图；平台壳仅作贴图展示与事件转发，不自建渲染逻辑。候选窗的**布局（横排/竖排）、圆角、浅/深色配色全部由 daemon 侧 `renderer.Skin` 决定**（`Horizontal` / `MaxWidth` / `CornerRadius`，`DefaultSkinFor(dark)`），壳只按 `candidateImage` 的 `dark` / `scale` 传参，不得在壳里另写皮肤或布局逻辑。
 - **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 原子写盘（`chaoset-userdict.json`，已 `.gitignore`）。
 
+## macOS 输入源图标（用户明确要求，禁止回退）
+
+系统设置「添加输入法」列表、菜单栏与系统栏里的输入源图标必须是**系统原生同款的
+22×16 宽扁 keycap**：实心圆角按键 + alpha 挖空的单字符「C」模板图
+（`ChaosetIME-input.tiff`，22×16@72dpi + 44×32@144dpi 双帧、RGB 全黑、ExtraSamples=2）；
+`ChaosetIME-palette.tiff` 为同尺寸纯字形 HUD 变体。
+
+- **不要**改回 16×16 正方形、描边空心块或纯色方块——2026-10-24 用户已两次纠正。
+- 依据：System Settings 对系统输入源按 `IPInputSource.iconImage` 实测的 **22×16** 渲染，
+  第三方输入源按 TIS 图标文件原尺寸显示；给 16×16 就会显示成方块。
+- 改动图标（尺寸/形态/配色）**前必须先问用户**；改完必须跑
+  `./shims/macos/tests/equivalence.sh`（D 段尺寸/形态断言 + E 段与系统渲染尺寸比对）
+  与 `./shims/macos/build/icon-size`，不许改测试/降断言来“通过”。
+- 详细要求与验收清单见 `shims/macos/README.md`「图标要求（用户确认，禁止回退）」。
+
 ## 本地构建与验证
 
 ```bash

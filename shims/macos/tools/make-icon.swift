@@ -165,6 +165,12 @@ func appIconRep(_ px: Int) -> NSBitmapImageRep {
 
 // MARK: - 输入源图标（模板图，逐像素对齐系统规格）
 
+// ⚠️ 用户明确要求（2026-10-24 两次纠正），禁止回退：
+//    系统设置 / 菜单栏里的输入源图标必须是本文件生成的 **22×16 宽扁 keycap**
+//    （实心圆角按键 + alpha 挖空字形），不要改成 16×16 正方形或描边空心块。
+//    动尺寸/形态/配色前必须先问用户；改完跑 tests/equivalence.sh（D 段尺寸断言 +
+//    E 段与系统 IPInputSource.iconImage 的渲染尺寸比对），并同步 README「图标要求」。
+
 // 系统输入法输入源图标的**实际渲染规格**（2026-10-24 以 IPInputSource.iconImage 复核）：
 //   - 系统设置/输入菜单按 **22 pt × 16 pt 的宽扁 keycap** 渲染：系统输入源的
 //     `IPInputSource.iconImage` 实测统一为 22×16（44×32 @2x）扁平按键；第三方输入源

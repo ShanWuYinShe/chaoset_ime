@@ -17,6 +17,9 @@ swiftc -O -framework InputMethodKit -framework AppKit src/*.swift -o "$APP/Conte
 #   smoke —— 与 daemon 的 IPC 全链路自检（需要先跑起 daemon）
 swiftc -O -framework Carbon tools/tis.swift -o build/tis
 swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/EngineClient.swift -o build/smoke
+#   icon-size —— 对比系统设置/菜单栏**实际渲染**的输入源图标尺寸是否与系统原生一致
+#                （icon.tiff 的像素尺寸 ≠ 系统显示尺寸；见 README「图标要求」）
+clang -O2 -framework Foundation -framework AppKit tools/icon-size.m -o build/icon-size
 
 echo "[3/5] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources
