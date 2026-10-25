@@ -160,6 +160,22 @@ func mayBeMisspelled(s string) bool {
 	return misspelledFromPatterns(s, tokenizeChunk(s))
 }
 
+// hasMidIsolatedInitial 报告任一切分路径里「非末位」出现单字母声母碎片
+// （zhengchagn 的最优切分 zheng'cha'g'n，g 夹在 zheng 与 n 之间）。
+// 这种形态可能是相邻颠倒手误（chagn → chang），也可能是合法混拼
+// （shangxj 的 x）——串形态不可分，调用方应放行常规路径、由词典事实
+// 决定纠错候选能否参与领跑。
+func hasMidIsolatedInitial(patterns [][]Token) bool {
+	for _, pat := range patterns {
+		for k := 0; k+1 < len(pat); k++ {
+			if !pat[k].IsExact && len(pat[k].Text) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasCleanSyllableSplit 判断整段能否切成**纯完整音节**序列（无简拼碎片）。
 // 修正串的正确形态就是合法音节序列，用这个 DP 校验最合适。
 func hasCleanSyllableSplit(chunk string) bool {

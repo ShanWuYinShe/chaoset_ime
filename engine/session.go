@@ -975,8 +975,19 @@ func (s *Session) compose() Composition {
 	// 「中欧国内」「中欧个」）最终都会被纠错候选压掉，却花费数毫秒
 	// （实测 zhogn 单键 6ms 里常规路径占九成），是打错字瞬间卡顿的来源。
 	typoSuspicious := misspelledFromPatterns(s.input, tokenPatterns)
+	// 中间孤立声母形态：最优切分里「非末位」出现单字母声母碎片
+	// （zhengchagn → zheng'cha'g'n，g 夹在两个完整音节之间）。可能是相邻
+	// 颠倒手误（chagn → chang），也可能是合法混拼（shangxj → shang'x'j）
+	// ——串形态不可分，放行常规路径，是否让纠错候选参与领跑由词典事实
+	// 决定（见下方领跑判定）。
+	midSuspicious := !typoSuspicious && hasMidIsolatedInitial(tokenPatterns)
+	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
+	inputSegs := 0
+	if len(tokenPatterns) > 0 {
+		inputSegs = len(tokenPatterns[0])
+	}
 	typoAdded := map[string]bool{}
-	if typoSuspicious {
+	if typoSuspicious || midSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
 		// 才是这部分的主要成本。typoCorrections 已按价值排序
@@ -1244,6 +1255,14 @@ func (s *Session) compose() Composition {
 			if items[i].rank != rankExact && items[i].rank != rankInitialExact {
 				continue
 			}
+			// transpose 触发的手误场景：只有「音节数 == 输入段数」的全消耗
+			// 精确词才算常规候选。中间夹声母的组合产物（zhengchagn 的
+			// 「正茶馆你」）与单字碎片（正/茶）都是强行切分的产物——用户
+			// 打 zhengchagn 的意图显然不是「正」单字，拿它们做门槛分母会让
+			// 正确的纠错（正常）永远无法领跑（2026-10-25 用户反馈）。
+			if (typoSuspicious || midSuspicious) && inputSegs > 0 && strings.Count(items[i].cand.Syllables, "'")+1 != inputSegs {
+				continue
+			}
 			hasRegularWord = true
 			if items[i].cand.Score > bestRegularFreq {
 				bestRegularFreq = items[i].cand.Score
@@ -1271,6 +1290,17 @@ func (s *Session) compose() Composition {
 		}
 		if a.FromUser != b.FromUser {
 			return a.FromUser
+		}
+		// 音节超段仲裁：词音节数多于输入段数的候选（用户词组联想/前缀续接，
+		// 如输入 xianzai 联想出「现在时间」）不得排在「输入完全消耗」候选
+		// （如「现在」）之前——打满音节的意图优先于联想延伸
+		//（2026-10-25 用户反馈；放在 FromUser 之后：调频优先级仍高于该启发式）。
+		if inputSegs > 0 {
+			aOver := strings.Count(a.Syllables, "'")+1 > inputSegs
+			bOver := strings.Count(b.Syllables, "'")+1 > inputSegs
+			if aOver != bOver {
+				return !aOver
+			}
 		}
 		if aRank != bRank {
 			if aRank == rankInitialExact && bRank == rankInitialSentence && a.Score < 20 && b.Score >= 100 {
