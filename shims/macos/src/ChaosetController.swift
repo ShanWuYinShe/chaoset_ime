@@ -137,18 +137,37 @@ final class ChaosetController: IMKInputController {
             return passThrough(client)
         }
 
-        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
-            return passThrough(client)
-        }
-
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
 
-        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；
-        // daemon 不可达时放行空格）
-        if chars == " ", event.modifierFlags.contains(.shift) {
+        // 空格（keyCode 49）：组词中一律消费——首选上屏；无候选（残缺组词）
+        // 时顶屏原始拼音（与回车等效）。放在 guard chars **之前**：部分客户端
+        // 快速输入时 charactersIgnoringModifiers 对空格判定失灵（返回空/nil），
+        // 会在前置守卫处透传——选词落空、空格漏进文档（2026-10-25 实机反馈）。
+        // 组词中用户按空格的意图永远是「结束组词」，不应有裸空格进文档。
+        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；daemon 不可达时放行）。
+        // 非组词状态的空格照旧放行。
+        if event.keyCode == 49, event.modifierFlags.contains(.shift) {
             if engine.toggleHalfWidth() != nil {
                 return true
             }
+            return passThrough(client)
+        }
+        if event.keyCode == 49, let cur = current, !cur.input.isEmpty {
+            if hasCandidates {
+                commit(index: 0, client: client)
+            } else {
+                let raw = engine.commitRaw() ?? cur.input
+                current = nil
+                client?.insertText(
+                    raw,
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                refresh(client)
+            }
+            return true
+        }
+
+        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
             return passThrough(client)
         }
 
@@ -169,12 +188,6 @@ final class ChaosetController: IMKInputController {
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
             refresh(client)
-            return true
-        }
-
-        // 空格：首选上屏；无候选时放行
-        if chars == " " && hasCandidates {
-            commit(index: 0, client: client)
             return true
         }
 
