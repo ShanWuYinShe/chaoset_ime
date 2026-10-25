@@ -88,6 +88,8 @@ jobs:
           name: chaoset-macos
           path: dist/chaoset-macos.zip
           retention-days: 14
+
+  package-linux:
     name: 打包 Linux (IBus Engine + 资源)
     runs-on: ubuntu-24.04
     needs: test
@@ -125,6 +127,13 @@ jobs:
           name: chaoset-linux-x86_64
           path: dist/chaoset-linux-x86_64.tar.gz
           retention-days: 14
+
+  package-windows:
+    name: 打包 Windows (TSF DLL + TCP Daemon)
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
 
       - name: 安装 Go
         uses: actions/setup-go@v7
