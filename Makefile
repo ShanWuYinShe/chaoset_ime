@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons package-linux package-windows package-macos package-all
+.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows package-linux package-windows package-macos package-all
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd
@@ -12,6 +12,16 @@ test:
 
 vet:
 	go vet ./...
+	$(MAKE) lint-workflows
+
+# 校验 .github/workflows 的结构完整性。
+# 为什么需要它：2026-10-25 一次文本替换误删了两个 job 的头部声明，YAML 语法
+# 依然合法（yaml 能解析），但 GitHub 判「workflow file issue」，CI 全线不跑。
+# 详细背景与检查项见 tools/check-workflows.py 的文件头注释。
+lint-workflows:
+	python3 tools/check-workflows.py \
+		--expect-jobs test,package-macos,package-linux,package-windows,release \
+		.github/workflows/ci.yml
 
 fmt:
 	gofmt -l -w .

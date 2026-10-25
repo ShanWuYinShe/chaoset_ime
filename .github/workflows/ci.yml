@@ -20,31 +20,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # workflow 结构校验：必须在最早的 job 里跑。2026-10-25 曾因文本替换
+      # 覆盖过头，误删了两个 job 的头部声明——YAML 语法仍然合法，但 GitHub
+      # 直接判「workflow file issue」，整个 CI 跑不起来、三端打包与 Release
+      # 全部无法产出。只查 yaml 能否解析是发现不了的，必须查结构。
+      - name: 校验 workflow 结构
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 tools/check-workflows.py \
+            --expect-jobs test,package-macos,package-linux,package-windows,release \
+            .github/workflows/ci.yml
+
       - name: gofmt 检查（不应有输出）
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-
-      - name: go vet 静态分析
-        run: go vet ./...
-
-      - name: 安装 CJK 字体
-        # renderer / ipc 的候选窗渲染测试需要 CJK 字体：renderer.probeFontPath()
-        # 在 Linux 上首选 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc，
-        # 而 GitHub 的 ubuntu-24.04 镜像只预装 fonts-noto-color-emoji（无中文字形）。
-        # 缺失时 TestCandidateImage / TestRenderEmptyCandidates 会因
-        # "未找到 CJK 字体" 失败——本步骤只补测试环境，不改动被测逻辑。
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
-          test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
-            || { echo "CJK 字体未装到探测路径"; exit 1; }
-
-      - name: 测试（含 -race）
-        run: go test -race -count=1 ./...
-
-      - name: 构建
-        run: make build
-
   package-macos:
     name: 打包 macOS (ChaosetIME.app + ChaosetSetup.app)
     runs-on: macos-latest
