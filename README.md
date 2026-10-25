@@ -53,7 +53,10 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
-renderer/          统一候选窗渲染（v2）：把组词状态画成 PNG，三端壳贴图显示
+renderer/          候选窗渲染（v3 分治）：为「壳贴图」调用方把组词状态画成 PNG
+                   ——Windows/Linux 壳贴图显示；macOS 壳自 v3 起用 AppKit 原生
+                   自绘候选窗（shims/macos/src/CandidatePanel.swift，视觉与
+                   本包 Skin 设计双端同步），candidateImage 保留为其回退路径。
                    默认横排候选栏 + 圆角 + 系统浅/深色皮肤（Skin.Horizontal /
                    MaxWidth / CornerRadius，DefaultSkinFor(dark)）；竖排列表布局
                    仍可用 Horizontal=false 走通（配色由 Skin 颜色字段决定）
@@ -67,7 +70,7 @@ data/
   dict_common.tsv    内置常用词库（cmd/chaoset-dictgen 生成产物，勿手工编辑）
   dict_seed.tsv      种子词库（演示/回归用的小词库，词 \t 拼音 \t 词频）
 shims/
-  macos/             InputMethodKit 薄壳（Swift，已实现，见其 README）
+  macos/             InputMethodKit 薄壳（Swift，已实现，见其 README；候选窗为壳内原生自绘）
   windows/           TSF COM 薄壳（已实现，核心层行为级 + DLL 编译级验证）
   linux/             ibus engine 胶水（已实现，见其 README）
 ```
@@ -179,12 +182,18 @@ go run ./.workwork/verify/scan    # 该脚本在 .workwork/（gitignore），口
 手误与**合法简拼/混拼在串形态上高度同形**——`nihap`（手误 nihao）与
 `chifanl`（合法混拼「吃饭」+ l）几乎无法从字形区分。因此：
 
-- **触发条件收紧**为「输入连简拼路径都排不出来」（`zhogn` 的 `ogn` 无解），
-  正常输入（`zhongg` / `yiwys` / `shangxj` 都能切成「完整音节 + 声母」）**零开销、
+- **触发条件**：「输入连简拼路径都排不出来」（`zhogn` 的 `ogn` 无解），或
+  「最优切分里**非末位**出现孤立单字母声母」且**存在相邻换位能把整串切成
+  纯完整音节序列**（`zhengchagn` → `zhengchang`，换位纠错的高置信信号；
+  合法混拼 `chifanl` / `shangxj` / `zhongg` 的相邻换位都无法切分，不受扰）。
+  纯合法混拼（`zhongg` / `yiwys` / `shangxj` 都能切成「完整音节 + 声母」）**零开销、
   不生成纠错候选**；
 - **层级由词频决定**：纠错候选初始在最低层，只有「命中的词频 ≥ 常规单词级候选
   最高词频的 2 倍」时才提升到首位（`typoPromoteRatio`）。这是实测踩出来的：
   直接放开会让合法混拼首选率从 34.32% 掉到 20.75%，且 `zhongg` → 中国 直接失败。
+  换位形态触发时门槛分母只采信「音节数 == 输入段数」的全消耗精确词——
+  `zhengchagn` 的常规层只有单字碎片（正/茶）与中间夹声母的组合（正茶馆你），
+  都不是用户意图，纠错「正常」无条件领跑。
 
 已知漏判（刻意保留）：`nihap` 能被切成 `ni|ha|p`（有完整音节），因此不修正——
 它与合法写法 `ni'ha'p` 完全同形，强行纠错会误伤所有混拼输入。
@@ -413,9 +422,11 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 返回 `{"committed":"你好"}`）/ `nextPage` / `prevPage`（候选翻页，返回
 current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：组词中
 返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
-`candidateImage`（v2 统一候选窗：返回
+`candidateImage`（统一候选窗贴图：返回
 `{"width","height","png":<base64>,"scale"}`，daemon 以 `-font` 启用；无候选时
-`png` 为空；未配置字体时报错，壳回退 v1 系统候选 UI）。候选与预编辑
+`png` 为空；未配置字体时报错）。**macOS 壳自 v3 起默认壳内 AppKit 原生自绘
+候选窗**（见 `shims/macos/src/CandidatePanel.swift`），此方法为其回退路径，
+Windows / Linux 壳继续以它作为主渲染路径。候选与预编辑
 结构见 `engine.Candidate` / `engine.Composition` 的 JSON 标签。
 
 `candidateImage` 支持两个**可选**参数（Go 侧为 `ipc.CandidateImageOptions`）：
@@ -456,7 +467,7 @@ current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中�
 | 平台 | 壳 | 状态 |
 |---|---|---|
 | Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
-| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon | 已实现（编译 + IPC 运行时验证；打字闭环待真机启用） |
+| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
 | Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；预编辑合成 + 数字盲选 | 已实现（核心行为级 + DLL 编译级；真机联调待环境） |
 
 Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
@@ -545,7 +556,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
         布局与皮肤统一由 daemon 的 `renderer.Skin` 决定：默认横排候选栏 + 圆角 +
         系统浅/深色配色，壳只按 `candidateImage` 的 `dark`/`scale` 传参（见阶段 20）；
-        Windows 壳贴图待真机环境
+        Windows 壳贴图待真机环境。（**v0.2.0 起 macOS 改为壳内原生自绘候选窗**，
+        见阶段 24；贴图路径保留为回退并继续服务 Windows/Linux）
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
@@ -601,6 +613,28 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         掉到 20.75%。正常输入各项指标零回归，性能零额外开销（22.0µs/键）。
       - 已知漏判：nihap 能被切成 ni|ha|p 因而不修正——与合法写法 ni'ha'p 同形，
         强行纠错会误伤所有混拼。
+- [x] 阶段 24：原生候选窗 + 键帽序号 + 纠错/联想排序修复（v0.2.0）
+      - **macOS 候选窗切原生（AppKit 自绘）**：替代 daemon PNG 贴图——消除
+        跨进程像素管线（渲染+PNG+base64+JSON+socket ≈5ms/帧 @Retina），
+        深浅色用 NSColor 动态色自动跟随，补齐贴图方案两大缺口：鼠标点选
+        候选（原 ignoresMouseEvents=true 无法点选）与 VoiceOver 读取（原
+        无任何无障碍标注）。Windows/Linux 壳继续贴图，candidateImage 为
+        macOS 回退路径；候选窗视觉双端同步（renderer.go + CandidatePanel.swift）。
+      - **序号键帽视觉**：候选序号收进 keycap（浅色白底黑边深黑数字、
+        深色 #5A5A5E 底亮边白字、首选蓝胶囊内半透白键帽），数字字号 80%；
+        修复深色键帽配色随 WithDarkMode 漏拷失效（改反射同步全部配色字段）。
+      - **空格选词**：改 keyCode 49 判定并前置（部分客户端 characters 对
+        空格失灵导致漏选词、空格漏进文档）；组词中空格一律消费——有候选
+        选首选，无候选顶屏原始拼音。
+      - **纠错与联想排序**：zhengchagn 等相邻颠倒错拼现在纠错出「正常」
+        （新增中间孤立声母形态触发 + 领跑分母只采信全消耗精确词）；
+        xianzai 的用户词典联想词（现在时间）不再压过全消耗精确词「现在」
+        （音节超段仲裁）。基线对比见「错拼修正」与 .workwork/verify/scan
+        （full 零回归、tail1 +1.30、mixed -1.16 为中间声母形态改由高频
+        纠错词领跑的预期代价）。
+      - **渲染性能**：None 滤波快速 PNG 编码（-63%~-67%，产物更小）+
+        圆角遮罩缓存；候选帧 @Retina 6ms → 3ms（贴图端收益，Win/Linux
+        与 macOS 回退路径受益）。
 - [x] 阶段 22：输入预测与拼音匹配强化
       - **末音节续接预测**：打字时每个音节都必然经过「打了一半」的状态
         （zhonggu / beijin / daxu / quanmia），旧版这些输入只能给出巧合碎词

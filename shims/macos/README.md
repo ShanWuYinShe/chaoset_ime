@@ -201,9 +201,12 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 - 过程中修复两处真缺陷：初版误用 `LSBackgroundOnly`（参照 Squirrel
   改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
   `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
-- **v2 统一候选窗贴图**：`candidateImage` 客户端方法 + NSPanel 贴图面板
-  已实现。组词时优先显示 daemon 渲染的统一候选窗图，daemon 未启用渲染时
-  回退 IMKCandidates（v1）。
+- **v3 原生候选窗（当前默认）**：壳内 AppKit 自绘面板
+  （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色 NSColor
+  动态色自动跟随、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
+  Composition（纯数据 IPC）。**v2 统一候选窗贴图**（`candidateImage`
+  客户端方法 + NSPanel 贴图面板）保留为其回退路径：daemon 未启用渲染或
+  原生面板不可用时回退 IMKCandidates（v1）。
   **2026-10-22 起面板跟随光标而非鼠标**：经
   `client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)` 取插入点
   矩形，优先放在光标行**下方**（`rect.minY - 6`）、下方空间不足时翻到**上方**

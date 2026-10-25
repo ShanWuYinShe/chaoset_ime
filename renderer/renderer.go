@@ -1,9 +1,11 @@
-// Package renderer 把组词状态渲染为候选窗 PNG——「daemon 渲染、壳贴图」
-// 的统一候选窗方案：三端壳显示同一张图，皮肤与布局只收敛在 daemon 一处。
+// Package renderer 把组词状态渲染为候选窗 PNG，供「daemon 渲染、壳贴图」
+// 的调用方使用（Windows/Linux 壳，以及 macOS 壳的原生候选窗不可用时的回退；
+// macOS 自 v3 起默认壳内 AppKit 原生自绘，见 shims/macos/src/CandidatePanel.swift，
+// 其视觉与本包 Skin 设计保持双端同步）。
 // 纯 Go（x/image 栅格化 + stdlib PNG），渲染结果可单测、可人工目检。
 //
 // 默认皮肤 DefaultSkin() 为系统输入法风格：半透明圆角底 + 1px 细边框 +
-// 横排候选栏（首选浅灰高亮）；DefaultSkinFor(true) 给出深色版。
+// 横排候选栏（首选蓝底高亮 + 序号键帽）；DefaultSkinFor(true) 给出深色版。
 // Skin.Horizontal=false 时退回旧的竖排列表布局（预编辑行 + 每候选一行），
 // 该路径保留给旧调用方，配色与装帧（朱批竖记、内框细线）完全由 Skin 字段决定。
 package renderer
