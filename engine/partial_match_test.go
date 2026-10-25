@@ -27,7 +27,7 @@ func TestPartialTailFallsBackToCompletePrefix(t *testing.T) {
 			continue
 		}
 		hasWant := false
-		for _, cand := range comp.Candidates {
+		for _, cand := range allCandidates(s, comp) {
 			if cand.Text == c.want {
 				hasWant = true
 				break

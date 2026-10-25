@@ -89,7 +89,8 @@ func TestRenderPageIndicator(t *testing.T) {
 	}
 }
 
-// 横排：页码指示作为末尾一项 ‹1/2›，同样使图像更宽。
+// 横排：页码固定钉在右侧折叠区内，不随面板宽度漂移——多页与单页布局
+// 尺寸一致（页码不再作为行尾候选项，见 2026-10-25 用户反馈）。
 func TestRenderBarPageIndicator(t *testing.T) {
 	skin := DefaultSkin()
 	requireFont(t, skin)
@@ -97,11 +98,8 @@ func TestRenderBarPageIndicator(t *testing.T) {
 	withPage.Page, withPage.PageCount = 0, 2
 	a := renderDecode(t, sampleComp(), skin)
 	b := renderDecode(t, withPage, skin)
-	if b.Bounds().Dx() <= a.Bounds().Dx() {
-		t.Fatalf("横排页码指示应使图像更宽: %d vs %d", b.Bounds().Dx(), a.Bounds().Dx())
-	}
-	if b.Bounds().Dy() != a.Bounds().Dy() {
-		t.Fatalf("页码指示不应改变行数: 高 %d vs %d", b.Bounds().Dy(), a.Bounds().Dy())
+	if b.Bounds() != a.Bounds() {
+		t.Fatalf("页码固定在折叠区不应改变布局: %v vs %v", a.Bounds(), b.Bounds())
 	}
 }
 

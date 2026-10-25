@@ -340,6 +340,12 @@ final class ChaosetController: IMKInputController {
             self.current = self.engine.nextPage()
             self.refresh(client)
         }
+        // 末页折叠区箭头变 ⌃：点击翻上一页（与 - / [ 键等效）
+        CandidatePanelController.onPageUp = { [weak self] in
+            guard let self, let client = self.client() else { return }
+            self.current = self.engine.prevPage()
+            self.refresh(client)
+        }
         return CandidatePanelController.show(
             candidates: items,
             page: cur.page,

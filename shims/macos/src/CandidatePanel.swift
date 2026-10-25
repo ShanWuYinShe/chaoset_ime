@@ -84,8 +84,10 @@ final class CandidatePanelView: NSView {
     private var pageCount = 0
     /// 点击命中的候选回调（index 即数字序号-1，等于 daemon select 的候选索引）。
     var onSelect: ((Int) -> Void)?
-    /// 点击右侧折叠区（chevron/页码）触发翻下一页。
+    /// 点击右侧折叠区触发翻下一页。
     var onPageDown: (() -> Void)?
+    /// 末页时折叠区箭头变 ⌃，点击触发翻上一页。
+    var onPageUp: (() -> Void)?
 
     // 排版参数（pt），与 renderer.renderBar 保持一致
     private enum Layout {
@@ -325,24 +327,41 @@ final class CandidatePanelView: NSView {
         let pageH = pageSize.map { ceil($0.height) } ?? 0
         let blockH: CGFloat = 8 + (pageText != nil ? 3 + pageH : 0)
         let blockTop = (bounds.height - blockH) / 2
-        drawChevron(x: chevX, y: blockTop + 4, arm: 3, color: theme.chevron)
+        // 折叠区：箭头方向反映实际可用动作——有下一页 ⌄（点击翻下页）；
+        // 已在末页但有上一页 ⌃（点击翻上页）；单页 ⌄ 低对比度（不可点）。
+        let hasNext = page + 1 < pageCount
+        let hasPrev = page > 0
+        let dirDown = hasNext || !hasPrev
+        let dim = pageCount <= 1
+        let chevronColor = dim
+            ? theme.chevron.withAlphaComponent(theme.chevron.alphaComponent / 3)
+            : theme.chevron
+        drawChevron(x: chevX, y: blockTop + 4, arm: 3, color: chevronColor, dirDown: dirDown)
         if let pageText, let pageSize {
             let pageW = ceil(pageSize.width)
             (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + 8 + 3), withAttributes: pageAttrs)
         }
 
-        // 折叠区点击 → 翻下一页（仅多页时有意义）
+        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义）
         if pageCount > 1 {
             let flipRect = NSRect(x: dividerX, y: 0, width: width - dividerX, height: bounds.height)
-            hitAreas.append((flipRect, -1))
+            hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
     }
 
-    private func drawChevron(x: CGFloat, y: CGFloat, arm: CGFloat, color: NSColor) {
+    /// 折叠指示箭头：dirDown=true 画 ⌄（翻下页），false 画 ⌃（翻上页）。
+    /// 视图 isFlipped（y 向下），两种形状的顶点分别在下方/上方。
+    private func drawChevron(x: CGFloat, y: CGFloat, arm: CGFloat, color: NSColor, dirDown: Bool) {
         let path = NSBezierPath()
-        path.move(to: NSPoint(x: x - arm, y: y + arm * 0.7))
-        path.line(to: NSPoint(x: x, y: y - arm * 0.3))
-        path.line(to: NSPoint(x: x + arm, y: y + arm * 0.7))
+        if dirDown {
+            path.move(to: NSPoint(x: x - arm, y: y - arm * 0.7))
+            path.line(to: NSPoint(x: x, y: y + arm * 0.7))
+            path.line(to: NSPoint(x: x + arm, y: y - arm * 0.7))
+        } else {
+            path.move(to: NSPoint(x: x - arm, y: y + arm * 0.7))
+            path.line(to: NSPoint(x: x, y: y - arm * 0.7))
+            path.line(to: NSPoint(x: x + arm, y: y + arm * 0.7))
+        }
         path.lineWidth = 1.5
         path.lineCapStyle = .round
         color.setStroke()
@@ -354,10 +373,10 @@ final class CandidatePanelView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         for (rect, index) in hitAreas where rect.contains(point) {
-            if index < 0 {
-                onPageDown?()
-            } else {
-                onSelect?(index)
+            switch index {
+            case -1: onPageDown?()
+            case -2: onPageUp?()
+            default: onSelect?(index)
             }
             return
         }
@@ -385,6 +404,8 @@ enum CandidatePanelController {
     static var onSelect: ((Int) -> Void)?
     /// 点击折叠区翻下一页的回调，与 onSelect 同约定。
     static var onPageDown: (() -> Void)?
+    /// 末页时折叠区箭头变 ⌃，点击翻上一页。
+    static var onPageUp: (() -> Void)?
 
     /// 显示候选窗。originProvider 在内容尺寸确定后被调用，返回面板左上角
     /// 屏幕坐标（Controller 用它把候选窗钉在光标下方）。
@@ -398,6 +419,7 @@ enum CandidatePanelController {
         guard let v = view else { return false }
         v.onSelect = { onSelect?($0) }
         v.onPageDown = { onPageDown?() }
+        v.onPageUp = { onPageUp?() }
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
@@ -409,6 +431,7 @@ enum CandidatePanelController {
         panel?.orderOut(nil)
         onSelect = nil
         onPageDown = nil
+        onPageUp = nil
     }
 
     private static func ensurePanel() -> NSPanel {

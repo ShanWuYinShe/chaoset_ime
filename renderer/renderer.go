@@ -357,7 +357,7 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 	firstPadLeft := 9 * scale
 	itemPadX := 7 * scale
 	gap := 11 * scale
-	chevronBoxW := 20 * scale
+	chevronBoxW := 36 * scale
 
 	idxColor := skin.IndexColor
 	if idxColor.A == 0 {
@@ -396,11 +396,8 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 		}
 		items = append(items, it)
 	}
-	// 多页时在末尾附页码指示，如 1/4
-	if comp.PageCount > 1 {
-		text := pageIndicator(face, comp.Page+1, comp.PageCount)
-		items = append(items, newBarSimpleItem(indexFace, text, skin.PreeditColor, itemPadX))
-	}
+	// 页码不再作为行尾候选项：固定钉在右侧折叠区内（见下方折叠区绘制），
+	// 面板宽度随候选变化时其相对位置恒定（2026-10-25 用户反馈「页码位置会一直变」）。
 	if len(items) == 0 {
 		return nil
 	}
@@ -542,20 +539,53 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 		dividerColor = color.NRGBA{0x00, 0x00, 0x00, 0x14}
 		chevronColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}
 	}
+	// 右侧折叠区：分割线 + 翻页箭头（方向按翻页状态）+ 页码。页码固定钉在
+	// 折叠区内——面板宽度随候选变化时其相对位置恒定（与 macOS 原生端
+	// CandidatePanel.swift 同一套布局参数）。
+	//
+	// 箭头方向反映实际可用动作：有下一页 → ⌄（翻下页）；已在末页但有
+	// 上一页 → ⌃（翻上页）；单页 → ⌄ 低对比度展示（无翻页可用）。
+	hasNext := comp.Page+1 < comp.PageCount
+	hasPrev := comp.Page > 0
 	dividerX := width - chevronBoxW + (2 * scale)
 	divH := textH * 55 / 100
-	divY0 := (height - divH) / 2
 	for dy := 0; dy < divH; dy++ {
 		for dx := 0; dx < scale; dx++ {
-			blendPixel(img, dividerX+dx, divY0+dy, dividerColor)
+			blendPixel(img, dividerX+dx, (height-divH)/2+dy, dividerColor)
 		}
 	}
 
-	chevX := dividerX + ((chevronBoxW - 2*scale) / 2)
-	chevY := height / 2
-	drawChevron(img, chevX, chevY, 3*scale, chevronColor)
+	// 折叠区内容整体垂直居中：箭头在上、页码在下（多页时）
+	chevX := dividerX + 2*scale + ((chevronBoxW - 4*scale) / 2)
+	pageText := ""
+	if comp.PageCount > 1 {
+		pageText = pageIndicator(indexFace, comp.Page+1, comp.PageCount)
+	}
+	pageW, pageH := 0, 0
+	if pageText != "" {
+		w := font.MeasureString(indexFace, pageText)
+		pageW, pageH = w.Ceil(), (indexFace.Metrics().Ascent + indexFace.Metrics().Descent).Ceil()
+	}
+	blockH := 8*scale + 3*scale + pageH
+	blockTop := (height - blockH) / 2
+	chevColor := chevronColor
+	if comp.PageCount <= 1 {
+		chevColor = color.NRGBA{chevronColor.R, chevronColor.G, chevronColor.B, chevronColor.A / 3}
+	}
+	drawChevron(img, chevX, blockTop+4*scale, 3*scale, chevColor, hasNext || !hasPrev)
+	if pageText != "" {
+		// 页码基线：字面顶部对齐 blockTop+8*scale，用 indexFace 的 metrics 换算
+		ascent := indexFace.Metrics().Ascent.Ceil()
+		drawText(img, indexFace, pageText, chevX-pageW/2, blockTop+8*scale+3*scale+ascent, skin.PreeditColor)
+	}
 
 	return img
+}
+
+// drawText 以字面左上角坐标绘制文本（折叠区页码等小字用）。
+func drawText(img *image.NRGBA, face font.Face, text string, x, yBase int, c color.NRGBA) {
+	d := &font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face, Dot: fixed.P(x, yBase)}
+	d.DrawString(text)
 }
 
 // pageIndicator 生成页码指示文本，形如 1/5（现代输入法简约规范）。
@@ -1103,10 +1133,16 @@ func drawCapsule(dst *image.NRGBA, r image.Rectangle, rLeft, rRight int, c color
 	}
 }
 
-// drawChevron 绘制 macOS 系统风格的极简折叠下拉箭头 ⌄。
-func drawChevron(dst *image.NRGBA, cx, cy int, arm int, c color.NRGBA) {
+// drawChevron 绘制折叠指示箭头：dirDown=true 画 ⌄（有下一页，翻下页），
+// false 画 ⌃（已在末页、提示可上翻）。淡色（单页无翻页可用）由调用方
+// 在传入颜色时处理。
+func drawChevron(dst *image.NRGBA, cx, cy int, arm int, c color.NRGBA, dirDown bool) {
+	sign := 1.0
+	if !dirDown {
+		sign = -1.0
+	}
 	for dx := -arm; dx <= arm; dx++ {
-		dy := int(math.Abs(float64(dx)) * 0.7)
+		dy := int(math.Abs(float64(dx)) * 0.7 * sign)
 		blendPixel(dst, cx+dx, cy+dy-1, c)
 		blendPixel(dst, cx+dx, cy+dy, c)
 	}

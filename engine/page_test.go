@@ -37,16 +37,16 @@ func TestPaginationPages(t *testing.T) {
 		t.Fatalf("第一页首选 = %q, 期望 词00", comp.Candidates[0].Text)
 	}
 
-	// 下一页：剩余 3 个候选
+	// 下一页：恰好剩余一整页候选
 	comp, err = s.NextPage()
 	if err != nil {
 		t.Fatalf("NextPage 失败: %v", err)
 	}
-	if comp.Page != 1 || len(comp.Candidates) != 3 {
-		t.Fatalf("Page=%d 候选数=%d, 期望 第 1 页 3 个候选", comp.Page, len(comp.Candidates))
+	if comp.Page != 1 || len(comp.Candidates) != pageSize {
+		t.Fatalf("Page=%d 候选数=%d, 期望 第 1 页 %d 个候选", comp.Page, len(comp.Candidates), pageSize)
 	}
-	if comp.Candidates[0].Text != "词09" {
-		t.Fatalf("第二页首选 = %q, 期望 词09", comp.Candidates[0].Text)
+	if comp.Candidates[0].Text != "词06" {
+		t.Fatalf("第二页首选 = %q, 期望 词06", comp.Candidates[0].Text)
 	}
 
 	// 末页再下翻：钳制不动
@@ -73,8 +73,8 @@ func TestPaginationSelectPageRelative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
-	if text != "词09" {
-		t.Fatalf("第二页选 1 应得 词09, 得到 %q", text)
+	if text != "词06" {
+		t.Fatalf("第二页选 1 应得 词06, 得到 %q", text)
 	}
 	comp, _ := s.Input("")
 	if comp.Input != "" {
@@ -105,4 +105,28 @@ func TestPaginationResetOnInput(t *testing.T) {
 	if comp, _ = s.Backspace(); comp.Page != 0 {
 		t.Fatalf("退格后 Page=%d, 期望 0", comp.Page)
 	}
+}
+
+// allCandidates 翻页收集全部候选。pageSize 缩小后，排序/回退类断言的
+// 目标词可能落在后续页——这类断言应基于完整列表而非首页。
+func allCandidates(s *Session, comp Composition) []Candidate {
+	out := append([]Candidate(nil), comp.Candidates...)
+	for comp.Page < comp.PageCount-1 {
+		next, err := s.NextPage()
+		if err != nil {
+			break
+		}
+		comp = next
+		out = append(out, comp.Candidates...)
+	}
+	return out
+}
+
+// mustComp 输入整串拼音并返回最终组词状态（测试 helper）。
+func mustComp(s *Session, input string) Composition {
+	comp, err := s.Input(input)
+	if err != nil {
+		panic(err)
+	}
+	return comp
 }

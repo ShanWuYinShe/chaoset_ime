@@ -273,7 +273,7 @@ go run ./cmd/chaoset-cli --socket chaoset.sock
 
 测试台操作：输入拼音回车看候选（如 `nihao`、`xian`、`xi'an`、`nih`）；
 单独一个数字 `1`–`9` 选择对应候选并「上屏」；`=` 下一页 / `-` 上一页
-（每页 9 个，超出部分可翻页查看）；标点键（如 `,` `.` `\` `"`）
+（每页 6 个，超出部分可翻页查看）；标点键（如 `,` `.` `\` `"`）
 输出中文标点，组词中先上屏首选；`:b` 退格；`:r` 重置；`:q` 退出。
 带 `*` 的候选表示被用户数据（调频/词组/上下文）加权过。
 
@@ -561,7 +561,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
-      每页 9 个）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入
+      每页 6 个，2026-10-25 由 9 调整：数字键 1-6 全在标准指位内且候选行
+      不易换行）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入
 - [x] 阶段 7：候选可视化收尾——渲染器页码指示（竖排布局并进预编辑行；
       横排布局改为末尾一项 `‹1/5›` 的淡色文字，因为横排不再绘制预编辑行）；
       ibus 壳 UpdateLookupTable 候选表上报（容器内端到端验证，数字键选择不再盲选）

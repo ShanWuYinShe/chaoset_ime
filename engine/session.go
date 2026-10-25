@@ -50,8 +50,10 @@ const (
 	maxSyllableLength = 6
 	maxPathsPerChunk  = 8
 	maxSegmentations  = 16
-	// pageSize：每页候选数。翻页状态在 Session.page，边界在 Compose 钳制。
-	pageSize = 9
+	// pageSize：每页候选数。6 个是逐键选词的最舒适页容量（数字键 1-6 全部
+	// 在标准指位内，且候选行不易换行；2026-10-25 用户反馈由 9 调整）。
+	// 翻页状态在 Session.page，边界在 Compose 钳制。
+	pageSize = 6
 
 	// learnThreshold：相邻两词共现多少次后固化为用户词组（词组进化）。
 	learnThreshold = 2

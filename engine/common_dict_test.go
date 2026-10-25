@@ -47,9 +47,9 @@ func TestCommonDictSingleSyllableRanksCommonChar(t *testing.T) {
 // 音节数完全匹配优先：打满两个音节时，二字词排在「以该序列开头的更长词」前面。
 func TestExactSyllableCountPreferred(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	comp, _ := s.Input("jingchang")
+	comp := allCandidates(s, mustComp(s, "jingchang"))
 	var idxExact, idxLonger = -1, -1
-	for i, c := range comp.Candidates {
+	for i, c := range comp {
 		switch c.Text {
 		case "经常":
 			idxExact = i
@@ -58,7 +58,7 @@ func TestExactSyllableCountPreferred(t *testing.T) {
 		}
 	}
 	if idxExact < 0 || idxLonger < 0 {
-		t.Fatalf("候选应同时含「经常」与「经常化」: %+v", comp.Candidates)
+		t.Fatalf("候选应同时含「经常」与「经常化」: %+v", comp)
 	}
 	if idxExact > idxLonger {
 		t.Fatalf("完全匹配的「经常」应排在「经常化」前: 经常@%d 经常化@%d", idxExact, idxLonger)
@@ -70,14 +70,25 @@ func TestUserBoostBeatsExactMatch(t *testing.T) {
 	udPath := filepath.Join(t.TempDir(), "user.json")
 	d := mustCommonDict(t)
 	s := NewSession(d, mustUserDict(t, udPath))
-	// 打 jingchang 时选「经常化」（长词，非完全匹配）
-	comp, _ := s.Input("jingchang")
+	// 打 jingchang 时选「经常化」（长词，非完全匹配；可能落在后续页，
+	// 翻页定位后按页内序号选择）
+	comp := mustComp(s, "jingchang")
 	idx := -1
-	for i, c := range comp.Candidates {
-		if c.Text == "经常化" {
-			idx = i
+	for {
+		for i, c := range comp.Candidates {
+			if c.Text == "经常化" {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 || comp.Page >= comp.PageCount-1 {
 			break
 		}
+		next, err := s.NextPage()
+		if err != nil {
+			break
+		}
+		comp = next
 	}
 	if idx < 0 {
 		t.Fatalf("候选应含「经常化」: %+v", comp.Candidates)
