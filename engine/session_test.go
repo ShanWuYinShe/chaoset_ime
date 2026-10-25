@@ -194,3 +194,19 @@ func TestLongPinyinNoExponentialFreeze(t *testing.T) {
 		_ = comp
 	}
 }
+
+// 联想候选按词频降序：QueryPrefix 按 Trie 子树序收集、顺序与词频无关，
+// 联想展示给用户时应高频在前（毫米 64 不应排在 豪快 9 之后）。
+func TestAssociateSortedByFreq(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	out := s.Associate([]string{"hao"})
+	if len(out) < 2 {
+		t.Fatal("hao 应有联想候选")
+	}
+	for i := 1; i < len(out); i++ {
+		if out[i-1].Score < out[i].Score {
+			t.Fatalf("联想候选未按词频降序: %+v", out)
+		}
+	}
+}

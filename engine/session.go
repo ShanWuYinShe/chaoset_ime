@@ -388,6 +388,14 @@ func (s *Session) Associate(sylls []string) []Candidate {
 			add(e)
 		}
 	}
+	// QueryPrefix 按 Trie 子树序收集、顺序与词频无关；联想候选展示给用户时
+	// 应高频在前（毫米 64 不应排在 豪快 9 之后），按词频降序稳定排序。
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].Text < out[j].Text
+	})
 	if len(out) > 9 {
 		out = out[:9]
 	}
