@@ -483,3 +483,99 @@ func TestWriteVisualSample(t *testing.T) {
 		t.Logf("样例已写入 %s (%dx%d)", out, cfg.Width, cfg.Height)
 	}
 }
+
+// 快速 PNG 编码器（None 滤波）产物必须是合法 PNG：stdlib 解码逐像素一致（含 alpha）。
+func TestEncodeFastPNGRoundTrip(t *testing.T) {
+	skin := DefaultSkin()
+	requireFont(t, skin)
+	img, err := RenderImageForTest(sampleComp(), skin)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if img == nil {
+		t.Fatal("应有图像")
+	}
+	dec, err := png.Decode(bytes.NewReader(encodeFastPNG(img)))
+	if err != nil {
+		t.Fatalf("encodeFastPNG 产物不是合法 PNG: %v", err)
+	}
+	d2, ok := dec.(*image.NRGBA)
+	if !ok {
+		t.Fatalf("解码类型 = %T, 期望 *image.NRGBA", dec)
+	}
+	if d2.Bounds() != img.Bounds() {
+		t.Fatalf("尺寸不一致: %v vs %v", d2.Bounds(), img.Bounds())
+	}
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			if img.NRGBAAt(x, y) != d2.NRGBAAt(x, y) {
+				t.Fatalf("像素不一致 @(%d,%d): %v vs %v", x, y, img.NRGBAAt(x, y), d2.NRGBAAt(x, y))
+			}
+		}
+	}
+}
+
+// 序号键帽：开启时整图出现键帽底色像素（非首选红底、首选绿底），
+// 且布局比关闭时更宽——键帽内衬会展宽每项。
+func TestRenderIndexChip(t *testing.T) {
+	skin := DefaultSkinFor(false)
+	requireFont(t, skin)
+
+	on := skin
+	on.BgColor = color.NRGBA{255, 255, 255, 255}          // 纯白不透明底：隔离 Over 混合
+	on.IndexChipBg = color.NRGBA{255, 0, 0, 255}          // 非首选键帽纯红
+	on.IndexChipBorder = color.NRGBA{}                    // 关边框，避免像素误判
+	on.HighlightIndexChipBg = color.NRGBA{0, 255, 0, 255} // 首选键帽纯绿
+	imgOn, err := RenderImageForTest(sampleComp(), on)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	hasRed, hasGreen := false, false
+	for y := imgOn.Bounds().Min.Y; y < imgOn.Bounds().Max.Y; y++ {
+		for x := imgOn.Bounds().Min.X; x < imgOn.Bounds().Max.X; x++ {
+			switch imgOn.NRGBAAt(x, y) {
+			case color.NRGBA{255, 0, 0, 255}:
+				hasRed = true
+			case color.NRGBA{0, 255, 0, 255}:
+				hasGreen = true
+			}
+		}
+	}
+	if !hasRed {
+		t.Fatal("未画出非首选序号键帽（IndexChipBg 未生效）")
+	}
+	if !hasGreen {
+		t.Fatal("未画出首选序号键帽（HighlightIndexChipBg 未生效）")
+	}
+
+	off := skin
+	off.IndexChipBg = color.NRGBA{} // Alpha=0：键帽整体关闭，序号退回纯文字
+	imgOff, err := RenderImageForTest(sampleComp(), off)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if imgOff.Bounds().Dx() >= imgOn.Bounds().Dx() {
+		t.Fatalf("键帽关闭应更窄: 关闭 %d px vs 开启 %d px", imgOff.Bounds().Dx(), imgOn.Bounds().Dx())
+	}
+}
+
+// 键帽关闭（IndexChipBg Alpha=0）时不应残留任何键帽色像素。
+func TestRenderIndexChipDisabled(t *testing.T) {
+	skin := DefaultSkinFor(true)
+	requireFont(t, skin)
+	off := skin
+	off.IndexChipBg = color.NRGBA{}
+	off.IndexChipBorder = color.NRGBA{}
+	off.HighlightIndexChipBg = color.NRGBA{0, 255, 0, 255} // 即使首选键帽色非零，主开关关闭也不画
+	img, err := RenderImageForTest(sampleComp(), off)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			if img.NRGBAAt(x, y) == (color.NRGBA{0, 255, 0, 255}) {
+				t.Fatalf("主开关关闭时不应画任何键帽 @(%d,%d)", x, y)
+			}
+		}
+	}
+}

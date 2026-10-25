@@ -9,12 +9,10 @@
 package renderer
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
-	"image/png"
 	"math"
 	"os"
 	"runtime"
@@ -55,6 +53,13 @@ type Skin struct {
 	HighlightFg         color.NRGBA // 首选项文字高亮色；Alpha=0 时退回 FgColor
 	HighlightIndexColor color.NRGBA // 首选项序号颜色；Alpha=0 时退回 HighlightFg
 
+	// 序号键帽（非首选候选的数字按键提示）：IndexChipBg 为键帽底色，
+	// IndexChipBorder 为其 1px 圆角描边，Alpha=0 时均不画（序号退回纯文字）；
+	// HighlightIndexChipBg 是首选高亮胶囊内的键帽底色，Alpha=0 时回退 IndexChipBg。
+	IndexChipBg          color.NRGBA
+	IndexChipBorder      color.NRGBA
+	HighlightIndexChipBg color.NRGBA
+
 	// Horizontal 为 true 时渲染横排候选栏（系统输入法风格）：不再画预编辑行，
 	// 候选按「序号+文本」横向流式排列，页码指示作为末尾一项。零值 false =
 	// 旧的竖排列表布局。
@@ -69,7 +74,7 @@ type Skin struct {
 // DefaultSkinFor 返回系统输入法风格的皮肤：dark=false 浅色、true 深色。
 // 字体仍走 probeFontPath() 的平台探测；布局为横排候选栏 + 圆角。
 // 配色取 macOS 原生输入法语义色：首选苹果经典高亮蓝（#0066EB/#007AFF），
-// 序号精细小字号并垂直居中，右侧带极简折叠指示符。
+// 序号收进白色键帽（系统蓝数字 + keycap 底），右侧带极简折叠指示符。
 func DefaultSkinFor(dark bool) Skin {
 	skin := Skin{
 		FontPath:          probeFontPath(),
@@ -82,26 +87,32 @@ func DefaultSkinFor(dark bool) Skin {
 		HighlightBarColor: color.NRGBA{}, // 系统风格不画朱批竖记
 	}
 	if dark {
-		skin.BgColor = color.NRGBA{0x2C, 0x2C, 0x2E, 0xF5}             // macOS 深色 HUD 底（半透深灰）
-		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x24}         // 1px 半透明高光边框
-		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}        // 次级文字
-		skin.IndexColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}          // 序号静音灰，与候选字层次分明
-		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}             // 候选纯白文字
-		skin.HighlightBg = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}         // 苹果原生高亮蓝
-		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}         // 首选纯白文字
-		skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xDD} // 首选序号浅白
-		skin.UserMarkColor = color.NRGBA{0x30, 0xD1, 0x58, 0xFF}       // 学习标记绿
+		skin.BgColor = color.NRGBA{0x2C, 0x2C, 0x2E, 0xF5}              // macOS 深色 HUD 底（半透深灰）
+		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x24}          // 1px 半透明高光边框
+		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}         // 次级文字
+		skin.IndexColor = color.NRGBA{0x40, 0x9C, 0xFF, 0xFF}           // 序号亮蓝（深色下的系统蓝），键帽内保持鲜艳
+		skin.IndexChipBg = color.NRGBA{0x3A, 0x3A, 0x3C, 0xE6}          // 序号键帽：深灰实底
+		skin.IndexChipBorder = color.NRGBA{0xFF, 0xFF, 0xFF, 0x2E}      // 键帽细边（半透高光）
+		skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x30} // 首选蓝胶囊内的半透白键帽
+		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}              // 候选纯白文字
+		skin.HighlightBg = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}          // 苹果原生高亮蓝
+		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
+		skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}  // 首选序号纯白
+		skin.UserMarkColor = color.NRGBA{0x30, 0xD1, 0x58, 0xFF}        // 学习标记绿
 		return skin
 	}
-	skin.BgColor = color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}             // macOS 浅色毛玻璃底
-	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x1A}         // 黑色细边
-	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}        // 次级文字
-	skin.IndexColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}          // 序号系统次级灰
-	skin.FgColor = color.NRGBA{0x1D, 0x1D, 0x1F, 0xFF}             // 苹果深黑字
-	skin.HighlightBg = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF}         // 苹果原生高亮蓝
-	skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}         // 首选纯白文字
-	skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xDD} // 首选序号浅白
-	skin.UserMarkColor = color.NRGBA{0x34, 0xC7, 0x59, 0xFF}       // 学习标记绿
+	skin.BgColor = color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}              // macOS 浅色毛玻璃底
+	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x1A}          // 黑色细边
+	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}         // 次级文字
+	skin.IndexColor = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}           // 序号苹果系统蓝（交互提示语义），键帽内鲜艳醒目
+	skin.IndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xD9}          // 序号键帽：白色底（毛玻璃上略透）
+	skin.IndexChipBorder = color.NRGBA{0x00, 0x00, 0x00, 0x26}      // 键帽细边（黑色低透明度）
+	skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x2B} // 首选蓝胶囊内的半透白键帽
+	skin.FgColor = color.NRGBA{0x1D, 0x1D, 0x1F, 0xFF}              // 苹果深黑字
+	skin.HighlightBg = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF}          // 苹果原生高亮蓝
+	skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
+	skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}  // 首选序号纯白
+	skin.UserMarkColor = color.NRGBA{0x34, 0xC7, 0x59, 0xFF}        // 学习标记绿
 	return skin
 }
 
@@ -254,13 +265,6 @@ func parseFont(data []byte) (*opentype.Font, error) {
 
 var renderMu sync.Mutex // 字体面并发不安全；渲染串行化（耗时微秒级）
 
-// pngFastEncoder 用 BestSpeed（曾在真机 IPC 实测后短暂换过 NoCompression，
-// 已回退）：编码确能再快 100µs，但单帧从 ~7KB 涨到 ~55KB，经 base64+JSON
-// 走 Unix socket 后，实测 candidateImage 总耗时与 BestSpeed 持平甚至更差
-// （2026-10-25 真机 daemon 对照：无压缩 1.6-4.1ms vs BestSpeed 1.6-2.9ms），
-// 传输字节翻 8 倍不值得，故保留 BestSpeed。
-var pngFastEncoder = png.Encoder{CompressionLevel: png.BestSpeed}
-
 // RenderWithBounds 把组词状态画成候选窗 PNG，并直接返回像素宽高。
 // 无候选时返回 (nil, 0, 0, nil)；字体不可用时返回错误。
 func RenderWithBounds(comp engine.Composition, skin Skin) ([]byte, int, int, error) {
@@ -289,12 +293,8 @@ func RenderWithBounds(comp engine.Composition, skin Skin) ([]byte, int, int, err
 		return nil, 0, 0, nil
 	}
 
-	var buf bytes.Buffer
-	if err := pngFastEncoder.Encode(&buf, img); err != nil {
-		return nil, 0, 0, fmt.Errorf("编码 PNG 失败: %w", err)
-	}
 	b := img.Bounds()
-	return buf.Bytes(), b.Dx(), b.Dy(), nil
+	return encodeFastPNG(img), b.Dx(), b.Dy(), nil
 }
 
 // RenderImageForTest 直接返回未编码的图像，仅供像素级回归测试使用。
@@ -360,6 +360,14 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 	if highIdxColor.A == 0 {
 		highIdxColor = skin.HighlightFg
 	}
+	// 序号键帽（数字按键提示）：Alpha=0 关闭时序号退回纯文字，序号宽即原宽。
+	chipBg := skin.IndexChipBg
+	chipBorder := skin.IndexChipBorder
+	hiChipBg := skin.HighlightIndexChipBg
+	if hiChipBg.A == 0 {
+		hiChipBg = chipBg
+	}
+	chipPadX, chipPadY, chipR := 4*scale, 2*scale, 3*scale // 键帽几何：左右内衬、上下内衬、圆角
 
 	items := make([]barItem, 0, len(comp.Candidates)+1)
 	for i, cand := range comp.Candidates {
@@ -374,7 +382,12 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 			cIdx = highIdxColor
 			px = firstPadLeft
 		}
-		items = append(items, newBarCandidateItem(face, indexFace, idxText, cand.Text, candFg, cIdx, px, i == 0, cand.FromUser))
+		it := newBarCandidateItem(face, indexFace, idxText, cand.Text, candFg, cIdx, px, i == 0, cand.FromUser)
+		if chipBg.A != 0 {
+			it.chipPad = chipPadX // 键帽左右各加一层内衬，序号收进 keycap
+			it.boxW += 2 * chipPadX
+		}
+		items = append(items, it)
 	}
 	// 多页时在末尾附页码指示，如 1/4
 	if comp.PageCount > 1 {
@@ -468,11 +481,35 @@ func renderBar(comp engine.Composition, skin Skin, face, indexFace font.Face) *i
 			curX := x + it.padX
 
 			if it.indexText != "" {
+				if it.chipPad > 0 {
+					// 序号键帽：白/深灰 keycap 底 + 细边，首选在蓝胶囊内用半透白底。
+					// 边框不走 drawRoundBorder：它按整幅图分配遮罩并做全图合成，
+					// 每个候选调用一次的开销随候选数线性放大（实测吃掉整帧数百
+					// µs）；小面积键帽改双层填充——外层边框色、内层底色。
+					bg := chipBg
+					if it.highlight {
+						bg = hiChipBg
+					}
+					chipTop := indexBaseY - indexAscent - chipPadY
+					chipRect := image.Rect(curX, chipTop, curX+it.indexW+2*it.chipPad, chipTop+indexH+2*chipPadY)
+					if !it.highlight && chipBorder.A != 0 {
+						drawRoundRect(img, chipRect, chipR, chipBorder, draw.Over)
+						if inner := chipRect.Inset(1); !inner.Empty() {
+							innerR := chipR - 1
+							if innerR < 1 {
+								innerR = 1
+							}
+							drawRoundRect(img, inner, innerR, bg, draw.Over)
+						}
+					} else {
+						drawRoundRect(img, chipRect, chipR, bg, draw.Over)
+					}
+				}
 				d.Face = indexFace
 				d.Src = image.NewUniform(it.idxColor)
-				d.Dot = fixed.P(curX, indexBaseY)
+				d.Dot = fixed.P(curX+it.chipPad, indexBaseY)
 				d.DrawString(it.indexText)
-				curX += it.indexW + it.gapW
+				curX += it.indexW + 2*it.chipPad + it.gapW
 			}
 
 			d.Face = face
@@ -534,11 +571,12 @@ type barItem struct {
 	highlight bool
 	userMark  bool
 	padX      int // 内部左侧留白
+	chipPad   int // 序号键帽单侧内衬；0 = 不画键帽（序号纯文字）
 	indexW    int // 序号像素宽
 	gapW      int // 序号与候选词间距像素宽
 	textW     int // 文本像素宽（不含序号、留白与标记）
 	markW     int // 学习标记宽
-	boxW      int // 含左右留白的整项宽
+	boxW      int // 含左右留白的整项宽（键帽开启时含 2*chipPad）
 }
 
 func newBarCandidateItem(face, indexFace font.Face, idxText, text string, c, idxC color.NRGBA, itemPadX int, highlight, userMark bool) barItem {
@@ -765,9 +803,53 @@ func drawRoundRect(img *image.NRGBA, rect image.Rectangle, radius int, c color.N
 //  2. 再只对四个角的方块做精确判定，把圆角外的像素清零。
 //
 // 复杂度从 O(宽×高) 降到 O(r²)，而 r 通常只有 10。
+// 圆角遮罩缓存：面板尺寸在连续输入中高度重复（同高度、宽度渐变且翻页/
+// 主题切换时完全一致），每帧重新分配 + 填充 Alpha 位图纯属浪费。遮罩内容
+// 只取决于宽/高/半径（与位置无关：唯一调用方 drawRoundRect 按 0 基相对
+// 坐标索引）；渲染已被 renderMu 串行化，缓存仍用独立锁以防测试并发。
+// 超过 256 项整表清空，防止长会话随宽度渐变无限膨胀。
+type maskKey struct{ w, h, r int }
+
+var (
+	maskMu    sync.Mutex
+	maskCache = map[maskKey]*image.Alpha{}
+)
+
+// roundRectMask 返回 (w,h,r) 对应的圆角遮罩（0 基），命中缓存时共享只读实例。
 func roundRectMask(rect image.Rectangle, radius int) *image.Alpha {
-	m := image.NewAlpha(rect)
+	w, h := rect.Dx(), rect.Dy()
 	r := clampRadius(rect, radius)
+	key := maskKey{w, h, r}
+	maskMu.Lock()
+	m, ok := maskCache[key]
+	maskMu.Unlock()
+	if ok {
+		return m
+	}
+	m = newRoundRectMask(w, h, r)
+	maskMu.Lock()
+	if len(maskCache) >= 256 {
+		maskCache = make(map[maskKey]*image.Alpha, 64)
+	}
+	maskCache[key] = m
+	maskMu.Unlock()
+	return m
+}
+
+// newRoundRectMask 生成 0 基圆角矩形遮罩（圆角外 alpha=0）。
+//
+// 性能关键：整幅图逐像素做圆角判定曾经是候选窗渲染的最大开销——
+// 611×30 的候选栏就要做 1.8 万次浮点判断（实测 1.08ms，占单帧六成），
+// 而这一步在**每次击键**都会跑一遍，直接造成可感知的卡顿。
+//
+// 实际只有四个角的 r×r 方块可能落在圆角外，中间区域必然是内部像素。
+// 因此这里把工作拆成：
+//  1. 先把整行按「直边矩形」批量填满（纯 memset，无逐像素判断）；
+//  2. 再只对四个角的方块做精确判定，把圆角外的像素清零。
+//
+// 复杂度从 O(宽×高) 降到 O(r²)，而 r 通常只有 10。
+func newRoundRectMask(w, h, r int) *image.Alpha {
+	m := image.NewAlpha(image.Rect(0, 0, w, h))
 	if r <= 0 {
 		for i := range m.Pix {
 			m.Pix[i] = 0xFF
@@ -776,8 +858,6 @@ func roundRectMask(rect image.Rectangle, radius int) *image.Alpha {
 	}
 	stride := m.Stride
 	pix := m.Pix
-	w := rect.Dx()
-	h := rect.Dy()
 	// 1) 整幅先按实心矩形填满。
 	for y := 0; y < h; y++ {
 		row := y * stride
@@ -786,7 +866,7 @@ func roundRectMask(rect image.Rectangle, radius int) *image.Alpha {
 		}
 	}
 	// 2) 只修正四个角：把落在圆角外的像素清零。
-	//    corner 给出该角的方块范围与判定用的矩形（本角区域内的像素中心）。
+	//    corner 给出该角的方块范围（在 0 基坐标系内判定，与遮罩位置无关）。
 	type corner struct{ x0, y0, x1, y1 int }
 	corners := [4]corner{
 		{0, 0, r, r},         // 左上
@@ -794,6 +874,7 @@ func roundRectMask(rect image.Rectangle, radius int) *image.Alpha {
 		{0, h - r, r, h},     // 左下
 		{w - r, h - r, w, h}, // 右下
 	}
+	base := image.Rect(0, 0, w, h)
 	for _, c := range corners {
 		if c.x1 <= c.x0 || c.y1 <= c.y0 {
 			continue
@@ -802,7 +883,7 @@ func roundRectMask(rect image.Rectangle, radius int) *image.Alpha {
 			row := y * stride
 			for x := c.x0; x < c.x1; x++ {
 				// 这里直接用「整图坐标系」判定，insideRoundRect 已处理直角区域。
-				if !insideRoundRect(rect, r, rect.Min.X+x, rect.Min.Y+y) {
+				if !insideRoundRect(base, r, x, y) {
 					pix[row+x] = 0
 				}
 			}
