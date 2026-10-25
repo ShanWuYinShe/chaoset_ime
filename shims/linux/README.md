@@ -67,12 +67,51 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
 - 已核对 IBus 上游源码（`ibusenginedesc.c` 的 XML 解析字段表，2026-10-22）：
   `icon`、`setup`、`symbol` 等元素均受支持。
 
-## 真机使用（Linux 桌面）
+## 安装（Linux 桌面）
+
+### 方式一：用发布包（推荐）
+
+从 GitHub Release 下载 `chaoset-linux-x86_64.tar.gz`，解包后：
 
 ```sh
-GOOS=linux GOARCH=<arch> go build -o chaoset-engine ./shims/linux/ibus-engine/
-sudo cp chaoset-engine /usr/local/bin/
-sudo cp data/dict_seed.tsv /usr/local/share/chaoset/dict.tsv
-# 组件文件 shims/linux/component/chaoset.xml 按 README 注释安装到
-# /usr/share/ibus/component/ 后重启 ibus-daemon 即可
+tar -xzf chaoset-linux-x86_64.tar.gz
+cd chaoset-linux-x86_64
+sudo ./install.sh          # 装二进制 + 词库 + ibus 组件 + 图标，并自检
+# 卸载：sudo ./install.sh --uninstall
 ```
+
+安装脚本会做四件事：
+
+1. 二进制装到 `/usr/local/bin`（chaosetd / chaoset-cli / chaoset-import / chaoset-userdict / chaoset-engine）；
+2. **常用词库**（14 万条）装到 `/usr/share/chaoset/dict.tsv`；
+3. ibus 组件描述装到 `/usr/share/ibus/component/chaoset.xml`，图标装进 hicolor 主题；
+4. **自检**：从 `/` 拉起一次引擎，确认它能找到词库——找不到就直接报错退出，
+   不会把「装完打不出字」的问题留给用户。
+
+装完在「设置 → 键盘 → 输入源」里添加 **Chaoset Pinyin**。列表里没有的话
+执行 `ibus restart` 或注销重登。
+
+### 方式二：从源码
+
+```sh
+make package-linux         # 产物：dist/chaoset-linux-x86_64.tar.gz
+# 或只编引擎：
+GOOS=linux GOARCH=amd64 go build \
+  -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
+  -o chaoset-engine ./shims/linux/ibus-engine/
+```
+
+### 词库路径是怎么找到的
+
+ibus-daemon 按 component XML 的 `<exec>` 拉起引擎，**不保证工作目录**，
+所以引擎不能依赖相对路径。查找顺序（命中即用）：
+
+1. 编译期注入的绝对路径（打包时 `-ldflags -X main.buildTimeDict=...`，默认 `/usr/share/chaoset/dict.tsv`）；
+2. 可执行文件同级 `../data/dict.tsv` 等（解包即用的绿色形态）；
+3. `/usr/share/chaoset/dict.tsv`（安装包部署位置）；
+4. `data/dict_common.tsv`（在仓库里直接 `go run` 时）。
+
+> 2026-10-25 修的发行缺陷：此前默认值写死为相对路径 `data/dict_common.tsv`，
+> 而发布包里只有 558 条的 `dict_seed.tsv`。结果是装完引擎立刻报
+> `打开词库 data/dict_common.tsv 失败` 并退出——ibus 里选了输入法却一个字
+> 都打不出来。现在包里带完整词库，且路径按上述顺序回退。

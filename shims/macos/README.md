@@ -25,9 +25,23 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ## 构建与安装
 
+### 用发布包（推荐）
+
+从 GitHub Release 下载 `chaoset-macos.zip`，解包后双击 **ChaosetSetup.app**，
+在图形界面里点「安装」即可（安装/更新、导入词库、看状态都在这个 app 内完成）。
+
+- 压缩包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac
+  都能直接用；
+- 采用 **ad-hoc 签名**（无 Apple 开发者证书），首次打开如果被 Gatekeeper 拦下，
+  右键点击 app →「打开」→ 确认打开即可，只需一次。
+
+### 从源码
+
 ```sh
 ./build.sh          # 产出 build/ChaosetIME.app、build/chaosetd 与验证工具 build/tis、build/smoke
                     # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
+                    # 默认构建 universal（ARCHS="arm64 x86_64"）；
+                    # 本地快速迭代可只出单架构：ARCHS=arm64 ./build.sh
 
 # 1. 一键安装：输入法 app（移除旧版→拷入→lsregister→TIS 登记）
 #    + daemon 与种子词库 + 输入法进程常驻 LaunchAgent

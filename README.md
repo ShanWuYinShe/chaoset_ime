@@ -431,6 +431,26 @@ current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中�
 传输形态：Linux/macOS 用 Unix socket；Windows 壳经 TCP 回环
 （daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 
+## 下载与安装（GitHub Release）
+
+推 `v*` tag 时，CI（`.github/workflows/ci.yml`）会自动三端打包并创建 Release：
+
+| 平台 | 下载文件 | 安装方式 |
+|---|---|---|
+| macOS | `chaoset-macos.zip` | 双击里面的 **ChaosetSetup.app**，图形界面点安装。universal 二进制（arm64 + x86_64），Intel 与 Apple Silicon 通用；ad-hoc 签名，首次打开需右键 →「打开」 |
+| Linux | `chaoset-linux-x86_64.tar.gz` | 解包后 `sudo ./install.sh`（装二进制 + 14 万条词库 + ibus 组件 + 图标，并自检） |
+| Windows | `chaoset-windows-x64.zip` | 解包后**右键 install.bat → 以管理员身份运行**（自动 regsvr32 注册 + 启动 daemon） |
+
+每个包都自带**完整的 14 万条常用词库**，装完即可用，不需要另配词库。
+
+> 2026-10-25 修复的发行缺陷（此前 Release 产物不可用）：Linux 包只带了 558 条的
+> 演示词库、引擎却要 `data/dict_common.tsv`，且相对路径依赖 cwd——装完引擎启动
+> 即退出，ibus 里一个字都打不出来；三个平台的打包命令都没显式指定
+> `GOOS/GOARCH`，在 macOS 开发机上打包会把 Darwin 二进制塞进 Linux/Windows 包
+> （CI 跑在对应平台所以看不出来）；macOS 只出 arm64，Intel 机器无法打开；
+> Windows 没有任何安装脚本，用户得手工敲 `regsvr32`。现在四项都已修复，
+> 并在 CI 里加了对应的验证步骤（架构断言 + 真实安装后启动引擎的冒烟校验）。
+
 ## 平台壳
 
 | 平台 | 壳 | 状态 |

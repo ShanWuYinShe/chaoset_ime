@@ -64,6 +64,19 @@ jobs:
           ./shims/macos/build.sh
           ./shims/macos/tests/equivalence.sh
 
+      # 架构自检：CI 的 macos-latest 是 Apple Silicon，裸 swiftc/go build 只出
+      # arm64，Intel Mac 用户装上会「无法打开」。Makefile 打包目标里也有同样的
+      # 断言，这里再显式跑一次，让失败原因直接出现在日志里。
+      - name: 校验 universal 二进制
+        run: |
+          for app in shims/macos/build/ChaosetIME.app shims/macos/build/ChaosetSetup.app; do
+            bin="$(echo "$app" | sed 's|\.app$|.app|')/Contents/MacOS/$(basename "$app" .app)"
+            echo "== $bin"
+            lipo -info "$bin"
+            lipo -info "$bin" | grep -q 'x86_64' || { echo "缺少 x86_64 架构"; exit 1; }
+            lipo -info "$bin" | grep -q 'arm64' || { echo "缺少 arm64 架构"; exit 1; }
+          done
+
       - name: 打包 ZIP
         run: |
           mkdir -p dist
@@ -75,8 +88,6 @@ jobs:
           name: chaoset-macos
           path: dist/chaoset-macos.zip
           retention-days: 14
-
-  package-linux:
     name: 打包 Linux (IBus Engine + 资源)
     runs-on: ubuntu-24.04
     needs: test
@@ -93,19 +104,27 @@ jobs:
           make build
           make package-linux
 
+      # 冒烟校验：解包后按真实用户路径装一次，再从任意 cwd 启动引擎。
+      # 这一步是必须的——2026-10-25 曾出现「打包全绿但装完引擎找不到词库、
+      # 在 ibus 里一个字都打不出来」的发行缺陷，只跑打包不装是发现不了的。
+      - name: 冒烟校验（解包 → 安装 → 启动引擎）
+        run: |
+          mkdir -p /tmp/smoke && tar -xzf dist/chaoset-linux-x86_64.tar.gz -C /tmp/smoke
+          cd /tmp/smoke/chaoset-linux-x86_64
+          sudo ./install.sh
+          # 引擎按 ibus 的方式（无 cwd 依赖）拉起，必须能找到词库
+          cd / && timeout 5 /usr/local/bin/chaoset-engine --ibus > /tmp/engine.log 2>&1 || true
+          grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/engine.log \
+            || { echo "引擎未加载词库，日志："; cat /tmp/engine.log; exit 1; }
+          grep -q '打开词库.*失败' /tmp/engine.log && { echo "引擎找不到词库"; cat /tmp/engine.log; exit 1; } || true
+          echo "冒烟校验通过"
+
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: chaoset-linux-x86_64
           path: dist/chaoset-linux-x86_64.tar.gz
           retention-days: 14
-
-  package-windows:
-    name: 打包 Windows (TSF DLL + TCP Daemon)
-    runs-on: ubuntu-24.04
-    needs: test
-    steps:
-      - uses: actions/checkout@v7
 
       - name: 安装 Go
         uses: actions/setup-go@v7
@@ -120,6 +139,23 @@ jobs:
       - name: 编译与打包
         run: |
           make package-windows
+
+      # 包内容自检：不跑 Windows 真机（本 job 在 Linux 上），但必须保证
+      # 包里有用户真正需要的东西——词库、安装脚本、PE 格式二进制。
+      # 2026-10-25 曾出现「包里只有 dict_seed.tsv、README 却让传 dict.tsv」
+      # 的缺陷，这类问题靠打包成功是看不出来的。
+      - name: 校验包内容
+        run: |
+          unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
+          cd /tmp/winpkg/chaoset-windows-x64
+          for f in install.bat dict.tsv ChaosetIME.dll chaosetd.exe README.md; do
+            test -f "$f" || { echo "缺少必要文件: $f"; ls -la; exit 1; }
+          done
+          file chaosetd.exe | grep -q 'PE32+' || { echo "chaosetd.exe 不是 Windows PE"; exit 1; }
+          file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 Windows PE"; exit 1; }
+          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllRegisterServer \
+            || { echo "DLL 缺少 DllRegisterServer 导出"; exit 1; }
+          echo "包内容校验通过"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7

@@ -4,22 +4,92 @@ set -e
 cd "$(dirname "$0")"
 
 mkdir -p build
-echo "[1/5] 编译 Go daemon..."
-(cd ../.. && go build -o shims/macos/build/chaosetd ./cmd/chaosetd)
+ROOT=$(cd ../.. && pwd)
+
+# ---- 输出架构：默认 universal（arm64 + x86_64）----
+# 背景：CI 的 macos-latest 是 Apple Silicon runner，裸 swiftc/go build 只产出
+# arm64，Intel Mac 用户装上会直接提示「无法打开」。因此默认同时构建两种架构
+# 并用 lipo 合并；设 ARCHS=arm64 可只出单架构（本地快速迭代用）。
+ARCHS=${ARCHS:-"arm64 x86_64"}
+MIN_MACOS=15.0
+# 交叉编译 Swift 需要独立的模块缓存目录：默认缓存在部分环境不可写
+# （沙盒 / 只读 HOME），统一放到 build/（已 gitignore）下且可复用。
+MODCACHE="$ROOT/shims/macos/build/modulecache"
+mkdir -p "$MODCACHE"
+
+# swift_universal <输出> <framework...> -- <源文件...>
+swift_universal() {
+  out=$1; shift
+  fws=""
+  while [ "$1" != "--" ]; do fws="$fws -framework $1"; shift; done
+  shift
+  rm -f "$out"
+  for arch in $ARCHS; do
+    case "$arch" in
+      arm64)  target="arm64-apple-macos$MIN_MACOS" ;;
+      x86_64) target="x86_64-apple-macos$MIN_MACOS" ;;
+      *) echo "未知架构: $arch" >&2; return 1 ;;
+    esac
+    swiftc -O -module-cache-path "$MODCACHE" -target "$target" $fws "$@" -o "$out.$arch" || return 1
+  done
+  if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
+    lipo -create "$out".* -output "$out"
+    rm -f "$out".arm64 "$out".x86_64
+  else
+    mv "$out.$ARCHS" "$out"
+  fi
+}
+
+# go_universal <输出> <包路径>
+go_universal() {
+  out=$1; pkg=$2
+  rm -f "$out"
+  for arch in $ARCHS; do
+    # Go 的目标架构名与 lipo/Swift 不同：x86_64 在 Go 里叫 amd64。
+    case "$arch" in
+      arm64)  goarch=arm64 ;;
+      x86_64) goarch=amd64 ;;
+      *) echo "未知架构: $arch" >&2; return 1 ;;
+    esac
+    (cd "$ROOT" && GOOS=darwin GOARCH=$goarch CGO_ENABLED=0 go build -o "$out.$arch" "$pkg") || return 1
+  done
+  if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
+    lipo -create "$out".* -output "$out"
+    rm -f "$out".arm64 "$out".x86_64
+  else
+    mv "$out.$ARCHS" "$out"
+  fi
+}
+
+echo "[1/5] 编译 Go daemon（架构: $ARCHS）..."
+go_universal "$ROOT/shims/macos/build/chaosetd" ./cmd/chaosetd
 
 echo "[2/5] 编译 Swift 输入法壳与验证工具..."
 APP=build/ChaosetIME.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -framework InputMethodKit -framework AppKit src/*.swift -o "$APP/Contents/MacOS/ChaosetIME"
+swift_universal "$APP/Contents/MacOS/ChaosetIME" InputMethodKit AppKit -- src/*.swift
 # README 的两步核验都用这两个工具，随构建一起产出：
 #   tis   —— 注册/枚举 TIS 输入源（判断系统是否收录本输入法）
 #   smoke —— 与 daemon 的 IPC 全链路自检（需要先跑起 daemon）
-swiftc -O -framework Carbon tools/tis.swift -o build/tis
-swiftc -O -framework InputMethodKit -framework AppKit smoke/main.swift src/EngineClient.swift -o build/smoke
+swift_universal build/tis Carbon -- tools/tis.swift
+swift_universal build/smoke InputMethodKit AppKit -- smoke/main.swift src/EngineClient.swift
 #   icon-size —— 对比系统设置/菜单栏**实际渲染**的输入源图标尺寸是否与系统原生一致
 #                （icon.tiff 的像素尺寸 ≠ 系统显示尺寸；见 README「图标要求」）
-clang -O2 -framework Foundation -framework AppKit tools/icon-size.m -o build/icon-size
+rm -f build/icon-size
+for arch in $ARCHS; do
+  case "$arch" in
+    arm64)  carch="arm64" ;;
+    x86_64) carch="x86_64" ;;
+    *) echo "未知架构: $arch" >&2; exit 1 ;;
+  esac
+  clang -O2 -arch "$carch" -framework Foundation -framework AppKit tools/icon-size.m -o "build/icon-size.$arch"
+done
+if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
+  lipo -create build/icon-size.* -output build/icon-size && rm -f build/icon-size.arm64 build/icon-size.x86_64
+else
+  mv "build/icon-size.$ARCHS" build/icon-size
+fi
 
 echo "[3/5] 生成图标（本家徽标，不复用第三方素材）..."
 mkdir -p build/Resources
@@ -194,8 +264,7 @@ echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."
 SETUP=build/ChaosetSetup.app
 rm -rf "$SETUP"
 mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
-swiftc -O -framework AppKit -framework Carbon -framework UniformTypeIdentifiers \
-  setup/main.swift -o "$SETUP/Contents/MacOS/ChaosetSetup"
+swift_universal "$SETUP/Contents/MacOS/ChaosetSetup" AppKit Carbon UniformTypeIdentifiers -- setup/main.swift
 (cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
 cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.embedded"
 cp build/chaosetd build/chaoset-import build/tis build/smoke \

@@ -24,26 +24,38 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 - **未验证（需 Windows 真机）**：COM 注册表启用流程、TSF 按键拦截与合成
   渲染的实际行为、UWP/AppContainer 场景。
 
-## 构建与安装（Windows 真机）
+## 安装（Windows 真机）
+
+### 方式一：用发布包（推荐）
+
+从 GitHub Release 下载 `chaoset-windows-x64.zip`，解包后：
+
+1. **右键 `install.bat` → 以管理员身份运行**（TSF 输入法必须 regsvr32 注册 COM，需要管理员权限）；
+2. 按提示打开「设置 → 时间和语言 → 语言和区域」，在中文(简体)下「添加键盘」选 **Chaoset**；
+3. `Win+Space` 切到 Chaoset 即可打字。
+
+卸载：同样右键管理员运行 `install.bat uninstall`。
+
+脚本做的事：`regsvr32 ChaosetIME.dll` 注册 COM/CTF TIPs → 把词库复制到
+`%LOCALAPPDATA%\Chaoset\dict.tsv` → 以绝对路径 `-dict` 启动 daemon
+（监听 `127.0.0.1:7949`）→ 日志写 `%LOCALAPPDATA%\Chaoset\chaosetd.log`。
+用绝对路径是刻意的：daemon 不能依赖启动时的工作目录（Linux 端踩过同类坑）。
+
+### 方式二：从源码
 
 ```sh
 # macOS 上交叉编译（brew install mingw-w64）
 ./build.sh    # 产出 build/ChaosetIME.dll
 
 # Windows 机器上（管理员）：
-regsvr32 ChaosetIME.dll       # 注册 COM + CTF TIPs 键
-# 启动 daemon（-tcp 形态）：
+regsvr32 ChaosetIME.dll
 chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json
 # 系统设置 → 时间和语言 → 语言和区域 → 添加输入法 ChaosetIME
 # 卸载：regsvr32 /u ChaosetIME.dll
 ```
 
-## 健壮性设计（已落实 / 待真机验证）
-
-| 项 | 状态 |
-|---|---|
-| daemon 未就绪：按键直接放行（1 秒重连冷却，不拦截不等待） | 已实现（核心层行为验证） |
-| 回调超时不卡宿主：传输失败即断开降级 | 已实现（核心层行为验证） |
+> `make package-windows` 产出的是可直接分发的 zip，内含
+> `dict.tsv`（14 万条常用词库）、`install.bat`、DLL 与三个 exe。
 | 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
 | UAC 完整性级别：v0 无自绘候选窗（数字盲选 + 预编辑显示），规避候选窗完整性问题 | 已实现（编译级） |
 | `-` / `=` 候选翻页（US 布局，有候选时；边界 daemon 钳制） | 已实现（核心行为级） |
