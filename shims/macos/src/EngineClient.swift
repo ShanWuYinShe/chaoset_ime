@@ -6,12 +6,15 @@ import Foundation
 // daemon 不可达时调用返回 nil，壳层据此降级为按键透传。
 struct Candidate {
     let text: String
+    let fromUser: Bool  // from_user：用户学习标记（*），原生候选窗展示用
 }
 
 struct Comp {
     let input: String
     let preedit: String
     let candidates: [Candidate]
+    let page: Int       // 0 起页码
+    let pageCount: Int  // 总页数（page_count）
 }
 
 // CandidateImage 是 daemon 渲染的统一候选窗贴图（PNG）。
@@ -156,11 +159,13 @@ final class EngineClient {
         if let arr = result["candidates"] as? [[String: Any]] {
             for item in arr {
                 if let text = item["text"] as? String {
-                    list.append(Candidate(text: text))
+                    list.append(Candidate(text: text, fromUser: item["from_user"] as? Bool ?? false))
                 }
             }
         }
-        return Comp(input: input, preedit: preedit, candidates: list)
+        let page = result["page"] as? Int ?? 0
+        let pageCount = result["page_count"] as? Int ?? 1
+        return Comp(input: input, preedit: preedit, candidates: list, page: page, pageCount: pageCount)
     }
 
     func input(_ text: String) -> Comp? {

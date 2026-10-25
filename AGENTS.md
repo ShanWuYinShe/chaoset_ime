@@ -8,7 +8,7 @@
 
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。
 - **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB）。macOS/Linux 默认走 Unix socket，Windows 走本机回环 TCP（127.0.0.1:7949）。
-- **统一候选窗渲染（v2）**：`renderer/` 负责将候选词组绘制为内存 PNG 贴图；平台壳仅作贴图展示与事件转发，不自建渲染逻辑。候选窗的**布局（横排/竖排）、圆角、浅/深色配色全部由 daemon 侧 `renderer.Skin` 决定**（`Horizontal` / `MaxWidth` / `CornerRadius`，`DefaultSkinFor(dark)`），壳只按 `candidateImage` 的 `dark` / `scale` 传参，不得在壳里另写皮肤或布局逻辑。
+- **候选窗渲染（v3，2026-10-25 起）**：**macOS 壳用 AppKit 原生自绘候选窗**（`shims/macos/src/CandidatePanel.swift`，视觉复刻 `renderer.Skin` 设计：键帽序号、首选蓝胶囊、学习标记），数据来自 daemon 的 Composition（纯数据 IPC，`input`/`select` 等不变）；深浅色用 NSColor 动态色自动跟随，支持鼠标点选候选与 VoiceOver 读取。**Windows/Linux 壳继续用 daemon `renderer` PNG 贴图**（`candidateImage` IPC 保留，亦是 macOS 的回退路径）。候选窗视觉调整需双端同步：`renderer/renderer.go`（贴图端）与 `CandidatePanel.swift`（macOS 原生端）。
 - **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 原子写盘（`chaoset-userdict.json`，已 `.gitignore`）。
 
 ## macOS 输入源图标（用户明确要求，禁止回退）

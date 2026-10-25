@@ -2,7 +2,8 @@ import AppKit
 import InputMethodKit
 
 // ChaosetController 是 IMK 输入法控制器：把系统按键事件翻译成
-// 对 chaosetd 的 IPC 调用，并用内联预编辑 + IMKCandidates 候选窗展示。
+// 对 chaosetd 的 IPC 调用，并用内联预编辑 + 壳内原生候选窗（AppKit 自绘，
+// 见 CandidatePanel.swift）展示；daemon 不可达时回退 IMKCandidates。
 // daemon 未运行时所有按键原样透传，不影响宿主应用输入。
 // @objc 显式注册 ObjC 类名：IMK 经 Info.plist 的
 // InputMethodServerControllerClass 用 NSClassFromString 查找控制器，
@@ -279,8 +280,8 @@ final class ChaosetController: IMKInputController {
             candidateWindow?.hide()
             return
         }
-        // v2 优先：daemon 渲染的统一候选窗贴图；失败回退 IMKCandidates（v1）
-        if showImagePanel(client: client) {
+        // 原生候选窗优先（壳内 AppKit 自绘）；失败回退 IMKCandidates
+        if showNativePanel(client: client) {
             candidateWindow?.hide()
             return
         }
@@ -289,77 +290,45 @@ final class ChaosetController: IMKInputController {
         }
     }
 
-    // ---- v2 统一候选窗贴图面板 ----
+    // ---- 原生候选窗面板（CandidatePanel.swift：壳内 AppKit 自绘） ----
 
-    // 全进程共用一个贴图面板：IMK 会为不同客户端/输入上下文创建多个控制器
+    // 全进程共用一个候选窗面板：IMK 会为不同客户端/输入上下文创建多个控制器
     // 实例，若每个实例各持有一个 NSPanel，而会话结束时系统只发
     // commitComposition:（点击文本框外）而没有 deactivateServer:，旧面板就会
     // 永远留在屏幕上、点不掉也关不掉（2026-10-21 实测同时残留多个候选窗）。
     // 改为共用面板 + 在全部会话结束路径收起，保证任何时刻最多一个可见候选窗。
-    private static var imagePanel: NSPanel?
+    // 面板单例与绘制在 CandidatePanel.swift，此处只做数据组装与定位。
 
     // 候选窗与光标行的间距（pt）：太贴会压住行下沿的下伸部，太远又像飘着。
     private static let candidateGap: CGFloat = 6
 
     private static func hideCandidatePanel() {
-        imagePanel?.orderOut(nil)
+        CandidatePanelController.hide()
     }
 
-    /// 懒创建全进程共用的贴图面板（首次显示时建一次）。
-    private static func ensureImagePanel() -> NSPanel {
-        if let existing = imagePanel { return existing }
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.level = .popUpMenu
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        // 候选窗只负责展示：不拦截鼠标，点击应落到宿主应用并触发会话提交
-        panel.ignoresMouseEvents = true
-        // 贴图本身已含 1px 细边框与圆角，系统投影按贴图 alpha 生成，与系统候选窗观感一致
-        panel.hasShadow = true
-        let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
-        imageView.autoresizingMask = [.width, .height]
-        imageView.imageScaling = .scaleNone
-        panel.contentView = imageView
-        imagePanel = panel
-        return panel
-    }
-
-    /// 显示 daemon 渲染的候选窗贴图；返回 false 表示不可用（回退 v1）。
+    /// 显示壳内原生候选窗；返回 false 表示不可用（回退 IMKCandidates）。
     /// client 用于取插入点矩形，取不到时退回鼠标位置。
-    private func showImagePanel(client: (any IMKTextInput)?) -> Bool {
-        // 深色/浅色皮肤跟随候选窗自身的外观（继承自 App，即系统外观）。
-        // 倍率取光标所在屏幕的 backingScaleFactor，**只传 1 或 2**：daemon 对其它
-        // 值一律按 1 渲染，传原值反而会让 NSImage.size 与像素对不上。
-        let panel = Self.ensureImagePanel()
-        let dark = Self.isDarkAppearance(panel.effectiveAppearance)
-        let screen = Self.screenForCursor(client) ?? panel.screen ?? NSScreen.main
-        let scale = (screen?.backingScaleFactor ?? 1) >= 1.5 ? 2 : 1
-        guard let image = engine.candidateImage(dark: dark, scale: scale), let png = image.png,
-              let nsImage = NSImage(data: png) else {
+    private func showNativePanel(client: (any IMKTextInput)?) -> Bool {
+        guard let cur = current, !cur.candidates.isEmpty else {
             Self.hideCandidatePanel()
             return false
         }
-        // daemon 已按 scale 倍像素渲染，点尺寸 = 像素/scale（Retina 下才不发虚）
-        let pixelScale = CGFloat(max(1, image.scale))
-        let size = NSSize(width: CGFloat(image.width) / pixelScale,
-                          height: CGFloat(image.height) / pixelScale)
-        // NSImage.size 显式设成点尺寸：图片自带 72dpi，不设会被按像素当点
-        nsImage.size = size
-        panel.setContentSize(size)
-        if let view = panel.contentView as? NSImageView {
-            view.image = nsImage
-            view.imageScaling = .scaleAxesIndependently
+        let items = cur.candidates.map { CandidatePanelView.Item(text: $0.text, fromUser: $0.fromUser) }
+        let screen = Self.screenForCursor(client) ?? NSScreen.main
+        // 点击候选 → 选词上屏。weak self：IMK 每个输入上下文建/销 Controller，
+        // 不得让静态面板的闭包延长已结束会话的实例生命周期。
+        CandidatePanelController.onSelect = { [weak self] index in
+            guard let self, let client = self.client() else { return }
+            self.commit(index: index, client: client)
         }
-        panel.setFrameTopLeftPoint(
-            Self.candidateOrigin(size: size, client: client, screen: screen)
+        return CandidatePanelController.show(
+            candidates: items,
+            page: cur.page,
+            pageCount: cur.pageCount,
+            originProvider: { size in
+                Self.candidateOrigin(size: size, client: client, screen: screen)
+            }
         )
-        panel.orderFront(nil)
-        return true
     }
 
     // MARK: - 候选窗定位（跟随光标、不遮挡正在输入的行）
@@ -426,14 +395,6 @@ final class ChaosetController: IMKInputController {
         }
         let mouse = NSEvent.mouseLocation
         return NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
-    }
-
-    /// 是否深色外观（候选窗贴图按此选皮肤）。
-    /// 取候选窗自身的 effectiveAppearance：面板是 NSAppearanceCustomization，
-    /// 未显式设 appearance 时继承 App（即系统）外观。NSScreen 没有该属性。
-    private static func isDarkAppearance(_ appearance: NSAppearance?) -> Bool {
-        let resolved = appearance ?? NSApplication.shared.effectiveAppearance
-        return resolved.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     // MARK: - IMKCandidates 数据源
