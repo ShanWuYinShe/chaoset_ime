@@ -1345,6 +1345,31 @@ func (s *Session) compose() Composition {
 	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
 	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
 	//   ⑥ 综合得分、词长、字典序。
+	// 部分消耗标记：rankExact/rankInitialExact 候选按序匹配的输入段数
+	// 少于输入段数（打满多段却只命中前面几段）时为 true。
+	partial := make([]bool, len(items))
+	for i := range items {
+		if items[i].rank != rankExact && items[i].rank != rankInitialExact {
+			continue
+		}
+		sylls := strings.Split(items[i].cand.Syllables, "'")
+		cons := 0
+		for k, cs := range sylls {
+			if k >= inputSegs {
+				break
+			}
+			is := ""
+			if k < len(tokenPatterns[0]) {
+				is = tokenPatterns[0][k].Text
+			}
+			if cs == is || strings.HasPrefix(cs, is) || strings.HasPrefix(is, cs) {
+				cons++
+			} else {
+				break
+			}
+		}
+		partial[i] = cons < inputSegs
+	}
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i].cand, items[j].cand
 		aRank, bRank := items[i].rank, items[j].rank

@@ -139,3 +139,36 @@ func TestBackspaceWordSyllableRollback(t *testing.T) {
 		t.Fatalf("BackspaceWord 末段残缺 期望 nihao, 得到 %q", comp.Input)
 	}
 }
+
+// 部分消耗降级回归：打满多段的输入，只消耗部分段数的单字不得占据首位；
+// 全消耗词组（音节数 == 段数）应进入前列（2026-10-25 用户反馈）。
+func TestPartialConsumeDemotesPartialMatch(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+
+	// yicha（2 段）：单字「依」（只消耗首段）不得排第一，
+	// 2 音节全消耗词组应进入前 3
+	comp := mustComp(s, "yicha")
+	if len(comp.Candidates) > 0 && comp.Candidates[0].Text == "依" {
+		t.Fatalf("yicha 首选不应该是只消耗首段的单字「依」: %+v", comp.Candidates[:3])
+	}
+	full2 := false
+	for i, c := range comp.Candidates {
+		if i >= 3 {
+			break
+		}
+		if c.Syllables == "yi'chan" || c.Syllables == "yi'chang" {
+			full2 = true
+			break
+		}
+	}
+	if !full2 {
+		t.Fatalf("yicha 前 3 候选应含 2 音节全消耗词组: %+v", comp.Candidates[:min(5, len(comp.Candidates))])
+	}
+
+	// sxj（3 段简拼）：单字「事」（只消耗首段声母）不得排第一
+	s2 := NewSession(mustCommonDict(t), nil)
+	comp2 := mustComp(s2, "sxj")
+	if len(comp2.Candidates) > 0 && comp2.Candidates[0].Text == "事" {
+		t.Fatalf("sxj 首选不应该是只消耗首段声母的单字「事」: %+v", comp2.Candidates[:3])
+	}
+}
