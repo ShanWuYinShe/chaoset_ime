@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -80,8 +81,12 @@ type Session struct {
 	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
 	page       int  // 当前候选页（0 起；输入变化时重置为 0）
 
-	lastPunct    rune // 上一次标点键（同键连按循环判定；0 = 无）
-	lastPunctIdx int  // 上一次循环位置
+	lastPunct rune // 上一次标点键（同键连按循环判定；0 = 无）
+	// Compose 记忆化：key 是当前输入串。排序依赖的 prev/user 数据只在
+	// 上屏（清空 input）时变化，因此 input 相同即结果相同。
+	composeMemoKey string
+	composeMemo    Composition
+	lastPunctIdx   int // 上一次循环位置
 
 	fuzzy bool // 模糊音：查询时展开声母/韵母等价音节（默认关闭）
 
@@ -286,6 +291,8 @@ func (s *Session) resetPunctCycle() {
 
 func (s *Session) Reset() (Composition, error) {
 	s.input = ""
+	s.composeMemoKey = ""
+	s.composeMemo = Composition{}
 	s.prev = ""
 	s.history = nil
 	s.page = 0
@@ -745,6 +752,20 @@ func tokensKey(tokens []Token) string {
 // Compose 基于当前输入生成组词状态：枚举全部音节约束切分（支持全拼、简拼与混拼）、
 // 查主词典与用户词库、生成整句候选、合并去重，并按匹配优先级与综合得分排序。
 func (s *Session) Compose() Composition {
+	// 记忆化：同一输入串的 Compose 结果必然相同（排序依赖的 prev/user 数据
+	// 只在上屏时变化，而上屏会清空 input 使 key 失效）。壳的调用模式是
+	// input() 后立刻 candidateImage()，后者在 daemon 内部会再 Compose 一次——
+	// 不加缓存时每键要做两次完整组词（实测 zh 多花 1.1ms）。
+	// key 必须包含页码：NextPage/PrevPage 只改 s.page 不改输入串。
+	key := s.input + "\x00" + strconv.Itoa(s.page)
+	if key == s.composeMemoKey {
+		return s.composeMemo
+	}
+	return s.compose()
+}
+
+// compose 是 Compose 的实际实现（见上方 Compose 的记忆化说明）。
+func (s *Session) compose() Composition {
 	comp := Composition{Input: s.input}
 	if s.input == "" {
 		return comp
@@ -1309,5 +1330,8 @@ func (s *Session) Compose() Composition {
 	comp.Page = s.page
 	comp.PageCount = pageCount
 	comp.Candidates = merged[start:end]
+	// 写入记忆化缓存（见 Compose 注释）
+	s.composeMemoKey = s.input + "\x00" + strconv.Itoa(s.page)
+	s.composeMemo = comp
 	return comp
 }

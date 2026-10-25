@@ -254,14 +254,12 @@ func parseFont(data []byte) (*opentype.Font, error) {
 
 var renderMu sync.Mutex // 字体面并发不安全；渲染串行化（耗时微秒级）
 
-// pngFastEncoder 用 NoCompression 而不是 BestSpeed。
-//
-// 候选窗是**每按一次键**都要重新渲染+传输+显示一次的临时贴图，生命周期只有
-// 几十毫秒；而这条链路走的是本机 Unix socket / 回环 TCP，带宽完全不是瓶颈。
-// 实测换用 NoCompression 后编码耗时从 202µs 降到 93µs（-54%），
-// 代价是单帧 PNG 从 ~0.4KB 涨到 ~55KB——在本机 IPC 上传输仍只需微秒级，
-// 这点体积换来的响应速度提升明显更划算。若将来改走远程传输，应重新权衡。
-var pngFastEncoder = png.Encoder{CompressionLevel: png.NoCompression}
+// pngFastEncoder 用 BestSpeed（曾在真机 IPC 实测后短暂换过 NoCompression，
+// 已回退）：编码确能再快 100µs，但单帧从 ~7KB 涨到 ~55KB，经 base64+JSON
+// 走 Unix socket 后，实测 candidateImage 总耗时与 BestSpeed 持平甚至更差
+// （2026-10-25 真机 daemon 对照：无压缩 1.6-4.1ms vs BestSpeed 1.6-2.9ms），
+// 传输字节翻 8 倍不值得，故保留 BestSpeed。
+var pngFastEncoder = png.Encoder{CompressionLevel: png.BestSpeed}
 
 // RenderWithBounds 把组词状态画成候选窗 PNG，并直接返回像素宽高。
 // 无候选时返回 (nil, 0, 0, nil)；字体不可用时返回错误。
