@@ -611,3 +611,49 @@ func TestWithDarkModeCoversAllColors(t *testing.T) {
 		t.Fatalf("WithDarkMode 不应改动字体与布局: %+v", out)
 	}
 }
+
+// 渲染级回归：daemon 从 DefaultSkin()（浅色）起步，收到 dark 请求后经
+// WithDarkMode 切换再渲染——这是真实生产路径。仅测字段同步不足以覆盖
+// 「渲染管线最终拿到的是哪份皮肤」：2026-10-25 键帽配色漏拷事故中，
+// 单元测试全部通过（构造皮肤绕过了 WithDarkMode），装机后才暴露深色
+// 键帽画成浅色纯白。此测试锁死整条路径。
+func TestRenderDarkViaWithDarkMode(t *testing.T) {
+	skin := WithDarkMode(DefaultSkin(), true) // daemon 真实起点：浅色 → dark
+	requireFont(t, skin)
+	img, err := RenderImageForTest(sampleComp(), skin)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if img == nil {
+		t.Fatal("应有图像")
+	}
+	// IndexChipBg（深色 #5A5A5E 不透明）经 drawRoundRect Over 直接写入，
+	// 键帽内部应存在精确相等的像素；若配色被漏拷成浅色纯白则失败。
+	hasChipBg := false
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y && !hasChipBg; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			if img.NRGBAAt(x, y) == skin.IndexChipBg {
+				hasChipBg = true
+				break
+			}
+		}
+	}
+	if !hasChipBg {
+		t.Fatalf("深色渲染未使用 IndexChipBg #%02X%02X%02X%02X——键帽配色可能被浅色值覆盖",
+			skin.IndexChipBg.R, skin.IndexChipBg.G, skin.IndexChipBg.B, skin.IndexChipBg.A)
+	}
+	// 反向断言：浅色键帽底（纯白 #FFFFFF）不应作为键帽底色整块出现——
+	// 深色皮肤的纯白像素只允许来自文字与序号（数量有限），键帽若误用
+	// 浅色纯白底，其像素数会远超文字量。取阈值为文字像素数的 3 倍。
+	white := 0
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			if img.NRGBAAt(x, y) == (color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}) {
+				white++
+			}
+		}
+	}
+	if white > 9000 { // 实测正常 ≈1900；键帽误用纯白时 ≈+30000
+		t.Fatalf("深色渲染出现过量纯白像素 (%d)——键帽疑似误用浅色纯白底", white)
+	}
+}
