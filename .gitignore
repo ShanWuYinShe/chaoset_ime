@@ -20,3 +20,6 @@ chaoset-userdict.json.tmp
 # 单条 .DS_Store 已能匹配任意层级，**/.DS_Store 为显式写法，便于一眼看出覆盖全仓
 .DS_Store
 **/.DS_Store
+
+# Go 测试二进制（go test -cpuprofile 等会生成）
+*.test

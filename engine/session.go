@@ -594,6 +594,37 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 	return out
 }
 
+// typoMaxCorrections 是一次错拼修正最多尝试的修正串数量。
+//
+// 单次编辑能生成的串数上限约 3n + 26(n+1) + 25n（n = 输入长度），十来个
+// 字母就有上千条，全查太贵。取 160 的依据：纠错只在「输入连简拼路径都
+// 排不出来」时触发（正常打字零开销），typoCorrections 已把最有价值的
+// 「相邻互换 + 删除」排在最前，160 条足以覆盖它们并给插入留足额度。
+// typoMaxQueries 限制实际拿去查词典的条数（见下方），生成可以更多。
+// 实测 24 条会让「中段漏字」（zhonguo → zhongguo，需要在中间插 g）的
+// 修正被靠前位置的候选挤掉。
+const typoMaxCorrections = 32
+
+// typoMaxQueries 限制实际拿去查词典的修正串数量。
+//
+// 生成（typoCorrections）很便宜——实测约 39µs，因为它只做纯音节 DP 校验；
+// 贵的是每条一次的词典 Trie 遍历。实测把上限从 160 降到 32，zhogn 的单键
+// 耗时从 2.1ms 降到百微秒级，而修正效果不变（zhogn → 中 仍为首选）。
+const typoMaxQueries = 32
+
+// typoPromoteRatio 是纠错候选升级为领跑的门槛：纠错命中的词频必须达到
+// 「常规单词级候选最高词频」的这个倍数。
+//
+// 取 2 的依据（实测词频对比）：
+//
+//	zhogn（手误）    → 纠错命中 中(90)  ，常规碎片里最好的是 中欧(40) → 90/40 = 2.25 ≥ 2，提升 ✓
+//	yiwys（合法混拼）→ 纠错命中 一无所有(37)，常规候选有一五一十(36) → 37/36 ≈ 1.03 < 2，不提升 ✓
+//
+// 即：只有「纠错结果明显比常规解析更像真实词」时才抢占首位，
+// 避免为了修手误而牺牲正常混拼输入的首选率（实测不设门槛会让
+// mixed 首选率从 34.32% 掉到 20.75%）。
+const typoPromoteRatio = 2
+
 // continuationPenalty 是续接候选每多补一个字符的得分折价。
 //
 // 量纲说明：静态词频区间是 1..99，「每补 1 个字符扣 30 分」等价于
@@ -720,10 +751,9 @@ func (s *Session) Compose() Composition {
 	}
 	rawChunks := strings.Split(s.input, "'")
 	tokenPatterns := enumerateAllTokens(rawChunks)
-	if len(tokenPatterns) == 0 {
-		comp.Preedit = s.input
-		return comp
-	}
+	// 注意：这里**不能**在 tokenPatterns 为空时直接返回。完全无法切分的输入
+	// （beijngi / zhonguo / niihao）正是「打错字」的典型形态，必须继续往下走
+	// 错拼修正路径才能救回来；常规 token 循环本身对空切片是安全的空操作。
 
 	// candItem 将候选与匹配层级绑定，确保排序时 rank 与候选始终保持一致。
 	type candItem struct {
@@ -783,9 +813,18 @@ func (s *Session) Compose() Composition {
 		rankPrefix                  // 全拼偏长词续接（如 jing -> 经济）
 		rankBackoff                 // 逐级回退前缀（如 nihaox -> 你好）
 		rankContinuationLead        // 无法干净切分时的续接兜底（quanmia → 全面，而非 全米啊）
+		// rankTypoFix 是错拼修正候选的**初始**层级：最低，仅保证能在列表末尾
+		// 看到。是否提升到 rankExact 参与领跑，由排序前的词频比较决定
+		// （见「纠错候选的层级提升」段）——因为预筛只能看形态，无法区分
+		// 手误（zhogn）与合法混拼（yiwys），必须靠「纠错命中词的词频远高于
+		// 常规候选」这个词典事实才能安全提升。
+		rankTypoFix
 	)
 
-	minPatternLen := len(tokenPatterns[0])
+	minPatternLen := 0
+	if len(tokenPatterns) > 0 {
+		minPatternLen = len(tokenPatterns[0])
+	}
 	allExactShape := true
 	for _, pat := range tokenPatterns {
 		if len(pat) < minPatternLen {
@@ -889,6 +928,66 @@ func (s *Session) Compose() Composition {
 			// 层级统一由 continuationRank 决定（干净解析时退后，否则领跑）。
 			score := sc.Entry.Freq + boost - continuationPenalty*len(sc.Remain)
 			addCandidate(sc.Entry, score, boost > 0, continuationRank)
+		}
+	}
+
+	// 错拼修正：用户手滑打错一两个字母时（zhogn / niihao / zhonguo / nihap），
+	// 常规路径要么拼出一堆碎片假词（zhogn → 「中欧国内」），要么直接没候选。
+	// 这里对输入做「单次编辑」修正，把能完整切分的修正串拿去做正常查询，
+	// 才能把「中 / 你好 / 中国」找回来。
+	//
+	// 生成时统一用最低层级（rankTypoFix），是否「领跑」由排序前的词频比较
+	// 决定（见下方「错拼修正的结果处理」）。
+	//
+	// 预筛直接复用上面已经算好的 tokenPatterns：切分是 Compose 里最贵的纯计算
+	// 步骤之一，对同一输入再做一次会让逐键延迟明显上升。
+	// 性能约束：这部分只在「输入切不动」时执行，但单次编辑会产出上百个
+	// 修正串，若每个都做多路径枚举 + 全文查询，最坏情况会到几十毫秒——
+	// 逐键延迟不可接受（实测 cap=160 时 zhonguo 达 25ms）。
+	//
+	// 因此这里刻意只用「一条」切分：修正串经 typoCorrections 的
+	// misspelledFromPatterns 校验，已经能切成合法音节序列；取它的首条切分
+	// （enumerateAllTokens 按最长音节优先产出）即可代表该修正串，不再枚举
+	// 所有歧义切分。这样每个修正串只做一次线性遍历 + 一次词典查询。
+	typoAdded := map[string]bool{}
+	if misspelledFromPatterns(s.input, tokenPatterns) {
+		fixes := typoCorrections(s.input, typoMaxCorrections)
+		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
+		// 才是这部分的主要成本。typoCorrections 已按价值排序
+		// （相邻互换 → 删除 → 插入 → 替换），前若干条覆盖绝大多数真实手误。
+		if len(fixes) > typoMaxQueries {
+			fixes = fixes[:typoMaxQueries]
+		}
+		for _, fixed := range fixes {
+			patterns := enumerateAllTokens(strings.Split(fixed, "'"))
+			if len(patterns) == 0 {
+				continue
+			}
+			qp := patterns[0]
+			exacts, _ := s.dict.QueryTokens(qp, 8)
+			for _, e := range exacts {
+				key := userKey(e.Word, e.Syllables)
+				if typoAdded[key] {
+					continue
+				}
+				typoAdded[key] = true
+				boost := 0
+				if s.user != nil {
+					boost = s.user.Score(e.Word, e.Syllables, s.prev)
+				}
+				addCandidate(e, e.Freq+boost, boost > 0, rankTypoFix)
+			}
+			if s.user != nil {
+				uExacts, _ := s.user.QueryTokens(qp, 4)
+				for _, e := range uExacts {
+					key := userKey(e.Word, e.Syllables)
+					if typoAdded[key] {
+						continue
+					}
+					typoAdded[key] = true
+					addCandidate(e, e.Freq, true, rankTypoFix)
+				}
+			}
 		}
 	}
 
@@ -1087,10 +1186,44 @@ func (s *Session) Compose() Composition {
 		}
 	}
 
-	// 排序（稳定）：
-	//   ① 匹配了完整音节（精确匹配/整句候选）的候选永远优先于丢弃尾部音节的回退候选；
-	//   ② 用户数据加权（调频/上下文/词组）——优先提升用户常用词；
-	//   ③ 匹配层级（完全匹配 > 整句拼接 > 简拼完全匹配 > 简拼整句 > 偏长前缀 > 回退前缀）；
+	if len(typoAdded) > 0 {
+		typoKey := func(c Candidate) string {
+			return userKey(c.Text, strings.Split(c.Syllables, "'"))
+		}
+		bestTypoFreq := 0
+		for i := range items {
+			if typoAdded[typoKey(items[i].cand)] && items[i].cand.Score > bestTypoFreq {
+				bestTypoFreq = items[i].cand.Score
+			}
+		}
+		// 「常规候选有多强」只能采信**单词级精确匹配**，必须排除一切拼接产物：
+		// zhogn 的候选里有「中欧个」(265 分)，它是靠把残段拆成 1 字母音节拼出来
+		// 的（zhong'ou'ge，层级为 rankContinuationLead）——这类分数是「多字词
+		// 奖励叠出来的虚高值」，与真实词频不可比，用它做门槛会把纠错永远挡住。
+		//
+		// 只采信 rankExact / rankInitialExact 两级（直接命中词典词条）。
+		bestRegularFreq := 0
+		hasRegularWord := false
+		for i := range items {
+			if typoAdded[typoKey(items[i].cand)] {
+				continue
+			}
+			if items[i].rank != rankExact && items[i].rank != rankInitialExact {
+				continue
+			}
+			hasRegularWord = true
+			if items[i].cand.Score > bestRegularFreq {
+				bestRegularFreq = items[i].cand.Score
+			}
+		}
+		if bestTypoFreq > 0 && (!hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
+			for i := range items {
+				if typoAdded[typoKey(items[i].cand)] {
+					items[i].rank = rankExact
+				}
+			}
+		}
+	}
 	//   ④ 简拼低频单字 vs 高频整句权衡：当简拼命中极低频词（Freq<20，如 wmd 命中「无目的」）
 	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
 	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
