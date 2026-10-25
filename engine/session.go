@@ -388,8 +388,16 @@ func (s *Session) Associate(sylls []string) []Candidate {
 			add(e)
 		}
 	}
+	if s.user != nil {
+		// 上下文加成：user.Score 含调频与「上屏词 → 联想词」共现（Bigram），
+		// 用户常打的联想词（如反复输入「现在的」跟随「现在」）排到前面。
+		for i := range out {
+			syllsList := strings.Split(out[i].Syllables, "'")
+			out[i].Score += s.user.Score(out[i].Text, syllsList, s.prev)
+		}
+	}
 	// QueryPrefix 按 Trie 子树序收集、顺序与词频无关；联想候选展示给用户时
-	// 应高频在前（毫米 64 不应排在 豪快 9 之后），按词频降序稳定排序。
+	// 应高频在前（毫米 64 不应排在 豪快 9 之后），按加成后得分降序稳定排序。
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score

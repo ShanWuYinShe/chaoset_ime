@@ -210,3 +210,40 @@ func TestAssociateSortedByFreq(t *testing.T) {
 		}
 	}
 }
+
+// 联想排序的上下文加成：与上屏词有共现记录（Bigram）的联想词
+// 应排在无共现的联想词之前——「越用越顺手」对联想同样成立。
+func TestAssociateContextBoost(t *testing.T) {
+	d := mustCommonDict(t)
+	udPath := filepath.Join(t.TempDir(), "u.json")
+	user, err := NewUserDict(udPath)
+	if err != nil {
+		t.Fatalf("NewUserDict 失败: %v", err)
+	}
+	// 学习：上屏「好」后两次接「好家伙」（Bigram 共现 2 次 ×250 = 500 加成，
+	// 远超其他 hao 前缀词条的静态词频 41/36）
+	user.BumpBigram("好", "好家伙")
+	user.BumpBigram("好", "好家伙")
+
+	s := NewSession(d, user)
+	s.prev = "好" // 模拟刚上屏「好」
+	out := s.Associate([]string{"hao"})
+	if len(out) == 0 {
+		t.Fatal("应有联想候选")
+	}
+	if out[0].Text != "好家伙" {
+		t.Fatalf("有 Bigram 共现的「好家伙」应排前（得分 %d），实际首选 %q: %+v",
+			out[0].Score, out[0].Text, out[:min(3, len(out))])
+	}
+	// 反向：无 Bigram 记录的会话，「好家伙」仅靠静态词频参与排序（不乱飘）
+	user2, err2 := NewUserDict(udPath)
+	if err2 != nil {
+		t.Fatalf("NewUserDict 失败: %v", err2)
+	}
+	s2 := NewSession(d, user2)
+	s2.prev = "好"
+	out2 := s2.Associate([]string{"hao"})
+	if len(out2) == 0 {
+		t.Fatal("应有联想候选")
+	}
+}
