@@ -10,7 +10,8 @@ let outDir = args.count > 1 ? args[1] : "/tmp"
 func render(dark: Bool, out: String) {
     let view = CandidatePanelView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
     view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-    let texts = ["你好", "你号", "你灏", "泥好", "你豪", "尼好", "你", "泥", "尼"]
+    // 长候选（复刻真机裁字案例：一行 8 个 + 第二行 1 个，两行布局）
+    let texts = ["今天", "今天时间", "进天", "近天", "金天", "仅天", "尽天", "金田起义", "金田村"]
     let items = texts.enumerated().map { i, text in
         CandidatePanelView.Item(text: text, fromUser: i == 0)
     }

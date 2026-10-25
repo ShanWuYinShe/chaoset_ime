@@ -84,6 +84,8 @@ final class CandidatePanelView: NSView {
     private var pageCount = 0
     /// 点击命中的候选回调（index 即数字序号-1，等于 daemon select 的候选索引）。
     var onSelect: ((Int) -> Void)?
+    /// 点击右侧折叠区（chevron/页码）触发翻下一页。
+    var onPageDown: (() -> Void)?
 
     // 排版参数（pt），与 renderer.renderBar 保持一致
     private enum Layout {
@@ -96,7 +98,11 @@ final class CandidatePanelView: NSView {
         static let lineSpacing: CGFloat = 4
         static let maxWidth: CGFloat = 720
         static let maxRows = 3
-        static let chevronBoxW: CGFloat = 20
+        // 行高用 CJK 安全值：NSFont 的 ascender/descender 是西文 metrics，不含
+        // 中文字形的上下延展，按它算的面板高度会把第二行文字下半裁掉
+        // （2026-10-25 实机：两行时「金田村」被裁半行）。
+        static let textH: CGFloat = ceil(fontSize * 1.4)
+        static let chevronBoxW: CGFloat = 36
         static let chipPadX: CGFloat = 4
         static let chipPadY: CGFloat = 2
         static let chipRadius: CGFloat = 3
@@ -132,12 +138,8 @@ final class CandidatePanelView: NSView {
     }
 
     /// 计算一行内每项的布局；返回该行宽度与各行项 rect（左上角坐标系，pt）。
-    private func layoutRows() -> (rows: [Row], lineHeight: CGFloat, textAscent: CGFloat) {
-        let theme = CandidateTheme.theme(dark: isDark)
-        _ = theme
-        let ascent = textFont.ascender
-        let descent = -textFont.descender
-        let textH = ceil(ascent + descent)
+    private func layoutRows() -> (rows: [Row], lineHeight: CGFloat) {
+        let textH = Layout.textH
         let lineH = textH + Layout.lineSpacing
         // 单项布局：键帽(可选) + 文本 + 学习标记
         struct Piece {
@@ -188,11 +190,11 @@ final class CandidatePanelView: NSView {
             next += 1
         }
         if !rowFrames.isEmpty { newRow() }
-        return (rows, lineH, ascent)
+        return (rows, lineH)
     }
 
     private func contentSize() -> NSSize {
-        let (rows, lineH, _) = layoutRows()
+        let (rows, lineH) = layoutRows()
         var width: CGFloat = 0
         for row in rows {
             let w = row.width + Layout.padding * 2 + Layout.chevronBoxW
@@ -220,20 +222,23 @@ final class CandidatePanelView: NSView {
         panelPath.lineWidth = 1
         panelPath.stroke()
 
-        let (rows, lineH, ascent) = layoutRows()
+        let (rows, lineH) = layoutRows()
         let idxAscent = indexFont.ascender
         let idxDescent = -indexFont.descender
         let idxH = ceil(idxAscent + idxDescent)
-        let textH = ceil(textFont.ascender - textFont.descender)
+        let textH = Layout.textH
+        let textLineH = ceil(textFont.ascender - textFont.descender)
         let panelR = Layout.panelRadius
 
         hitAreas = []
         var y: CGFloat = Layout.padding
         for row in rows {
             var x = Layout.padding
-            for (i, frame) in row.frames.enumerated() {
+            for frame in row.frames {
                 let item = items[frame.index]
-                let p = i == 0
+                // 首选判定用全局候选索引：行内枚举的 i 每行归零，会让每行
+                // 首项都误画高亮胶囊（实机截图已复现）。
+                let p = frame.index == 0
                 // 首选：蓝色高亮胶囊（圆角承接面板圆角）
                 if p {
                     let box = frame.rect.insetBy(dx: -Layout.pillMargin, dy: -Layout.pillMargin)
@@ -283,13 +288,13 @@ final class CandidatePanelView: NSView {
                     .font: textFont,
                     .foregroundColor: p ? theme.highlightText : theme.text,
                 ]
-                (item.text as NSString).draw(at: NSPoint(x: curX, y: y + (textH + Layout.lineSpacing - Layout.lineSpacing) / 2 + (ascent - ceil(textFont.ascender))), withAttributes: textAttrs)
+                (item.text as NSString).draw(at: NSPoint(x: curX, y: y + (textH - textLineH) / 2), withAttributes: textAttrs)
                 let textW = ceil((item.text as NSString).size(withAttributes: [.font: textFont]).width)
                 curX += textW
 
                 // 学习标记 *
                 if item.fromUser {
-                    (("*" as NSString).draw(at: NSPoint(x: curX + 1, y: y + (ascent - ceil(textFont.ascender))), withAttributes: [
+                    (("*" as NSString).draw(at: NSPoint(x: curX + 1, y: y + (textH - textLineH) / 2), withAttributes: [
                         .font: textFont,
                         .foregroundColor: theme.userMark,
                     ]))
@@ -303,22 +308,33 @@ final class CandidatePanelView: NSView {
             y += lineH
         }
 
-        // 右侧折叠区：分割线 + chevron（与贴图版一致）
+        // 右侧折叠区：分割线 + chevron + 页码。页码固定钉在折叠区内——面板
+        // 宽度随候选变化时它的相对位置恒定，不再浮在候选行尾随宽度漂移。
+        // 折叠区可点击：翻到下一页（与 = / ] 键等效）。
         let width = bounds.width
         let dividerX = width - Layout.chevronBoxW + 2
-        let divH = textH * 55 / 100
-        let divY0 = (bounds.height - divH) / 2
+        let divH = Layout.textH * 55 / 100
         theme.divider.setFill()
-        NSRect(x: dividerX, y: bounds.height - divY0 - divH, width: 1, height: divH).fill()
-        let chevX = dividerX + (Layout.chevronBoxW - 2) / 2
-        let chevY = bounds.height / 2
-        drawChevron(x: chevX, y: chevY, arm: 3, color: theme.chevron)
+        NSRect(x: dividerX, y: bounds.height - divH - Layout.padding, width: 1, height: divH).fill()
 
-        // 页码指示（多页时，右下角简化样式）
+        // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下
+        let chevX = dividerX + 2 + (Layout.chevronBoxW - 4) / 2
+        let pageText = pageCount > 1 ? "\(page + 1)/\(pageCount)" : nil
+        let pageAttrs: [NSAttributedString.Key: Any] = [.font: indexFont, .foregroundColor: theme.pageColor]
+        let pageSize = pageText.map { ($0 as NSString).size(withAttributes: pageAttrs) }
+        let pageH = pageSize.map { ceil($0.height) } ?? 0
+        let blockH: CGFloat = 8 + (pageText != nil ? 3 + pageH : 0)
+        let blockTop = (bounds.height - blockH) / 2
+        drawChevron(x: chevX, y: blockTop + 4, arm: 3, color: theme.chevron)
+        if let pageText, let pageSize {
+            let pageW = ceil(pageSize.width)
+            (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + 8 + 3), withAttributes: pageAttrs)
+        }
+
+        // 折叠区点击 → 翻下一页（仅多页时有意义）
         if pageCount > 1 {
-            let text = "\(page + 1)/\(pageCount)"
-            let attrs: [NSAttributedString.Key: Any] = [.font: indexFont, .foregroundColor: theme.pageColor]
-            (text as NSString).draw(at: NSPoint(x: bounds.width - Layout.chevronBoxW - 34, y: bounds.height - Layout.padding - 12), withAttributes: attrs)
+            let flipRect = NSRect(x: dividerX, y: 0, width: width - dividerX, height: bounds.height)
+            hitAreas.append((flipRect, -1))
         }
     }
 
@@ -338,7 +354,11 @@ final class CandidatePanelView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         for (rect, index) in hitAreas where rect.contains(point) {
-            onSelect?(index)
+            if index < 0 {
+                onPageDown?()
+            } else {
+                onSelect?(index)
+            }
             return
         }
     }
@@ -363,6 +383,8 @@ enum CandidatePanelController {
     private static var view: CandidatePanelView?
     /// 点击候选的回调，由 Controller 在显示时设置（weak self 由调用方保证）。
     static var onSelect: ((Int) -> Void)?
+    /// 点击折叠区翻下一页的回调，与 onSelect 同约定。
+    static var onPageDown: (() -> Void)?
 
     /// 显示候选窗。originProvider 在内容尺寸确定后被调用，返回面板左上角
     /// 屏幕坐标（Controller 用它把候选窗钉在光标下方）。
@@ -375,6 +397,7 @@ enum CandidatePanelController {
         let p = ensurePanel()
         guard let v = view else { return false }
         v.onSelect = { onSelect?($0) }
+        v.onPageDown = { onPageDown?() }
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
@@ -385,6 +408,7 @@ enum CandidatePanelController {
     static func hide() {
         panel?.orderOut(nil)
         onSelect = nil
+        onPageDown = nil
     }
 
     private static func ensurePanel() -> NSPanel {
