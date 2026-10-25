@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"chaoset.ime/engine"
@@ -577,5 +578,36 @@ func TestRenderIndexChipDisabled(t *testing.T) {
 				t.Fatalf("主开关关闭时不应画任何键帽 @(%d,%d)", x, y)
 			}
 		}
+	}
+}
+
+// WithDarkMode 必须同步 Skin 的**全部**配色字段（color.NRGBA）：
+// 手动清单曾漏拷序号键帽三字段，daemon 从浅色皮肤起步收到 dark 请求后
+// 键帽仍是浅色纯白，深色下白数字完全不可见（2026-10-25 实机事故）。
+// 用反射断言而非逐字段点名——未来新增配色字段时此测试自动覆盖。
+func TestWithDarkModeCoversAllColors(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		got := WithDarkMode(DefaultSkin(), dark)
+		want := DefaultSkinFor(dark)
+		gv, wv := reflect.ValueOf(got), reflect.ValueOf(want)
+		tt := gv.Type()
+		nrgba := reflect.TypeOf(color.NRGBA{})
+		for i := 0; i < tt.NumField(); i++ {
+			if tt.Field(i).Type != nrgba {
+				continue
+			}
+			if gv.Field(i).Interface() != wv.Field(i).Interface() {
+				t.Fatalf("dark=%v 字段 %s 未被 WithDarkMode 同步: got %v, want %v",
+					dark, tt.Field(i).Name, gv.Field(i).Interface(), wv.Field(i).Interface())
+			}
+		}
+	}
+	// 非配色字段必须原样保留（抽查布局与字体）
+	base := DefaultSkin()
+	base.FontSize = 22
+	base.MaxWidth = 999
+	out := WithDarkMode(base, true)
+	if out.FontSize != 22 || out.MaxWidth != 999 || !out.Horizontal || out.FontPath != base.FontPath {
+		t.Fatalf("WithDarkMode 不应改动字体与布局: %+v", out)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"image/draw"
 	"math"
 	"os"
+	"reflect"
 	"runtime"
 	"sync"
 
@@ -122,22 +123,24 @@ func DefaultSkin() Skin {
 	return DefaultSkinFor(false)
 }
 
-// WithDarkMode 把皮肤配色切换为浅色/深色主题，保留字体与布局字段
+// WithDarkMode 把皮肤配色切换为浅色/深色主题，保留字体与布局等非配色字段
 // （FontPath/FontSize/Padding/LineSpacing/Horizontal/MaxWidth/CornerRadius）。
 // daemon 用 -font/-fontsize 定制字体后，壳仍可只按外观切换配色。
+//
+// 配色字段（全部 color.NRGBA）用反射逐字段同步，而非手动清单：Skin 新增
+// 配色字段时此函数自动覆盖。手动清单曾漏拷序号键帽三字段（2026-10-25），
+// daemon 从 DefaultSkin() 浅色起步收到 dark 请求后键帽仍是浅色纯白，
+// 深色下白数字画在纯白键帽上完全不可见（白色实心方块）。
 func WithDarkMode(skin Skin, dark bool) Skin {
 	theme := DefaultSkinFor(dark)
-	skin.BgColor = theme.BgColor
-	skin.BorderColor = theme.BorderColor
-	skin.InnerBorderColor = theme.InnerBorderColor
-	skin.PreeditColor = theme.PreeditColor
-	skin.FgColor = theme.FgColor
-	skin.HighlightBg = theme.HighlightBg
-	skin.HighlightFg = theme.HighlightFg
-	skin.HighlightBarColor = theme.HighlightBarColor
-	skin.UserMarkColor = theme.UserMarkColor
-	skin.IndexColor = theme.IndexColor
-	skin.HighlightIndexColor = theme.HighlightIndexColor
+	sv, tv := reflect.ValueOf(&skin).Elem(), reflect.ValueOf(theme)
+	t := sv.Type()
+	nrgba := reflect.TypeOf(color.NRGBA{})
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).Type == nrgba {
+			sv.Field(i).Set(tv.Field(i))
+		}
+	}
 	return skin
 }
 
