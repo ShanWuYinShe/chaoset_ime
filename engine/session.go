@@ -359,6 +359,69 @@ func (s *Session) Select(index int) (string, error) {
 	return text, nil
 }
 
+// Associate 返回「以上屏词音节序列开头」的联想候选：用户选词上屏后拼音区
+// 已清空，候选窗继续展示的续接词组（如上屏「现在」→ 联想「现在时间」）。
+// 纯查询，不改会话状态；最多返回 9 个（单页）。
+func (s *Session) Associate(sylls []string) []Candidate {
+	if s.dict == nil || len(sylls) == 0 {
+		return nil
+	}
+	var out []Candidate
+	seen := map[string]bool{}
+	add := func(e *Entry) {
+		key := userKey(e.Word, e.Syllables)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, Candidate{
+			Text:      e.Word,
+			Syllables: strings.Join(e.Syllables, "'"),
+			Score:     e.Freq,
+		})
+	}
+	for _, e := range s.dict.QueryPrefix(sylls, "") {
+		add(e)
+	}
+	if s.user != nil {
+		for _, e := range s.user.QueryPhrasesPrefix(sylls) {
+			add(e)
+		}
+	}
+	if len(out) > 9 {
+		out = out[:9]
+	}
+	return out
+}
+
+// AssociateSelect 联想候选直接上屏：不需要拼音组词状态，学习路径与
+// Select 完全一致（调频、上下文共现、词组进化），保证「越用越顺手」
+// 对联想上屏同样成立。
+func (s *Session) AssociateSelect(word string, sylls []string) (string, error) {
+	if word == "" || len(sylls) == 0 {
+		return "", fmt.Errorf("联想上屏参数为空")
+	}
+	if s.user != nil {
+		if err := s.user.BumpWord(word, sylls); err != nil {
+			return "", fmt.Errorf("记录用户词频失败: %w", err)
+		}
+		if s.prev != "" {
+			if err := s.user.BumpBigram(s.prev, word); err != nil {
+				return "", fmt.Errorf("记录上下文共现失败: %w", err)
+			}
+		}
+	}
+	s.history = append(s.history, learnEntry{word: word, sylls: sylls})
+	if len(s.history) > maxHistory {
+		s.history = s.history[len(s.history)-maxHistory:]
+	}
+	if s.user != nil {
+		s.learnPhrase()
+	}
+	s.prev = word
+	return word, nil
+}
+
 // learnPhrase 观察「最后两次上屏」：相邻共现达到阈值且主词典还没有
 // 这个组合时，固化为用户词组。链式扩展（A+B→AB 之后 AB+又一词）
 // 由后续真实上屏自然发生，无需特殊处理。
@@ -1290,19 +1353,23 @@ func (s *Session) compose() Composition {
 		if aBackoff != bBackoff {
 			return !aBackoff
 		}
-		if a.FromUser != b.FromUser {
-			return a.FromUser
-		}
-		// 音节超段仲裁：词音节数多于输入段数的候选（用户词组联想/前缀续接，
-		// 如输入 xianzai 联想出「现在时间」）不得排在「输入完全消耗」候选
-		// （如「现在」）之前——打满音节的意图优先于联想延伸
-		//（2026-10-25 用户反馈；放在 FromUser 之后：调频优先级仍高于该启发式）。
+		// 音节超段仲裁（**最高排序键之一，位于调频之前**）：词音节数多于
+		// 输入段数的候选（用户词组联想/前缀续接，如输入 xianzai、hao 时
+		// 联想出的「现在时间」「好家伙」）不得排在「输入完全消耗」候选
+		// （「现在」「好」）之前——即使后者是调频过的单字。
+		// 2026-10-25 用户反馈二度修正：单音节输入 hao 的首候选被学习词组
+		// 「好家伙」占据、单字「好」退到第 5 位。准确匹配用户输入是硬约束，
+		// 调频只在「同为全消耗」的候选之间决定先后；联想延伸交由上屏后的
+		// 联想区域展示（见 associate）。
 		if inputSegs > 0 {
 			aOver := strings.Count(a.Syllables, "'")+1 > inputSegs
 			bOver := strings.Count(b.Syllables, "'")+1 > inputSegs
 			if aOver != bOver {
 				return !aOver
 			}
+		}
+		if a.FromUser != b.FromUser {
+			return a.FromUser
 		}
 		if aRank != bRank {
 			if aRank == rankInitialExact && bRank == rankInitialSentence && a.Score < 20 && b.Score >= 100 {

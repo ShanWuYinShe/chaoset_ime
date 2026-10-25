@@ -15,6 +15,9 @@ final class ChaosetController: IMKInputController {
 
     private let engine = EngineClient()
     private var current: Comp?
+    // 联想模式：选词上屏后候选窗继续展示续接词组（非 nil 即联想中）；
+    // 用户开始输入新字母或结束会话时清空，回到正常拼音匹配。
+    private var associateCandidates: [Candidate]?
     private var candidateWindow: IMKCandidates?
 
     // 中英模式：英文模式下按键全部放行（组词/选词/标点映射不介入）。
@@ -139,6 +142,40 @@ final class ChaosetController: IMKInputController {
 
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
 
+        // 联想模式：数字键选联想词直接上屏（并继续联想）；空格/回车结束
+        // 联想放行；字母键退出联想进入正常组词（落到下方常规流程）。
+        if associateCandidates != nil {
+            // 联想分支在 guard chars 之前：部分客户端空格的 characters 失灵
+            // （同空格选词修复的口径），数字/字母改用 event 自带的键值判定。
+            let rawChars = event.charactersIgnoringModifiers ?? ""
+            let firstScalar = rawChars.unicodeScalars.first?.value ?? 0
+            if event.keyCode == 49 || event.keyCode == 36 {
+                // 空格/回车：结束联想（空格透传，回车消费）
+                let wasSpace = event.keyCode == 49
+                exitAssociate()
+                if wasSpace {
+                    return passThrough(client)
+                }
+                return true
+            } else if firstScalar >= 49, firstScalar <= 54,
+                      let list = associateCandidates,
+                      Int(firstScalar) - 49 < list.count {
+                let pick = list[Int(firstScalar) - 49]
+                if let committed = engine.associateSelect(word: pick.text, sylls: pick.syllables.split(separator: "'").map(String.init)) {
+                    client?.insertText(
+                        committed,
+                        replacementRange: NSRange(location: NSNotFound, length: 0)
+                    )
+                    enterAssociate(sylls: pick.syllables.split(separator: "'").map(String.init), client: client)
+                    return true
+                }
+                exitAssociate()
+            } else if firstScalar >= 97, firstScalar <= 122 {
+                // 字母键：退出联想，进入正常组词
+                exitAssociate()
+            }
+        }
+
         // 空格（keyCode 49）：组词中一律消费——首选上屏；无候选（残缺组词）
         // 时顶屏原始拼音（与回车等效）。放在 guard chars **之前**：部分客户端
         // 快速输入时 charactersIgnoringModifiers 对空格判定失灵（返回空/nil），
@@ -259,18 +296,73 @@ final class ChaosetController: IMKInputController {
     }
 
     private func commit(index: Int, client: (any IMKTextInput)?) {
-        guard let committed = engine.select(index) else { return }
+        guard let cur = current, index < cur.candidates.count,
+              let committed = engine.select(index) else { return }
+        let sylls = cur.candidates[index].syllables
         current = nil
         client?.insertText(
             committed,
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
         refresh(client)
+        // 联想：选词上屏后候选窗继续展示续接词组（用户可直接数字键连选）
+        enterAssociate(sylls: sylls.split(separator: "'").map(String.init), client: client)
+    }
+
+    // MARK: - 联想模式
+
+    /// 进入联想模式：按上屏词音节查续接词组并展示（无候选则不进入）。
+    private func enterAssociate(sylls: [String], client: (any IMKTextInput)?) {
+        guard let comp = engine.associate(sylls: sylls), !comp.candidates.isEmpty else { return }
+        associateCandidates = comp.candidates
+        refresh(client)
+    }
+
+    private func exitAssociate() {
+        associateCandidates = nil
+        exitAssociate()
+    }
+
+    /// 展示联想候选（数据源为续接词组而非组词状态）。
+    private func showAssociatePanel(client: (any IMKTextInput)?, candidates: [Candidate]) -> Bool {
+        let items = candidates.map { CandidatePanelView.Item(text: $0.text, fromUser: false) }
+        let screen = Self.screenForCursor(client) ?? NSScreen.main
+        CandidatePanelController.onSelect = { [weak self] index in
+            guard let self, index < candidates.count, let client = self.client() else { return }
+            let pick = candidates[index]
+            if let committed = self.engine.associateSelect(word: pick.text, sylls: pick.syllables.split(separator: "'").map(String.init)) {
+                client.insertText(
+                    committed,
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                self.enterAssociate(sylls: pick.syllables.split(separator: "'").map(String.init), client: client)
+            }
+        }
+        CandidatePanelController.onPageDown = nil
+        CandidatePanelController.onPageUp = nil
+        return CandidatePanelController.show(
+            candidates: items,
+            page: 0,
+            pageCount: 1,
+            originProvider: { size in
+                Self.candidateOrigin(size: size, client: client, screen: screen)
+            }
+        )
     }
 
     // MARK: - 展示
 
     private func refresh(_ client: (any IMKTextInput)?) {
+        // 组词开始即退出联想（新输入优先于联想展示）
+        if current?.input.isEmpty == false {
+            associateCandidates = nil
+        }
+        // 联想模式：候选窗展示续接词组
+        if let assoc = associateCandidates, !assoc.isEmpty {
+            if showAssociatePanel(client: client, candidates: assoc) {
+                return
+            }
+        }
         let marked = current?.preedit ?? ""
         if marked.isEmpty {
             // 组词结束：用 insertText("") 收掉 inline session。
@@ -289,7 +381,7 @@ final class ChaosetController: IMKInputController {
         }
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
         if !hasCandidates {
-            Self.hideCandidatePanel()
+            exitAssociate()
             candidateWindow?.hide()
             return
         }
@@ -323,7 +415,7 @@ final class ChaosetController: IMKInputController {
     /// client 用于取插入点矩形，取不到时退回鼠标位置。
     private func showNativePanel(client: (any IMKTextInput)?) -> Bool {
         guard let cur = current, !cur.candidates.isEmpty else {
-            Self.hideCandidatePanel()
+            exitAssociate()
             return false
         }
         let items = cur.candidates.map { CandidatePanelView.Item(text: $0.text, fromUser: $0.fromUser) }
@@ -442,24 +534,24 @@ final class ChaosetController: IMKInputController {
     // 会话状态并收起候选窗，否则 v2 贴图面板会残留在屏幕上且无法关闭。
     override func commitComposition(_ sender: Any!) {
         current = engine.reset()
-        Self.hideCandidatePanel()
+        exitAssociate()
         candidateWindow?.hide()
     }
 
     override func activateServer(_ sender: Any!) {
         // 新的输入上下文：先收掉上一个上下文可能残留的候选窗
-        Self.hideCandidatePanel()
+        exitAssociate()
         candidateWindow?.hide()
     }
 
     override func deactivateServer(_ sender: Any!) {
         current = engine.reset()
-        Self.hideCandidatePanel()
+        exitAssociate()
         candidateWindow?.hide()
     }
 
     deinit {
-        Self.hideCandidatePanel()
+        exitAssociate()
         candidateWindow?.hide()
     }
 }

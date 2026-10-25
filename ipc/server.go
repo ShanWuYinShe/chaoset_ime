@@ -165,6 +165,33 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "associate":
+		// 联想候选：选词上屏后拼音区已清空，按上屏词音节查续接词组
+		// （Candidate 列表，结构同 input 响应）。macOS 壳进入联想模式时调用。
+		var pAsso struct {
+			Sylls []string `json:"sylls"`
+		}
+		if err := json.Unmarshal(req.Params, &pAsso); err != nil {
+			return nil, fmt.Errorf("解析 associate 参数失败: %w", err)
+		}
+		return map[string]any{
+			"input": "", "preedit": "", "page": 0, "page_count": 1,
+			"candidates": sess.Associate(pAsso.Sylls),
+		}, nil
+	case "associateSelect":
+		// 联想候选直接上屏：学习路径与 select 完全一致（调频/共现/词组进化）。
+		var pAssoSel struct {
+			Word  string   `json:"word"`
+			Sylls []string `json:"sylls"`
+		}
+		if err := json.Unmarshal(req.Params, &pAssoSel); err != nil {
+			return nil, fmt.Errorf("解析 associateSelect 参数失败: %w", err)
+		}
+		text, err := sess.AssociateSelect(pAssoSel.Word, pAssoSel.Sylls)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"committed": text}, nil
 	case "punct":
 		var p struct {
 			Key string `json:"key"`

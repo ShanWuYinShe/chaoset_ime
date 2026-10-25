@@ -279,6 +279,31 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 	return out
 }
 
+// QueryPhrasesPrefix 返回「音节序列为前缀」的用户合成词组（联想用）：
+// 上屏「现在」后，打 xian'zai 的联想应含「现在时间」这类以该序列开头的
+// 学习词组。词组规模在数千以内时线性扫描足够。
+func (u *UserDict) QueryPhrasesPrefix(syllables []string) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	prefix := strings.Join(syllables, " ")
+	if prefix == "" {
+		return nil
+	}
+	prefix += " "
+	var out []*Entry
+	for _, rec := range u.file.Phrases {
+		if !strings.HasPrefix(rec.Sylls, prefix) {
+			continue
+		}
+		out = append(out, &Entry{
+			Word:      rec.Word,
+			Syllables: strings.Fields(rec.Sylls),
+			Freq:      u.phraseScore(rec),
+		})
+	}
+	return out
+}
+
 // QueryTokensExact 返回音节数恰好等于 len(tokens) 的完全匹配用户词条（按得分降序，最多 maxResults 条）。
 func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 	u.mu.RLock()

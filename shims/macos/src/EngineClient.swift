@@ -6,6 +6,7 @@ import Foundation
 // daemon 不可达时调用返回 nil，壳层据此降级为按键透传。
 struct Candidate {
     let text: String
+    let syllables: String  // ' 连接的音节序列（联想上屏回传 daemon 学习用）
     let fromUser: Bool  // from_user：用户学习标记（*），原生候选窗展示用
 }
 
@@ -159,7 +160,9 @@ final class EngineClient {
         if let arr = result["candidates"] as? [[String: Any]] {
             for item in arr {
                 if let text = item["text"] as? String {
-                    list.append(Candidate(text: text, fromUser: item["from_user"] as? Bool ?? false))
+                    list.append(Candidate(text: text,
+                                          syllables: item["syllables"] as? String ?? "",
+                                          fromUser: item["from_user"] as? Bool ?? false))
                 }
             }
         }
@@ -215,6 +218,19 @@ final class EngineClient {
     func toggleHalfWidth() -> Bool? {
         guard let result = call(method: "toggleHalfWidth", params: [:]) else { return nil }
         return result["half_width"] as? Bool
+    }
+
+    // associate 取联想候选：上屏词后拼音区已清空，候选窗继续展示的续接词组。
+    // sylls 为上屏词的音节序列（' 连接）。返回 nil 表示 daemon 不可达。
+    func associate(sylls: [String]) -> Comp? {
+        parseComp(call(method: "associate", params: ["sylls": sylls]))
+    }
+
+    // associateSelect 联想候选直接上屏：学习路径与 select 一致。
+    func associateSelect(word: String, sylls: [String]) -> String? {
+        guard let result = call(method: "associateSelect",
+                                params: ["word": word, "sylls": sylls]) else { return nil }
+        return result["committed"] as? String
     }
 
     // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；

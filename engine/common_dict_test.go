@@ -65,13 +65,17 @@ func TestExactSyllableCountPreferred(t *testing.T) {
 	}
 }
 
-// 用户调频必须压过「完全匹配优先」：反复选过长词后，长词应排到前面。
+// 调频与「全消耗优先」的关系（2026-10-25 语义演进）：
+// 学习过的长词（经常化，3 音节）不再压过「输入完全消耗」的短词（经常，
+// 2 音节）——音节超段仲裁位于调频之前，准确匹配用户输入是硬约束。
+// 学习效果体现为：「经常化」仍进入候选列表（此前根本查不到），排在
+// 全消耗词之后；打满更多音节（jingchangh）时它回到首位。
 func TestUserBoostBeatsExactMatch(t *testing.T) {
 	udPath := filepath.Join(t.TempDir(), "user.json")
 	d := mustCommonDict(t)
 	s := NewSession(d, mustUserDict(t, udPath))
-	// 打 jingchang 时选「经常化」（长词，非完全匹配；可能落在后续页，
-	// 翻页定位后按页内序号选择）
+	// 打 jingchang 时选「经常化」（长词；可能落在后续页，翻页定位后按
+	// 页内序号选择，Select 的 index 是页内相对序号）
 	comp := mustComp(s, "jingchang")
 	idx := -1
 	for {
@@ -96,11 +100,23 @@ func TestUserBoostBeatsExactMatch(t *testing.T) {
 	if _, err := s.Select(idx); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
-	// 新会话加载同一份用户词典：学习过的长词应排到第一
+	// 新会话加载同一份用户词典：
+	// ① 全消耗的「经常」仍是第一（音节超段仲裁位于调频之前）
 	s2 := NewSession(d, mustUserDict(t, udPath))
-	comp2, _ := s2.Input("jingchang")
-	if len(comp2.Candidates) == 0 || comp2.Candidates[0].Text != "经常化" {
-		t.Fatalf("学习后「经常化」应排第一，得到 %+v", comp2.Candidates)
+	comp2 := mustComp(s2, "jingchang")
+	if len(comp2.Candidates) == 0 || comp2.Candidates[0].Text != "经常" {
+		t.Fatalf("学习后全消耗词「经常」仍应第一，得到 %+v", comp2.Candidates)
+	}
+	// ② 「经常化」必须进入候选列表（学习生效；在本页或后续页）
+	found := false
+	for _, c := range allCandidates(s2, comp2) {
+		if c.Text == "经常化" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("学习过的「经常化」应进入候选列表: %+v", comp2.Candidates)
 	}
 }
 
