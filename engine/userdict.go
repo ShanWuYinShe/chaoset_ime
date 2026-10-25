@@ -121,8 +121,27 @@ func (u *UserDict) load(data []byte) error {
 // setClock 注入时钟供测试控制时间衰减。
 func (u *UserDict) setClock(f func() time.Time) { u.now = f }
 
+// userKeySep 是用户词条键（词 + 分隔符 + 空格分隔的音节）的分隔符。
+// 用 NUL 而非 TAB：词或音节中都不可能含 NUL，解析无歧义。
+const userKeySep = "\x00"
+
 func userKey(word string, syllables []string) string {
-	return word + "\x00" + strings.Join(syllables, " ")
+	return word + userKeySep + strings.Join(syllables, " ")
+}
+
+// parseUserKey 把 userKey 生成的键拆回「词 + 音节列表」，
+// 与 userKey 使用同一个分隔符，避免两侧不一致导致查询恒空。
+// 键缺少分隔符时 ok 为 false（调用方应跳过该条记录）。
+func parseUserKey(key string) (word string, syllables []string, ok bool) {
+	word, joined, found := strings.Cut(key, userKeySep)
+	if !found || word == "" {
+		return "", nil, false
+	}
+	syllables = strings.Fields(joined)
+	if len(syllables) == 0 {
+		return "", nil, false
+	}
+	return word, syllables, true
 }
 
 func (u *UserDict) touch(rec *userRecord) {
@@ -298,12 +317,10 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 
 	// 2. 查询用户调频单字/词
 	for key, rec := range u.file.Words {
-		parts := strings.SplitN(key, "\t", 2)
-		if len(parts) != 2 {
+		word, sylls, valid := parseUserKey(key)
+		if !valid {
 			continue
 		}
-		word := parts[0]
-		sylls := strings.Fields(parts[1])
 		if len(sylls) != len(tokens) {
 			continue
 		}
@@ -382,12 +399,10 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 
 	// 2. 查询用户调频单字/词
 	for key, rec := range u.file.Words {
-		parts := strings.SplitN(key, "\t", 2)
-		if len(parts) != 2 {
+		word, sylls, valid := parseUserKey(key)
+		if !valid {
 			continue
 		}
-		word := parts[0]
-		sylls := strings.Fields(parts[1])
 		if len(sylls) < len(tokens) {
 			continue
 		}
@@ -432,6 +447,72 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 		prefixes = prefixes[:maxResults]
 	}
 	return exacts, prefixes
+}
+
+// QueryContinuation 在用户词库里做「末音节续接」匹配：tokens 是前面已完整的
+// 音节约束，frag 是末段尚未打完的串。命中「tokens + 以 frag 为前缀的音节」
+// 开头的用户词条（自学习词组与调频词），返回结果带各自需补全的剩余字符。
+//
+// 用户词条用 []string 存音节，无法走 Trie，只能线性扫描；
+// 用户词条规模在数千以内，配合「先比音节数、再比前缀」的提前退出足够快。
+func (u *UserDict) QueryContinuation(tokens []Token, frag string, maxResults int) []SyllableContinuation {
+	if frag == "" || len(tokens) == 0 {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 8
+	}
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
+	var out []SyllableContinuation
+	seen := make(map[string]bool)
+	match := func(word string, sylls []string, score int) {
+		if len(sylls) < len(tokens)+1 {
+			return
+		}
+		for i, tok := range tokens {
+			if !matchSyllable(sylls[i], tok) {
+				return
+			}
+		}
+		next := sylls[len(tokens)]
+		if !strings.HasPrefix(next, frag) {
+			return
+		}
+		key := word + userKeySep + strings.Join(sylls, " ")
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, SyllableContinuation{
+			Entry:  &Entry{Word: word, Syllables: sylls, Freq: score},
+			Remain: next[len(frag):],
+		})
+	}
+	for _, rec := range u.file.Phrases {
+		match(rec.Word, strings.Fields(rec.Sylls), u.phraseScore(rec))
+	}
+	for key, rec := range u.file.Words {
+		word, sylls, ok := parseUserKey(key)
+		if !ok {
+			continue
+		}
+		match(word, sylls, int(float64(rec.Count*UserBoostPerCount)*decay(rec.LastUsed, u.now())))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i].Remain) != len(out[j].Remain) {
+			return len(out[i].Remain) < len(out[j].Remain)
+		}
+		if out[i].Entry.Freq != out[j].Entry.Freq {
+			return out[i].Entry.Freq > out[j].Entry.Freq
+		}
+		return out[i].Entry.Word < out[j].Entry.Word
+	})
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
 }
 
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。
@@ -519,8 +600,13 @@ func (u *UserDict) ExportTSV(w io.Writer, phrasesOnly bool) error {
 		}
 		rows := make([]row, 0, len(u.file.Words))
 		for key, rec := range u.file.Words {
-			word, sylls, _ := strings.Cut(key, "\x00")
-			rows = append(rows, row{word + "\t" + sylls, rec})
+			// 与查询侧共用同一套键解析，保证导出与查询口径一致；
+			// 键残缺时退回原键名，避免整条记录丢失
+			word, sylls, valid := parseUserKey(key)
+			if !valid {
+				word, sylls = key, nil
+			}
+			rows = append(rows, row{word + "\t" + strings.Join(sylls, " "), rec})
 		}
 		sort.Slice(rows, func(i, j int) bool {
 			if rows[i].rec.Count != rows[j].rec.Count {

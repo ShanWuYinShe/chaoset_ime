@@ -86,3 +86,29 @@ func SyllablesWithPrefix(frag string) []string {
 	}
 	return out
 }
+
+// syllableAliases 是「用户可能敲出的非标准拼写 → 标准音节」表。
+//
+// 只收录**输入侧**的等价写法，不改音节表本身：音节表统一用 v 记写 ü
+// （nv=女、lve=略），这是词库与导入管线的既定格式；但用户键盘上敲 ü 的
+// 习惯写法是 u（lue=略、nue=虐），且多数输入法都接受。缺了这张表，
+// 敲 lue 只能打出「路鄂」（lu + e），敲 nue 只能打出「怒鄂」，观感是坏掉。
+//
+// 注意 jue/que/xue/yue 在标准拼音里本来就用 u（jue 不是 jüe 的另一种写法），
+// 因此不能把它们映射成 jve/qve/xve/yve——那些不是合法音节。
+var syllableAliases = map[string]string{
+	"lue": "lve",
+	"nue": "nve",
+}
+
+// canonicalSyllable 返回音节的标准写法：是合法音节则原样返回；
+// 否则尝试别名表（lue → lve）；都不匹配时原样返回，由调用方判定非法。
+func canonicalSyllable(s string) string {
+	if IsSyllable(s) {
+		return s
+	}
+	if canon, ok := syllableAliases[s]; ok {
+		return canon
+	}
+	return s
+}

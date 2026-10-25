@@ -420,7 +420,9 @@ func tokenizeChunk(chunk string) [][]Token {
 		}
 		anySuccess := false
 		for l := maxLen; l >= 1; l-- {
-			sub := chunk[pos : pos+l]
+			// 别名归一（lue → lve）：用户按键盘习惯敲 u 代替 ü 时，
+			// 仍应命中词库中以 v 记写的音节（略 / 虐）。
+			sub := canonicalSyllable(chunk[pos : pos+l])
 			if IsSyllable(sub) {
 				cur = append(cur, Token{Text: sub, IsExact: true})
 				if dfsFull(pos + l) {
@@ -592,6 +594,109 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 	return out
 }
 
+// continuationPenalty 是续接候选每多补一个字符的得分折价。
+//
+// 量纲说明：静态词频区间是 1..99，「每补 1 个字符扣 30 分」等价于
+// 「预测词必须比同输入下的完整词高频约 30 档才能赢」，正好落在分界线上：
+//   - 中国(85) 补 o 后 55 > 中古(36)：残缺输入 zhonggu 首选「中国」；
+//   - 一霎(30) 对比 以上(73)：yisha 本身是完整输入，首选仍是「一霎」。
+//
+// 取值由数据扫描确定（见 README「输入预测」实测表）：30 是唯一同时保住
+// 「全拼完整输入首选率」与「末音节残缺首选率」的点——20 会侵蚀完整输入
+// （80.75% → 79.86%），40 则让残缺输入的预测收益明显缩水（44.38% → 42.47%）。
+const continuationPenalty = 30
+
+// partialTailSplit 是「末段残缺」的一种拆法：前面已完整的音节 + 待补全串。
+type partialTailSplit struct {
+	tokens []Token
+	frag   string
+}
+
+// partialTailSplits 枚举「末段整体尚未构成完整音节」的续接形态。
+// 与 syllableContinuations 那条路径的区别：那里末音节本身是合法音节
+// （gu / jin / xu 只是还能延长），这里末段连音节都不是（mia / nchen），
+// 必须整段作为 prefix 去续接，否则只会被切成碎片出假词。
+//
+// 做法：从最长 6 个字符往短试末段 frag，前面剩下的部分必须能被完整
+// 切分成音节；frag 一旦本身是合法音节就停止（那种情况由上一条路径覆盖）。
+func partialTailSplits(input string) []partialTailSplit {
+	if input == "" || strings.HasSuffix(input, "'") {
+		return nil
+	}
+	lastChunk := input
+	if i := strings.LastIndexByte(input, '\''); i >= 0 {
+		lastChunk = input[i+1:]
+	}
+	if lastChunk == "" {
+		return nil
+	}
+	var out []partialTailSplit
+	// frag 从 2 个字符起递增：**优先把最长的一段当作前置完整音节**
+	// （quanmia → quan + mia，而不是 qu + anmia），这样续接出的
+	// 「全面」才不会被更长的 frag 拆成噪声。
+	// 1 个字符的末段属于声母简拼的领域，交给常规路径。
+	for fl := 2; fl <= maxSyllableLength && len(out) < 2; fl++ {
+		if fl >= len(lastChunk) {
+			continue
+		}
+		frag := lastChunk[len(lastChunk)-fl:]
+		if IsSyllable(frag) {
+			break // 末段已是完整音节，这条路径不适用
+		}
+		syls, ok := splitExactSyllables(lastChunk[:len(lastChunk)-fl])
+		if !ok || len(syls) == 0 {
+			continue
+		}
+		toks := make([]Token, len(syls))
+		for i, syl := range syls {
+			toks[i] = Token{Text: syl, IsExact: true}
+		}
+		out = append(out, partialTailSplit{tokens: toks, frag: frag})
+	}
+	return out
+}
+
+// splitExactSyllables 把一段拼音贪心切成完整音节；有任何字符无法归入
+// 合法音节时返回 ok=false。
+func splitExactSyllables(chunk string) ([]string, bool) {
+	var syls []string
+	for len(chunk) > 0 {
+		maxL := len(chunk)
+		if maxL > maxSyllableLength {
+			maxL = maxSyllableLength
+		}
+		matched := false
+		for l := maxL; l >= 1; l-- {
+			if IsSyllable(chunk[:l]) {
+				syls = append(syls, chunk[:l])
+				chunk = chunk[l:]
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	return syls, true
+}
+
+// syllableContinuations 返回「以 syl 为前缀、比 syl 更长的合法音节」中
+// syl 之后需要补敲的那一段（如 gu → ["o","i","ang"...] 中的 o/i/ang 等）。
+// 空结果表示该音节无法再延长，也就没有续接预测价值。
+func syllableContinuations(syl string) []string {
+	if syl == "" {
+		return nil
+	}
+	var out []string
+	for _, s := range syllableSorted {
+		if len(s) > len(syl) && strings.HasPrefix(s, syl) {
+			out = append(out, s[len(syl):])
+		}
+	}
+	return out
+}
+
 func tokensKey(tokens []Token) string {
 	var b strings.Builder
 	for i, t := range tokens {
@@ -659,21 +764,131 @@ func (s *Session) Compose() Composition {
 		})
 	}
 
+	// 匹配层级（数字越小越靠前）。
+	//
+	// 注意 rankContinuation 与 rankExact 是**两个不同层级**，续接默认排在
+	// 完整匹配之后：输入能被切成干净音节时（yisha = yi'sha），续接只是额外
+	// 的预测补充。但续接候选与精确匹配的得分口径相同（都是「词频 - 补全代价」），
+	// 所以高频预测词仍能在同层级内凭分数胜出（zhonggu → 中国）。
+	//
+	// rankContinuationLead 是兜底：输入压根无法切成干净音节时（quanmia 只能切成
+	// quan'mi'a），同层候选全是「全米啊」这类碎片假词，必须由续接领跑。
 	const (
-		rankExact           = 0 // 全拼单词完全匹配（如 jingchang -> 经常，ba -> 把）
-		rankSentence        = 1 // 全拼多词 DP 拼接复合候选（如 womende -> 我们的）
-		rankInitialExact    = 2 // 简拼/混拼单词完全匹配（如 zg -> 中国，bj -> 北京，jsj -> 计算机，rmb -> 人民币，zhongg -> 中国）
-		rankInitialSentence = 3 // 简拼/混拼多词 DP 拼接复合候选（如 wmd/womd -> 我们的）
-		rankPartial         = 4 // 末段残缺续接（如 shix -> 史学）
-		rankInitialPrefix   = 5 // 简拼偏长词（如 zg -> 中国人民，中关村）
-		rankPrefix          = 6 // 全拼偏长词续接（如 jing -> 经济）
-		rankBackoff         = 7 // 逐级回退前缀（如 nihaox -> 你好）
+		rankExact            = iota // 全拼单词完全匹配（如 jingchang -> 经常，ba -> 把）
+		rankSentence                // 全拼多词 DP 拼接复合候选（如 womende -> 我们的）
+		rankInitialExact            // 简拼/混拼单词完全匹配（如 zg -> 中国，bj -> 北京，jsj -> 计算机，rmb -> 人民币，zhongg -> 中国）
+		rankInitialSentence         // 简拼/混拼多词 DP 拼接复合候选（如 wmd/womd -> 我们的）
+		rankContinuation            // 末段残缺续接（zhonggu → 中国，daxu → 大学）
+		rankInitialPrefix           // 简拼偏长词（如 zg -> 中国人民，中关村）
+		rankPrefix                  // 全拼偏长词续接（如 jing -> 经济）
+		rankBackoff                 // 逐级回退前缀（如 nihaox -> 你好）
+		rankContinuationLead        // 无法干净切分时的续接兜底（quanmia → 全面，而非 全米啊）
 	)
 
 	minPatternLen := len(tokenPatterns[0])
+	allExactShape := true
 	for _, pat := range tokenPatterns {
 		if len(pat) < minPatternLen {
 			minPatternLen = len(pat)
+		}
+	}
+	// 输入的「最干净解析」：所有音节都是完整全拼、且没有任何一段被拆成
+	// 声母简拼。只有当输入存在这样一条干净解析时，续接才退居次要位置——
+	// 否则（quanmia 被切成 quan'mi'a、zhonggu 被切成 zhong'gu）候选里的
+	// 东西全是碎片，应当由续接候选领跑。
+	for _, pat := range tokenPatterns {
+		if len(pat) != minPatternLen {
+			continue
+		}
+		if !allExactShape {
+			break
+		}
+		for _, tok := range pat {
+			if !tok.IsExact {
+				allExactShape = false
+				break
+			}
+		}
+	}
+
+	// 末音节续接预测：末音节虽然已经打成一个合法音节，但它同时是某个更长
+	// 音节的前缀时（gu→guo、jin→jing、xu→xue、ha→hao、ma→mian…），用户很
+	// 可能还没打完。此时把末音节当作「待补全」做一次续接查询，才能让
+	// zhonggu 打出「中国」、beijin 打出「北京」、daxu 打出「大学」。
+	// 不加这一步时这些输入只能出「中古 / 被进 / 大需」这类巧合的碎词。
+	//
+	// 分层规则（两条续接路径共用）。
+	//
+	// 关键点：输入的末音节既可以按「已完整」解析（zhonggu = zhong'gu → 中古），
+	// 也可以按「还差几个字母」解析（zhong'gu→guo → 中国）。两种解析在输入串上
+	// **完全无法区分**，所以正确的做法不是人为规定谁优先，而是让它们同层竞争，
+	// 由「词频 - 补全代价」决定（与真实输入法的拼音格 lattice + 语言模型一致）：
+	// 中国(85) 即使扣掉补全代价也高于 中古(36)，而 一霎(30) 低于 以上(73)。
+	// 因此 yisha 首选会变成「以上」——这是**预测生效的正确表现**（用户敲的确实
+	// 是 yishang 的前缀），不是回归。
+	//
+	// 例外：输入**无法**被干净切分成完整音节时（quanmia 只能切成 quan'mi'a），
+	// 同级候选全是「全米啊」这类碎片假词，此时续接必须领跑，否则根本出不来。
+	continuationRank := rankExact
+	if !allExactShape {
+		continuationRank = rankContinuationLead
+	}
+	addedContinuation := map[string]bool{}
+	for _, pat := range tokenPatterns {
+		if len(pat) < 2 {
+			continue
+		}
+		last := pat[len(pat)-1]
+		if !last.IsExact || len(syllableContinuations(last.Text)) == 0 {
+			continue
+		}
+		head := pat[:len(pat)-1]
+		r := continuationRank
+		entryList := s.dict.QueryContinuation(head, last.Text, 24)
+		if s.user != nil {
+			entryList = append(entryList, s.user.QueryContinuation(head, last.Text, 8)...)
+		}
+		for _, sc := range entryList {
+			key := userKey(sc.Entry.Word, sc.Entry.Syllables)
+			if addedContinuation[key] {
+				continue
+			}
+			addedContinuation[key] = true
+			if sc.Remain == "" {
+				continue // 末音节本身已是完整音节：等同精确匹配，由常规路径覆盖
+			}
+			boost := 0
+			if s.user != nil {
+				boost = s.user.Score(sc.Entry.Word, sc.Entry.Syllables, s.prev)
+			}
+			// 补全越长越不确定（gu→guo 远强于 gu→guang），按字符数折价。
+			score := sc.Entry.Freq + boost - continuationPenalty*len(sc.Remain)
+			addCandidate(sc.Entry, score, boost > 0, r)
+		}
+	}
+	// 情况二：末段本身不是一个完整音节（quanmia / shangmia / zhonghuarenming），
+	// 常规切分会把残缺段拆成「完整音节 + 声母 + 韵母」的碎片（quan'mi'a），
+	// 命中「全米啊」这类假词。这里把「前面已完整 + 末段整体当作待补全串」
+	// 再查一次，才能出「全面 / 上面」。
+	for _, tail := range partialTailSplits(s.input) {
+		entryList := s.dict.QueryContinuation(tail.tokens, tail.frag, 24)
+		if s.user != nil {
+			entryList = append(entryList, s.user.QueryContinuation(tail.tokens, tail.frag, 8)...)
+		}
+		for _, sc := range entryList {
+			key := userKey(sc.Entry.Word, sc.Entry.Syllables)
+			if addedContinuation[key] {
+				continue
+			}
+			addedContinuation[key] = true
+			boost := 0
+			if s.user != nil {
+				boost = s.user.Score(sc.Entry.Word, sc.Entry.Syllables, s.prev)
+			}
+			// 补全越长越不确定（qua→quan 稳，qua→quang 更勉强），按字符数折价；
+			// 层级统一由 continuationRank 决定（干净解析时退后，否则领跑）。
+			score := sc.Entry.Freq + boost - continuationPenalty*len(sc.Remain)
+			addCandidate(sc.Entry, score, boost > 0, continuationRank)
 		}
 	}
 
@@ -720,6 +935,7 @@ func (s *Session) Compose() Composition {
 						}
 					}
 				}
+
 				for _, e := range prefixes {
 					boost := 0
 					if s.user != nil {

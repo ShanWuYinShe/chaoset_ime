@@ -22,6 +22,41 @@ func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, be
 	return FindSentenceCandidatesTokens(dict, user, tokens, beamWidth)
 }
 
+// userEntryBaseFreq 是「只存在于用户词库的词条」在整句规划中的基础分。
+// 用户权重由 UserDict.Score 单独计入（见下方 uScore 分支），这里只给一个
+// 与静态词频同量级的占位值，避免用户调频分（次数×500）被当作静态词频
+// 再乘以音节数放大——那会让高频学过的单字霸榜，把完整词挤成碎字拼接。
+const userEntryBaseFreq = 20
+
+// mergeUserEntries 把用户词库命中的词条并入静态词条，并完成两件事：
+//  1. 用户得分归一化：调频分（可达数千）不能直接当词频，统一压到
+//     userEntryBaseFreq，真实权重交给 uScore 分支按上下文计算；
+//  2. 去重：同一「词 + 音节序列」以静态词条为准（静态词频是真实语料频率），
+//     用户词条只在静态词库没有该词时补位。
+func mergeUserEntries(static, userEntries []*Entry) []*Entry {
+	if len(userEntries) == 0 {
+		return static
+	}
+	seen := make(map[string]bool, len(static))
+	for _, e := range static {
+		seen[userKey(e.Word, e.Syllables)] = true
+	}
+	out := static
+	for _, e := range userEntries {
+		key := userKey(e.Word, e.Syllables)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, &Entry{
+			Word:      e.Word,
+			Syllables: e.Syllables,
+			Freq:      userEntryBaseFreq,
+		})
+	}
+	return out
+}
+
 // FindSentenceCandidatesTokens 使用动态规划（Viterbi Beam Search）在词典与用户词库中
 // 根据音节约束序列（支持全拼、简拼与混拼）寻找能够完整拼合的最优整句/复合短语候选。
 //
@@ -64,24 +99,19 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 			}
 
 			var entries []*Entry
+			var userEntries []*Entry
 			if allExact {
 				entries = dict.QueryExact(partSylls)
 				if user != nil {
-					userEntries := user.QueryPhrases(partSylls, "")
-					if len(userEntries) > 0 {
-						entries = append(append([]*Entry(nil), entries...), userEntries...)
-					}
+					userEntries = user.QueryPhrases(partSylls, "")
 				}
 			} else {
-				exacts := dict.QueryTokensExact(part, 6)
-				entries = exacts
+				entries = dict.QueryTokensExact(part, 6)
 				if user != nil {
-					userExacts := user.QueryTokensExact(part, 6)
-					if len(userExacts) > 0 {
-						entries = append(append([]*Entry(nil), entries...), userExacts...)
-					}
+					userEntries = user.QueryTokensExact(part, 6)
 				}
 			}
+			entries = mergeUserEntries(entries, userEntries)
 
 			if len(entries) == 0 {
 				continue

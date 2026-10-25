@@ -98,6 +98,80 @@ func (d *Dictionary) QueryPrefix(syllables []string, frag string) []*Entry {
 	return out
 }
 
+// SyllableContinuation 描述一次「末音节续接」命中的词条：
+// Remain 是该词末音节在用户已敲部分之后还需要补敲的字符，
+// 补全越短说明用户越可能正想打这个词。
+type SyllableContinuation struct {
+	Entry  *Entry
+	Remain string
+}
+
+// QueryContinuation 处理「末段音节打了一半」的场景：tokens 是前面已经
+// 完整/简拼的音节约束，frag 是末段残缺串。命中条件是「tokens + 某个以
+// frag 为前缀的完整音节」构成的词条前缀。
+//
+// 与 QueryTokens 的差别：QueryTokens 只能整段吃掉 frag 作为若干音节前缀
+// （于是 zhonggu 被切成 zhong+g+u 这种碎片化路径，命中「中古」而不是「中国」），
+// 本方法把 frag 视为**一个尚未打完的音节**去续接，正是输入法预测的核心形态。
+func (d *Dictionary) QueryContinuation(tokens []Token, frag string, maxResults int) []SyllableContinuation {
+	if frag == "" || len(tokens) == 0 {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+	nodes := d.walkTokens(tokens)
+	if len(nodes) == 0 {
+		return nil
+	}
+	var out []SyllableContinuation
+	seen := make(map[int]bool)
+	// 沿「以 frag 为前缀的下一音节」下探两层，覆盖 中国 / 中国人民 这类词
+	// 以及 中国人 这类多音节衍生词；更长的衍生词由通用前缀查询兜底。
+	var walk func(node *dictNode, depth int, remain string)
+	walk = func(node *dictNode, depth int, remain string) {
+		if node.children == nil || depth > 2 {
+			return
+		}
+		for syl, child := range node.children {
+			if !strings.HasPrefix(syl, frag) {
+				continue
+			}
+			r := syl[len(frag):]
+			if depth == 0 {
+				remain = r
+			}
+			for _, id := range child.ids {
+				if !seen[id] {
+					seen[id] = true
+					out = append(out, SyllableContinuation{Entry: d.entries[id], Remain: remain})
+				}
+			}
+			walk(child, depth+1, remain)
+		}
+	}
+	for _, node := range nodes {
+		walk(node, 0, "")
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// 补全越短越可能：zhonggu → 中国(remain "o") 优先于 中关村(remain "an")
+		if len(out[i].Remain) != len(out[j].Remain) {
+			return len(out[i].Remain) < len(out[j].Remain)
+		}
+		if out[i].Entry.Freq != out[j].Entry.Freq {
+			return out[i].Entry.Freq > out[j].Entry.Freq
+		}
+		return out[i].Entry.Word < out[j].Entry.Word
+	})
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
+}
+
 // QueryExact 返回音节序列与 syllables 恰好完全一致的词条（不含子树衍生更长的词）。
 func (d *Dictionary) QueryExact(syllables []string) []*Entry {
 	node := d.walk(syllables)
