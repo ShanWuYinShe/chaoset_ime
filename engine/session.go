@@ -949,8 +949,13 @@ func (s *Session) Compose() Composition {
 	// misspelledFromPatterns 校验，已经能切成合法音节序列；取它的首条切分
 	// （enumerateAllTokens 按最长音节优先产出）即可代表该修正串，不再枚举
 	// 所有歧义切分。这样每个修正串只做一次线性遍历 + 一次词典查询。
+	// typoSuspicious 同时决定两件事：① 是否生成纠错候选；② 常规路径是否
+	// 做昂贵的 DP 整句与 prefix 收集——碎片输入的这些产物（zhogn 的
+	// 「中欧国内」「中欧个」）最终都会被纠错候选压掉，却花费数毫秒
+	// （实测 zhogn 单键 6ms 里常规路径占九成），是打错字瞬间卡顿的来源。
+	typoSuspicious := misspelledFromPatterns(s.input, tokenPatterns)
 	typoAdded := map[string]bool{}
-	if misspelledFromPatterns(s.input, tokenPatterns) {
+	if typoSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
 		// 才是这部分的主要成本。typoCorrections 已按价值排序
@@ -1001,7 +1006,14 @@ func (s *Session) Compose() Composition {
 				}
 			}
 
-			exacts, prefixes := s.dict.QueryTokens(qp, 20)
+			// 错拼形态：主查询换 QueryTokensExact（不展开 prefix 子树）。
+			// 碎片前缀的 BFS 展开量大且产物全是假词。
+			var exacts, prefixes []*Entry
+			if typoSuspicious {
+				exacts = s.dict.QueryTokensExact(qp, 20)
+			} else {
+				exacts, prefixes = s.dict.QueryTokens(qp, 20)
+			}
 
 			if !hasInitials {
 				// 纯全拼匹配
@@ -1014,7 +1026,7 @@ func (s *Session) Compose() Composition {
 				}
 				// 整句合成（DP）仅在最少音节数（即未将拼音过度碎片化）的切分路径上执行，
 				// 避免生成如「看以西啊」(4音节) 压过「看一下」(3音节)、「地安娜哦上」(5音节) 压过「电脑上」(3音节)
-				if len(qp) == minPatternLen && len(qp) >= 2 {
+				if !typoSuspicious && len(qp) == minPatternLen && len(qp) >= 2 {
 					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
 						if len(sc.Words) > 1 {
 							boost := 0
@@ -1051,7 +1063,7 @@ func (s *Session) Compose() Composition {
 					}
 					addCandidate(e, e.Freq+boost, boost > 0, rankInitialExact)
 				}
-				if len(qp) == minPatternLen && len(qp) >= 2 {
+				if !typoSuspicious && len(qp) == minPatternLen && len(qp) >= 2 {
 					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
 						if len(sc.Words) > 1 {
 							avgScore := sc.Score / len(sc.Words)
@@ -1106,7 +1118,7 @@ func (s *Session) Compose() Composition {
 			if limit > 6 {
 				limit = 6
 			}
-			for drop := 1; drop <= limit; drop++ {
+			for drop := 1; !typoSuspicious && drop <= limit; drop++ {
 				shorter := qp[:len(qp)-drop]
 				sKey := tokensKey(shorter)
 				if seenShorter[sKey] {

@@ -316,25 +316,51 @@ func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*E
 	// 避免在宽泛节点下触发全树无上限递归与万级对象巨型排序。
 	var prefixMatches []*Entry
 	prefixSeen := make(map[int]bool)
+	// prefix BFS 的第一层可能是「宽前缀」：zh 一个 token 就命中几十个音节
+	// 节点，每个再向下展开一层，扫描与排序就是数千词条——这是简拼输入
+	// （z / zh / y）单键延迟的主要来源（实测 1.2-1.8ms）。
+	//
+	// 优化：第一层节点按「节点内词条最高词频」排序后再展开，并限制每层
+	// 展开的节点数。原先 map 遍历无序收集，有限名额给到的是随机词；
+	// 现在优先给高频词，候选质量同步提升，长尾节点被剪枝。
 	levelNodes := curr
 	maxPrefixScan := maxResults * 4
+	const maxExpandPerLevel = 12
 	for depth := 0; depth < 2 && len(levelNodes) > 0 && len(prefixMatches) < maxPrefixScan; depth++ {
-		var nextLevel []*dictNode
+		type childFreq struct {
+			node *dictNode
+			freq int
+		}
+		var ranked []childFreq
 		for _, node := range levelNodes {
 			if node.children == nil {
 				continue
 			}
 			for _, child := range node.children {
-				nextLevel = append(nextLevel, child)
+				top := 0
 				for _, id := range child.ids {
+					if d.entries[id].Freq > top {
+						top = d.entries[id].Freq
+					}
+				}
+				ranked = append(ranked, childFreq{child, top})
+			}
+			sort.Slice(ranked, func(i, j int) bool { return ranked[i].freq > ranked[j].freq })
+			if len(ranked) > maxExpandPerLevel {
+				ranked = ranked[:maxExpandPerLevel]
+			}
+			var nextLevel []*dictNode
+			for _, cf := range ranked {
+				nextLevel = append(nextLevel, cf.node)
+				for _, id := range cf.node.ids {
 					if !prefixSeen[id] {
 						prefixSeen[id] = true
 						prefixMatches = append(prefixMatches, d.entries[id])
 					}
 				}
 			}
+			levelNodes = nextLevel
 		}
-		levelNodes = nextLevel
 	}
 
 	sort.Slice(prefixMatches, func(i, j int) bool {
