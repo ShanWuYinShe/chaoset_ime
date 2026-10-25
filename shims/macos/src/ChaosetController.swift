@@ -65,6 +65,10 @@ final class ChaosetController: IMKInputController {
             if shiftArmed {
                 shiftArmed = false
                 enMode.toggle()
+                // 切到英文模式时收起联想窗（英文模式不展示中文联想）
+                if enMode {
+                    exitAssociate()
+                }
                 current = engine.reset()
                 refresh(client)
             }
@@ -72,15 +76,22 @@ final class ChaosetController: IMKInputController {
         }
         shiftArmed = false // 出现其它按键 → 不是"空按"，取消待判定
 
-        // 英文模式：全部放行（passThrough 会先清掉未上屏的组词）
+        // 英文模式：全部放行（passThrough 会先清掉未上屏的组词），
+        // 同时收起联想窗（中英切换时不得残留）
         if enMode {
+            exitAssociate()
             return passThrough(client)
         }
 
         let isComposing = !(current?.input.isEmpty ?? true)
 
-        // Esc 键（keyCode 53）：直接全部删除（清空当前组词并关闭候选窗）
+        // Esc 键（keyCode 53）：联想模式先关闭联想窗；组词中直接全部删除
+        // （清空当前组词并关闭候选窗）
         if event.keyCode == 53 {
+            if associateCandidates != nil {
+                exitAssociate()
+                return true
+            }
             if isComposing {
                 current = engine.reset()
                 refresh(client)
@@ -241,6 +252,9 @@ final class ChaosetController: IMKInputController {
         // 组词中的撇号仍是音节分隔符，交回组词流程。
         if chars.count == 1, let scalar = chars.unicodeScalars.first,
            Self.isPunctKey(scalar) {
+            if associateCandidates != nil {
+                exitAssociate()
+            }
             if scalar == "'", current?.input.isEmpty == false {
                 current = engine.input(chars)
                 refresh(client)
