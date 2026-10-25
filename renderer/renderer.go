@@ -90,10 +90,10 @@ func DefaultSkinFor(dark bool) Skin {
 		skin.BgColor = color.NRGBA{0x2C, 0x2C, 0x2E, 0xF5}              // macOS 深色 HUD 底（半透深灰）
 		skin.BorderColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x24}          // 1px 半透明高光边框
 		skin.PreeditColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}         // 次级文字
-		skin.IndexColor = color.NRGBA{0x40, 0x9C, 0xFF, 0xFF}           // 序号亮蓝（深色下的系统蓝），键帽内保持鲜艳
-		skin.IndexChipBg = color.NRGBA{0x3A, 0x3A, 0x3C, 0xE6}          // 序号键帽：深灰实底
-		skin.IndexChipBorder = color.NRGBA{0xFF, 0xFF, 0xFF, 0x2E}      // 键帽细边（半透高光）
-		skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x30} // 首选蓝胶囊内的半透白键帽
+		skin.IndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}           // 序号纯白：白 on #5A5A5E 键帽 ≈7:1，小字号可读
+		skin.IndexChipBg = color.NRGBA{0x5A, 0x5A, 0x5E, 0xFF}          // 序号键帽：中灰实底（与 #2C2C2E 背景明显拉开）
+		skin.IndexChipBorder = color.NRGBA{0xFF, 0xFF, 0xFF, 0x40}      // 键帽细边（半透高光，加强轮廓）
+		skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x45} // 首选蓝胶囊内的半透白键帽
 		skin.FgColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}              // 候选纯白文字
 		skin.HighlightBg = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}          // 苹果原生高亮蓝
 		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
@@ -104,10 +104,10 @@ func DefaultSkinFor(dark bool) Skin {
 	skin.BgColor = color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}              // macOS 浅色毛玻璃底
 	skin.BorderColor = color.NRGBA{0x00, 0x00, 0x00, 0x1A}          // 黑色细边
 	skin.PreeditColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}         // 次级文字
-	skin.IndexColor = color.NRGBA{0x00, 0x66, 0xEB, 0xFF}           // 序号苹果系统蓝（交互提示语义），键帽内鲜艳醒目
-	skin.IndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xD9}          // 序号键帽：白色底（毛玻璃上略透）
-	skin.IndexChipBorder = color.NRGBA{0x00, 0x00, 0x00, 0x26}      // 键帽细边（黑色低透明度）
-	skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x2B} // 首选蓝胶囊内的半透白键帽
+	skin.IndexColor = color.NRGBA{0x1D, 0x1D, 0x1F, 0xFF}           // 序号深黑：黑 on 白键帽 ≈16:1，缩小后仍清晰
+	skin.IndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 序号键帽：纯白实底（毛玻璃灰底上成块）
+	skin.IndexChipBorder = color.NRGBA{0x00, 0x00, 0x00, 0x3C}      // 键帽细边（加强轮廓）
+	skin.HighlightIndexChipBg = color.NRGBA{0xFF, 0xFF, 0xFF, 0x45} // 首选蓝胶囊内的半透白键帽
 	skin.FgColor = color.NRGBA{0x1D, 0x1D, 0x1F, 0xFF}              // 苹果深黑字
 	skin.HighlightBg = color.NRGBA{0x00, 0x7A, 0xFF, 0xFF}          // 苹果原生高亮蓝
 	skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
@@ -251,9 +251,11 @@ func loadFace(s Skin) (font.Face, error) {
 	return loadFaceWithSize(s.FontPath, s.FontSize)
 }
 
-// loadIndexFace 加载用于序号与页码的小字号面（主字号约 70%），贴合系统原生输入法排版层级。
+// loadIndexFace 加载用于序号与页码的小字号面（主字号约 80%）：70% 时
+// Retina 缩视下序号笔画过细、与键帽底色对比不足（2026-10-25 用户反馈
+// 可读性差），提到 80% 兼顾层级感与可读性。
 func loadIndexFace(s Skin) (font.Face, error) {
-	return loadFaceWithSize(s.FontPath, s.FontSize*0.70)
+	return loadFaceWithSize(s.FontPath, s.FontSize*0.80)
 }
 
 func parseFont(data []byte) (*opentype.Font, error) {
