@@ -113,3 +113,38 @@ cd shims/macos
 ./tests/equivalence.sh         # A 同源 / B 导入等价 / C 判定等价 / D 图标 / E 渲染尺寸 / F 双端视觉
 ./build/tis dedupe             # TIS 重复实例合并
 ```
+
+## 五、CI 相关（2026-10-26 建立）
+
+### 本地只跑轻量项，重活交给 CI
+
+提交前本地只需 `gofmt -l $(git ls-files '*.go')` 与 `go build ./...`（秒级）。
+其余由 5 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build。
+
+### 踩坑：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
+
+`ci.yml` 里配了 `concurrency: group: ci-${{ github.ref }}, cancel-in-progress: true`。
+连续 push 时**上一个运行会被标记 cancelled**——看到 Linux E2E 报
+`##[error]The operation was canceled.` 时，先确认是不是被新 push 顶掉的，
+不要当成代码失败去排查：
+
+```bash
+gh run list --limit 3                                   # 是否同一分支连续两次
+gh run view <旧id> --json conclusion --jq .conclusion    # cancelled = 被取消，非失败
+```
+
+### 踩坑：macOS runner 排队
+
+GitHub 会提示 "Due to capacity constraints, jobs targeting macOS arm64 runners
+may experience longer queue times"。macos-build 排队几分钟是正常现象，
+不要因为「怎么还不开始」去改 workflow。
+
+### linux-e2e 为什么用 test-ci.sh 而不是 test.sh
+
+`test.sh` 假设本地已用 `setup-container.sh` 起了 docker 容器并通过 `docker exec`
+操作；而 GitHub runner 本身就是一次性 VM，再套 docker 要多花 1-3 分钟拉镜像、
+装 ibus。`test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
+
+**在本机用 docker 预演这套 E2E 会很慢**（2026-10-26 实测：apt 装 ibus 在容器里
+花了 10 分钟仍未完成），不值得——直接推 CI 跑，实测 38 秒出结果。
+
