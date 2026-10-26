@@ -1068,6 +1068,7 @@ func (s *Session) compose() Composition {
 	// ——串形态不可分，放行常规路径，是否让纠错候选参与领跑由词典事实
 	// 决定（见下方领跑判定）。
 	midSuspicious := !typoSuspicious && hasMidIsolatedInitial(tokenPatterns)
+	tailSuspicious := !typoSuspicious && !midSuspicious && hasTailIsolatedInitial(tokenPatterns)
 	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
 	inputSegs := 0
 	if len(tokenPatterns) > 0 {
@@ -1075,7 +1076,8 @@ func (s *Session) compose() Composition {
 	}
 	typoAdded := make(map[string]bool)
 	typoIsNear := make(map[string]bool)
-	if typoSuspicious || midSuspicious {
+	typoLen := make(map[string]int)
+	if typoSuspicious || midSuspicious || tailSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
 		// 才是这部分的主要成本。typoCorrections 已按价值排序
@@ -1101,6 +1103,7 @@ func (s *Session) compose() Composition {
 				}
 				typoAdded[key] = true
 				typoIsNear[key] = fix.isNear
+				typoLen[key] = len(fix.text)
 				boost := 0
 				if s.user != nil {
 					boost = s.user.Score(e.Word, e.Syllables, s.prev)
@@ -1120,6 +1123,7 @@ func (s *Session) compose() Composition {
 					}
 					typoAdded[key] = true
 					typoIsNear[key] = fix.isNear
+					typoLen[key] = len(fix.text)
 					score := e.Freq - penalty
 					if score < 1 {
 						score = 1
@@ -1339,7 +1343,7 @@ func (s *Session) compose() Composition {
 		bestTypoFreq := 0
 		for i := range items {
 			k := typoKey(items[i].cand)
-			if typoAdded[k] && typoIsNear[k] && items[i].cand.Score > bestTypoFreq {
+			if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) && items[i].cand.Score > bestTypoFreq {
 				bestTypoFreq = items[i].cand.Score
 			}
 		}
@@ -1363,7 +1367,7 @@ func (s *Session) compose() Composition {
 			// 「正茶馆你」）与单字碎片（正/茶）都是强行切分的产物——用户
 			// 打 zhengchagn 的意图显然不是「正」单字，拿它们做门槛分母会让
 			// 正确的纠错（正常）永远无法领跑（2026-10-25 用户反馈）。
-			if (typoSuspicious || midSuspicious) && inputSegs > 0 && strings.Count(items[i].cand.Syllables, "'")+1 != inputSegs {
+			if (typoSuspicious || midSuspicious || tailSuspicious) && inputSegs > 0 && strings.Count(items[i].cand.Syllables, "'")+1 != inputSegs {
 				continue
 			}
 			hasRegularWord = true
@@ -1374,7 +1378,7 @@ func (s *Session) compose() Composition {
 		if bestTypoFreq > 0 && (!hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
 			for i := range items {
 				k := typoKey(items[i].cand)
-				if typoAdded[k] && typoIsNear[k] {
+				if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) {
 					items[i].rank = rankExact
 				}
 			}

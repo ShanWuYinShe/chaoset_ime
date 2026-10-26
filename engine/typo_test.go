@@ -14,9 +14,11 @@ func TestTypoCorrectionFixesCommonMistakes(t *testing.T) {
 	cases := []struct{ input, want string }{
 		{"zhogn", "中"},       // 相邻颠倒 g/o
 		{"zhonng", "中"},      // 多敲一个 n
+		{"zhoonng", "中"},     // 连击多个粘键 o/n
 		{"zhonguo", "中国"},    // 漏敲一个 g
 		{"jisuanjii", "计算机"}, // 多敲一个 i
 		{"niihao", "你好"},     // 多敲一个 i
+		{"niihaoo", "你好"},    // 连击多个粘键 i/o
 	}
 	for _, c := range cases {
 		s.Reset()
@@ -49,6 +51,7 @@ func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
 		{"zhsopian", "照片"}, // a->s 邻近键：照片
 		{"ksishui", "开水"},  // a->s 邻近键：开水
 		{"husnying", "欢迎"}, // a->s 邻近键：欢迎
+		{"nihap", "你好"},    // o->p 邻近键：你好
 		{"fspiao", "发票"},   // a->s 邻近键：发票
 	}
 	for _, c := range cases {

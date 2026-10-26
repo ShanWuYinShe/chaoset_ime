@@ -102,13 +102,48 @@ var syllableAliases = map[string]string{
 }
 
 // canonicalSyllable 返回音节的标准写法：是合法音节则原样返回；
-// 否则尝试别名表（lue → lve）；都不匹配时原样返回，由调用方判定非法。
+// 否则尝试规则与别名表归一化；都不匹配时原样返回，由调用方判定非法。
 func canonicalSyllable(s string) string {
 	if IsSyllable(s) {
 		return s
 	}
 	if canon, ok := syllableAliases[s]; ok {
 		return canon
+	}
+	// 1. 省写韵母归一 (标准汉语拼音省略规则引发的常见拼写习惯):
+	//    - uei -> ui (shuei -> shui, duei -> dui, guei -> gui 等)
+	//    - iou -> iu (jiou -> jiu, niou -> niu, liou -> liu 等)
+	//    - uen -> un (chuen -> chun, zhuen -> zhun, luen -> lun 等)
+	if len(s) >= 4 {
+		if strings.HasSuffix(s, "uei") {
+			if fixed := s[:len(s)-3] + "ui"; IsSyllable(fixed) {
+				return fixed
+			}
+		}
+		if strings.HasSuffix(s, "iou") {
+			if fixed := s[:len(s)-3] + "iu"; IsSyllable(fixed) {
+				return fixed
+			}
+		}
+		if strings.HasSuffix(s, "uen") {
+			if fixed := s[:len(s)-3] + "un"; IsSyllable(fixed) {
+				return fixed
+			}
+		}
+	}
+	// 2. 撮口呼字母 v 键盘习惯 (j/q/x/y 配合撮口呼时用户习惯敲 v):
+	//    jv -> ju, jve -> jue, jvan -> juan, jvn -> jun
+	//    qv -> qu, qve -> que, qvan -> quan, qvn -> qun
+	//    xv -> xu, xve -> xue, xvan -> xuan, xvn -> xun
+	//    yv -> yu, yve -> yue, yvan -> yuan, yvn -> yun
+	if len(s) >= 2 && (s[0] == 'j' || s[0] == 'q' || s[0] == 'x' || s[0] == 'y') && strings.ContainsRune(s, 'v') {
+		if fixed := strings.ReplaceAll(s, "v", "u"); IsSyllable(fixed) {
+			return fixed
+		}
+	}
+	// 3. 常见后鼻音漏敲 g (汉语拼音无 xion/jion/qion，均为 iong)
+	if s == "xion" || s == "jion" || s == "qion" {
+		return s + "g"
 	}
 	return s
 }
@@ -176,6 +211,20 @@ func hasMidIsolatedInitial(patterns [][]Token) bool {
 	return false
 }
 
+// hasTailIsolatedInitial 报告任一切分路径里「末位」出现单字母声母碎片
+// （如 nihap 命中 ni'ha'p，p 为末位声母碎片）。
+func hasTailIsolatedInitial(patterns [][]Token) bool {
+	for _, pat := range patterns {
+		if len(pat) > 0 {
+			last := pat[len(pat)-1]
+			if !last.IsExact && len(last.Text) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasCleanSyllableSplit 判断整段能否切成**纯完整音节**序列（无简拼碎片）。
 // 修正串的正确形态就是合法音节序列，用这个 DP 校验最合适。
 func hasCleanSyllableSplit(chunk string) bool {
@@ -183,7 +232,7 @@ func hasCleanSyllableSplit(chunk string) bool {
 	ok[0] = true
 	for i := 1; i <= len(chunk); i++ {
 		for l := 1; l <= maxSyllableLength && l <= i; l++ {
-			if ok[i-l] && IsSyllable(chunk[i-l:i]) {
+			if ok[i-l] && IsSyllable(canonicalSyllable(chunk[i-l:i])) {
 				ok[i] = true
 				break
 			}
@@ -244,9 +293,10 @@ type typoCorrection struct {
 // typoCorrections 生成 input 的「单次编辑」修正候选（只生成能完整切分成
 // 合法音节的那些串），按编辑类型与置信度稳定输出。
 //
-// 覆盖五类最常见的手误：
+// 覆盖六类最常见的手误：
 //   - transpose：相邻两字母颠倒（zhogn → zhong，手速快时的经典错误）
 //   - delete：多敲了一个字母（zhonng / niihao → zhong / nihao）
+//   - stutter：连击/粘键折叠（niihaoo → nihao, zhoonng → zhong）
 //   - substitute-near：QWERTY 邻近键敲错（yishrng → yisheng, diannap → diannao, womrn → women）
 //   - insert：漏敲了一个字母（zhonguo → zhongguo）
 //   - substitute-far：非邻近键替换兜底
@@ -286,7 +336,24 @@ func typoCorrections(input string, maxResults int) []typoCorrection {
 	for i := 0; i < n; i++ {
 		add(string(r[:i])+string(r[i+1:]), true)
 	}
-	// 3) QWERTY 键盘邻近键替换：手指物理按偏（单字敲错中最符合人类生物力学的错误）。
+	// 3) 连击/按键粘连折叠 (连续重复字母手误，如 niihaoo -> nihao, zhoonng -> zhong)
+	hasDup := false
+	for i := 0; i+1 < n; i++ {
+		if r[i] == r[i+1] {
+			hasDup = true
+			break
+		}
+	}
+	if hasDup {
+		var collapsed []byte
+		for i := 0; i < n; i++ {
+			if i == 0 || r[i] != r[i-1] {
+				collapsed = append(collapsed, r[i])
+			}
+		}
+		add(string(collapsed), true)
+	}
+	// 4) QWERTY 键盘邻近键替换：手指物理按偏（单字敲错中最符合人类生物力学的错误）。
 	// 优先级必须高于全键盘 26 字母任意插入/远端替换，避免有限配额（maxResults）被无关联字母耗尽。
 	for i := 0; i < n; i++ {
 		orig := r[i]
@@ -299,7 +366,7 @@ func typoCorrections(input string, maxResults int) []typoCorrection {
 			add(string(c), true)
 		}
 	}
-	// 4) 插入一个字母（漏敲）。
+	// 5) 插入一个字母（漏敲）。
 	//
 	// 遍历顺序很关键：名额有限（maxResults），若按「位置在外、字母在内」
 	// 遍历，位置 0 的 26 个插入就会吃光全部名额，末位置的补全（zhonguo
@@ -310,7 +377,7 @@ func typoCorrections(input string, maxResults int) []typoCorrection {
 			add(string(r[:i])+string(ch)+string(r[i:]), true)
 		}
 	}
-	// 5) 远端非邻近键替换（敲错远端键），同样按字母交错。
+	// 6) 远端非邻近键替换（敲错远端键），同样按字母交错。
 	for ci := 0; ci < 26; ci++ {
 		ch := byte('a' + ci)
 		for i := 0; i < n; i++ {
