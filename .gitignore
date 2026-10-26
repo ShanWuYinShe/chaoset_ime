@@ -32,3 +32,12 @@ chaoset-userdict.json.tmp
 # 仓库根目录的临时分析产物（历史上出现过 analyze_top2 这类 4MB 调试二进制，
 # 既不匹配任何忽略规则也不在 bin/ 下，`git add -A` 会把它提交进来）
 /analyze_*
+
+# 误在仓库根跑 `go build ./cmd/xxx` 会直接产出二进制到当前目录（不带 -o 时
+# Go 以包名命名）。2026-10-26 就误出过一个 chaosetd，差点被提交。
+/chaosetd
+/chaoset-cli
+/chaoset-import
+/chaoset-dictgen
+/chaoset-userdict
+/chaoset-engine
