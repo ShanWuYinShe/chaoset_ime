@@ -17,7 +17,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 同一分支的新推送取消仍在跑的旧流水，避免排队浪费额度。
+# 同一分支的新推送取消旧的仍在跑的流水。
+#
+# 但**必须按 job 分开配**：2026-10-26 实测踩坑——顶层无条件
+# `cancel-in-progress: true` 时，连续两次 push 会把上一次的 macos-build 标成
+# `cancelled` 并给出注解「Canceling since a higher priority waiting request
+# for ci-refs/heads/main exists」。macOS runner 有容量限制、排队动辄 10 分钟，
+# 而普通提交间隔远小于这个时间 → **日常提交的 macOS 验证永远跑不完**，
+# 等于白配。
+#
+# 现在：快的 job 照旧取消（省额度、反馈快），macOS job 不配 concurrency
+# （让它排完、跑完；一次排队比反复取消更省时间）。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -140,6 +150,13 @@ jobs:
     name: macOS 构建与一致性
     runs-on: macos-latest
     needs: lint
+    # job 级 concurrency 覆盖顶层的 cancel-in-progress: true。
+    # macOS runner 排队常达 10 分钟，而提交间隔往往更短——若沿用顶层配置，
+    # 第二次 push 会把正在排队的这次标成 cancelled，日常提交的 macOS 验证
+    # 就永远跑不完（2026-10-26 实测）。这里允许排队、不取消。
+    concurrency:
+      group: ci-macos-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
 
