@@ -123,6 +123,10 @@ package-linux:
 		dpkg-deb --build --root-owner-group dist/deb_staging dist/chaoset_amd64.deb; \
 		rm -rf dist/deb_staging; \
 	fi
+	@if command -v zstd >/dev/null 2>&1; then \
+		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.5; \
+	fi
 	rm -rf dist/chaoset-linux-x86_64
 
 # package-windows：交叉编译到 windows/amd64（Go）与 mingw-w64（DLL）。

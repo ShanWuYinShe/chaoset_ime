@@ -80,7 +80,24 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
   安装程序会自动部署二进制、14万词库、ibus组件描述与图标，并自动重启 ibus-daemon。
 - **卸载**：在系统应用商店中直接点击「卸载」，或执行 `sudo dpkg -r chaoset-ime`。
 
-### 方式二：通用压缩包安装（其他发行版 / 脚本）
+### 方式二：Arch Linux / Manjaro / EndeavourOS 用户（小白首选·双击或一键 pacman）
+
+- **双击一键安装（推荐）**：
+  从 GitHub Release 下载 `chaoset-ime-x86_64.pkg.tar.zst`：
+  - **图形化安装**：在文件管理器中**双击**该包，使用系统软件中心（Pamac / 发现）点击「安装」；
+  - **终端安装**：
+    ```sh
+    sudo pacman -U chaoset-ime-x86_64.pkg.tar.zst
+    ```
+  - **卸载**：在应用中心点击卸载，或执行 `sudo pacman -R chaoset-ime`。
+
+- **通过 PKGBUILD 本地编译**：
+  克隆仓库后进入 `shims/linux/arch/`：
+  ```sh
+  cd shims/linux/arch && makepkg -si
+  ```
+
+### 方式三：通用压缩包安装（其他发行版 / 脚本）
 
 从 GitHub Release 下载 `chaoset-linux-x86_64.tar.gz`，解包后：
 

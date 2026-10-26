@@ -1,0 +1,29 @@
+post_install() {
+    # 刷新桌面图标缓存
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+    fi
+
+    # 尝试重启所有当前登录用户的 ibus 守护进程以即时收录
+    for u in $(who | awk '{print $1}' | sort -u); do
+        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
+    done
+
+    echo "==> Chaoset 拼音输入法已安装成功！"
+    echo "    请在「系统设置 → 键盘 → 输入源」中添加「Chaoset Pinyin」即可使用。"
+    echo "    若列表未刷新，可执行 ibus restart 或注销重新登录。"
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    rm -f /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli 2>/dev/null || true
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+    fi
+    for u in $(who | awk '{print $1}' | sort -u); do
+        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
+    done
+}

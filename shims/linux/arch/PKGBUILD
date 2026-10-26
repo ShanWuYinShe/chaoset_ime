@@ -1,0 +1,51 @@
+# Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
+pkgname=chaoset-ime
+pkgver=0.2.5
+pkgrel=1
+pkgdesc="Chaoset Pinyin IME - 傻瓜式现代拼音输入法"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ShanWuYinShe/chaoset_ime"
+license=('MIT')
+depends=('ibus')
+makedepends=('go')
+install=chaoset-ime.install
+source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "chaoset_ime-$pkgver"
+    export CGO_ENABLED=0
+    go build -o bin/chaosetd ./cmd/chaosetd
+    go build -o bin/chaoset-cli ./cmd/chaoset-cli
+    go build -o bin/chaoset-import ./cmd/chaoset-import
+    go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
+    go build -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
+        -o bin/chaoset-engine ./shims/linux/ibus-engine/
+}
+
+package() {
+    cd "chaoset_ime-$pkgver"
+    install -Dm755 bin/chaosetd "$pkgdir/usr/bin/chaosetd"
+    install -Dm755 bin/chaoset-cli "$pkgdir/usr/bin/chaoset-cli"
+    install -Dm755 bin/chaoset-import "$pkgdir/usr/bin/chaoset-import"
+    install -Dm755 bin/chaoset-userdict "$pkgdir/usr/bin/chaoset-userdict"
+    install -Dm755 bin/chaoset-engine "$pkgdir/usr/bin/chaoset-engine"
+
+    # Compatibility symlinks in /usr/local/bin
+    install -d "$pkgdir/usr/local/bin"
+    ln -sf /usr/bin/chaoset-engine "$pkgdir/usr/local/bin/chaoset-engine"
+    ln -sf /usr/bin/chaosetd "$pkgdir/usr/local/bin/chaosetd"
+    ln -sf /usr/bin/chaoset-cli "$pkgdir/usr/local/bin/chaoset-cli"
+
+    # Dictionary
+    install -Dm644 data/dict_common.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
+
+    # IBus component
+    install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
+
+    # Icons
+    install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"
+    install -Dm644 shims/linux/icons/hicolor/128x128/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/chaoset.png"
+    install -Dm644 shims/linux/icons/hicolor/256x256/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/chaoset.png"
+    install -Dm644 shims/linux/icons/hicolor/scalable/apps/chaoset.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/chaoset.svg"
+}

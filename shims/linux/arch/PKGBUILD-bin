@@ -1,0 +1,34 @@
+# Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
+pkgname=chaoset-ime-bin
+_pkgname=chaoset-ime
+pkgver=0.2.5
+pkgrel=1
+pkgdesc="Chaoset Pinyin IME (prebuilt binary) - 傻瓜式现代拼音输入法"
+arch=('x86_64')
+url="https://github.com/ShanWuYinShe/chaoset_ime"
+license=('MIT')
+depends=('ibus')
+provides=('chaoset-ime')
+conflicts=('chaoset-ime')
+install=chaoset-ime.install
+source=("https://github.com/ShanWuYinShe/chaoset_ime/releases/download/v$pkgver/chaoset-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    cd "$srcdir/chaoset-linux-x86_64"
+    install -Dm755 bin/chaosetd "$pkgdir/usr/bin/chaosetd"
+    install -Dm755 bin/chaoset-cli "$pkgdir/usr/bin/chaoset-cli"
+    install -Dm755 bin/chaoset-import "$pkgdir/usr/bin/chaoset-import"
+    install -Dm755 bin/chaoset-userdict "$pkgdir/usr/bin/chaoset-userdict"
+    install -Dm755 bin/chaoset-engine "$pkgdir/usr/bin/chaoset-engine"
+
+    install -d "$pkgdir/usr/local/bin"
+    ln -sf /usr/bin/chaoset-engine "$pkgdir/usr/local/bin/chaoset-engine"
+    ln -sf /usr/bin/chaosetd "$pkgdir/usr/local/bin/chaosetd"
+    ln -sf /usr/bin/chaoset-cli "$pkgdir/usr/local/bin/chaoset-cli"
+
+    install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
+    install -Dm644 component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
+
+    cp -r icons/hicolor "$pkgdir/usr/share/icons/"
+}

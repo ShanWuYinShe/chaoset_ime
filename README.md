@@ -10,9 +10,10 @@
 | :--- | :--- | :--- | :--- |
 | **Windows** (10 / 11) | [📥 ChaosetSetup.exe](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **直接双击安装**，点击「下一步」完成（已自动注册并开机自启） | `Win + 空格` |
 | **macOS** (12+) | [📥 Chaoset.dmg](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击打开**，打开里面的「Chaoset 安装与设置」，点击「一键安装」 | `Ctrl + 空格` 或 `Fn / 🌐` |
-| **Linux** (Ubuntu/Debian/Mint) | [📥 chaoset_amd64.deb](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在系统应用中心点击「安装」即可自动生效 | `Super + 空格` 或 `Ctrl + 空格` |
+| **Linux (Ubuntu / Debian / Mint)** | [📥 chaoset_amd64.deb](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在系统应用中心点击「安装」即可自动生效 | `Super + 空格` 或 `Ctrl + 空格` |
+| **Linux (Arch / Manjaro / EndeavourOS)** | [📥 chaoset-ime-x86_64.pkg.tar.zst](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在应用商店（Pamac/发现）点击「安装」，或 `sudo pacman -U <包名>` | `Super + 空格` 或 `Ctrl + 空格` |
 
-> 📦 **开发者与绿色便携版**：如需无需安装的独立归档，可前往 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases) 获取 `.zip` (Windows/macOS) 或 `.tar.gz` (Linux)。
+> 📦 **开发者、绿色便携版与 AUR**：如需无需安装的独立归档，可前往 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases) 获取 `.zip` (Windows/macOS) 或 `.tar.gz` (Linux)；Arch Linux 用户亦可直接使用仓库自带的 `shims/linux/arch/PKGBUILD`。
 
 ---
 
