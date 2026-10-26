@@ -34,6 +34,11 @@ jobs:
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
+      - name: 安装 CJK 字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
       - name: 运行单元测试
         run: make test
 
