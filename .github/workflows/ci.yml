@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -20,225 +19,26 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # workflow 结构校验：必须在最早的 job 里跑。2026-10-25 曾因文本替换
-      # 覆盖过头，误删了两个 job 的头部声明——YAML 语法仍然合法，但 GitHub
-      # 直接判「workflow file issue」，整个 CI 跑不起来、三端打包与 Release
-      # 全部无法产出。只查 yaml 能否解析是发现不了的，必须查结构。
+      # workflow 结构校验：检查 CI 与 Release 工作流的完整性
       - name: 校验 workflow 结构
         run: |
           python3 -m pip install --quiet pyyaml
           python3 tools/check-workflows.py \
-            --expect-jobs test,package-macos,package-linux,package-windows,release \
+            --expect-jobs test \
             .github/workflows/ci.yml
+          python3 tools/check-workflows.py \
+            --expect-jobs test,package-macos,package-linux,package-windows,release \
+            .github/workflows/release.yml
 
       - name: gofmt 检查（不应有输出）
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-  package-macos:
-    name: 打包 macOS (ChaosetIME.app + ChaosetSetup.app)
-    runs-on: macos-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v7
 
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - name: 运行单元测试
+        run: make test
 
-      - name: 构建 Go 二进制与 macOS app
-        run: |
-          make build
-          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh
-          ./shims/macos/build.sh
-          ./shims/macos/tests/equivalence.sh
+      - name: 运行代码静态检查
+        run: make vet
 
-      # 架构自检：CI 的 macos-latest 是 Apple Silicon，裸 swiftc/go build 只出
-      # arm64，Intel Mac 用户装上会「无法打开」。Makefile 打包目标里也有同样的
-      # 断言，这里再显式跑一次，让失败原因直接出现在日志里。
-      - name: 校验 universal 二进制
-        run: |
-          for app in shims/macos/build/ChaosetIME.app shims/macos/build/ChaosetSetup.app; do
-            bin="$(echo "$app" | sed 's|\.app$|.app|')/Contents/MacOS/$(basename "$app" .app)"
-            echo "== $bin"
-            lipo -info "$bin"
-            lipo -info "$bin" | grep -q 'x86_64' || { echo "缺少 x86_64 架构"; exit 1; }
-            lipo -info "$bin" | grep -q 'arm64' || { echo "缺少 arm64 架构"; exit 1; }
-          done
-
-      - name: 打包 DMG 与 ZIP
-        run: |
-          mkdir -p dist
-          (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
-          mkdir -p dist/dmg_staging
-          cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/
-          ln -s /Applications dist/dmg_staging/Applications 2>/dev/null || true
-          hdiutil create -volname "Chaoset" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset.dmg
-          rm -rf dist/dmg_staging
-          test -f dist/Chaoset.dmg || { echo "缺少 Chaoset.dmg"; exit 1; }
-          echo "macOS DMG 产物生成并校验通过"
-
-      - name: 上传产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: chaoset-macos
-          path: |
-            dist/chaoset-macos.zip
-            dist/Chaoset.dmg
-          retention-days: 14
-
-  package-linux:
-    name: 打包 Linux (IBus Engine + 资源)
-    runs-on: ubuntu-24.04
-    needs: test
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: 安装 ibus 与 zstd 测试依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ibus zstd
-
-      - name: 编译与打包
-        run: |
-          make build
-          make package-linux
-
-      # 冒烟校验：测 deb 安装、tar.gz 脚本安装、Arch Linux 格式包完整性
-      - name: 冒烟校验（DEB 安装、tar.gz 安装、Arch 包校验）
-        run: |
-          test -f dist/chaoset_amd64.deb || { echo "缺少 chaoset_amd64.deb"; exit 1; }
-          sudo dpkg -i dist/chaoset_amd64.deb
-          test -x /usr/bin/chaoset-engine || { echo "deb 未安装 /usr/bin/chaoset-engine"; exit 1; }
-          timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/deb-engine.log 2>&1 || true
-          grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/deb-engine.log \
-            || { echo "DEB 引擎未加载词库，日志："; cat /tmp/deb-engine.log; exit 1; }
-          echo "DEB 包冒烟测试通过"
-          sudo dpkg -r chaoset-ime
-
-          mkdir -p /tmp/smoke && tar -xzf dist/chaoset-linux-x86_64.tar.gz -C /tmp/smoke
-          cd /tmp/smoke/chaoset-linux-x86_64
-          sudo ./install.sh
-          # 引擎按 ibus 的方式（无 cwd 依赖）拉起，必须能找到词库
-          cd / && timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/engine.log 2>&1 || true
-          grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/engine.log \
-            || { echo "引擎未加载词库，日志："; cat /tmp/engine.log; exit 1; }
-          grep -q '打开词库.*失败' /tmp/engine.log && { echo "引擎找不到词库"; cat /tmp/engine.log; exit 1; } || true
-          echo "tar.gz 冒烟校验通过"
-
-          cd "$GITHUB_WORKSPACE"
-          test -f dist/chaoset-ime-x86_64.pkg.tar.zst || { echo "缺少 chaoset-ime-x86_64.pkg.tar.zst"; exit 1; }
-          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q '.PKGINFO' || { echo "Arch 包缺少 .PKGINFO"; exit 1; }
-          echo "Arch Linux 包格式自检通过"
-
-      - name: 上传产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: chaoset-linux-x86_64
-          path: |
-            dist/chaoset-linux-x86_64.tar.gz
-            dist/chaoset_amd64.deb
-            dist/chaoset-ime-x86_64.pkg.tar.zst
-          retention-days: 14
-
-  package-windows:
-    name: 打包 Windows (TSF DLL + TCP Daemon)
-    runs-on: ubuntu-24.04
-    needs: test
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: 安装 mingw-w64 交叉编译器与 NSIS 打包工具
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
-
-      - name: 编译与打包
-        run: |
-          make package-windows
-
-      # 包内容自检：不跑 Windows 真机（本 job 在 Linux 上），但必须保证
-      # 包里有用户真正需要的东西——词库、安装脚本、PE 格式二进制与一键安装程序。
-      - name: 校验包内容
-        run: |
-          unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
-          cd /tmp/winpkg/chaoset-windows-x64
-          for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe README.md; do
-            test -f "$f" || { echo "缺少必要文件: $f"; ls -la; exit 1; }
-          done
-          file chaosetd.exe | grep -q 'PE32+' || { echo "chaosetd.exe 不是 Windows PE"; exit 1; }
-          file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 64 位 Windows PE"; exit 1; }
-          file ChaosetIME32.dll | grep -q 'PE32 ' || { echo "ChaosetIME32.dll 不是 32 位 Windows PE"; exit 1; }
-          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllRegisterServer \
-            || { echo "ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
-          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllUnregisterServer \
-            || { echo "ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllRegisterServer \
-            || { echo "ChaosetIME32.dll 缺少 DllRegisterServer 导出"; exit 1; }
-          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllUnregisterServer \
-            || { echo "ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-          echo "ZIP 包内容校验通过"
-          test -f "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
-          file "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" | grep -q 'PE32' || { echo "ChaosetSetup.exe 不是有效 Windows PE"; exit 1; }
-          echo "ChaosetSetup.exe 安装程序自检通过"
-
-      - name: 上传产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: chaoset-windows-x64
-          path: |
-            dist/chaoset-windows-x64.zip
-            dist/ChaosetSetup.exe
-          retention-days: 14
-
-  release:
-    name: 发布 GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [package-macos, package-linux, package-windows]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: 下载 macOS 产物
-        uses: actions/download-artifact@v7
-        with:
-          name: chaoset-macos
-          path: dist
-
-      - name: 下载 Linux 产物
-        uses: actions/download-artifact@v7
-        with:
-          name: chaoset-linux-x86_64
-          path: dist
-
-      - name: 下载 Windows 产物
-        uses: actions/download-artifact@v7
-        with:
-          name: chaoset-windows-x64
-          path: dist
-
-      - name: 创建 Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            dist/ChaosetSetup.exe
-            dist/Chaoset.dmg
-            dist/chaoset_amd64.deb
-            dist/chaoset-ime-x86_64.pkg.tar.zst
-            dist/chaoset-windows-x64.zip
-            dist/chaoset-macos.zip
-            dist/chaoset-linux-x86_64.tar.gz
-          generate_release_notes: true
-
+      - name: 运行核心构建检查
+        run: make build

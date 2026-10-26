@@ -20,8 +20,11 @@ vet:
 # 详细背景与检查项见 tools/check-workflows.py 的文件头注释。
 lint-workflows:
 	python3 tools/check-workflows.py \
-		--expect-jobs test,package-macos,package-linux,package-windows,release \
+		--expect-jobs test \
 		.github/workflows/ci.yml
+	python3 tools/check-workflows.py \
+		--expect-jobs test,package-macos,package-linux,package-windows,release \
+		.github/workflows/release.yml
 
 fmt:
 	gofmt -l -w .
