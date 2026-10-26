@@ -17,9 +17,11 @@ RequestExecutionLevel admin
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 
+!define MUI_FINISHPAGE_TITLE "Chaoset 拼音输入法安装完成"
+!define MUI_FINISHPAGE_TEXT "Chaoset 拼音输入法已安装成功并自动激活！$\r$\n$\r$\n【使用小贴士】$\r$\n1. 新打开的任何软件已立即生效，随时按 Win+Space 即可打字。$\r$\n2. 若您在安装前已经打开了软件（如记事本、聊天软件），只需将其【关闭并重新打开】即可体验新版全部特性！"
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "按 Win+Space 即可切换至 Chaoset 拼音输入法"
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "按 Win+Space 随时切换 Chaoset 拼音输入法"
 !insertmacro MUI_PAGE_FINISH
 
 ; 卸载页面
@@ -74,6 +76,23 @@ Section "MainSection" SEC01
     ; 终止可能运行中的旧守护进程并等待系统完全释放文件句柄
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
     Sleep 300
+
+    ; 检查是否有正在运行的应用锁定了输入法 DLL（如用户先前打开的记事本、浏览器或聊天软件）
+    ${If} ${FileExists} "$INSTDIR\ChaosetIME.dll"
+        ClearErrors
+        FileOpen $0 "$INSTDIR\ChaosetIME.dll" a
+        ${If} ${Errors}
+            MessageBox MB_YESNO|MB_ICONQUESTION \
+                "检测到当前有正在运行的软件（如记事本、浏览器或聊天软件）正在使用旧版输入法。$\r$\n$\r$\n是否由安装程序尝试温和关闭这些软件，以便新版本能够【立即生效】？$\r$\n$\r$\n（若您在打开的软件中有未保存的内容，请先保存，或选择“否”并在安装完成后手动重新打开对应软件）" \
+                IDYES close_running_apps IDNO keep_running_apps
+            close_running_apps:
+                nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$p = Get-Process | Where-Object { try { $_.Modules.ModuleName -contains \"ChaosetIME.dll\" -or $_.Modules.ModuleName -contains \"ChaosetIME32.dll\" } catch { $false } } | Where-Object { $_.ProcessName -notin @(\"explorer\", \"dwm\", \"ctfmon\", \"TextInputHost\", \"SearchHost\", \"ShellExperienceHost\") }; foreach ($x in $p) { $x.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 200 }"'
+                Sleep 500
+            keep_running_apps:
+        ${Else}
+            FileClose $0
+        ${EndIf}
+    ${EndIf}
 
     ; 安全写入二进制文件与资源（支持热替换）
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME.dll"
@@ -142,8 +161,13 @@ Section "MainSection" SEC01
     ; 为当前用户激活语言配置 (HKCU)
     WriteRegDWORD HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
-    ; 自动添加到用户当前语言列表（免手动配置，即装即用 Win+Space 切换）
-    nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like \"zh*\" }; if ($z) { if (-not ($z.InputMethodTips -contains \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\")) { $z.InputMethodTips.Add(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"); Set-WinUserLanguageList $l -Force } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"); $l += $z[0]; Set-WinUserLanguageList $l -Force }"'
+    ; 自动添加到用户当前语言列表并无条件强制刷新（免手动配置，即装即用 Win+Space 切换）
+    nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like \"zh*\" }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force"'
+
+    ; 重启 Windows 文本输入框架服务（ctfmon.exe），消除旧版输入法缓存，让系统任务栏与切换菜单立即加载专属图标
+    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
+    Sleep 200
+    Exec '"$WINDIR\system32\ctfmon.exe"'
 
     ; 准备数据目录并同步词库
     CreateDirectory "$LOCALAPPDATA\Chaoset"
@@ -160,7 +184,7 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.11"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.12"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式
@@ -179,6 +203,9 @@ Section "Uninstall"
 
     ; 从用户语言列表中移除输入法
     nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
+    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
+    Sleep 200
+    Exec '"$WINDIR\system32\ctfmon.exe"'
 
     ; 反注册 TSF COM 组件
     ${If} ${RunningX64}

@@ -45,7 +45,9 @@ if exist "%WINDIR%\SysWOW64\regsvr32.exe" (
 )
 
 echo ==^> Enabling Chaoset in user language list
-powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like 'zh*' }; if ($z) { if (-not ($z.InputMethodTips -contains '0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}')) { $z.InputMethodTips.Add('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'); Set-WinUserLanguageList $l -Force } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'); $l += $z[0]; Set-WinUserLanguageList $l -Force }" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = '0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like 'zh*' }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force" >nul 2>&1
+taskkill /F /IM ctfmon.exe >nul 2>&1
+start "" "%WINDIR%\System32\ctfmon.exe"
 
 echo ==^> Preparing user data directory %LOCALAPPDATA%\Chaoset
 if not exist "%LOCALAPPDATA%\Chaoset" mkdir "%LOCALAPPDATA%\Chaoset"
@@ -83,6 +85,8 @@ if exist "%WINDIR%\SysWOW64\regsvr32.exe" (
   if exist "ChaosetIME32.dll" "%WINDIR%\SysWOW64\regsvr32.exe" /s /u "%~dp0ChaosetIME32.dll"
 )
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}') }; Set-WinUserLanguageList $l -Force" >nul 2>&1
+taskkill /F /IM ctfmon.exe >nul 2>&1
+start "" "%WINDIR%\System32\ctfmon.exe"
 echo ==^> Removing dictionary copy
 if exist "%LOCALAPPDATA%\Chaoset\dict.tsv" del /Q "%LOCALAPPDATA%\Chaoset\dict.tsv"
 echo ==^> Uninstalled. Remove the Chaoset keyboard in Settings if it is still listed.
