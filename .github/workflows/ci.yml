@@ -1,5 +1,15 @@
 name: CI
 
+# 设计原则：把验证拆到多个并行 runner，本地只跑「改动的直接相关项」。
+#
+# 用户诉求（2026-10-26）：测试尽量交给 GitHub Actions，本地不跑重活，避免
+# 跑测试时拖慢正常用电脑。因此 CI 覆盖了所有耗时的端到端验证：
+#   - Go 单测 + race（race 本机要跑 45s+，是最重的一项）
+#   - Linux 容器内 ibus 端到端（需要 docker + dbus，本机跑占资源）
+#   - Windows 核心层行为测试（见 release.yml 的 package-windows job）
+#   - macOS 构建 + 等价性 + 双端视觉一致性（见 release.yml 的 package-macos）
+#
+# 各 job 相互独立并行，单次提交约 3-5 分钟出全部结论。
 on:
   push:
     branches: [main]
@@ -7,9 +17,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 同一分支的新推送取消仍在跑的旧流水，避免排队浪费额度。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    name: 格式 / 静态检查 / 测试 / 构建
+  # ── 1. 基础：格式 / 静态检查 / 构建（最快，失败就早停）────────────
+  lint:
+    name: 格式 / 静态检查 / 构建
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -19,12 +35,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # workflow 结构校验：检查 CI 与 Release 工作流的完整性
+      # workflow 结构校验：2026-10-25 有过一次文本替换误删 job 声明，导致
+      # YAML 仍合法但 GitHub 判 workflow file issue、CI 全线不跑的教训。
       - name: 校验 workflow 结构
         run: |
           python3 -m pip install --quiet pyyaml
           python3 tools/check-workflows.py \
-            --expect-jobs test \
+            --expect-jobs lint,test,race,linux-e2e,macos-build \
             .github/workflows/ci.yml
           python3 tools/check-workflows.py \
             --expect-jobs test,package-macos,package-linux,package-windows,release \
@@ -34,6 +51,30 @@ jobs:
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
+      - name: 静态检查（go vet + workflow + 版本单一真源）
+        run: make vet
+
+      - name: 核心构建检查
+        run: make build
+
+      # 度量工具带 //go:build ignore，不在 ./... 里，单独编译防止烂掉。
+      - name: 检查度量工具可编译
+        run: go build -o /dev/null tools/render_metrics.go
+
+  # ── 2. Go 单测 ────────────────────────────────────────────────────
+  test:
+    name: 单元测试
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # renderer 的测试要渲染候选窗 PNG，需要 CJK 字体；缺字体会跳过断言。
       - name: 安装 CJK 字体
         run: |
           sudo apt-get update
@@ -42,8 +83,96 @@ jobs:
       - name: 运行单元测试
         run: make test
 
-      - name: 运行代码静态检查
-        run: make vet
+  # ── 3. 数据竞争检测（本机最重的一项，完全交给 CI）─────────────────
+  race:
+    name: 数据竞争检测
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
 
-      - name: 运行核心构建检查
-        run: make build
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 安装 CJK 字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
+      - name: race detector
+        run: make race
+
+  # ── 4. Linux 容器内 ibus 端到端（本机跑会占大量资源）──────────────
+  linux-e2e:
+    name: Linux 容器 E2E（ibus）
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # 这套 DBus 端到端此前**只在人工容器里跑过**，CI 从未执行
+      # （2026-10-26 审查指出）。现在放进 CI。
+      #
+      # 用 test-ci.sh（原生版）而不是 test.sh：test.sh 假设本地已用
+      # setup-container.sh 起了 docker 容器并通过 docker exec 操作，而
+      # GitHub runner 本身就是一次性 VM，再套 docker 要多花 1-3 分钟拉镜像。
+      - name: 安装 ibus 与 dbus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 python3-gi
+
+      - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
+        run: |
+          chmod +x shims/linux/test-ci.sh
+          ./shims/linux/test-ci.sh
+  # ── 5. macOS 构建 + 等价性 + 双端视觉一致性（本机跑要 2-3 分钟）─────
+  # 此前这些只在打 tag 的 release.yml 里跑，PR/日常提交无从验证——改动一旦
+  # 破坏 macOS 壳或两端视觉一致性，要到发版才发现。现在 PR 也跑。
+  macos-build:
+    name: macOS 构建与一致性
+    runs-on: macos-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 构建 macOS app（含 universal 架构自检）
+        run: |
+          make build
+          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
+                   shims/macos/tests/visual-parity.sh
+          ./shims/macos/build.sh
+          for app in shims/macos/build/ChaosetIME.app shims/macos/build/ChaosetSetup.app; do
+            bin="$app/Contents/MacOS/$(basename "$app" .app)"
+            lipo -info "$bin"
+            lipo -info "$bin" | grep -q x86_64 || { echo "缺少 x86_64: $bin"; exit 1; }
+            lipo -info "$bin" | grep -q arm64  || { echo "缺少 arm64: $bin"; exit 1; }
+          done
+
+      # 顺带断言所有随包工具都是 universal：chaoset-import 曾因裸 go build 只出
+      # arm64，Intel 用户点「导入词库」直接 Bad CPU type（2026-10-26 修复）。
+      - name: 随包工具 universal 自检
+        run: |
+          for b in shims/macos/build/chaosetd shims/macos/build/tis \
+                   shims/macos/build/smoke shims/macos/build/chaoset-import; do
+            lipo -info "$b" | grep -q 'x86_64 arm64\|arm64 x86_64' \
+              || { echo "非 universal: $b"; lipo -info "$b"; exit 1; }
+          done
+          echo "随包工具全部 universal"
+
+      - name: 等价性 + 双端视觉一致性
+        run: |
+          ./shims/macos/tests/equivalence.sh
+          ./shims/macos/tests/visual-parity.sh

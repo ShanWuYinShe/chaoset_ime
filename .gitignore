@@ -6,6 +6,11 @@ dist/
 /build/
 shims/macos/build/
 shims/windows/build/
+# Linux 壳的容器构建产物目录（setup-container.sh 会往这里写二进制）。
+# 此前只忽略了 macos/windows，Linux 这个漏了——实测
+# `git check-ignore shims/linux/build/chaoset-ibus-engine` 退出码 1（未忽略），
+# 一旦有人在 shims/linux/ 下误跑脚本再 git add -A 就会把二进制提交进来。
+shims/linux/build/
 
 # 运行产物
 *.sock
@@ -23,3 +28,7 @@ chaoset-userdict.json.tmp
 
 # Go 测试二进制（go test -cpuprofile 等会生成）
 *.test
+
+# 仓库根目录的临时分析产物（历史上出现过 analyze_top2 这类 4MB 调试二进制，
+# 既不匹配任何忽略规则也不在 bin/ 下，`git add -A` 会把它提交进来）
+/analyze_*
