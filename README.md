@@ -163,40 +163,27 @@ go run ./.workwork/verify/scan    # 该脚本在 .workwork/（gitignore），口
 漏敲一个字母（`zhonguo`）、敲错一个键。旧版对这些输入要么给出一堆碎片假词
 （`zhogn` → 「中欧国内」），要么直接无候选。
 
-现在对输入做**单次编辑**修正后重新查询（`engine/typoCorrections`），覆盖四类手误：
+现在对输入做**单次编辑与粘键折叠**修正后重新查询（`engine/typoCorrections`），覆盖六类手误与拼音习惯：
 
 | 类型 | 例子 | 修正后 | 结果 |
 |---|---|---|---|
 | 相邻颠倒 | `zhogn` | `zhong` | **中** |
 | 多敲一个字母 | `zhonng` / `niihao` | `zhong` / `nihao` | **中** / **你好** |
+| 连击粘键折叠 | `niihaoo` / `zhoonng` | `nihao` / `zhong` | **你好** / **中** |
 | 漏敲一个字母 | `zhonguo` / `jisuanjii` | `zhongguo` / `jisuanji` | **中国** / **计算机** |
-| 敲错一个键 | `zhonggi` | `zhongguo` | **中国** |
+| QWERTY 邻键敲错 | `yishrng` / `diannap` / `nihap` | `yisheng` / `diannao` / `nihao` | **一声** / **电脑** / **你好** |
+| 省写与撮口呼习惯 | `dueibuqi` / `jvece` / `xionmao` | `dui'bu'qi` / `jue'ce` / `xiong'mao` | **对不起** / **决策** / **熊猫** |
 
-### 判据：为什么只做「单次编辑」
+### 判据与置信度分层
 
-实测 12 个典型错拼里 10 个属于上述四类（单次编辑可还原）。不做两次及以上：
-再多的错误已不是「手滑」而是「不会打」，强行修正常给出离题候选。
+- **QWERTY 物理按键邻近建模**：手指物理按偏产生的相邻键替换（如 `e` $\rightarrow$ `r`、`o` $\rightarrow$ `p`）保留完整词频；跨键区非邻近替换（如 `r` $\rightarrow$ `a`）扣除 `15` 分惩罚分且不参与直接晋升，彻底杜绝远端巧合高频词反压真实目标词。
+- **拼音习惯自动规范**：`uei` $\rightarrow$ `ui`（`shueijiao` $\rightarrow$ `睡觉`）、`iou` $\rightarrow$ `iu`（`niourou` $\rightarrow$ `牛肉`）、`uen` $\rightarrow$ `un`（`chuentian` $\rightarrow$ `春天`）、`j/q/x/y + v` $\rightarrow$ `u`（`xvesheng` $\rightarrow$ `学生`）。
 
 ### 关键取舍：绝不污染正常输入
 
-手误与**合法简拼/混拼在串形态上高度同形**——`nihap`（手误 nihao）与
-`chifanl`（合法混拼「吃饭」+ l）几乎无法从字形区分。因此：
-
-- **触发条件**：「输入连简拼路径都排不出来」（`zhogn` 的 `ogn` 无解），或
-  「最优切分里**非末位**出现孤立单字母声母」且**存在相邻换位能把整串切成
-  纯完整音节序列**（`zhengchagn` → `zhengchang`，换位纠错的高置信信号；
-  合法混拼 `chifanl` / `shangxj` / `zhongg` 的相邻换位都无法切分，不受扰）。
-  纯合法混拼（`zhongg` / `yiwys` / `shangxj` 都能切成「完整音节 + 声母」）**零开销、
-  不生成纠错候选**；
-- **层级由词频决定**：纠错候选初始在最低层，只有「命中的词频 ≥ 常规单词级候选
-  最高词频的 2 倍」时才提升到首位（`typoPromoteRatio`）。这是实测踩出来的：
-  直接放开会让合法混拼首选率从 34.32% 掉到 20.75%，且 `zhongg` → 中国 直接失败。
-  换位形态触发时门槛分母只采信「音节数 == 输入段数」的全消耗精确词——
-  `zhengchagn` 的常规层只有单字碎片（正/茶）与中间夹声母的组合（正茶馆你），
-  都不是用户意图，纠错「正常」无条件领跑。
-
-已知漏判（刻意保留）：`nihap` 能被切成 `ni|ha|p`（有完整音节），因此不修正——
-它与合法写法 `ni'ha'p` 完全同形，强行纠错会误伤所有混拼输入。
+手误与**合法简拼/混拼在串形态上高度同形**：
+- **触发条件**：无法完整切分（`zhogn`）、切分中段存在孤立声母（`zhengchagn`），或末段存在孤立声母且无常规词匹配（`tailSuspicious`，如 `nihap`）；
+- **防截断护栏**：末段声母形态纠错强制要求 `typoLen >= len(input)`，**严格禁止删除末位声母**——既能纠正 `nihap` $\rightarrow$ `你好`，又确保 `zhongg`（中国）、`chifanl`（吃饭了）、`shangxiaj`（上下级）等合法混拼与前缀输入首选完全不受干扰。
 
 ### 实测与性能
 
@@ -641,7 +628,12 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         为等长词组（遗产/数学家/领导），学习词组与单字不再越位；
         五场景首选率较起点全部提升（full 80.82/tail1 48.56/tail2 32.12/
         initials 20.55/mixed 39.11）。
-      - [x] 阶段 25：联想机制 + 部分消耗降级 + 用户词典净化 + 排序金标准（v0.2.1）
+      - [x] 阶段 26：QWERTY 物理键邻近纠错 + 拼音习惯与粘键容错（v0.2.2）
+      - **QWERTY 物理键邻近手误建模**：建立 26 键标准错行错位布局物理邻键映射，手指按偏替换优先占满纠错名额；跨键区远端替换扣除惩罚分，防止远端巧合高频词反客为主（如 yishrng 纠错「以上」不再压过「一声/医生」）。
+      - **末位声母手滑纠错**：引入 tailSuspicious 判定与 typoLen >= len(input) 防截断护栏，解决 nihap 出「你哈珀」痛点直接命中「你好」，同时零误伤 zhongg（中国）、chifanl（吃饭了）、shangxiaj（上下级）。
+      - **拼音省写与撮口呼习惯归一**：uei->ui（dueibuqi->对不起、shueijiao->睡觉）、iou->iu（niourou->牛肉）、uen->un（chuentian->春天）、j/q/x/y+v->u（jvece->决策、xvesheng->学生）、xion/jion/qion 漏 g 补齐。
+      - **连击粘键消除（Stutter Reduction）**：连续重复字母手误折叠（niihaoo->nihao、zhoonng->zhong）。
+- [x] 阶段 25：联想机制 + 部分消耗降级 + 用户词典净化 + 排序金标准（v0.2.1）
       - **联想机制（v0.2.1）**：选词上屏后拼音区清空，候选窗继续展示
         以该词开头的续接词组，数字键 1-6 直接连选上屏（学习路径与普通
         选词一致）；字母键回到正常组词、Esc/切中英/标点立即收起联想窗。
