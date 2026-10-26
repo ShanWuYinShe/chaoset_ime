@@ -63,7 +63,7 @@ package-macos:
 		rm -rf dist/dmg_staging; \
 		mkdir -p dist/dmg_staging; \
 		cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/; \
-		ln -s /Applications dist/dmg_staging/Applications 2>/dev/null || true; \
+		printf "【Chaoset 输入法 macOS 安装说明】\n\n1. 直接双击运行「Chaoset 安装与设置」(ChaosetSetup.app)；\n2. 在窗口中点击「一键安装 / 更新」，程序将自动部署输入法组件并启动后台服务；\n3. 按快捷键【Ctrl + 空格】（或 Fn / 🌐 键）切换至 Chaoset 即可开始打字！\n\n※ 全程图形化自动安装，无需将文件拖入应用程序目录，无需使用终端或运行脚本。\n" > dist/dmg_staging/安装说明.txt; \
 		hdiutil create -volname "Chaoset" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset.dmg; \
 		rm -rf dist/dmg_staging; \
 	fi

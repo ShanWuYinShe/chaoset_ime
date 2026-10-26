@@ -222,7 +222,7 @@ func installIME() -> String {
     let n = chaosetSourceCount()
     out += "系统输入源表 Chaoset 条目：\(n) 条（预期 2：父容器 + Pinyin 模式）\n"
     if n > 2 {
-        out += "⚠ 发现重复条目：请注销重登一次重建输入源表，或在本机终端运行 ./reregister.sh 清理。\n"
+        out += "⚠ 发现重复条目：系统存在旧版本缓存，请注销并重新登录一次即可自动刷新并重建输入源表。\n"
     }
     return out
 }
