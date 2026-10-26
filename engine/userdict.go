@@ -62,7 +62,8 @@ type userFile struct {
 }
 
 // UserDict 是用户行为数据：静态词调频、合成词组、上下文共现。
-// path 为空串时仅驻留内存；所有 bump 即时原子落盘。
+// path 为空串时仅驻留内存。
+//
 // 多连接并发安全：daemon 的所有连接共享同一 UserDict，读（Score/
 // QueryPhrases/Stats/Export）与写（Bump*/Clear/Save）经 mu 互斥。
 type UserDict struct {
@@ -70,6 +71,23 @@ type UserDict struct {
 	path string
 	now  func() time.Time
 	file userFile
+
+	// dirty 表示内存态有尚未落盘的变更。
+	//
+	// 为什么引入「延迟落盘」（2026-10-26）：一次上屏会触发 BumpWord +
+	// BumpBigram（+ BumpPhrase），即最多 3 次「全量 MarshalIndent + 写临时
+	// 文件 + rename」，全部在 IPC 响应返回前同步完成——壳因此阻塞在上屏路径
+	// 上。该文件随使用单调增长（无淘汰），实测 3 年重度用量级（约 10MB）单次
+	// Save 到 100ms+，直接卡按键。
+	//
+	// 行为契约（改动时必须同时满足）：
+	//   - 默认（deferred=false，测试与短生命周期场景）：bump 立即落盘，语义
+	//     与旧版完全一致，NewUserDict(path) 重新打开即可见刚才写入的数据；
+	//   - 延迟模式（deferred=true，daemon 使用）：bump 只标脏，由后台 ticker
+	//     定期 FlushIfDirty，进程退出时同步落盘。
+	// 两种模式下 Save() 都保证把当前内存态写盘。
+	dirty    bool
+	deferred bool
 }
 
 // NewUserDict 加载用户词典；文件不存在视为空词典。
@@ -121,6 +139,27 @@ func (u *UserDict) load(data []byte) error {
 // setClock 注入时钟供测试控制时间衰减。
 func (u *UserDict) setClock(f func() time.Time) { u.now = f }
 
+// SetDeferred 开启/关闭延迟落盘（见 UserDict.deferred 的契约说明）。
+// daemon 启动时开启；测试与一次性工具保持默认的立即落盘语义。
+func (u *UserDict) SetDeferred(on bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.deferred = on
+}
+
+// persistAfterBump 按当前模式决定 bump 之后是否立即落盘。
+// 调用方须已持写锁。
+func (u *UserDict) persistAfterBump() error {
+	if u.path == "" {
+		return nil
+	}
+	u.dirty = true
+	if u.deferred {
+		return nil
+	}
+	return u.saveLocked()
+}
+
 // userKeySep 是用户词条键（词 + 分隔符 + 空格分隔的音节）的分隔符。
 // 用 NUL 而非 TAB：词或音节中都不可能含 NUL，解析无歧义。
 const userKeySep = "\x00"
@@ -160,7 +199,7 @@ func (u *UserDict) BumpWord(word string, syllables []string) error {
 		u.file.Words[key] = rec
 	}
 	u.touch(rec)
-	return u.saveLocked()
+	return u.persistAfterBump()
 }
 
 // BumpBigram 记录一对前后词共现。
@@ -177,7 +216,7 @@ func (u *UserDict) BumpBigram(prev, next string) error {
 		u.file.Bigrams[key] = rec
 	}
 	u.touch(rec)
-	return u.saveLocked()
+	return u.persistAfterBump()
 }
 
 // PairCount 返回前后词共现次数。
@@ -202,7 +241,7 @@ func (u *UserDict) BumpPhrase(word string, syllables []string) error {
 	}
 	rec.Count++
 	rec.LastUsed = u.now().Unix()
-	return u.saveLocked()
+	return u.persistAfterBump()
 }
 
 // PhraseCount 返回用户合成词组的使用次数（不存在为 0）。
@@ -541,10 +580,28 @@ func (u *UserDict) QueryContinuation(tokens []Token, frag string, maxResults int
 }
 
 // Save 以「写临时文件 + rename」的原子方式落盘，避免写一半被读到。
+//
+// 语义是「保证把当前内存态写盘」，不做「无变更就跳过」的优化：
+// 加载旧格式文件后即使没有 bump，Save 也应把它重写成新格式（迁移路径）。
 func (u *UserDict) Save() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.saveLocked()
+}
+
+// FlushIfDirty 在后台定时调用：有变更才落盘。
+// 返回是否真的写了盘，便于调用方统计/调试。
+//
+// 与 Save 的区别只是语义命名（不强调「必须写」），实现一致。
+// daemon 用 time.Ticker 定期调用它，把「每次上屏都阻塞落盘」摊薄成
+// 「最多每 flushInterval 写一次」。
+func (u *UserDict) FlushIfDirty() (bool, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.dirty {
+		return false, nil
+	}
+	return true, u.saveLocked()
 }
 
 // saveLocked 落盘（调用方须已持有写锁）。
@@ -568,6 +625,7 @@ func (u *UserDict) saveLocked() error {
 	if err := os.Rename(tmp, u.path); err != nil {
 		return fmt.Errorf("替换用户词典失败: %w", err)
 	}
+	u.dirty = false
 	return nil
 }
 

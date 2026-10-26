@@ -16,6 +16,11 @@ type Candidate struct {
 }
 
 // Composition 是当前组词状态：原始输入、预编辑串、当前页候选与分页信息。
+// PageSize 返回每页候选数（数字键 1..PageSize 对应本页候选）。
+// 壳侧应按此值判定数字键是否选中候选，避免越界静默吞键：
+// pageSize 由 9 改成 6 后，壳仍接受 1-9，按 7/8/9 会既不选词也不进文档。
+func PageSize() int { return pageSize }
+
 // Page 为 0 起页码，PageCount 为总页数（每页 pageSize 个候选；无候选时为 0）。
 type Composition struct {
 	Input      string      `json:"input"`
@@ -54,6 +59,12 @@ const (
 	// 在标准指位内，且候选行不易换行；2026-10-25 用户反馈由 9 调整）。
 	// 翻页状态在 Session.page，边界在 Compose 钳制。
 	pageSize = 6
+
+	// maxAssociate 是联想候选的条数上限（单页展示）。
+	// **必须与 pageSize 一致**：壳按数字键 1..N 选联想词，若联想返回的条数
+	// 多于 pageSize，多出来的候选用户永远选不到（2026-10-26 审查发现：此前
+	// 联想上限写死 9 而 pageSize=6，第 7-9 条联想词无法选中）。
+	maxAssociate = pageSize
 
 	// learnThreshold：相邻两词共现多少次后固化为用户词组（词组进化）。
 	learnThreshold = 2
@@ -335,14 +346,17 @@ func (s *Session) Select(index int) (string, error) {
 	c := comp.Candidates[index]
 	sylls := strings.Split(c.Syllables, "'")
 	text := c.Text
+	// 学习数据的写入失败**绝不能阻断上屏**。
+	//
+	// 输入法的铁律是「用户按了键就必须出字」。旧实现把 BumpWord/BumpBigram 的
+	// 错误返回给调用方，于是磁盘满、路径只读、权限变更等任何落盘故障都会让
+	// 这次上屏彻底失败——壳已经把按键消费掉了，用户看到的就是「按数字键毫无
+	// 反应，字也没进文档」（2026-10-26 复现确认）。学习是增量优化，失败只应
+	// 记录而不影响组词结果；下一次 flush 成功时会自动补上。
 	if s.user != nil {
-		if err := s.user.BumpWord(text, sylls); err != nil {
-			return "", fmt.Errorf("记录用户词频失败: %w", err)
-		}
+		_ = s.user.BumpWord(text, sylls)
 		if s.prev != "" {
-			if err := s.user.BumpBigram(s.prev, text); err != nil {
-				return "", fmt.Errorf("记录上下文共现失败: %w", err)
-			}
+			_ = s.user.BumpBigram(s.prev, text)
 		}
 	}
 	s.history = append(s.history, learnEntry{word: text, sylls: sylls})
@@ -404,8 +418,8 @@ func (s *Session) Associate(sylls []string) []Candidate {
 		}
 		return out[i].Text < out[j].Text
 	})
-	if len(out) > 9 {
-		out = out[:9]
+	if len(out) > maxAssociate {
+		out = out[:maxAssociate]
 	}
 	return out
 }
@@ -417,14 +431,11 @@ func (s *Session) AssociateSelect(word string, sylls []string) (string, error) {
 	if word == "" || len(sylls) == 0 {
 		return "", fmt.Errorf("联想上屏参数为空")
 	}
+	// 同 Select：学习写入失败不阻断联想上屏。
 	if s.user != nil {
-		if err := s.user.BumpWord(word, sylls); err != nil {
-			return "", fmt.Errorf("记录用户词频失败: %w", err)
-		}
+		_ = s.user.BumpWord(word, sylls)
 		if s.prev != "" {
-			if err := s.user.BumpBigram(s.prev, word); err != nil {
-				return "", fmt.Errorf("记录上下文共现失败: %w", err)
-			}
+			_ = s.user.BumpBigram(s.prev, word)
 		}
 	}
 	s.history = append(s.history, learnEntry{word: word, sylls: sylls})
