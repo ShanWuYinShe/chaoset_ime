@@ -29,6 +29,40 @@ RequestExecutionLevel admin
 ; 简体中文
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
+; 核心宏：安全替换可能被运行中进程占用的二进制文件（DLL/EXE）
+; 原理：在 Windows NTFS 文件系统中，正在被进程内存映射打开的 DLL 虽不能被覆写或删除，
+; 但允许被重命名！将正在使用的旧 DLL 移开至 .old，原文件路径立即被腾空释放，
+; 随后写入新版 DLL，实现零弹窗热替换与平滑无缝升级。
+!macro InstallRobustFile SRC_PATH FILE_NAME
+    Delete "$INSTDIR\${FILE_NAME}.old"
+    Delete "$INSTDIR\${FILE_NAME}.old2"
+
+    ${If} ${FileExists} "$INSTDIR\${FILE_NAME}"
+        ClearErrors
+        Delete "$INSTDIR\${FILE_NAME}"
+        ${If} ${Errors}
+            ClearErrors
+            Rename "$INSTDIR\${FILE_NAME}" "$INSTDIR\${FILE_NAME}.old"
+            ${If} ${Errors}
+                ClearErrors
+                Rename "$INSTDIR\${FILE_NAME}" "$INSTDIR\${FILE_NAME}.old2"
+                Delete /REBOOTOK "$INSTDIR\${FILE_NAME}.old2"
+            ${Else}
+                Delete /REBOOTOK "$INSTDIR\${FILE_NAME}.old"
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
+
+    ClearErrors
+    File "/oname=$INSTDIR\${FILE_NAME}" "${SRC_PATH}\${FILE_NAME}"
+    ${If} ${Errors}
+        ; 极端保护：若仍有只读或锁定限制，写为 .new 并预约重启替换
+        File "/oname=$INSTDIR\${FILE_NAME}.new" "${SRC_PATH}\${FILE_NAME}"
+        Rename /REBOOTOK "$INSTDIR\${FILE_NAME}.new" "$INSTDIR\${FILE_NAME}"
+        SetRebootFlag true
+    ${EndIf}
+!macroend
+
 Section "MainSection" SEC01
     ${If} ${RunningX64}
         SetRegView 64
@@ -37,16 +71,17 @@ Section "MainSection" SEC01
     SetOutPath "$INSTDIR"
     SetOverwrite on
 
-    ; 终止可能运行中的旧进程
+    ; 终止可能运行中的旧守护进程并等待系统完全释放文件句柄
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
+    Sleep 300
 
-    ; 复制文件
-    File "..\..\..\dist\chaoset-windows-x64\ChaosetIME.dll"
-    File "..\..\..\dist\chaoset-windows-x64\ChaosetIME32.dll"
-    File "..\..\..\dist\chaoset-windows-x64\chaosetd.exe"
-    File "..\..\..\dist\chaoset-windows-x64\chaoset-cli.exe"
-    File "..\..\..\dist\chaoset-windows-x64\chaoset-import.exe"
-    File "..\..\..\dist\chaoset-windows-x64\dict.tsv"
+    ; 安全写入二进制文件与资源（支持热替换）
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME.dll"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME32.dll"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetd.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-cli.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-import.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
     File "..\resources\chaoset.ico"
 
     ; 注册 TSF COM 组件（同时支持 64 位原生程序与 32 位 WOW64 程序）
@@ -125,7 +160,7 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.8"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.9"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式
@@ -138,8 +173,9 @@ Section "Uninstall"
         SetRegView 64
     ${EndIf}
 
-    ; 终止后台服务
+    ; 终止后台服务并等待句柄完全释放
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
+    Sleep 300
 
     ; 从用户语言列表中移除输入法
     nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
@@ -164,20 +200,30 @@ Section "Uninstall"
     ; 删除注册表启动项与卸载项
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset"
+    DeleteRegKey HKLM "Software\Chaoset"
     DeleteRegKey HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}"
 
-    ; 删除文件
-    Delete "$INSTDIR\ChaosetIME.dll"
-    Delete "$INSTDIR\ChaosetIME32.dll"
+    ; 安全删除文件（若 DLL 仍被活跃软件映射占用，预约重启清除，绝不报错阻断）
     Delete "$INSTDIR\chaosetd.exe"
     Delete "$INSTDIR\chaoset-cli.exe"
     Delete "$INSTDIR\chaoset-import.exe"
     Delete "$INSTDIR\dict.tsv"
     Delete "$INSTDIR\chaoset.ico"
     Delete "$INSTDIR\uninstall.exe"
-    RMDir "$INSTDIR"
+
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME.dll"
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll"
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME.dll.old"
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old"
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME.dll.old2"
+    Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old2"
+    RMDir /REBOOTOK "$INSTDIR"
 
     ; 删除快捷方式
     Delete "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk"
     RMDir "$SMPROGRAMS\Chaoset"
 SectionEnd
+
+Function .onInstFailed
+    MessageBox MB_OK|MB_ICONEXCLAMATION "安装遇到异常中断，已自动中止退出。您可以重新运行安装程序。"
+FunctionEnd
