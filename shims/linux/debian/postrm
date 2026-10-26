@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    rm -f /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli 2>/dev/null || true
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    fi
+    for u in $(who | awk '{print $1}' | sort -u); do
+        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
+    done
+fi
+
+exit 0

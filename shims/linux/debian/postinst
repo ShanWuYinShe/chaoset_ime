@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+# 创建快捷软链接到 /usr/local/bin，确保各种传统环境均可无缝找到命令
+mkdir -p /usr/local/bin
+ln -sf /usr/bin/chaoset-engine /usr/local/bin/chaoset-engine 2>/dev/null || true
+ln -sf /usr/bin/chaosetd /usr/local/bin/chaosetd 2>/dev/null || true
+ln -sf /usr/bin/chaoset-cli /usr/local/bin/chaoset-cli 2>/dev/null || true
+
+# 刷新图标缓存
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+
+# 尝试重启所有登录用户的 ibus-daemon 以立即收录输入法
+for u in $(who | awk '{print $1}' | sort -u); do
+    su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
+done
+
+echo "==> Chaoset 拼音输入法安装完成！"
+echo "    系统已自动重启 ibus。请在「设置 → 键盘 → 输入源」中添加「Chaoset Pinyin」即可使用。"
+
+exit 0

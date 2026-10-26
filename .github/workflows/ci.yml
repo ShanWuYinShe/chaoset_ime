@@ -66,16 +66,25 @@ jobs:
             lipo -info "$bin" | grep -q 'arm64' || { echo "缺少 arm64 架构"; exit 1; }
           done
 
-      - name: 打包 ZIP
+      - name: 打包 DMG 与 ZIP
         run: |
           mkdir -p dist
           (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
+          mkdir -p dist/dmg_staging
+          cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/
+          ln -s /Applications dist/dmg_staging/Applications 2>/dev/null || true
+          hdiutil create -volname "Chaoset" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset.dmg
+          rm -rf dist/dmg_staging
+          test -f dist/Chaoset.dmg || { echo "缺少 Chaoset.dmg"; exit 1; }
+          echo "macOS DMG 产物生成并校验通过"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: chaoset-macos
-          path: dist/chaoset-macos.zip
+          path: |
+            dist/chaoset-macos.zip
+            dist/Chaoset.dmg
           retention-days: 14
 
   package-linux:
@@ -95,26 +104,35 @@ jobs:
           make build
           make package-linux
 
-      # 冒烟校验：解包后按真实用户路径装一次，再从任意 cwd 启动引擎。
-      # 这一步是必须的——2026-10-25 曾出现「打包全绿但装完引擎找不到词库、
-      # 在 ibus 里一个字都打不出来」的发行缺陷，只跑打包不装是发现不了的。
-      - name: 冒烟校验（解包 → 安装 → 启动引擎）
+      # 冒烟校验：先测 deb 一键安装包（双击即可安装的格式），再测 tar.gz 脚本安装
+      - name: 冒烟校验（DEB 安装与 tar.gz 安装）
         run: |
+          test -f dist/chaoset_amd64.deb || { echo "缺少 chaoset_amd64.deb"; exit 1; }
+          sudo dpkg -i dist/chaoset_amd64.deb
+          test -x /usr/bin/chaoset-engine || { echo "deb 未安装 /usr/bin/chaoset-engine"; exit 1; }
+          timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/deb-engine.log 2>&1 || true
+          grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/deb-engine.log \
+            || { echo "DEB 引擎未加载词库，日志："; cat /tmp/deb-engine.log; exit 1; }
+          echo "DEB 包冒烟测试通过"
+          sudo dpkg -r chaoset-ime
+
           mkdir -p /tmp/smoke && tar -xzf dist/chaoset-linux-x86_64.tar.gz -C /tmp/smoke
           cd /tmp/smoke/chaoset-linux-x86_64
           sudo ./install.sh
           # 引擎按 ibus 的方式（无 cwd 依赖）拉起，必须能找到词库
-          cd / && timeout 5 /usr/local/bin/chaoset-engine --ibus > /tmp/engine.log 2>&1 || true
+          cd / && timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/engine.log 2>&1 || true
           grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/engine.log \
             || { echo "引擎未加载词库，日志："; cat /tmp/engine.log; exit 1; }
           grep -q '打开词库.*失败' /tmp/engine.log && { echo "引擎找不到词库"; cat /tmp/engine.log; exit 1; } || true
-          echo "冒烟校验通过"
+          echo "tar.gz 冒烟校验通过"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: chaoset-linux-x86_64
-          path: dist/chaoset-linux-x86_64.tar.gz
+          path: |
+            dist/chaoset-linux-x86_64.tar.gz
+            dist/chaoset_amd64.deb
           retention-days: 14
 
   package-windows:
@@ -197,9 +215,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
+            dist/ChaosetSetup.exe
+            dist/Chaoset.dmg
+            dist/chaoset_amd64.deb
+            dist/chaoset-windows-x64.zip
             dist/chaoset-macos.zip
             dist/chaoset-linux-x86_64.tar.gz
-            dist/chaoset-windows-x64.zip
-            dist/ChaosetSetup.exe
           generate_release_notes: true
 

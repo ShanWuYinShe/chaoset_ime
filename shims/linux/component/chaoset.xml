@@ -2,7 +2,7 @@
 <component>
   <name>org.freedesktop.IBus.Chaoset</name>
   <description>Chaoset Input Method</description>
-  <exec>/usr/local/bin/chaoset-engine --ibus</exec>
+  <exec>/usr/bin/chaoset-engine --ibus</exec>
   <version>0.1.0</version>
   <author>chaoset</author>
   <license>MIT</license>

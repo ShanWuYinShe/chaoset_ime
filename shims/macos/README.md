@@ -27,13 +27,13 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ### 用发布包（推荐）
 
-从 GitHub Release 下载 `chaoset-macos.zip`，解包后双击 **ChaosetSetup.app**，
-在图形界面里点「安装」即可（安装/更新、导入词库、看状态都在这个 app 内完成）。
+1. 从 GitHub Release 下载 **`Chaoset.dmg`**（或 `chaoset-macos.zip`）；
+2. 双击打开 DMG 磁盘映象，直接运行里面的 **Chaoset 安装与设置**（`ChaosetSetup.app`）；
+3. 在图形界面中点击「一键安装 / 更新」，程序会自动将输入法组件配置到系统、部署常用词库并拉起后台服务；
+4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
 
-- 压缩包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac
-  都能直接用；
-- 采用 **ad-hoc 签名**（无 Apple 开发者证书），首次打开如果被 Gatekeeper 拦下，
-  右键点击 app →「打开」→ 确认打开即可，只需一次。
+- 磁盘映象内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
+- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击该应用 → 选择「打开」→ 确认打开即可。
 
 ### 从源码
 

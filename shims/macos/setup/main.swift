@@ -211,11 +211,11 @@ func installIME() -> String {
     if let s = findSource() {
         _ = TISEnableInputSource(s)
         _ = TISSelectInputSource(s)
-        out += "系统已收录本输入法，已启用并选中。\n"
+        out += "🎉 系统已收录本输入法，已为您自动启用并选中！\n"
+        out += "👉 提示：使用快捷键【Ctrl + 空格】（或 Fn / 🌐 键）即可随时切换。\n"
     } else {
-        out += "\n注意：系统输入源表里还看不到本输入法。macOS 只在【登录时】扩充输入源表，\n"
-        out += "请注销并重新登录，然后回到本工具点「重新检查」；届时到「系统设置 → 键盘 →\n"
-        out += "输入法」添加「Chaoset」即可。\n"
+        out += "\n提示：首次安装后，macOS 需在登录时扩充输入源表。\n"
+        out += "请【注销并重新登录】一次，即可在菜单栏直接切换或在「系统设置 → 键盘 → 输入法」中添加「Chaoset」。\n"
     }
     // 收起系统设置/输入菜单进程，保证下次打开看到的是新图标与新列表，而不是旧快照
     killInputSourceUI()
@@ -355,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             b.setContentHuggingPriority(.defaultLow, for: .horizontal)
             return b
         }
-        let row = NSStackView(views: [button("安装 / 更新输入法", #selector(doInstall)),
+        let row = NSStackView(views: [button("一键安装 / 更新", #selector(doInstall)),
                                       button("导入词库…", #selector(doImport)),
                                       button("重新检查", #selector(doRefresh)),
                                       button("打开数据文件夹", #selector(doOpenFolder))])

@@ -69,7 +69,18 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
 
 ## 安装（Linux 桌面）
 
-### 方式一：用发布包（推荐）
+### 方式一：Ubuntu / Debian / Mint 用户双击一键安装（小白首选，推荐）
+
+从 GitHub Release 下载 `chaoset_amd64.deb`：
+- **图形化安装**：直接在文件管理器中**双击** `.deb` 文件，系统应用商店（Ubuntu 软件中心 / GDebi）将弹出安装窗口，点击「安装」即可。
+- **终端一行安装**（可选）：
+  ```sh
+  sudo dpkg -i chaoset_amd64.deb
+  ```
+  安装程序会自动部署二进制、14万词库、ibus组件描述与图标，并自动重启 ibus-daemon。
+- **卸载**：在系统应用商店中直接点击「卸载」，或执行 `sudo dpkg -r chaoset-ime`。
+
+### 方式二：通用压缩包安装（其他发行版 / 脚本）
 
 从 GitHub Release 下载 `chaoset-linux-x86_64.tar.gz`，解包后：
 

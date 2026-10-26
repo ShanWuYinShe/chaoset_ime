@@ -1,0 +1,12 @@
+Package: chaoset-ime
+Version: 0.2.4
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
+Installed-Size: 15000
+Depends: ibus
+Homepage: https://github.com/ShanWuYinShe/chaoset_ime
+Description: Chaoset Pinyin IME - 傻瓜式现代拼音输入法
+ Chaoset 是一个极简、开箱即用的现代中文拼音输入法。
+ 提供智能纠错、物理邻近推测、模糊音、自学习词库与流式响应。

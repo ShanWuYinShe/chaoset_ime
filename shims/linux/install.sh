@@ -10,7 +10,8 @@
 set -e
 cd "$(dirname "$0")"
 
-PREFIX_BIN=/usr/local/bin
+PREFIX_BIN=/usr/bin
+PREFIX_LOCAL_BIN=/usr/local/bin
 PREFIX_SHARE=/usr/share/chaoset
 COMPONENT_DIR=/usr/share/ibus/component
 ICON_ROOT=/usr/share/icons
@@ -20,6 +21,9 @@ uninstall() {
   rm -f "$PREFIX_BIN/chaosetd" "$PREFIX_BIN/chaoset-cli" \
         "$PREFIX_BIN/chaoset-import" "$PREFIX_BIN/chaoset-userdict" \
         "$PREFIX_BIN/chaoset-engine"
+  rm -f "$PREFIX_LOCAL_BIN/chaosetd" "$PREFIX_LOCAL_BIN/chaoset-cli" \
+        "$PREFIX_LOCAL_BIN/chaoset-import" "$PREFIX_LOCAL_BIN/chaoset-userdict" \
+        "$PREFIX_LOCAL_BIN/chaoset-engine"
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
   # 图标按 hicolor 目录逐个删（不整目录删，避免误删系统图标）
@@ -52,8 +56,10 @@ fi
 
 echo "==> 安装二进制到 $PREFIX_BIN"
 install -d "$PREFIX_BIN"
+install -d "$PREFIX_LOCAL_BIN"
 for b in chaosetd chaoset-cli chaoset-import chaoset-userdict chaoset-engine; do
   install -m 0755 "bin/$b" "$PREFIX_BIN/$b"
+  ln -sf "$PREFIX_BIN/$b" "$PREFIX_LOCAL_BIN/$b" 2>/dev/null || true
 done
 
 echo "==> 安装词库到 $PREFIX_SHARE"

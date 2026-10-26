@@ -1,6 +1,22 @@
 # chaoset-ime
 
-跨平台中文输入法（macOS / Linux / Windows）。
+跨平台中文拼音输入法（Windows / macOS / Linux）。
+
+## ⚡ 极简新手安装指南（零门槛·傻瓜式一键使用）
+
+> **致普通用户**：输入法面向的是广大日常电脑用户，绝不需要假设您有任何编程或命令行知识。直接下载对应系统的一键安装包，双击即可无障碍开始打字！
+
+| 操作系统 | 推荐安装包（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
+| :--- | :--- | :--- | :--- |
+| **Windows** (10 / 11) | [📥 ChaosetSetup.exe](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **直接双击安装**，点击「下一步」完成（已自动注册并开机自启） | `Win + 空格` |
+| **macOS** (12+) | [📥 Chaoset.dmg](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击打开**，打开里面的「Chaoset 安装与设置」，点击「一键安装」 | `Ctrl + 空格` 或 `Fn / 🌐` |
+| **Linux** (Ubuntu/Debian/Mint) | [📥 chaoset_amd64.deb](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在系统应用中心点击「安装」即可自动生效 | `Super + 空格` 或 `Ctrl + 空格` |
+
+> 📦 **开发者与绿色便携版**：如需无需安装的独立归档，可前往 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases) 获取 `.zip` (Windows/macOS) 或 `.tar.gz` (Linux)。
+
+---
+
+## 架构概览
 
 架构：**Go 引擎 + 守护进程（daemon）+ 各平台薄壳**。引擎与组词逻辑只写一份，
 平台壳只负责「按键转发 + 文本上屏 + 光标定位」，通过 IPC 与 daemon 通信。

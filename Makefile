@@ -55,6 +55,16 @@ package-macos:
 	done
 	mkdir -p dist
 	(cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
+	@if command -v hdiutil >/dev/null 2>&1; then \
+		echo "==> 构建 macOS 单文件磁盘映象 (Chaoset.dmg)..."; \
+		rm -rf dist/dmg_staging; \
+		mkdir -p dist/dmg_staging; \
+		cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/; \
+		ln -s /Applications dist/dmg_staging/Applications 2>/dev/null || true; \
+		hdiutil create -volname "Chaoset" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset.dmg; \
+		rm -rf dist/dmg_staging; \
+	fi
+
 # package-linux：显式交叉编译到 linux/amd64。
 #
 # 必须显式指定 GOOS/GOARCH：此前的写法是裸 `go build`，在 macOS 开发机上打包
@@ -91,6 +101,28 @@ package-linux:
 		file "$$b" | grep -q ELF || { echo "错误：$$b 不是 ELF（Linux）可执行文件："; file "$$b"; exit 1; }; \
 	done
 	tar -czf dist/chaoset-linux-x86_64.tar.gz -C dist chaoset-linux-x86_64
+	@if command -v dpkg-deb >/dev/null 2>&1; then \
+		echo "==> 构建 Linux Debian/Ubuntu 一键安装包 (chaoset_amd64.deb)..."; \
+		rm -rf dist/deb_staging; \
+		mkdir -p dist/deb_staging/DEBIAN; \
+		mkdir -p dist/deb_staging/usr/bin; \
+		mkdir -p dist/deb_staging/usr/share/chaoset; \
+		mkdir -p dist/deb_staging/usr/share/ibus/component; \
+		mkdir -p dist/deb_staging/usr/share/icons; \
+		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
+		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
+		cp dist/chaoset-linux-x86_64/component/chaoset.xml dist/deb_staging/usr/share/ibus/component/; \
+		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
+		cp shims/linux/debian/control dist/deb_staging/DEBIAN/control; \
+		cp shims/linux/debian/postinst dist/deb_staging/DEBIAN/postinst; \
+		cp shims/linux/debian/postrm dist/deb_staging/DEBIAN/postrm; \
+		chmod 0755 dist/deb_staging/DEBIAN/postinst dist/deb_staging/DEBIAN/postrm; \
+		chmod 0755 dist/deb_staging/usr/bin/*; \
+		chmod 0644 dist/deb_staging/usr/share/chaoset/dict.tsv; \
+		chmod 0644 dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
+		dpkg-deb --build --root-owner-group dist/deb_staging dist/chaoset_amd64.deb; \
+		rm -rf dist/deb_staging; \
+	fi
 	rm -rf dist/chaoset-linux-x86_64
 
 # package-windows：交叉编译到 windows/amd64（Go）与 mingw-w64（DLL）。

@@ -29,6 +29,10 @@ namespace {
 const GUID CLSID_ChaosetTIP = {
     0x8a5c7b31, 0x4e2d, 0x4c6a, {0x9f, 0x41, 0x77, 0xd0, 0xb3, 0xe5, 0xc1, 0xa8}};
 
+// 本壳语言配置标识（固定值；用于 Windows TSF 0x0804 简体中文配置）
+const GUID GUID_ChaosetProfile = {
+    0x5a1b3c7d, 0x8e9f, 0x4a1b, {0xa2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29}};
+
 constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
 constexpr DWORD kVkShift = 0x10;
 constexpr DWORD kVkBackspace = 0x08;
@@ -671,6 +675,18 @@ static HRESULT regSet(HKEY root, const std::string& key, const std::string& name
     return r == ERROR_SUCCESS ? S_OK : E_FAIL;
 }
 
+static HRESULT regSetDword(HKEY root, const std::string& key, const std::string& name,
+                           DWORD data) {
+    HKEY k = nullptr;
+    LONG r = RegCreateKeyExA(root, key.c_str(), 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE,
+                             nullptr, &k, nullptr);
+    if (r != ERROR_SUCCESS) return E_FAIL;
+    r = RegSetValueExA(k, name.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&data),
+                       sizeof(DWORD));
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS ? S_OK : E_FAIL;
+}
+
 static std::string guidToString(const GUID& g) {
     wchar_t wide[64] = {0};
     StringFromGUID2(g, wide, 64);
@@ -681,19 +697,26 @@ static std::string guidToString(const GUID& g) {
 
 STDAPI DllRegisterServer() {
     std::string clsid = guidToString(CLSID_ChaosetTIP);
+    std::string profid = guidToString(GUID_ChaosetProfile);
     std::string base = "Software\\Classes\\CLSID\\" + clsid;
-    HRESULT hr = regSet(HKEY_LOCAL_MACHINE, base, "", "ChaosetIME");
+    HRESULT hr = regSet(HKEY_LOCAL_MACHINE, base, "", "Chaoset 拼音输入法");
     if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, base + "\\InprocServer32", "", dllPath());
     if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, base + "\\InprocServer32", "ThreadingModel", "Apartment");
 
-    // CTF 输入法注册；分类暂只登记键盘类（GUID_TFCAT_CATEGORY_OF_TIP 的
-    // 值不在 mingw uuid 库中，注册完备性留待 Windows 真机验证）
+    // CTF 输入法注册与键盘分类
     std::string tips = "Software\\Microsoft\\CTF\\TIPs\\" + clsid;
-    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, tips, "", "ChaosetIME");
+    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, tips, "", "Chaoset 拼音输入法");
     if (SUCCEEDED(hr)) {
-        hr = regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\" + guidToString(GUID_TFCAT_TIP_KEYBOARD),
-                    "", "");
+        hr = regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Item\\" + guidToString(GUID_TFCAT_TIP_KEYBOARD) + "\\" + clsid, "", "");
+        hr = regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Category\\" + guidToString(GUID_TFCAT_TIP_KEYBOARD) + "\\" + clsid, "", "");
     }
+    // 语言配置（0x0804 简体中文）：通知 Windows 系统将本 TIP 作为简体中文输入法识别
+    std::string langProfile = tips + "\\LanguageProfile\\0x00000804\\" + profid;
+    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, langProfile, "Description", "Chaoset 拼音输入法");
+    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, langProfile, "IconFile", dllPath());
+    if (SUCCEEDED(hr)) hr = regSetDword(HKEY_LOCAL_MACHINE, langProfile, "IconIndex", 0);
+    if (SUCCEEDED(hr)) hr = regSetDword(HKEY_LOCAL_MACHINE, langProfile, "Enable", 1);
+
     return hr;
 }
 

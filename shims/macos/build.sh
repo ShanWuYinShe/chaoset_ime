@@ -305,7 +305,7 @@ cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 cat > "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STR'
-"CFBundleDisplayName" = "Chaoset";
+"CFBundleDisplayName" = "Chaoset 安装与设置";
 "CFBundleName" = "Chaoset";
 STR
 printf 'APPL????' > "$SETUP/Contents/PkgInfo"
