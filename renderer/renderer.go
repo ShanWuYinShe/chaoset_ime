@@ -189,13 +189,17 @@ func probeFontPath() string {
 	default: // linux 及其他
 		candidates = []string{
 			"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+			"/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+			"/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
 			"/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 			"/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
 		}
 	}
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
+		if data, err := os.ReadFile(p); err == nil {
+			if _, ferr := parseFont(data); ferr == nil {
+				return p
+			}
 		}
 	}
 	return ""
