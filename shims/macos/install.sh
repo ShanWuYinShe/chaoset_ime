@@ -63,8 +63,8 @@ kill_input_source_ui() {
 }
 
 clear_tis_caches() {
-  [ -d "$TIS_CACHE_DIR" ] || return 0
-  find "$TIS_CACHE_DIR" -maxdepth 2 -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  find /private/var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  [ -d "$TIS_CACHE_DIR" ] && find "$TIS_CACHE_DIR" -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
 }
 
 if [ -x build/tis ]; then
@@ -76,11 +76,14 @@ if [ -x build/tis ]; then
   clear_tis_caches
   sleep 2
 
-  # 清理本地 build 目录与历史嵌套 app 在 LaunchServices 中的旧登记，
+  # 清理本地 build、tmp 与历史嵌套 app 在 LaunchServices 中的旧登记，
   # 杜绝同一 bundle ID 从多个路径被 TIS/系统设置索引（会表现为重复条目）。
   "$LSREGISTER" -u "$(pwd)/build/ChaosetIME.app" 2>/dev/null || true
   "$LSREGISTER" -u "$(pwd)/build/ChaosetSetup.app" 2>/dev/null || true
   "$LSREGISTER" -u "$HOME/Applications/ChaosetSetup.app/Contents/Resources/ChaosetIME.app" 2>/dev/null || true
+  "$LSREGISTER" -u "/private/tmp/ChaosetIME.app" 2>/dev/null || true
+  "$LSREGISTER" -u "/private/tmp/ChaosetIME.app/ChaosetIME.app" 2>/dev/null || true
+  rm -rf /private/tmp/ChaosetIME.app 2>/dev/null || true
 
   # 登记是幂等的：系统表里已有就跳过，避免重复 TISRegisterInputSource 触发多余通知。
   if ! build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then

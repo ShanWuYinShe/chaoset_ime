@@ -19,8 +19,8 @@ LEGACY_MODE=ime.chaoset.inputmethod.ChaosetIME.Hans
 # TIS 输入源缓存每进程一份；只重启进程不删缓存会留下旧图标/旧条目
 TIS_CACHE_DIR="$(dirname "${TMPDIR:-/tmp}")/C"
 clear_tis_caches() {
-  [ -d "$TIS_CACHE_DIR" ] || return 0
-  find "$TIS_CACHE_DIR" -maxdepth 2 -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  find /private/var/folders -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
+  [ -d "$TIS_CACHE_DIR" ] && find "$TIS_CACHE_DIR" -name "com.apple.IntlDataCache*" -delete 2>/dev/null || true
 }
 kill_input_source_ui() {
   killall "System Settings" 2>/dev/null || true
@@ -29,6 +29,10 @@ kill_input_source_ui() {
   pkill -9 -f "TextInputSwitcher" 2>/dev/null || true
   pkill -9 -f "TextInputMenuAgent" 2>/dev/null || true
   pkill -9 -f "CursorUIViewService" 2>/dev/null || true
+  LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  "$LSREGISTER" -u "/private/tmp/ChaosetIME.app" 2>/dev/null || true
+  "$LSREGISTER" -u "/private/tmp/ChaosetIME.app/ChaosetIME.app" 2>/dev/null || true
+  rm -rf /private/tmp/ChaosetIME.app 2>/dev/null || true
 }
 
 printf '== 1) 重新登记 bundle ==\n'
