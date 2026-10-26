@@ -124,6 +124,10 @@ package-windows:
 	done
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
 		| grep -q DllRegisterServer || { echo "错误：ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
+	@if command -v makensis >/dev/null 2>&1; then \
+		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
+		(cd shims/windows/installer && makensis chaoset.nsi); \
+	fi
 	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
 	rm -rf dist/chaoset-windows-x64
 

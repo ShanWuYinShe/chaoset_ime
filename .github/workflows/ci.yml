@@ -129,19 +129,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: 安装 mingw-w64 交叉编译器
+      - name: 安装 mingw-w64 交叉编译器与 NSIS 打包工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 nsis
 
       - name: 编译与打包
         run: |
           make package-windows
 
       # 包内容自检：不跑 Windows 真机（本 job 在 Linux 上），但必须保证
-      # 包里有用户真正需要的东西——词库、安装脚本、PE 格式二进制。
-      # 2026-10-25 曾出现「包里只有 dict_seed.tsv、README 却让传 dict.tsv」
-      # 的缺陷，这类问题靠打包成功是看不出来的。
+      # 包里有用户真正需要的东西——词库、安装脚本、PE 格式二进制与一键安装程序。
       - name: 校验包内容
         run: |
           unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
@@ -153,13 +151,18 @@ jobs:
           file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 Windows PE"; exit 1; }
           x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllRegisterServer \
             || { echo "DLL 缺少 DllRegisterServer 导出"; exit 1; }
-          echo "包内容校验通过"
+          echo "ZIP 包内容校验通过"
+          test -f "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
+          file "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" | grep -q 'PE32' || { echo "ChaosetSetup.exe 不是有效 Windows PE"; exit 1; }
+          echo "ChaosetSetup.exe 安装程序自检通过"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: chaoset-windows-x64
-          path: dist/chaoset-windows-x64.zip
+          path: |
+            dist/chaoset-windows-x64.zip
+            dist/ChaosetSetup.exe
           retention-days: 14
 
   release:
@@ -197,5 +200,6 @@ jobs:
             dist/chaoset-macos.zip
             dist/chaoset-linux-x86_64.tar.gz
             dist/chaoset-windows-x64.zip
+            dist/ChaosetSetup.exe
           generate_release_notes: true
 

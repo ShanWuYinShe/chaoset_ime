@@ -26,20 +26,27 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 
 ## 安装（Windows 真机）
 
-### 方式一：用发布包（推荐）
+### 方式一：一键安装程序（最推荐，适合所有普通用户）
+
+从 GitHub Release 直接下载 **`ChaosetSetup.exe`**：
+
+1. **直接双击 `ChaosetSetup.exe`**，系统弹出 UAC 提权提示时点击「是」；
+2. 安装向导自动完成：
+   - 释放核心文件到 `C:\Program Files\Chaoset`
+   - 自动注册 TSF COM 输入法组件（`regsvr32`）
+   - 配置开机自动启动后台守护进程（写入注册表 `Run`，重启电脑永不失效）
+   - 写入 Windows「已安装的应用 / 控制面板」标准卸载程序
+   - 立即启动输入法后台服务
+3. 按 `Win+Space` 切换到 **Chaoset 拼音输入法** 即可开始打字。
+
+> 卸载：直接在 Windows「设置 → 应用 → 安装的应用」中找到 **Chaoset 拼音输入法** 点击「卸载」，或在开始菜单中点击「卸载 Chaoset 输入法」。
+
+### 方式二：便携 ZIP 压缩包（免安装）
 
 从 GitHub Release 下载 `chaoset-windows-x64.zip`，解包后：
 
-1. **右键 `install.bat` → 以管理员身份运行**（TSF 输入法必须 regsvr32 注册 COM，需要管理员权限）；
-2. 按提示打开「设置 → 时间和语言 → 语言和区域」，在中文(简体)下「添加键盘」选 **Chaoset**；
-3. `Win+Space` 切到 Chaoset 即可打字。
-
-卸载：同样右键管理员运行 `install.bat uninstall`。
-
-脚本做的事：`regsvr32 ChaosetIME.dll` 注册 COM/CTF TIPs → 把词库复制到
-`%LOCALAPPDATA%\Chaoset\dict.tsv` → 以绝对路径 `-dict` 启动 daemon
-（监听 `127.0.0.1:7949`）→ 日志写 `%LOCALAPPDATA%\Chaoset\chaosetd.log`。
-用绝对路径是刻意的：daemon 不能依赖启动时的工作目录（Linux 端踩过同类坑）。
+1. 右键 `install.bat` → 以管理员身份运行；
+2. 卸载：右键管理员运行 `install.bat uninstall`。
 
 ### 方式二：从源码
 
