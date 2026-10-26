@@ -5,7 +5,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
 Installed-Size: 15000
-Depends: ibus
+Recommends: ibus
 Homepage: https://github.com/ShanWuYinShe/chaoset_ime
 Description: Chaoset Pinyin IME - 傻瓜式现代拼音输入法
  Chaoset 是一个极简、开箱即用的现代中文拼音输入法。

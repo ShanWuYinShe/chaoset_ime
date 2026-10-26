@@ -99,6 +99,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: 安装 ibus 测试依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ibus
+
       - name: 编译与打包
         run: |
           make build
