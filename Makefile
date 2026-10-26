@@ -125,7 +125,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.6; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.7; \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
@@ -134,7 +134,7 @@ package-linux:
 # 与 Linux 同理，必须显式指定 GOOS/GOARCH：裸 go build 会把开发机的
 # Mach-O/ELF 二进制塞进 Windows 包。包内自带 install.bat，
 # 用户右键「以管理员身份运行」即可完成 regsvr32 注册 + daemon 启动，
-# 不必再手工敲命令。
+# 不必再手工敲命令。同时编译 64 位与 32 位两个 TSF DLL，实现合体安装包全面支持。
 WIN_GOENV = GOOS=windows GOARCH=amd64 CGO_ENABLED=0
 
 package-windows:
@@ -143,8 +143,14 @@ package-windows:
 	$(WIN_GOENV) go build -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
 	$(WIN_GOENV) go build -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
 	$(WIN_GOENV) go build -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
+	# 64 位 TSF 前端 DLL
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
+		shims/windows/src/win32.cpp shims/windows/src/core.cpp \
+		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32
+	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
+	i686-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
+		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
@@ -154,14 +160,20 @@ package-windows:
 	cp data/dict_common.tsv dist/chaoset-windows-x64/dict.tsv
 	cp shims/windows/install.bat dist/chaoset-windows-x64/
 	cp shims/windows/README.md dist/chaoset-windows-x64/
-	@# 架构自检：Go 二进制必须是 PE，DLL 必须导出四个标准入口
+	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
 	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe; do \
 		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
 	done
+	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }
+	@file dist/chaoset-windows-x64/ChaosetIME32.dll | grep -q 'PE32 ' || { echo "错误：ChaosetIME32.dll 不是 32 位 PE："; file dist/chaoset-windows-x64/ChaosetIME32.dll; exit 1; }
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
 		| grep -q DllRegisterServer || { echo "错误：ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
 		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
+	@i686-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME32.dll \
+		| grep -q DllRegisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllRegisterServer 导出"; exit 1; }
+	@i686-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME32.dll \
+		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
 		(cd shims/windows/installer && makensis chaoset.nsi); \

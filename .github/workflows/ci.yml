@@ -161,7 +161,7 @@ jobs:
       - name: 安装 mingw-w64 交叉编译器与 NSIS 打包工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 nsis
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
 
       - name: 编译与打包
         run: |
@@ -173,13 +173,20 @@ jobs:
         run: |
           unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
           cd /tmp/winpkg/chaoset-windows-x64
-          for f in install.bat dict.tsv ChaosetIME.dll chaosetd.exe README.md; do
+          for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe README.md; do
             test -f "$f" || { echo "缺少必要文件: $f"; ls -la; exit 1; }
           done
           file chaosetd.exe | grep -q 'PE32+' || { echo "chaosetd.exe 不是 Windows PE"; exit 1; }
-          file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 Windows PE"; exit 1; }
+          file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 64 位 Windows PE"; exit 1; }
+          file ChaosetIME32.dll | grep -q 'PE32 ' || { echo "ChaosetIME32.dll 不是 32 位 Windows PE"; exit 1; }
           x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllRegisterServer \
-            || { echo "DLL 缺少 DllRegisterServer 导出"; exit 1; }
+            || { echo "ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
+          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllUnregisterServer \
+            || { echo "ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
+          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllRegisterServer \
+            || { echo "ChaosetIME32.dll 缺少 DllRegisterServer 导出"; exit 1; }
+          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllUnregisterServer \
+            || { echo "ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
           echo "ZIP 包内容校验通过"
           test -f "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
           file "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" | grep -q 'PE32' || { echo "ChaosetSetup.exe 不是有效 Windows PE"; exit 1; }

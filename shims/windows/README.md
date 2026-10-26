@@ -19,9 +19,10 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 - **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环，
   即 Windows 壳的实际传输形态）跑通 17 项：协议帧、JSON（转义/中文/截断）、
   组词/预编辑/选词上屏/歧义切分/退格/重置、业务错误后连接复用。
-- **Win32 胶水层：编译与注册规范升级**——`x86_64-w64-mingw32-g++` 零警告编译，
+- **Win32 胶水层：双架构全面支持**——同时编译出 64 位 `ChaosetIME.dll` 与 32 位 `ChaosetIME32.dll`，
   规范导出 `DllRegisterServer/DllUnregisterServer/DllUninstallServer/DllGetClassObject/DllCanUnloadNow`，
-  且注册环节全面支持现代 Windows TSF COM 接口（`ITfInputProcessorProfiles` 与 `ITfCategoryMgr`）及键盘类别/沉浸式/托盘支持，并解决 WOW64 转向与模块路径定位问题。
+  注册环节全面支持现代 Windows TSF COM 接口（`ITfInputProcessorProfiles` 与 `ITfCategoryMgr`）及键盘类别/沉浸式/托盘支持，
+  同一个安装包自动同时注册 64 位原生与 32 位 WOW64（如 Steam、游戏、32位办公软件），实现全环境无死角打字。
 
 ## 安装（Windows 真机）
 

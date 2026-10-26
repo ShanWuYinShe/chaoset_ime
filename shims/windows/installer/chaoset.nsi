@@ -42,19 +42,27 @@ Section "MainSection" SEC01
 
     ; 复制文件
     File "..\..\..\dist\chaoset-windows-x64\ChaosetIME.dll"
+    File "..\..\..\dist\chaoset-windows-x64\ChaosetIME32.dll"
     File "..\..\..\dist\chaoset-windows-x64\chaosetd.exe"
     File "..\..\..\dist\chaoset-windows-x64\chaoset-cli.exe"
     File "..\..\..\dist\chaoset-windows-x64\chaoset-import.exe"
     File "..\..\..\dist\chaoset-windows-x64\dict.tsv"
     File "..\resources\chaoset.ico"
 
-    ; 注册 TSF COM 组件（关闭 WOW64 转向以确保在 64 位系统上调用 64 位 regsvr32）
+    ; 注册 TSF COM 组件（同时支持 64 位原生程序与 32 位 WOW64 程序）
     ${If} ${RunningX64}
+        ; 1. 注册 64 位原生组件 (供 64 位软件如 Edge、Notepad、资源管理器等加载)
         ${DisableX64FSRedirection}
         ExecWait 'regsvr32.exe /s "$INSTDIR\ChaosetIME.dll"'
         ${EnableX64FSRedirection}
+
+        ; 2. 注册 32 位 WOW64 组件 (供 32 位软件如 Steam、游戏、32位客户端等加载)
+        ${If} ${FileExists} "$WINDIR\SysWOW64\regsvr32.exe"
+            ExecWait '"$WINDIR\SysWOW64\regsvr32.exe" /s "$INSTDIR\ChaosetIME32.dll"'
+        ${EndIf}
     ${Else}
-        ExecWait 'regsvr32.exe /s "$INSTDIR\ChaosetIME.dll"'
+        ; 纯 32 位系统
+        ExecWait 'regsvr32.exe /s "$INSTDIR\ChaosetIME32.dll"'
     ${EndIf}
 
     ; 注册 TSF 语言配置与类别（确保 Windows 语言列表中显示为简体中文输入法）
@@ -74,6 +82,27 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+
+    ; 32 位 WOW64 类别与配置注册 (WOW6432Node)
+    ${If} ${RunningX64}
+        SetRegView 32
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Description" "Chaoset 拼音输入法"
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "IconFile" "$INSTDIR\ChaosetIME32.dll"
+        WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "IconIndex" 0
+        WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
+
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        SetRegView 64
+    ${EndIf}
 
     ; 为当前用户激活语言配置 (HKCU)
     WriteRegDWORD HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
@@ -96,7 +125,7 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.6"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.7"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式
@@ -115,13 +144,21 @@ Section "Uninstall"
     ; 从用户语言列表中移除输入法
     nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
 
-    ; 反注册 TSF COM 组件（关闭 WOW64 转向以确保在 64 位系统上调用 64 位 regsvr32）
+    ; 反注册 TSF COM 组件
     ${If} ${RunningX64}
         ${DisableX64FSRedirection}
         ExecWait 'regsvr32.exe /u /s "$INSTDIR\ChaosetIME.dll"'
         ${EnableX64FSRedirection}
+
+        ${If} ${FileExists} "$WINDIR\SysWOW64\regsvr32.exe"
+            ExecWait '"$WINDIR\SysWOW64\regsvr32.exe" /u /s "$INSTDIR\ChaosetIME32.dll"'
+        ${EndIf}
+
+        SetRegView 32
+        DeleteRegKey HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}"
+        SetRegView 64
     ${Else}
-        ExecWait 'regsvr32.exe /u /s "$INSTDIR\ChaosetIME.dll"'
+        ExecWait 'regsvr32.exe /u /s "$INSTDIR\ChaosetIME32.dll"'
     ${EndIf}
 
     ; 删除注册表启动项与卸载项
@@ -131,6 +168,7 @@ Section "Uninstall"
 
     ; 删除文件
     Delete "$INSTDIR\ChaosetIME.dll"
+    Delete "$INSTDIR\ChaosetIME32.dll"
     Delete "$INSTDIR\chaosetd.exe"
     Delete "$INSTDIR\chaoset-cli.exe"
     Delete "$INSTDIR\chaoset-import.exe"

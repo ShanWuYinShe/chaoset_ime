@@ -30,14 +30,18 @@ if not exist "%DLL%"    ( echo ERROR: %DLL% missing & pause & exit /b 1 )
 if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
 
-echo ==^> Registering TSF input method: regsvr32 %DLL%
+echo ==^> Registering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe
 if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe
-"%REGSVR%" /s "%DLL%"
-if errorlevel 1 (
-  echo ERROR: regsvr32 failed. Make sure %DLL% is in the same folder and you are admin.
-  pause
-  exit /b 1
+if exist "%DLL%" (
+  echo Registering 64-bit component: %DLL%
+  "%REGSVR%" /s "%DLL%"
+)
+if exist "%WINDIR%\SysWOW64\regsvr32.exe" (
+  if exist "ChaosetIME32.dll" (
+    echo Registering 32-bit component: ChaosetIME32.dll
+    "%WINDIR%\SysWOW64\regsvr32.exe" /s "%~dp0ChaosetIME32.dll"
+  )
 )
 
 echo ==^> Enabling Chaoset in user language list
@@ -74,7 +78,10 @@ taskkill /IM %DAEMON% /F >nul 2>&1
 echo ==^> Unregistering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe
 if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe
-"%REGSVR%" /s /u "%DLL%"
+if exist "%DLL%" "%REGSVR%" /s /u "%DLL%"
+if exist "%WINDIR%\SysWOW64\regsvr32.exe" (
+  if exist "ChaosetIME32.dll" "%WINDIR%\SysWOW64\regsvr32.exe" /s /u "%~dp0ChaosetIME32.dll"
+)
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}') }; Set-WinUserLanguageList $l -Force" >nul 2>&1
 echo ==^> Removing dictionary copy
 if exist "%LOCALAPPDATA%\Chaoset\dict.tsv" del /Q "%LOCALAPPDATA%\Chaoset\dict.tsv"
