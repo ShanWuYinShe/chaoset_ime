@@ -72,6 +72,13 @@ final class EngineClient {
         //（macOS 没有 MSG_NOSIGNAL，BSD 的做法是给套接字设 SO_NOSIGPIPE）。
         var nosigpipe: Int32 = 1
         setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        // 设置 100ms 收发超时：守护进程异常挂起或负载高时，绝不无限制阻塞输入法主线程，
+        // 彻底杜绝拖慢 macOS WindowServer 与系统输入法切换 HUD
+        var tv = timeval(tv_sec: 0, tv_usec: 100_000) // 100ms
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(socketPath.utf8)
@@ -83,16 +90,41 @@ final class EngineClient {
         withUnsafeMutableBytes(of: &addr.sun_path) { dest in
             dest.copyBytes(from: pathBytes)
         }
+
+        // 设置非阻塞模式，防止 connect 在主线程上挂起
+        let flags = fcntl(sock, F_GETFL, 0)
+        _ = fcntl(sock, F_SETFL, flags | O_NONBLOCK)
+
         let result = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 Darwin.connect(sock, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard result == 0 else {
-            Darwin.close(sock)
-            lastFailAt = now
-            return false
+        if result != 0 {
+            let err = errno
+            if err == EINPROGRESS {
+                var pfd = pollfd(fd: sock, events: Int16(POLLOUT), revents: 0)
+                let pollRes = poll(&pfd, 1, 20) // 20ms 超短超时
+                if pollRes <= 0 || (pfd.revents & Int16(POLLOUT)) == 0 {
+                    Darwin.close(sock)
+                    lastFailAt = now
+                    return false
+                }
+                var sockErr: Int32 = 0
+                var errLen = socklen_t(MemoryLayout<Int32>.size)
+                if getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) != 0 || sockErr != 0 {
+                    Darwin.close(sock)
+                    lastFailAt = now
+                    return false
+                }
+            } else {
+                Darwin.close(sock)
+                lastFailAt = now
+                return false
+            }
         }
+        // 连上后恢复常规模式（受 SO_RCVTIMEO/SO_SNDTIMEO 100ms 保护）
+        _ = fcntl(sock, F_SETFL, flags)
         fd = sock
         return true
     }

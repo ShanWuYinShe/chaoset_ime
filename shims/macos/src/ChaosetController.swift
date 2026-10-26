@@ -60,7 +60,7 @@ final class ChaosetController: IMKInputController {
         if Self.shiftKeyCodes.contains(event.keyCode) {
             if mods.contains(.shift) {
                 shiftArmed = true
-                return true
+                return false // 放行 Shift 按下事件，确保修饰键状态完整同步给宿主应用（如 Shift+点击多选、范围选择、快捷键）
             }
             if shiftArmed {
                 shiftArmed = false
@@ -69,10 +69,14 @@ final class ChaosetController: IMKInputController {
                 if enMode {
                     exitAssociate()
                 }
-                current = engine.reset()
+                if current?.input.isEmpty == false {
+                    current = engine.reset()
+                } else {
+                    current = nil
+                }
                 refresh(client)
             }
-            return true
+            return false // 放行 Shift 释放事件，绝不吞掉宿主应用的按键状态机
         }
         shiftArmed = false // 出现其它按键 → 不是"空按"，取消待判定
 
@@ -545,27 +549,41 @@ final class ChaosetController: IMKInputController {
     // MARK: - 生命周期
 
     // 输入会话被提交（点击文本框外、切换应用/输入法时系统调用）：必须清空
-    // 会话状态并收起候选窗，否则 v2 贴图面板会残留在屏幕上且无法关闭。
+    // 会话状态并收起候选窗，保证候选面板从屏幕彻底消失且不影响焦点。
     override func commitComposition(_ sender: Any!) {
-        current = engine.reset()
+        if current?.input.isEmpty == false {
+            current = engine.reset()
+        } else {
+            current = nil
+        }
         exitAssociate()
+        Self.hideCandidatePanel()
         candidateWindow?.hide()
     }
 
     override func activateServer(_ sender: Any!) {
         // 新的输入上下文：先收掉上一个上下文可能残留的候选窗
         exitAssociate()
+        Self.hideCandidatePanel()
         candidateWindow?.hide()
     }
 
     override func deactivateServer(_ sender: Any!) {
-        current = engine.reset()
+        // 切换输入法或失去焦点时：若无未决组词，坚决不发生任何阻塞性 IPC，
+        // 保证 WindowServer 与系统输入法切换 HUD 丝滑无卡顿
+        if current?.input.isEmpty == false {
+            current = engine.reset()
+        } else {
+            current = nil
+        }
         exitAssociate()
+        Self.hideCandidatePanel()
         candidateWindow?.hide()
     }
 
     deinit {
         exitAssociate()
+        Self.hideCandidatePanel()
         candidateWindow?.hide()
     }
 }
