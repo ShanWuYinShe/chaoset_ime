@@ -31,12 +31,17 @@ if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
 
 echo ==^> Registering TSF input method: regsvr32 %DLL%
-regsvr32 /s "%DLL%"
+set REGSVR=%WINDIR%\System32\regsvr32.exe
+if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe
+"%REGSVR%" /s "%DLL%"
 if errorlevel 1 (
   echo ERROR: regsvr32 failed. Make sure %DLL% is in the same folder and you are admin.
   pause
   exit /b 1
 )
+
+echo ==^> Enabling Chaoset in user language list
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like 'zh*' }; if ($z) { if (-not ($z.InputMethodTips -contains '0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}')) { $z.InputMethodTips.Add('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'); Set-WinUserLanguageList $l -Force } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'); $l += $z[0]; Set-WinUserLanguageList $l -Force }" >nul 2>&1
 
 echo ==^> Preparing user data directory %LOCALAPPDATA%\Chaoset
 if not exist "%LOCALAPPDATA%\Chaoset" mkdir "%LOCALAPPDATA%\Chaoset"
@@ -67,7 +72,10 @@ exit /b 0
 echo ==^> Stopping daemon
 taskkill /IM %DAEMON% /F >nul 2>&1
 echo ==^> Unregistering TSF input method
-regsvr32 /s /u "%DLL%"
+set REGSVR=%WINDIR%\System32\regsvr32.exe
+if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe
+"%REGSVR%" /s /u "%DLL%"
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove('0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}') }; Set-WinUserLanguageList $l -Force" >nul 2>&1
 echo ==^> Removing dictionary copy
 if exist "%LOCALAPPDATA%\Chaoset\dict.tsv" del /Q "%LOCALAPPDATA%\Chaoset\dict.tsv"
 echo ==^> Uninstalled. Remove the Chaoset keyboard in Settings if it is still listed.

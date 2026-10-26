@@ -33,6 +33,29 @@ const GUID CLSID_ChaosetTIP = {
 const GUID GUID_ChaosetProfile = {
     0x5a1b3c7d, 0x8e9f, 0x4a1b, {0xa2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29}};
 
+// Windows TSF 核心接口与类别标识（避免不同 SDK/MinGW 版本的外部符号缺失）
+const GUID kCLSID_TF_InputProcessorProfiles = {
+    0x33c53a50, 0xf456, 0x4884, {0xb0, 0x49, 0x85, 0xfd, 0x64, 0x3e, 0xcf, 0xed}};
+const GUID kIID_ITfInputProcessorProfiles = {
+    0x1f02b6c5, 0x7842, 0x4ee6, {0x8a, 0x0b, 0x9a, 0x24, 0x18, 0x3a, 0x95, 0xca}};
+const GUID kCLSID_TF_CategoryMgr = {
+    0xa4b544a1, 0x438d, 0x4b41, {0x93, 0x25, 0x86, 0x95, 0x23, 0xe2, 0xd6, 0xc7}};
+const GUID kIID_ITfCategoryMgr = {
+    0xc3acefb5, 0xf69d, 0x4905, {0x93, 0x8f, 0xfc, 0xad, 0xcf, 0x4b, 0xe8, 0x30}};
+
+// TSF 键盘与显示类别标识
+const GUID kGUID_TFCAT_TIP_KEYBOARD = {
+    0x34745c63, 0xb2f0, 0x4784, {0x8b, 0x67, 0x5e, 0x12, 0xc8, 0x70, 0x1a, 0x31}};
+const GUID kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER = {
+    0x046602e4, 0xc36a, 0x4f66, {0x82, 0xf7, 0xb4, 0x4d, 0x5f, 0xd8, 0x1a, 0xc4}};
+// 现代 Windows (Windows 8/10/11) 沉浸式与托盘支持能力分类，确保在现代系统设置与 UWP 应用中可见
+const GUID kGUID_TFCAT_TIPCAP_UIELEMENTENABLED = {
+    0x8ffdef2b, 0xfa65, 0x46fa, {0xb0, 0x6e, 0x6d, 0x54, 0x19, 0xcc, 0xbf, 0x4e}};
+const GUID kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT = {
+    0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0x75, 0x84}};
+const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
+    0x25504fb4, 0x7bab, 0x4bc1, {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x3d, 0x9f}};
+
 constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
 constexpr DWORD kVkShift = 0x10;
 constexpr DWORD kVkBackspace = 0x08;
@@ -645,7 +668,14 @@ public:
 
 // ---- 导出 ----
 
-BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) { return TRUE; }
+static HINSTANCE g_hInst = nullptr;
+
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID) {
+    if (fdwReason == DLL_PROCESS_ATTACH) {
+        g_hInst = hinstDLL;
+    }
+    return TRUE;
+}
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     if (!IsEqualCLSID(rclsid, CLSID_ChaosetTIP)) return CLASS_E_CLASSNOTAVAILABLE;
@@ -659,7 +689,17 @@ STDAPI DllCanUnloadNow() {
 
 static std::string dllPath() {
     char path[MAX_PATH] = {0};
-    GetModuleFileNameA(nullptr, path, MAX_PATH);
+    if (g_hInst != nullptr) {
+        GetModuleFileNameA(g_hInst, path, MAX_PATH);
+    }
+    return path;
+}
+
+static std::wstring dllPathW() {
+    wchar_t path[MAX_PATH] = {0};
+    if (g_hInst != nullptr) {
+        GetModuleFileNameW(g_hInst, path, MAX_PATH);
+    }
     return path;
 }
 
@@ -698,31 +738,110 @@ static std::string guidToString(const GUID& g) {
 STDAPI DllRegisterServer() {
     std::string clsid = guidToString(CLSID_ChaosetTIP);
     std::string profid = guidToString(GUID_ChaosetProfile);
+    std::string pathA = dllPath();
+    std::wstring pathW = dllPathW();
+
+    // 1. COM 基础服务注册 (HKLM\Software\Classes\CLSID\{CLSID})
     std::string base = "Software\\Classes\\CLSID\\" + clsid;
     HRESULT hr = regSet(HKEY_LOCAL_MACHINE, base, "", "Chaoset 拼音输入法");
-    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, base + "\\InprocServer32", "", dllPath());
+    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, base + "\\InprocServer32", "", pathA);
     if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, base + "\\InprocServer32", "ThreadingModel", "Apartment");
 
-    // CTF 输入法注册与键盘分类
-    std::string tips = "Software\\Microsoft\\CTF\\TIPs\\" + clsid;
-    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, tips, "", "Chaoset 拼音输入法");
-    if (SUCCEEDED(hr)) {
-        hr = regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Item\\" + guidToString(GUID_TFCAT_TIP_KEYBOARD) + "\\" + clsid, "", "");
-        hr = regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Category\\" + guidToString(GUID_TFCAT_TIP_KEYBOARD) + "\\" + clsid, "", "");
+    // 2. 通过 Windows TSF 标准 COM 接口注册配置文件与类别
+    HRESULT hrCo = CoInitialize(nullptr);
+
+    ITfInputProcessorProfiles* profiles = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr,
+                                   CLSCTX_INPROC_SERVER, kIID_ITfInputProcessorProfiles,
+                                   reinterpret_cast<void**>(&profiles)))) {
+        profiles->Register(CLSID_ChaosetTIP);
+        const wchar_t* desc = L"Chaoset 拼音输入法";
+        profiles->AddLanguageProfile(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile,
+                                     desc, static_cast<ULONG>(wcslen(desc)),
+                                     pathW.c_str(), static_cast<ULONG>(pathW.size()), 0);
+        profiles->EnableLanguageProfile(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile, TRUE);
+        profiles->EnableLanguageProfileByDefault(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile, TRUE);
+        profiles->Release();
     }
-    // 语言配置（0x0804 简体中文）：通知 Windows 系统将本 TIP 作为简体中文输入法识别
+
+    ITfCategoryMgr* catMgr = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr,
+                                   CLSCTX_INPROC_SERVER, kIID_ITfCategoryMgr,
+                                   reinterpret_cast<void**>(&catMgr)))) {
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
+        catMgr->Release();
+    }
+
+    if (SUCCEEDED(hrCo)) {
+        CoUninitialize();
+    }
+
+    // 3. 注册表双重保障：直接写入 CTF 结构（应对特殊环境与控制面板直接扫描）
+    std::string tips = "Software\\Microsoft\\CTF\\TIPs\\" + clsid;
+    regSet(HKEY_LOCAL_MACHINE, tips, "", "Chaoset 拼音输入法");
+
+    const GUID* catGuids[] = {
+        &kGUID_TFCAT_TIP_KEYBOARD,
+        &kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
+        &kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+        &kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+        &kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+    };
+    for (const GUID* g : catGuids) {
+        std::string gStr = guidToString(*g);
+        regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Category\\" + gStr + "\\" + clsid, "", "");
+        regSet(HKEY_LOCAL_MACHINE, tips + "\\Category\\Item\\" + gStr + "\\" + clsid, "", "");
+    }
+
     std::string langProfile = tips + "\\LanguageProfile\\0x00000804\\" + profid;
-    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, langProfile, "Description", "Chaoset 拼音输入法");
-    if (SUCCEEDED(hr)) hr = regSet(HKEY_LOCAL_MACHINE, langProfile, "IconFile", dllPath());
-    if (SUCCEEDED(hr)) hr = regSetDword(HKEY_LOCAL_MACHINE, langProfile, "IconIndex", 0);
-    if (SUCCEEDED(hr)) hr = regSetDword(HKEY_LOCAL_MACHINE, langProfile, "Enable", 1);
+    regSet(HKEY_LOCAL_MACHINE, langProfile, "Description", "Chaoset 拼音输入法");
+    regSet(HKEY_LOCAL_MACHINE, langProfile, "IconFile", pathA);
+    regSetDword(HKEY_LOCAL_MACHINE, langProfile, "IconIndex", 0);
+    regSetDword(HKEY_LOCAL_MACHINE, langProfile, "Enable", 1);
 
     return hr;
 }
 
-STDAPI DllUninstallServer() {
+STDAPI DllUnregisterServer() {
     std::string clsid = guidToString(CLSID_ChaosetTIP);
+
+    HRESULT hrCo = CoInitialize(nullptr);
+
+    ITfCategoryMgr* catMgr = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr,
+                                   CLSCTX_INPROC_SERVER, kIID_ITfCategoryMgr,
+                                   reinterpret_cast<void**>(&catMgr)))) {
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
+        catMgr->Release();
+    }
+
+    ITfInputProcessorProfiles* profiles = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr,
+                                   CLSCTX_INPROC_SERVER, kIID_ITfInputProcessorProfiles,
+                                   reinterpret_cast<void**>(&profiles)))) {
+        profiles->RemoveLanguageProfile(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile);
+        profiles->Unregister(CLSID_ChaosetTIP);
+        profiles->Release();
+    }
+
+    if (SUCCEEDED(hrCo)) {
+        CoUninitialize();
+    }
+
     RegDeleteTreeA(HKEY_LOCAL_MACHINE, ("Software\\Microsoft\\CTF\\TIPs\\" + clsid).c_str());
     RegDeleteTreeA(HKEY_LOCAL_MACHINE, ("Software\\Classes\\CLSID\\" + clsid).c_str());
     return S_OK;
+}
+
+// 保持历史兼容
+STDAPI DllUninstallServer() {
+    return DllUnregisterServer();
 }

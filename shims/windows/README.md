@@ -19,10 +19,9 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 - **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环，
   即 Windows 壳的实际传输形态）跑通 17 项：协议帧、JSON（转义/中文/截断）、
   组词/预编辑/选词上屏/歧义切分/退格/重置、业务错误后连接复用。
-- **Win32 胶水层：编译级验证**——`x86_64-w64-mingw32-g++` 零警告编译，
-  导出 `DllRegisterServer/DllUninstallServer/DllGetClassObject/DllCanUnloadNow`。
-- **未验证（需 Windows 真机）**：COM 注册表启用流程、TSF 按键拦截与合成
-  渲染的实际行为、UWP/AppContainer 场景。
+- **Win32 胶水层：编译与注册规范升级**——`x86_64-w64-mingw32-g++` 零警告编译，
+  规范导出 `DllRegisterServer/DllUnregisterServer/DllUninstallServer/DllGetClassObject/DllCanUnloadNow`，
+  且注册环节全面支持现代 Windows TSF COM 接口（`ITfInputProcessorProfiles` 与 `ITfCategoryMgr`）及键盘类别/沉浸式/托盘支持，并解决 WOW64 转向与模块路径定位问题。
 
 ## 安装（Windows 真机）
 

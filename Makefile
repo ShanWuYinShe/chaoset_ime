@@ -125,7 +125,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.5; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.6; \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
@@ -146,7 +146,7 @@ package-windows:
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp \
-		-lole32 -luuid -lws2_32 -luser32 -lkernel32
+		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
 	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
 	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
@@ -160,6 +160,8 @@ package-windows:
 	done
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
 		| grep -q DllRegisterServer || { echo "错误：ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
+	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
+		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
 		(cd shims/windows/installer && makensis chaoset.nsi); \
