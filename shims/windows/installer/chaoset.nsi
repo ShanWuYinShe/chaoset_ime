@@ -174,17 +174,28 @@ Section "MainSection" SEC01
     CopyFiles /SILENT "$INSTDIR\dict.tsv" "$LOCALAPPDATA\Chaoset\dict.tsv"
 
     ; 写入开机自启动项 (解决重启后守护进程未运行导致输入法打不出字)
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
+    ;
+    ; **必须显式传 -userdict**（2026-10-26 修复）：chaosetd 的 -userdict 默认是
+    ; 相对路径 chaoset-userdict.json，而安装版的工作目录是 Program Files，
+    ; 普通用户无权写入 → 每次上屏的学习落盘失败。虽然现在落盘失败不再阻断
+    ; 上屏（engine/session.go），但自学习会永久失效。
+    ; install.bat 一直传了 %LOCALAPPDATA% 下的路径，两种装法此前行为不一致。
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -userdict "$LOCALAPPDATA\Chaoset\userdict.json" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
 
     ; 立即启动后台服务（GUI 无控制台黑框直接运行，日志静默落盘）
-    Exec '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
+    Exec '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -userdict "$LOCALAPPDATA\Chaoset\userdict.json" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
 
     ; 写入系统“已安装的应用/控制面板”标准卸载信息
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayName" "Chaoset 拼音输入法"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.12"
+    ; 版本号由 makensis 的命令行 /DVERSION=… 注入（Makefile 从 git tag 推导）。
+    ; 此处曾写死 0.2.12，发版时必然漏改（2026-10-26 修复）。
+    !ifndef VERSION
+      !define VERSION "0.0.0-dev"
+    !endif
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "${VERSION}"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式
@@ -245,6 +256,18 @@ Section "Uninstall"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME.dll.old2"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old2"
     RMDir /REBOOTOK "$INSTDIR"
+
+    ; 清理用户数据目录（词库副本 + 用户学习数据 + 日志）。
+    ; 2026-10-26 修复：此前卸载完全不碰 %LOCALAPPDATA%\Chaoset，用户重装后
+    ; 会读到上一份 userdict.json；同时按 NSIS 惯例，卸载应提供「是否保留
+    ; 个人数据」的选择，这里默认删除（输入法学习数据无长期价值）。
+    MessageBox MB_YESNO|MB_ICONQUESTION "是否同时删除 Chaoset 的个人数据（学习词库与日志）？$\r$\n选择「否」将保留在 $LOCALAPPDATA\Chaoset，重装后可继续使用。" IDNO skipUserData
+      Delete "$LOCALAPPDATA\Chaoset\dict.tsv"
+      Delete "$LOCALAPPDATA\Chaoset\userdict.json"
+      Delete "$LOCALAPPDATA\Chaoset\chaosetd.log"
+      Delete "$LOCALAPPDATA\Chaoset\chaoset-userdict.json"
+      RMDir "$LOCALAPPDATA\Chaoset"
+    skipUserData:
 
     ; 删除快捷方式
     Delete "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk"

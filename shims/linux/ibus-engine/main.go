@@ -86,11 +86,35 @@ func (f *repeatFlag) Set(v string) error {
 	return nil
 }
 
+// defaultUserDictPath 返回 XDG 规范下的用户词典路径。
+// 优先 $XDG_DATA_HOME，否则 ~/.local/share；目录不可写时返回空串（退化为
+// 仅内存），避免因为一个可选功能让整个引擎起不来。
+func defaultUserDictPath() string {
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "chaoset", "userdict.json")
+}
+
 func main() {
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入）")
 	ibusFlag := flag.Bool("ibus", false, "由 ibus-daemon 启动时传入（兼容约定，无实际作用）")
-	userPath := flag.String("userdict", "", "用户词典路径（空串表示不落盘）")
+	// 空串 = 用 XDG 默认路径（**不是**「不落盘」）。
+	//
+	// 2026-10-26 修复：此前默认空串，而 engine/userdict.go 的 saveLocked 在
+	// path=="" 时直接 return nil——而 ibus 按 component XML 拉起引擎时只传
+	// --ibus，从来不传 -userdict。结果是 Linux 上所有调频/bigram/词组进化
+	// 只存在于进程内存，退出即丢，「自学习」在 Linux 发行包里根本没生效。
+	// 其他端都是可落盘的（macOS Setup 传 support/user.json、Windows
+	// install.bat 传 %LOCALAPPDATA%、daemon 默认 chaoset-userdict.json）。
+	// 显式传 -userdict= 空值（带等号）才表示真正关闭落盘。
+	userPath := flag.String("userdict", defaultUserDictPath(), "用户词典路径（默认 XDG 数据目录；显式传空串则不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
 	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
 	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）；空关闭（键位表见 engine/double_pinyin.go）")

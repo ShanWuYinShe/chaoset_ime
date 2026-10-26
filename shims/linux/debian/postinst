@@ -1,23 +1,26 @@
 #!/bin/sh
+# Chaoset 拼音输入法 — Debian/Ubuntu postinst
+#
+# 原则：包管理器只负责「把文件放对位置」，**不重启用户会话里的服务**。
+# 原因（2026-10-26 审查修复）：
+#   1. /usr/local/bin 按 FHS 属于系统管理员自建内容的区域，包不得写入；
+#      旧实现 `ln -sf` 会直接覆盖用户自己放在那里的同名脚本，卸载时还会
+#      把它删掉 —— 属于数据丢失。
+#   2. `who | awk` + `su - $u -c "ibus restart"` 会在安装/卸载的瞬间杀掉
+#      所有登录用户的 ibus-daemon，正在打字的人当场丢输入；多用户/无 tty
+#      场景下还会误判或空转。
+# ibus 会在下次登录（或用户自行执行 `ibus restart`）时自动收录新组件。
 set -e
 
-# 创建快捷软链接到 /usr/local/bin，确保各种传统环境均可无缝找到命令
-mkdir -p /usr/local/bin
-ln -sf /usr/bin/chaoset-engine /usr/local/bin/chaoset-engine 2>/dev/null || true
-ln -sf /usr/bin/chaosetd /usr/local/bin/chaosetd 2>/dev/null || true
-ln -sf /usr/bin/chaoset-cli /usr/local/bin/chaoset-cli 2>/dev/null || true
-
-# 刷新图标缓存
+# 刷新图标缓存（这是包该做的事）
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
 
-# 尝试重启所有登录用户的 ibus-daemon 以立即收录输入法
-for u in $(who | awk '{print $1}' | sort -u); do
-    su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
-done
+# 仅缓存在必要时用 update-desktop-database 之类的标准钩子；不碰用户会话。
 
 echo "==> Chaoset 拼音输入法安装完成！"
-echo "    系统已自动重启 ibus。请在「设置 → 键盘 → 输入源」中添加「Chaoset Pinyin」即可使用。"
+echo "    请在「设置 → 键盘 → 输入源」中添加「Chaoset Pinyin」。"
+echo "    若列表里暂时看不到，请注销重登一次，或执行：ibus restart"
 
 exit 0

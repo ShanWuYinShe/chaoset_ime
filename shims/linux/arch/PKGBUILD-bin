@@ -1,7 +1,8 @@
 # Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
 pkgname=chaoset-ime-bin
 _pkgname=chaoset-ime
-pkgver=0.2.12
+# 占位符 @VERSION@，由 Makefile 的 $(VERSION)（源自 git tag）在打包时替换。
+pkgver=@VERSION@
 pkgrel=1
 pkgdesc="Chaoset Pinyin IME (prebuilt binary) - 傻瓜式现代拼音输入法"
 arch=('x86_64')
@@ -30,5 +31,9 @@ package() {
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
     install -Dm644 component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
+    # 目标目录必须先创建：`cp -r src dst/` 在 dst 不存在时直接失败
+    # （"No such file or directory"），而同函数上面几行都用 install -D 自动建
+    # 父目录，唯独这里漏了——2026-10-26 在 macOS 上实测复现 exit 1。
+    install -d "$pkgdir/usr/share/icons"
     cp -r icons/hicolor "$pkgdir/usr/share/icons/"
 }

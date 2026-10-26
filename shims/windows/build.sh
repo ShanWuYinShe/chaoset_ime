@@ -14,7 +14,10 @@ CXX=${CXX:-clang++}
 echo "[2/3] 启动真实 daemon（TCP 回环）并跑行为测试..."
 (cd ../.. && go build -o shims/windows/build/chaosetd ./cmd/chaosetd)
 PORT=${PORT:-7949}
-./build/chaosetd -tcp "127.0.0.1:$PORT" -dict ../../data/dict_seed.tsv -userdict "" &
+# 必须用**发版词库** dict_common.tsv：打包时随包携带的是它，用它测才等于测
+# 用户实际拿到的行为。此前这里用 558 条的 dict_seed.tsv，测试环境与发行环境
+# 不一致（2026-10-26 审查指出；core_test 的断言曾对词库敏感而误报）。
+./build/chaosetd -tcp "127.0.0.1:$PORT" -dict ../../data/dict_common.tsv -userdict "" &
 DPID=$!
 trap 'kill -INT $DPID 2>/dev/null || true' EXIT
 sleep 1
@@ -27,7 +30,7 @@ echo "[3/3] mingw-w64 交叉编译 ChaosetIME.dll..."
 CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static -o build/ChaosetIME.dll \
   src/win32.cpp src/core.cpp \
-  -lole32 -luuid -lws2_32 -luser32 -lkernel32
+  -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32
 x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -E "DllRegisterServer|DllGetClassObject|DllCanUnloadNow|DllUninstallServer" | while read -r line; do
   echo "  导出: $line"
 done

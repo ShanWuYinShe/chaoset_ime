@@ -264,7 +264,8 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     JsonValue none;
     if (ok != nullptr) *ok = false;
     ++nextID_;
-    std::string req = buildRequest(nextID_, method, params);
+    const std::uint64_t reqID = nextID_;
+    std::string req = buildRequest(reqID, method, params);
 
     std::uint32_t len = static_cast<std::uint32_t>(req.size());
     std::string packet;
@@ -297,6 +298,18 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     bool parsed = false;
     JsonValue resp = jsonParse(body, &parsed);
     if (!parsed || resp.type != JsonValue::Type::Obj) {
+        t_.closeConn();
+        return none;
+    }
+    // 校验响应 id 必须与本次请求 id 一致。
+    //
+    // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前调用是全
+    // 串行的一问一答，理论上不会错位；但一旦将来引入并发、连接池或 daemon
+    // 侧改为乱序响应，不校验就会把**别的请求的结果当成本次的结果**——在
+    // 输入法里这意味着上屏错字。防御成本很低，出错即断开重连。
+    const JsonValue* rid = resp.find("id");
+    if (rid == nullptr || rid->type != JsonValue::Type::Num ||
+        static_cast<std::uint64_t>(rid->number) != reqID) {
         t_.closeConn();
         return none;
     }

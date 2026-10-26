@@ -3,7 +3,8 @@
   <name>org.freedesktop.IBus.Chaoset</name>
   <description>Chaoset Input Method</description>
   <exec>/usr/bin/chaoset-engine --ibus</exec>
-  <version>0.1.0</version>
+  <!-- 占位符 @VERSION@，由 Makefile 的 $(VERSION)（源自 git tag）在打包时替换。 不要写死数字：此处曾停在 0.1.0 而 tag 已是 v0.2.12。 -->
+  <version>@VERSION@</version>
   <author>chaoset</author>
   <license>MIT</license>
   <engines>

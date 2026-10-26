@@ -1,14 +1,19 @@
 #!/bin/sh
+# Chaoset 拼音输入法 — Debian/Ubuntu postrm
+#
+# 只做包自身该做的清理；**不删除 /usr/local/bin 里的内容、不重启用户
+# ibus-daemon**（理由见 postinst 注释）。dpkg 会自动删除包自有的
+# /usr/bin/chaoset-* 与 /usr/share/chaoset、组件 XML 等文件。
 set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    rm -f /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli 2>/dev/null || true
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
     fi
-    for u in $(who | awk '{print $1}' | sort -u); do
-        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
-    done
+    echo "==> Chaoset 拼音输入法已卸载。"
+    if [ "$1" = "purge" ]; then
+        echo "    用户学习数据保留在 ~/.local/share/chaoset/userdict.json（如需清理请手动删除）。"
+    fi
 fi
 
 exit 0

@@ -1,4 +1,38 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows package-linux package-windows package-macos package-all
+.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows package-linux package-windows package-macos package-all version check-version
+
+# ── 版本号：单一真源 ────────────────────────────────────────────────
+#
+# 此前版本号散落在 8 处（macOS Info.plist ×2、Linux deb control、
+# component XML、两个 PKGBUILD、package.sh 默认值、NSIS、Makefile），
+# 全部手工维护且已经不一致——component XML 还停在 0.1.0，而 tag 早已
+# v0.2.12（2026-10-26 审查发现）。发版时必然漏改。
+#
+# 现在统一从 git tag 推导，各打包步骤通过 $(VERSION) 注入。
+# 不在 git 仓库里（如源码 tarball）时回退到 VERSION 文件或 0.0.0-dev。
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
+VERSION := $(if $(VERSION),$(VERSION),0.0.0-dev)
+
+version:
+	@echo $(VERSION)
+
+# check-version：CI 里断言各处的版本占位符没有被写死成具体数字。
+# 具体数字只允许出现在 git tag 里，源码里一律用 $(VERSION) 注入。
+check-version:
+	@echo "当前版本（由 git tag 推导）: $(VERSION)"
+	@! grep -rn '^Version: [0-9]' shims/linux/debian/control 2>/dev/null \
+		|| { echo "错误：debian/control 的 Version 仍是写死的数字"; exit 1; }
+	@! grep -qn '<version>[0-9]' shims/linux/component/chaoset.xml 2>/dev/null \
+		|| { echo "错误：component XML 的 version 仍是写死的数字"; exit 1; }
+	@! grep -qE '^pkgver=[0-9]' shims/linux/arch/PKGBUILD 2>/dev/null \
+		|| { echo "错误：PKGBUILD 的 pkgver 仍是写死的数字"; exit 1; }
+	@! grep -qE '^pkgver=[0-9]' shims/linux/arch/PKGBUILD-bin 2>/dev/null \
+		|| { echo "错误：PKGBUILD-bin 的 pkgver 仍是写死的数字"; exit 1; }
+	@grep -A1 'CFBundleShortVersionString</key>' shims/macos/build.sh \
+		| grep -q '<string>\$$VERSION</string>' \
+		|| { echo "错误：macOS build.sh 的 CFBundleShortVersionString 未使用 \$$VERSION"; exit 1; }
+	@! grep -q '"DisplayVersion" "0\.' shims/windows/installer/chaoset.nsi 2>/dev/null \
+		|| { echo "错误：NSIS 的 DisplayVersion 仍是写死的数字"; exit 1; }
+	@echo "版本号单一真源检查通过（8 处历史散落点全部改为注入）"
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd
@@ -13,6 +47,7 @@ test:
 vet:
 	go vet ./...
 	$(MAKE) lint-workflows
+	$(MAKE) check-version
 
 # 校验 .github/workflows 的结构完整性。
 # 为什么需要它：2026-10-25 一次文本替换误删了两个 job 的头部声明，YAML 语法
@@ -47,7 +82,7 @@ icons:
 	rm -rf .workwork/tmp_icon
 
 package-macos:
-	./shims/macos/build.sh
+	VERSION=$(VERSION) ./shims/macos/build.sh
 	@# 架构自检：主壳与安装器都必须是 universal（arm64 + x86_64）。
 	@# CI 的 macos-latest 是 Apple Silicon，裸 swiftc/go build 只出 arm64，
 	@# Intel Mac 用户装上会「无法打开」——这个坑 2026-10-25 实测确认过。
@@ -91,7 +126,7 @@ package-linux:
 	# 因此解包即用的绿色形态也能跑。
 	$(LINUX_GOENV) go build -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
 		-o dist/chaoset-linux-x86_64/bin/chaoset-engine ./shims/linux/ibus-engine/
-	cp shims/linux/component/chaoset.xml dist/chaoset-linux-x86_64/component/
+	sed "s/@VERSION@/$(VERSION)/g" shims/linux/component/chaoset.xml > dist/chaoset-linux-x86_64/component/chaoset.xml
 	cp -r shims/linux/icons/hicolor dist/chaoset-linux-x86_64/icons/
 	# 词库：随包携带常用词库（dict_common.tsv），安装到 /usr/share/chaoset/dict.tsv。
 	# 此前只带 558 条的 dict_seed.tsv 而引擎默认要 dict_common.tsv，是装完
@@ -114,9 +149,9 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/icons; \
 		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
-		cp dist/chaoset-linux-x86_64/component/chaoset.xml dist/deb_staging/usr/share/ibus/component/; \
+		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
-		cp shims/linux/debian/control dist/deb_staging/DEBIAN/control; \
+		sed "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
 		cp shims/linux/debian/postinst dist/deb_staging/DEBIAN/postinst; \
 		cp shims/linux/debian/postrm dist/deb_staging/DEBIAN/postrm; \
 		chmod 0755 dist/deb_staging/DEBIAN/postinst dist/deb_staging/DEBIAN/postrm; \
@@ -128,7 +163,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.12; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst $(VERSION); \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
@@ -183,7 +218,7 @@ package-windows:
 		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
-		(cd shims/windows/installer && makensis chaoset.nsi); \
+		(cd shims/windows/installer && makensis /DVERSION=$(VERSION) chaoset.nsi); \
 	fi
 	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
 	rm -rf dist/chaoset-windows-x64

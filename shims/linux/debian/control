@@ -1,11 +1,14 @@
 Package: chaoset-ime
-Version: 0.2.12
+# 占位符 @VERSION@，由 Makefile 的 $(VERSION)（源自 git tag）在打包时替换。
+Version: @VERSION@
 Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
 Installed-Size: 15000
-Recommends: ibus
+# 必须是 Depends 而非 Recommends：引擎依赖 ibus 的 session bus 与组件目录，
+# 纯 Recommends 允许 apt 在无桌面的机器上装完这个包却永远跑不起来（2026-10-26 修复）。
+Depends: ibus
 Homepage: https://github.com/ShanWuYinShe/chaoset_ime
 Description: Chaoset Pinyin IME - 傻瓜式现代拼音输入法
  Chaoset 是一个极简、开箱即用的现代中文拼音输入法。
