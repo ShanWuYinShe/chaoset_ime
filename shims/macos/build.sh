@@ -12,6 +12,14 @@ ROOT=$(cd ../.. && pwd)
 # 并用 lipo 合并；设 ARCHS=arm64 可只出单架构（本地快速迭代用）。
 ARCHS=${ARCHS:-"arm64 x86_64"}
 MIN_MACOS=15.0
+
+# 版本号：由调用方（Makefile 的 $(VERSION)，源自 git tag）通过 VERSION 环境
+# 变量注入；直接跑 build.sh 时从 git tag 推导，取不到则用 0.0.0-dev。
+# 此前这里写死 0.1.0，与 tag 长期不符（2026-10-26 修复）。
+if [ -z "$VERSION" ]; then
+  VERSION=$(git -C "$(dirname "$0")/../.." describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+fi
+VERSION=${VERSION:-0.0.0-dev}
 # 交叉编译 Swift 需要独立的模块缓存目录：默认缓存在部分环境不可写
 # （沙盒 / 只读 HOME），统一放到 build/（已 gitignore）下且可复用。
 MODCACHE="$ROOT/shims/macos/build/modulecache"
@@ -122,7 +130,7 @@ cp build/Resources/ChaosetIME.icns \
 #   ③ 图标键与 Xcode 样板键（CFBundleIconFile/…、LSMinimumSystemVersion、
 #      CFBundleSupportedPlatforms、CFBundleSignature、LSBackgroundOnly、
 #      TICapsLockLanguageSwitchCapable、InputMethodServerDelegateClass）。
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -144,7 +152,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>$VERSION</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleSupportedPlatforms</key>
@@ -265,12 +273,16 @@ SETUP=build/ChaosetSetup.app
 rm -rf "$SETUP"
 mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
 swift_universal "$SETUP/Contents/MacOS/ChaosetSetup" AppKit Carbon UniformTypeIdentifiers -- setup/main.swift
-(cd ../.. && go build -o shims/macos/build/chaoset-import ./cmd/chaoset-import)
+# 必须走 go_universal：chaoset-import 会被拷进 Setup.app 供用户点「导入词库」，
+# 裸 go build 只出开发机架构（Apple Silicon 上就是 arm64），Intel Mac 用户
+# 点导入会直接 "Bad CPU type in executable"（2026-10-26 审查发现；
+# Makefile 的架构自检只查两个 app 的主二进制，漏掉了这个工具）。
+go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
 cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.embedded"
 cp build/chaosetd build/chaoset-import build/tis build/smoke \
   ../../data/dict_common.tsv "$SETUP/Contents/Resources/"
 cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"
-cat > "$SETUP/Contents/Info.plist" <<'PLIST'
+cat > "$SETUP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -292,7 +304,7 @@ cat > "$SETUP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>$VERSION</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>

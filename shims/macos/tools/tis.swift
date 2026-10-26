@@ -10,6 +10,7 @@ import Foundation
 //   tis enable <输入源ID>     把输入源加入"已启用"列表（AppleEnabledInputSources）
 //   tis select <输入源ID>     切换到指定输入源
 //   tis sync                  同步已安装输入法到 com.apple.HIToolbox 首选项
+//   tis dedupe                消除 TIS 表中同一输入源的重复实例（菜单栏/系统设置出现重复 Chaoset 时用）
 
 func prop(_ source: TISInputSource, _ key: CFString) -> String {
     guard let raw = TISGetInputSourceProperty(source, key) else { return "?" }
@@ -180,16 +181,69 @@ case "disable":
     }
     exit(0)
 
+case "dedupe":
+    // 消除 TIS 表中同一输入源的重复实例。
+    //
+    // 背景（2026-10-26 实测）：TIS 表里同一个 InputSourceID 可能出现两条
+    // **属性完全相同、只有对象指针不同**的记录（缓存文件里 .Pinyin 出现两次），
+    // 表现为菜单栏/系统设置里出现多个同样的 Chaoset。
+    // 诱因是安装/刷新期间多次 TISRegisterInputSource 与 TIS 缓存重建交错，
+    // 系统把同一条 mode 登记了两次。
+    //
+    // 实测有效的修法：把该 ID 的**全部实例**逐个 TISDisableInputSource，
+    // 让 TIS 合并这些记录，然后只对第一个实例 TISEnableInputSource。
+    // 直接 enable 无效果（重复条目保持），必须先全禁再启一个。
+    let targets = ["ime.chaoset.inputmethod.ChaosetIME",
+                   "ime.chaoset.inputmethod.ChaosetIME.Pinyin"]
+    var fixedAny = false
+    for target in targets {
+        let insts = (TISCreateInputSourceList(nil, true).takeRetainedValue() as! [TISInputSource])
+            .filter { prop($0, kTISPropertyInputSourceID) == target }
+        if insts.count <= 1 { continue }
+        print("发现 \(target) 有 \(insts.count) 个重复实例，正在合并…")
+        for s in insts { _ = TISDisableInputSource(s) }
+        Thread.sleep(forTimeInterval: 1.0)
+        let after = (TISCreateInputSourceList(nil, true).takeRetainedValue() as! [TISInputSource])
+            .filter { prop($0, kTISPropertyInputSourceID) == target }
+        if let first = after.first {
+            _ = TISEnableInputSource(first)
+        }
+        print("  \(target) 合并后实例数: \(after.count)")
+        fixedAny = true
+    }
+    if fixedAny {
+        syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")
+        print("已消除重复输入源实例")
+    } else {
+        print("未发现重复实例，无需处理")
+    }
+    exit(0)
+
 case "sync":
-    // 禁用父容器及旧模式输入源，仅保留单一具体的 Pinyin Mode
+    // 只清理历史 .Hans 旧模式；**父容器必须保持启用**。
+    //
+    // 2026-10-26 实测踩坑：此前这里把父容器 ime.chaoset.inputmethod.ChaosetIME
+    // 也一并 TISDisableInputSource，结果系统随即清空
+    // com.apple.inputsources 的 AppleEnabledThirdPartyInputSources，
+    // 表现为「装完输入法从菜单栏整个消失」——父容器是 TIS 的骨架节点
+    // （系统「简体拼音」同样是 mode + container 两条且都启用），
+    // 只允许禁用 .Hans 这类历史模式。
     for source in allSources() {
         let id = prop(source, kTISPropertyInputSourceID)
-        if id == "ime.chaoset.inputmethod.ChaosetIME" || id == "ime.chaoset.inputmethod.ChaosetIME.Hans" {
+        if id == "ime.chaoset.inputmethod.ChaosetIME.Hans" {
             _ = TISDisableInputSource(source)
         }
     }
+    // 父容器与 Pinyin 模式都启用，与系统输入法的结构保持一致。
+    for source in allSources() {
+        let id = prop(source, kTISPropertyInputSourceID)
+        if id == "ime.chaoset.inputmethod.ChaosetIME"
+            || id == "ime.chaoset.inputmethod.ChaosetIME.Pinyin" {
+            _ = TISEnableInputSource(source)
+        }
+    }
     syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")
-    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项（已排除父容器与旧模式冗余项）")
+    print("已同步 ChaosetIME 到 com.apple.HIToolbox 首选项（父容器 + Pinyin 模式各 1 条）")
     exit(0)
 
 case "list":
@@ -204,5 +258,5 @@ case "list":
     }
 
 default:
-    print("用法: tis register <app 路径> | list | select <输入源ID> | enable <输入源ID> | sync")
+    print("用法: tis register <app 路径> | list | select <输入源ID> | enable <输入源ID> | sync | dedupe")
 }

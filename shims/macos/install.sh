@@ -30,11 +30,19 @@ rm -f "$IM/.chaoset-write-test"
 # 旧版备份移至 .workwork/backups（不能以 .app 后缀残留在 Input Methods 目录，
 # 否则 LaunchServices 会并存多个同 ID 的 app，导致系统设置和图标服务持续命中旧备份）。
 if [ -d "$IM/ChaosetIME.app" ]; then
-  BAK_DIR="../../.workwork/backups"
+  # 备份目录必须落在**用户数据目录**，不能是 ../../.workwork/backups：
+  # 后者是开发仓库的中间产物目录，普通用户从下载包安装时根本不存在，
+  # 且向上跳两级会指向任意路径（2026-10-26 审查指出）。
+  BAK_DIR="$HOME/Library/Application Support/chaoset/backups"
   mkdir -p "$BAK_DIR"
   bak="$BAK_DIR/ChaosetIME-$(date +%Y%m%d-%H%M%S)"
   mv "$IM/ChaosetIME.app" "$bak"
   echo "旧输入法已备份: $bak"
+  # 只保留最近 5 份备份：每份 app 约 15MB，无限累积会吃光用户磁盘。
+  # 备份本身不带 .app 后缀，不会被 LaunchServices 当成第二个输入法索引。
+  ls -1dt "$BAK_DIR"/ChaosetIME-* 2>/dev/null | tail -n +6 | while IFS= read -r old; do
+    rm -rf "$old"
+  done
 fi
 # 清理可能遗留的旧备份 app
 rm -rf "$IM"/ChaosetIME.app.bak.* "$IM"/ChaosetIME.app.old.* "$IM/ChaosetIME.app" 2>/dev/null || true
@@ -97,10 +105,19 @@ if [ -x build/tis ]; then
     done
   fi
 
-  # 禁用旧模式并启用全新的单一 Pinyin 模式及其父级容器
+  # 只禁用历史 .Hans 旧模式；**父容器必须和 Pinyin 模式一起启用**。
+  # 2026-10-26 实测：父容器是 TIS 的骨架节点（系统「简体拼音」同样是
+  # mode + container 两条且都 enabled），把它禁用会让系统清空
+  # com.apple.inputsources 的 AppleEnabledThirdPartyInputSources，
+  # 表现为「装完输入法从菜单栏整个消失」。
   build/tis disable "ime.chaoset.inputmethod.ChaosetIME.Hans" 2>/dev/null || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME" || true
   build/tis enable "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
+
+  # 消除 TIS 表里的重复实例：同一 InputSourceID 出现多条（属性相同、指针不同）
+  # 会让菜单栏/系统设置列出多个 Chaoset。必须在 enable 之后跑——它会先全部
+  # disable 让 TIS 合并记录，再只启用一个（见 tis.swift 的 dedupe 注释）。
+  build/tis dedupe || true
   build/tis select "ime.chaoset.inputmethod.ChaosetIME.Pinyin" || true
   build/tis sync || true
 
@@ -173,15 +190,81 @@ if [ -x build/chaosetd ]; then
       echo "   词库保持不变（$reason）"
     fi
   fi
-  # LaunchAgent（KeepAlive）会自动拉起新版本；未配置自启时手动启动即可：
-  #   "$SUPPORT/chaosetd" -socket "$SUPPORT/chaoset.sock" \
-  #     -dict "$SUPPORT/dict.tsv" -userdict "$SUPPORT/userdict.json"
-  if launchctl list ime.chaoset.daemon >/dev/null 2>&1; then
-    launchctl kickstart -k "gui/$(id -u)/ime.chaoset.daemon" 2>/dev/null || killall chaosetd 2>/dev/null || true
-  else
-    killall chaosetd 2>/dev/null || true
+  # 安装（或修正）daemon 的 LaunchAgent：KeepAlive 保证 daemon 被 kill /
+  # 崩溃 / 重启电脑后自动拉起。
+  #
+  # 2026-10-26 修复：此前 install.sh **从不写这个 plist**，只在一个「已经
+  # 存在」的分支里 kickstart。全新机器上（或旧 plist 被清理后）装完输入法
+  # 能出现在菜单里，但 daemon 没人拉起——用户看到的就是「能切过去但打不出
+  # 中文」。开发机因为早先手工建过 plist 才没暴露这个缺陷。
+  DAEMON_LA="$HOME/Library/LaunchAgents/ime.chaoset.daemon.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$DAEMON_LA" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>ime.chaoset.daemon</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$SUPPORT/chaosetd</string>
+		<string>-socket</string>
+		<string>$SUPPORT/chaoset.sock</string>
+		<string>-dict</string>
+		<string>$SUPPORT/dict.tsv</string>
+		<string>-userdict</string>
+		<string>$SUPPORT/userdict.json</string>
+	</array>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$DAEMON_LA" >/dev/null || { echo "✗ LaunchAgent plist 校验失败：$DAEMON_LA"; exit 1; }
+
+  # 卸载旧定义 → 加载新定义。
+  #
+  # 2026-10-26 实机踩坑：原先 bootout 后直接 bootstrap，再紧跟一个
+  # `kickstart -k`。三层竞争叠在一起——bootout 是异步的，bootstrap 可能在
+  # 旧服务还没退干净时执行（静默失败），随后 kickstart 又去杀掉刚被拉起的
+  # 新进程，最终结果就是「plist 已写、进程也短暂出现过，但服务没注册、
+  # 套接字消失」。表现正是本脚本自检报的「daemon 已部署但 IPC 未就绪」。
+  #
+  # 现在：bootout 后等它真正从域里消失，bootstrap 失败要报错，且不再额外
+  # kickstart——bootstrap 本身就会按 RunAtLoad 启动，KeepAlive 负责后续。
+  LA_LABEL="ime.chaoset.daemon"
+  LA_DOMAIN="gui/$(id -u)"
+  launchctl bootout "$LA_DOMAIN/$LA_LABEL" 2>/dev/null || true
+  # 等卸载真正生效（最多 3 秒），避免 bootstrap 撞上正在退出的旧服务
+  j=0
+  while [ $j -lt 30 ]; do
+    launchctl print "$LA_DOMAIN/$LA_LABEL" >/dev/null 2>&1 || break
+    j=$((j + 1))
+    sleep 0.1
+  done
+  if ! launchctl bootstrap "$LA_DOMAIN" "$DAEMON_LA" 2>/dev/null; then
+    # bootstrap 对「已加载」会返回非零；此时用 kickstart 重启让它读新二进制
+    launchctl kickstart -k "$LA_DOMAIN/$LA_LABEL" 2>/dev/null || true
   fi
-  echo "已部署 daemon: $SUPPORT/chaosetd（旧版备份为 chaosetd.prev）"
+  launchctl enable "$LA_DOMAIN/$LA_LABEL" 2>/dev/null || true
+
+  # 等 daemon 真正就绪：用 IPC 往返判定（套接字文件存在不代表有进程 listen）。
+  # 最多等 10 秒（首次启动要加载 14 万词库，约 300ms；留足余量给慢机器）。
+  ready=no
+  i=0
+  while [ $i -lt 50 ]; do
+    if build/smoke "$SUPPORT/chaoset.sock" >/dev/null 2>&1; then ready=yes; break; fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  if [ "$ready" = yes ]; then
+    echo "已部署 daemon 并确认 IPC 就绪（LaunchAgent: $LA_LABEL）"
+  else
+    echo "⚠ daemon 已部署但 IPC 未就绪（10 秒内未响应）。排查："
+    echo "   launchctl print $LA_DOMAIN/$LA_LABEL | head -30"
+    echo "   日志：log stream --predicate 'process == \"chaosetd\"' --last 1m"
+    echo "   手动启动：$SUPPORT/chaosetd -socket $SUPPORT/chaoset.sock -dict $SUPPORT/dict.tsv -userdict $SUPPORT/userdict.json"
+  fi
 else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"
 fi
