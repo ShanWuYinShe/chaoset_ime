@@ -71,7 +71,15 @@ final class EngineClient {
         // daemon 在写入途中消失时不能触发 SIGPIPE：否则整个输入法进程会被信号杀死
         //（macOS 没有 MSG_NOSIGNAL，BSD 的做法是给套接字设 SO_NOSIGPIPE）。
         var nosigpipe: Int32 = 1
-        setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+        // 必须检查返回值：设置失败时，daemon 若在我们写入途中消失，write 会触发
+        // SIGPIPE 直接把整个输入法进程杀掉（默认动作），表现为「打着字输入法突然
+        // 没了」。失败就放弃这次连接，下次按键再试（2026-10-26 审查发现）。
+        if setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe,
+                      socklen_t(MemoryLayout<Int32>.size)) != 0 {
+            Darwin.close(sock)
+            lastFailAt = now
+            return false
+        }
 
         // 收发超时：既要绝不无限阻塞输入法主线程（拖慢 WindowServer 与切换 HUD），
         // 又要给 daemon 留足正常处理时间。
@@ -181,7 +189,8 @@ final class EngineClient {
     private func callOnce(method: String, params: [String: Any]) -> [String: Any]? {
         guard connectIfNeeded() else { return nil }
         nextID += 1
-        var req: [String: Any] = ["id": nextID, "method": method]
+        let reqID = nextID
+        var req: [String: Any] = ["id": reqID, "method": method]
         if !params.isEmpty { req["params"] = params }
         guard let payload = try? JSONSerialization.data(withJSONObject: req) else { return nil }
 
@@ -198,6 +207,16 @@ final class EngineClient {
         let size = Int(headBytes[0]) << 24 | Int(headBytes[1]) << 16 | Int(headBytes[2]) << 8 | Int(headBytes[3])
         guard size > 0, size <= (1 << 20), let body = readAll(size),
               let resp = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
+            disconnect()
+            return nil
+        }
+        // 响应 id 必须与本次请求一致。
+        //
+        // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前是实现
+        // 全串行的一问一答，理论上不会错位；但一旦将来引入并发或连接复用，
+        // 不校验就会把**别的请求的结果当成本次的**——在输入法里就是上屏错字。
+        // 出问题即断开重连，让下一次按键走干净路径（2026-10-26 审查发现）。
+        guard let respID = resp["id"] as? UInt64, respID == reqID else {
             disconnect()
             return nil
         }

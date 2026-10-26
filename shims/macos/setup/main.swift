@@ -119,6 +119,13 @@ func importDictionaries(files: [String], support: String, importer: String, seed
     let merged = tmp + "/merged.tsv"
     let r2 = runTool(importer, ["-o", merged, base] + files)
     log += r2.output
+    // 必须检查导入器的**退出码**，不能只看产物文件在不在。
+    // 导入器对非法音节行会报错退出，但残缺产物同样会被写出来——
+    // 只看文件存在会把「部分文件解析失败」当成成功，装进不完整词库
+    //（2026-10-26 审查发现）。
+    guard r2.status == 0 else {
+        return "合并词库失败（导入器退出码 \(r2.status)）：\n" + log
+    }
     guard fm.fileExists(atPath: merged) else { return "合并失败：\n" + log }
 
     if fm.fileExists(atPath: dictPath) {
@@ -126,13 +133,25 @@ func importDictionaries(files: [String], support: String, importer: String, seed
         try? fm.copyItem(atPath: dictPath, toPath: bak)
         log += "旧词库已备份：\(bak)\n"
     }
+    // 原子替换：绝不允许出现「旧词库已删、新词库没到位」的中间态。
+    //
+    // 2026-10-26 审查发现：此前是 removeItem(dictPath) 然后 moveItem——
+    // 若 move 失败（跨卷、权限、磁盘满），用户就彻底失去词库（输入法打不出字）。
+    // FileManager.replaceItemAt 在同一卷上是原子的，且自带旧文件处理。
     let staging = dictPath + ".tmp"
-    try? fm.removeItem(atPath: staging)
     do {
+        try? fm.removeItem(atPath: staging)
         try fm.copyItem(atPath: merged, toPath: staging)
-        try? fm.removeItem(atPath: dictPath)
-        try fm.moveItem(atPath: staging, toPath: dictPath)
-    } catch { return "写入词库失败：\(error)" }
+        if fm.fileExists(atPath: dictPath) {
+            _ = try fm.replaceItemAt(URL(fileURLWithPath: dictPath),
+                                     withItemAt: URL(fileURLWithPath: staging))
+        } else {
+            try fm.moveItem(atPath: staging, toPath: dictPath)
+        }
+    } catch {
+        try? fm.removeItem(atPath: staging)
+        return "写入词库失败（旧词库保持不变）：\(error)"
+    }
 
     let lines = (try? String(contentsOfFile: dictPath, encoding: .utf8))?.split(separator: "\n").count ?? 0
     log += "词库已更新：\(dictPath)（\(lines) 行）\n"
@@ -144,12 +163,65 @@ func importDictionaries(files: [String], support: String, importer: String, seed
 }
 
 // ---- daemon 部署与重启 ----
+
+/// 轮询等待 daemon 的套接字真正可用（IPC 能往返）。
+///
+/// 为什么不能只 sleep 后宣称成功（2026-10-26 审查发现）：套接字文件存在
+/// 不代表有进程在 listen（daemon 被 unlink 后路径会残留成僵尸文件），
+/// 而「LaunchAgent 会自动拉起」是个假设——全新机器上若没有 plist，
+/// daemon 根本不会被拉起，用户看到的就是「装好了但打不出中文」。
+func waitDaemonReady(support: String, timeout: TimeInterval = 8) -> Bool {
+    let sock = support + "/chaoset.sock"
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if FileManager.default.fileExists(atPath: sock) {
+            // 用 ping 走真实 IPC 判定，而不是只看文件
+            if let fd = connectUnixSocket(sock) {
+                Darwin.close(fd)
+                return true
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+    }
+    return false
+}
+
+/// 最小 Unix socket 连接检测（只用于探活，不发协议帧）。
+func connectUnixSocket(_ path: String) -> Int32? {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else {
+        Darwin.close(fd)
+        return nil
+    }
+    withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: bytes) }
+    let ok = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+        }
+    }
+    if !ok {
+        Darwin.close(fd)
+        return nil
+    }
+    return fd
+}
+
 func restartDaemon(support: String) -> String {
     var out = ""
     let kill = runTool("/usr/bin/killall", ["chaosetd"])
     if kill.status == 0 {
-        out += "已重启 daemon（LaunchAgent 会自动拉起）\n"
-        Thread.sleep(forTimeInterval: 1.5)
+        // 等 LaunchAgent 重新拉起，并**验证套接字真的能连**。
+        // 连不上就明确报错，不再用「会自动拉起」这种假设糊弄用户。
+        if waitDaemonReady(support: support) {
+            out += "已重启 daemon 并确认 IPC 就绪\n"
+        } else {
+            out += "⚠ daemon 已停止但 8 秒内未恢复运行。\n"
+            out += "   请检查 LaunchAgent：launchctl print gui/\(getuid())/ime.chaoset.daemon\n"
+        }
         return out
     }
     let daemon = res("chaosetd")

@@ -32,7 +32,11 @@ func main() {
 	socket := flag.String("socket", "chaoset.sock", "Unix 套接字路径")
 	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；设置后忽略 -socket，供 Windows 壳使用）")
 	fontPath := flag.String("font", "", "候选窗渲染 CJK 字体路径（空则按平台探测；找不到则禁用渲染）")
-	fontSize := flag.Float64("fontsize", 16, "候选窗字号")
+	// 默认 15，与 macOS 原生候选窗（CandidatePanel.swift 的 Layout.fontSize）
+	// **保持一致**。此前这里是 16 而 Swift 端写死 15，同一个候选窗在
+	// Windows/Linux（贴图）与 macOS（原生绘制）字号不同（2026-10-26 审查发现）。
+	// tests/visual-parity.sh 会断言两端 layout 参数一致。
+	fontSize := flag.Float64("fontsize", 15, "候选窗字号（默认与 macOS 原生端一致）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
