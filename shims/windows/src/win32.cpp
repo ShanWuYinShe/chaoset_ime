@@ -105,6 +105,27 @@ std::wstring toWide(const std::string& utf8) {
     return w;
 }
 
+bool isAppContainer() {
+    static int cached = -1;
+    if (cached != -1) return cached == 1;
+
+    HANDLE hToken = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+        cached = 0;
+        return false;
+    }
+    BOOL isAppCont = FALSE;
+    DWORD len = 0;
+    // TokenIsAppContainer (29) 判断当前进程是否运行在 UWP / AppContainer 沙盒中
+    if (GetTokenInformation(hToken, static_cast<TOKEN_INFORMATION_CLASS>(29), &isAppCont, sizeof(isAppCont), &len)) {
+        cached = isAppCont ? 1 : 0;
+    } else {
+        cached = 0;
+    }
+    CloseHandle(hToken);
+    return cached == 1;
+}
+
 class ChaosetTIP;
 
 // ---- 候选窗主题配色：与 macOS CandidatePanel.swift / renderer.DefaultSkinFor 像素级一致 ----
@@ -624,34 +645,73 @@ public:
         WSACleanup();
     }
 
+    bool isConnected() const { return sock_ != INVALID_SOCKET; }
+
     bool ensureConnected() {
         if (sock_ != INVALID_SOCKET) return true;
+        // AppContainer (如 Windows 输入法切换宿主 TextInputHost / UWP 应用) 受网络隔离限制，
+        // 无法通过 TCP 连接 127.0.0.1，必须直接跳过，防止阻塞系统 UI 线程
+        if (isAppContainer()) return false;
+
         DWORD now = GetTickCount();
-        if (now - lastFail_ < 200) return false;  // 快速重试冷却 200ms
+        if (now - lastFail_ < 2000) return false;  // 失败冷却 2 秒，避免频繁重试阻塞
 
         SOCKET s = INVALID_SOCKET;
-
-        // 极速直连路径：IPv4 纯数字地址（如 127.0.0.1）直接使用 sockaddr_in，彻底绕过 GetAddrInfoW 造成的 50-500ms 耗时
         unsigned long ip = inet_addr(host_.c_str());
         if (ip != INADDR_NONE) {
             s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (s != INVALID_SOCKET) {
+                // 设置为非阻塞模式，确保 connect 绝不在 UI 线程上死等挂起
+                u_long nonblocking = 1;
+                ::ioctlsocket(s, FIONBIO, &nonblocking);
+
                 int nodelay = 1;
                 ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
-                DWORD timeout = 500;
-                ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
 
                 sockaddr_in sa{};
                 sa.sin_family = AF_INET;
                 sa.sin_port = htons(static_cast<u_short>(port_));
                 sa.sin_addr.s_addr = ip;
-                if (::connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
+
+                int res = ::connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+                if (res == SOCKET_ERROR) {
+                    int err = WSAGetLastError();
+                    if (err == WSAEWOULDBLOCK) {
+                        fd_set writefds, exceptfds;
+                        FD_ZERO(&writefds);
+                        FD_ZERO(&exceptfds);
+                        FD_SET(s, &writefds);
+                        FD_SET(s, &exceptfds);
+
+                        // 本地回环连接通常 < 0.1ms；设置 20ms 超短超时，绝不卡顿系统输入法切换或窗口事件
+                        timeval tv{0, 20000};
+                        int sel = ::select(0, nullptr, &writefds, &exceptfds, &tv);
+                        if (sel > 0 && FD_ISSET(s, &writefds) && !FD_ISSET(s, &exceptfds)) {
+                            int sockErr = 0;
+                            int optLen = sizeof(sockErr);
+                            if (::getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sockErr), &optLen) == 0 && sockErr == 0) {
+                                // 连上：恢复阻塞模式，设置 200ms 的收发超时
+                                u_long blocking = 0;
+                                ::ioctlsocket(s, FIONBIO, &blocking);
+                                DWORD timeout = 200;
+                                ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                                ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                                sock_ = s;
+                                return true;
+                            }
+                        }
+                    }
+                    ::closesocket(s);
+                    s = INVALID_SOCKET;
+                } else if (res == 0) {
+                    u_long blocking = 0;
+                    ::ioctlsocket(s, FIONBIO, &blocking);
+                    DWORD timeout = 200;
+                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
                     sock_ = s;
                     return true;
                 }
-                ::closesocket(s);
-                s = INVALID_SOCKET;
             }
         } else {
             // 域名回退路径（如 localhost 等）
@@ -665,14 +725,48 @@ public:
                 for (addrinfoW* p = res; p != nullptr; p = p->ai_next) {
                     s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
                     if (s == INVALID_SOCKET) continue;
+
+                    u_long nonblocking = 1;
+                    ::ioctlsocket(s, FIONBIO, &nonblocking);
+
                     int nodelay = 1;
                     ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
-                    DWORD timeout = 500;
-                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                    if (::connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen)) == 0) break;
-                    ::closesocket(s);
-                    s = INVALID_SOCKET;
+
+                    int cRes = ::connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen));
+                    if (cRes == SOCKET_ERROR) {
+                        int err = WSAGetLastError();
+                        if (err == WSAEWOULDBLOCK) {
+                            fd_set writefds, exceptfds;
+                            FD_ZERO(&writefds);
+                            FD_ZERO(&exceptfds);
+                            FD_SET(s, &writefds);
+                            FD_SET(s, &exceptfds);
+
+                            timeval tv{0, 20000};
+                            int sel = ::select(0, nullptr, &writefds, &exceptfds, &tv);
+                            if (sel > 0 && FD_ISSET(s, &writefds) && !FD_ISSET(s, &exceptfds)) {
+                                int sockErr = 0;
+                                int optLen = sizeof(sockErr);
+                                if (::getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sockErr), &optLen) == 0 && sockErr == 0) {
+                                    u_long blocking = 0;
+                                    ::ioctlsocket(s, FIONBIO, &blocking);
+                                    DWORD timeout = 200;
+                                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                                    break;
+                                }
+                            }
+                        }
+                        ::closesocket(s);
+                        s = INVALID_SOCKET;
+                    } else if (cRes == 0) {
+                        u_long blocking = 0;
+                        ::ioctlsocket(s, FIONBIO, &blocking);
+                        DWORD timeout = 200;
+                        ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                        ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                        break;
+                    }
                 }
                 FreeAddrInfoW(res);
             }
@@ -833,8 +927,10 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
-        // 激活时预热建立 TCP 回环连接，消除首个字母按键冷启动建立连接耗时，彻底杜绝漏首字母
-        transport_.ensureConnected();
+        // 普通桌面应用中非阻塞预热连接（< 0.1ms），在 AppContainer（如输入法切换宿主）中直接跳过，绝不阻塞 UI
+        if (!isAppContainer()) {
+            transport_.ensureConnected();
+        }
         return S_OK;
     }
 
@@ -862,19 +958,31 @@ public:
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
         if (!fForeground) {
             candidateWnd_.hide();
+            // 失去焦点时清空未决预编辑与候选，防止跨窗口残留组词状态导致后续窗口吃键
+            if (isComposing()) {
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+            }
         } else {
-            // 获得焦点时确保后台连接处于活跃状态
-            transport_.ensureConnected();
+            if (!isAppContainer()) {
+                transport_.ensureConnected();
+            }
         }
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
-        // Shift 事件始终接住用于空按跟踪（最终不消费，见 OnKeyDown）
-        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) *pfEaten = TRUE;
-        else if (enMode_) *pfEaten = FALSE;           // 英文模式全放行
-        else *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
+        if (isModifierKey(wParam)) {
+            *pfEaten = FALSE;  // 修饰键始终放行
+            return S_OK;
+        }
+        if (enMode_) {
+            *pfEaten = FALSE;  // 英文模式全放行
+            return S_OK;
+        }
+        *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
         return S_OK;
     }
 
@@ -882,7 +990,7 @@ public:
                                         BOOL* pfEaten) override {
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             onShiftEvent(false);
-            *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键不受影响
+            *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键与按键事件完整透传给宿主
             return S_OK;
         }
         sinceShift_ = true;  // 其他键按下：取消 Shift 空按窗口
@@ -892,7 +1000,8 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
-        *pfEaten = (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) ? TRUE : FALSE;
+        (void)wParam;
+        *pfEaten = FALSE;  // KeyUp 一律不消费，保证宿主应用状态机完整，绝不导致宿主丢键或键盘卡死
         return S_OK;
     }
 
@@ -1013,6 +1122,15 @@ private:
         }
 
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
+
+        // 若当前未处于组词状态且在 AppContainer 环境中，或后台服务不可达，一律放行按键，绝不抢占或吞掉宿主按键
+        if (!isComposing()) {
+            if (isAppContainer()) return false;
+            if (!const_cast<TcpTransport&>(transport_).isConnected() &&
+                !const_cast<TcpTransport&>(transport_).ensureConnected()) {
+                return false;
+            }
+        }
 
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
         const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
