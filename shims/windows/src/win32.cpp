@@ -57,11 +57,11 @@ const GUID kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER = {
     0x046602e4, 0xc36a, 0x4f66, {0x82, 0xf7, 0xb4, 0x4d, 0x5f, 0xd8, 0x1a, 0xc4}};
 // 现代 Windows (Windows 8/10/11) 沉浸式与托盘支持能力分类，确保在现代系统设置与 UWP 应用中可见
 const GUID kGUID_TFCAT_TIPCAP_UIELEMENTENABLED = {
-    0x8ffdef2b, 0xfa65, 0x46fa, {0xb0, 0x6e, 0x6d, 0x54, 0x19, 0xcc, 0xbf, 0x4e}};
+    0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
 const GUID kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT = {
-    0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0x75, 0x84}};
+    0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0xe3, 0x5d}};
 const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
-    0x25504fb4, 0x7bab, 0x4bc1, {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x3d, 0x9f}};
+    0x25504fb4, 0x7bab, 0x4bc1, {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x0e, 0xf5}};
 
 constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
 constexpr DWORD kVkShift = 0x10;
@@ -872,7 +872,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
         // Shift 事件始终接住用于空按跟踪（最终不消费，见 OnKeyDown）
-        if (wParam == kVkShift) *pfEaten = TRUE;
+        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) *pfEaten = TRUE;
         else if (enMode_) *pfEaten = FALSE;           // 英文模式全放行
         else *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
         return S_OK;
@@ -880,7 +880,7 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                         BOOL* pfEaten) override {
-        if (wParam == kVkShift) {
+        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             onShiftEvent(false);
             *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键不受影响
             return S_OK;
@@ -892,13 +892,13 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
-        *pfEaten = (wParam == kVkShift) ? TRUE : FALSE;
+        *pfEaten = (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) ? TRUE : FALSE;
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
-        if (wParam == kVkShift) {
+        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             onShiftEvent(true);
             *pfEaten = FALSE;  // 只跟踪不消费
             return S_OK;
@@ -989,10 +989,31 @@ private:
         return nullptr;
     }
 
-    // 是否会吃掉该键：字母与标点键任意时刻都吃（标点由 daemon 映射，
-    // daemon 不可达时在 handleKey 里放行）；组词中再吃数字/空格/回车/
-    // 退格/Esc/翻页。
-    bool wouldHandle(WPARAM vk) {
+    static bool isModifierKey(WPARAM vk) {
+        return vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ||
+               vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ||
+               vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU ||
+               vk == VK_LWIN || vk == VK_RWIN;
+    }
+
+    // 是否会吃掉该键：修饰键组合（Ctrl/Alt/Win 快捷键）一律放行给宿主系统与应用，
+    // 仅在组词中支持 Ctrl+Backspace 快速清空拼音；字母与标点键正常输入；
+    // 组词中再吃数字/空格/回车/退格/Esc/翻页。
+    bool wouldHandle(WPARAM vk) const {
+        if (isModifierKey(vk)) return false;
+
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
+
+        if (alt || win) return false;
+        if (ctrl) {
+            // 组词中支持 Ctrl+Backspace 快速清空拼音；其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）全部放行
+            return isComposing() && (vk == kVkBackspace);
+        }
+
+        if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
+
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
         const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
                                 vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
@@ -1005,6 +1026,40 @@ private:
     }
 
     bool handleKey(WPARAM vk, ITfContext* pic) {
+        if (isModifierKey(vk)) return false;
+
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
+
+        // Alt 或 Win 快捷键：若处于组词中，先清空未决预编辑与候选窗，然后放行原键给宿主
+        if (alt || win) {
+            if (isComposing()) {
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+            }
+            return false;
+        }
+
+        // Ctrl 组合键：
+        if (ctrl) {
+            if (vk == kVkBackspace && isComposing()) {
+                // Ctrl+Backspace：直接全部删除（清空全部拼音）
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+                return true;
+            }
+            // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）：若处于组词中，先清空未决预编辑与候选窗，放行原键给宿主
+            if (isComposing()) {
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+            }
+            return false;
+        }
+
         // 字母：追加组词
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
             std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));

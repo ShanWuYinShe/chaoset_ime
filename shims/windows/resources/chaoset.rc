@@ -1,0 +1,3 @@
+// Windows 资源脚本：将应用图标嵌入 ChaosetIME.dll 与 ChaosetIME32.dll
+// 资源 ID 1 即为主图标（IconIndex 0），供 Windows 语言栏、系统托盘和切换菜单提取展示
+1 ICON "chaoset.ico"

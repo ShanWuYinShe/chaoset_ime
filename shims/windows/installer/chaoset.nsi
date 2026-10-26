@@ -111,12 +111,12 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
 
     ; 32 位 WOW64 类别与配置注册 (WOW6432Node)
     ${If} ${RunningX64}
@@ -130,12 +130,12 @@ Section "MainSection" SEC01
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{8ffdef2b-fa65-46fa-b06e-6d5419ccbf4e}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e07584}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f3d9f}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
+        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         SetRegView 64
     ${EndIf}
 
@@ -160,7 +160,7 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.10"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "0.2.11"
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式

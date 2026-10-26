@@ -125,7 +125,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.10; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.11; \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
@@ -143,16 +143,20 @@ package-windows:
 	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
+	# 资源文件编译（将应用图标嵌入 DLL，确保 Windows 语言栏与切换菜单显示专属图标）
+	x86_64-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
+	i686-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
 	# 64 位 TSF 前端 DLL
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
-		shims/windows/src/win32.cpp shims/windows/src/core.cpp \
+		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
 	i686-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
-		shims/windows/src/win32.cpp shims/windows/src/core.cpp \
+		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32
+	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
 	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
 	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
