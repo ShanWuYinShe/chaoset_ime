@@ -90,7 +90,9 @@ final class CandidatePanelView: NSView {
     var onPageUp: (() -> Void)?
 
     // 排版参数（pt），与 renderer.renderBar 保持一致
-    private enum Layout {
+    // internal（非 private）：tools/panel_metrics.swift 需要读取这些常量，
+    // 与 renderer/renderer.go 的 Skin 字段做机器比对，防止双端视觉漂移。
+    enum Layout {
         static let fontSize: CGFloat = 15
         static let indexFontSize: CGFloat = 12      // 主字号 80%
         static let padding: CGFloat = 7
@@ -317,7 +319,13 @@ final class CandidatePanelView: NSView {
         let dividerX = width - Layout.chevronBoxW + 2
         let divH = Layout.textH * 55 / 100
         theme.divider.setFill()
-        NSRect(x: dividerX, y: bounds.height - divH - Layout.padding, width: 1, height: divH).fill()
+        // 分割线**垂直居中**，与 Go 端 renderer.go 的 divH 定位保持一致：
+        //   Go:  blendPixel(..., (height-divH)/2+dy, ...)
+        // 此前这里是「贴底」（bounds.height - divH - padding），同一条竖线在
+        // macOS 原生候选窗与 Windows/Linux 贴图端位置不同（2026-10-26 审查
+        // 发现）。两端各写一份布局又无黄金对比测试，正是漂移的温床——这里
+        // 先对齐，长期方案见 README「双端视觉一致性」。
+        NSRect(x: dividerX, y: (bounds.height - divH) / 2, width: 1, height: divH).fill()
 
         // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下
         let chevX = dividerX + 2 + (Layout.chevronBoxW - 4) / 2
@@ -370,6 +378,11 @@ final class CandidatePanelView: NSView {
 
     // MARK: 鼠标点选（原生方案红利：贴图版 ignoresMouseEvents 无法实现）
 
+    // 非 key 窗口的首击默认只用于激活窗口、不投递 mouseDown，会导致
+    // 「第一次点候选词没反应，要点第二次」。候选窗永不成为 key 窗口
+    // （nonactivatingPanel），因此必须显式接受首次点击。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         for (rect, index) in hitAreas where rect.contains(point) {
@@ -383,6 +396,14 @@ final class CandidatePanelView: NSView {
     }
 
     // MARK: 无障碍（贴图方案无法提供，本次回归）
+
+    // 系统外观切换（浅色 ⇄ 深色）时重绘。面板在 draw 里读 effectiveAppearance
+    // 取配色，但若面板正开着而用户切换了外观，视图不会自动重绘——候选窗会
+    // 保持旧配色直到下次输入（2026-10-26 审查发现）。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .list }
@@ -452,11 +473,53 @@ enum CandidatePanelController {
         // 面板外点击仍落到宿主应用并触发会话提交。
         p.ignoresMouseEvents = false
         p.hasShadow = true
+        // 候选窗必须能跟随用户出现在任何 Space / 全屏应用之上。
+        //
+        // NSWindow.h 明确：windowLevel != NSNormalWindowLevel 时默认
+        // collectionBehavior 是 Transient（"Floats in spaces, hidden by
+        // exposé"），不参与 Space 切换。而输入法常在浏览器/编辑器全屏
+        // （独立 Space）里使用——不加下面这三项，orderFront 后候选窗
+        // 根本不会显示（2026-10-26 审查发现，此前只测了普通窗口场景）。
+        //   .canJoinAllSpaces  —— 出现在所有 Space
+        //   .fullScreenAuxiliary —— 允许在全屏应用的独立 Space 上显示
+        //   .stationary        —— Exposé/Mission Control 时不随桌面移动
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // borderless 窗口默认不接受首次点击（非 key 窗口的首击只用来激活），
+        // 会使「点击候选词上屏」第一次点击无效、需要点两次。
+        // becomesKeyOnlyIfNeeded 让面板在需要时才取 key，配合视图的
+        // acceptsFirstMouse 即可单击生效且不抢焦点（2026-10-26 审查发现）。
+        p.becomesKeyOnlyIfNeeded = true
         let v = CandidatePanelView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
         v.autoresizingMask = [.width, .height]
         p.contentView = v
         panel = p
         view = v
         return p
+    }
+}
+// MARK: - 双端视觉一致性（供 tools/panel_metrics.swift 导出）
+
+extension CandidatePanelView {
+    /// LayoutSnapshot 把布局常量导出给 panel_metrics 工具，与
+    /// renderer/renderer.go 的 Skin 字段做机器比对。
+    /// 这些值与 Go 端必须一致，由 tests/visual-parity.sh 断言。
+    struct LayoutSnapshot {
+        let fontSize: Double
+        let padding: Double
+        let lineSpacing: Double
+        let maxWidth: Double
+        let panelRadius: Double
+        let textH: Double
+
+        static var current: LayoutSnapshot {
+            LayoutSnapshot(
+                fontSize: Layout.fontSize,
+                padding: Layout.padding,
+                lineSpacing: Layout.lineSpacing,
+                maxWidth: Layout.maxWidth,
+                panelRadius: Layout.panelRadius,
+                textH: Layout.textH
+            )
+        }
     }
 }

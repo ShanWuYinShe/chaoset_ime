@@ -223,12 +223,21 @@ final class ChaosetController: IMKInputController {
             return passThrough(client)
         }
 
-        // 数字 1-9：选对应候选
+        // 数字 1-N 选对应候选（N = 本页实际候选数）。
+        //
+        // 必须按**实际候选数**判定而不是写死 1-9：页面容量从 9 改成 6 后，
+        // 组词中按 7/8/9 会走到 commit() 里因越界直接 return，而这里无条件
+        // return true → 键被吞掉，既不选词也不进文档（2026-10-26 审查发现）。
+        // 越界时落到后面的 passThrough/标点分支，让数字正常进入文档。
         if hasCandidates, chars.count == 1,
            let scalar = chars.unicodeScalars.first,
            scalar.value >= 49, scalar.value <= 57 {
-            commit(index: Int(scalar.value - 49), client: client)
-            return true
+            let idx = Int(scalar.value - 49)
+            if idx < (current?.candidates.count ?? 0) {
+                commit(index: idx, client: client)
+                return true
+            }
+            // 超出本页候选数：不吞键，继续走后续分支（数字按原样处理）
         }
 
         // 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
@@ -276,9 +285,20 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
-        // 字母与撇号：进组词流程
+        // 字母与撇号：进组词流程。
+        //
+        // engine.input 返回 nil 只有一种可能：daemon 不可达（IPC 失败）。
+        // 此时**绝不能消费按键**——2026-10-26 用户实测「切换到本输入法后
+        // 首字母丢失」的根因就在这里：旧代码把 current 置空后 return true，
+        // 按键被吞掉，而宿主应用什么都没收到，字母就凭空消失了。
+        // 输入法的铁律是「任何情况下都不能丢键」：daemon 出问题时应当原样
+        // 放行这个字母，让用户至少还能用英文继续输入，而不是静默吞掉。
+        // （EngineClient 内部有 1 秒失败冷却，daemon 恢复后下一次按键会自动重连。）
         if isCompositionChar(chars) {
-            current = engine.input(chars)
+            guard let comp = engine.input(chars) else {
+                return passThrough(client)
+            }
+            current = comp
             refresh(client)
             return true
         }
@@ -314,9 +334,12 @@ final class ChaosetController: IMKInputController {
     }
 
     private func commit(index: Int, client: (any IMKTextInput)?) {
-        guard let cur = current, index < cur.candidates.count,
-              let committed = engine.select(index) else { return }
+        // 越界直接返回（调用方应已按候选数判定；这里是最后一道防线）。
+        guard let cur = current, index >= 0, index < cur.candidates.count else { return }
         let sylls = cur.candidates[index].syllables
+        // daemon 不可达时 engine.select 返回 nil：绝不能静默失败（键被消费、
+        // 文字没进文档 = 丢字）。退化为把原始拼音上屏，保证用户输入不丢失。
+        let committed = engine.select(index) ?? cur.input
         current = nil
         client?.insertText(
             committed,
@@ -562,7 +585,12 @@ final class ChaosetController: IMKInputController {
     }
 
     override func activateServer(_ sender: Any!) {
-        // 新的输入上下文：先收掉上一个上下文可能残留的候选窗
+        // 新的输入上下文：先收掉上一个上下文可能残留的候选窗，并丢弃上一个
+        // 上下文遗留的组词状态。若不清，切到本输入法后的首次按键会带着旧
+        // 会话的 preedit 去和 daemon 组词，表现为「刚切换过来就打错字」。
+        // 这里不调 daemon（reset 只请求 daemon 重置会话，代价一次 IPC）；
+        // 直接丢弃本地状态即可——daemon 侧会话按连接维护，新连接本就是空的。
+        current = nil
         exitAssociate()
         Self.hideCandidatePanel()
         candidateWindow?.hide()

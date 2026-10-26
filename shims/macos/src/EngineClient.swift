@@ -73,9 +73,15 @@ final class EngineClient {
         var nosigpipe: Int32 = 1
         setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
 
-        // 设置 100ms 收发超时：守护进程异常挂起或负载高时，绝不无限制阻塞输入法主线程，
-        // 彻底杜绝拖慢 macOS WindowServer 与系统输入法切换 HUD
-        var tv = timeval(tv_sec: 0, tv_usec: 100_000) // 100ms
+        // 收发超时：既要绝不无限阻塞输入法主线程（拖慢 WindowServer 与切换 HUD），
+        // 又要给 daemon 留足正常处理时间。
+        //
+        // 2026-10-26 实测：daemon 单键处理 p50 1.5ms，但 GC 尖峰会让单次调用到
+        // 50–90ms；原先的 100ms 超时与尖峰咬合，客户端偶发拿到 nil，表现为
+        // 「切换后首字母丢失」。daemon 侧已把 GOGC 调到 400 削峰（p99 → 18ms），
+        // 这里再放宽到 250ms 作为安全边界——正常路径远用不到，尖峰不至于误杀，
+        // 而 250ms 仍是用户可感知卡顿的上限，不会出现「输入法卡死」的观感。
+        var tv = timeval(tv_sec: 0, tv_usec: 250_000) // 250ms
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
@@ -155,7 +161,24 @@ final class EngineClient {
     }
 
     // call 发一次请求并返回 result 对象；任何失败返回 nil 并断开重连。
-    private func call(method: String, params: [String: Any]) -> [String: Any]? {
+    //
+    // 读类方法（input/backspace/nextPage 等）在失败且**尚未产生副作用**时重试一次：
+    // daemon 偶发的 GC 停顿或瞬时忙会让单次调用超时，若直接放弃，调用方（壳）
+    // 就会丢掉这一次按键——正是用户报的「首字母丢失」。这类方法重试是安全的，
+    // 因为它们只读会话状态。写类方法（select/associateSelect/punct 会改学习数据）
+    // 不重试，避免同一次上屏被记录两遍。
+    private func call(method: String, params: [String: Any], retryOnFailure: Bool = true) -> [String: Any]? {
+        if let r = callOnce(method: method, params: params) {
+            return r
+        }
+        guard retryOnFailure else { return nil }
+        // 重连后重试一次：上一次失败通常已 disconnect()，这里会重新建立连接。
+        // 清零冷却时间，保证重试不会被 1 秒冷却直接挡掉。
+        lastFailAt = 0
+        return callOnce(method: method, params: params)
+    }
+
+    private func callOnce(method: String, params: [String: Any]) -> [String: Any]? {
         guard connectIfNeeded() else { return nil }
         nextID += 1
         var req: [String: Any] = ["id": nextID, "method": method]
@@ -224,15 +247,20 @@ final class EngineClient {
         return result["committed"] as? String
     }
 
+    /// 选词上屏。**不重试**：该调用会写学习数据（调频/bigram/词组进化），
+    /// 重试会让同一次上屏被记录两遍。
     func select(_ index: Int) -> String? {
-        guard let result = call(method: "select", params: ["index": index]) else { return nil }
+        guard let result = call(method: "select", params: ["index": index],
+                                retryOnFailure: false) else { return nil }
         return result["committed"] as? String
     }
 
     // punct 提交标点键：组词中先上屏首选候选，随后输出映射后的中文标点。
     // 返回 nil 表示 daemon 不可达或未知标点（调用方回退原键放行）。
+    /// 标点键提交。**不重试**：组词中会先上屏首选（写学习数据），重试会重复记录。
     func punct(_ key: String) -> String? {
-        guard let result = call(method: "punct", params: ["key": key]) else { return nil }
+        guard let result = call(method: "punct", params: ["key": key],
+                                retryOnFailure: false) else { return nil }
         return result["committed"] as? String
     }
 
@@ -259,9 +287,11 @@ final class EngineClient {
     }
 
     // associateSelect 联想候选直接上屏：学习路径与 select 一致。
+    /// 联想候选上屏。**不重试**：与 select 一样会写学习数据。
     func associateSelect(word: String, sylls: [String]) -> String? {
         guard let result = call(method: "associateSelect",
-                                params: ["word": word, "sylls": sylls]) else { return nil }
+                                params: ["word": word, "sylls": sylls],
+                                retryOnFailure: false) else { return nil }
         return result["committed"] as? String
     }
 
