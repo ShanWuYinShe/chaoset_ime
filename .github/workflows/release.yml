@@ -57,9 +57,16 @@ jobs:
       - name: 构建 Go 二进制与 macOS app
         run: |
           make build
-          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh
+          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
+                   shims/macos/tests/visual-parity.sh
           ./shims/macos/build.sh
           ./shims/macos/tests/equivalence.sh
+
+      # 双端视觉一致性（Go 贴图端 vs macOS 原生端）需要 swiftc，只能在
+      # macOS runner 上跑，所以在 package-macos job 里单独成步，失败原因比
+      # 埋在 equivalence.sh 的 F 段里更醒目。
+      - name: 双端视觉一致性（Go 贴图端 vs macOS 原生端）
+        run: ./shims/macos/tests/visual-parity.sh
 
       # 架构自检：CI 的 macos-latest 是 Apple Silicon，裸 swiftc/go build 只出
       # arm64，Intel Mac 用户装上会「无法打开」。Makefile 打包目标里也有同样的
@@ -170,6 +177,30 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
+
+      # 核心层行为测试：用真实 chaosetd（TCP 回环，即 Windows 壳的实际传输
+      # 形态）驱动 core.cpp 的协议与会话逻辑。
+      #
+      # 为什么必须放进 CI（2026-10-26 修复）：这项测试以前**只在开发机手工
+      # 跑**，CI 从不执行，于是断言里写死的「每页 9 个候选」在引擎改成 6 之后
+      # 一直失败却没人发现。测试不跑 = 没有测试。
+      - name: 核心层行为测试（真实 daemon + TCP 回环）
+        run: |
+          set -e
+          g++ -std=c++17 -O2 -Wall -Wextra -Ishims/windows/src \
+              shims/windows/tests/core_test.cpp shims/windows/src/core.cpp \
+              -o /tmp/core_test
+          make build
+          ./bin/chaosetd -tcp 127.0.0.1:17949 \
+              -dict data/dict_common.tsv -userdict "" > /tmp/win-daemon.log 2>&1 &
+          DPID=$!
+          trap 'kill -TERM $DPID 2>/dev/null || true' EXIT
+          # 等 daemon 真正就绪（套接字可连），而不是盲等
+          for i in $(seq 1 50); do
+            if (exec 3<>/dev/tcp/127.0.0.1/17949) 2>/dev/null; then exec 3<&- 3>&-; break; fi
+            sleep 0.2
+          done
+          /tmp/core_test "127.0.0.1:17949"
 
       - name: 编译与打包
         run: |
