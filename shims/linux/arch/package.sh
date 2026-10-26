@@ -3,7 +3,7 @@ set -e
 
 SRC_DIR="$1"
 OUT_PKG="$2"
-PKG_VER="${3:-0.2.7}"
+PKG_VER="${3:-0.2.8}"
 
 if [ -z "$SRC_DIR" ] || [ -z "$OUT_PKG" ]; then
     echo "用法: $0 <staging_dir> <output_pkg> [version]" >&2

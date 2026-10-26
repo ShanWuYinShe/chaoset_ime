@@ -57,7 +57,7 @@ REM Copy dictionary to a fixed location and load it by absolute path, so the
 REM daemon does not depend on whatever working directory it happens to start in
 REM (same class of bug we hit on Linux).
 copy /Y "%DICT%" "%LOCALAPPDATA%\Chaoset\dict.tsv" >nul
-start "" /B "%DAEMON%" -tcp 127.0.0.1:7949 -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -userdict "%USERDICT%" >> "%LOG%" 2>&1
+start "" "%DAEMON%" -tcp 127.0.0.1:7949 -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -userdict "%USERDICT%" -log "%LOG%"
 
 echo.
 echo ==^> Install complete

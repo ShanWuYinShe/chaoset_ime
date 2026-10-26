@@ -1,7 +1,7 @@
 # Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
 pkgname=chaoset-ime-bin
 _pkgname=chaoset-ime
-pkgver=0.2.7
+pkgver=0.2.8
 pkgrel=1
 pkgdesc="Chaoset Pinyin IME (prebuilt binary) - 傻瓜式现代拼音输入法"
 arch=('x86_64')

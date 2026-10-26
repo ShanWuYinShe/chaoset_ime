@@ -12,16 +12,23 @@
 // 构建见 build.sh（x86_64-w64-mingw32-g++）。
 
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <wingdi.h>
 #include <msctf.h>
 #include <objbase.h>
 
-
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "core.hpp"
+
+static HINSTANCE g_hInst = nullptr;
 
 namespace {
 
@@ -97,6 +104,331 @@ std::wstring toWide(const std::string& utf8) {
     }
     return w;
 }
+
+// ---- 候选词悬浮窗：双缓冲原生 GDI 渲染、DPI 感知、光标跟随与边界防溢出 ----
+
+class CandidateWindow {
+public:
+    CandidateWindow() = default;
+    ~CandidateWindow() { destroy(); }
+
+    CandidateWindow(const CandidateWindow&) = delete;
+    CandidateWindow& operator=(const CandidateWindow&) = delete;
+
+    void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp) {
+        if (comp.candidates.empty()) {
+            hide();
+            return;
+        }
+        comp_ = comp;
+        targetPos_ = pt;
+        targetLineHeight_ = lineH;
+        ensureWindow(hinst);
+        if (hwnd_ == nullptr) return;
+
+        layoutAndPosition();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    }
+
+    void hide() {
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) {
+            ShowWindow(hwnd_, SW_HIDE);
+        }
+    }
+
+    void destroy() {
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) {
+            DestroyWindow(hwnd_);
+            hwnd_ = nullptr;
+        }
+    }
+
+private:
+    struct ItemPos {
+        std::wstring indexStr;
+        std::wstring textStr;
+        RECT indexRect{};
+        RECT textRect{};
+        bool isFirst = false;
+    };
+
+    static int getDpi() {
+        HDC hdc = GetDC(nullptr);
+        int dpi = 96;
+        if (hdc != nullptr) {
+            dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+            ReleaseDC(nullptr, hdc);
+        }
+        return dpi;
+    }
+
+    static int scale(int px, int dpi) {
+        return MulDiv(px, dpi, 96);
+    }
+
+    void ensureWindow(HINSTANCE hinst) {
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) return;
+
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_DROPSHADOW | CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = CandidateWndProc;
+        wc.hInstance = hinst;
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        wc.lpszClassName = L"ChaosetCandidateWndClass";
+        RegisterClassExW(&wc);
+
+        hwnd_ = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            L"ChaosetCandidateWndClass",
+            L"ChaosetCandidate",
+            WS_POPUP,
+            0, 0, 0, 0,
+            nullptr, nullptr, hinst, nullptr
+        );
+        if (hwnd_ != nullptr) {
+            SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        }
+    }
+
+    static LRESULT CALLBACK CandidateWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        CandidateWindow* self = reinterpret_cast<CandidateWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        switch (msg) {
+            case WM_MOUSEACTIVATE:
+                return MA_NOACTIVATE;
+            case WM_ERASEBKGND:
+                return 1;
+            case WM_PAINT:
+                if (self != nullptr) {
+                    self->onPaint(hwnd);
+                    return 0;
+                }
+                break;
+            case WM_DESTROY:
+                break;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    void layoutAndPosition() {
+        int dpi = getDpi();
+        int fontH = -MulDiv(11, dpi, 72);
+        HFONT fontNormal = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+        HFONT fontBold = CreateFontW(fontH, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+
+        HDC screenDC = GetDC(nullptr);
+        HDC memDC = CreateCompatibleDC(screenDC);
+        HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
+
+        int padX = scale(10, dpi);
+        int padY = scale(6, dpi);
+        int curY = padY;
+        int row1W = 0;
+
+        preeditWide_ = toWide(comp_.preedit);
+        if (!preeditWide_.empty()) {
+            SIZE sz{};
+            GetTextExtentPoint32W(memDC, preeditWide_.c_str(), static_cast<int>(preeditWide_.size()), &sz);
+            preeditRect_.left = padX;
+            preeditRect_.top = curY;
+            preeditRect_.right = padX + sz.cx;
+            preeditRect_.bottom = curY + sz.cy;
+            row1W = sz.cx;
+            curY += sz.cy + scale(3, dpi);
+            dividerY_ = curY;
+            curY += scale(4, dpi);
+        }
+
+        items_.clear();
+        int curX = padX;
+        int maxCandH = 0;
+
+        for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
+            ItemPos item;
+            item.isFirst = (i == 0);
+            item.indexStr = std::to_wstring(i + 1) + L".";
+            item.textStr = toWide(comp_.candidates[i].text);
+
+            SelectObject(memDC, fontNormal);
+            SIZE szIdx{};
+            GetTextExtentPoint32W(memDC, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()), &szIdx);
+
+            SelectObject(memDC, item.isFirst ? fontBold : fontNormal);
+            SIZE szTxt{};
+            GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+
+            int itemH = (std::max)(szIdx.cy, szTxt.cy);
+            if (itemH > maxCandH) maxCandH = itemH;
+
+            item.indexRect.left = curX;
+            item.indexRect.top = curY;
+            item.indexRect.right = curX + szIdx.cx;
+            item.indexRect.bottom = curY + szIdx.cy;
+            curX += szIdx.cx + scale(3, dpi);
+
+            item.textRect.left = curX;
+            item.textRect.top = curY;
+            item.textRect.right = curX + szTxt.cx;
+            item.textRect.bottom = curY + szTxt.cy;
+            curX += szTxt.cx + scale(12, dpi);
+
+            items_.push_back(item);
+        }
+
+        hasPage_ = (comp_.pageCount > 1);
+        if (hasPage_) {
+            pageStr_ = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
+            SelectObject(memDC, fontNormal);
+            SIZE szPage{};
+            GetTextExtentPoint32W(memDC, pageStr_.c_str(), static_cast<int>(pageStr_.size()), &szPage);
+            if (szPage.cy > maxCandH) maxCandH = szPage.cy;
+
+            pageRect_.left = curX + scale(4, dpi);
+            pageRect_.top = curY;
+            pageRect_.right = pageRect_.left + szPage.cx;
+            pageRect_.bottom = curY + szPage.cy;
+            curX = pageRect_.right;
+        }
+
+        int row2W = curX - padX;
+        int totalW = (std::max)(row1W, row2W) + padX * 2;
+        int totalH = curY + maxCandH + padY;
+
+        SelectObject(memDC, oldFont);
+        DeleteDC(memDC);
+        ReleaseDC(nullptr, screenDC);
+        DeleteObject(fontNormal);
+        DeleteObject(fontBold);
+
+        int winW = (std::max)(totalW, scale(120, dpi));
+        int winH = totalH;
+
+        POINT pt = targetPos_;
+        int lineH = targetLineHeight_ > 0 ? targetLineHeight_ : scale(20, dpi);
+        int winX = pt.x;
+        int winY = pt.y + scale(4, dpi);
+
+        HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(hMon, &mi)) {
+            RECT work = mi.rcWork;
+            if (winX + winW > work.right) {
+                winX = work.right - winW - scale(4, dpi);
+            }
+            if (winX < work.left) {
+                winX = work.left + scale(4, dpi);
+            }
+            if (winY + winH > work.bottom) {
+                winY = pt.y - lineH - winH - scale(4, dpi);
+                if (winY < work.top) {
+                    winY = work.top + scale(4, dpi);
+                }
+            }
+        }
+
+        SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    void onPaint(HWND hwnd) {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT clientRc;
+        GetClientRect(hwnd, &clientRc);
+        int w = clientRc.right - clientRc.left;
+        int h = clientRc.bottom - clientRc.top;
+        if (w <= 0 || h <= 0) {
+            EndPaint(hwnd, &ps);
+            return;
+        }
+
+        HDC memDC = CreateCompatibleDC(hdc);
+        HBITMAP memBmp = CreateCompatibleBitmap(hdc, w, h);
+        HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
+
+        HBRUSH bgBrush = CreateSolidBrush(RGB(255, 255, 255));
+        FillRect(memDC, &clientRc, bgBrush);
+        DeleteObject(bgBrush);
+
+        HBRUSH borderBrush = CreateSolidBrush(RGB(205, 210, 218));
+        FrameRect(memDC, &clientRc, borderBrush);
+        DeleteObject(borderBrush);
+
+        SetBkMode(memDC, TRANSPARENT);
+
+        int dpi = getDpi();
+        int fontH = -MulDiv(11, dpi, 72);
+        HFONT fontNormal = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+        HFONT fontBold = CreateFontW(fontH, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+
+        HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
+
+        if (!preeditWide_.empty()) {
+            SetTextColor(memDC, RGB(40, 44, 52));
+            TextOutW(memDC, preeditRect_.left, preeditRect_.top, preeditWide_.c_str(), static_cast<int>(preeditWide_.size()));
+
+            HPEN divPen = CreatePen(PS_SOLID, 1, RGB(232, 235, 240));
+            HGDIOBJ oldPen = SelectObject(memDC, divPen);
+            MoveToEx(memDC, 8, dividerY_, nullptr);
+            LineTo(memDC, w - 8, dividerY_);
+            SelectObject(memDC, oldPen);
+            DeleteObject(divPen);
+        }
+
+        for (const auto& item : items_) {
+            COLORREF idxColor = item.isFirst ? RGB(22, 119, 255) : RGB(140, 144, 153);
+            SetTextColor(memDC, idxColor);
+            SelectObject(memDC, fontNormal);
+            TextOutW(memDC, item.indexRect.left, item.indexRect.top, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()));
+
+            COLORREF textColor = item.isFirst ? RGB(22, 119, 255) : RGB(30, 32, 36);
+            SetTextColor(memDC, textColor);
+            SelectObject(memDC, item.isFirst ? fontBold : fontNormal);
+            TextOutW(memDC, item.textRect.left, item.textRect.top, item.textStr.c_str(), static_cast<int>(item.textStr.size()));
+        }
+
+        if (hasPage_) {
+            SetTextColor(memDC, RGB(160, 164, 172));
+            SelectObject(memDC, fontNormal);
+            TextOutW(memDC, pageRect_.left, pageRect_.top, pageStr_.c_str(), static_cast<int>(pageStr_.size()));
+        }
+
+        BitBlt(hdc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
+
+        SelectObject(memDC, oldFont);
+        DeleteObject(fontNormal);
+        DeleteObject(fontBold);
+        SelectObject(memDC, oldBmp);
+        DeleteObject(memBmp);
+        DeleteDC(memDC);
+
+        EndPaint(hwnd, &ps);
+    }
+
+    HWND hwnd_ = nullptr;
+    chaoset::Comp comp_;
+    POINT targetPos_{0, 0};
+    int targetLineHeight_ = 20;
+
+    std::wstring preeditWide_;
+    RECT preeditRect_{};
+    int dividerY_ = 0;
+
+    std::vector<ItemPos> items_;
+    bool hasPage_ = false;
+    std::wstring pageStr_;
+    RECT pageRect_{};
+};
 
 // ---- 传输：TCP 回环（与 daemon -tcp 127.0.0.1:7949 配对） ----
 
@@ -276,6 +608,7 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
+        candidateWnd_.destroy();
         endComposition();
         session_.reset();
         comp_ = chaoset::Comp();
@@ -295,7 +628,12 @@ public:
     }
 
     // ITfKeyEventSink
-    HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL /*fForeground*/) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
+        if (!fForeground) {
+            candidateWnd_.hide();
+        }
+        return S_OK;
+    }
 
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
@@ -342,6 +680,7 @@ public:
 
     // ITfCompositionSink：合成被外部终止（焦点切换等）
     HRESULT STDMETHODCALLTYPE OnCompositionTerminated(TfEditCookie /*ec*/, ITfComposition* /*pComposition*/) override {
+        candidateWnd_.hide();
         composition_ = nullptr;
         session_.reset();
         comp_ = chaoset::Comp();
@@ -375,6 +714,7 @@ private:
                 session_.reset();
                 endComposition();
                 comp_ = chaoset::Comp();
+                candidateWnd_.hide();
             }
             sinceShift_ = false;
         }
@@ -540,15 +880,43 @@ private:
         return ctx;
     }
 
-    // 把引擎候选状态渲染为预编辑合成（无合成则从插入点启动）
+    // 把引擎候选状态渲染为预编辑合成与候选悬浮窗
     void render(ITfContext* pic) {
         ITfContext* ctx = pic != nullptr ? pic : focusContext();
         if (ctx == nullptr) return;
+        caretFound_ = false;
         EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
             static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
         });
         es.run(tm_, clientId_);
         es.Release();
+
+        if (comp_.candidates.empty()) {
+            candidateWnd_.hide();
+            return;
+        }
+
+        if (!caretFound_ || (caretPos_.x == 0 && caretPos_.y == 0)) {
+            GUITHREADINFO gti{};
+            gti.cbSize = sizeof(gti);
+            if (GetGUIThreadInfo(0, &gti) && gti.hwndCaret != nullptr) {
+                POINT pt{gti.rcCaret.left, gti.rcCaret.bottom};
+                ClientToScreen(gti.hwndCaret, &pt);
+                caretPos_ = pt;
+                caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
+                caretFound_ = true;
+            } else if (GetGUIThreadInfo(0, &gti) && gti.hwndFocus != nullptr) {
+                POINT pt{gti.rcCaret.left, gti.rcCaret.bottom};
+                ClientToScreen(gti.hwndFocus, &pt);
+                caretPos_ = pt;
+                caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
+                caretFound_ = true;
+            } else {
+                GetCursorPos(&caretPos_);
+                caretLineHeight_ = 20;
+            }
+        }
+        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_);
     }
 
     void applyPreedit(ITfContext* ctx, TfEditCookie ec) {
@@ -557,6 +925,18 @@ private:
             ITfRange* range = nullptr;
             if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
                 range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
+                ITfContextView* view = nullptr;
+                if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
+                    RECT rc{};
+                    BOOL fClipped = FALSE;
+                    if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
+                        caretPos_.x = rc.left;
+                        caretPos_.y = rc.bottom;
+                        caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
+                        caretFound_ = true;
+                    }
+                    view->Release();
+                }
                 range->Release();
             }
             return;
@@ -576,12 +956,25 @@ private:
                 }
                 cc->Release();
             }
+            ITfContextView* view = nullptr;
+            if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
+                RECT rc{};
+                BOOL fClipped = FALSE;
+                if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
+                    caretPos_.x = rc.left;
+                    caretPos_.y = rc.bottom;
+                    caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
+                    caretFound_ = true;
+                }
+                view->Release();
+            }
             range->Release();
         }
         insert->Release();
     }
 
     void commit(ITfContext* pic, const std::string& text) {
+        candidateWnd_.hide();
         ITfContext* ctx = pic != nullptr ? pic : focusContext();
         if (ctx == nullptr) return;
         committed_ = text;
@@ -609,6 +1002,7 @@ private:
     }
 
     void endComposition() {
+        candidateWnd_.hide();
         if (composition_ == nullptr) return;
         ITfContext* ctx = focusContext();
         if (ctx != nullptr) {
@@ -631,6 +1025,11 @@ private:
     ITfThreadMgr* tm_ = nullptr;
     TfClientId clientId_ = 0;
     bool keySinkAdvised_ = false;
+
+    CandidateWindow candidateWnd_;
+    POINT caretPos_{0, 0};
+    int caretLineHeight_ = 20;
+    bool caretFound_ = false;
 
     TcpTransport transport_;
     chaoset::Session session_{transport_};
@@ -667,8 +1066,6 @@ public:
 }  // namespace
 
 // ---- 导出 ----
-
-static HINSTANCE g_hInst = nullptr;
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
