@@ -105,7 +105,72 @@ std::wstring toWide(const std::string& utf8) {
     return w;
 }
 
-// ---- 候选词悬浮窗：双缓冲原生 GDI 渲染、DPI 感知、光标跟随与边界防溢出 ----
+class ChaosetTIP;
+
+// ---- 候选窗主题配色：与 macOS CandidatePanel.swift / renderer.DefaultSkinFor 像素级一致 ----
+
+struct CandidateColors {
+    COLORREF panelBg;
+    COLORREF panelBorder;
+    COLORREF text;
+    COLORREF highlightBg;
+    COLORREF highlightText;
+    COLORREF chipBg;
+    COLORREF chipBorder;
+    COLORREF chipDigit;
+    COLORREF highlightChipBg;
+    COLORREF pageColor;
+    COLORREF divider;
+    COLORREF chevron;
+
+    static CandidateColors get(bool dark) {
+        if (dark) {
+            return {
+                RGB(44, 44, 46),       // panelBg #2C2C2E
+                RGB(72, 72, 74),       // panelBorder #48484A
+                RGB(255, 255, 255),    // text #FFFFFF
+                RGB(0, 102, 235),      // highlightBg #0066EB
+                RGB(255, 255, 255),    // highlightText #FFFFFF
+                RGB(90, 90, 94),       // chipBg #5A5A5E
+                RGB(120, 120, 124),    // chipBorder
+                RGB(255, 255, 255),    // chipDigit #FFFFFF
+                RGB(69, 143, 240),     // highlightChipBg（0x45 alpha 白叠加在 #0066EB）
+                RGB(152, 152, 159),    // pageColor #98989F
+                RGB(63, 63, 66),       // divider
+                RGB(152, 152, 159)     // chevron
+            };
+        }
+        return {
+            RGB(246, 246, 248),        // panelBg #F6F6F8
+            RGB(212, 212, 216),        // panelBorder #D4D4D8
+            RGB(29, 29, 31),           // text #1D1D1F（Apple 原生主文本色）
+            RGB(0, 122, 255),          // highlightBg #007AFF（Apple 原生蓝胶囊）
+            RGB(255, 255, 255),        // highlightText #FFFFFF
+            RGB(255, 255, 255),        // chipBg #FFFFFF
+            RGB(208, 208, 212),        // chipBorder
+            RGB(29, 29, 31),           // chipDigit #1D1D1F
+            RGB(69, 158, 255),         // highlightChipBg（0x45 alpha 白叠加在 #007AFF）
+            RGB(142, 142, 147),        // pageColor #8E8E93
+            RGB(226, 226, 228),        // divider
+            RGB(142, 142, 147)         // chevron
+        };
+    }
+};
+
+bool isSystemDarkTheme() {
+    HKEY hKey = nullptr;
+    DWORD val = 1;
+    DWORD sz = sizeof(val);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegQueryValueExW(hKey, L"AppsUseLightTheme", nullptr, nullptr, reinterpret_cast<LPBYTE>(&val), &sz);
+        RegCloseKey(hKey);
+    }
+    return val == 0;
+}
+
+// ---- 候选词悬浮窗：双缓冲原生 GDI 渲染、DPI 感知、光标跟随、圆角胶囊与 macOS 视觉一致 ----
 
 class CandidateWindow {
 public:
@@ -115,12 +180,13 @@ public:
     CandidateWindow(const CandidateWindow&) = delete;
     CandidateWindow& operator=(const CandidateWindow&) = delete;
 
-    void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp) {
+    void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {
         if (comp.candidates.empty()) {
             hide();
             return;
         }
         comp_ = comp;
+        tip_ = tip;
         targetPos_ = pt;
         targetLineHeight_ = lineH;
         ensureWindow(hinst);
@@ -144,11 +210,16 @@ public:
         }
     }
 
+    void onLButtonDown(int x, int y);
+
 private:
     struct ItemPos {
+        int index = 0;
         std::wstring indexStr;
         std::wstring textStr;
-        RECT indexRect{};
+        RECT itemRect{};
+        RECT pillRect{};
+        RECT chipRect{};
         RECT textRect{};
         bool isFirst = false;
     };
@@ -165,6 +236,18 @@ private:
 
     static int scale(int px, int dpi) {
         return MulDiv(px, dpi, 96);
+    }
+
+    bool isInteractiveArea() const {
+        POINT pt;
+        if (GetCursorPos(&pt) && hwnd_ != nullptr) {
+            ScreenToClient(hwnd_, &pt);
+            for (const auto& it : items_) {
+                if (PtInRect(&it.itemRect, pt)) return true;
+            }
+            if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) return true;
+        }
+        return false;
     }
 
     void ensureWindow(HINSTANCE hinst) {
@@ -205,6 +288,18 @@ private:
                     return 0;
                 }
                 break;
+            case WM_LBUTTONDOWN:
+                if (self != nullptr) {
+                    self->onLButtonDown(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
+                    return 0;
+                }
+                break;
+            case WM_SETCURSOR:
+                if (self != nullptr && self->isInteractiveArea()) {
+                    SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)));  // IDC_HAND
+                    return TRUE;
+                }
+                break;
             case WM_DESTROY:
                 break;
         }
@@ -213,100 +308,111 @@ private:
 
     void layoutAndPosition() {
         int dpi = getDpi();
-        int fontH = -MulDiv(11, dpi, 72);
+        int fontH = -MulDiv(15, dpi, 72);
+        int idxFontH = -MulDiv(12, dpi, 72);
         HFONT fontNormal = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-        HFONT fontBold = CreateFontW(fontH, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+        HFONT fontIndex = CreateFontW(idxFontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
 
         HDC screenDC = GetDC(nullptr);
         HDC memDC = CreateCompatibleDC(screenDC);
         HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
 
-        int padX = scale(10, dpi);
-        int padY = scale(6, dpi);
-        int curY = padY;
-        int row1W = 0;
+        // 排版参数（与 macOS Layout 保持 1:1 像素级对齐）
+        int pad = scale(7, dpi);
+        int firstPadLeft = scale(9, dpi);
+        int itemPadX = scale(7, dpi);
+        int gap = scale(11, dpi);
+        int chipPadX = scale(4, dpi);
+        int chipPadY = scale(2, dpi);
+        int pillMargin = scale(2, dpi);
+        int chevronBoxW = scale(36, dpi);
 
-        preeditWide_ = toWide(comp_.preedit);
-        if (!preeditWide_.empty()) {
-            SIZE sz{};
-            GetTextExtentPoint32W(memDC, preeditWide_.c_str(), static_cast<int>(preeditWide_.size()), &sz);
-            preeditRect_.left = padX;
-            preeditRect_.top = curY;
-            preeditRect_.right = padX + sz.cx;
-            preeditRect_.bottom = curY + sz.cy;
-            row1W = sz.cx;
-            curY += sz.cy + scale(3, dpi);
-            dividerY_ = curY;
-            curY += scale(4, dpi);
-        }
+        TEXTMETRICW tmText{}, tmIdx{};
+        SelectObject(memDC, fontNormal);
+        GetTextMetricsW(memDC, &tmText);
+        SelectObject(memDC, fontIndex);
+        GetTextMetricsW(memDC, &tmIdx);
+
+        int textH = (std::max)(static_cast<int>(tmText.tmHeight), scale(22, dpi));
+        int idxH = tmIdx.tmHeight;
+        int chipH = idxH + chipPadY * 2;
+        int contentH = (std::max)(textH, chipH);
+        int winH = pad * 2 + contentH;
+        int contentTop = pad;
 
         items_.clear();
-        int curX = padX;
-        int maxCandH = 0;
+        int curX = pad;
 
         for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
             ItemPos item;
+            item.index = static_cast<int>(i);
             item.isFirst = (i == 0);
-            item.indexStr = std::to_wstring(i + 1) + L".";
+            item.indexStr = std::to_wstring(i + 1);
             item.textStr = toWide(comp_.candidates[i].text);
 
-            SelectObject(memDC, fontNormal);
+            int padX = item.isFirst ? firstPadLeft : itemPadX;
+
+            SelectObject(memDC, fontIndex);
             SIZE szIdx{};
             GetTextExtentPoint32W(memDC, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()), &szIdx);
 
-            SelectObject(memDC, item.isFirst ? fontBold : fontNormal);
+            SelectObject(memDC, fontNormal);
             SIZE szTxt{};
             GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
 
-            int itemH = (std::max)(szIdx.cy, szTxt.cy);
-            if (itemH > maxCandH) maxCandH = itemH;
+            int chipW = szIdx.cx + chipPadX * 2;
+            int chipTextGap = (std::max)(scale(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
+            int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx;
 
-            item.indexRect.left = curX;
-            item.indexRect.top = curY;
-            item.indexRect.right = curX + szIdx.cx;
-            item.indexRect.bottom = curY + szIdx.cy;
-            curX += szIdx.cx + scale(3, dpi);
+            item.itemRect.left = curX;
+            item.itemRect.top = contentTop;
+            item.itemRect.right = curX + itemW;
+            item.itemRect.bottom = contentTop + contentH;
 
-            item.textRect.left = curX;
-            item.textRect.top = curY;
-            item.textRect.right = curX + szTxt.cx;
-            item.textRect.bottom = curY + szTxt.cy;
-            curX += szTxt.cx + scale(12, dpi);
+            if (item.isFirst) {
+                item.pillRect.left = curX - pillMargin;
+                item.pillRect.top = contentTop - pillMargin;
+                item.pillRect.right = curX + itemW + pillMargin;
+                item.pillRect.bottom = contentTop + contentH + pillMargin;
+            }
+
+            int chipLeft = curX + padX;
+            int chipTop = contentTop + (contentH - chipH) / 2;
+            item.chipRect.left = chipLeft;
+            item.chipRect.top = chipTop;
+            item.chipRect.right = chipLeft + chipW;
+            item.chipRect.bottom = chipTop + chipH;
+
+            int textLeft = item.chipRect.right + chipTextGap;
+            int textTop = contentTop + (contentH - tmText.tmHeight) / 2;
+            item.textRect.left = textLeft;
+            item.textRect.top = textTop;
+            item.textRect.right = textLeft + szTxt.cx;
+            item.textRect.bottom = textTop + tmText.tmHeight;
 
             items_.push_back(item);
+            curX += itemW + gap;
         }
 
-        hasPage_ = (comp_.pageCount > 1);
-        if (hasPage_) {
-            pageStr_ = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
-            SelectObject(memDC, fontNormal);
-            SIZE szPage{};
-            GetTextExtentPoint32W(memDC, pageStr_.c_str(), static_cast<int>(pageStr_.size()), &szPage);
-            if (szPage.cy > maxCandH) maxCandH = szPage.cy;
+        int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW;
+        int winW = (std::max)(totalW, scale(120, dpi));
 
-            pageRect_.left = curX + scale(4, dpi);
-            pageRect_.top = curY;
-            pageRect_.right = pageRect_.left + szPage.cx;
-            pageRect_.bottom = curY + szPage.cy;
-            curX = pageRect_.right;
-        }
+        chevronRect_.left = winW - chevronBoxW;
+        chevronRect_.top = 0;
+        chevronRect_.right = winW;
+        chevronRect_.bottom = winH;
 
-        int row2W = curX - padX;
-        int totalW = (std::max)(row1W, row2W) + padX * 2;
-        int totalH = curY + maxCandH + padY;
+        dividerX_ = winW - chevronBoxW + scale(2, dpi);
 
         SelectObject(memDC, oldFont);
         DeleteDC(memDC);
         ReleaseDC(nullptr, screenDC);
         DeleteObject(fontNormal);
-        DeleteObject(fontBold);
-
-        int winW = (std::max)(totalW, scale(120, dpi));
-        int winH = totalH;
+        DeleteObject(fontIndex);
 
         POINT pt = targetPos_;
         int lineH = targetLineHeight_ > 0 ? targetLineHeight_ : scale(20, dpi);
@@ -332,6 +438,7 @@ private:
             }
         }
 
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, scale(16, dpi), scale(16, dpi)), TRUE);
         SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
@@ -348,66 +455,143 @@ private:
             return;
         }
 
+        int dpi = getDpi();
+        bool dark = isSystemDarkTheme();
+        CandidateColors theme = CandidateColors::get(dark);
+
         HDC memDC = CreateCompatibleDC(hdc);
         HBITMAP memBmp = CreateCompatibleBitmap(hdc, w, h);
         HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
 
-        HBRUSH bgBrush = CreateSolidBrush(RGB(255, 255, 255));
-        FillRect(memDC, &clientRc, bgBrush);
-        DeleteObject(bgBrush);
-
-        HBRUSH borderBrush = CreateSolidBrush(RGB(205, 210, 218));
-        FrameRect(memDC, &clientRc, borderBrush);
-        DeleteObject(borderBrush);
+        // 面板背景圆角与 1px 细边框
+        HBRUSH bgBrush = CreateSolidBrush(theme.panelBg);
+        HPEN borderPen = CreatePen(PS_SOLID, 1, theme.panelBorder);
+        HGDIOBJ oldBrush = SelectObject(memDC, bgBrush);
+        HGDIOBJ oldPen = SelectObject(memDC, borderPen);
+        RoundRect(memDC, 0, 0, w, h, scale(16, dpi), scale(16, dpi));
 
         SetBkMode(memDC, TRANSPARENT);
 
-        int dpi = getDpi();
-        int fontH = -MulDiv(11, dpi, 72);
+        int fontH = -MulDiv(15, dpi, 72);
+        int idxFontH = -MulDiv(12, dpi, 72);
         HFONT fontNormal = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-        HFONT fontBold = CreateFontW(fontH, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-
+        HFONT fontIndex = CreateFontW(idxFontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
         HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
 
-        if (!preeditWide_.empty()) {
-            SetTextColor(memDC, RGB(40, 44, 52));
-            TextOutW(memDC, preeditRect_.left, preeditRect_.top, preeditWide_.c_str(), static_cast<int>(preeditWide_.size()));
-
-            HPEN divPen = CreatePen(PS_SOLID, 1, RGB(232, 235, 240));
-            HGDIOBJ oldPen = SelectObject(memDC, divPen);
-            MoveToEx(memDC, 8, dividerY_, nullptr);
-            LineTo(memDC, w - 8, dividerY_);
-            SelectObject(memDC, oldPen);
-            DeleteObject(divPen);
-        }
-
+        // 绘制候选列表
         for (const auto& item : items_) {
-            COLORREF idxColor = item.isFirst ? RGB(22, 119, 255) : RGB(140, 144, 153);
-            SetTextColor(memDC, idxColor);
-            SelectObject(memDC, fontNormal);
-            TextOutW(memDC, item.indexRect.left, item.indexRect.top, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()));
+            if (item.isFirst) {
+                // 首选：Apple 风格高亮蓝胶囊
+                HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
+                SelectObject(memDC, pillBrush);
+                HPEN nullPen = CreatePen(PS_NULL, 0, 0);
+                SelectObject(memDC, nullPen);
+                RoundRect(memDC, item.pillRect.left, item.pillRect.top,
+                          item.pillRect.right, item.pillRect.bottom,
+                          scale(12, dpi), scale(12, dpi));
+                DeleteObject(pillBrush);
+                DeleteObject(nullPen);
 
-            COLORREF textColor = item.isFirst ? RGB(22, 119, 255) : RGB(30, 32, 36);
-            SetTextColor(memDC, textColor);
-            SelectObject(memDC, item.isFirst ? fontBold : fontNormal);
-            TextOutW(memDC, item.textRect.left, item.textRect.top, item.textStr.c_str(), static_cast<int>(item.textStr.size()));
+                // 蓝胶囊内键帽：半透白单层填充，无边框
+                HBRUSH chipBrush = CreateSolidBrush(theme.highlightChipBg);
+                SelectObject(memDC, chipBrush);
+                HPEN chipPen = CreatePen(PS_NULL, 0, 0);
+                SelectObject(memDC, chipPen);
+                RoundRect(memDC, item.chipRect.left, item.chipRect.top,
+                          item.chipRect.right, item.chipRect.bottom,
+                          scale(6, dpi), scale(6, dpi));
+                DeleteObject(chipBrush);
+                DeleteObject(chipPen);
+
+                // 数字：白色
+                SetTextColor(memDC, theme.highlightText);
+                SelectObject(memDC, fontIndex);
+                DrawTextW(memDC, item.indexStr.c_str(), -1, const_cast<RECT*>(&item.chipRect),
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                // 首选文本：白色
+                SetTextColor(memDC, theme.highlightText);
+                SelectObject(memDC, fontNormal);
+                DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            } else {
+                // 次选键帽：外边框 + 内部底色
+                HBRUSH chipBrush = CreateSolidBrush(theme.chipBg);
+                HPEN chipPen = CreatePen(PS_SOLID, 1, theme.chipBorder);
+                SelectObject(memDC, chipBrush);
+                SelectObject(memDC, chipPen);
+                RoundRect(memDC, item.chipRect.left, item.chipRect.top,
+                          item.chipRect.right, item.chipRect.bottom,
+                          scale(6, dpi), scale(6, dpi));
+                DeleteObject(chipBrush);
+                DeleteObject(chipPen);
+
+                // 数字：深色 (深色模式下为白色)
+                SetTextColor(memDC, theme.chipDigit);
+                SelectObject(memDC, fontIndex);
+                DrawTextW(memDC, item.indexStr.c_str(), -1, const_cast<RECT*>(&item.chipRect),
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                // 候选文本：深色 (深色模式下为白色)
+                SetTextColor(memDC, theme.text);
+                SelectObject(memDC, fontNormal);
+                DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
         }
 
-        if (hasPage_) {
-            SetTextColor(memDC, RGB(160, 164, 172));
-            SelectObject(memDC, fontNormal);
-            TextOutW(memDC, pageRect_.left, pageRect_.top, pageStr_.c_str(), static_cast<int>(pageStr_.size()));
+        // 绘制右侧折叠区：垂直分割线 + 翻页箭头 chevron + 页码
+        int divH = h * 55 / 100;
+        int divY = (h - divH) / 2;
+        HPEN divPen = CreatePen(PS_SOLID, 1, theme.divider);
+        SelectObject(memDC, divPen);
+        MoveToEx(memDC, dividerX_, divY, nullptr);
+        LineTo(memDC, dividerX_, divY + divH);
+        DeleteObject(divPen);
+
+        // 翻页箭头
+        int chevX = dividerX_ + (w - dividerX_) / 2;
+        bool hasNext = comp_.page + 1 < comp_.pageCount;
+        bool hasPrev = comp_.page > 0;
+        bool dirDown = hasNext || !hasPrev;
+        int arm = scale(3, dpi);
+        int chevY = (comp_.pageCount > 1) ? (h / 2 - scale(4, dpi)) : (h / 2);
+
+        HPEN chevPen = CreatePen(PS_SOLID, scale(1, dpi) < 2 ? 1 : 2, theme.chevron);
+        SelectObject(memDC, chevPen);
+        if (dirDown) {
+            MoveToEx(memDC, chevX - arm, chevY - scale(2, dpi), nullptr);
+            LineTo(memDC, chevX, chevY + scale(2, dpi));
+            LineTo(memDC, chevX + arm + 1, chevY - scale(2, dpi) - 1);
+        } else {
+            MoveToEx(memDC, chevX - arm, chevY + scale(2, dpi), nullptr);
+            LineTo(memDC, chevX, chevY - scale(2, dpi));
+            LineTo(memDC, chevX + arm + 1, chevY + scale(2, dpi) + 1);
+        }
+        DeleteObject(chevPen);
+
+        // 页码指示（多页时居中显示于 chevron 下方）
+        if (comp_.pageCount > 1) {
+            std::wstring pageStr = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
+            RECT pageRc{ dividerX_, chevY + scale(3, dpi), w, h };
+            SetTextColor(memDC, theme.pageColor);
+            SelectObject(memDC, fontIndex);
+            DrawTextW(memDC, pageStr.c_str(), -1, &pageRc, DT_CENTER | DT_TOP | DT_SINGLELINE);
         }
 
         BitBlt(hdc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
 
         SelectObject(memDC, oldFont);
         DeleteObject(fontNormal);
-        DeleteObject(fontBold);
+        DeleteObject(fontIndex);
+        SelectObject(memDC, oldBrush);
+        DeleteObject(bgBrush);
+        SelectObject(memDC, oldPen);
+        DeleteObject(borderPen);
         SelectObject(memDC, oldBmp);
         DeleteObject(memBmp);
         DeleteDC(memDC);
@@ -417,17 +601,13 @@ private:
 
     HWND hwnd_ = nullptr;
     chaoset::Comp comp_;
+    ChaosetTIP* tip_ = nullptr;
     POINT targetPos_{0, 0};
     int targetLineHeight_ = 20;
 
-    std::wstring preeditWide_;
-    RECT preeditRect_{};
-    int dividerY_ = 0;
-
     std::vector<ItemPos> items_;
-    bool hasPage_ = false;
-    std::wstring pageStr_;
-    RECT pageRect_{};
+    RECT chevronRect_{};
+    int dividerX_ = 0;
 };
 
 // ---- 传输：TCP 回环（与 daemon -tcp 127.0.0.1:7949 配对） ----
@@ -437,10 +617,73 @@ public:
     TcpTransport() {
         WSADATA data{};
         WSAStartup(MAKEWORD(2, 2), &data);
+        parseAddr();
     }
     ~TcpTransport() override {
         closeConn();
         WSACleanup();
+    }
+
+    bool ensureConnected() {
+        if (sock_ != INVALID_SOCKET) return true;
+        DWORD now = GetTickCount();
+        if (now - lastFail_ < 200) return false;  // 快速重试冷却 200ms
+
+        SOCKET s = INVALID_SOCKET;
+
+        // 极速直连路径：IPv4 纯数字地址（如 127.0.0.1）直接使用 sockaddr_in，彻底绕过 GetAddrInfoW 造成的 50-500ms 耗时
+        unsigned long ip = inet_addr(host_.c_str());
+        if (ip != INADDR_NONE) {
+            s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (s != INVALID_SOCKET) {
+                int nodelay = 1;
+                ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
+                DWORD timeout = 500;
+                ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+
+                sockaddr_in sa{};
+                sa.sin_family = AF_INET;
+                sa.sin_port = htons(static_cast<u_short>(port_));
+                sa.sin_addr.s_addr = ip;
+                if (::connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
+                    sock_ = s;
+                    return true;
+                }
+                ::closesocket(s);
+                s = INVALID_SOCKET;
+            }
+        } else {
+            // 域名回退路径（如 localhost 等）
+            addrinfoW hints{};
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_STREAM;
+            addrinfoW* res = nullptr;
+            std::wstring hostW = toWide(host_);
+            std::wstring portW = toWide(std::to_string(port_));
+            if (GetAddrInfoW(hostW.c_str(), portW.c_str(), &hints, &res) == 0) {
+                for (addrinfoW* p = res; p != nullptr; p = p->ai_next) {
+                    s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+                    if (s == INVALID_SOCKET) continue;
+                    int nodelay = 1;
+                    ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
+                    DWORD timeout = 500;
+                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                    if (::connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen)) == 0) break;
+                    ::closesocket(s);
+                    s = INVALID_SOCKET;
+                }
+                FreeAddrInfoW(res);
+            }
+        }
+
+        if (s == INVALID_SOCKET) {
+            lastFail_ = now;
+            return false;
+        }
+        sock_ = s;
+        return true;
     }
 
     bool writeAll(const std::uint8_t* data, std::size_t len) override {
@@ -481,40 +724,26 @@ public:
     }
 
 private:
-    bool ensureConnected() {
-        if (sock_ != INVALID_SOCKET) return true;
-        DWORD now = GetTickCount();
-        if (now - lastFail_ < 1000) return false;  // 失败冷却 1 秒
-        addrinfoW hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfoW* res = nullptr;
-        if (GetAddrInfoW(hostWide_.c_str(), portWide_.c_str(), &hints, &res) != 0) {
-            lastFail_ = now;
-            return false;
+    void parseAddr() {
+        std::string a = envOr("CHAOSET_TCP", kDefaultTcpAddr);
+        auto pos = a.rfind(':');
+        if (pos != std::string::npos) {
+            host_ = a.substr(0, pos);
+            try {
+                port_ = std::stoi(a.substr(pos + 1));
+            } catch (...) {
+                port_ = 7949;
+            }
+        } else {
+            host_ = a;
+            port_ = 7949;
         }
-        SOCKET s = INVALID_SOCKET;
-        for (addrinfoW* p = res; p != nullptr; p = p->ai_next) {
-            s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-            if (s == INVALID_SOCKET) continue;
-            if (::connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen)) == 0) break;
-            ::closesocket(s);
-            s = INVALID_SOCKET;
-        }
-        FreeAddrInfoW(res);
-        if (s == INVALID_SOCKET) {
-            lastFail_ = now;
-            return false;
-        }
-        sock_ = s;
-        return true;
     }
 
     SOCKET sock_ = INVALID_SOCKET;
     DWORD lastFail_ = 0;
-    std::string addr_ = envOr("CHAOSET_TCP", kDefaultTcpAddr);
-    std::wstring hostWide_ = toWide(addr_.substr(0, addr_.rfind(':')));
-    std::wstring portWide_ = toWide(addr_.substr(addr_.rfind(':') + 1));
+    std::string host_ = "127.0.0.1";
+    int port_ = 7949;
 };
 
 // ---- 同步编辑会话：TSF 规定文本操作必须经 RequestEditSession ----
@@ -604,6 +833,8 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
+        // 激活时预热建立 TCP 回环连接，消除首个字母按键冷启动建立连接耗时，彻底杜绝漏首字母
+        transport_.ensureConnected();
         return S_OK;
     }
 
@@ -631,6 +862,9 @@ public:
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
         if (!fForeground) {
             candidateWnd_.hide();
+        } else {
+            // 获得焦点时确保后台连接处于活跃状态
+            transport_.ensureConnected();
         }
         return S_OK;
     }
@@ -685,6 +919,26 @@ public:
         session_.reset();
         comp_ = chaoset::Comp();
         return S_OK;
+    }
+
+    void selectCandidateByIndex(int index) {
+        if (!hasCandidates()) return;
+        ITfContext* ctx = focusContext();
+        std::string committed;
+        if (session_.select(index, &committed)) {
+            commit(ctx, committed);
+        }
+    }
+
+    void flipPage(bool next) {
+        if (!hasCandidates() || comp_.pageCount <= 1) return;
+        ITfContext* ctx = focusContext();
+        comp_ = next ? session_.nextPage() : session_.prevPage();
+        if (!comp_.ok) {
+            endComposition();
+            return;
+        }
+        render(ctx);
     }
 
 private:
@@ -753,9 +1007,17 @@ private:
     bool handleKey(WPARAM vk, ITfContext* pic) {
         // 字母：追加组词
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
-            comp_ = session_.input(std::string(1, static_cast<char>('a' + (vk - kVkFirstLetter))));
+            std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));
+            comp_ = session_.input(ch);
             if (!comp_.ok) {
-                // daemon 不可达：清状态放行，绝不让宿主应用卡住
+                // 若偶发连接断开或冷启动未连上，立即关闭重连并重试一次，绝不轻易泄露首字母到宿主程序
+                transport_.closeConn();
+                if (transport_.ensureConnected()) {
+                    comp_ = session_.input(ch);
+                }
+            }
+            if (!comp_.ok) {
+                // daemon 确实不可达：清状态放行原键，保证宿主应用不卡死
                 endComposition();
                 return false;
             }
@@ -784,6 +1046,12 @@ private:
             if (vk == kVkOemQuotes && isComposing()) {
                 // 组词中的撇号是音节分隔符，走组词流程
                 comp_ = session_.input("'");
+                if (!comp_.ok) {
+                    transport_.closeConn();
+                    if (transport_.ensureConnected()) {
+                        comp_ = session_.input("'");
+                    }
+                }
                 if (!comp_.ok) {
                     endComposition();
                     return false;
@@ -916,7 +1184,7 @@ private:
                 caretLineHeight_ = 20;
             }
         }
-        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_);
+        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
     }
 
     void applyPreedit(ITfContext* ctx, TfEditCookie ec) {
@@ -1037,6 +1305,26 @@ private:
     ITfComposition* composition_ = nullptr;
     std::string committed_;
 };
+
+void CandidateWindow::onLButtonDown(int x, int y) {
+    POINT pt{ x, y };
+    for (const auto& it : items_) {
+        if (PtInRect(&it.itemRect, pt)) {
+            if (tip_ != nullptr) {
+                tip_->selectCandidateByIndex(it.index);
+            }
+            return;
+        }
+    }
+    if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) {
+        if (tip_ != nullptr) {
+            bool hasNext = comp_.page + 1 < comp_.pageCount;
+            bool hasPrev = comp_.page > 0;
+            bool dirDown = hasNext || !hasPrev;
+            tip_->flipPage(dirDown);
+        }
+    }
+}
 
 // ---- 类厂 ----
 

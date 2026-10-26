@@ -267,10 +267,14 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     std::string req = buildRequest(nextID_, method, params);
 
     std::uint32_t len = static_cast<std::uint32_t>(req.size());
-    std::uint8_t header[4] = {
-        static_cast<std::uint8_t>((len >> 24) & 0xFF), static_cast<std::uint8_t>((len >> 16) & 0xFF),
-        static_cast<std::uint8_t>((len >> 8) & 0xFF), static_cast<std::uint8_t>(len & 0xFF)};
-    if (!t_.writeAll(header, 4) || !t_.writeAll(reinterpret_cast<const std::uint8_t*>(req.data()), req.size())) {
+    std::string packet;
+    packet.reserve(4 + req.size());
+    packet.push_back(static_cast<char>((len >> 24) & 0xFF));
+    packet.push_back(static_cast<char>((len >> 16) & 0xFF));
+    packet.push_back(static_cast<char>((len >> 8) & 0xFF));
+    packet.push_back(static_cast<char>(len & 0xFF));
+    packet.append(req);
+    if (!t_.writeAll(reinterpret_cast<const std::uint8_t*>(packet.data()), packet.size())) {
         t_.closeConn();
         return none;
     }

@@ -125,7 +125,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.9; \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst 0.2.10; \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
