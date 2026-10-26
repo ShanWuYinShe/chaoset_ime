@@ -173,7 +173,11 @@ if [ -x build/chaosetd ]; then
   # LaunchAgent（KeepAlive）会自动拉起新版本；未配置自启时手动启动即可：
   #   "$SUPPORT/chaosetd" -socket "$SUPPORT/chaoset.sock" \
   #     -dict "$SUPPORT/dict.tsv" -userdict "$SUPPORT/userdict.json"
-  killall chaosetd 2>/dev/null || true
+  if launchctl list ime.chaoset.daemon >/dev/null 2>&1; then
+    launchctl kickstart -k "gui/$(id -u)/ime.chaoset.daemon" 2>/dev/null || killall chaosetd 2>/dev/null || true
+  else
+    killall chaosetd 2>/dev/null || true
+  fi
   echo "已部署 daemon: $SUPPORT/chaosetd（旧版备份为 chaosetd.prev）"
 else
   echo "（未找到 build/chaosetd，跳过 daemon 部署）"

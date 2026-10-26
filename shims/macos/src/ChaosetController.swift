@@ -334,7 +334,7 @@ final class ChaosetController: IMKInputController {
 
     private func exitAssociate() {
         associateCandidates = nil
-        exitAssociate()
+        Self.hideCandidatePanel()
     }
 
     /// 展示联想候选（数据源为续接词组而非组词状态）。
