@@ -115,14 +115,40 @@ func main() {
 	// install.bat 传 %LOCALAPPDATA%、daemon 默认 chaoset-userdict.json）。
 	// 显式传 -userdict= 空值（带等号）才表示真正关闭落盘。
 	userPath := flag.String("userdict", defaultUserDictPath(), "用户词典路径（默认 XDG 数据目录；显式传空串则不落盘）")
-	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
-	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
-	sp := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）；空关闭（键位表见 engine/double_pinyin.go）")
+	// 这三项在发行包里靠配置文件生效（见 config.go）：ibus 按 component XML
+	// 拉起引擎时只传 --ibus，flag 永远不会被传，此前等于功能不可达。
+	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（也可在 ~/.config/chaoset/config.json 配 fuzzy）")
+	trad := flag.Bool("traditional", false, "候选输出繁体（也可在 config.json 配 traditional）")
+	sp := flag.String("shuangpin", "", "双拼方案：zrm/mspy/flypy（也可在 config.json 配 shuangpin）")
+	cfgPath := flag.String("config", defaultConfigPath(), "配置文件路径（默认 XDG 配置目录）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag(resolveDefaultDicts())
 	}
 	_ = *ibusFlag
+
+	// 合并用户配置：flag 显式传值时优先，否则用配置文件。
+	// flag.Visit 只遍历「命令行实际出现过」的 flag，正是我们要的语义。
+	cfg, cfgErr := loadUserConfig(*cfgPath)
+	if cfgErr != nil {
+		// 配置坏了不能静默——用户会以为设置生效了。但也不该让引擎起不来
+		// （那样 ibus 里就完全打不出字），所以记录并继续用默认值。
+		log.Printf("⚠ %v（已忽略，使用默认配置）", cfgErr)
+	}
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	if !setFlags["fuzzy"] {
+		*fuzzy = cfg.Fuzzy
+	}
+	if !setFlags["traditional"] {
+		*trad = cfg.Traditional
+	}
+	if !setFlags["shuangpin"] {
+		*sp = cfg.Shuangpin
+	}
+	if *fuzzy || *trad || *sp != "" {
+		log.Printf("配置生效：模糊音=%v 繁体=%v 双拼=%q", *fuzzy, *trad, *sp)
+	}
 
 	log.Printf("加载词库: %s", strings.Join(dicts, ", "))
 	dict, err := engine.LoadDictFiles(dicts)

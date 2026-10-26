@@ -85,6 +85,13 @@ func isShiftKeyval(keyval uint32) bool {
 	return keyval == keysymShiftLeft || keyval == keysymShiftRight
 }
 
+// reset 丢弃当前的空按跟踪状态。
+// 用于焦点切换：上一个窗口按了一半的 Shift 不应带到新窗口里被判成空按。
+func (t *shiftTracker) reset() {
+	t.shiftDown = 0
+	t.sinceShift = false
+}
+
 // feed 处理一次按键事件（含按下与释放），返回该事件是否为
 // 「Shift 空按释放」——即应触发中英切换。两颗 Shift 同时按住时，
 // 松开其中一颗不触发，全部松开才判定。
@@ -381,20 +388,29 @@ type ibusLookupTable struct {
 	Labels        godbus.Variant
 }
 
-// ibusPageSize 与引擎的每页候选数一致（engine 内部常量 pageSize）。
-const ibusPageSize = 9
+// ibusPageSize 直接取引擎导出的每页容量，**不要再写死一个数字**。
+//
+// 2026-10-26 审查发现：这里曾写死 9 并注释「与引擎一致」，而引擎早在
+// 2026-10-25 就把 pageSize 从 9 改成了 6。IBusLookupTable.page_size 是面板
+// 布局与「还有没有下一页」的判断依据，声明 9 而实际只给 6 项会让面板末尾
+// 留空、翻页按钮状态错乱。两份真相必然漂移，改为单一来源。
+var ibusPageSize = engine.PageSize()
 
 func newIBusLookupTable(comp engine.Composition) ibusLookupTable {
 	cands := make([]godbus.Variant, 0, len(comp.Candidates))
 	labels := make([]godbus.Variant, 0, len(comp.Candidates))
 	for i, c := range comp.Candidates {
 		cands = append(cands, godbus.MakeVariant(newIBusText(c.Text)))
-		labels = append(labels, godbus.MakeVariant(newIBusText(fmt.Sprintf("%d.", (i+1)%10))))
+		// 序号 1..N，不做 %10 回绕：第 10 项会显示成 "0."，而 ProcessKeyEvent
+		// 只认数字键 1-9、ibus 面板也不认 0 —— 那一项将永远选不到
+		// （2026-10-26 审查发现）。当前 pageSize=6 触发不到，但只要页容量
+		// 调到 >9 就会暴露，这里直接按真实序号生成。
+		labels = append(labels, godbus.MakeVariant(newIBusText(fmt.Sprintf("%d.", i+1))))
 	}
 	return ibusLookupTable{
 		TypeName:      "IBusLookupTable",
 		Attachments:   map[string]godbus.Variant{},
-		PageSize:      ibusPageSize,
+		PageSize:      uint32(ibusPageSize),
 		CursorPos:     0, // 首选高亮
 		CursorVisible: true,
 		Round:         false,
@@ -432,14 +448,47 @@ func (e *ibusEngine) commit(text string) {
 	e.hideLookupTable()
 }
 
-// ---- 其余 Engine 方法：v0 为无操作，保持接口完整 ----
+// ---- Engine 生命周期方法 ----
 
-func (e *ibusEngine) Enable() *godbus.Error   { return nil }
-func (e *ibusEngine) Disable() *godbus.Error  { return nil }
-func (e *ibusEngine) FocusIn() *godbus.Error  { return nil }
-func (e *ibusEngine) FocusOut() *godbus.Error { return nil }
-func (e *ibusEngine) Reset() *godbus.Error {
+func (e *ibusEngine) Enable() *godbus.Error  { return nil }
+func (e *ibusEngine) Disable() *godbus.Error { return nil }
+
+// FocusIn：输入上下文获得焦点。
+//
+// 必须重置 shift 空按跟踪：否则在上一个窗口按了一半的 Shift 会带到这里，
+// 跨窗口误判成「空按切换中英」（2026-10-26 审查发现此前是空实现）。
+func (e *ibusEngine) FocusIn() *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shift.reset()
+	return nil
+}
+
+// FocusOut：输入上下文失去焦点。
+//
+// 必须清空组词并收起预编辑与候选面板：否则在 A 窗口打了 nihao 没上屏、
+// 切到 B 窗口后，组词状态仍残留（下次击键会接着 A 的内容继续组），而
+// 候选面板还可能挂在 B 窗口上显示 A 的候选（2026-10-26 审查发现此前是空实现）。
+// 中英模式（enMode）**不清**：那属于用户输入习惯，不该随窗口切换改变。
+func (e *ibusEngine) FocusOut() *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.sess.Reset()
+	e.shift.reset()
+	e.hidePreedit()
+	e.hideLookupTable()
+	return nil
+}
+
+// Reset：ibus 要求重置输入状态（如按 Esc 或切换上下文时）。
+// 清空组词**并收起面板**——此前只清 session、不发隐藏信号，面板会显示
+// 过期候选直到下一次按键。
+func (e *ibusEngine) Reset() *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.sess.Reset()
+	e.hidePreedit()
+	e.hideLookupTable()
 	return nil
 }
 func (e *ibusEngine) SetCursorLocation(x, y, w, h int32) *godbus.Error { return nil }

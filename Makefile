@@ -91,6 +91,19 @@ package-macos:
 		lipo -info "$$bin" 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
 			|| { echo "错误：$$bin 不是 universal 二进制："; lipo -info "$$bin" 2>&1; exit 1; }; \
 	done
+	@# 随包工具也必须 universal：chaoset-import 曾因裸 go build 只出 arm64，
+	@# Intel 用户点「导入词库」直接 Bad CPU type（2026-10-26 修复）。
+	@# 这些二进制在 Setup.app 里各有一份副本，要连同副本一起查。
+	@for b in shims/macos/build/chaosetd shims/macos/build/tis \
+	           shims/macos/build/smoke shims/macos/build/chaoset-import \
+	           shims/macos/build/ChaosetSetup.app/Contents/Resources/chaosetd \
+	           shims/macos/build/ChaosetSetup.app/Contents/Resources/tis \
+	           shims/macos/build/ChaosetSetup.app/Contents/Resources/smoke \
+	           shims/macos/build/ChaosetSetup.app/Contents/Resources/chaoset-import; do \
+		lipo -info "$$b" 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
+			|| { echo "错误：$$b 不是 universal："; lipo -info "$$b" 2>&1; exit 1; }; \
+	done
+	@echo "✓ 全部二进制 universal（主壳 + 安装器 + 四个随包工具及其副本）"
 	mkdir -p dist
 	(cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
 	@if command -v hdiutil >/dev/null 2>&1; then \

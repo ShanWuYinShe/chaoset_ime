@@ -88,6 +88,11 @@ constexpr DWORD kVkOemMinus = 0xBD;          // '-'
 
  volatile LONG g_liveObjects = 0;
 
+// 当前存活的候选窗口数量。用于 DllCanUnloadNow —— 候选窗的窗口过程指向
+// 本 DLL 内的代码，只要还开着窗口就不能让宿主 FreeLibrary（否则下一次
+// WM_PAINT 会跳到已卸载内存，崩掉 explorer / TextInputHost）。
+ volatile LONG g_liveCandidateWindows = 0;
+
 std::string envOr(const char* name, const std::string& fallback) {
     char buf[256] = {0};
     DWORD n = GetEnvironmentVariableA(name, buf, sizeof(buf));
@@ -228,7 +233,11 @@ public:
         if (hwnd_ != nullptr && IsWindow(hwnd_)) {
             DestroyWindow(hwnd_);
             hwnd_ = nullptr;
+            // 窗口过程已失效，此时才允许 DLL 被卸载（见 DllCanUnloadNow）
+            InterlockedDecrement(&g_liveCandidateWindows);
         }
+        // 清掉裸指针，避免窗口已销毁却仍被引用（审查指出的悬垂风险）
+        tip_ = nullptr;
     }
 
     void onLButtonDown(int x, int y);
@@ -293,6 +302,8 @@ private:
         );
         if (hwnd_ != nullptr) {
             SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+            // 窗口过程现在指向本 DLL 的代码：只要它还活着，DLL 就不能被卸载
+            InterlockedIncrement(&g_liveCandidateWindows);
         }
     }
 
@@ -1542,7 +1553,16 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
 }
 
 STDAPI DllCanUnloadNow() {
-    return g_liveObjects == 0 ? S_OK : S_FALSE;  // 常驻：S_FALSE 最安全
+    // 必须同时考虑 TIP 实例与候选窗口：
+    //
+    // 2026-10-26 审查指出的崩溃隐患——g_liveObjects 只统计 ChaosetTIP，
+    // 但候选窗是懒创建的 HWND，其窗口过程（CandidateWndProc）指向本 DLL 里的
+    // 代码。若窗口还开着而 TIP 已全部释放，计数归零 → 宿主 FreeLibrary →
+    // 窗口过程变成已卸载内存的函数指针，下一次 WM_PAINT 直接崩 explorer /
+    // TextInputHost。因此有残留窗口时也返回 S_FALSE（不可卸载）。
+    if (g_liveObjects != 0) return S_FALSE;
+    if (g_liveCandidateWindows != 0) return S_FALSE;
+    return S_OK;
 }
 
 static std::string dllPath() {
