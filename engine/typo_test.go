@@ -34,6 +34,39 @@ func TestTypoCorrectionFixesCommonMistakes(t *testing.T) {
 	}
 }
 
+// QWERTY 键盘物理邻近键手误修正测试：手指按偏敲到相邻按键时，
+// 优先推测相邻键形成的合法音节，且邻近键修正结果应优先于跨键区的远端巧合高频词。
+func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	cases := []struct{ input, want string }{
+		{"yishrng", "一声"},  // e->r 邻近键：一声/医生 优先于跨键区的「以上」(r->a)
+		{"diannap", "电脑"},  // o->p 邻近键：电脑
+		{"zhonh", "中"},     // g->h 邻近键：中
+		{"beijinf", "北京"},  // g->f 邻近键：北京
+		{"womrn", "我们"},    // e->r 邻近键：我们
+		{"guabxi", "关系"},   // n->b 邻近键：关系
+		{"shebme", "什么"},   // n->b 邻近键：什么
+		{"zhsopian", "照片"}, // a->s 邻近键：照片
+		{"ksishui", "开水"},  // a->s 邻近键：开水
+		{"husnying", "欢迎"}, // a->s 邻近键：欢迎
+		{"fspiao", "发票"},   // a->s 邻近键：发票
+	}
+	for _, c := range cases {
+		s.Reset()
+		comp, err := s.Input(c.input)
+		if err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		if len(comp.Candidates) == 0 {
+			t.Errorf("%s: 应有候选（期望「%s」）", c.input, c.want)
+			continue
+		}
+		if got := comp.Candidates[0].Text; got != c.want {
+			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
+		}
+	}
+}
+
 // 关键的反向约束：错拼修正**绝不能**污染正常输入。
 //
 // 合法简拼（zg / bj / cs）、合法混拼（zhongg / womd / chifanl）与手误

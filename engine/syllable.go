@@ -192,33 +192,75 @@ func hasCleanSyllableSplit(chunk string) bool {
 	return ok[len(chunk)]
 }
 
+// qwertyNeighbors 记录 QWERTY 键盘上每个字母物理按键的几何相邻键（按物理中心距由近及远排序）。
+// 用于在敲错键时，优先推测距离手滑落点最近的邻近按键。
+var qwertyNeighbors = [26][]byte{
+	'a' - 'a': {'s', 'q', 'z', 'w'},
+	'b' - 'a': {'n', 'v', 'g', 'h'},
+	'c' - 'a': {'v', 'x', 'd', 'f'},
+	'd' - 'a': {'f', 's', 'e', 'c', 'x', 'r'},
+	'e' - 'a': {'r', 'w', 'd', 's'},
+	'f' - 'a': {'d', 'g', 'r', 'c', 'v', 't'},
+	'g' - 'a': {'f', 'h', 't', 'b', 'v', 'y'},
+	'h' - 'a': {'g', 'j', 'y', 'b', 'n', 'u'},
+	'i' - 'a': {'o', 'u', 'k', 'j'},
+	'j' - 'a': {'h', 'k', 'u', 'm', 'n', 'i'},
+	'k' - 'a': {'j', 'l', 'i', 'm', 'o'},
+	'l' - 'a': {'k', 'o', 'p'},
+	'm' - 'a': {'n', 'j', 'k'},
+	'n' - 'a': {'b', 'm', 'h', 'j'},
+	'o' - 'a': {'i', 'p', 'l', 'k'},
+	'p' - 'a': {'o', 'l'},
+	'q' - 'a': {'w', 'a'},
+	'r' - 'a': {'e', 't', 'f', 'd'},
+	's' - 'a': {'a', 'd', 'w', 'x', 'z', 'e'},
+	't' - 'a': {'r', 'y', 'g', 'f'},
+	'u' - 'a': {'i', 'y', 'j', 'h'},
+	'v' - 'a': {'b', 'c', 'f', 'g'},
+	'w' - 'a': {'e', 'q', 's', 'a'},
+	'x' - 'a': {'c', 'z', 'd', 's'},
+	'y' - 'a': {'t', 'u', 'h', 'g'},
+	'z' - 'a': {'x', 'a', 's'},
+}
+
+func isQWERTYNeighbor(a, b byte) bool {
+	if a < 'a' || a > 'z' || b < 'a' || b > 'z' {
+		return false
+	}
+	for _, n := range qwertyNeighbors[a-'a'] {
+		if n == b {
+			return true
+		}
+	}
+	return false
+}
+
+// typoCorrection 包含修正后的拼音串及其是否属于高置信度物理手误（转置、删除、QWERTY 邻近替换）。
+type typoCorrection struct {
+	text   string
+	isNear bool
+}
+
 // typoCorrections 生成 input 的「单次编辑」修正候选（只生成能完整切分成
-// 合法音节的那些串），按编辑类型与字典序稳定输出。
+// 合法音节的那些串），按编辑类型与置信度稳定输出。
 //
-// 覆盖四类最常见的手误（实测 12 个典型错拼有 10 个属于这四类）：
+// 覆盖五类最常见的手误：
 //   - transpose：相邻两字母颠倒（zhogn → zhong，手速快时的经典错误）
 //   - delete：多敲了一个字母（zhonng / niihao → zhong / nihao）
+//   - substitute-near：QWERTY 邻近键敲错（yishrng → yisheng, diannap → diannao, womrn → women）
 //   - insert：漏敲了一个字母（zhonguo → zhongguo）
-//   - substitute：敲错了一个键（nihap / nihso → nihao）
-//
-// 生成量级：输入长度 n 时约 n(转置) + n(删除) + 26n(插入) + 25n(替换) 个串，
-// 再逐个做「能否切分」校验（O(n·6)），单键输入成本在微秒级。
-// 调用方只应在原输入无法切分时才调用，避免正常输入白付这份开销。
-func typoCorrections(input string, maxResults int) []string {
+//   - substitute-far：非邻近键替换兜底
+func typoCorrections(input string, maxResults int) []typoCorrection {
 	if input == "" {
 		return nil
 	}
 	if maxResults <= 0 {
-		maxResults = 24
+		maxResults = 32
 	}
 	seen := make(map[string]bool, maxResults*4)
-	var out []string
-	// 过滤条件用「能否切成纯完整音节」，而不是 misspelledFromPatterns：
-	// 后者内部还要做一次完整切分（含简拼路径枚举），而这里要过滤的候选
-	// 数量是 maxResults 的数十倍，用重判据会把单键延迟推到毫秒级
-	// （实测曾达 25ms）。修正串的正确形态就是「合法音节序列」，
-	// 用纯音节 DP 校验既便宜又精确。
-	add := func(cand string) {
+	var out []typoCorrection
+
+	add := func(cand string, isNear bool) {
 		if len(out) >= maxResults || seen[cand] {
 			return
 		}
@@ -226,7 +268,7 @@ func typoCorrections(input string, maxResults int) []string {
 			return
 		}
 		seen[cand] = true
-		out = append(out, cand)
+		out = append(out, typoCorrection{text: cand, isNear: isNear})
 	}
 	r := []byte(input)
 	n := len(r)
@@ -238,13 +280,26 @@ func typoCorrections(input string, maxResults int) []string {
 		}
 		c := append([]byte(nil), r...)
 		c[i], c[i+1] = c[i+1], c[i]
-		add(string(c))
+		add(string(c), true)
 	}
-	// 2) 删除一个字母（多敲）
+	// 2) 删除一个字母（多敲或连带误触）
 	for i := 0; i < n; i++ {
-		add(string(r[:i]) + string(r[i+1:]))
+		add(string(r[:i])+string(r[i+1:]), true)
 	}
-	// 3) 插入一个字母（漏敲）。
+	// 3) QWERTY 键盘邻近键替换：手指物理按偏（单字敲错中最符合人类生物力学的错误）。
+	// 优先级必须高于全键盘 26 字母任意插入/远端替换，避免有限配额（maxResults）被无关联字母耗尽。
+	for i := 0; i < n; i++ {
+		orig := r[i]
+		if orig < 'a' || orig > 'z' {
+			continue
+		}
+		for _, nb := range qwertyNeighbors[orig-'a'] {
+			c := append([]byte(nil), r...)
+			c[i] = nb
+			add(string(c), true)
+		}
+	}
+	// 4) 插入一个字母（漏敲）。
 	//
 	// 遍历顺序很关键：名额有限（maxResults），若按「位置在外、字母在内」
 	// 遍历，位置 0 的 26 个插入就会吃光全部名额，末位置的补全（zhonguo
@@ -252,19 +307,19 @@ func typoCorrections(input string, maxResults int) []string {
 	// 每个位置的候选都能分到名额。
 	for ch := byte('a'); ch <= 'z'; ch++ {
 		for i := 0; i <= n; i++ {
-			add(string(r[:i]) + string(ch) + string(r[i:]))
+			add(string(r[:i])+string(ch)+string(r[i:]), true)
 		}
 	}
-	// 4) 替换一个字母（敲错键），同样按字母交错。
+	// 5) 远端非邻近键替换（敲错远端键），同样按字母交错。
 	for ci := 0; ci < 26; ci++ {
 		ch := byte('a' + ci)
 		for i := 0; i < n; i++ {
-			if r[i] == ch {
+			if r[i] == ch || isQWERTYNeighbor(r[i], ch) {
 				continue
 			}
 			c := append([]byte(nil), r...)
 			c[i] = ch
-			add(string(c))
+			add(string(c), false)
 		}
 	}
 	return out

@@ -713,6 +713,12 @@ const typoMaxQueries = 32
 // mixed 首选率从 34.32% 掉到 20.75%）。
 const typoPromoteRatio = 2
 
+// nonAdjacentTypoPenalty 是对远端非邻近键替换纠错候选的降权分值。
+// 键盘输入错按物理相邻键（如 p->o, r->e）属于高置信度物理手误，保留原词频；
+// 跨键区的非邻近替换（如 r->a）置信度显著更低，扣除该分值以防止巧合高频词
+// 反客为主（如 yishrng 纠错时「以上」反压「一声/医生」）。
+const nonAdjacentTypoPenalty = 15
+
 // continuationPenalty 是续接候选每多补一个字符的得分折价。
 //
 // 量纲说明：静态词频区间是 1..99，「每补 1 个字符扣 30 分」等价于
@@ -1067,7 +1073,8 @@ func (s *Session) compose() Composition {
 	if len(tokenPatterns) > 0 {
 		inputSegs = len(tokenPatterns[0])
 	}
-	typoAdded := map[string]bool{}
+	typoAdded := make(map[string]bool)
+	typoIsNear := make(map[string]bool)
 	if typoSuspicious || midSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
@@ -1076,12 +1083,16 @@ func (s *Session) compose() Composition {
 		if len(fixes) > typoMaxQueries {
 			fixes = fixes[:typoMaxQueries]
 		}
-		for _, fixed := range fixes {
-			patterns := enumerateAllTokens(strings.Split(fixed, "'"))
+		for _, fix := range fixes {
+			patterns := enumerateAllTokens(strings.Split(fix.text, "'"))
 			if len(patterns) == 0 {
 				continue
 			}
 			qp := patterns[0]
+			penalty := 0
+			if !fix.isNear {
+				penalty = nonAdjacentTypoPenalty
+			}
 			exacts, _ := s.dict.QueryTokens(qp, 8)
 			for _, e := range exacts {
 				key := userKey(e.Word, e.Syllables)
@@ -1089,11 +1100,16 @@ func (s *Session) compose() Composition {
 					continue
 				}
 				typoAdded[key] = true
+				typoIsNear[key] = fix.isNear
 				boost := 0
 				if s.user != nil {
 					boost = s.user.Score(e.Word, e.Syllables, s.prev)
 				}
-				addCandidate(e, e.Freq+boost, boost > 0, rankTypoFix)
+				score := e.Freq + boost - penalty
+				if score < 1 {
+					score = 1
+				}
+				addCandidate(e, score, boost > 0, rankTypoFix)
 			}
 			if s.user != nil {
 				uExacts, _ := s.user.QueryTokens(qp, 4)
@@ -1103,7 +1119,12 @@ func (s *Session) compose() Composition {
 						continue
 					}
 					typoAdded[key] = true
-					addCandidate(e, e.Freq, true, rankTypoFix)
+					typoIsNear[key] = fix.isNear
+					score := e.Freq - penalty
+					if score < 1 {
+						score = 1
+					}
+					addCandidate(e, score, true, rankTypoFix)
 				}
 			}
 		}
@@ -1317,7 +1338,8 @@ func (s *Session) compose() Composition {
 		}
 		bestTypoFreq := 0
 		for i := range items {
-			if typoAdded[typoKey(items[i].cand)] && items[i].cand.Score > bestTypoFreq {
+			k := typoKey(items[i].cand)
+			if typoAdded[k] && typoIsNear[k] && items[i].cand.Score > bestTypoFreq {
 				bestTypoFreq = items[i].cand.Score
 			}
 		}
@@ -1351,12 +1373,14 @@ func (s *Session) compose() Composition {
 		}
 		if bestTypoFreq > 0 && (!hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
 			for i := range items {
-				if typoAdded[typoKey(items[i].cand)] {
+				k := typoKey(items[i].cand)
+				if typoAdded[k] && typoIsNear[k] {
 					items[i].rank = rankExact
 				}
 			}
 		}
 	}
+
 	//   ④ 简拼低频单字 vs 高频整句权衡：当简拼命中极低频词（Freq<20，如 wmd 命中「无目的」）
 	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
 	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
