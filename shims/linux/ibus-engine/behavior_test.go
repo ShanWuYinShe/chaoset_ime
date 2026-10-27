@@ -287,3 +287,100 @@ func TestFocusInResetsShiftTracker(t *testing.T) {
 			e.shift.shiftDown, e.shift.sinceShift)
 	}
 }
+
+// ---- 2026-10-27 三端交互一致性修复（对齐 macOS 壳行为）----
+
+// TestShiftReleaseNotConsumed：Shift 空按切换中英后，释放事件必须放行。
+// 应用已收到 Shift 按下，吞掉释放会让依赖修饰键状态机的应用
+// （Shift+点击范围选择等）认为 Shift 一直按着。
+func TestShiftReleaseNotConsumed(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.ProcessKeyEvent(keysymShiftLeft, 50, 0) // press
+	handled, _ := e.ProcessKeyEvent(keysymShiftLeft, 50, ibusReleaseMask)
+	if handled {
+		t.Fatal("Shift 空按释放不应被消费（宿主应用需要完整的按下/释放对）")
+	}
+	if !e.enMode {
+		t.Fatal("Shift 空按应已切换到英文模式")
+	}
+}
+
+// TestSpaceCommitsRawWithoutCandidates：残缺组词按空格——顶屏原始拼音并
+// 消费空格。此前直接放行：裸空格进文档、看不见的活组词继续挂着（与
+// 回车分支行为分裂，macOS 2026-10-25 实机反馈的同族问题）。
+func TestSpaceCommitsRawWithoutCandidates(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "zzz")
+	if hasCandidates(e.sess) {
+		t.Skip("该词库下 zzz 有候选，用例前提不成立")
+	}
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if !handled {
+		t.Fatal("组词中空格应被消费（裸空格不应漏进文档）")
+	}
+	if got := fe.lastCommitText(); got != "zzz" {
+		t.Fatalf("残缺组词按空格应顶屏原始拼音 zzz，实际 %q", got)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("空格后组词应清空，实际 %q", got)
+	}
+}
+
+// TestOutOfRangeDigitKeepsComposition：越界数字（超出本页候选数）不消费、
+// 组词保持原样。此前隐藏预编辑/候选表但 session 仍在组词——拼音从屏幕
+// 消失、数字漏进文档，下一次击键组词又「复活」。
+func TestOutOfRangeDigitKeepsComposition(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "ni")
+	if len(e.sess.Compose().Candidates) == 0 {
+		t.Fatal("前置条件失败：ni 应有候选")
+	}
+	before := fe.count("CommitText")
+	handled, _ := e.ProcessKeyEvent(uint32('9'), 0, 0)
+	if handled {
+		t.Fatal("越界数字不应被消费（应原样进文档）")
+	}
+	if got := fe.count("CommitText"); got != before {
+		t.Fatalf("越界数字不应上屏，CommitText 前后 %d→%d", before, got)
+	}
+	if got := e.sess.Compose().Input; got != "ni" {
+		t.Fatalf("越界数字后组词应保持原样，实际 %q", got)
+	}
+	_, visible := fe.lastPreedit()
+	if !visible {
+		t.Fatal("越界数字后预编辑应保持可见（此前被隐藏，用户以为输入被取消）")
+	}
+}
+
+// TestKeypadDigitSelectsCandidate：小键盘 KP_1..KP_9 同样选候选（此前
+// 完全未处理，数字漏进文档并叠加组词不清）。
+func TestKeypadDigitSelectsCandidate(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	handled, _ := e.ProcessKeyEvent(keysymKP1, 0, 0) // KP_1
+	if !handled {
+		t.Fatal("KP_1 应被消费")
+	}
+	if got := fe.lastCommitText(); got != "你好" {
+		t.Fatalf("KP_1 应选首选「你好」，实际 %q", got)
+	}
+}
+
+// TestUnhandledKeyClearsComposition：组词中按未处理的键（方向键等）——
+// 先清空组词再放行。此前直接放行：字符进文档的同时预编辑挂在原地，
+// 光标移走后预编辑与实文脱节。
+func TestUnhandledKeyClearsComposition(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "ni")
+	before := fe.count("CommitText")
+	handled, _ := e.ProcessKeyEvent(0xFF51, 0, 0) // Left
+	if handled {
+		t.Fatal("方向键应放行给宿主应用")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("放行后组词应清空，实际 %q", got)
+	}
+	if got := fe.count("CommitText"); got != before {
+		t.Fatalf("不应误触上屏，CommitText 前后 %d→%d", before, got)
+	}
+}

@@ -75,7 +75,8 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | 后台服务完全静默（GUI Subsystem，零黑框，零控制台窗口常驻） | 已实现（编译级） |
 | `-` / `=` / `[` / `]` / PageUp / PageDown 候选翻页 | 已实现（核心行为级） |
 | Shift 空按切换中英（英文模式全放行；跟踪在按键事件层完成） | 已实现（编译级） |
-| Shift+空格切换全角/半角标点（GetKeyState 查 Shift 状态） | 已实现（编译级） |
+| Shift+空格切换全角/半角标点（非组词状态也可切；GetKeyState 查 Shift 状态） | 已实现（编译级） |
+| Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 
 ## 图标与设置界面
@@ -93,8 +94,10 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
-- 中文标点按 US 布局 OEM 虚键直映（`,` `.` `;` `[` `]` `\` `'`，已接
-  core 行为测试）；shift 组合标点（`?` `!` `:` `"` `《》` 等）需字符级
-  识别（ToAscii），待真机联调时接入。
+- 中文标点按 US 布局**字符级映射**（含 Shift 变体：`,` `.` `;` `[` `]` `\` `'`
+  与 Shift 产生的 `:` `<` `>` `?` `~` `!` `^` `(` `)` `"`，已对齐 macOS/ibus
+  壳与 daemon 的字符集；2026-10-27 前 Shift 组合全部错映射、十个中文标点
+  不可达，已修）。仅覆盖 US 键盘布局；其它布局（如德法 AZERTY 的 OEM 键位
+  不同）待真机按需接 ToAscii。
 - `GUID_TFCAT_CATEGORY_OF_TIP` 的值不在 mingw uuid 库中，注册分类暂只
   登记键盘类；注册完备性待真机确认（`regsvr32` 报错与否即可判断）。

@@ -85,6 +85,8 @@ constexpr DWORD kVkOemCloseBrackets = 0xDD;  // ']'
 constexpr DWORD kVkOemQuotes = 0xDE;         // '\''
 constexpr DWORD kVkOemPlus = 0xBB;           // '='（US 布局；shift 为 '+'）
 constexpr DWORD kVkOemMinus = 0xBD;          // '-'
+constexpr DWORD kVkOem2 = 0xBF;              // '/'（US 布局；shift 为 '?'）
+constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'）
 
  volatile LONG g_liveObjects = 0;
 
@@ -1094,9 +1096,31 @@ private:
         }
     }
 
-    // OEM 虚键 → 标点字符（与 engine.IsPunctKey 的直映子集对应；
-    // shift+键产生的 ？!: 等需字符级识别，待真机联调时接 ToAscii）
-    static const char* oemPunctChar(WPARAM vk) {
+    // 按键 → 产生的 ASCII 字符（US 布局直映，含 Shift 变体），只返回
+    // engine.IsPunctKey 字符集内的成员，nullptr 表示「不是标点，放行」。
+    //
+    // 判定必须是**字符级**而非 VK 级：Shift+; 产生的字符是 ':'、Shift+/
+    // 是 '?'——此前纯 VK 直映不看 Shift，导致 Shift+; 出「；」而不是「：」、
+    // Shift+, 出「，」而不是「《」，且 ？！：《》"" 等十个中文标点完全不可达
+    // （2026-10-27 审查发现；macOS/ibus 壳按字符判定，此处对齐）。
+    // Shift 变体不在字符集的键（如 Shift+2 → @、Shift+[ → {）返回 nullptr，
+    // 原字符透传给宿主，与 mac 的 passThrough 行为一致。
+    static const char* keyPunctChar(WPARAM vk, bool shift) {
+        if (shift) {
+            switch (vk) {
+                case kVkFirstDigit: return "!";          // Shift+1
+                case '6': return "^";
+                case '9': return "(";
+                case '0': return ")";
+                case kVkOemSemicolon: return ":";
+                case kVkOemComma: return "<";
+                case kVkOemPeriod: return ">";
+                case kVkOem2: return "?";
+                case kVkOem3: return "~";
+                case kVkOemQuotes: return "\"";          // 开闭引号配对在 daemon
+            }
+            return nullptr;
+        }
         switch (vk) {
             case kVkOemComma: return ",";
             case kVkOemPeriod: return ".";
@@ -1107,6 +1131,11 @@ private:
             case kVkOemQuotes: return "'";
         }
         return nullptr;
+    }
+
+    // Shift/CapsLock 有效：字母按大写、数字/OEM 键按 Shift 变体处理
+    static bool shiftActive() {
+        return (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
     }
 
     static bool isModifierKey(WPARAM vk) {
@@ -1143,15 +1172,21 @@ private:
             }
         }
 
-        if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
-        const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
+        // Shift+字母（大写英文，含 CapsLock）：放行给宿主，不进组词
+        if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return !shiftActive();
+        // 翻页键不带 Shift（Shift 变体 _ + { } 与 mac 一致放行原字符）
+        const bool isPageKey = !shiftActive() &&
+                               (vk == kVkOemMinus || vk == kVkOemPlus ||
                                 vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
                                 vk == kVkPrior || vk == kVkNext);
         if (isPageKey && isComposing()) return hasCandidates();
-        if (oemPunctChar(vk) != nullptr) return true;
+        if (keyPunctChar(vk, shiftActive()) != nullptr) return true;
         if (!isComposing()) return false;
+        // 数字选词只在不带 Shift 且本页确有该序号候选时；Shift+数字产生的
+        // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）
         return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-               (vk >= kVkFirstDigit && vk <= kVkLastDigit);
+               ((vk >= kVkFirstDigit && vk <= kVkLastDigit) && !shiftActive() &&
+                static_cast<int>(vk - kVkFirstDigit) < static_cast<int>(comp_.candidates.size()));
     }
 
     bool handleKey(WPARAM vk, ITfContext* pic) {
@@ -1189,8 +1224,18 @@ private:
             return false;
         }
 
-        // 字母：追加组词
+        // 字母：追加组词。Shift+字母（大写英文，含 CapsLock）不进组词：
+        // 放行原字符，组词中先清空——此前无条件小写化，Shift+A 会变成 a
+        // 混进拼音（mac 壳 isCompositionChar 只认小写，此处对齐）。
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
+            if (shiftActive()) {
+                if (isComposing()) {
+                    session_.reset();
+                    endComposition();
+                    comp_ = chaoset::Comp();
+                }
+                return false;
+            }
             std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));
             comp_ = session_.input(ch);
             if (!comp_.ok) {
@@ -1209,8 +1254,11 @@ private:
             return true;
         }
 
-        // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费；空组词放行原键/出标点）
-        const bool isPageKey = (vk == kVkOemMinus || vk == kVkOemPlus ||
+        // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费；
+        // 空组词放行原键/出标点）。翻页键不带 Shift：Shift 变体 _ + { }
+        // 不是翻页也不是标点，落到末尾清组词放行（对齐 mac 的字符级判定）。
+        const bool isPageKey = !shiftActive() &&
+                               (vk == kVkOemMinus || vk == kVkOemPlus ||
                                 vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
                                 vk == kVkPrior || vk == kVkNext);
         if (isPageKey && isComposing() && hasCandidates()) {
@@ -1224,9 +1272,9 @@ private:
             return true;
         }
 
-        // 标点键（US 布局 OEM 映射）：组词中先上屏首选再出中文标点，
-        // 空组词直接出中文标点；映射规则在 daemon 侧统一完成。
-        if (const char* key = oemPunctChar(vk)) {
+        // 标点键（US 布局字符级映射，含 Shift 变体）：组词中先上屏首选再出
+        // 中文标点，空组词直接出中文标点；映射规则在 daemon 侧统一完成。
+        if (const char* key = keyPunctChar(vk, shiftActive())) {
             if (vk == kVkOemQuotes && isComposing()) {
                 // 组词中的撇号是音节分隔符，走组词流程
                 comp_ = session_.input("'");
@@ -1258,15 +1306,16 @@ private:
             return false;
         }
 
-        if (!isComposing()) return false;
-
-        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；
-        // GetKeyState 查物理 Shift 状态，通信失败时 toggle 返回 false
-        // 仅表示未切到半角，不影响后续按键）
+        // Shift+空格：切换全角/半角标点模式。放在 isComposing 守卫**之前**：
+        // 用户常在开始打字前先切模式，此前放在守卫之后导致空组词时永远
+        // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
+        // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
             session_.toggleHalfWidth();
             return true;
         }
+
+        if (!isComposing()) return false;
 
         if (vk == kVkBackspace) {
             if (GetKeyState(VK_CONTROL) & 0x8000) {
@@ -1295,13 +1344,20 @@ private:
             return true;
         }
 
-        if (vk >= kVkFirstDigit && vk <= kVkLastDigit && hasCandidates()) {
+        // 数字选词：只认不带 Shift 的 1-9，且按**本页实际候选数**判定——
+        // 页面容量是 6，越界数字不消费、落到末尾兜底（清组词后放行原键）。
+        // 此前 select 失败仍 return true：数字凭空消失，既不选词也不进文档
+        // （mac 壳 2026-10-26 已修，此处对齐）。带 Shift 的数字（!@# 等字符）
+        // 不属于选词，同样落到末尾放行。
+        if (vk >= kVkFirstDigit && vk <= kVkLastDigit && !shiftActive()) {
             int index = static_cast<int>(vk - kVkFirstDigit);
-            std::string committed;
-            if (session_.select(index, &committed)) {
-                commit(pic, committed);
+            if (index < static_cast<int>(comp_.candidates.size())) {
+                std::string committed;
+                if (session_.select(index, &committed)) {
+                    commit(pic, committed);
+                }
+                return true;
             }
-            return true;
         }
 
         if (vk == kVkReturn && isComposing()) {
@@ -1311,14 +1367,31 @@ private:
             return true;
         }
 
-        if (vk == kVkSpace && hasCandidates()) {
-            std::string committed;
-            if (session_.select(0, &committed)) {
-                commit(pic, committed);
+        // 空格：组词中一律消费（用户意图永远是「结束组词」，不应有裸空格
+        // 漏进文档）——有候选选首选；残缺组词顶屏原始拼音，与回车等效
+        // （此前要求 hasCandidates，无候选时空格透传进文档，mac 2026-10-25
+        // 实机反馈的同族问题）。Shift+空格已在前面的全半角分支处理。
+        if (vk == kVkSpace) {
+            if (hasCandidates()) {
+                std::string committed;
+                if (session_.select(0, &committed)) {
+                    commit(pic, committed);
+                }
+                return true;
             }
+            std::string raw = comp_.input;
+            session_.reset();
+            commit(pic, raw);
             return true;
         }
 
+        // 不可处理的按键（方向键 / F 键 / 数字 0 / Shift+数字的 @# 等字符）：
+        // 组词中先清空再放行，避免预编辑与实文脱节（对齐 macOS 壳 passThrough）
+        if (isComposing()) {
+            session_.reset();
+            endComposition();
+            comp_ = chaoset::Comp();
+        }
         return false;
     }
 

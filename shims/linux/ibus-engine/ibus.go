@@ -34,6 +34,8 @@ const (
 	keysymSpace     = 0x20
 	keysymPageUp    = 0xFF55
 	keysymPageDown  = 0xFF56
+	keysymKP1       = 0xFFB1 // 小键盘 1..9 连续（KP_1..KP_9）
+	keysymKP9       = 0xFFB9
 
 	// ibus 修饰键掩码（IBUS_MODIFIER_MASK 中的常用位）
 	ibusReleaseMask = 1 << 30
@@ -267,13 +269,17 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Shift 空按释放：切换中英模式（英文模式下丢弃未上屏的组词）
+	// Shift 空按释放：切换中英模式（英文模式下丢弃未上屏的组词）。
+	// 判定切换后仍**放行**该 Shift 释放事件：应用已收到 Shift 按下，
+	// 若吞掉释放，依赖修饰键状态机的应用（如 Shift+点击范围选择）会
+	// 一直认为 Shift 仍按着（对齐 macOS 壳「绝不吞掉宿主应用的按键
+	// 状态机」的铁律，2026-10-27 审查发现）。
 	if e.shift.feed(keyval, state) {
 		e.enMode = !e.enMode
 		e.sess.Reset()
 		e.hidePreedit()
 		e.hideLookupTable()
-		return true, nil
+		return false, nil
 	}
 	// 英文模式：全部放行，组词/选词/标点映射均不介入
 	if e.enMode {
@@ -317,12 +323,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 		return false, nil
 
-	case keyval >= '1' && keyval <= '9':
-		text, err := e.sess.Select(int(keyval - '1'))
+	case (keyval >= '1' && keyval <= '9') || (keyval >= keysymKP1 && keyval <= keysymKP9):
+		// 数字键（主键盘 1-9 与小键盘 KP_1..KP_9）选对应候选。
+		// 每页容量是 6（engine.PageSize），越界数字**不消费**且候选窗保持
+		// 原样：此前越界时隐藏预编辑/候选表但 session 仍在组词——用户刚打
+		// 的拼音从屏幕消失、数字又漏进文档，下一次击键组词又「复活」
+		// （对齐 macOS 壳按实际候选数判定的修复，2026-10-27 审查发现）。
+		idx := int(keyval - '1')
+		if keyval >= keysymKP1 {
+			idx = int(keyval - keysymKP1)
+		}
+		text, err := e.sess.Select(idx)
 		if err != nil {
-			// 无对应候选：不消费，让数字原样上屏
-			e.hidePreedit()
-			e.hideLookupTable()
 			return false, nil
 		}
 		e.commit(text)
@@ -349,16 +361,29 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.sess.ToggleHalfWidth()
 			return true, nil
 		}
-		if !hasCandidates(e.sess) {
-			return false, nil
+		// 组词中空格一律消费（用户意图永远是「结束组词」，不应有裸空格
+		// 漏进文档）：有候选选首选；残缺组词（无候选）顶屏原始拼音，与
+		// 回车分支等效。此前无候选时直接放行——一个多余空格进文档、
+		// 看不见的活组词继续挂着（对齐 macOS 壳 2026-10-25 实机修复）。
+		if !isComposing(e.sess) {
+			return false, nil // 非组词：空格照旧放行
 		}
-		text, err := e.sess.Select(0)
-		if err != nil {
-			e.hidePreedit()
-			e.hideLookupTable()
+		if hasCandidates(e.sess) {
+			text, err := e.sess.Select(0)
+			if err != nil {
+				e.sess.Reset()
+				e.hidePreedit()
+				e.hideLookupTable()
+				return true, nil
+			}
+			e.commit(text)
 			return true, nil
 		}
-		e.commit(text)
+		raw := e.sess.Compose().Input
+		e.sess.Reset()
+		e.hidePreedit()
+		e.hideLookupTable()
+		e.commit(raw)
 		return true, nil
 
 	case keyval == keysymPageUp || keyval == keysymPageDown:
@@ -420,6 +445,15 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 	}
 
+	// 不可处理的按键（方向键 / Tab / F 键 / 大写字母 / 数字 0 / Alt+字母等）：
+	// 组词中先清空再放行——否则字符插进文档的同时预编辑与候选窗仍挂在原地，
+	// 光标移走后下一个字母会接着旧组词继续，预编辑与实文彻底脱节
+	// （对齐 macOS 壳 passThrough，2026-10-27 审查发现）。
+	if isComposing(e.sess) {
+		e.sess.Reset()
+		e.hidePreedit()
+		e.hideLookupTable()
+	}
 	return false, nil
 }
 
