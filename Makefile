@@ -147,6 +147,7 @@ package-linux:
 	cp data/dict_common.tsv dist/chaoset-linux-x86_64/data/dict.tsv
 	cp shims/linux/install.sh dist/chaoset-linux-x86_64/
 	cp shims/linux/README.md dist/chaoset-linux-x86_64/
+	cp LICENSE dist/chaoset-linux-x86_64/LICENSE
 	@# 架构自检：包里的二进制必须真是 ELF，不能是开发机的 Mach-O
 	@for b in dist/chaoset-linux-x86_64/bin/*; do \
 		file "$$b" | grep -q ELF || { echo "错误：$$b 不是 ELF（Linux）可执行文件："; file "$$b"; exit 1; }; \
@@ -165,6 +166,8 @@ package-linux:
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
 		sed "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
+		mkdir -p dist/deb_staging/usr/share/doc/chaoset-ime; \
+		cp LICENSE dist/deb_staging/usr/share/doc/chaoset-ime/copyright; \
 		cp shims/linux/debian/postinst dist/deb_staging/DEBIAN/postinst; \
 		cp shims/linux/debian/postrm dist/deb_staging/DEBIAN/postrm; \
 		chmod 0755 dist/deb_staging/DEBIAN/postinst dist/deb_staging/DEBIAN/postrm; \

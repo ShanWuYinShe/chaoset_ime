@@ -54,7 +54,9 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
 - 预编辑与候选列表均经 ibus 面板显示（UpdatePreeditText /
   UpdateLookupTable 信号）；面板的具体渲染样式由 ibus 决定。
 - 多 InputContext 已按实例隔离（每上下文独立会话/中英模式，
-  容器内验证状态分离）；焦点跟随（FocusIn/Out 精细化）待真机桌面。
+  容器内验证状态分离）。FocusOut 清组词并收起面板、FocusIn 重置
+  Shift 跟踪（2026-10-26 实现，防跨窗口状态残留）；光标跟随定位
+  （SetCursorLocation）待真机桌面。
 - 候选窗自绘贴图（candidateImage）在此壳的显示接入待做。
 
 ## 图标与设置界面
@@ -119,7 +121,7 @@ sudo ./install.sh          # 装二进制 + 词库 + ibus 组件 + 图标，并�
 装完在「设置 → 键盘 → 输入源」里添加 **Chaoset Pinyin**。列表里没有的话
 执行 `ibus restart` 或注销重登。
 
-### 方式二：从源码
+### 方式四：从源码
 
 ```sh
 make package-linux         # 产物：dist/chaoset-linux-x86_64.tar.gz

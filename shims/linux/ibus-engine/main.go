@@ -65,10 +65,12 @@ func resolveDefaultDicts() []string {
 	if _, err := os.Stat(installed); err == nil {
 		return []string{installed}
 	}
-	// 都找不到：返回系统安装路径报错——它最能提示用户「词库没装」。
-	if _, err := os.Stat(installed); err != nil {
-		return []string{installed}
-	}
+	// 第 4 级：仓库相对路径（go run / 仓库内直接跑）。
+	//
+	// 2026-10-26 审查发现此处是死代码：中间曾有一个「installed 不存在就
+	// 返回 installed」的分支，让第 4 级永远不可达——而函数头注释与 README
+	// 都宣称这一级存在（仓库内 go run 必须能找到词库）。删掉死分支，
+	// 让回退链与文档一致；装好的发行包永远在前几级命中，不受影响。
 	return []string{"data/dict_common.tsv"}
 }
 

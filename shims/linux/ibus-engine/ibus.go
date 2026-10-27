@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	godbus "github.com/godbus/dbus/v5"
 
@@ -56,8 +57,17 @@ func newIBusText(text string) ibusText {
 // 经工厂 CreateEngine 获得独立实例（独立组词会话/中英模式/Shift
 // 跟踪），多应用同时打字互不干扰。UserDict 与词典为全实例共享
 // （并发安全见 engine.UserDict 的锁）。
+// emitter 是 ibusEngine 对 dbus 连接的最小依赖（只用到 Emit 一个方法）。
+// 抽成接口是为了测试：*godbus.Conn 天然满足它，而测试可以用 fake 记录信号
+// 调用序列，从而覆盖「面板更新/上屏/竞态」这些此前 0% 覆盖、只能靠人工
+// 在容器里肉眼确认的行为（2026-10-26 审查实测覆盖率仅 6.5%）。
+type emitter interface {
+	// 与 (*godbus.Conn).Emit 同签名（返回 error）。
+	Emit(path godbus.ObjectPath, name string, values ...interface{}) error
+}
+
 type ibusEngine struct {
-	conn *godbus.Conn
+	conn emitter
 	dict *engine.Dictionary
 	user *engine.UserDict
 	path godbus.ObjectPath // 本实例的对象路径（信号发射目标）
@@ -127,8 +137,9 @@ type ibusFactory struct {
 	trad  bool
 	sp    string
 
-	mu  sync.Mutex
-	seq uint32 // 已创建的引擎实例计数（对象路径编号）
+	mu      sync.Mutex
+	seq     uint32 // 已创建的引擎实例计数（对象路径编号）
+	engines map[godbus.ObjectPath]*ibusEngine
 }
 
 func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string) (*ibusFactory, error) {
@@ -136,7 +147,15 @@ func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad 
 	if err != nil {
 		return nil, fmt.Errorf("连接 session bus 失败: %w", err)
 	}
-	return &ibusFactory{conn: conn, dict: dict, user: user, fuzzy: fuzzy, trad: trad, sp: sp}, nil
+	return &ibusFactory{
+		conn:    conn,
+		dict:    dict,
+		user:    user,
+		fuzzy:   fuzzy,
+		trad:    trad,
+		sp:      sp,
+		engines: make(map[godbus.ObjectPath]*ibusEngine),
+	}, nil
 }
 
 func (f *ibusFactory) run() error {
@@ -144,14 +163,21 @@ func (f *ibusFactory) run() error {
 	if err := f.conn.Export(f, factoryPath, factoryIface); err != nil {
 		return fmt.Errorf("导出工厂对象失败: %w", err)
 	}
-	reply, err := f.conn.RequestName(ibusBusName, godbus.NameFlagAllowReplacement|godbus.NameFlagReplaceExisting)
+	// 不带 AllowReplacement/ReplaceExisting：另一个 chaoset-engine 进程若已
+	// 持有总线名，这里必须失败退出，而不是「抢到名字后旧进程变成收不到任何
+	// 调用的幽灵进程」（2026-10-26 审查发现：旧实现用 AllowReplacement 且
+	// 只打印 reply 不校验结果）。
+	reply, err := f.conn.RequestName(ibusBusName, 0)
 	if err != nil {
 		return fmt.Errorf("请求总线名失败: %w", err)
 	}
-	log.Printf("chaoset ibus 引擎就绪（request_name=%d）", reply)
+	if reply != godbus.RequestNameReplyPrimaryOwner {
+		return fmt.Errorf("总线名 %s 已被其他进程持有（可能已有 chaoset-engine 在运行），本实例退出", ibusBusName)
+	}
+	log.Printf("chaoset ibus 引擎就绪（bus=%s）", ibusBusName)
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-stop
 		f.conn.Close()
@@ -196,14 +222,51 @@ func (f *ibusFactory) CreateEngine(name string) (godbus.ObjectPath, *godbus.Erro
 	if err := f.conn.Export(eng, path, engineIface); err != nil {
 		return "", godbus.MakeFailedError(fmt.Errorf("导出引擎实例失败: %w", err))
 	}
+	// 注册到实例表，供 DestroyEngine 回收：每个 InputContext 一个实例
+	// （含整份组词会话），关闭的应用不回收会持续涨内存（2026-10-26 审查发现）。
+	f.mu.Lock()
+	f.engines[path] = eng
+	f.mu.Unlock()
 	log.Printf("已创建引擎实例 %d（%s）", seq, path)
 	return path, nil
+}
+
+// DestroyEngine 是 IBus 工厂协议的标准方法：ibus-daemon 在 InputContext
+// 关闭时调用，引擎应释放对应实例。此前未实现，实例只增不减。
+func (f *ibusFactory) DestroyEngine(path string) *godbus.Error {
+	op := godbus.ObjectPath(path)
+	f.mu.Lock()
+	eng, ok := f.engines[op]
+	if ok {
+		delete(f.engines, op)
+	}
+	f.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	// godbus v5 没有 public Unexport：Export(nil, path, iface) 即取消导出
+	//（其内部注释「Remove a previous export if the interface is nil」）。
+	if err := f.conn.Export(nil, op, engineIface); err != nil {
+		log.Printf("取消导出 %s 失败: %v", path, err)
+	}
+	_ = eng // 会话随对象一起被 GC
+	log.Printf("已销毁引擎实例 %s", path)
+	return nil
 }
 
 // ---- org.freedesktop.IBus.Engine ----
 
 // ProcessKeyEvent 处理按键：返回 true 表示已消费（不再透传给应用）。
+//
+// 整个函数从头到尾持 e.mu：godbus 对每个方法调用各起一个 goroutine
+// （conn.handleCall），本方法与 PageUp/PageDown/Reset/FocusOut 是真并发。
+// Shift 空按读写的 enMode、Ctrl+Backspace 早退分支读写的 sess 此前都在锁外，
+// 与加锁的 PageUp 等构成数据竞争——测试此前没并发调用本方法的用例，
+// go test -race 一直没发现（2026-10-26 审查实测 ProcessKeyEvent 覆盖 0%）。
 func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godbus.Error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	// Shift 空按释放：切换中英模式（英文模式下丢弃未上屏的组词）
 	if e.shift.feed(keyval, state) {
 		e.enMode = !e.enMode
@@ -221,8 +284,6 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	}
 	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
 		if isComposing(e.sess) && keyval == keysymBackspace {
-			e.mu.Lock()
-			defer e.mu.Unlock()
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
@@ -230,9 +291,6 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 		return false, nil
 	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	switch {
 	case keyval >= 'a' && keyval <= 'z':
@@ -318,18 +376,33 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == '-' || keyval == '=' || keyval == '[' || keyval == ']':
-		// 候选翻页（组词中消费；空组词放行原键；边界由 daemon 钳制）
-		if !isComposing(e.sess) {
-			return false, nil
+		// 翻页键与标点键的分流（对齐 macOS 壳 ChaosetController 的行为）：
+		//   组词中且有候选：- = [ ] 都是翻页键；
+		//   其余情况：[ ] 是标点键输出【】（走下方标点分支），
+		//             - = 不是标点键透传原键。
+		//
+		// 此前只判 isComposing 就消费：残缺输入（无候选）时按键被吞且毫无
+		// 反馈；[ ] 也永远到不了标点分支——Linux 上组词中打不出【】，
+		// 空组词时也只会透传出半角 [（2026-10-26 审查发现）。
+		if isComposing(e.sess) && hasCandidates(e.sess) {
+			var comp engine.Composition
+			if keyval == '-' || keyval == '[' {
+				comp, _ = e.sess.PrevPage()
+			} else {
+				comp, _ = e.sess.NextPage()
+			}
+			e.refresh(comp)
+			return true, nil
 		}
-		var comp engine.Composition
-		if keyval == '-' || keyval == '[' {
-			comp, _ = e.sess.PrevPage()
-		} else {
-			comp, _ = e.sess.NextPage()
+		if engine.IsPunctKey(rune(keyval)) {
+			text, err := e.sess.Punct(string(rune(keyval)))
+			if err != nil {
+				return false, nil
+			}
+			e.commit(text)
+			return true, nil
 		}
-		e.refresh(comp)
-		return true, nil
+		return false, nil
 
 	case keyval == '\'' && isComposing(e.sess):
 		// 组词中的撇号是音节分隔符（0x27 不在 a-z 分支内，在此分流）
@@ -436,8 +509,13 @@ func (e *ibusEngine) hideLookupTable() {
 }
 
 // refresh 把组成状态同步到 ibus 面板：预编辑文本 + 当前页候选表。
+//
+// 预编辑可见性的判据是「preedit 非空」而不是「有候选」：引擎对无法切分的
+// 输入（如 beijngi、niihao）仍返回非空 Preedit 但零候选（这类输入要走纠错
+// 路径）。若按「有无候选」决定可见性，用户敲了字母却什么都看不见——
+// 与 macOS 壳（preedit 非空即显示）不一致，2026-10-26 审查发现。
 func (e *ibusEngine) refresh(comp engine.Composition) {
-	e.updatePreedit(comp.Preedit, len(comp.Candidates) > 0)
+	e.updatePreedit(comp.Preedit, comp.Preedit != "")
 	e.updateLookupTable(comp)
 }
 

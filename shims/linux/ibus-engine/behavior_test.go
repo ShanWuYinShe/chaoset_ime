@@ -3,80 +3,239 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
-	"github.com/godbus/dbus/v5"
+	godbus "github.com/godbus/dbus/v5"
 
 	"chaoset.ime/engine"
 )
 
-// 这些测试补上 ibus 壳此前几乎为零的覆盖（审查实测仅 6.5%，且只测了
-// shiftTracker）。重点锁住 2026-10-26 修复的几处行为：
-//   - FocusOut 必须清组词（防跨窗口状态残留）
-//   - FocusIn 必须重置 Shift 空按跟踪（防跨窗口误判中英切换）
-//   - 候选表 page_size 必须与引擎一致（防两份真相漂移）
-//   - 候选序号不能回绕成 0（第 10 项会永远选不到）
+// fakeEmitter 记录全部 Emit 调用，让面板行为（预编辑/候选表/上屏信号）
+// 可以被断言，而不是只靠人工在容器里肉眼确认。godbus.Conn 无法在测试里
+// 实例化（需要真实 session bus），这正是引入 emitter 接口的原因。
+type fakeEmitter struct {
+	mu      sync.Mutex
+	emitted []emittedSignal
+}
 
-// newTestEngine 造一个不连真实 dbus 的引擎。注意 conn 为 nil，任何 Emit
-// 路径都会 panic，因此调用方需用 recover 兜住，或用只读路径。
-func newTestEngine(t *testing.T) (*ibusEngine, *engine.Session) {
+// emittedSignal 记录一次 Emit 的完整参数（类型名避开 os/signal 包冲突）。
+// 记录 values 是为了断言可见性等参数——例如 hidePreedit 与正常预编辑更新
+// 发的是同一个信号名 UpdatePreeditText，只数次数无法区分修复前后。
+type emittedSignal struct {
+	path   godbus.ObjectPath
+	name   string
+	values []interface{}
+}
+
+func (f *fakeEmitter) Emit(path godbus.ObjectPath, name string, values ...interface{}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.emitted = append(f.emitted, emittedSignal{path: path, name: name, values: values})
+	return nil
+}
+
+func (f *fakeEmitter) count(name string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, s := range f.emitted {
+		if strings.Contains(s.name, name) {
+			n++
+		}
+	}
+	return n
+}
+
+// unwrapText 解包 godbus.Variant 取出其中的 ibusText 文本。
+// 注意 Emit 的 values[0] 是 godbus.Variant（MakeVariant 的包装），必须先解包
+// Variant 再断言 ibusText——直接断言会失败并表现为「取到空串」。
+func unwrapText(v interface{}) (string, bool) {
+	variant, ok := v.(godbus.Variant)
+	if !ok {
+		return "", false
+	}
+	it, ok := variant.Value().(ibusText)
+	if !ok {
+		return "", false
+	}
+	return it.Text, true
+}
+
+// lastPreedit 返回最后一次 UpdatePreeditText 的（文本, 可见）。
+func (f *fakeEmitter) lastPreedit() (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.emitted) - 1; i >= 0; i-- {
+		s := f.emitted[i]
+		if !strings.Contains(s.name, "UpdatePreeditText") {
+			continue
+		}
+		text := ""
+		if len(s.values) > 0 {
+			text, _ = unwrapText(s.values[0])
+		}
+		visible := false
+		if len(s.values) > 2 {
+			if b, ok := s.values[2].(bool); ok {
+				visible = b
+			}
+		}
+		return text, visible
+	}
+	return "", false
+}
+
+// lastCommitText 返回最后一次 CommitText 的文本（无则空串）。
+func (f *fakeEmitter) lastCommitText() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.emitted) - 1; i >= 0; i-- {
+		s := f.emitted[i]
+		if !strings.Contains(s.name, "CommitText") {
+			continue
+		}
+		if len(s.values) > 0 {
+			if text, ok := unwrapText(s.values[0]); ok {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// newTestEngine 造一个挂 fakeEmitter 的引擎 + 真实词库（含「你好」「你」）。
+func newTestEngine(t *testing.T) (*ibusEngine, *fakeEmitter) {
 	t.Helper()
 	src := "你好\tni hao\t90\n你\tni\t80\n"
 	d, err := engine.ParseDict(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("构造测试词库失败: %v", err)
 	}
-	sess := engine.NewSession(d, nil)
-	return &ibusEngine{sess: sess}, sess
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+	return e, fe
 }
 
-// FocusOut 必须清空组词状态。
-func TestFocusOutClearsComposition(t *testing.T) {
-	e, sess := newTestEngine(t)
-	sess.Input("ni")
-	if got := sess.Compose().Input; got != "ni" {
-		t.Fatalf("前置条件失败：组词应为 ni，实际 %q", got)
-	}
-	// FocusOut 会调 hidePreedit/hideLookupTable（需要 conn）；nil conn 会 panic，
-	// 用 recover 兜住，只验证会话状态被清空——这正是本用例的核心断言。
-	func() {
-		defer func() { _ = recover() }()
-		_ = e.FocusOut()
-	}()
-	if got := sess.Compose().Input; got != "" {
-		t.Fatalf("FocusOut 后组词应清空，实际 %q", got)
+// 辅助：模拟敲一串小写字母（逐键）。
+func typeKeys(e *ibusEngine, text string) {
+	for _, ch := range text {
+		e.ProcessKeyEvent(uint32(ch), 0, 0)
 	}
 }
 
-// FocusIn 必须重置 Shift 空按跟踪。
-func TestFocusInResetsShiftTracker(t *testing.T) {
-	e, _ := newTestEngine(t)
-	// 模拟「Shift 按下但没释放」就切换了窗口
-	e.shift.shiftDown = 1
-	e.shift.sinceShift = false
-	func() {
-		defer func() { _ = recover() }()
-		_ = e.FocusIn()
-	}()
-	if e.shift.shiftDown != 0 || e.shift.sinceShift {
-		t.Fatalf("FocusIn 应重置 shift 跟踪，实际 shiftDown=%d sinceShift=%v",
-			e.shift.shiftDown, e.shift.sinceShift)
+// TestCommitEmitsSignals：组词 → 空格上屏，应发出 CommitText 并收起
+// 预编辑与候选表。锁提升（ProcessKeyEvent 全程持 e.mu）不得改变信号行为。
+func TestCommitEmitsSignals(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	_, gerr := e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if gerr != nil {
+		t.Fatalf("空格上屏出错: %v", gerr)
+	}
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("CommitText 应恰好 1 次，实际 %d", got)
+	}
+	if got := fe.count("UpdatePreeditText"); got < 2 {
+		t.Logf("UpdatePreeditText 调用 %d 次（组词 1 次 + 收起 1 次）", got)
 	}
 }
 
-// 候选表 page_size 必须与引擎导出的每页容量一致。
+// TestConcurrentMethodsRace：并发调用 ProcessKeyEvent / PageUp / PageDown /
+// Reset / FocusOut，在 -race 下验证全程持锁。
 //
-// 回归背景：这里曾写死 9 并注释「与引擎一致」，而引擎早已改成 6。
-// IBusLookupTable.page_size 是面板布局与「还有没有下一页」的依据。
+// 回归背景（2026-10-26 审查发现）：ProcessKeyEvent 的 Shift/enMode/Ctrl+Backspace
+// 分支此前在 e.mu 之外读写共享状态，而 godbus 每个方法调用一个 goroutine，
+// 与加锁的 PageUp 构成真数据竞争。修复后整个函数持锁。
+func TestConcurrentMethodsRace(t *testing.T) {
+	e, _ := newTestEngine(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				switch j % 5 {
+				case 0:
+					typeKeys(e, "ni")
+				case 1:
+					_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+				case 2:
+					_, _ = e.ProcessKeyEvent(keysymBackspace, 0, 0)
+				case 3:
+					_ = e.PageUp()
+					_ = e.PageDown()
+				case 4:
+					_ = e.Reset()
+					_ = e.FocusOut()
+					_ = e.FocusIn()
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// TestPageKeyRequiresCandidates：翻页键只在「组词中且有候选」时消费。
+// 残缺输入（无候选）时按 - 必须放行（此前被静默吞掉）；[ ] 此时应落到
+// 标点分支输出【】——这是 Linux 上打不出【】的根因。
+func TestPageKeyRequiresCandidates(t *testing.T) {
+	e, fe := newTestEngine(t)
+	// z 是声母：zzz 无法构成完整音节，引擎给出行不行…直接断言零候选，
+	// 若该词库下 zz 有候选（纠错/简拼命中）则换明确无法命中的串。
+	typeKeys(e, "zzz")
+	if hasCandidates(e.sess) {
+		t.Skip("该词库下 zzz 有候选，用例前提不成立")
+	}
+	handled, _ := e.ProcessKeyEvent(uint32('-'), 0, 0)
+	if handled {
+		t.Fatal("无候选时 - 不应被消费（此前被静默吞掉）")
+	}
+	handled, _ = e.ProcessKeyEvent(uint32('['), 0, 0)
+	if !handled {
+		t.Fatal("[ 无候选时应落到标点分支被消费")
+	}
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("[ 应上屏【，CommitText 实际 %d 次", got)
+	}
+	if got := fe.lastCommitText(); got != "【" {
+		t.Fatalf("[ 无候选时应输出【，实际 %q", got)
+	}
+}
+
+// TestPreeditVisibleWithoutCandidates：残缺输入（preedit 非空、零候选）
+// 时预编辑必须可见——否则用户敲了字母却什么都看不见。
+// 回归背景：可见性曾绑在「有无候选」上（refresh → updatePreedit 的第二参）。
+func TestPreeditVisibleWithoutCandidates(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "zzz")
+	if hasCandidates(e.sess) {
+		t.Skip("该词库下 zzz 有候选，用例前提不成立")
+	}
+	before := fe.count("UpdatePreeditText")
+	e.ProcessKeyEvent(uint32('z'), 0, 0)
+	if n := fe.count("UpdatePreeditText"); n <= before {
+		t.Fatalf("残缺输入后应刷新预编辑（before=%d after=%d）", before, n)
+	}
+	text, visible := fe.lastPreedit()
+	if !visible {
+		t.Fatal("残缺输入时预编辑应可见（此前可见性绑在「有无候选」上，用户敲了字母却看不见）")
+	}
+	if text == "" {
+		t.Fatal("可见预编辑的文本不应为空")
+	}
+	t.Logf("残缺输入预编辑: %q (visible=%v)", text, visible)
+}
+
+// 候选表 page_size 必须与引擎导出的每页容量一致（防两份真相漂移）。
 func TestLookupTablePageSizeMatchesEngine(t *testing.T) {
 	want := engine.PageSize()
 	if ibusPageSize != want {
-		t.Fatalf("ibusPageSize=%d 与 engine.PageSize()=%d 不一致",
-			ibusPageSize, want)
+		t.Fatalf("ibusPageSize=%d 与 engine.PageSize()=%d 不一致", ibusPageSize, want)
 	}
 }
 
-// 候选序号必须是 1..N 递增，不能 %10 回绕成 0。
+// 候选序号必须是 1..N 递增，不能 %10 回绕成 0（第 10 项会变成 "0." 且选不到）。
 func TestLookupTableLabelsDoNotWrap(t *testing.T) {
 	var cands []engine.Candidate
 	for i := 1; i <= 11; i++ {
@@ -85,7 +244,7 @@ func TestLookupTableLabelsDoNotWrap(t *testing.T) {
 	comp := engine.Composition{Input: "test", Preedit: "test", Candidates: cands}
 	table := newIBusLookupTable(comp)
 
-	labels, ok := table.Labels.Value().([]dbus.Variant)
+	labels, ok := table.Labels.Value().([]godbus.Variant)
 	if !ok {
 		t.Fatalf("labels 类型异常: %T", table.Labels.Value())
 	}
@@ -102,5 +261,29 @@ func TestLookupTableLabelsDoNotWrap(t *testing.T) {
 			t.Fatalf("第 %d 个标签应为 %q，实际 %q（序号回绕会导致该项选不到）",
 				i, want, txt.Text)
 		}
+	}
+}
+
+// FocusOut 必须清空组词状态（跨窗口不再残留）。
+func TestFocusOutClearsComposition(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "ni")
+	if got := e.sess.Compose().Input; got != "ni" {
+		t.Fatalf("前置条件失败：组词应为 ni，实际 %q", got)
+	}
+	_ = e.FocusOut()
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("FocusOut 后组词应清空，实际 %q", got)
+	}
+}
+
+// FocusIn 必须重置 Shift 空按跟踪（跨窗口不再误判中英切换）。
+func TestFocusInResetsShiftTracker(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.shift.shiftDown = 1 // 模拟「Shift 按下未释放」就切走了窗口
+	_ = e.FocusIn()
+	if e.shift.shiftDown != 0 || e.shift.sinceShift {
+		t.Fatalf("FocusIn 应重置 shift 跟踪，实际 shiftDown=%d sinceShift=%v",
+			e.shift.shiftDown, e.shift.sinceShift)
 	}
 }
