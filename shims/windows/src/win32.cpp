@@ -897,6 +897,155 @@ private:
 
 // ---- TIP 主体 ----
 
+// ---- 模式切换提示（短暂 toast）----
+// 中英/全半角切换此前零反馈，用户只能靠打字试探（2026-10-27 审查，与
+// macOS/ibus 壳统一补齐）。独立小窗 + 1.2s 自动隐藏；连续切换时重置
+// 定时器，不会提前收起新提示。深浅色跟随系统（与候选窗同源）。
+
+class ModeToast {
+public:
+    ~ModeToast() { destroy(); }
+    ModeToast() = default;
+    ModeToast(const ModeToast&) = delete;
+    ModeToast& operator=(const ModeToast&) = delete;
+
+    void show(HINSTANCE hinst, const std::wstring& text, int x, int y) {
+        if (!ensureWindow(hinst)) return;
+        text_ = text;
+        dpi_ = systemDpi();
+        measure();
+        int r = scale(10);
+        SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w_, h_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, r * 2, r * 2), TRUE);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        SetTimer(hwnd_, kTimerId, kDurationMs, nullptr);
+    }
+
+    void hide() {
+        if (hwnd_ != nullptr) {
+            KillTimer(hwnd_, kTimerId);
+            ShowWindow(hwnd_, SW_HIDE);
+        }
+    }
+
+private:
+    static constexpr UINT kTimerId = 1;
+    static constexpr UINT kDurationMs = 1200;
+
+    static int systemDpi() {
+        HDC hdc = GetDC(nullptr);
+        int dpi = 96;
+        if (hdc != nullptr) {
+            dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+            ReleaseDC(nullptr, hdc);
+        }
+        return dpi;
+    }
+
+    static int scale(int px) { return MulDiv(px, systemDpi(), 96); }
+
+    bool ensureWindow(HINSTANCE hinst) {
+        if (hwnd_ != nullptr) return true;
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_DROPSHADOW;
+        wc.lpfnWndProc = ModeToast::wndProc;
+        wc.hInstance = hinst;
+        wc.lpszClassName = L"ChaosetModeToastWndClass";
+        RegisterClassExW(&wc);
+        hwnd_ = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            wc.lpszClassName, L"ChaosetModeToast",
+            WS_POPUP, 0, 0, 0, 0,
+            nullptr, nullptr, hinst, nullptr);
+        if (hwnd_ != nullptr) {
+            SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        }
+        return hwnd_ != nullptr;
+    }
+
+    void measure() {
+        HDC dc = GetDC(hwnd_);
+        HFONT font = makeFont();
+        HGDIOBJ old = SelectObject(dc, font);
+        SIZE sz{};
+        GetTextExtentPoint32W(dc, text_.c_str(), static_cast<int>(text_.size()), &sz);
+        SelectObject(dc, old);
+        DeleteObject(font);
+        ReleaseDC(hwnd_, dc);
+        w_ = sz.cx + scale(28);
+        h_ = sz.cy + scale(12);
+    }
+
+    HFONT makeFont() const {
+        return CreateFontW(-MulDiv(13, dpi_, 72), 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    }
+
+    void onPaint(HWND hwnd) {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        const bool dark = isSystemDarkTheme();
+        HBRUSH bg = CreateSolidBrush(dark ? RGB(0x2C, 0x2C, 0x2E) : RGB(0xF6, 0xF6, 0xF8));
+        HPEN pen = CreatePen(PS_SOLID, 1, dark ? RGB(0x45, 0x45, 0x48) : RGB(0xC8, 0xC8, 0xCC));
+        HGDIOBJ oldBrush = SelectObject(dc, bg);
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        int r = scale(10);
+        RoundRect(dc, 0, 0, w_, h_, r * 2, r * 2);
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(bg);
+        DeleteObject(pen);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, dark ? RGB(0xFF, 0xFF, 0xFF) : RGB(0x26, 0x26, 0x28));
+        HFONT font = makeFont();
+        HGDIOBJ oldFont = SelectObject(dc, font);
+        RECT rc{0, 0, w_, h_};
+        DrawTextW(dc, text_.c_str(), static_cast<int>(text_.size()), &rc,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, oldFont);
+        DeleteObject(font);
+        EndPaint(hwnd, &ps);
+    }
+
+    static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        ModeToast* self = reinterpret_cast<ModeToast*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        switch (msg) {
+            case WM_MOUSEACTIVATE:
+                return MA_NOACTIVATE;
+            case WM_ERASEBKGND:
+                return 1;
+            case WM_PAINT:
+                if (self != nullptr) {
+                    self->onPaint(hwnd);
+                    return 0;
+                }
+                break;
+            case WM_TIMER:
+                if (self != nullptr && wParam == kTimerId) {
+                    self->hide();
+                    return 0;
+                }
+                break;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    void destroy() {
+        if (hwnd_ != nullptr) {
+            DestroyWindow(hwnd_);
+            hwnd_ = nullptr;
+        }
+    }
+
+    HWND hwnd_ = nullptr;
+    std::wstring text_;
+    int dpi_ = 96;
+    int w_ = 0;
+    int h_ = 0;
+};
+
 class ChaosetTIP : public ITfTextInputProcessor, public ITfKeyEventSink, public ITfCompositionSink {
 public:
     ChaosetTIP() { InterlockedIncrement(&g_liveObjects); }
@@ -971,6 +1120,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
         if (!fForeground) {
             candidateWnd_.hide();
+            toast_.hide();
             // 失去焦点时清空未决预编辑与候选，防止跨窗口残留组词状态导致后续窗口吃键
             if (isComposing()) {
                 session_.reset();
@@ -1091,6 +1241,7 @@ private:
                 endComposition();
                 comp_ = chaoset::Comp();
                 candidateWnd_.hide();
+                showModeToast(enMode_ ? L"英文模式" : L"中文模式");
             }
             sinceShift_ = false;
         }
@@ -1311,7 +1462,8 @@ private:
         // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
         // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
-            session_.toggleHalfWidth();
+            const bool half = session_.toggleHalfWidth();
+            showModeToast(half ? L"半角标点" : L"全角标点");
             return true;
         }
 
@@ -1552,6 +1704,16 @@ private:
     bool keySinkAdvised_ = false;
 
     CandidateWindow candidateWnd_;
+    ModeToast toast_;
+
+    // 模式提示：放光标行下方（caretPos_ 是最后已知光标行底边的屏幕坐标）；
+    // 没有历史位置时退回鼠标。
+    void showModeToast(const wchar_t* text) {
+        POINT pt = caretPos_;
+        if (pt.x == 0 && pt.y == 0) GetCursorPos(&pt);
+        int lineH = caretLineHeight_ > 0 ? caretLineHeight_ : 20;
+        toast_.show(g_hInst, text, pt.x, pt.y + lineH + 6);
+    }
     POINT caretPos_{0, 0};
     int caretLineHeight_ = 20;
     bool caretFound_ = false;

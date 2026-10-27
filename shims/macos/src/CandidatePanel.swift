@@ -522,3 +522,93 @@ extension CandidatePanelView {
         }
     }
 }
+
+// MARK: - 模式切换提示（短暂 toast）
+
+// 中英/全半角切换此前零反馈，用户只能靠打字试探才知道当前模式
+// （2026-10-27 审查，三端统一补齐）。与候选窗同等层级的小胶囊，
+// 短暂显示后自动消失；连续切换时旧定时器作废，不会提前收起新提示。
+
+/// 模式提示的展示时长（秒）。
+private let modeToastDuration: TimeInterval = 1.2
+
+final class ModeToastView: NSView {
+    var text: String = "" { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let bg = isDark ? NSColor(white: 0.18, alpha: 0.92) : NSColor(white: 0.97, alpha: 0.95)
+        let fg = isDark ? NSColor.white : NSColor(calibratedWhite: 0.15, alpha: 1)
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
+        bg.setFill()
+        path.fill()
+        NSColor(white: 0, alpha: isDark ? 0.4 : 0.15).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: fg,
+        ]
+        let size = (text as NSString).size(withAttributes: attrs)
+        (text as NSString).draw(
+            at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+            withAttributes: attrs)
+    }
+
+    /// 按文本内容计算胶囊尺寸。
+    static func size(for text: String) -> NSSize {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium)
+        ]
+        let s = (text as NSString).size(withAttributes: attrs)
+        return NSSize(width: ceil(s.width) + 28, height: ceil(s.height) + 14)
+    }
+}
+
+enum ModeToastController {
+    private static var panel: NSPanel?
+    private static var hideWork: DispatchWorkItem?
+
+    /// 在给定左上角坐标显示提示，约 1.2 秒后自动消失。
+    static func show(text: String, topLeft: NSPoint) {
+        let p = ensurePanel()
+        guard let v = p.contentView as? ModeToastView else { return }
+        v.text = text
+        let size = ModeToastView.size(for: text)
+        p.setContentSize(size)
+        p.setFrameTopLeftPoint(topLeft)
+        p.orderFront(nil)
+        hideWork?.cancel()
+        let work = DispatchWorkItem { [weak p] in p?.orderOut(nil) }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + modeToastDuration, execute: work)
+    }
+
+    /// 立即收起（会话结束/切换输入法时调用，不等定时器）。
+    static func hide() {
+        hideWork?.cancel()
+        panel?.orderOut(nil)
+    }
+
+    private static func ensurePanel() -> NSPanel {
+        if let panel, panel.contentView is ModeToastView { return panel }
+        let p = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        p.level = .popUpMenu
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        // 纯提示：不接收鼠标（点击穿透到宿主），不抢焦点，跟随 Space/全屏
+        p.ignoresMouseEvents = true
+        p.hasShadow = true
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        let v = ModeToastView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        v.autoresizingMask = [.width, .height]
+        p.contentView = v
+        panel = p
+        return p
+    }
+}

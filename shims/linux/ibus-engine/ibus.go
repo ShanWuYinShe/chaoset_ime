@@ -4,8 +4,12 @@ package main
 // （src/ibusengine.c 的 introspection XML）：
 //   ProcessKeyEvent(u keyval, u keycode, u state) -> b
 //   信号 CommitText(v text) / UpdatePreeditText(v text, u cursor, b visible, u mode)
-// 其中 v 是 IBusSerializable 序列化变体：元组 (类型名 s, 附件 a{sv}, 内容 s)，
-// 对 IBusText 即 ("IBusText", {}, "你好")，与 ibus_text_serialize 逐字段对应。
+//   信号 UpdateAuxiliaryText(v text, b visible)
+// 其中 v 是 IBusSerializable 序列化变体。IBusText 的完整线缆格式是
+// (s 类型名, a{sv} 附件, s 文本, v 属性列表)，属性列表为 IBusAttrList
+// （(s, a{sv}, av)），每个属性 IBusAttribute 为 (s, a{sv}, u type,
+// u value, u start, u end)——与 ibus_text_serialize/ibusattribute.c
+// 逐字段对应。此前缺属性列表字段，预编辑无法携带下划线标记。
 
 import (
 	"fmt"
@@ -13,7 +17,10 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
+	"unicode/utf8"
 
 	godbus "github.com/godbus/dbus/v5"
 
@@ -44,15 +51,67 @@ const (
 	ibusShiftMask   = 1 << 0
 )
 
-// ibusText 对应 libibus 的 IBusText 线缆序列化元组 (s, a{sv}, s)。
+// ibusText 对应 libibus 的 IBusText 线缆序列化元组 (s, a{sv}, s, v)。
+// 第 4 个字段是 IBusAttrList 变体（文本属性：下划线/前景色等）。
 type ibusText struct {
 	TypeName    string
 	Attachments map[string]godbus.Variant
 	Text        string
+	Attrs       godbus.Variant
+}
+
+// ibusAttribute 对应 (s, a{sv}, u type, u value, u start, u end)。
+type ibusAttribute struct {
+	TypeName    string
+	Attachments map[string]godbus.Variant
+	AttrType    uint32
+	Value       uint32
+	StartIndex  uint32
+	EndIndex    uint32
+}
+
+// ibusAttrList 对应 (s, a{sv}, av)。
+type ibusAttrList struct {
+	TypeName    string
+	Attachments map[string]godbus.Variant
+	Attrs       []godbus.Variant
+}
+
+// ibus 常量：IBUS_ATTR_TYPE_UNDERLINE=1（下划线标记），
+// IBUS_ATTR_UNDERLINE_SINGLE=1（单线下划线）。
+const (
+	ibusAttrTypeUnderline   = 1
+	ibusAttrUnderlineSingle = 1
+)
+
+func newIBusAttrList(attrs []godbus.Variant) godbus.Variant {
+	if attrs == nil {
+		attrs = []godbus.Variant{}
+	}
+	return godbus.MakeVariant(ibusAttrList{
+		TypeName: "IBusAttrList", Attachments: map[string]godbus.Variant{}, Attrs: attrs,
+	})
 }
 
 func newIBusText(text string) ibusText {
-	return ibusText{TypeName: "IBusText", Attachments: map[string]godbus.Variant{}, Text: text}
+	return ibusText{TypeName: "IBusText", Attachments: map[string]godbus.Variant{},
+		Text: text, Attrs: newIBusAttrList(nil)}
+}
+
+// newPreeditText 生成带整串下划线标记的预编辑文本：没有下划线时，应用把
+// 预编辑渲染成与已提交文本无差别的裸文本，部分应用无法分辨「正在组词」。
+// index 以字符（非字节）为单位，与 libibus 的 unichar 索引一致。
+func newPreeditText(text string) ibusText {
+	t := newIBusText(text)
+	if text != "" {
+		underline := ibusAttribute{TypeName: "IBusAttribute",
+			Attachments: map[string]godbus.Variant{},
+			AttrType:    ibusAttrTypeUnderline, Value: ibusAttrUnderlineSingle,
+			StartIndex: 0, EndIndex: uint32(utf8.RuneCountInString(text)),
+		}
+		t.Attrs = newIBusAttrList([]godbus.Variant{godbus.MakeVariant(underline)})
+	}
+	return t
 }
 
 // ibusEngine 是导出给 ibus-daemon 的单个引擎实例：每个 InputContext
@@ -279,6 +338,11 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.sess.Reset()
 		e.hidePreedit()
 		e.hideLookupTable()
+		if e.enMode {
+			e.showModeToast("英文")
+		} else {
+			e.showModeToast("中文")
+		}
 		return false, nil
 	}
 	// 英文模式：全部放行，组词/选词/标点映射均不介入
@@ -356,9 +420,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return false, nil
 
 	case keyval == keysymSpace:
-		// Shift+空格：切换全角/半角标点模式（优先于首选上屏）
+		// Shift+空格：切换全角/半角标点模式（优先于首选上屏），并短暂提示
 		if state&ibusShiftMask != 0 {
-			e.sess.ToggleHalfWidth()
+			if e.sess.ToggleHalfWidth() {
+				e.showModeToast("半角标点")
+			} else {
+				e.showModeToast("全角标点")
+			}
 			return true, nil
 		}
 		// 组词中空格一律消费（用户意图永远是「结束组词」，不应有裸空格
@@ -471,8 +539,10 @@ func (e *ibusEngine) updatePreedit(preedit string, visible bool) {
 		e.hidePreedit()
 		return
 	}
+	// cursor 取文本末尾（字符数）：此前恒传 0，内联光标画在拼音串开头
+	// 而不是末尾（2026-10-27 审查发现）。
 	e.conn.Emit(e.path, engineIface+".UpdatePreeditText",
-		godbus.MakeVariant(newIBusText(preedit)), uint32(0), true, uint32(0))
+		godbus.MakeVariant(newPreeditText(preedit)), uint32(utf8.RuneCountInString(preedit)), true, uint32(0))
 }
 
 func (e *ibusEngine) hidePreedit() {
@@ -540,6 +610,28 @@ func (e *ibusEngine) updateLookupTable(comp engine.Composition) {
 func (e *ibusEngine) hideLookupTable() {
 	e.conn.Emit(e.path, engineIface+".UpdateLookupTable",
 		godbus.MakeVariant(newIBusLookupTable(engine.Composition{})), false)
+}
+
+// modeToastSeq 让连续快速切换时旧的隐藏定时器不再提前收起新提示。
+var modeToastSeq atomic.Uint64
+
+// modeToastDuration 是模式提示的展示时长。
+const modeToastDuration = 1200 * time.Millisecond
+
+// showModeToast 经 UpdateAuxiliaryText 短暂显示模式提示（如「英文」）。
+// 中英/全半角此前切换零反馈，用户只能靠打字试探（2026-10-27 审查发现）。
+// 定时器只碰 conn/path（godbus.Emit 线程安全），不取 e.mu，避免与输入
+// 线程竞争；仅当期间没有更新的提示时才收起。
+func (e *ibusEngine) showModeToast(text string) {
+	seq := modeToastSeq.Add(1)
+	e.conn.Emit(e.path, engineIface+".UpdateAuxiliaryText",
+		godbus.MakeVariant(newIBusText(text)), true)
+	time.AfterFunc(modeToastDuration, func() {
+		if modeToastSeq.Load() == seq {
+			e.conn.Emit(e.path, engineIface+".UpdateAuxiliaryText",
+				godbus.MakeVariant(newIBusText("")), false)
+		}
+	})
 }
 
 // refresh 把组成状态同步到 ibus 面板：预编辑文本 + 当前页候选表。

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	godbus "github.com/godbus/dbus/v5"
 
@@ -382,5 +383,130 @@ func TestUnhandledKeyClearsComposition(t *testing.T) {
 	}
 	if got := fe.count("CommitText"); got != before {
 		t.Fatalf("不应误触上屏，CommitText 前后 %d→%d", before, got)
+	}
+}
+
+// ---- 2026-10-27 第二批：预编辑标记与模式反馈 ----
+
+// lastPreeditCursor 取最后一次可见 UpdatePreeditText 的 cursor 参数。
+func (f *fakeEmitter) lastPreeditCursor() (uint32, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.emitted) - 1; i >= 0; i-- {
+		s := f.emitted[i]
+		if !strings.Contains(s.name, "UpdatePreeditText") {
+			continue
+		}
+		if len(s.values) > 2 {
+			if b, ok := s.values[2].(bool); ok && b {
+				cursor := uint32(0)
+				if len(s.values) > 1 {
+					if u, ok := s.values[1].(uint32); ok {
+						cursor = u
+					}
+				}
+				return cursor, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// TestPreeditUnderlineAndCursor：预编辑必须带整串下划线属性（否则应用把
+// 预编辑渲染成与已提交文本无差别的裸文本），cursor 必须指向文本末尾
+// （此前恒为 0，内联光标画在拼音串开头）。
+func TestPreeditUnderlineAndCursor(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	cursor, ok := fe.lastPreeditCursor()
+	if !ok {
+		t.Fatal("组词后应发出可见的 UpdatePreeditText")
+	}
+	const want = "ni'hao"
+	if cursor != uint32(utf8.RuneCountInString(want)) {
+		t.Fatalf("预编辑 cursor 应指向末尾（%d），实际 %d", utf8.RuneCountInString(want), cursor)
+	}
+	e.mu.Lock()
+	var last ibusText
+	for i := len(fe.emitted) - 1; i >= 0; i-- {
+		s := fe.emitted[i]
+		if !strings.Contains(s.name, "UpdatePreeditText") {
+			continue
+		}
+		if text, ok := unwrapText(s.values[0]); ok && text != "" {
+			last = s.values[0].(godbus.Variant).Value().(ibusText)
+			break
+		}
+	}
+	e.mu.Unlock()
+	var attrs ibusAttrList
+	if v, ok := last.Attrs.Value().(ibusAttrList); ok {
+		attrs = v
+	} else {
+		t.Fatalf("IBusText.Attrs 应为 IBusAttrList 变体，实际 %T", last.Attrs.Value())
+	}
+	if len(attrs.Attrs) == 0 {
+		t.Fatal("预编辑应携带下划线属性（裸文本让应用无法分辨正在组词）")
+	}
+	a, ok := attrs.Attrs[0].Value().(ibusAttribute)
+	if !ok {
+		t.Fatalf("属性元素应为 IBusAttribute 变体，实际 %T", attrs.Attrs[0].Value())
+	}
+	if a.AttrType != 1 || a.Value != 1 || a.StartIndex != 0 {
+		t.Fatalf("应为整串单线下划线（type=1 value=1 start=0），实际 %+v", a)
+	}
+	if a.EndIndex != uint32(utf8.RuneCountInString(want)) {
+		t.Fatalf("下划线应覆盖到末尾 %d，实际 %d", utf8.RuneCountInString(want), a.EndIndex)
+	}
+}
+
+// lastAuxiliary 取最后一次 UpdateAuxiliaryText 的（文本, 可见）。
+func (f *fakeEmitter) lastAuxiliary() (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.emitted) - 1; i >= 0; i-- {
+		s := f.emitted[i]
+		if !strings.Contains(s.name, "UpdateAuxiliaryText") {
+			continue
+		}
+		text, _ := unwrapText(s.values[0])
+		visible := false
+		if len(s.values) > 1 {
+			if b, ok := s.values[1].(bool); ok {
+				visible = b
+			}
+		}
+		return text, visible
+	}
+	return "", false
+}
+
+// TestModeToastOnShiftToggle：Shift 空按切换中英后，辅助文本应短暂显示
+// 目标模式——此前切换零反馈，用户只能靠打字试探。
+func TestModeToastOnShiftToggle(t *testing.T) {
+	e, fe := newTestEngine(t)
+	e.ProcessKeyEvent(keysymShiftLeft, 50, 0) // press
+	e.ProcessKeyEvent(keysymShiftLeft, 50, ibusReleaseMask)
+	text, visible := fe.lastAuxiliary()
+	if !visible || text != "英文" {
+		t.Fatalf("切英文后应提示「英文」，实际 visible=%v text=%q", visible, text)
+	}
+}
+
+// TestHalfWidthToastOnShiftSpace：Shift+空格切全/半角后应短暂提示当前
+// 半角状态（ToggleHalfWidth 返回 true = 已进入半角）。
+func TestHalfWidthToastOnShiftSpace(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "ni")
+	// 先人工切到全角态（奇数次往返），保证按键后必然进入半角
+	for e.sess.ToggleHalfWidth() {
+	}
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, ibusShiftMask)
+	if !handled {
+		t.Fatal("Shift+空格应被消费")
+	}
+	text, visible := fe.lastAuxiliary()
+	if !visible || text != "半角标点" {
+		t.Fatalf("切半角后应提示「半角标点」，实际 visible=%v text=%q", visible, text)
 	}
 }

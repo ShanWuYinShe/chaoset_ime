@@ -9,7 +9,9 @@ package main
 //
 // 这里采用「配置文件优先、flag 覆盖」的合并策略：
 //   - 默认读 $XDG_CONFIG_HOME/chaoset/config.json（缺省 ~/.config/chaoset/）；
-//   - 文件里能配的项：fuzzy / traditional / shuangpin / dict / userdict；
+//   - 文件里能配的项：fuzzy / traditional / shuangpin（词库路径暂不可配，
+//     走 --dict 与默认词库；曾在此宣称可配 dict/userdict 但结构体并无该
+//     字段，用户照写静默无效果——2026-10-27 审查修正注释）；
 //   - 命令行显式传的 flag 优先（便于排障时临时覆盖）。
 //
 // 为什么不用 ibus 的 <setup> 弹窗：那需要一个图形设置程序，Linux 端暂无条件

@@ -74,6 +74,7 @@ final class ChaosetController: IMKInputController {
                 } else {
                     current = nil
                 }
+                showToast(enMode ? "英文模式" : "中文模式", client: client)
                 refresh(client)
             }
             return false // 放行 Shift 释放事件，绝不吞掉宿主应用的按键状态机
@@ -188,6 +189,11 @@ final class ChaosetController: IMKInputController {
             } else if firstScalar >= 97, firstScalar <= 122 {
                 // 字母键：退出联想，进入正常组词
                 exitAssociate()
+            } else if firstScalar == 45 || firstScalar == 61 {
+                // - / =：联想展示为单页，无翻页语义；收起联想放行原键。
+                // 此前落到末尾 passThrough——只清组词不清联想窗，= 字符进了
+                // 文档而联想窗还挂在屏幕上（2026-10-27 审查发现）。
+                exitAssociate()
             }
         }
 
@@ -197,9 +203,10 @@ final class ChaosetController: IMKInputController {
         // 会在前置守卫处透传——选词落空、空格漏进文档（2026-10-25 实机反馈）。
         // 组词中用户按空格的意图永远是「结束组词」，不应有裸空格进文档。
         // Shift+空格：切换全角/半角标点模式（优先于首选上屏；daemon 不可达时放行）。
-        // 非组词状态的空格照旧放行。
+        // 非组词状态的空格照旧放行。切换后短暂提示当前状态（三端统一反馈）。
         if event.keyCode == 49, event.modifierFlags.contains(.shift) {
-            if engine.toggleHalfWidth() != nil {
+            if let half = engine.toggleHalfWidth() {
+                showToast(half ? "半角标点" : "全角标点", client: client)
                 return true
             }
             return passThrough(client)
@@ -393,6 +400,14 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 展示
 
+    /// 在光标附近短暂显示模式提示（中英/全半角切换反馈，三端统一）；
+    /// 光标矩形取不到时退回鼠标位置。
+    private func showToast(_ text: String, client: (any IMKTextInput)?) {
+        let size = ModeToastView.size(for: text)
+        let origin = Self.candidateOrigin(size: size, client: client, screen: Self.screenForCursor(client))
+        ModeToastController.show(text: text, topLeft: origin)
+    }
+
     private func refresh(_ client: (any IMKTextInput)?) {
         // 组词开始即退出联想（新输入优先于联想展示）
         if current?.input.isEmpty == false {
@@ -581,6 +596,7 @@ final class ChaosetController: IMKInputController {
         }
         exitAssociate()
         Self.hideCandidatePanel()
+        ModeToastController.hide()
         candidateWindow?.hide()
     }
 
@@ -593,6 +609,7 @@ final class ChaosetController: IMKInputController {
         current = nil
         exitAssociate()
         Self.hideCandidatePanel()
+        ModeToastController.hide()
         candidateWindow?.hide()
     }
 
@@ -606,12 +623,14 @@ final class ChaosetController: IMKInputController {
         }
         exitAssociate()
         Self.hideCandidatePanel()
+        ModeToastController.hide()
         candidateWindow?.hide()
     }
 
     deinit {
         exitAssociate()
         Self.hideCandidatePanel()
+        ModeToastController.hide()
         candidateWindow?.hide()
     }
 }
