@@ -15,6 +15,7 @@ namespace chaoset {
 
 struct Candidate {
     std::string text;
+    std::string syllables;  // 撇号分隔的音节串（如 xian'zai），联想续接需要
 };
 
 struct Comp {
@@ -87,6 +88,12 @@ public:
     bool punct(const std::string& key, std::string* committed);
     // 全角/半角标点模式切换，返回切换后是否为半角；通信失败返回 false。
     bool toggleHalfWidth();
+    // 词组联想：按上屏词音节查续接词组（响应结构与 Composition 同构，
+    // candidates 为联想列表）；通信失败返回 ok=false。
+    bool associate(const std::vector<std::string>& sylls, Comp* out);
+    // 联想候选直接上屏：学习路径与 select 完全一致（调频/共现/词组进化）。
+    bool associateSelect(const std::string& word, const std::vector<std::string>& sylls,
+                         std::string* committed);
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);

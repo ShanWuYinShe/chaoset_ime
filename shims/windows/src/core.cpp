@@ -245,9 +245,10 @@ Comp parseComposition(const JsonValue& result) {
     const JsonValue* cands = result.find("candidates");
     if (cands != nullptr && cands->type == JsonValue::Type::Arr) {
         for (const JsonValue& item : cands->arr) {
-            std::string text;
-            if (item.isString("text", &text)) {
-                c.candidates.push_back(Candidate{text});
+            Candidate cand;
+            if (item.isString("text", &cand.text)) {
+                item.isString("syllables", &cand.syllables);
+                c.candidates.push_back(std::move(cand));
             }
         }
     }
@@ -385,6 +386,40 @@ bool Session::toggleHalfWidth() {
     const JsonValue* hw = result.find("half_width");
     if (hw == nullptr || hw->type != JsonValue::Type::Bool) return false;
     return hw->boolean;
+}
+
+// sylls 数组 → JSON 文本（音节为 ASCII + 撇号，escape 仅为统一口径）。
+static std::string syllsJson(const std::vector<std::string>& sylls) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < sylls.size(); ++i) {
+        if (i != 0) out += ",";
+        out += "\"" + jsonEscape(sylls[i]) + "\"";
+    }
+    out += "]";
+    return out;
+}
+
+bool Session::associate(const std::vector<std::string>& sylls, Comp* out) {
+    bool ok = false;
+    JsonValue result = call("associate", "{\"sylls\":" + syllsJson(sylls) + "}", &ok);
+    if (!ok) return false;
+    Comp c = parseComposition(result);
+    if (!c.ok) return false;
+    if (out != nullptr) *out = std::move(c);
+    return true;
+}
+
+bool Session::associateSelect(const std::string& word, const std::vector<std::string>& sylls,
+                              std::string* committed) {
+    bool ok = false;
+    JsonValue result = call("associateSelect",
+                            "{\"word\":\"" + jsonEscape(word) + "\",\"sylls\":" + syllsJson(sylls) + "}",
+                            &ok);
+    if (!ok) return false;
+    std::string text = parseCommitted(result);
+    if (text.empty()) return false;
+    if (committed != nullptr) *committed = text;
+    return true;
 }
 
 }  // namespace chaoset

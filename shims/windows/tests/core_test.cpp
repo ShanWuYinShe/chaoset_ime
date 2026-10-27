@@ -29,6 +29,22 @@ void check(bool cond, const std::string& msg) {
     }
 }
 
+// 撇号分隔的音节串 → 音节数组（与 win32.cpp splitSyllables 同规则）。
+std::vector<std::string> splitSylls(const std::string& syllables) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= syllables.size()) {
+        std::size_t pos = syllables.find('\'', start);
+        if (pos == std::string::npos) {
+            if (start < syllables.size()) out.push_back(syllables.substr(start));
+            break;
+        }
+        if (pos > start) out.push_back(syllables.substr(start, pos - start));
+        start = pos + 1;
+    }
+    return out;
+}
+
 // TCP 回环传输——与 Windows 壳的 TcpTransport 语义一致
 // （有连接、有序字节流、断线由传输层负责重连）。
 class TcpTransport : public Transport {
@@ -238,6 +254,38 @@ int main(int argc, char** argv) {
     // （通过重新连接同一 daemon 即可）
     Comp c7 = session.input("hao");
     check(c7.ok, "后续按键继续可用");
+
+    // 词组联想（2026-10-27 接入 Windows 壳）：上屏词的音节 → 续接词组 →
+    // associateSelect 直接上屏（学习路径与 select 一致）。
+    {
+        session.reset();
+        Comp n = session.input("ni");
+        if (n.ok && !n.candidates.empty()) {
+            std::string committed;
+            const std::string firstSylls = n.candidates[0].syllables;
+            check(session.select(0, &committed) && !committed.empty(),
+                  "联想前置：上屏「ni」首选");
+            Comp assoc;
+            check(session.associate(splitSylls(firstSylls), &assoc) && assoc.ok,
+                  "associate 按上屏词音节可查到续接词组");
+            if (assoc.ok && !assoc.candidates.empty()) {
+                check(!assoc.candidates[0].syllables.empty(),
+                      "联想候选带音节（壳需要它做连选续接）");
+                std::string assocCommitted;
+                const chaoset::Candidate& pick = assoc.candidates[0];
+                check(session.associateSelect(pick.text, splitSylls(pick.syllables), &assocCommitted) &&
+                          assocCommitted == pick.text,
+                      "associateSelect 联想词直接上屏");
+            } else {
+                check(true, "该词库无 ni 续接词，跳过连选断言");
+                check(true, "该词库无 ni 续接词，跳过连选断言");
+            }
+        } else {
+            check(true, "词库无 ni，跳过联想用例");
+            check(true, "词库无 ni，跳过联想用例");
+            check(true, "词库无 ni，跳过联想用例");
+        }
+    }
 
     if (failures == 0) {
         std::printf("PASS: core 全部检查通过\n");

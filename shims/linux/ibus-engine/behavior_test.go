@@ -510,3 +510,153 @@ func TestHalfWidthToastOnShiftSpace(t *testing.T) {
 		t.Fatalf("切半角后应提示「半角标点」，实际 visible=%v text=%q", visible, text)
 	}
 }
+
+// ---- 2026-10-27 第三批：词组联想接入 Linux（对齐 macOS 壳）----
+
+// lastLookupCandidates 取最后一次可见 UpdateLookupTable 的候选文本列表。
+func (f *fakeEmitter) lastLookupCandidates() ([]string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.emitted) - 1; i >= 0; i-- {
+		s := f.emitted[i]
+		if !strings.Contains(s.name, "UpdateLookupTable") {
+			continue
+		}
+		visible := false
+		if len(s.values) > 1 {
+			if b, ok := s.values[1].(bool); ok {
+				visible = b
+			}
+		}
+		if !visible {
+			continue
+		}
+		table, ok := s.values[0].(godbus.Variant)
+		if !ok {
+			return nil, false
+		}
+		lt, ok := table.Value().(ibusLookupTable)
+		if !ok {
+			return nil, false
+		}
+		candsV, ok := lt.Candidates.Value().([]godbus.Variant)
+		if !ok {
+			return nil, false
+		}
+		var out []string
+		for _, v := range candsV {
+			if it, ok := v.Value().(ibusText); ok {
+				out = append(out, it.Text)
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// newAssociateTestEngine：含「ni」续接词组的词库（上屏「你」后，
+// 以 ni 开头的「你好/你们」都是续接候选）。
+func newAssociateTestEngine(t *testing.T) (*ibusEngine, *fakeEmitter) {
+	t.Helper()
+	src := "你好\tni hao\t90\n你\tni\t80\n你们\tni men\t70\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+	return e, fe
+}
+
+// TestAssociateFlow：选词上屏 → 联想候选表 → 数字连选 → 续接耗尽退出；
+// 以及字母退出联想进入正常组词。
+func TestAssociateFlow(t *testing.T) {
+	e, fe := newAssociateTestEngine(t)
+
+	// 组词 ni → 空格上屏首选「你」（单音节输入：音节数一致优先）
+	typeKeys(e, "ni")
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if !handled {
+		t.Fatal("空格应被消费")
+	}
+	if got := fe.lastCommitText(); got != "你" {
+		t.Fatalf("空格应上屏首选「你」，实际 %q", got)
+	}
+	if len(e.assoc) == 0 {
+		t.Fatal("上屏「你」后应进入联想（词库含 ni 开头的更长词条）")
+	}
+	cands, visible := fe.lastLookupCandidates()
+	if !visible {
+		t.Fatal("联想候选表应可见")
+	}
+	if len(cands) == 0 {
+		t.Fatal("联想候选表不应为空")
+	}
+	// 联想列表应含以 ni 开头的续接词且不含刚上屏的「你」本身
+	for _, c := range cands {
+		if c == "你" {
+			t.Fatalf("联想列表不应含刚上屏的词本身，实际 %v", cands)
+		}
+	}
+
+	// 数字 1 连选联想首选（词频 90「你好」> 70「你们」，应为「你好」），
+	// 上屏后继续查 ni'hao 续接——词库无更深层词条，联想应结束
+	handled, _ = e.ProcessKeyEvent(uint32('1'), 0, 0)
+	if !handled {
+		t.Fatal("联想中数字 1 应被消费")
+	}
+	if got := fe.lastCommitText(); got != cands[0] {
+		t.Fatalf("数字 1 应上屏联想首选 %q，实际 %q", cands[0], got)
+	}
+	if len(e.assoc) != 0 {
+		t.Fatalf("续接耗尽后联想应结束，实际 %v", e.assoc)
+	}
+
+	// 第二轮：字母退出联想进入正常组词
+	typeKeys(e, "ni")
+	handled, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if !handled || len(e.assoc) == 0 {
+		t.Fatalf("前置失败：应再次进入联想（assoc=%d）", len(e.assoc))
+	}
+	handled, _ = e.ProcessKeyEvent(uint32('a'), 0, 0)
+	if !handled {
+		t.Fatal("联想中字母键应被消费（进入正常组词）")
+	}
+	if len(e.assoc) != 0 {
+		t.Fatal("字母键应退出联想")
+	}
+	if got := e.sess.Compose().Input; got != "a" {
+		t.Fatalf("字母应进入正常组词，实际输入 %q", got)
+	}
+}
+
+// TestAssociateEscapeAndPageKeys：联想中 Esc/-/= 的收起语义。
+func TestAssociateEscapeAndPageKeys(t *testing.T) {
+	e, _ := newAssociateTestEngine(t)
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) == 0 {
+		t.Fatal("前置失败：应进入联想")
+	}
+	// -：单页无翻页语义，收起联想放行原键
+	handled, _ := e.ProcessKeyEvent(uint32('-'), 0, 0)
+	if handled {
+		t.Fatal("联想中 - 应放行（无翻页语义）")
+	}
+	if len(e.assoc) != 0 {
+		t.Fatal("- 应收起联想")
+	}
+	// 重新进入联想后 Esc 消费并收起
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	handled, _ = e.ProcessKeyEvent(keysymEscape, 0, 0)
+	if !handled {
+		t.Fatal("联想中 Esc 应被消费")
+	}
+	if len(e.assoc) != 0 {
+		t.Fatal("Esc 应收起联想")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("Esc 后组词应为空，实际 %q", got)
+	}
+}

@@ -1121,6 +1121,7 @@ public:
         if (!fForeground) {
             candidateWnd_.hide();
             toast_.hide();
+            clearAssociate();
             // 失去焦点时清空未决预编辑与候选，防止跨窗口残留组词状态导致后续窗口吃键
             if (isComposing()) {
                 session_.reset();
@@ -1194,6 +1195,21 @@ public:
     }
 
     void selectCandidateByIndex(int index) {
+        // 联想窗点击：联想候选直接上屏并继续联想（与数字键同路径）
+        if (!assoc_.candidates.empty()) {
+            if (index >= static_cast<int>(assoc_.candidates.size())) return;
+            const chaoset::Candidate pick = assoc_.candidates[index];
+            ITfContext* ctx = focusContext();
+            std::string committed;
+            if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
+                const std::string sylls = pick.syllables;
+                commit(ctx, committed);
+                enterAssociate(sylls);
+            } else {
+                clearAssociate();
+            }
+            return;
+        }
         if (!hasCandidates()) return;
         ITfContext* ctx = focusContext();
         std::string committed;
@@ -1312,6 +1328,16 @@ private:
             return isComposing() && (vk == kVkBackspace);
         }
 
+        // 联想模式：数字（有对应项）/空格/回车/Esc 由联想分支消费；- / =
+        // 收起联想放行；其余按键退出联想后按正常流程判定（继续往下走）。
+        if (!assoc_.candidates.empty()) {
+            if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace) return true;
+            if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return false;
+            if (!shiftActive() && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
+                return static_cast<int>(vk - kVkFirstDigit) < static_cast<int>(assoc_.candidates.size());
+            }
+        }
+
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
 
         // 若当前未处于组词状态且在 AppContainer 环境中，或后台服务不可达，一律放行按键，绝不抢占或吞掉宿主按键
@@ -1342,6 +1368,46 @@ private:
 
     bool handleKey(WPARAM vk, ITfContext* pic) {
         if (isModifierKey(vk)) return false;
+
+        // 词组联想分支（对齐 macOS 壳，2026-10-27 接入 Windows）：
+        //   数字（有对应项）→ 联想词直接上屏并继续联想；
+        //   空格 → 结束联想，空格透传；回车 → 结束联想并消费；
+        //   Esc → 收起联想；- / = → 单页无翻页语义，收起放行；
+        //   其余按键 → 退出联想走正常流程（字母进组词 / 标点出中文标点 /
+        //   Ctrl 等修饰键照旧放行）。
+        if (!assoc_.candidates.empty()) {
+            const bool shift = shiftActive();
+            if (vk == kVkEscape || vk == kVkReturn) {
+                clearAssociate();
+                return true;
+            }
+            if (vk == kVkSpace) {
+                clearAssociate();
+                return false; // 空格透传给宿主
+            }
+            if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus)) {
+                clearAssociate();
+                return false;
+            }
+            if (!shift && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
+                const int index = static_cast<int>(vk - kVkFirstDigit);
+                if (index < static_cast<int>(assoc_.candidates.size())) {
+                    const chaoset::Candidate pick = assoc_.candidates[index];
+                    std::string committed;
+                    if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
+                        const std::string sylls = pick.syllables;
+                        commit(pic, committed);
+                        enterAssociate(sylls);
+                    } else {
+                        clearAssociate();
+                    }
+                    return true;
+                }
+                clearAssociate(); // 越界序号：收起联想放行数字（单页 6 条，7-9 必然越界）
+                return false;
+            }
+            clearAssociate(); // 其余按键退出联想，落到下方正常流程
+        }
 
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
@@ -1506,7 +1572,10 @@ private:
             if (index < static_cast<int>(comp_.candidates.size())) {
                 std::string committed;
                 if (session_.select(index, &committed)) {
+                    // commit 会清空 comp_，先取本候选音节供联想续接
+                    const std::string sylls = comp_.candidates[index].syllables;
                     commit(pic, committed);
+                    enterAssociate(sylls);
                 }
                 return true;
             }
@@ -1527,7 +1596,9 @@ private:
             if (hasCandidates()) {
                 std::string committed;
                 if (session_.select(0, &committed)) {
+                    const std::string sylls = comp_.candidates[0].syllables;
                     commit(pic, committed);
+                    enterAssociate(sylls);
                 }
                 return true;
             }
@@ -1721,8 +1792,47 @@ private:
     TcpTransport transport_;
     chaoset::Session session_{transport_};
     chaoset::Comp comp_;
+    // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
+    // 上屏词音节查续接词组继续展示，数字键可直接连选。
+    chaoset::Comp assoc_;
     ITfComposition* composition_ = nullptr;
     std::string committed_;
+
+    // 撇号分隔的音节串 → 音节数组（"xian'zai" → ["xian","zai"]）。
+    static std::vector<std::string> splitSyllables(const std::string& syllables) {
+        std::vector<std::string> out;
+        std::size_t start = 0;
+        while (start <= syllables.size()) {
+            std::size_t pos = syllables.find('\'', start);
+            if (pos == std::string::npos) {
+                if (start < syllables.size()) out.push_back(syllables.substr(start));
+                break;
+            }
+            if (pos > start) out.push_back(syllables.substr(start, pos - start));
+            start = pos + 1;
+        }
+        return out;
+    }
+
+    // 选词上屏后进入联想：查续接词组并复用候选窗展示（单页，页码 1/1）。
+    void enterAssociate(const std::string& syllables) {
+        assoc_ = chaoset::Comp();
+        std::vector<std::string> sylls = splitSyllables(syllables);
+        if (sylls.empty()) return;
+        chaoset::Comp assoc;
+        if (!session_.associate(sylls, &assoc) || assoc.candidates.empty()) return;
+        assoc_ = std::move(assoc);
+        assoc_.page = 0;
+        assoc_.pageCount = 1;
+        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, assoc_, this);
+    }
+
+    // 退出联想并收起联想窗。
+    void clearAssociate() {
+        if (assoc_.candidates.empty()) return;
+        assoc_ = chaoset::Comp();
+        candidateWnd_.hide();
+    }
 };
 
 void CandidateWindow::onLButtonDown(int x, int y) {

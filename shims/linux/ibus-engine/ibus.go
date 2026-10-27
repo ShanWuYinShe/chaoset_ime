@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -137,6 +138,9 @@ type ibusEngine struct {
 	sess   *engine.Session
 	enMode bool // 英文模式：按键全部放行，组词/标点映射不介入
 	shift  shiftTracker
+	// assoc 非空即联想中：选词上屏后按上屏词音节查到的续接词组，候选表
+	// 展示、数字键连选（对齐 macOS 壳，2026-10-27 接入 Linux）。
+	assoc []engine.Candidate
 }
 
 // shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
@@ -359,7 +363,45 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.hideLookupTable()
 			return true, nil
 		}
+		e.exitAssociate()
 		return false, nil
+	}
+
+	// 词组联想分支（对齐 macOS 壳，2026-10-27 接入 Linux）：
+	//   数字（含小键盘）有对应项 → 联想词直接上屏并继续联想；
+	//   空格 → 结束联想，空格透传；回车/Esc → 结束联想并消费；
+	//   - / = → 单页无翻页语义，收起放行；
+	//   字母 → 退出联想落入下方正常组词；
+	//   其余按键 → 退出联想走正常流程（未处理键的「先清空再放行」兜底
+	//   在 switch 末尾，此处已收起联想窗不会残留）。
+	if len(e.assoc) > 0 {
+		isDigit := (keyval >= '1' && keyval <= '9') || (keyval >= keysymKP1 && keyval <= keysymKP9)
+		switch {
+		case keyval == keysymEscape || keyval == keysymReturn:
+			e.exitAssociate()
+			return true, nil
+		case keyval == keysymSpace || keyval == '-' || keyval == '=':
+			e.exitAssociate()
+			return false, nil
+		case isDigit:
+			idx := int(keyval - '1')
+			if keyval >= keysymKP1 {
+				idx = int(keyval - keysymKP1)
+			}
+			if idx < len(e.assoc) {
+				pick := e.assoc[idx]
+				sylls := strings.Split(pick.Syllables, "'")
+				if word, err := e.sess.AssociateSelect(pick.Text, sylls); err == nil {
+					e.commit(word)
+					e.enterAssociate(sylls)
+					return true, nil
+				}
+			}
+			e.exitAssociate()
+			return false, nil
+		default:
+			e.exitAssociate()
+		}
 	}
 
 	switch {
@@ -397,11 +439,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if keyval >= keysymKP1 {
 			idx = int(keyval - keysymKP1)
 		}
+		comp := e.sess.Compose()
+		if idx >= len(comp.Candidates) {
+			return false, nil
+		}
 		text, err := e.sess.Select(idx)
 		if err != nil {
 			return false, nil
 		}
+		// commit 会清空组词状态，先取本候选音节供联想续接
+		sylls := strings.Split(comp.Candidates[idx].Syllables, "'")
 		e.commit(text)
+		e.enterAssociate(sylls)
 		return true, nil
 
 	case keyval == keysymReturn:
@@ -437,6 +486,8 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			return false, nil // 非组词：空格照旧放行
 		}
 		if hasCandidates(e.sess) {
+			// commit 会清空组词状态，先取首选音节供联想续接
+			firstSylls := strings.Split(e.sess.Compose().Candidates[0].Syllables, "'")
 			text, err := e.sess.Select(0)
 			if err != nil {
 				e.sess.Reset()
@@ -445,6 +496,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 				return true, nil
 			}
 			e.commit(text)
+			e.enterAssociate(firstSylls)
 			return true, nil
 		}
 		raw := e.sess.Compose().Input
@@ -652,6 +704,30 @@ func (e *ibusEngine) commit(text string) {
 	e.hideLookupTable()
 }
 
+// enterAssociate 选词上屏后按上屏词音节查续接词组并经候选表展示
+// （单页，engine.Associate 内部已按 maxAssociate=pageSize 截断）。
+func (e *ibusEngine) enterAssociate(sylls []string) {
+	e.assoc = nil
+	if len(sylls) == 0 {
+		return
+	}
+	cands := e.sess.Associate(sylls)
+	if len(cands) == 0 {
+		return
+	}
+	e.assoc = cands
+	e.updateLookupTable(engine.Composition{Candidates: e.assoc, PageCount: 1})
+}
+
+// exitAssociate 退出联想并收起联想候选表。
+func (e *ibusEngine) exitAssociate() {
+	if len(e.assoc) == 0 {
+		return
+	}
+	e.assoc = nil
+	e.hideLookupTable()
+}
+
 // ---- Engine 生命周期方法 ----
 
 func (e *ibusEngine) Enable() *godbus.Error  { return nil }
@@ -679,6 +755,7 @@ func (e *ibusEngine) FocusOut() *godbus.Error {
 	defer e.mu.Unlock()
 	e.sess.Reset()
 	e.shift.reset()
+	e.exitAssociate()
 	e.hidePreedit()
 	e.hideLookupTable()
 	return nil
@@ -691,6 +768,7 @@ func (e *ibusEngine) Reset() *godbus.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.sess.Reset()
+	e.exitAssociate()
 	e.hidePreedit()
 	e.hideLookupTable()
 	return nil
