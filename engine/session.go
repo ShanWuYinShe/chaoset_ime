@@ -852,7 +852,7 @@ func tokensKey(tokens []Token) string {
 func (s *Session) Compose() Composition {
 	// 记忆化：同一输入串的 Compose 结果必然相同（排序依赖的 prev/user 数据
 	// 只在上屏时变化，而上屏会清空 input 使 key 失效）。壳的调用模式是
-	// input() 后立刻 candidateImage()，后者在 daemon 内部会再 Compose 一次——
+	// input() 拿候选后还会连续取翻页/选择等，翻页路径会再 Compose 一次——
 	// 不加缓存时每键要做两次完整组词（实测 zh 多花 1.1ms）。
 	// key 必须包含页码：NextPage/PrevPage 只改 s.page 不改输入串。
 	key := s.input + "\x00" + strconv.Itoa(s.page)

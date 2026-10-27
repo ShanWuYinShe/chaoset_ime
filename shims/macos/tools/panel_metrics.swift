@@ -12,7 +12,7 @@ import Foundation
 
 @main struct PanelMetrics {
     static func main() {
-        // 与 Go 端 render_metrics.go 完全相同的场景
+        // 用一组固定候选驱动一次真实布局（divider 导出需要 size）
         let items = ["今天", "今天时间", "明天", "昨天", "半天", "白天"]
         let view = CandidatePanelView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.appearance = NSAppearance(named: .aqua)
@@ -21,7 +21,7 @@ import Foundation
         }
         let size = view.layout(candidates: list, page: 0, pageCount: 3)
 
-        // 布局常量（与 Go 侧 Skin 字段一一对应）
+        // 布局常量（与 Go 侧 skin/skin.go 字段一一对应）
         let layout = CandidatePanelView.LayoutSnapshot.current
         var out: [String: Any] = [:]
         out["skin"] = [
@@ -31,11 +31,7 @@ import Foundation
             "maxWidth": layout.maxWidth,
             "cornerRadius": layout.panelRadius,
         ]
-        out["scene"] = [
-            "width": Int(size.width.rounded()),
-            "height": Int(size.height.rounded()),
-        ]
-        // 分栏线垂直位置（关键漂移点）：Go 端是 (height-divH)/2，这里导出同样的量
+        // 分栏线垂直位置（关键漂移点，2026-10-26 审查实证漂移处）
         let divH = layout.textH * 55 / 100
         out["divider"] = [
             "height": Double(divH),

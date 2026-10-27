@@ -57,7 +57,8 @@ Shift+字母 不误触）、Shift+空格切换全角/半角标点。
   容器内验证状态分离）。FocusOut 清组词并收起面板、FocusIn 重置
   Shift 跟踪（2026-10-26 实现，防跨窗口状态残留）；光标跟随定位
   （SetCursorLocation）待真机桌面。
-- 候选窗自绘贴图（candidateImage）在此壳的显示接入待做。
+- 候选窗由 ibus 原生面板显示（历史上的 daemon 贴图 candidateImage
+  已随 renderer 包于 2026-10-27 删除，此壳无接入计划）。
 
 ## 图标与设置界面
 

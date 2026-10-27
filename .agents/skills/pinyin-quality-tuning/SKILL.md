@@ -129,7 +129,7 @@ git stash pop                                 # 恢复改动
 ## 四、改动后的验证清单
 
 ```sh
-gofmt -l engine/ cmd/ ipc/ renderer/
+gofmt -l engine/ cmd/ ipc/ skin/
 go vet ./...
 go test ./... -count=1
 go test -race -count=1 ./engine/

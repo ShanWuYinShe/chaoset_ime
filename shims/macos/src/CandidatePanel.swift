@@ -9,16 +9,16 @@
 //      ignoresMouseEvents=true 曾是功能缺口）；
 //   3. daemon 渲染管线的一处皮肤状态机缺陷（WithDarkMode 漏拷配色）曾
 //      导致深色键帽全坏且单测未拦——原生方案不存在跨进程皮肤状态机。
-// 代价：macOS 与 Windows/Linux 的候选窗视觉从此分叉（后两者继续用
-// daemon renderer 贴图），视觉改动需要双端同步；daemon renderer 与
-// candidateImage IPC 保留，作为 Win/Linux 渲染路径与 macOS 回退。
+// 代价：macOS 与 Windows/Linux 的候选窗视觉从此分叉（各自原生自绘），
+// 视觉改动需要双端同步。三端壳都不再使用 daemon 贴图后，daemon 侧的
+// PNG 渲染链路（renderer 包 + candidateImage IPC）已于 2026-10-27 删除。
 //
-// 视觉复刻 renderer.Skin 当前设计（键帽序号 + 首选蓝胶囊 + 学习标记），
-// 色值与 renderer/renderer.go 保持一致，浅/深用动态色自动切换。
+// 视觉复刻 skin.DefaultSkinFor 的设计（键帽序号 + 首选蓝胶囊 + 学习标记），
+// 色值与 skin/skin.go 保持一致，浅/深用动态色自动切换。
 
 import AppKit
 
-// MARK: - 主题色（与 renderer.DefaultSkinFor 色值一一对应）
+// MARK: - 主题色（与 skin.DefaultSkinFor 色值一一对应）
 
 private struct CandidateTheme {
     let panelBg: NSColor
@@ -89,9 +89,9 @@ final class CandidatePanelView: NSView {
     /// 末页时折叠区箭头变 ⌃，点击触发翻上一页。
     var onPageUp: (() -> Void)?
 
-    // 排版参数（pt），与 renderer.renderBar 保持一致
+    // 排版参数（pt），与 skin/skin.go 的 Skin 字段保持一致
     // internal（非 private）：tools/panel_metrics.swift 需要读取这些常量，
-    // 与 renderer/renderer.go 的 Skin 字段做机器比对，防止双端视觉漂移。
+    // 与 Go 侧 tools/render_metrics.go 导出的 skin 参数做机器比对，防止双端视觉漂移。
     enum Layout {
         static let fontSize: CGFloat = 15
         static let indexFontSize: CGFloat = 12      // 主字号 80%
@@ -319,12 +319,11 @@ final class CandidatePanelView: NSView {
         let dividerX = width - Layout.chevronBoxW + 2
         let divH = Layout.textH * 55 / 100
         theme.divider.setFill()
-        // 分割线**垂直居中**，与 Go 端 renderer.go 的 divH 定位保持一致：
-        //   Go:  blendPixel(..., (height-divH)/2+dy, ...)
+        // 分割线**垂直居中**（与 Windows 壳 win32.cpp 的定位约定一致）。
         // 此前这里是「贴底」（bounds.height - divH - padding），同一条竖线在
-        // macOS 原生候选窗与 Windows/Linux 贴图端位置不同（2026-10-26 审查
-        // 发现）。两端各写一份布局又无黄金对比测试，正是漂移的温床——这里
-        // 先对齐，长期方案见 README「双端视觉一致性」。
+        // macOS 原生候选窗与 Windows 贴图端位置不同（2026-10-26 审查发现）。
+        // 两端各写一份布局又无黄金对比测试，正是漂移的温床——双端视觉
+        // 差分见 tests/visual-parity.sh。
         NSRect(x: dividerX, y: (bounds.height - divH) / 2, width: 1, height: divH).fill()
 
         // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下
@@ -501,7 +500,7 @@ enum CandidatePanelController {
 
 extension CandidatePanelView {
     /// LayoutSnapshot 把布局常量导出给 panel_metrics 工具，与
-    /// renderer/renderer.go 的 Skin 字段做机器比对。
+    /// Go 侧 skin/skin.go 的 Skin 参数做机器比对。
     /// 这些值与 Go 端必须一致，由 tests/visual-parity.sh 断言。
     struct LayoutSnapshot {
         let fontSize: Double

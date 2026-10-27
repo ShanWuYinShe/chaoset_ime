@@ -36,8 +36,8 @@ macOS InputMethodKit 本身就是进程间模型）。
 
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
 
-本项目是**从零实现**的：Go 引擎（`engine/`）、IPC（`ipc/`）、候选窗渲染
-（`renderer/`）、三端薄壳（`shims/`）全部为本仓库自研代码，
+本项目是**从零实现**的：Go 引擎（`engine/`）、IPC（`ipc/`）、视觉参数真源
+（`skin/`）、三端薄壳（`shims/`）全部为本仓库自研代码，
 `git ls-files` 中没有任何 Squirrel / librime 源码，也没有引用其图标素材。
 来自第三方的只有**数据**：
 
@@ -70,15 +70,12 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
-renderer/          候选窗渲染（v3 分治）：为「壳贴图」调用方把组词状态画成 PNG
-                   ——Windows/Linux 壳贴图显示；macOS 壳自 v3 起用 AppKit 原生
-                   自绘候选窗（shims/macos/src/CandidatePanel.swift，视觉与
-                   本包 Skin 设计双端同步），candidateImage 保留为其回退路径。
-                   默认横排候选栏 + 圆角 + 系统浅/深色皮肤（Skin.Horizontal /
-                   MaxWidth / CornerRadius，DefaultSkinFor(dark)）；竖排列表布局
-                   仍可用 Horizontal=false 走通（配色由 Skin 颜色字段决定）
+skin/              候选窗视觉参数真源（几何 + 浅/深配色，DefaultSkinFor(dark)）：
+                   三端候选窗均原生自绘（2026-10-27 起 daemon 贴图渲染链路已删），
+                   macOS 壳 shims/macos/src/CandidatePanel.swift 与双端视觉
+                   检查 tools/render_metrics.go 都以本包为准
 cmd/
-  chaosetd/          守护进程二进制（-dict 可多次叠加；-font/-fontsize 候选窗渲染）
+  chaosetd/          守护进程二进制（-dict 可多次叠加）
   chaoset-cli/       阶段 0 终端测试台（本地内嵌引擎或连接 daemon）
   chaoset-import/    热词导入工具（合并输出 TSV）
   chaoset-dictgen/   内置词库生成工具（jieba 词频表 + 词语拼音表 → TSV）
@@ -425,23 +422,14 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 方法：`ping` / `input` / `backspace` / `reset` / `select`（`{"index":0}`，
 返回 `{"committed":"你好"}`）/ `nextPage` / `prevPage`（候选翻页，返回
 current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：组词中
-返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
-`candidateImage`（统一候选窗贴图：返回
-`{"width","height","png":<base64>,"scale"}`，daemon 以 `-font` 启用；无候选时
-`png` 为空；未配置字体时报错）。**macOS 壳自 v3 起默认壳内 AppKit 原生自绘
-候选窗**（见 `shims/macos/src/CandidatePanel.swift`），此方法为其回退路径，
-Windows / Linux 壳继续以它作为主渲染路径。候选与预编辑
-结构见 `engine.Candidate` / `engine.Composition` 的 JSON 标签。
+返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）。
+IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
+候选窗由各平台壳原生自绘（macOS 用 AppKit，见 `shims/macos/src/CandidatePanel.swift`；
+Windows 用 GDI；Linux 用 ibus 原生面板）。历史上的 `candidateImage` 贴图方法
+（daemon 渲染 PNG）随三端壳全部改为自绘，已于 2026-10-27 删除。
 
-`candidateImage` 支持两个**可选**参数（Go 侧为 `ipc.CandidateImageOptions`）：
-
-- `dark`（bool）：按系统外观选深色皮肤；不传则用 daemon 侧皮肤的原样配色。
-- `scale`（int）：像素倍率，**只有 2 生效**（Retina 双倍像素），其余值一律按 1。
-  壳侧应把图片显示尺寸设为 `像素 / scale`，高分屏才清晰。
-
-返回体里的 `scale` 是 daemon **实际采用**的倍率（1 或 2）：传了不支持的倍率时
-以它为准换算，不要用请求值。**不带参数时行为与旧版完全一致**（原皮肤、scale=1），
-因此未接入新参数的 Linux / Windows 壳继续正常工作。
+视觉参数（几何 + 浅/深配色）的真源是 `skin/skin.go`（`DefaultSkinFor(dark)`），
+双端一致性由 `shims/macos/tests/visual-parity.sh` 机器断言。
 
 传输形态：Linux/macOS 用 Unix socket；Windows 壳经 TCP 回环
 （daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
@@ -561,7 +549,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         布局与皮肤统一由 daemon 的 `renderer.Skin` 决定：默认横排候选栏 + 圆角 +
         系统浅/深色配色，壳只按 `candidateImage` 的 `dark`/`scale` 传参（见阶段 20）；
         Windows 壳贴图待真机环境。（**v0.2.0 起 macOS 改为壳内原生自绘候选窗**，
-        见阶段 24；贴图路径保留为回退并继续服务 Windows/Linux）
+        见阶段 24；**2026-10-27 起贴图渲染链路整体删除**——三端壳均为原生自绘，
+        视觉参数保留在 `skin/` 包，见阶段 27）
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
@@ -587,13 +576,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 - [x] 阶段 19：中国风视觉（**已被阶段 20 取代**）——当时应用图标取中国印章语汇、
       候选窗默认皮肤取中国传统色（宣纸底 #F7F2E7、朱红外框 + 米金细内框、浓墨候选、
       淡墨预编辑、朱红首选高亮 + 「朱批」竖记、石青学习标记）。**当前默认皮肤是系统风格的
-      横排候选栏**（见阶段 20）。宣纸/朱红观感**不再是任何内置默认**：要复现须显式
-      把 `Skin.Horizontal` 设为 false **并**逐个覆盖 `BgColor`/`BorderColor`/`FgColor`
-      等配色字段（仅切 `Horizontal` 只会变成竖排布局、配色仍是系统浅色）；
+      横排候选栏**（见阶段 20）。宣纸/朱红观感**不再是任何内置默认**；该观感的
+      绘制代码已随 renderer 包删除（2026-10-27，见阶段 27），如需恢复参考 git 历史；
       输入源图标也已由「印章」改为与系统输入法一致的扁平 keycap。
-      视觉样例不入库：跑 `go test ./renderer/ -run TestWriteVisualSample` 现场生成到
-      `.workwork/`（已 gitignore），共 9 张：横排浅色/深色、浅色 scale=2、深色 scale=2、
-      翻页、9 候选、窄栏换行、超 3 行截断，以及竖排 legacy 对照图。
 - [x] 阶段 14：CC-CEDICT 开源词库直连导入（约 12 万词条，自动识别
       格式、声调数字/u: 记法归一、非汉字过滤、合成词频让用户词库优先）
 - [x] 阶段 15：规模化验证与基准固化——10 万级词库加载 42ms、组词
@@ -623,8 +608,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         跨进程像素管线（渲染+PNG+base64+JSON+socket ≈5ms/帧 @Retina），
         深浅色用 NSColor 动态色自动跟随，补齐贴图方案两大缺口：鼠标点选
         候选（原 ignoresMouseEvents=true 无法点选）与 VoiceOver 读取（原
-        无任何无障碍标注）。Windows/Linux 壳继续贴图，candidateImage 为
-        macOS 回退路径；候选窗视觉双端同步（renderer.go + CandidatePanel.swift）。
+        无任何无障碍标注）。Windows/Linux 壳当时继续贴图；candidateImage 与
+        renderer 已于 2026-10-27 删除（三端原生自绘，视觉真源迁至 skin/ 包）。
       - **序号键帽视觉**：候选序号收进 keycap（浅色白底黑边深黑数字、
         深色 #5A5A5E 底亮边白字、首选蓝胶囊内半透白键帽），数字字号 80%；
         修复深色键帽配色随 WithDarkMode 漏拷失效（改反射同步全部配色字段）。
@@ -711,6 +696,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         输入源图标改为对齐系统规格的 16×16 + 32×32 双帧 TIFF，显示名统一为 `Chaoset`。
       - **仓库卫生**：`.gitignore` 忽略 `.DS_Store`；`go.mod` 把
         `github.com/godbus/dbus/v5` 归正为直接依赖（`shims/linux/ibus-engine` 直接 import）。
+- [x] 阶段 27：删除 daemon 贴图渲染链路（2026-10-27）
+      - **为什么删**：macOS 壳自阶段 24 起 AppKit 原生自绘、Windows 壳 GDI 自绘、
+        Linux 壳用 ibus 原生面板——`renderer` 包（约 1900 行含测试）与
+        `candidateImage` IPC 在三端壳中均无调用方，daemon 每次启动还在探测
+        CJK 字体并打印「candidateImage 渲染已启用」，纯属死代码与误导性日志。
+      - **删了什么**：`renderer/` 整目录、IPC `candidateImage` 方法与服务端
+        `WithSkin`、客户端 `CandidateImage` 方法族、daemon 的 `-font`/`-fontsize`
+        参数、macOS `EngineClient.candidateImage`（Swift 侧同样零调用）。
+      - **留了什么**：视觉参数（几何 + 浅/深配色）迁至新包 `skin/`
+        （`DefaultSkinFor(dark)`，去掉只服务渲染的 `FontPath`/`Horizontal` 字段），
+        作为 Go 侧视觉真源继续服务 `tools/render_metrics.go` 与
+        `tests/visual-parity.sh` 的双端一致性断言（字号/色值检查不变；
+        原场景尺寸比对随渲染器删除——其防回归目标与布局常量比对重叠）。
+        后续若做「构建期由 skin 包生成 Swift 常量」（单一真源），生成源即此包。
 
 ## 验收范围确认（2026-09-23）
 

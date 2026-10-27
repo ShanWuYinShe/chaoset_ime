@@ -1,9 +1,9 @@
 #!/bin/sh
-# 双端候选窗视觉一致性对比：Go 贴图端（Windows/Linux）vs macOS 原生端。
+# 双端候选窗视觉一致性对比：Go 视觉真源（skin/skin.go）vs macOS 原生端。
 #
-# 为什么需要（2026-10-26）：renderer/renderer.go 与 CandidatePanel.swift 是同一套
+# 为什么需要（2026-10-26）：skin/skin.go 与 CandidatePanel.swift 是同一套
 # 视觉的两份独立实现，色值/间距全靠人工手抄同步，没有任何自动断言。审查已实证
-# 漂移（分栏线 y、字号）。本脚本把两端的布局常量与固定场景渲染尺寸导出后做差分，
+# 漂移（分栏线 y、字号）。本脚本把两端的布局常量导出后做差分，
 # 让漂移在 CI 里暴露，而不是等用户肉眼看出候选窗「两个平台长得不一样」。
 #
 # 用法: ./tests/visual-parity.sh
@@ -63,26 +63,6 @@ def cmp(name, a, b):
 print("== B. 布局常量对比 ==")
 for k in ("fontSize", "padding", "lineSpacing", "maxWidth", "cornerRadius"):
     cmp(f"skin.{k}", go["skin"][k], sw["skin"][k])
-
-print()
-print("== C. 固定场景渲染尺寸 ==")
-# 宽度允许 1-2px 差异：两端字体度量（NSFont vs golang.org/x/image）本就不同，
-# 像素级完全一致不现实。这里只断言「量级一致」，防止布局参数改坏导致的数百 px 偏差。
-gw, sw_w = go["scene"]["width"], sw["scene"]["width"]
-if abs(gw - sw_w) <= 4:
-    print(f"ok   scene.width: Go={gw} Swift={sw_w}（差 {abs(gw-sw_w)}px，阈值 4）")
-else:
-    fails.append(("scene.width", gw, sw_w))
-    print(f"FAIL scene.width: Go={gw} Swift={sw_w} 差 {abs(gw-sw_w)}px 超过阈值 4")
-
-gh, sh_h = go["scene"]["height"], sw["scene"]["height"]
-# 高度差异来自行高算法：Go 用字体 metrics，Swift 用 ceil(fontSize*1.4)。
-# 允许 8px 内差异（一行高度量级），超出说明布局逻辑被改坏。
-if abs(gh - sh_h) <= 8:
-    print(f"ok   scene.height: Go={gh} Swift={sh_h}（差 {abs(gh-sh_h)}px，阈值 8）")
-else:
-    fails.append(("scene.height", gh, sh_h))
-    print(f"FAIL scene.height: Go={gh} Swift={sh_h} 差 {abs(gh-sh_h)}px 超过阈值 8")
 
 print()
 print("== D. 色值对比（浅色皮肤）==")

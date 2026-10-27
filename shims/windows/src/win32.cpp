@@ -133,7 +133,7 @@ bool isAppContainer() {
 
 class ChaosetTIP;
 
-// ---- 候选窗主题配色：与 macOS CandidatePanel.swift / renderer.DefaultSkinFor 像素级一致 ----
+// ---- 候选窗主题配色：与 macOS CandidatePanel.swift / skin.DefaultSkinFor 像素级一致 ----
 
 struct CandidateColors {
     COLORREF panelBg;

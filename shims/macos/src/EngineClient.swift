@@ -18,16 +18,6 @@ struct Comp {
     let pageCount: Int  // 总页数（page_count）
 }
 
-// CandidateImage 是 daemon 渲染的统一候选窗贴图（PNG）。
-// scale 是 daemon 实际采用的像素倍率（1 或 2）：壳按 像素/scale 设置 NSImage.size，
-// Retina 屏上才是 1:1 物理像素、不发虚。
-struct CandidateImage {
-    let width: Int
-    let height: Int
-    let png: Data?  // nil = 无候选（壳应隐藏窗口）
-    let scale: Int
-}
-
 final class EngineClient {
     // 套接字路径：优先环境变量 CHAOSET_SOCKET，否则用用户目录下的默认位置
     //（输入法进程没有可靠的工作目录，不能用相对路径）。
@@ -312,26 +302,5 @@ final class EngineClient {
                                 params: ["word": word, "sylls": sylls],
                                 retryOnFailure: false) else { return nil }
         return result["committed"] as? String
-    }
-
-    // candidateImage 取统一候选窗渲染图（v2）。png 为 nil 表示无候选；
-    // 返回 nil 表示 daemon 不可达或未启用渲染（调用方回退 IMKCandidates）。
-    //
-    // dark：按系统外观取深色/浅色皮肤；scale：像素倍率，**只传 1 或 2**
-    // （daemon 对其它值一律回落 1，故传错只会丢清晰度、不会画错）。
-    // 响应里的 scale 是 daemon 实际采用的倍率，壳必须按它换算点尺寸。
-    func candidateImage(dark: Bool = false, scale: Int = 1) -> CandidateImage? {
-        var params: [String: Any] = ["dark": dark]
-        if scale == 2 { params["scale"] = 2 }
-        guard let result = call(method: "candidateImage", params: params) else { return nil }
-        let width = result["width"] as? Int ?? 0
-        let height = result["height"] as? Int ?? 0
-        // 与 daemon 的 EffectiveScale 一致：只有 2 才是双倍，其余按 1
-        let actualScale = (result["scale"] as? Int) == 2 ? 2 : 1
-        guard let b64 = result["png"] as? String else {
-            return CandidateImage(width: width, height: height, png: nil, scale: actualScale)
-        }
-        guard let data = Data(base64Encoded: b64) else { return nil }
-        return CandidateImage(width: width, height: height, png: data, scale: actualScale)
     }
 }

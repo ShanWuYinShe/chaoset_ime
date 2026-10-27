@@ -148,13 +148,13 @@ if [ "$fails" -eq 0 ]; then
   fi
 fi
 
-# F. 双端视觉一致性：Go 贴图端 vs macOS 原生端布局常量差分。
+# F. 双端视觉一致性：Go 视觉真源（skin/skin.go）vs macOS 原生端布局常量差分。
 #    两端是同一套视觉的独立实现，靠人工手抄同步——已实证漂移（分栏线 y、
-#    字号）。这里把布局常量导出后做机器比对，让漂移在 CI 暴露。
+#    字号）。这里把布局常量与色值导出后做机器比对，让漂移在 CI 暴露。
 if [ "$fails" -eq 0 ]; then
-  note "== F. 双端视觉一致性（Go 贴图端 vs macOS 原生端） =="
+  note "== F. 双端视觉一致性（Go 视觉真源 vs macOS 原生端） =="
   if ./tests/visual-parity.sh >/tmp/chaoset-parity.log 2>&1; then
-    ok "F.布局常量与固定场景尺寸两段一致"
+    ok "F.布局常量与色值两段一致"
   else
     fail "F.双端视觉漂移（详见 tests/visual-parity.sh 输出）"
     sed 's/^/   /' /tmp/chaoset-parity.log | tail -20

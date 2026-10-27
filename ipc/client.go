@@ -2,7 +2,6 @@ package ipc
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -65,55 +64,6 @@ func (c *Client) call(method string, params any, result any) error {
 		return json.Unmarshal(resp.Result, result)
 	}
 	return nil
-}
-
-// CandidateImage 取当前组词的候选窗渲染图（v2 统一候选窗）。
-// 无候选时 data 为 nil；daemon 未启用渲染时返回错误（壳回退 v1 UI）。
-func (c *Client) CandidateImage() (width, height int, data []byte, err error) {
-	return c.CandidateImageWith(CandidateImageOptions{})
-}
-
-// CandidateImageOptions 是 candidateImage 的可选渲染参数（零值 = 旧行为）：
-//   - Dark：深色皮肤（跟随系统外观）
-//   - Scale：像素倍率，2 = Retina 双倍像素，其余按 1
-//
-// 壳侧应把 NSImage.size 设为 图片像素/Scale，得到 Retina 清晰度。
-type CandidateImageOptions struct {
-	Dark  bool `json:"dark,omitempty"`
-	Scale int  `json:"scale,omitempty"`
-}
-
-// CandidateImageWith 按 opts 取候选窗渲染图；返回的 scale 是 daemon 实际
-// 采用的倍率（1 或 2），壳侧据此换算 NSImage.size，避免传了不支持的倍率
-// 却按它缩放图片。
-func (c *Client) CandidateImageWith(opts CandidateImageOptions) (width, height int, data []byte, err error) {
-	w, h, d, _, err := c.CandidateImageDetailed(opts)
-	return w, h, d, err
-}
-
-// CandidateImageDetailed 同 CandidateImageWith，但额外返回实际渲染倍率。
-func (c *Client) CandidateImageDetailed(opts CandidateImageOptions) (width, height int, data []byte, scale int, err error) {
-	var out struct {
-		Width  int    `json:"width"`
-		Height int    `json:"height"`
-		PNG    string `json:"png"`
-		Scale  int    `json:"scale"`
-	}
-	if err = c.call("candidateImage", opts, &out); err != nil {
-		return 0, 0, nil, 0, err
-	}
-	scale = out.Scale
-	if scale != 2 {
-		scale = 1
-	}
-	if out.PNG == "" {
-		return out.Width, out.Height, nil, scale, nil
-	}
-	data, err = base64.StdEncoding.DecodeString(out.PNG)
-	if err != nil {
-		return 0, 0, nil, 0, fmt.Errorf("解码渲染图失败: %w", err)
-	}
-	return out.Width, out.Height, data, scale, nil
 }
 
 func (c *Client) Input(text string) (engine.Composition, error) {

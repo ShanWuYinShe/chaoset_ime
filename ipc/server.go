@@ -2,7 +2,6 @@ package ipc
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"net"
 
 	"chaoset.ime/engine"
-	"chaoset.ime/renderer"
 )
 
 // Server 在一条监听套接字上为每个连接维护独立的 engine.Session。
@@ -20,20 +18,13 @@ type Server struct {
 	ln           net.Listener
 	dict         *engine.Dictionary
 	user         *engine.UserDict
-	skin         *renderer.Skin // 可选：启用 candidateImage 候选窗渲染
-	fuzzy        bool           // 可选：新会话启用模糊音
-	traditional  bool           // 可选：新会话启用繁体输出
-	doublePinyin string         // 可选：新会话的双拼方案（空 = 关闭）
+	fuzzy        bool   // 可选：新会话启用模糊音
+	traditional  bool   // 可选：新会话启用繁体输出
+	doublePinyin string // 可选：新会话的双拼方案（空 = 关闭）
 }
 
 // Option 定制 Server 可选能力。
 type Option func(*Server)
-
-// WithSkin 启用统一候选窗渲染（v2）：壳经 candidateImage 方法取
-// 渲染好的 PNG 贴图显示。
-func WithSkin(skin renderer.Skin) Option {
-	return func(s *Server) { s.skin = &skin }
-}
 
 // WithFuzzy 为每个连接的新会话启用模糊音（规则见 engine/fuzzy.go）。
 func WithFuzzy(on bool) Option {
@@ -236,39 +227,6 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"tsv": buf.String()}, nil
-	case "candidateImage":
-		if s.skin == nil {
-			return nil, fmt.Errorf("未启用候选窗渲染（daemon 未配置字体）")
-		}
-		// 可选参数：dark 选深色皮肤，scale 取 2 时按 2 倍像素渲染（Retina）。
-		// 不带参数 = 与旧行为一致（皮肤原样、scale=1）。
-		var p struct {
-			Dark  *bool `json:"dark"` // 指针：区分「未传」与显式 false
-			Scale int   `json:"scale"`
-		}
-		if len(req.Params) > 0 {
-			if err := json.Unmarshal(req.Params, &p); err != nil {
-				return nil, fmt.Errorf("解析 candidateImage 参数失败: %w", err)
-			}
-		}
-		// Skin 是值类型：按请求复制一份改字段，绝不改 s.skin（多连接并发）。
-		skin := *s.skin
-		if p.Dark != nil {
-			skin = renderer.WithDarkMode(skin, *p.Dark)
-		}
-		skin = renderer.ScaleSkin(skin, p.Scale)
-		comp := sess.Compose()
-		data, width, height, err := renderer.RenderWithBounds(comp, skin)
-		if err != nil {
-			return nil, fmt.Errorf("渲染候选窗失败: %w", err)
-		}
-		out := map[string]any{"width": 0, "height": 0, "png": "", "scale": renderer.EffectiveScale(p.Scale)}
-		if len(data) > 0 {
-			out["width"] = width
-			out["height"] = height
-			out["png"] = base64.StdEncoding.EncodeToString(data)
-		}
-		return out, nil
 	default:
 		return nil, fmt.Errorf("未知方法 %q", req.Method)
 	}

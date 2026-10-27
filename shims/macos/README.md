@@ -205,15 +205,14 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色 NSColor
   动态色自动跟随、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
   Composition（纯数据 IPC）。**v2 统一候选窗贴图**（`candidateImage`
-  客户端方法 + NSPanel 贴图面板）保留为其回退路径：daemon 未启用渲染或
-  原生面板不可用时回退 IMKCandidates（v1）。
+  客户端方法 + NSPanel 贴图面板）已于 2026-10-27 删除——三端壳均为原生
+  自绘后，daemon 侧渲染链路整体移除；深浅色由壳按 `effectiveAppearance`
+  自动跟随，不存在渲染回退路径（原生面板不可用时回退 IMKCandidates，v1 起）。
   **2026-10-22 起面板跟随光标而非鼠标**：经
   `client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)` 取插入点
   矩形，优先放在光标行**下方**（`rect.minY - 6`）、下方空间不足时翻到**上方**
   （`rect.maxY + 6`），并用 `NSScreen.visibleFrame` 钳制不出屏；仅在矩形全零/
   非有限值时退回鼠标位置（部分 Electron、远程桌面客户端会返回零矩形）。
-  同时按 `effectiveAppearance` 传 `dark`、按屏幕 `backingScaleFactor` 传 `scale`
-  （只传 1 或 2），并按响应里的实际 `scale` 换算 `NSImage.size`，Retina 下 1:1 物理像素。
 - **2026-09-28 真机反馈修复**：Info.plist 此前缺 `ComponentInputModeDict`
   （输入模式声明），TIS 不把本壳枚举为可添加输入源——已装进
   `~/Library/Input Methods` 且注销重登，系统设置仍无此输入法，
@@ -275,11 +274,12 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   macOS 没有 `MSG_NOSIGNAL`，按 BSD 惯例设 `SO_NOSIGPIPE` 后写入返回 EPIPE，客户端按既有
   逻辑断开并降级（按键透传）。差分实测（连接→正常调用→杀掉 daemon→再调用）：
   **修复前 exit=141（被 SIGPIPE 杀死），修复后 exit=0 且第二次调用返回 nil**。
-- **2026-10-06 候选窗字体实测**：本机（macOS 15.8.1）`/System/Library/Fonts/PingFang.ttc`
+- **2026-10-06 候选窗字体实测（renderer 时代，2026-10-27 渲染链路删除后仅作存档）**：
+  本机（macOS 15.8.1）`/System/Library/Fonts/PingFang.ttc`
   **不存在**，renderer 的平台探测实际命中 `/System/Library/Fonts/Hiragino Sans GB.ttc`（覆盖率好：
   同一组 9 个候选全部有字形）。**不要把系统宋体加入探测序列**：`Supplemental/Songti.ttc` 的
   第 0 号 face 覆盖不全，实测同一组候选里有 6 个画成空白（像素统计：含文字行数 50 vs
-  Hiragino 的 114）。若要换字体请用 `-font` 指定并先用候选窗实渲染验证覆盖率。
+  Hiragino 的 114）。AppKit 自绘候选窗用系统字体栈，不经过此探测。
 - **2026-10-06 本地化与"系统确实读过我们的 bundle"复核**：
   - `InfoPlist.strings` 按输入源 ID 逐模式命名（`CFBundleDisplayName`、`CFBundleName`、
     `ime.chaoset.inputmethod`、`ime.chaoset.inputmethod.Hans`），与官方 Squirrel 的命名方式
