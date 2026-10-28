@@ -492,7 +492,7 @@ private:
 
         // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧
         // 20px 齿轮，点击弹设置菜单（词组联想开关）。
-        int gearBoxW = scale(20, dpi);
+        int gearBoxW = scale(26, dpi);
         int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW + gearBoxW;
         int winW = (std::max)(totalW, scale(120, dpi));
 
@@ -653,20 +653,33 @@ private:
         LineTo(memDC, dividerX_, divY + divH);
         DeleteObject(divPen);
 
-        // 设置齿轮（分割线右侧、翻页箭头左侧）：用 Segoe UI Symbol 的
-        // U+2699 字形，随主题淡色（与页码同色系）
+        // 设置齿轮（分割线右侧、翻页箭头左侧）：圆形淡底 + 居中 ⚙ 字形
+        // （U+2699，Segoe UI Symbol），随主题深浅色——与 macOS 端圆形
+        // 淡底设计一致（参考微信输入法候选栏右侧的独立功能图标）
         {
             const wchar_t* gear = L"\x2699";
-            HFONT gearFont = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL,
+            const bool dark = isSystemDarkTheme();
+            int dia = (std::min)(static_cast<int>(settingsRect_.right - settingsRect_.left),
+                                 h - scale(6, dpi));
+            HBRUSH circleBg = CreateSolidBrush(dark ? RGB(0x3A, 0x3A, 0x3C)
+                                                    : RGB(0xE6, 0xE6, 0xE8));
+            HGDIOBJ oldCircle = SelectObject(memDC, circleBg);
+            Ellipse(memDC, settingsRect_.left + scale(1, dpi), scale(3, dpi),
+                    settingsRect_.left + scale(1, dpi) + dia,
+                    scale(3, dpi) + dia);
+            SelectObject(memDC, oldCircle);
+            DeleteObject(circleBg);
+
+            HFONT gearFont = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_MEDIUM,
                                          FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
                                          L"Segoe UI Symbol");
             HGDIOBJ oldGearFont = SelectObject(memDC, gearFont);
             SetBkMode(memDC, TRANSPARENT);
-            SetTextColor(memDC, theme.pageColor);
-            RECT gearRc = settingsRect_;
-            DrawTextW(memDC, gear, -1, &gearRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SetTextColor(memDC, dark ? RGB(0xD0, 0xD0, 0xD4) : RGB(0x50, 0x50, 0x54));
+            RECT gearTextRc = settingsRect_;
+            DrawTextW(memDC, gear, -1, &gearTextRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             SelectObject(memDC, oldGearFont);
             DeleteObject(gearFont);
         }

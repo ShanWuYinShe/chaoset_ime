@@ -398,22 +398,27 @@ final class CandidatePanelView: NSView {
         // 12pt 淡色「不容易看到」，加大到 13pt + hover 反馈增强可发现性
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
         let gearHovered = mouseLocationInView.map { gearRect.contains($0) } ?? false
-        // 常驻键帽底（与序号键帽同款视觉）：齿轮是一个「按钮」而不是
-        // 混在候选里的一个字符——实机三轮反馈「不容易看到」，仅靠颜色
-        // 与字号不够，需要形状上把它区隔出来
-        let chipBg = gearHovered ? theme.highlightChipBg : theme.chipBg
-        let chipPath = NSBezierPath(
-            roundedRect: gearRect.insetBy(dx: 2, dy: 3),
-            xRadius: 6, yRadius: 6)
-        chipBg.setFill()
-        chipPath.fill()
-        let chipBorder = gearHovered ? theme.highlightBg : theme.chipBorder
-        chipBorder.setStroke()
-        chipPath.lineWidth = 1
-        chipPath.stroke()
+        // 圆形淡底常驻 + hover 系统蓝圆底反白——macOS 工具栏按钮的标准
+        // 形态（参考微信输入法候选栏右侧的独立功能图标）：静态时淡底
+        // 提供按钮的存在感又不突兀，悬停时明确的可点反馈。此前的方形
+        // 键帽被用户评价「太丑」，纯淡色字符则「不容易看到」。
+        let diameter = min(gearRect.width - 4, Layout.textH + 4)
+        let circleRect = NSRect(
+            x: gearRect.midX - diameter / 2,
+            y: gearRect.midY - diameter / 2,
+            width: diameter, height: diameter)
+        let circle = NSBezierPath(ovalIn: circleRect)
+        if gearHovered {
+            theme.highlightBg.setFill()
+            circle.fill()
+        } else {
+            NSColor.quaternarySystemFill.setFill()
+            circle.fill()
+        }
+        let iconTint = gearHovered ? theme.highlightText : NSColor.secondaryLabelColor
         if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
             .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
-            let tint = gearHovered ? theme.highlightText : theme.chipDigit
+            let tint = iconTint
             let sized = NSImage(size: gear.size, flipped: false) { rect in
                 tint.set()
                 gear.draw(in: rect)
@@ -820,5 +825,5 @@ enum AssociateSetting {
 
 // 齿轮图标尺寸（折叠区内、chevron 左侧）。
 enum SettingsGear {
-    static let boxW: CGFloat = 24
+    static let boxW: CGFloat = 26 // 圆形淡底直径 22 + 余量
 }
