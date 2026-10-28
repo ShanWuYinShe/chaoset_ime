@@ -324,6 +324,15 @@ private:
         wc.lpszClassName = L"ChaosetCandidateWndClass";
         RegisterClassExW(&wc);
 
+        // 层级设计（三端对照，2026-10-28 复核）：候选窗保持 TOPMOST——
+        // 微软自带拼音与搜狗等输入法的候选窗同样是置顶 popup。Windows 的
+        // 下拉菜单是系统模态的 topmost popup，弹出时位于 Z 序最顶端且
+        // 独占鼠标（模态菜单循环），候选窗 frame 即使重叠也不会拦截菜单
+        // 点击——与 macOS 不同（NSPanel.popUpMenu 层级会真的压住菜单栏
+        // 拦截点击，macOS 端因此降级为 floating）。去掉 TOPMOST 会让
+        // 候选窗被宿主文档窗口盖住，不可行。
+        // 全链路防拦截：WS_EX_NOACTIVATE 不抢焦点 + 失焦即收候选窗
+        // （OnSetFocus(FALSE)），点击其它应用时候选窗先收起再切换。
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             L"ChaosetCandidateWndClass",
@@ -1053,6 +1062,8 @@ private:
         wc.hInstance = hinst;
         wc.lpszClassName = L"ChaosetModeToastWndClass";
         RegisterClassExW(&wc);
+        // ModeToast 同候选窗：TOPMOST 保持（纯提示 ignoresMouseEvents
+        // 本就不拦截点击；系统模态菜单弹出时位于最上），层级决策见候选窗
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             wc.lpszClassName, L"ChaosetModeToast",
