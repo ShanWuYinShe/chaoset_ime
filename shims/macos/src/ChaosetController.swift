@@ -175,7 +175,8 @@ final class ChaosetController: IMKInputController {
                 return true
             } else if firstScalar >= 49, firstScalar <= 54,
                       let list = associateCandidates {
-                let pick = Int(firstScalar) - 49
+                // 数字选当前页内的联想词（联想已翻页化，见 associateFlip）
+                let pick = associatePage * Self.associatePageSize + Int(firstScalar) - 49
                 if pick < list.count {
                     if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
                         client?.insertText(
@@ -195,10 +196,10 @@ final class ChaosetController: IMKInputController {
                 // 字母键：退出联想，进入正常组词
                 exitAssociate()
             } else if firstScalar == 45 || firstScalar == 61 {
-                // - / =：联想展示为单页，无翻页语义；收起联想放行原键。
-                // 此前落到末尾 passThrough——只清组词不清联想窗，= 字符进了
-                // 文档而联想窗还挂在屏幕上（2026-10-27 审查发现）。
-                exitAssociate()
+                // - / =：联想翻页（2026-10-28 联想翻页化：候选上限 30 条，
+                // 单页 6 条；翻页取代此前的「单页无翻页、收起放行」语义）
+                associateFlip(next: firstScalar == 61, client: client)
+                return true
             }
         }
 
@@ -364,25 +365,51 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 联想模式
 
+    /// 联想每页条数（与引擎 pageSize 一致，数字键 1-6 指位）。
+    private static let associatePageSize = 6
+    /// 联想当前页（0 起）。enterAssociate 归零，翻页键/面板点击切换。
+    private var associatePage = 0
+
     /// 进入联想模式：按上屏词音节查续接词组并展示（无候选则不进入）。
     private func enterAssociate(sylls: [String], client: (any IMKTextInput)?) {
         guard let comp = engine.associate(sylls: sylls), !comp.candidates.isEmpty else { return }
         associateCandidates = comp.candidates
+        associatePage = 0
         refresh(client)
     }
 
     private func exitAssociate() {
         associateCandidates = nil
+        associatePage = 0
         Self.hideCandidatePanel()
     }
 
-    /// 展示联想候选（数据源为续接词组而非组词状态）。
+    /// 联想翻页（- / = 键或面板折叠区）。边界页保持当前页（与组词翻页的
+    /// 钳制语义一致）。
+    private func associateFlip(next: Bool, client: (any IMKTextInput)?) {
+        guard let list = associateCandidates else { return }
+        let pageCount = (list.count + Self.associatePageSize - 1) / Self.associatePageSize
+        if next, associatePage + 1 < pageCount {
+            associatePage += 1
+        } else if !next, associatePage > 0 {
+            associatePage -= 1
+        }
+        refresh(client)
+    }
+
+    /// 展示联想候选（数据源为续接词组而非组词状态，本地分页）。
     private func showAssociatePanel(client: (any IMKTextInput)?, candidates: [Candidate]) -> Bool {
-        let items = candidates.map { CandidatePanelView.Item(text: $0.text, fromUser: false) }
+        let pageCount = max((candidates.count + Self.associatePageSize - 1) / Self.associatePageSize, 1)
+        if associatePage >= pageCount { associatePage = pageCount - 1 }
+        let start = associatePage * Self.associatePageSize
+        let slice = Array(candidates[start..<min(start + Self.associatePageSize, candidates.count)])
+        let items = slice.map { CandidatePanelView.Item(text: $0.text, fromUser: false) }
         let screen = Self.screenForCursor(client) ?? NSScreen.main
         CandidatePanelController.onSelect = { [weak self] index in
-            guard let self, index < candidates.count, let client = self.client() else { return }
-            let pick = candidates[index]
+            // index 是**当前页切片**内的序号（视图按页渲染），查全局列表
+            // 会错选其它页的同位词
+            guard let self, index < slice.count, let client = self.client() else { return }
+            let pick = slice[index]
             if let committed = self.engine.associateSelect(word: pick.text, sylls: pick.syllables.split(separator: "'").map(String.init)) {
                 client.insertText(
                     committed,
@@ -391,12 +418,17 @@ final class ChaosetController: IMKInputController {
                 self.enterAssociate(sylls: pick.syllables.split(separator: "'").map(String.init), client: client)
             }
         }
-        CandidatePanelController.onPageDown = nil
-        CandidatePanelController.onPageUp = nil
+        // 折叠区点击翻页（与翻页键同一逻辑）
+        CandidatePanelController.onPageDown = { [weak self] in
+            self?.associateFlip(next: true, client: self?.client())
+        }
+        CandidatePanelController.onPageUp = { [weak self] in
+            self?.associateFlip(next: false, client: self?.client())
+        }
         return CandidatePanelController.show(
             candidates: items,
-            page: 0,
-            pageCount: 1,
+            page: associatePage,
+            pageCount: pageCount,
             originProvider: { size in
                 Self.candidateOrigin(size: size, client: client, screen: screen)
             }

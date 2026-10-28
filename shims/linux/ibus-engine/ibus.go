@@ -141,8 +141,10 @@ type ibusEngine struct {
 	enMode bool // 英文模式：按键全部放行，组词/标点映射不介入
 	shift  shiftTracker
 	// assoc 非空即联想中：选词上屏后按上屏词音节查到的续接词组，候选表
-	// 展示、数字键连选（对齐 macOS 壳，2026-10-27 接入 Linux）。
-	assoc []engine.Candidate
+	// 分页展示（assocPage 当前页）、数字键连选（对齐 macOS 壳，2026-10-27
+	// 接入 Linux；2026-10-28 翻页化）。
+	assoc     []engine.Candidate
+	assocPage int
 }
 
 // shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
@@ -389,13 +391,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		case keyval == keysymEscape || keyval == keysymReturn:
 			e.exitAssociate()
 			return true, nil
-		case keyval == keysymSpace || keyval == '-' || keyval == '=':
+		case keyval == keysymSpace:
 			e.exitAssociate()
 			return false, nil
+		case keyval == '-' || keyval == '=':
+			// 联想翻页（2026-10-28 翻页化，取代此前的「收起放行」）
+			e.flipAssociate(keyval == '=')
+			return true, nil
 		case isDigit:
-			idx := int(keyval - '1')
+			// 全局序号 = 当前页 × 每页条数 + 页内序号（候选表展示的是切片）
+			idx := e.assocPage*engine.PageSize() + int(keyval-'1')
 			if keyval >= keysymKP1 {
-				idx = int(keyval - keysymKP1)
+				idx = e.assocPage*engine.PageSize() + int(keyval-keysymKP1)
 			}
 			if idx < len(e.assoc) {
 				pick := e.assoc[idx]
@@ -524,6 +531,11 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == keysymPageUp || keyval == keysymPageDown:
+		// 联想中：Page Up / Down 翻联想页（与 - / = 同语义）
+		if len(e.assoc) > 0 {
+			e.flipAssociate(keyval == keysymPageDown)
+			return true, nil
+		}
 		// Page Up / Page Down 键盘翻页（组词中且有候选时消费；空组词放行
 		// 原键）。残缺组词（无候选）时对齐 macOS/Windows 壳：先清空组词再
 		// 放行——此前静默吞键，宿主文档不滚动，用户感知为「按键失灵」。
@@ -753,7 +765,46 @@ func (e *ibusEngine) enterAssociate(sylls []string) {
 		return
 	}
 	e.assoc = cands
-	e.updateLookupTable(engine.Composition{Candidates: e.assoc, PageCount: 1})
+	e.assocPage = 0
+	e.showAssociateTable()
+}
+
+// showAssociateTable 展示联想当前页（本地分页：全量在 e.assoc，每页
+// pageSize 条；2026-10-28 联想翻页化）。
+func (e *ibusEngine) showAssociateTable() {
+	per := engine.PageSize()
+	total := len(e.assoc)
+	if e.assocPage*per >= total {
+		e.assocPage = total/per - 1
+		if e.assocPage < 0 {
+			e.assocPage = 0
+		}
+	}
+	start := e.assocPage * per
+	end := start + per
+	if end > total {
+		end = total
+	}
+	e.updateLookupTable(engine.Composition{
+		Candidates: e.assoc[start:end],
+		Page:       e.assocPage,
+		PageCount:  (total + per - 1) / per,
+	})
+}
+
+// flipAssociate 联想翻页（- / = / PageUp / PageDown）。返回是否切换了页。
+func (e *ibusEngine) flipAssociate(next bool) bool {
+	per := engine.PageSize()
+	pageCount := (len(e.assoc) + per - 1) / per
+	if next && e.assocPage+1 < pageCount {
+		e.assocPage++
+	} else if !next && e.assocPage > 0 {
+		e.assocPage--
+	} else {
+		return false
+	}
+	e.showAssociateTable()
+	return true
 }
 
 // exitAssociate 退出联想并收起联想候选表。
@@ -762,6 +813,7 @@ func (e *ibusEngine) exitAssociate() {
 		return
 	}
 	e.assoc = nil
+	e.assocPage = 0
 	e.hideLookupTable()
 }
 

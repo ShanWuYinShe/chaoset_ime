@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,4 +126,29 @@ func mustInput(t *testing.T, s *Session, text string) Composition {
 		t.Fatalf("Input(%q) 失败: %v", text, err)
 	}
 	return comp
+}
+
+// TestAssociatePagingCap：联想上限翻页化为 30 条（壳本地分页展示），
+// 返回仍按得分降序——条数上限与排序互不影响。
+func TestAssociatePagingCap(t *testing.T) {
+	// 40 个「ni + 合法音节」的续接词条（第二音节从音节表取样）
+	tails := []string{"hao", "men", "de", "shuo", "kan", "xiang", "yao", "neng", "hui", "qu", "lai", "zuo", "xie", "gei", "zhao", "wen", "ting", "jiao", "dai", "ban", "pan", "wan", "tan", "man", "zhan", "guan", "chuan", "zhuan", "duan", "ruan", "suan", "nuan", "luan", "kuan", "huan", "tuan", "duo", "hai", "hei", "hun"}
+	var src strings.Builder
+	for i, tail := range tails {
+		fmt.Fprintf(&src, "你%s\tni %s\t%d\n", tail, tail, 90-i)
+	}
+	d, err := ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	s := NewSession(d, nil)
+	assoc := s.Associate([]string{"ni"})
+	if len(assoc) != maxAssociate {
+		t.Fatalf("联想应返回上限 %d 条，实际 %d", maxAssociate, len(assoc))
+	}
+	for i := 1; i < len(assoc); i++ {
+		if assoc[i-1].Score < assoc[i].Score {
+			t.Fatalf("联想候选应按得分降序，第 %d/%d 项逆序", i, i+1)
+		}
+	}
 }

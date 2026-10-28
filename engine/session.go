@@ -60,11 +60,12 @@ const (
 	// 翻页状态在 Session.page，边界在 Compose 钳制。
 	pageSize = 6
 
-	// maxAssociate 是联想候选的条数上限（单页展示）。
-	// **必须与 pageSize 一致**：壳按数字键 1..N 选联想词，若联想返回的条数
-	// 多于 pageSize，多出来的候选用户永远选不到（2026-10-26 审查发现：此前
-	// 联想上限写死 9 而 pageSize=6，第 7-9 条联想词无法选中）。
-	maxAssociate = pageSize
+	// maxAssociate 是联想候选的条数上限（**三端壳本地分页展示**，每页
+	// pageSize 条）。2026-10-28 联想翻页化之前「必须与 pageSize 一致」——
+	// 单页展示时超出的条数永远选不到；翻页接入后该约束解除：壳按页切片
+	// 展示，数字键选当前页内的候选，翻页键在联想中切换页。排序不变
+	// （词频 + 用户共现），只是从「取 6 条」变为「取 30 条分 5 页」。
+	maxAssociate = 30
 
 	// learnThreshold：相邻两词共现多少次后固化为用户词组（词组进化）。
 	learnThreshold = 2

@@ -638,13 +638,21 @@ func TestAssociateEscapeAndPageKeys(t *testing.T) {
 	if len(e.assoc) == 0 {
 		t.Fatal("前置失败：应进入联想")
 	}
-	// -：单页无翻页语义，收起联想放行原键
+	// 2026-10-28 翻页化：- / = 变为联想翻页（消费），不再收起联想
+	before := e.assocPage
 	handled, _ := e.ProcessKeyEvent(uint32('-'), 0, 0)
-	if handled {
-		t.Fatal("联想中 - 应放行（无翻页语义）")
+	if !handled {
+		t.Fatal("联想中 - 应被消费（翻上一页）")
 	}
-	if len(e.assoc) != 0 {
-		t.Fatal("- 应收起联想")
+	if len(e.assoc) == 0 {
+		t.Fatal("- 不应收起联想")
+	}
+	if e.assocPage != before {
+		t.Fatalf("首页按 - 应保持第 0 页（钳制），实际 %d", e.assocPage)
+	}
+	handled, _ = e.ProcessKeyEvent(uint32('='), 0, 0)
+	if !handled {
+		t.Fatal("联想中 = 应被消费（翻下一页）")
 	}
 	// 重新进入联想后 Esc 消费并收起
 	typeKeys(e, "ni")
@@ -716,5 +724,51 @@ func TestPageKeyClearsCompositionWithoutCandidates(t *testing.T) {
 	}
 	if got := e.sess.Compose().Input; got != "" {
 		t.Fatalf("放行前组词应清空，实际 %q", got)
+	}
+}
+
+// TestAssociatePaging：联想翻页化——上限 30 条分页展示，`=` 翻页后数字键
+// 选到第 2 页的词（翻页前该词永远选不到）。
+func TestAssociatePaging(t *testing.T) {
+	tails := []string{"hao", "men", "de", "shuo", "kan", "xiang", "yao", "neng",
+		"hui", "qu", "lai", "zuo", "xie", "gei", "zhao", "wen", "ting", "jiao",
+		"dai", "ban", "pan", "wan", "tan", "man", "zhan", "guan", "chuan",
+		"zhuan", "duan", "ruan", "suan", "nuan", "luan", "kuan", "huan", "tuan",
+		"duo", "hai", "hei", "hun"}
+	var src strings.Builder
+	src.WriteString("你\tni\t95\n") // 单字「你」须是 ni 首选，上屏后按 ni 查续接
+	for i, tail := range tails {
+		fmt.Fprintf(&src, "你%s\tni %s\t%d\n", tail, tail, 90-i)
+	}
+	d, err := engine.ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) != 30 {
+		t.Fatalf("联想应返回上限 30 条，实际 %d", len(e.assoc))
+	}
+	// 第 1 页展示 6 条
+	cands, visible := fe.lastLookupCandidates()
+	if !visible || len(cands) != 6 {
+		t.Fatalf("联想第 1 页应展示 6 条，实际 visible=%v len=%d", visible, len(cands))
+	}
+	// = 翻到第 2 页
+	if _, gerr := e.ProcessKeyEvent(uint32('='), 0, 0); gerr != nil {
+		t.Fatalf("= 翻页出错: %v", gerr)
+	}
+	cands2, _ := fe.lastLookupCandidates()
+	if len(cands2) != 6 || cands2[0] == cands[0] {
+		t.Fatalf("翻页后应展示第 2 页切片（首条 %q ≠ %q），实际 %v", cands[0], cands2[0], cands2)
+	}
+	// 数字 1 在第 2 页应选中全局第 7 条（enterAssociate 会清空 assoc，先存引用）
+	want := e.assoc[e.assocPage*6]
+	_, _ = e.ProcessKeyEvent(uint32('1'), 0, 0)
+	if got := fe.lastCommitText(); got != want.Text {
+		t.Fatalf("第 2 页数字 1 应选全局第 7 条 %q，实际上屏 %q", want.Text, got)
 	}
 }

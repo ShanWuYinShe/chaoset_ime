@@ -1237,8 +1237,9 @@ public:
     void selectCandidateByIndex(int index) {
         // 联想窗点击：联想候选直接上屏并继续联想（与数字键同路径）
         if (!assoc_.candidates.empty()) {
-            if (index >= static_cast<int>(assoc_.candidates.size())) return;
-            const chaoset::Candidate pick = assoc_.candidates[index];
+            const int global = assocPage_ * 6 + index;
+            if (index < 0 || global >= static_cast<int>(assoc_.candidates.size())) return;
+            const chaoset::Candidate pick = assoc_.candidates[global];
             ITfContext* ctx = focusContext();
             std::string committed;
             if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
@@ -1373,9 +1374,10 @@ private:
         // 收起联想放行；其余按键退出联想后按正常流程判定（继续往下走）。
         if (!assoc_.candidates.empty()) {
             if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace) return true;
-            if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return false;
+            if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return true;
             if (!shiftActive() && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
-                return static_cast<int>(vk - kVkFirstDigit) < static_cast<int>(assoc_.candidates.size());
+                return assocPage_ * 6 + static_cast<int>(vk - kVkFirstDigit) <
+                       static_cast<int>(assoc_.candidates.size());
             }
         }
 
@@ -1426,12 +1428,15 @@ private:
                 clearAssociate();
                 return false; // 空格透传给宿主
             }
+            // - / =：联想翻页（2026-10-28 翻页化，取代此前的「收起放行」；
+            // 边界页保持当前页，与组词翻页的钳制语义一致）
             if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus)) {
-                clearAssociate();
-                return false;
+                flipAssociate(vk == kVkOemPlus);
+                return true;
             }
             if (!shift && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
-                const int index = static_cast<int>(vk - kVkFirstDigit);
+                // 全局序号 = 当前页 × 每页条数 + 页内序号（候选窗展示的是切片）
+                const int index = assocPage_ * 6 + static_cast<int>(vk - kVkFirstDigit);
                 if (index < static_cast<int>(assoc_.candidates.size())) {
                     const chaoset::Candidate pick = assoc_.candidates[index];
                     std::string committed;
@@ -1444,7 +1449,7 @@ private:
                     }
                     return true;
                 }
-                clearAssociate(); // 越界序号：收起联想放行数字（单页 6 条，7-9 必然越界）
+                clearAssociate(); // 越界序号：收起联想放行数字
                 return false;
             }
             clearAssociate(); // 其余按键退出联想，落到下方正常流程
@@ -1847,6 +1852,7 @@ private:
     // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
     // 上屏词音节查续接词组继续展示，数字键可直接连选。
     chaoset::Comp assoc_;
+    int assocPage_ = 0; // 联想当前页（0 起，本地分页每页 6 条）
     ITfComposition* composition_ = nullptr;
     std::string committed_;
 
@@ -1874,15 +1880,47 @@ private:
         chaoset::Comp assoc;
         if (!session_.associate(sylls, &assoc) || assoc.candidates.empty()) return;
         assoc_ = std::move(assoc);
-        assoc_.page = 0;
-        assoc_.pageCount = 1;
-        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, assoc_, this);
+        assocPage_ = 0;
+        showAssociatePage();
+    }
+
+    // 展示联想当前页（本地分页：全量候选在 assoc_，每页 pageSize 条）。
+    void showAssociatePage() {
+        const int per = 6; // 与 engine.PageSize 一致（数字键 1-6 指位）
+        const int total = static_cast<int>(assoc_.candidates.size());
+        const int pageCount = (total + per - 1) / per;
+        if (assocPage_ >= pageCount) assocPage_ = pageCount - 1;
+        const int start = assocPage_ * per;
+        const int end = std::min(start + per, total);
+        chaoset::Comp page;
+        page.ok = true;
+        page.page = assocPage_;
+        page.pageCount = pageCount;
+        page.candidates.assign(assoc_.candidates.begin() + start,
+                               assoc_.candidates.begin() + end);
+        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, page, this);
+    }
+
+    // 联想翻页（- / = 键）：边界页保持当前页。返回是否发生了翻页。
+    bool flipAssociate(bool next) {
+        const int total = static_cast<int>(assoc_.candidates.size());
+        const int pageCount = (total + 5) / 6;
+        if (next && assocPage_ + 1 < pageCount) {
+            ++assocPage_;
+        } else if (!next && assocPage_ > 0) {
+            --assocPage_;
+        } else {
+            return false;
+        }
+        showAssociatePage();
+        return true;
     }
 
     // 退出联想并收起联想窗。
     void clearAssociate() {
         if (assoc_.candidates.empty()) return;
         assoc_ = chaoset::Comp();
+        assocPage_ = 0;
         candidateWnd_.hide();
     }
 };
