@@ -808,3 +808,37 @@ func (u *UserDict) QueryPhrasesByWordPrefix(prefix string) []*Entry {
 	}
 	return out
 }
+
+// QueryWordsByWordPrefix 按**词字面**前缀查用户调频词条（Words 表）——
+// 用户整句上屏/选词的调频记录都在这张表，是「之前输入过的词」的主体
+// （Phrases 只存词组进化合成的词）。联想续接按上屏词的字走时必须查它，
+// 否则用户打过的词不会出现在联想候选（2026-10-28 用户反馈）。
+// 返回按调频分降序的词条（Freq 已含次数×衰减）。
+func (u *UserDict) QueryWordsByWordPrefix(prefix string) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if prefix == "" {
+		return nil
+	}
+	var out []*Entry
+	for key, rec := range u.file.Words {
+		word, sylls, ok := parseUserKey(key)
+		if !ok {
+			continue
+		}
+		if len(word) > len(prefix) && strings.HasPrefix(word, prefix) {
+			out = append(out, &Entry{
+				Word:      word,
+				Syllables: sylls,
+				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Freq != out[j].Freq {
+			return out[i].Freq > out[j].Freq
+		}
+		return out[i].Word < out[j].Word
+	})
+	return out
+}

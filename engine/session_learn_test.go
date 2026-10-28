@@ -228,3 +228,46 @@ func TestAssociateBigramBoostWithWordPrefix(t *testing.T) {
 		t.Fatalf("有 Bigram 共现的「好家伙」应排首，实际首选 %+v", out[:min(3, len(out))])
 	}
 }
+
+// TestAssociateShowsUserLearnedWords：用户上屏过的词（调频词条，含整句
+// 学习的长句）必须出现在联想续接候选中——2026-10-28 用户反馈「之前输入
+// 过的词联想的时候都没有显示」的根因就是 Associate 只查 Phrases（合成
+// 词组），漏了 Words 调频表。
+func TestAssociateShowsUserLearnedWords(t *testing.T) {
+	d := mustCommonDict(t)
+	user, err := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	if err != nil {
+		t.Fatalf("NewUserDict 失败: %v", err)
+	}
+	s := NewSession(d, user)
+
+	// 用户上屏「不行」多次（调频），再上屏「不行的话」作为一条整句词条
+	for i := 0; i < 3; i++ {
+		s.Input("buxing")
+		if _, err := s.Select(0); err != nil {
+			t.Fatalf("Select 失败: %v", err)
+		}
+	}
+	s.Input("buxingdehua")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 整句失败: %v", err)
+	}
+
+	// 新会话（模拟跨应用/重启）：上屏「不行」→ 联想应含「不行的话」
+	s2 := NewSession(d, user)
+	s2.Input("buxing")
+	if _, err := s2.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	assoc := s2.Associate([]string{"bu", "xing"})
+	found := false
+	for _, c := range assoc {
+		if c.Text == "不行的话" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("用户上屏过「不行的话」，联想候选中应包含它（共 %d 条：%+v）", len(assoc), assoc)
+	}
+}

@@ -423,6 +423,12 @@ func (s *Session) Associate(sylls []string) []Candidate {
 			for _, e := range s.user.QueryPhrasesByWordPrefix(s.prev) {
 				add(e, true)
 			}
+			// 用户调频词条（Words 表）：整句上屏/选词的记录都在这里，
+			// 是「之前输入过的词」的主体——漏查它，用户打过的词就不会
+			// 出现在联想候选（2026-10-28 用户反馈）。
+			for _, e := range s.user.QueryWordsByWordPrefix(s.prev) {
+				add(e, true)
+			}
 		}
 	}
 	// 2026-10-28 二次收紧：**严格按字**——不再回退到音节前缀层。回退层
