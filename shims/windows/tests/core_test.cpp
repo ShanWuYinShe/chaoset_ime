@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 using namespace chaoset;
@@ -226,9 +227,11 @@ int main(int argc, char** argv) {
         Comp g2 = session.nextPage();
         check(g2.ok && g2.page == 1, "可翻到第二页");
         Comp g3 = session.nextPage();
-        // 继续下翻，直到钳制在末页
+        // 继续下翻，直到钳制在末页。上界必须由 pageCount 推导：
+        // 单音节全量召回后 yi 有 24 页，写死 16 会停在中间，后面的
+        // 「钳制不动」断言就会被下一页推进误判为失败。
         Comp gLast = g3;
-        for (int i = 0; i < 16 && gLast.page < gLast.pageCount - 1; ++i) {
+        for (int i = 0; i <= gLast.pageCount && gLast.page < gLast.pageCount - 1; ++i) {
             gLast = session.nextPage();
         }
         Comp gClamp = session.nextPage();
