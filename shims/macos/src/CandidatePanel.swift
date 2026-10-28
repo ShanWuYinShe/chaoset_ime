@@ -212,11 +212,16 @@ final class CandidatePanelView: NSView {
     private func contentSize(rows: [Row], lineH: CGFloat) -> NSSize {
         var width: CGFloat = 0
         for row in rows {
-            let w = row.width + Layout.padding * 2 + Layout.chevronBoxW
+            // 面板宽度必须包含齿轮区（SettingsGear.boxW）——漏加会让齿轮
+            // 叠在最后一个候选/首选胶囊上（2026-10-28 实机截图「你是谁啊」
+            // 单候选时齿轮压字）。
+            let w = row.width + Layout.padding * 2 + Layout.chevronBoxW + SettingsGear.boxW
             width = max(width, w)
         }
+        // 最小宽度也要容纳 控制区(chevron+gear)+padding：60 连控制区都不够
+        let minW = Layout.padding * 2 + Layout.chevronBoxW + SettingsGear.boxW + 8
         contentHeight = Layout.padding * 2 + CGFloat(rows.count) * lineH - Layout.lineSpacing
-        return NSSize(width: ceil(max(width, 60)), height: ceil(max(contentHeight, 20)))
+        return NSSize(width: ceil(max(width, minW)), height: ceil(max(contentHeight, 20)))
     }
 
     // MARK: 绘制

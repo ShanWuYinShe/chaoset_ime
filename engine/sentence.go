@@ -41,6 +41,12 @@ func init() {
 // 不直接过滤——沉底保留可达性，误伤成本最低。
 const fragmentPenalty = 800
 
+// rareCharFreq 是长句中单字独立成词的词频门槛：低于它的单字（锝 32/
+// 嘚 17——元素名/方言字）在长句的 de 类同音槽位挤占真词位（2026-10-28
+// 用户反馈「输入文字锝/嘚位置」）。用户有学习数据的字豁免（吸收用户
+// 习惯优先于静态频率）。
+const rareCharFreq = 35
+
 // userEntryBaseFreq 是「只存在于用户词库的词条」在整句规划中的基础分。
 // 用户权重由 UserDict.Score 单独计入（见下方 uScore 分支），这里只给一个
 // 与静态词频同量级的占位值，避免用户调频分（次数×500）被当作静态词频
@@ -192,6 +198,19 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 							concatWord := prevLast + entry.Word
 							concatSylls := append(append([]string(nil), prev.Syllables...), entry.Syllables...)
 							if !dict.Contains(concatWord, concatSylls) {
+								continue
+							}
+						}
+
+						// 生僻单字占位过滤（仅长句 ≥4 音节）：de 槽位的同音
+						// 单字各生成一条整句路径（锝/嘚——元素名/方言字），
+						// 与首选仅差一个字却挤进前排（2026-10-28 用户截图
+						// 「输入文字锝/嘚位置」）。静态词频 < 35 的单字在长句
+						// 独立成词的概率极低，过滤之；**用户有学习数据的字
+						// 豁免**（Freq 对 user-only 词条是基础分 20，但那是
+						// 用户确认过的习惯字——「吸收用户习惯」优先于频率）。
+						if syllCount >= 4 && l == 1 && entry.Freq < rareCharFreq {
+							if user == nil || user.Score(entry.Word, entry.Syllables, prevWord) == 0 {
 								continue
 							}
 						}
