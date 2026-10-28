@@ -663,8 +663,11 @@ private:
         DeleteObject(divPen);
 
         // 设置齿轮（分割线右侧、翻页箭头左侧）：纯 ⚙ 字形（U+2699，
-        // Segoe UI Symbol），固定中灰、无底框、不随状态变色——与 macOS
-        // 端定稿一致（用户反馈 hover 变色观感为「随输入变色」、圆形底在
+        // Segoe UI Symbol），固定中灰、无底框、不随状态变色——颜色语义
+        // 与 macOS 端定稿（chipDigit：暗色亮/浅色暗）对齐。**绘制方式
+        // 与 mac 不同是有意的**：mac 端 SF Symbol 模板图离屏着色失效才
+        // 改手绘矢量；Windows 的 SetTextColor 对字体字形直接生效，无需
+        // 手绘。UI 改动必须三端同步检查（AGENTS.md 候选窗条目）。（用户反馈 hover 变色观感为「随输入变色」、圆形底在
         // 暗色下区分度低，固定中灰在深浅两套主题下对比度都足够）
         {
             const wchar_t* gear = L"\x2699";
