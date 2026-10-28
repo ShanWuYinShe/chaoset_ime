@@ -129,19 +129,6 @@ final class CandidatePanelView: NSView {
     private var cachedLineH: CGFloat = 0
     // VoiceOver 子元素的强引用（accessibilityChildren 每次刷新重建）
     var axChildren: [CandidateAXItem] = []
-    // 齿轮 hover：鼠标在齿轮区内时重绘高亮底（工具栏按钮观感）
-    private var gearHover = false
-    private var hoverTracking: NSTrackingArea?
-    private var mouseLocationInView: NSPoint? {
-        didSet {
-            let hovered = mouseLocationInView != nil
-            if hovered != gearHover || hovered {
-                gearHover = hovered
-                needsDisplay = true
-            }
-        }
-    }
-
     override var isFlipped: Bool { true }
 
     /// 用组词状态刷新内容；返回内容尺寸（pt）。items 为空时返回 .zero。
@@ -190,7 +177,8 @@ final class CandidatePanelView: NSView {
         // 多页时附页码（按简单项处理，无键帽）
         var rows: [Row] = []
         var next = 0
-        let maxContent = Layout.maxWidth - Layout.padding * 2 - Layout.chevronBoxW - SettingsGear.boxW
+        let maxContent = Layout.maxWidth - Layout.padding * 2 - Layout.chevronBoxW
+            - SettingsGear.boxW - Layout.pillMargin * 2 - 2
         var rowFrames: [(rect: NSRect, index: Int)] = []
         var rowW: CGFloat = 0
         var y: CGFloat = Layout.padding
@@ -394,31 +382,14 @@ final class CandidatePanelView: NSView {
         }
 
         // 设置齿轮：SF Symbol 绘制，hitArea -3 由 mouseDown 转发 onSettings。
-        // 齿轮区 hover 时画高亮圆角底（工具栏按钮观感）——实机反馈齿轮
-        // 12pt 淡色「不容易看到」，加大到 13pt + hover 反馈增强可发现性
+        // 颜色与序号数字（chipDigit：浅色深黑/深色纯白）一致且**刻意固定
+        // 不变**——不随 hover/输入内容变色：v2 的 hover 变蓝被用户误读为
+        // 「根据输入的文字变色」，v4 的淡圆底在暗色下区分度过低（三张实机
+        // 截图，2026-10-28）。纯图标 + 固定高对比色是最稳的定稿。
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
-        let gearHovered = mouseLocationInView.map { gearRect.contains($0) } ?? false
-        // 圆形淡底常驻 + hover 系统蓝圆底反白——macOS 工具栏按钮的标准
-        // 形态（参考微信输入法候选栏右侧的独立功能图标）：静态时淡底
-        // 提供按钮的存在感又不突兀，悬停时明确的可点反馈。此前的方形
-        // 键帽被用户评价「太丑」，纯淡色字符则「不容易看到」。
-        let diameter = min(gearRect.width - 4, Layout.textH + 4)
-        let circleRect = NSRect(
-            x: gearRect.midX - diameter / 2,
-            y: gearRect.midY - diameter / 2,
-            width: diameter, height: diameter)
-        let circle = NSBezierPath(ovalIn: circleRect)
-        if gearHovered {
-            theme.highlightBg.setFill()
-            circle.fill()
-        } else {
-            NSColor.quaternarySystemFill.setFill()
-            circle.fill()
-        }
-        let iconTint = gearHovered ? theme.highlightText : NSColor.secondaryLabelColor
         if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
-            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
-            let tint = iconTint
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) {
+            let tint = theme.chipDigit
             let sized = NSImage(size: gear.size, flipped: false) { rect in
                 tint.set()
                 gear.draw(in: rect)
@@ -483,29 +454,6 @@ final class CandidatePanelView: NSView {
         needsDisplay = true
     }
 
-    // 齿轮 hover 追踪：mouseMoved/Exited 更新状态触发重绘
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if hoverTracking == nil, visibleRect != .zero {
-            let ta = NSTrackingArea(
-                rect: bounds,
-                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
-                owner: self, userInfo: nil)
-            addTrackingArea(ta)
-            hoverTracking = ta
-        }
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        mouseLocationInView = convert(event.locationInWindow, from: nil)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        if gearHover {
-            gearHover = false
-            needsDisplay = true
-        }
-    }
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .list }

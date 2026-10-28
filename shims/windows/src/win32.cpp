@@ -653,23 +653,13 @@ private:
         LineTo(memDC, dividerX_, divY + divH);
         DeleteObject(divPen);
 
-        // 设置齿轮（分割线右侧、翻页箭头左侧）：圆形淡底 + 居中 ⚙ 字形
-        // （U+2699，Segoe UI Symbol），随主题深浅色——与 macOS 端圆形
-        // 淡底设计一致（参考微信输入法候选栏右侧的独立功能图标）
+        // 设置齿轮（分割线右侧、翻页箭头左侧）：纯 ⚙ 字形（U+2699，
+        // Segoe UI Symbol），固定中灰、无底框、不随状态变色——与 macOS
+        // 端定稿一致（用户反馈 hover 变色观感为「随输入变色」、圆形底在
+        // 暗色下区分度低，固定中灰在深浅两套主题下对比度都足够）
         {
             const wchar_t* gear = L"\x2699";
             const bool dark = isSystemDarkTheme();
-            int dia = (std::min)(static_cast<int>(settingsRect_.right - settingsRect_.left),
-                                 h - scale(6, dpi));
-            HBRUSH circleBg = CreateSolidBrush(dark ? RGB(0x3A, 0x3A, 0x3C)
-                                                    : RGB(0xE6, 0xE6, 0xE8));
-            HGDIOBJ oldCircle = SelectObject(memDC, circleBg);
-            Ellipse(memDC, settingsRect_.left + scale(1, dpi), scale(3, dpi),
-                    settingsRect_.left + scale(1, dpi) + dia,
-                    scale(3, dpi) + dia);
-            SelectObject(memDC, oldCircle);
-            DeleteObject(circleBg);
-
             HFONT gearFont = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_MEDIUM,
                                          FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
