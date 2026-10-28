@@ -5,8 +5,8 @@ description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）�
 
 # 守护进程与输入源生命周期（本项目专用）
 
-这套排查来自 2026-10-26 用户实际遇到的两个现象：「后台有多个 chaosetd」与
-「切换到我这个输入法后首字母丢失」。两者根因相通，按下面的顺序查最快。
+两类高频现象根因相通：后台出现多个 chaosetd；切换到这个输入法后首字母丢失、打不出字。
+按下面的顺序查最快。
 
 ## 一、「打不出字 / 首字母丢失」的排查顺序
 
@@ -30,9 +30,8 @@ except Exception as e: print('失败:',e)
 `ECONNREFUSED (errno 61)` 而 daemon 进程还在跑，就是僵尸——daemon 持有的
 unix socket 对象（lsof 里那串 `0x...`）与磁盘上的 inode 不是同一个。
 
-成因（2026-10-26 实测）：daemon 在 `net.Listen` 前 `os.Remove(socket)`，
-这个删除分不清「残留文件」与「另一个运行中 daemon 的套接字」。已用 flock
-单实例锁修复（`cmd/chaosetd/singleton_unix.go`）。
+成因：daemon 启动时若在 `net.Listen` 前 `os.Remove(socket)`，会误删另一个运行中
+daemon 的套接字。现行实现用 flock 单实例锁规避（`cmd/chaosetd/singleton_unix.go`）。
 
 ### 第 2 步：daemon 是否被 SIGTERM 打断
 
@@ -40,9 +39,9 @@ unix socket 对象（lsof 里那串 `0x...`）与磁盘上的 inode 不是同一
 launchctl print "gui/$(id -u)/ime.chaoset.daemon" | grep -E 'state|last exit'
 ```
 
-`launchctl kickstart -k` 与各平台 init 都用 **SIGTERM**。只监听 SIGINT 时
-进程被直接杀死 → 用户词典来不及落盘、套接字残留成僵尸。已修（同时监听
-SIGTERM 并在退出时删除套接字）。
+`launchctl kickstart -k` 与各平台 init 都用 **SIGTERM**。反例：只监听 SIGINT——进程被
+直接杀死 → 用户词典来不及落盘、套接字残留成僵尸。现行实现同时监听 SIGTERM 并在退出时
+删除套接字。
 
 ### 第 3 步：壳在 IPC 失败时是否吞键
 
@@ -56,7 +55,7 @@ SIGTERM 并在退出时删除套接字）。
 # daemon 单键处理 p50 约 1.5ms 但 p99 可达 51ms（GC），客户端超时 100ms 时
 # 会偶发拿不到响应 → 壳判定失败 → 丢键。
 ```
-已修：daemon `runtime/debug.SetGCPercent(400)`（p99 → 18ms），客户端超时
+现行实现：daemon `runtime/debug.SetGCPercent(400)`（p99 → 18ms），客户端超时
 放宽到 250ms，读类方法失败重试一次（写类不重试，避免学习数据记两遍）。
 
 ## 二、多实例 / 重复条目的排查
@@ -81,10 +80,10 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
    ```
    修复：`./build/tis dedupe`。原理是**全部 disable 让 TIS 合并记录，再只启用
    一个**——直接 enable 无效。
-2. **父容器被禁用**：`tis sync` 曾把父容器 `ime.chaoset.inputmethod.ChaosetIME`
-   也 disable，而它是 TIS 骨架节点（系统「简体拼音」同样是 mode+container
+2. **父容器被禁用**：反例是 `tis sync` 把父容器 `ime.chaoset.inputmethod.ChaosetIME`
+   也 disable——它是 TIS 骨架节点（系统「简体拼音」同样是 mode+container
    两条且都启用）。禁用会触发系统清空 `AppleEnabledThirdPartyInputSources`，
-   表现为**装完输入法从菜单栏整个消失**。已修：只禁用 .Hans 历史模式。
+   表现为**装完输入法从菜单栏整个消失**。现行 `tis sync` 只禁用 .Hans 历史模式。
 
 正确的 TIS 结构（与系统输入法一致）：
 
@@ -98,8 +97,8 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 
 ## 三、安装/自启相关
 
-- **LaunchAgent 必须由 install.sh 写入**（2026-10-26 前只 kickstart 已存在的
-  plist，全新机器打不出中文）。检查：`launchctl print gui/$(id -u)/ime.chaoset.daemon`。
+- **LaunchAgent 必须由 install.sh 写入**：反例是只 kickstart 已存在的 plist——全新机器
+  没有该 plist，打不出中文。检查：`launchctl print gui/$(id -u)/ime.chaoset.daemon`。
 - `bootout → bootstrap → kickstart` 三层有竞争：bootout 是异步的，要等它在域里
   真正消失再 bootstrap，且不要紧跟 kickstart（会杀掉刚拉起的进程）。
 - 就绪判定**必须用真实 IPC 往返**（`build/smoke`），不能只看套接字文件存在
@@ -109,12 +108,12 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 
 ```bash
 cd shims/macos
-./verify.sh                    # 退出码 0=通过（2026-10-26 前它永远返回 0，已修）
+./verify.sh                    # 退出码 0=通过（反例：旧实现恒返回 0，不能只看退出码）
 ./tests/equivalence.sh         # A 同源 / B 导入等价 / C 判定等价 / D 图标 / E 渲染尺寸 / F 双端视觉
 ./build/tis dedupe             # TIS 重复实例合并
 ```
 
-## 五、CI 相关（2026-10-26 建立）
+## 五、CI 相关
 
 ### 本地只跑轻量项，重活交给 CI
 
@@ -147,4 +146,3 @@ may experience longer queue times"。macos-build 排队几分钟是正常现象�
 
 **在本机用 docker 预演这套 E2E 会很慢**（2026-10-26 实测：apt 装 ibus 在容器里
 花了 10 分钟仍未完成），不值得——直接推 CI 跑，实测 38 秒出结果。
-
