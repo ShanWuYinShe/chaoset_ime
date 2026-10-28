@@ -381,6 +381,13 @@ private:
         items_.clear();
         int curX = pad;
 
+        // 面板最大内容宽度（对齐 macOS Layout.maxWidth=720pt）：单条长候选
+        // 此前可把面板撑出屏幕，右侧内容被裁掉且点不到（2026-10-27 审查）。
+        // 超宽的候选项不再排列（仍在候选列表里，可翻页查看）；首项独超宽时
+        // 逐字截断加省略号，保证至少能显示一条。
+        const int maxContent = scale(720, dpi) - pad * 2 - chevronBoxW;
+        const wchar_t* kEllipsis = L"…";
+
         for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
             ItemPos item;
             item.index = static_cast<int>(i);
@@ -401,6 +408,27 @@ private:
             int chipW = szIdx.cx + chipPadX * 2;
             int chipTextGap = (std::max)(scale(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
             int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx;
+
+            if (items_.empty()) {
+                // 首项独超宽：逐字截断加省略号（保证面板不出屏）
+                if (curX + itemW + chevronBoxW - gap > maxContent + pad) {
+                    const int avail = (std::max)(maxContent - padX * 2 - chipW - chipTextGap - chevronBoxW - scale(8, dpi), scale(20, dpi));
+                    SIZE szEll{};
+                    SelectObject(memDC, fontNormal);
+                    GetTextExtentPoint32W(memDC, kEllipsis, 1, &szEll);
+                    while (item.textStr.size() > 1) {
+                        item.textStr.resize(item.textStr.size() - 1);
+                        GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+                        if (szTxt.cx + szEll.cx <= avail) break;
+                    }
+                    item.textStr += kEllipsis;
+                    GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+                    itemW = padX * 2 + chipW + chipTextGap + szTxt.cx;
+                }
+            } else if (curX - pad + itemW > maxContent) {
+                // 后续项放不下：停止排列（候选仍在列表中，数字键可选）
+                break;
+            }
 
             item.itemRect.left = curX;
             item.itemRect.top = contentTop;
@@ -800,7 +828,7 @@ public:
             int n = ::send(sock_, reinterpret_cast<const char*>(data + off),
                            static_cast<int>(len - off), 0);
             if (n <= 0) {
-                closeConn();
+                failConn();
                 return false;
             }
             off += static_cast<std::size_t>(n);
@@ -814,7 +842,7 @@ public:
             int n = ::recv(sock_, reinterpret_cast<char*>(buf + off),
                            static_cast<int>(len - off), 0);
             if (n <= 0) {
-                closeConn();
+                failConn();
                 return false;
             }
             off += static_cast<std::size_t>(n);
@@ -827,10 +855,22 @@ public:
             ::closesocket(sock_);
             sock_ = INVALID_SOCKET;
         }
-        lastFail_ = 0;  // 主动断开（非连接失败）不进入冷却
+        lastFail_ = 0;  // 主动断开（非失败）不进入冷却
     }
 
 private:
+    // 收发失败断开：与主动断开不同，进入 2s 冷却——daemon 半死（连接可建
+    // 但响应超时）时，此前每次失败都清零冷却，下一键又全量重连+超时，宿主
+    // UI 线程每键被阻塞最多 ~400ms；进入冷却后后续按键直接降级放行，
+    // 只有下一轮冷却过期才重试（2026-10-27 审查发现）。
+    void failConn() {
+        if (sock_ != INVALID_SOCKET) {
+            ::closesocket(sock_);
+            sock_ = INVALID_SOCKET;
+        }
+        lastFail_ = GetTickCount();
+    }
+
     void parseAddr() {
         std::string a = envOr("CHAOSET_TCP", kDefaultTcpAddr);
         auto pos = a.rfind(':');
@@ -1464,9 +1504,12 @@ private:
             std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));
             comp_ = session_.input(ch);
             if (!comp_.ok) {
-                // 若偶发连接断开或冷启动未连上，立即关闭重连并重试一次，绝不轻易泄露首字母到宿主程序
-                transport_.closeConn();
-                if (transport_.ensureConnected()) {
+                // 偶发断开（连接已不在且不在失败冷却）：重连后重试一次，绝不
+                // 轻易泄露首字母到宿主程序。此前这里无条件 closeConn 清零
+                // 失败冷却——daemon 半死（响应超时）时每键都会重新全量重试，
+                // 宿主 UI 线程每键被阻塞 ~200ms；现在尊重 failConn 冷却，
+                // 冷却期内直接降级放行（2026-10-27 审查发现）。
+                if (!transport_.isConnected() && transport_.ensureConnected()) {
                     comp_ = session_.input(ch);
                 }
             }
@@ -1504,8 +1547,8 @@ private:
                 // 组词中的撇号是音节分隔符，走组词流程
                 comp_ = session_.input("'");
                 if (!comp_.ok) {
-                    transport_.closeConn();
-                    if (transport_.ensureConnected()) {
+                    // 只在偶发断开时重连重试（尊重失败冷却，见字母分支注释）
+                    if (!transport_.isConnected() && transport_.ensureConnected()) {
                         comp_ = session_.input("'");
                     }
                 }

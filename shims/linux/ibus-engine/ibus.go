@@ -12,7 +12,9 @@ package main
 // 逐字段对应。此前缺属性列表字段，预编辑无法携带下划线标记。
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -616,12 +618,12 @@ func (e *ibusEngine) updatePreedit(preedit string, visible bool) {
 	}
 	// cursor 取文本末尾（字符数）：此前恒传 0，内联光标画在拼音串开头
 	// 而不是末尾（2026-10-27 审查发现）。
-	e.conn.Emit(e.path, engineIface+".UpdatePreeditText",
+	e.emitSigned(engineIface+".UpdatePreeditText",
 		godbus.MakeVariant(newPreeditText(preedit)), uint32(utf8.RuneCountInString(preedit)), true, uint32(0))
 }
 
 func (e *ibusEngine) hidePreedit() {
-	e.conn.Emit(e.path, engineIface+".UpdatePreeditText",
+	e.emitSigned(engineIface+".UpdatePreeditText",
 		godbus.MakeVariant(newIBusText("")), uint32(0), false, uint32(0))
 }
 
@@ -678,12 +680,12 @@ func (e *ibusEngine) updateLookupTable(comp engine.Composition) {
 		e.hideLookupTable()
 		return
 	}
-	e.conn.Emit(e.path, engineIface+".UpdateLookupTable",
+	e.emitSigned(engineIface+".UpdateLookupTable",
 		godbus.MakeVariant(newIBusLookupTable(comp)), true)
 }
 
 func (e *ibusEngine) hideLookupTable() {
-	e.conn.Emit(e.path, engineIface+".UpdateLookupTable",
+	e.emitSigned(engineIface+".UpdateLookupTable",
 		godbus.MakeVariant(newIBusLookupTable(engine.Composition{})), false)
 }
 
@@ -699,11 +701,11 @@ const modeToastDuration = 1200 * time.Millisecond
 // 线程竞争；仅当期间没有更新的提示时才收起。
 func (e *ibusEngine) showModeToast(text string) {
 	seq := modeToastSeq.Add(1)
-	e.conn.Emit(e.path, engineIface+".UpdateAuxiliaryText",
+	e.emitSigned(engineIface+".UpdateAuxiliaryText",
 		godbus.MakeVariant(newIBusText(text)), true)
 	time.AfterFunc(modeToastDuration, func() {
 		if modeToastSeq.Load() == seq {
-			e.conn.Emit(e.path, engineIface+".UpdateAuxiliaryText",
+			e.emitSigned(engineIface+".UpdateAuxiliaryText",
 				godbus.MakeVariant(newIBusText("")), false)
 		}
 	})
@@ -720,8 +722,20 @@ func (e *ibusEngine) refresh(comp engine.Composition) {
 	e.updateLookupTable(comp)
 }
 
+// emitSigned 发送面板信号并记录失败：此前所有 Emit 返回值都被丢弃——
+// 总线异常时 UI 停更而按键仍被消费，且无日志可查（2026-10-27 审查）。
+// 打日志要避免每键刷屏：只记录非上下文关闭类错误（ECONNRESET/EOF 属
+// 于正常断开）。
+func (e *ibusEngine) emitSigned(name string, values ...interface{}) {
+	if err := e.conn.Emit(e.path, name, values...); err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) && !errors.Is(err, godbus.ErrClosed) {
+			log.Printf("面板信号 %s 发送失败: %v", name, err)
+		}
+	}
+}
+
 func (e *ibusEngine) commit(text string) {
-	e.conn.Emit(e.path, engineIface+".CommitText",
+	e.emitSigned(engineIface+".CommitText",
 		godbus.MakeVariant(newIBusText(text)))
 	e.hidePreedit()
 	e.hideLookupTable()

@@ -125,6 +125,8 @@ final class CandidatePanelView: NSView {
     // 多次 NSString 文本测量，纯属重复计算（2026-10-27 性能审查）。
     private var cachedRows: [Row] = []
     private var cachedLineH: CGFloat = 0
+    // VoiceOver 子元素的强引用（accessibilityChildren 每次刷新重建）
+    var axChildren: [CandidateAXItem] = []
 
     override var isFlipped: Bool { true }
 
@@ -624,5 +626,90 @@ enum ModeToastController {
         p.contentView = v
         panel = p
         return p
+    }
+}
+
+// MARK: - VoiceOver 候选子元素
+
+// 此前面板只能被 VoiceOver 整串朗读，无法逐项浏览/上屏（2026-10-27 审查）。
+// 官方模式：NSAccessibilityElement 子类作为虚拟子元素暴露给辅助功能树，
+// 每个候选一项——VoiceOver 光标可逐项停留朗读，AXPress（VO+空格）直接
+// 走与鼠标点击相同的 onSelect 回调上屏，不依赖面板成为 key 窗口。
+
+final class CandidateAXItem: NSAccessibilityElement {
+    private let index: Int
+    private weak var owner: CandidatePanelView?
+
+    init(index: Int, owner: CandidatePanelView) {
+        self.index = index
+        self.owner = owner
+        super.init()
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("unsupported")
+    }
+
+    private var itemText: String {
+        guard let owner, index < owner.axItemTexts.count else { return "" }
+        return owner.axItemTexts[index]
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? {
+        "候选 \(index + 1)，\(itemText)"
+    }
+    override func accessibilityValue() -> Any? { itemText }
+
+    /// 元素在屏幕上的 frame（hitAreas 存的是视图坐标）。
+    override func accessibilityFrame() -> NSRect {
+        guard let owner else { return .zero }
+        return owner.axItemFrame(at: index)
+    }
+
+    /// VO+空格（AXPress）上屏：与鼠标点击同一条 onSelect 回调。
+    override func accessibilityPerformPress() -> Bool {
+        guard let owner else { return false }
+        owner.axPressItem(at: index)
+        return true
+    }
+}
+
+extension CandidatePanelView {
+    static let axMaxItems = 12
+
+    /// 当前候选的文本快照（供 AX 子元素在 owner 释放前读取）。
+    var axItemTexts: [String] {
+        items.map(\.text)
+    }
+
+    /// AX 子元素的屏幕 frame（extension 内访问 private hitAreas）。
+    func axItemFrame(at index: Int) -> NSRect {
+        guard index < hitAreas.count, let window else { return .zero }
+        let windowRect = convert(hitAreas[index].rect, to: nil)
+        return window.convertToScreen(windowRect)
+    }
+
+    /// AX 子元素的弱引用入口：AXPress 直接走与鼠标点击一致的回调。
+    func axPressItem(at index: Int) {
+        guard index < hitAreas.count else { return }
+        let hit = hitAreas[index].index
+        switch hit {
+        case -1: onPageDown?()
+        case -2: onPageUp?()
+        default: onSelect?(hit)
+        }
+    }
+
+    /// 逐项暴露候选给 VoiceOver（面板级 accessibilityValue 的整串朗读保留）。
+    override func accessibilityChildren() -> [Any]? {
+        guard !items.isEmpty else { return nil }
+        let count = min(items.count, Self.axMaxItems)
+        let children = (0..<count).map { CandidateAXItem(index: $0, owner: self) }
+        // AX 子元素是弱引用 owner 的临时对象，必须由视图持有强引用
+        axChildren = children
+        return children
     }
 }
