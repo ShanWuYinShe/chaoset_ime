@@ -153,6 +153,8 @@ package-linux:
 		file "$$b" | grep -q ELF || { echo "错误：$$b 不是 ELF（Linux）可执行文件："; file "$$b"; exit 1; }; \
 	done
 	tar -czf dist/chaoset-linux-x86_64.tar.gz -C dist chaoset-linux-x86_64
+	@# deb control 语法不支持 # 注释，模板里的维护说明必须在生成时剔除，
+	@# 否则 dpkg-deb 报 "field name '#' must be followed by colon"。
 	@if command -v dpkg-deb >/dev/null 2>&1; then \
 		echo "==> 构建 Linux Debian/Ubuntu 一键安装包 (chaoset_amd64.deb)..."; \
 		rm -rf dist/deb_staging; \
@@ -165,7 +167,7 @@ package-linux:
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
-		sed "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
+		sed -e '/^#/d' -e "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
 		mkdir -p dist/deb_staging/usr/share/doc/chaoset-ime; \
 		cp LICENSE dist/deb_staging/usr/share/doc/chaoset-ime/copyright; \
 		cp shims/linux/debian/postinst dist/deb_staging/DEBIAN/postinst; \
@@ -174,7 +176,7 @@ package-linux:
 		chmod 0755 dist/deb_staging/usr/bin/*; \
 		chmod 0644 dist/deb_staging/usr/share/chaoset/dict.tsv; \
 		chmod 0644 dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
-		dpkg-deb --build --root-owner-group dist/deb_staging dist/chaoset_amd64.deb; \
+		dpkg-deb --build --root-owner-group dist/deb_staging dist/chaoset_amd64.deb || exit 1; \
 		rm -rf dist/deb_staging; \
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
