@@ -23,6 +23,7 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -662,28 +663,46 @@ private:
         LineTo(memDC, dividerX_, divY + divH);
         DeleteObject(divPen);
 
-        // 设置齿轮（分割线右侧、翻页箭头左侧）：纯 ⚙ 字形（U+2699，
-        // Segoe UI Symbol），固定中灰、无底框、不随状态变色——颜色语义
-        // 与 macOS 端定稿（chipDigit：暗色亮/浅色暗）对齐。**绘制方式
-        // 与 mac 不同是有意的**：mac 端 SF Symbol 模板图离屏着色失效才
-        // 改手绘矢量；Windows 的 SetTextColor 对字体字形直接生效，无需
-        // 手绘。UI 改动必须三端同步检查（AGENTS.md 候选窗条目）。（用户反馈 hover 变色观感为「随输入变色」、圆形底在
-        // 暗色下区分度低，固定中灰在深浅两套主题下对比度都足够）
+        // 设置齿轮（分割线右侧、翻页箭头左侧）：**与 macOS 端完全相同的
+        // 矢量算法**（中心圆环 r3.4/线宽1.8 + 8 齿辐条 4.6→7.2/线宽2
+        // 圆头线帽——几何参数与色值逐一对应，三端 UI 一模一样，
+        // 2026-10-28 用户拍板）。颜色同 mac chipDigit：暗色纯白/
+        // 浅色 #1D1D1F，固定不变。GDI 几何笔（ExtCreatePen
+        // PS_GEOMETRIC）才有圆头线帽与真实线宽。
         {
-            const wchar_t* gear = L"\x2699";
             const bool dark = isSystemDarkTheme();
-            HFONT gearFont = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_MEDIUM,
-                                         FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                                         L"Segoe UI Symbol");
-            HGDIOBJ oldGearFont = SelectObject(memDC, gearFont);
-            SetBkMode(memDC, TRANSPARENT);
-            SetTextColor(memDC, dark ? RGB(0xD0, 0xD0, 0xD4) : RGB(0x50, 0x50, 0x54));
-            RECT gearTextRc = settingsRect_;
-            DrawTextW(memDC, gear, -1, &gearTextRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(memDC, oldGearFont);
-            DeleteObject(gearFont);
+            const COLORREF gearColor = dark ? RGB(0xFF, 0xFF, 0xFF) : RGB(0x1D, 0x1D, 0x1F);
+            const double u = dpi / 96.0; // mac 端 pt 值按 1x 换算
+            const double cx = (settingsRect_.left + settingsRect_.right) / 2.0;
+            const double cy = h / 2.0;
+            // 中心圆环：NULL_BRUSH 只描边不填充
+            HBRUSH ringBrush = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+            HPEN ringPen = CreatePen(PS_SOLID, static_cast<int>(1.8 * u + 0.5), gearColor);
+            HGDIOBJ oldBrush = SelectObject(memDC, ringBrush);
+            HGDIOBJ oldPen = SelectObject(memDC, ringPen);
+            const double rr = 3.4 * u;
+            Ellipse(memDC,
+                    static_cast<int>(cx - rr + 0.5), static_cast<int>(cy - rr + 0.5),
+                    static_cast<int>(cx + rr + 0.5), static_cast<int>(cy + rr + 0.5));
+            // 8 齿辐条：PS_GEOMETRIC 圆头线帽
+            HPEN spokePen = ExtCreatePen(PS_GEOMETRIC | PS_ENDCAP_ROUND,
+                                         static_cast<DWORD>(2 * u + 0.5),
+                                         nullptr, 0, nullptr);
+            SelectObject(memDC, spokePen);
+            for (int i = 0; i < 8; ++i) {
+                const double a = i * 3.14159265358979 / 4.0;
+                const double dx = cos(a), dy = sin(a);
+                MoveToEx(memDC,
+                         static_cast<int>(cx + dx * 4.6 * u + 0.5),
+                         static_cast<int>(cy + dy * 4.6 * u + 0.5), nullptr);
+                LineTo(memDC,
+                       static_cast<int>(cx + dx * 7.2 * u + 0.5),
+                       static_cast<int>(cy + dy * 7.2 * u + 0.5));
+            }
+            SelectObject(memDC, oldBrush);
+            SelectObject(memDC, oldPen);
+            DeleteObject(ringPen);
+            DeleteObject(spokePen);
         }
 
         // 翻页箭头
