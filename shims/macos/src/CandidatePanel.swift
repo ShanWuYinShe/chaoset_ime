@@ -386,28 +386,38 @@ final class CandidatePanelView: NSView {
             hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
 
-        // 设置齿轮：SF Symbol 绘制，hitArea -3 由 mouseDown 转发 onSettings。
-        // 颜色与序号数字（chipDigit：浅色深黑/深色纯白）一致且**刻意固定
-        // 不变**——不随 hover/输入内容变色：v2 的 hover 变蓝被用户误读为
-        // 「根据输入的文字变色」，v4 的淡圆底在暗色下区分度过低（三张实机
-        // 截图，2026-10-28）。纯图标 + 固定高对比色是最稳的定稿。
+        // 设置齿轮：手绘矢量（见 drawGear），hitArea -3 由 mouseDown 转发
+        // onSettings。颜色固定用 chipDigit（浅色深黑/深色纯白），不随
+        // hover/输入内容变色。
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
-        if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) {
-            let tint = theme.chipDigit
-            let sized = NSImage(size: gear.size, flipped: false) { rect in
-                tint.set()
-                gear.draw(in: rect)
-                return true
-            }
-            let iconSize = gear.size
-            sized.draw(in: NSRect(
-                x: gearRect.midX - iconSize.width / 2,
-                y: gearRect.midY - iconSize.height / 2,
-                width: iconSize.width,
-                height: iconSize.height))
-        }
+        // 齿轮用**手绘矢量路径**（中心圆环 + 8 齿辐条）：SF Symbol 模板图
+        // 在离屏/PDF 上下文的着色不可靠（tint.set 无效；蒙版填色在 PDF
+        // 渲染下成实心方块——panel_preview 实测），手绘路径颜色完全受控。
+        // 颜色 chipDigit：浅色深黑/深色纯白，两套主题对比度都足够。
+        drawGear(center: NSPoint(x: gearRect.midX, y: bounds.height / 2),
+                 color: theme.chipDigit)
         hitAreas.append((gearRect, -3))
+    }
+
+    /// 设置齿轮（矢量手绘）：中心圆环 + 8 齿辐条，约 15pt。SF Symbol
+    /// 模板图在离屏/PDF 上下文的着色不可靠（多轮颜色改不动、蒙版填色在
+    /// PDF 渲染下成实心方块——panel_preview 实测），手绘路径颜色完全受控。
+    private func drawGear(center: NSPoint, color: NSColor) {
+        color.setStroke()
+        let ring = NSBezierPath(
+            ovalIn: NSRect(x: center.x - 3.4, y: center.y - 3.4, width: 6.8, height: 6.8))
+        ring.lineWidth = 1.8
+        ring.stroke()
+        let spokes = NSBezierPath()
+        spokes.lineCapStyle = .round
+        spokes.lineWidth = 2
+        for i in 0..<8 {
+            let angle = CGFloat(i) * .pi / 4
+            let dx = cos(angle), dy = sin(angle)
+            spokes.move(to: NSPoint(x: center.x + dx * 4.6, y: center.y + dy * 4.6))
+            spokes.line(to: NSPoint(x: center.x + dx * 7.2, y: center.y + dy * 7.2))
+        }
+        spokes.stroke()
     }
 
     /// 折叠指示箭头：dirDown=true 画 ⌄（翻下页），false 画 ⌃（翻上页）。
