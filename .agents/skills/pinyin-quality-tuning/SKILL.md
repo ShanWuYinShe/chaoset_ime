@@ -22,7 +22,7 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
   的规则词条（约 3.6 万条）；
 - **确定性采样**：按 (词, 拼音) 排序后每 25 条取 1 条（约 1,460 条）。
   绝不能用 map 遍历顺序采样——每次跑的词集不同，数字没有意义；
-- 取全部候选用 `Session.NextPage()` 翻到底（每页 9 条）；
+- 取全部候选用 `Session.NextPage()` 翻到底（每页 6 条）；
 - rank 判定必须**同时匹配词与音节序列**（`c.Text == word && c.Syllables == key`），
   否则同形词的不同切分会被误判为命中；
 - 全量扫描 14 万词条太慢（单次组词约 20µs，但翻页取全部候选会放大），
@@ -135,7 +135,7 @@ go test ./... -count=1
 go test -race -count=1 ./engine/
 make build
 # 关键路径性能不能明显退化（本项目基准为微秒级）
-go test ./engine/ -run XXX -bench 'ComposeCommonDict' -benchtime 20x -count=3
+go test ./engine/ -run '^$' -bench 'ComposeCommonDict' -benchtime 20x -count=3
 ```
 
 性能数据必须多次采样对比（`-count=3`），单次结果在 M1 上有 ±10% 抖动，
