@@ -785,3 +785,26 @@ func (u *UserDict) ExportTSV(w io.Writer, phrasesOnly bool) error {
 	}
 	return bw.Flush()
 }
+
+// QueryPhrasesByWordPrefix 按**词字面**前缀查用户合成词组（与音节前缀的
+// QueryPhrasesPrefix 互补）：联想续接按上屏词的字走，同音不同字（测试/
+// 策士）的续接词组应当不同（2026-10-28 用户反馈）。线性扫描用户词组
+// （数千条量级）足够快。
+func (u *UserDict) QueryPhrasesByWordPrefix(prefix string) []*Entry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if prefix == "" {
+		return nil
+	}
+	var out []*Entry
+	for _, rec := range u.file.Phrases {
+		if len(rec.Word) > len(prefix) && strings.HasPrefix(rec.Word, prefix) {
+			out = append(out, &Entry{
+				Word:      rec.Word,
+				Syllables: strings.Fields(rec.Sylls),
+				Freq:      u.phraseScore(rec),
+			})
+		}
+	}
+	return out
+}

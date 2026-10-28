@@ -376,53 +376,93 @@ func (s *Session) Select(index int) (string, error) {
 
 // Associate 返回「以上屏词音节序列开头」的联想候选：用户选词上屏后拼音区
 // 已清空，候选窗继续展示的续接词组（如上屏「现在」→ 联想「现在时间」）。
-// 纯查询，不改会话状态；最多返回 9 个（单页）。
+// 纯查询，不改会话状态；返回上限 maxAssociate 条（壳本地分页展示）。
+//
+// 2026-10-28 语义修正：续接按**上屏词的字**（s.prev）优先——同音不同字
+// （测试/策士）上屏后的续接候选应当跟着字走：选「测试」弹「测试题/
+// 测试员」，选「策士」弹「策士团」，而不是两者弹同一批 ce'shi 开头的
+// 词（用户反馈「联想不能只靠拼音，要跟字对应起来」）。
+// 分层：字前缀（词典 QueryWordPrefix + 用户词库 QueryPhrasesByWordPrefix）
+// 优先，音节前缀（QueryPrefix/QueryPhrasesPrefix）回退补充——上屏词没有
+// 更长的字面续接词时（如单字「了」）仍能出音节续接候选。
 func (s *Session) Associate(sylls []string) []Candidate {
 	if s.dict == nil || len(sylls) == 0 {
 		return nil
 	}
-	var out []Candidate
+	type assocItem struct {
+		cand   Candidate
+		byWord bool // 字前缀层（同分时排在音节前缀层之前）
+	}
+	var out []assocItem
 	seen := map[string]bool{}
-	add := func(e *Entry) {
+	add := func(e *Entry, byWord bool) {
 		key := userKey(e.Word, e.Syllables)
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		out = append(out, Candidate{
-			Text:      e.Word,
-			Syllables: strings.Join(e.Syllables, "'"),
-			Score:     e.Freq,
+		out = append(out, assocItem{
+			cand: Candidate{
+				Text:      e.Word,
+				Syllables: strings.Join(e.Syllables, "'"),
+				Score:     e.Freq,
+			},
+			byWord: byWord,
 		})
 	}
+
+	// 字前缀层：s.prev 是刚上屏的词（Select/AssociateSelect 设置）。
+	// 收集上限 200（按字统计的最长尾也覆盖），不要传 maxAssociate——
+	// 内部按词频截断会把 Bigram 加成候选裁掉（好家伙 41 分排 31+，
+	// 加成后的 541 分根本进不了列表，2026-10-28 探针实测）。
+	if s.prev != "" {
+		for _, e := range s.dict.QueryWordPrefix(s.prev, 200) {
+			add(e, true)
+		}
+		if s.user != nil {
+			for _, e := range s.user.QueryPhrasesByWordPrefix(s.prev) {
+				add(e, true)
+			}
+		}
+	}
+	// 音节前缀层（回退）：字前缀已覆盖的词条由 seen 去重自然吸收。
+	// 音节层的词条规模 = 该音节前缀的全部衍生词（hao 前缀 40+ 条），
+	// 不做内部截断，统一由末尾 maxAssociate 截断
 	for _, e := range s.dict.QueryPrefix(sylls, "") {
-		add(e)
+		add(e, false)
 	}
 	if s.user != nil {
 		for _, e := range s.user.QueryPhrasesPrefix(sylls) {
-			add(e)
+			add(e, false)
 		}
 	}
 	if s.user != nil {
 		// 上下文加成：user.Score 含调频与「上屏词 → 联想词」共现（Bigram），
 		// 用户常打的联想词（如反复输入「现在的」跟随「现在」）排到前面。
 		for i := range out {
-			syllsList := strings.Split(out[i].Syllables, "'")
-			out[i].Score += s.user.Score(out[i].Text, syllsList, s.prev)
+			syllsList := strings.Split(out[i].cand.Syllables, "'")
+			out[i].cand.Score += s.user.Score(out[i].cand.Text, syllsList, s.prev)
 		}
 	}
-	// QueryPrefix 按 Trie 子树序收集、顺序与词频无关；联想候选展示给用户时
-	// 应高频在前（毫米 64 不应排在 豪快 9 之后），按加成后得分降序稳定排序。
+	// 排序：字前缀层优先（同音不同字的续接跟着字走），层内按加成后得分
+	// 降序稳定排序（毫米 64 不应排在 豪快 9 之后）。
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
+		if out[i].byWord != out[j].byWord {
+			return out[i].byWord
 		}
-		return out[i].Text < out[j].Text
+		if out[i].cand.Score != out[j].cand.Score {
+			return out[i].cand.Score > out[j].cand.Score
+		}
+		return out[i].cand.Text < out[j].cand.Text
 	})
 	if len(out) > maxAssociate {
 		out = out[:maxAssociate]
 	}
-	return out
+	result := make([]Candidate, len(out))
+	for i, it := range out {
+		result[i] = it.cand
+	}
+	return result
 }
 
 // AssociateSelect 联想候选直接上屏：不需要拼音组词状态，学习路径与

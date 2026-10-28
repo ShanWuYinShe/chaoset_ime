@@ -549,3 +549,34 @@ func WriteTSV(w io.Writer, entries []*Entry) error {
 	}
 	return bw.Flush()
 }
+
+// QueryWordPrefix 按**词字面**前缀查词条（与音节前缀的 QueryPrefix 互补）。
+// 联想续接按上屏词的字走：同音不同字（测试/策士）的续接词组应当不同
+// （2026-10-28 用户反馈「联想不能只靠拼音，要跟字对应起来」）。
+// 词库结构是音节 Trie，字面查询只能线性扫描全部词条——14 万条约 1-2ms，
+// 联想只在上屏后调用一次（非按键热路径），可接受。
+// 返回按词频降序、最多 maxResults 条；不含前缀自身（上屏词不重复出现）。
+func (d *Dictionary) QueryWordPrefix(prefix string, maxResults int) []*Entry {
+	if prefix == "" {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+	var out []*Entry
+	for _, e := range d.entries {
+		if len(e.Word) > len(prefix) && strings.HasPrefix(e.Word, prefix) {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Freq != out[j].Freq {
+			return out[i].Freq > out[j].Freq
+		}
+		return out[i].Word < out[j].Word
+	})
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
+}

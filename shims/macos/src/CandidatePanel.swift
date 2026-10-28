@@ -129,6 +129,18 @@ final class CandidatePanelView: NSView {
     private var cachedLineH: CGFloat = 0
     // VoiceOver 子元素的强引用（accessibilityChildren 每次刷新重建）
     var axChildren: [CandidateAXItem] = []
+    // 齿轮 hover：鼠标在齿轮区内时重绘高亮底（工具栏按钮观感）
+    private var gearHover = false
+    private var hoverTracking: NSTrackingArea?
+    private var mouseLocationInView: NSPoint? {
+        didSet {
+            let hovered = mouseLocationInView != nil
+            if hovered != gearHover || hovered {
+                gearHover = hovered
+                needsDisplay = true
+            }
+        }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -381,13 +393,24 @@ final class CandidatePanelView: NSView {
             hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
 
-        // 设置齿轮：SF Symbol 绘制，hitArea -3 由 mouseDown 转发 onSettings
+        // 设置齿轮：SF Symbol 绘制，hitArea -3 由 mouseDown 转发 onSettings。
+        // 齿轮区 hover 时画高亮圆角底（工具栏按钮观感）——实机反馈齿轮
+        // 12pt 淡色「不容易看到」，加大到 13pt + hover 反馈增强可发现性
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
+        let gearHovered = mouseLocationInView.map { gearRect.contains($0) } ?? false
+        if gearHovered {
+            let hoverBg = theme.highlightBg.withAlphaComponent(0.22)
+            let hoverPath = NSBezierPath(
+                roundedRect: gearRect.insetBy(dx: 1, dy: 3),
+                xRadius: 6, yRadius: 6)
+            hoverBg.setFill()
+            hoverPath.fill()
+        }
         if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) {
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) {
             // 用候选文字色（深色白/浅色近黑）：pageColor 是次级淡色，
             // 实机反馈齿轮「配色太烂根本看不清」（2026-10-28）
-            let tint = theme.text
+            let tint = gearHovered ? theme.highlightText : theme.text
             let sized = NSImage(size: gear.size, flipped: false) { rect in
                 tint.set()
                 gear.draw(in: rect)
@@ -450,6 +473,30 @@ final class CandidatePanelView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+    }
+
+    // 齿轮 hover 追踪：mouseMoved/Exited 更新状态触发重绘
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if hoverTracking == nil, visibleRect != .zero {
+            let ta = NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                owner: self, userInfo: nil)
+            addTrackingArea(ta)
+            hoverTracking = ta
+        }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        mouseLocationInView = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if gearHover {
+            gearHover = false
+            needsDisplay = true
+        }
     }
 
     override func isAccessibilityElement() -> Bool { true }

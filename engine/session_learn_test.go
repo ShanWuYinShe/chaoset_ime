@@ -152,3 +152,73 @@ func TestAssociatePagingCap(t *testing.T) {
 		}
 	}
 }
+
+// TestAssociateFollowsWord：联想续接按**上屏词的字**走——同音不同字
+// （测试/策士）上屏后的续接候选应当不同（2026-10-28 用户反馈）。
+// 同时覆盖 Bigram 共现排序（打过的「词 + 续接」组合排最前）。
+func TestAssociateFollowsWord(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("测试\tce shi\t80\n测试题\tce shi ti\t70\n测试员\tce shi yuan\t60\n")
+	src.WriteString("策士\tce shi\t75\n策士团\tce shi tuan\t50\n")
+	d, err := ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	user, _ := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	s := NewSession(d, user)
+
+	// 选「测试」上屏 → 联想首条应是「测试」开头的续接词（测试题），
+	// 而非同音节的「策士团」
+	s.Input("ceshi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	assoc := s.Associate([]string{"ce", "shi"})
+	if len(assoc) == 0 {
+		t.Fatal("应有联想候选")
+	}
+	if !strings.HasPrefix(assoc[0].Text, "测试") {
+		t.Fatalf("上屏「测试」后联想首选应是「测试」开头，实际 %q（%+v）", assoc[0].Text, assoc)
+	}
+
+	// 选「策士」上屏 → 联想首条应是「策士」开头（策士团）——同音节
+	// 不同字，续接跟着字走
+	s.Reset()
+	s.Input("ceshi")
+	for i, c := range s.Compose().Candidates {
+		if c.Text == "策士" {
+			if _, err := s.Select(i); err != nil {
+				t.Fatalf("Select 策士失败: %v", err)
+			}
+			break
+		}
+		_ = i
+	}
+	assoc = s.Associate([]string{"ce", "shi"})
+	if len(assoc) == 0 {
+		t.Fatal("应有联想候选")
+	}
+	if !strings.HasPrefix(assoc[0].Text, "策士") {
+		t.Fatalf("上屏「策士」后联想首选应是「策士」开头，实际 %q（%+v）", assoc[0].Text, assoc)
+	}
+}
+
+// TestAssociateBigramBoostWithWordPrefix：Bigram 共现加成必须在字前缀
+// 分层下仍然生效（「好家伙」freq 仅 41、被 30 个「好」开头词条包夹，
+// 共现加成后的 500+ 分必须把它顶到首位——收集上限放宽前它被内部截断
+// 排 31+，2026-10-28 探针实测）。
+func TestAssociateBigramBoostWithWordPrefix(t *testing.T) {
+	d := mustCommonDict(t)
+	user, err := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	if err != nil {
+		t.Fatalf("NewUserDict 失败: %v", err)
+	}
+	user.BumpBigram("好", "好家伙")
+	user.BumpBigram("好", "好家伙")
+	s := NewSession(d, user)
+	s.prev = "好"
+	out := s.Associate([]string{"hao"})
+	if len(out) == 0 || out[0].Text != "好家伙" {
+		t.Fatalf("有 Bigram 共现的「好家伙」应排首，实际首选 %+v", out[:min(3, len(out))])
+	}
+}
