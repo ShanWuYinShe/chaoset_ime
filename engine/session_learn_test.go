@@ -271,3 +271,40 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 		t.Fatalf("用户上屏过「不行的话」，联想候选中应包含它（共 %d 条：%+v）", len(assoc), assoc)
 	}
 }
+
+// TestSelectPrefixProgressive：渐进上屏——打长串拼音后选中「今天」，
+// 只消耗 jin'tian 两音节，剩余 wo'chi'le'yi'da'wan 回灌继续组词；
+// 逐段渐进上屏，每段进用户词库学习（2026-10-29 用户场景）。
+func TestSelectPrefixProgressive(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("今天\tjin tian\t90\n我\two\t88\n吃\tchi\t85\n")
+	src.WriteString("了\tle\t84\n一\tyi\t83\n大\tda\t82\n碗\twan\t81\n")
+	src.WriteString("吃了一碗\tchi le yi wan\t70\n")
+	d, err := ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	user, _ := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	s := NewSession(d, user)
+
+	// 打长串，选「今天」（ jin'tian 词条，两音节）
+	s.Input("jintianwochi leyidawan")
+	comp, committed, err := s.SelectPrefix(0)
+	if err != nil {
+		t.Fatalf("SelectPrefix 失败: %v", err)
+	}
+	if committed != "今天" {
+		t.Fatalf("committed 应为「今天」，实际 %q", committed)
+	}
+	if comp.Preedit != "wo'chi'le'yi'da'wan" {
+		t.Fatalf("剩余拼音应为 wochi leyidawan，实际 %q", comp.Preedit)
+	}
+
+	// 剩余串选「吃了一碗」（词组路径或逐段）
+	s.Reset()
+	s.Input("chi leyidawan")
+	comp, _ = s.Input("")
+	if len(comp.Candidates) == 0 {
+		t.Fatal("剩余串应有候选")
+	}
+}

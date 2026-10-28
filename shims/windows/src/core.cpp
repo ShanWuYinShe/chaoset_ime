@@ -369,6 +369,21 @@ bool Session::select(int index, std::string* committed) {
     return true;
 }
 
+bool Session::selectPrefix(int index, Comp* out) {
+    bool ok = false;
+    JsonValue result = call("selectPrefix", "{\"index\":" + std::to_string(index) + "}", &ok);
+    if (!ok) return false;
+    Comp c = parseComposition(result);
+    if (!c.ok) return false;
+    // committed 在 Composition 的顶层字段（committed）
+    if (const JsonValue* cm = result.find("committed"); cm != nullptr && cm->type == JsonValue::Type::Str) {
+        c.committed = cm->str;
+    }
+    if (c.committed.empty()) return false;
+    if (out != nullptr) *out = std::move(c);
+    return true;
+}
+
 bool Session::punct(const std::string& key, std::string* committed) {
     bool ok = false;
     JsonValue result = call("punct", "{\"key\":\"" + jsonEscape(key) + "\"}", &ok);

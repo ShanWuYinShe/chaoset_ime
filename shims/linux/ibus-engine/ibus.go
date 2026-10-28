@@ -484,14 +484,19 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if idx >= len(comp.Candidates) {
 			return false, nil
 		}
-		text, err := e.sess.Select(idx)
+		// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
+		rest, committed, err := e.sess.SelectPrefix(idx)
 		if err != nil {
 			return false, nil
 		}
-		// commit 会清空组词状态，先取本候选音节供联想续接
-		sylls := strings.Split(comp.Candidates[idx].Syllables, "'")
-		e.commit(text)
-		e.enterAssociate(sylls)
+		e.commit(committed)
+		if rest.Input != "" {
+			// 剩余拼音回灌：预编辑显示剩余串，候选表刷新为剩余组词
+			e.refresh(rest)
+			return true, nil
+		}
+		// 剩余耗尽：进入联想（与整句上屏同收尾）
+		e.enterAssociateForPrev(e.sess.PrevWord())
 		return true, nil
 
 	case keyval == keysymReturn:
@@ -527,17 +532,25 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			return false, nil // 非组词：空格照旧放行
 		}
 		if hasCandidates(e.sess) {
-			// commit 会清空组词状态，先取首选音节供联想续接
-			firstSylls := strings.Split(e.sess.Compose().Candidates[0].Syllables, "'")
-			text, err := e.sess.Select(0)
+			// 渐进上屏：只消耗首选音节对应的拼音前缀，剩余回灌继续组词
+			rest, committed, err := e.sess.SelectPrefix(0)
 			if err != nil {
-				e.sess.Reset()
-				e.hidePreedit()
-				e.hideLookupTable()
+				text, serr := e.sess.Select(0)
+				if serr != nil {
+					e.sess.Reset()
+					e.hidePreedit()
+					e.hideLookupTable()
+					return true, nil
+				}
+				e.commit(text)
 				return true, nil
 			}
-			e.commit(text)
-			e.enterAssociate(firstSylls)
+			e.commit(committed)
+			if rest.Input != "" {
+				e.refresh(rest)
+				return true, nil
+			}
+			e.enterAssociateForPrev(e.sess.PrevWord())
 			return true, nil
 		}
 		raw := e.sess.Compose().Input
@@ -780,7 +793,16 @@ func (e *ibusEngine) enterAssociate(sylls []string) {
 	if len(sylls) == 0 {
 		return
 	}
-	cands := e.sess.Associate(sylls)
+	e.enterAssociateForPrev(sylls[len(sylls)-1])
+}
+
+// enterAssociateForPrev 按上屏词（字前缀）查续接联想：渐进上屏的剩余
+// 耗尽收尾用（sylls 参数是上屏段音节，仅作兼容签名）。
+func (e *ibusEngine) enterAssociateForPrev(prev string) {
+	if !e.assocOn || prev == "" {
+		return
+	}
+	cands := e.sess.Associate(strings.Split(prev, "'"))
 	if len(cands) == 0 {
 		return
 	}

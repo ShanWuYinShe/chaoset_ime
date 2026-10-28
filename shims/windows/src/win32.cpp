@@ -1738,12 +1738,27 @@ private:
         if (vk >= kVkFirstDigit && vk <= kVkLastDigit && !shiftActive()) {
             int index = static_cast<int>(vk - kVkFirstDigit);
             if (index < static_cast<int>(comp_.candidates.size())) {
-                std::string committed;
-                if (session_.select(index, &committed)) {
-                    // commit 会清空 comp_，先取本候选音节供联想续接
-                    const std::string sylls = comp_.candidates[index].syllables;
-                    commit(pic, committed);
-                    enterAssociate(sylls);
+                // 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
+                //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）
+                chaoset::Comp rest;
+                if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
+                    commit(pic, rest.committed);
+                    if (!rest.input.empty()) {
+                        // 剩余拼音回灌：更新 comp_ 为剩余组词态并重渲染
+                        comp_ = rest;
+                        render(pic);
+                    } else {
+                        // 剩余耗尽：与整句上屏同收尾（进入联想）
+                        comp_ = chaoset::Comp();
+                        endComposition();
+                        enterAssociate(rest.committed);
+                    }
+                } else {
+                    // daemon 不可达/越界：回退整句上屏（现状语义）
+                    std::string committed;
+                    if (session_.select(index, &committed)) {
+                        commit(pic, committed);
+                    }
                 }
                 return true;
             }
@@ -1762,11 +1777,22 @@ private:
         // 实机反馈的同族问题）。Shift+空格已在前面的全半角分支处理。
         if (vk == kVkSpace) {
             if (hasCandidates()) {
+                chaoset::Comp rest;
+                if (session_.selectPrefix(0, &rest) && !rest.committed.empty()) {
+                    commit(pic, rest.committed);
+                    if (!rest.input.empty()) {
+                        comp_ = rest;
+                        render(pic);
+                    } else {
+                        comp_ = chaoset::Comp();
+                        endComposition();
+                        enterAssociate(rest.committed);
+                    }
+                    return true;
+                }
                 std::string committed;
                 if (session_.select(0, &committed)) {
-                    const std::string sylls = comp_.candidates[0].syllables;
                     commit(pic, committed);
-                    enterAssociate(sylls);
                 }
                 return true;
             }

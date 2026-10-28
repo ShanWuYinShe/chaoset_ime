@@ -28,6 +28,9 @@ type Composition struct {
 	Candidates []Candidate `json:"candidates"`
 	Page       int         `json:"page"`
 	PageCount  int         `json:"page_count"`
+	// Committed 仅 SelectPrefix（渐进上屏）返回时非空：本次实际上屏的
+	// 前缀段文本，壳据此写入文档并用 Preedit（剩余拼音）恢复预编辑。
+	Committed string `json:"committed,omitempty"`
 }
 
 // Controller 是会话的统一操作接口。本地 Session 与 IPC Client 都实现它，
@@ -347,6 +350,15 @@ func (s *Session) Select(index int) (string, error) {
 	c := comp.Candidates[index]
 	sylls := strings.Split(c.Syllables, "'")
 	text := c.Text
+	s.learnSelection(text, sylls)
+	s.input = ""
+	s.resetPunctCycle()
+	return text, nil
+}
+
+// learnSelection 记录一次上屏的学习数据：词频、与上一上屏词的 Bigram、
+// history 与词组进化。Select / SelectPrefix 共用。
+func (s *Session) learnSelection(text string, sylls []string) {
 	// 学习数据的写入失败**绝不能阻断上屏**。
 	//
 	// 输入法的铁律是「用户按了键就必须出字」。旧实现把 BumpWord/BumpBigram 的
@@ -369,9 +381,42 @@ func (s *Session) Select(index int) (string, error) {
 		s.learnPhrase()
 	}
 	s.prev = text
-	s.input = ""
+}
+
+// SelectPrefix 渐进上屏：选中第 index 个候选，上屏其文本并只消耗其音节
+// 对应的 input 前缀，**剩余 input 自动回灌继续组词**——返回剩余组词态
+// （Composition）供壳刷新候选；已上屏文本经 committed 返回给壳上屏。
+//
+// 2026-10-29 用户场景：打 jintianwochi… 长串，候选 1 是「今天」——选中
+// 后只消耗 jin'tian，剩余 wo'chi'le'yi'da'wan 继续弹「吃了一大碗」相关
+// 候选，逐段渐进拼出整句；每个上屏段都进用户词库学习（吸收用户习惯）。
+//
+// 候选音节与 input 前缀不匹配时（简拼/模糊音场景的音节展开差异），
+// 回退为现状语义：整句上屏、input 全清。
+func (s *Session) SelectPrefix(index int) (comp Composition, committed string, err error) {
+	c := s.Compose()
+	if index < 0 || index >= len(c.Candidates) {
+		return Composition{}, "", fmt.Errorf("候选序号 %d 越界（当前共 %d 个候选）", index+1, len(c.Candidates))
+	}
+	cand := c.Candidates[index]
+	committed = cand.Text
+	sylls := strings.Split(cand.Syllables, "'")
+	// 候选音节的字母连写（与 s.input 的连写形态对齐）
+	typed := strings.Join(sylls, "")
+	rest := s.input
+	if strings.HasPrefix(rest, typed) {
+		rest = rest[len(typed):]
+	} else {
+		rest = "" // 音节与前缀不匹配（简拼/模糊音展开）：回退全清
+	}
+
+	s.learnSelection(committed, sylls)
+	s.prev = committed
+	s.input = rest
 	s.resetPunctCycle()
-	return text, nil
+	comp = s.Compose()
+	comp.Committed = committed
+	return comp, committed, nil
 }
 
 // Associate 返回「以上屏词音节序列开头」的联想候选：用户选词上屏后拼音区
@@ -1575,3 +1620,6 @@ func (s *Session) compose() Composition {
 	s.composeMemo = comp
 	return comp
 }
+
+// PrevWord 返回最近一次上屏的词（渐进上屏/联想续接按字前缀查询用）。
+func (s *Session) PrevWord() string { return s.prev }

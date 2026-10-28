@@ -156,6 +156,29 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
+	case "selectPrefix":
+		// 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，剩余拼音
+		// 回灌继续组词。返回剩余组词态（committed=已上屏前缀段文本，
+		// input/preedit=剩余拼音，candidates=剩余候选），壳据此写文档、
+		// 恢复预编辑并刷新候选。
+		var p struct {
+			Index int `json:"index"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, fmt.Errorf("解析 selectPrefix 参数失败: %w", err)
+		}
+		comp, committed, err := sess.SelectPrefix(p.Index)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"committed":  committed,
+			"input":      comp.Input,
+			"preedit":    comp.Preedit,
+			"candidates": comp.Candidates,
+			"page":       comp.Page,
+			"page_count": comp.PageCount,
+		}, nil
 	case "associate":
 		// 联想候选：选词上屏后拼音区已清空，按上屏词音节查续接词组
 		// （Candidate 列表，结构同 input 响应）。macOS 壳进入联想模式时调用。

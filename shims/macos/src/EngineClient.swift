@@ -16,6 +16,8 @@ struct Comp {
     let candidates: [Candidate]
     let page: Int       // 0 起页码
     let pageCount: Int  // 总页数（page_count）
+    // 渐进上屏（selectPrefix）返回时非空：本次实际上屏的前缀段文本
+    var committedText: String = ""
 }
 
 final class EngineClient {
@@ -297,6 +299,31 @@ final class EngineClient {
 
     // associateSelect 联想候选直接上屏：学习路径与 select 一致。
     /// 联想候选上屏。**不重试**：与 select 一样会写学习数据。
+    /// 渐进上屏：选中候选后只消耗其音节对应的拼音前缀，剩余拼音回灌继续
+    /// 组词。返回剩余组词态（Committed=已上屏前缀段文本，Preedit=剩余拼音，
+    /// Candidates=剩余候选）。
+    func selectPrefix(index: Int) -> Comp? {
+        guard let result = call(method: "selectPrefix",
+                                params: ["index": index]) else { return nil }
+        let committed = result["committed"] as? String ?? ""
+        let input = result["input"] as? String ?? ""
+        let preedit = result["preedit"] as? String ?? ""
+        let page = (result["page"] as? Int ?? 0)
+        let pageCount = (result["page_count"] as? Int ?? 1)
+        var list: [Candidate] = []
+        if let arr = result["candidates"] as? [[String: Any]] {
+            for item in arr {
+                if let text = item["text"] as? String {
+                    list.append(Candidate(text: text,
+                                          syllables: item["syllables"] as? String ?? "",
+                                          fromUser: item["from_user"] as? Bool ?? false))
+                }
+            }
+        }
+        return Comp(input: input, preedit: preedit, candidates: list,
+                    page: page, pageCount: pageCount, committedText: committed)
+    }
+
     func associateSelect(word: String, sylls: [String]) -> String? {
         guard let result = call(method: "associateSelect",
                                 params: ["word": word, "sylls": sylls],

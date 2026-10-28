@@ -369,9 +369,27 @@ final class ChaosetController: IMKInputController {
     private func commit(index: Int, client: (any IMKTextInput)?) {
         // 越界直接返回（调用方应已按候选数判定；这里是最后一道防线）。
         guard let cur = current, index >= 0, index < cur.candidates.count else { return }
-        let sylls = cur.candidates[index].syllables
-        // daemon 不可达时 engine.select 返回 nil：绝不能静默失败（键被消费、
-        // 文字没进文档 = 丢字）。退化为把原始拼音上屏，保证用户输入不丢失。
+        // 渐进上屏（2026-10-29）：SelectPrefix 只消耗候选音节对应的拼音
+        // 前缀——打 jintian'wo'chi… 选「今天」后剩余 wo'chi… 继续组词
+        // （2026-10-28 用户反馈「选一个候选就清空整个拼音」不合适，
+        // 渐进拼句才是吸纳用户习惯的主途径）。
+        if let comp = engine.selectPrefix(index: index), !comp.committedText.isEmpty {
+            client?.insertText(
+                comp.committedText,
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            if comp.preedit.isEmpty {
+                current = nil
+            } else {
+                current = Comp(input: comp.input, preedit: comp.preedit,
+                               candidates: comp.candidates,
+                               page: comp.page, pageCount: comp.pageCount)
+            }
+            refresh(client)
+            return
+        }
+        // daemon 不可达（selectPrefix 返回 nil）：绝不能静默失败（键被消费、
+        // 文字没进文档 = 丢字）。退化为整句上屏，保证用户输入不丢失。
         let committed = engine.select(index) ?? cur.input
         current = nil
         client?.insertText(
@@ -380,7 +398,7 @@ final class ChaosetController: IMKInputController {
         )
         refresh(client)
         // 联想：选词上屏后候选窗继续展示续接词组（用户可直接数字键连选）
-        enterAssociate(sylls: sylls.split(separator: "'").map(String.init), client: client)
+        enterAssociate(sylls: cur.candidates[index].syllables.split(separator: "'").map(String.init), client: client)
     }
 
     // MARK: - 联想模式

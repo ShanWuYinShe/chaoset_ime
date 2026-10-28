@@ -25,6 +25,7 @@ struct Comp {
     std::vector<Candidate> candidates;
     int page = 0;       // 当前候选页（0 起）
     int pageCount = 0;  // 总页数（无候选为 0）
+    std::string committed;  // 渐进上屏（selectPrefix）返回的已上屏前缀段文本
 };
 
 // 传输抽象：Windows 下是 TCP 回环（与 daemon -tcp 配对），
@@ -84,6 +85,10 @@ public:
     Comp nextPage();
     Comp prevPage();
     bool select(int index, std::string* committed);
+    // 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，剩余拼音回灌
+    // 继续组词。成功时 *out 为剩余组词态（committed=已上屏前缀段文本，
+    // input/preedit/candidates=剩余），失败（通信/越界）返回 false。
+    bool selectPrefix(int index, Comp* out);
     // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
     bool punct(const std::string& key, std::string* committed);
     // 全角/半角标点模式切换，返回切换后是否为半角；通信失败返回 false。

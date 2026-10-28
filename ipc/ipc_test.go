@@ -346,3 +346,91 @@ func waitForDial(sock string) (*Client, error) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestSelectPrefixProgressive：渐进上屏——selectPrefix 只消耗候选音节
+// 对应的 input 前缀，剩余拼音回灌继续组词（committed=已上屏段，
+// input/preedit=剩余拼音，candidates=剩余候选）。2026-10-29 用户场景：
+// 打长串 jin'tian'wo'chi… 选「今天」不清空整个拼音，剩余继续组词。
+func TestSelectPrefixProgressive(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "test.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(`
+今天	jin tian	99
+我	wo	88
+吃	chi	85
+了	le	84
+一	yi	83
+大	da	82
+碗	wan	81
+一大碗	yi da wan	70
+`))
+	if err != nil {
+		t.Fatalf("解析词库失败: %v", err)
+	}
+	udPath := filepath.Join(dir, "user.json")
+	user, err := engine.NewUserDict(udPath)
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+	defer srv.Close()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 打长串 jin'tian'wo'chi'le'yi'da'wan，渐进选「今天」（词条路径）
+	comp, err := client.Input("jintianwochi leyidawan")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx := -1
+	for i, c := range comp.Candidates {
+		if c.Text == "今天" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("前置失败：候选中应有「今天」")
+	}
+
+	comp, err = client.SelectPrefix(idx)
+	if err != nil {
+		t.Fatalf("SelectPrefix 失败: %v", err)
+	}
+	if comp.Committed != "今天" {
+		t.Fatalf("committed 应为「今天」，实际 %q", comp.Committed)
+	}
+	if comp.Preedit != "wo'chi'le'yi'da'wan" {
+		t.Fatalf("剩余拼音应为 wo'chi'le'yi'da'wan，实际 %q", comp.Preedit)
+	}
+	if len(comp.Candidates) == 0 {
+		t.Fatal("剩余拼音应有继续组词的候选")
+	}
+
+	// 渐进第二步：剩余拼音 wo'chi'le'yi'da'wan 已组出整句「我吃了一大碗」
+	// 排第一——SelectPrefix(0) 选它，剩余耗尽后正常收尾
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "我吃了一大碗" {
+		t.Fatalf("剩余候选首选应为整句「我吃了一大碗」：%+v", comp.Candidates)
+	}
+	comp2, err := client.SelectPrefix(0)
+	if err != nil {
+		t.Fatalf("SelectPrefix(0) 失败: %v", err)
+	}
+	if comp2.Committed != "我吃了一大碗" {
+		t.Fatalf("第二段 committed 应为「我吃了一大碗」，实际 %q", comp2.Committed)
+	}
+	if comp2.Input != "" || len(comp2.Candidates) != 0 {
+		t.Fatalf("剩余耗尽后应无剩余拼音：input=%q candidates=%d", comp2.Input, len(comp2.Candidates))
+	}
+}
