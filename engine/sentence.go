@@ -22,6 +22,25 @@ func FindSentenceCandidates(dict *Dictionary, user *UserDict, sylls []string, be
 	return FindSentenceCandidatesTokens(dict, user, tokens, beamWidth)
 }
 
+// particle 是虚词/代词/助词等「可自由组合」的功能字：这些字与任意字
+// 相邻拼合都可能合法（你说/把它/我来了），不参与双单字碎片降权。
+// 覆盖：结构助词（的了着）、语气词（吗呢吧呀哦嗯）、代词（你我他她它
+// 您咱谁哪这那）、常用副词/介词/连词（不很也都就还又才再被和与或在从
+// 向让给比没别将）。
+var particle = map[rune]bool{}
+
+func init() {
+	for _, r := range "的了着过吗呢吧呀哦嗯们是 不很也都就还又才再被和与或在从向让给比没别将你我他她它您咱谁哪这那个" {
+		particle[r] = true
+	}
+}
+
+// fragmentPenalty 是双音节输入中「两个实词单字拼合非词典词」的降权：
+// 微+只 这类拼合不是词（2026-10-28 用户反馈「wei'zhi 候选里微只/为只/
+// 未只 抢占真词位」），沉底让真词顶上；虚词/代词组合（你说/把它）豁免。
+// 不直接过滤——沉底保留可达性，误伤成本最低。
+const fragmentPenalty = 800
+
 // userEntryBaseFreq 是「只存在于用户词库的词条」在整句规划中的基础分。
 // 用户权重由 UserDict.Score 单独计入（见下方 uScore 分支），这里只给一个
 // 与静态词频同量级的占位值，避免用户调频分（次数×500）被当作静态词频
@@ -152,6 +171,12 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 						// 连续单字累进惩罚（第 2 个单字 -120，第 3 个单字 -180...）
 						wordScore -= (consecSingle + 1) * 60
 
+						syllCount := len(prev.Syllables) + len(entry.Syllables)
+						prevLast := ""
+						if len(prev.Words) > 0 {
+							prevLast = prev.Words[len(prev.Words)-1]
+						}
+
 						// 碎片拼合**过滤**（仅长句 ≥4 音节）：相邻两个单字段
 						// 拼成的双字组合若不是词典词条（微+只=微只 ✗），该 DP
 						// 路径不生成候选——用户词典的单字 Bigram（的→微）会给
@@ -163,16 +188,26 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 						// 不在词典——无差别过滤会把它们打挂（首轮实测）。长句
 						// 尾部拼不成词的碎片才是污染源；≥4 音节真词有词典词条
 						// 路径兜底（多路径冗余），只断纯碎片路径。
-						syllCount := len(prev.Syllables) + len(entry.Syllables)
-						if syllCount >= 4 {
-							prevLast := ""
-							if len(prev.Words) > 0 {
-								prevLast = prev.Words[len(prev.Words)-1]
-							}
+						if syllCount >= 4 && prevLast != "" {
 							concatWord := prevLast + entry.Word
 							concatSylls := append(append([]string(nil), prev.Syllables...), entry.Syllables...)
-							if prevLast != "" && !dict.Contains(concatWord, concatSylls) {
+							if !dict.Contains(concatWord, concatSylls) {
 								continue
+							}
+						}
+
+						// 双音节降权（syllCount==2）：输入 wei'zhi 时「微只/为只/
+						// 未只」这类**两个实词单字拼合的非词**应沉底——真词
+						// （位置/为止/未知/为之）顶上。豁免：两字含虚词/代词
+						//（你说/把它/我发——功能字与任意字相邻都可能合法）或
+						// 拼合在词典。不直接过滤，仅沉底保可达性。
+						if syllCount == 2 && l == 1 && len(prev.Words) > 0 {
+							lastLen := len([]rune(prevLast))
+							if lastLen == 1 && !dict.Contains(prevLast+entry.Word, append(append([]string(nil), prev.Syllables...), entry.Syllables...)) {
+								a, b := []rune(prevLast)[0], []rune(entry.Word)[0]
+								if !particle[a] && !particle[b] {
+									wordScore -= fragmentPenalty
+								}
 							}
 						}
 					}
