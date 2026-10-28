@@ -151,6 +151,30 @@ func FindSentenceCandidatesTokens(dict *Dictionary, user *UserDict, tokens []Tok
 					if l == 1 && consecSingle > 0 {
 						// 连续单字累进惩罚（第 2 个单字 -120，第 3 个单字 -180...）
 						wordScore -= (consecSingle + 1) * 60
+
+						// 碎片拼合**过滤**（仅长句 ≥4 音节）：相邻两个单字段
+						// 拼成的双字组合若不是词典词条（微+只=微只 ✗），该 DP
+						// 路径不生成候选——用户词典的单字 Bigram（的→微）会给
+						// 碎片路径巨额加成（实测碎片句 10268 分排第 2，且点选
+						// →学习→排前形成污染循环；2026-10-28 用户反馈「文字
+						// 输入的微只/为只/未只」）。
+						// **为什么 ≥4 音节才过滤**：合法的全单字短句「他的车/
+						// 在吗/我来了」都是 ≤3 音节且拼合词（他的/在吗/我来）
+						// 不在词典——无差别过滤会把它们打挂（首轮实测）。长句
+						// 尾部拼不成词的碎片才是污染源；≥4 音节真词有词典词条
+						// 路径兜底（多路径冗余），只断纯碎片路径。
+						syllCount := len(prev.Syllables) + len(entry.Syllables)
+						if syllCount >= 4 {
+							prevLast := ""
+							if len(prev.Words) > 0 {
+								prevLast = prev.Words[len(prev.Words)-1]
+							}
+							concatWord := prevLast + entry.Word
+							concatSylls := append(append([]string(nil), prev.Syllables...), entry.Syllables...)
+							if prevLast != "" && !dict.Contains(concatWord, concatSylls) {
+								continue
+							}
+						}
 					}
 
 					if user != nil {

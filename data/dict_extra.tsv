@@ -1,0 +1,23 @@
+# chaoset 补充词表（由 cmd/chaoset-dictgen -extra 合并进内置词库，手工维护）
+# 格式与输出一致：词 \t 拼音（空格分隔，无声调） \t 原始词频
+#
+# 用途：词频表（jieba）漏收但口语高频的常用拼合词组——不补录的话，
+# 组句时这些词的双单字拼合路径会被碎片过滤（见 engine/sentence.go）
+# 误杀，表现为「打不出这个词，候选里是同音碎片」。
+# 维护规则：只补「两个高频单字拼合、明显是常用词、且词频表确实没有」
+# 的词；新增后跑 cmd/chaoset-dictgen 重新生成（同一输入逐字节一致）。
+真好	zhen hao	900
+真棒	zhen bang	400
+真难	zhen nan	300
+看不懂	kan bu dong	500
+来不及	lai bu ji	500
+不得了	bu de liao	500
+了不起	li bu qi	500
+差不多	cha bu duo	500
+差不多儿	cha bu duo er	100
+顾不上	gu bu shang	200
+赶不上	gan bu shang	200
+对不起	dui bu qi	500
+紫外线	zi wai xian	300
+老抽	lao chou	200
+信不过	xin bu guo	200

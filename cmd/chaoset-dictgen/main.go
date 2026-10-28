@@ -47,19 +47,20 @@ func main() {
 	jiebaPath := flag.String("jieba", "", "jieba 词频表 dict.txt 路径（必填）")
 	pinyinPath := flag.String("pinyin", "", "phrase-pinyin-data large_pinyin.txt 路径（必填）")
 	singlePath := flag.String("single", "", "pinyin-data pinyin.txt 路径（单字拼音；缺省时跳过无词组拼音的单字）")
+	extraPath := flag.String("extra", "", "补充词表 TSV 路径（词\t拼音\t词频 1..99；补录词频表漏收的常用词组，如真好/难得）")
 	out := flag.String("o", "", "输出 TSV 路径（必填）")
 	flag.Parse()
 	if *jiebaPath == "" || *pinyinPath == "" || *out == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(*jiebaPath, *pinyinPath, *singlePath, *out); err != nil {
+	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(jiebaPath, pinyinPath, singlePath, outPath string) error {
+func run(jiebaPath, pinyinPath, singlePath, extraPath, outPath string) error {
 	rawFreqs, err := parseJieba(jiebaPath)
 	if err != nil {
 		return err
@@ -87,17 +88,59 @@ func run(jiebaPath, pinyinPath, singlePath, outPath string) error {
 		return fmt.Errorf("词频表 %s 没有有效词频", jiebaPath)
 	}
 
-	// 繁体变体剔除：简体输入法的 -traditional 输出是运行时转换
-	// （engine.ToTraditional），词典不需要繁体词条——jieba 语料混入的
-	// 繁体词（時/師/實/歷史…）与对应简体词同音同义，只会在候选页里
-	// 占位（2026-10-28 专项：词典 14.4 万条中约 2000 条繁体变体）。
-	// 规则：词条经 ToSimplified 回退后改变、且简体版本身也会被收录时，
-	// 丢弃繁体版；简体版不存在的（如「絁」→ 扩展区「𫄟」不在词库）保留。
-	simplifiedExists := make(map[string]bool, len(rawFreqs))
+	// 补充词表（-extra）：词频表漏收的常用词组（如「真好」——口语高频
+	// 组合，jieba 词频表未收录，导致组句时「真+好」双单字拼合候选被
+	// 碎片过滤误杀）。格式与输出一致：词\t拼音(空格分隔)\t词频(原始计数)。
+	// 与 jieba 源按 (词,拼音) 去重：补充条目优先（同名保留较大词频）。
+	type extraEntry struct {
+		word  string
+		sylls []string
+		freq  int
+	}
+	var extras []extraEntry
+	if extraPath != "" {
+		data, err := os.ReadFile(extraPath)
+		if err != nil {
+			return fmt.Errorf("打开补充词表 %s 失败: %w", extraPath, err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) != 3 {
+				return fmt.Errorf("补充词表 %s 格式非法（应为 词\t拼音\t词频）: %q", extraPath, line)
+			}
+			freq := 0
+			fmt.Sscanf(parts[2], "%d", &freq)
+			if freq <= 0 {
+				return fmt.Errorf("补充词表 %s 词频非法: %q", extraPath, line)
+			}
+			extras = append(extras, extraEntry{
+				word:  parts[0],
+				sylls: strings.Fields(parts[1]),
+				freq:  freq,
+			})
+		}
+	}
+	// extra 词频参与 maxFreq 压缩基准（与主源同一量纲——extra 用原始计数）
+	for _, e := range extras {
+		if e.freq > maxFreq {
+			maxFreq = e.freq
+		}
+	}
+
+	// 繁体剔除的判定集合：主源 + extra 补充词都纳入（extra 是简体手工
+	// 词条，正常不会引入繁体，但集合覆盖它们保持判定一致）
+	simplifiedExists := make(map[string]bool, len(rawFreqs)+len(extras))
 	for _, wf := range rawFreqs {
 		if cjkWordOK(wf.word) {
 			simplifiedExists[engine.ToSimplified(wf.word)] = true
 		}
+	}
+	for _, e := range extras {
+		simplifiedExists[engine.ToSimplified(e.word)] = true
 	}
 
 	entries := make([]entry, 0, len(rawFreqs))
@@ -122,6 +165,38 @@ func run(jiebaPath, pinyinPath, singlePath, outPath string) error {
 		}
 		entries = append(entries, entry{word: word, sylls: sylls, freq: scaleFreq(freq, maxFreq)})
 	}
+
+	// 补充词条追加（-extra 手工维护表）：同样过 CJK 与音节合法性检查
+	//（非法音节必须拦截——AGENTS 红线），非法条目计入 skipped 不阻断。
+	// 补充词的音节由维护者手写（不查拼音表），逐音节 IsSyllable 校验。
+	// 与主源 (词,拼音) 重复的条目跳过（避免输出 TSV 出现重复行）。
+	mainSource := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		mainSource[e.word+"\x00"+strings.Join(e.sylls, " ")] = true
+	}
+	for _, e := range extras {
+		if !cjkWordOK(e.word) {
+			skipped++
+			continue
+		}
+		bad := false
+		for _, syl := range e.sylls {
+			if !engine.IsSyllable(syl) {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			skipped++
+			continue
+		}
+		if mainSource[e.word+"\x00"+strings.Join(e.sylls, " ")] {
+			skipped++ // 主源已有该词条（避免输出重复行）
+			continue
+		}
+		entries = append(entries, entry{word: e.word, sylls: e.sylls, freq: scaleFreq(e.freq, maxFreq)})
+	}
+
 	// 确定性排序：词频降序、同频按词、再按音节（同词多音的稳定次序）
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
