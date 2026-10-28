@@ -80,3 +80,17 @@ func BenchmarkQueryPrefix100k(b *testing.B) {
 		d.QueryPrefix(nil, "n")
 	}
 }
+
+// BenchmarkComposeInitials 简拼热路径基准：全首字母输入是 prefix BFS 的
+// 最宽形态（单声母 token 触发整层展开）。调 maxExpandPerLevel /
+// maxPrefixScan 时以此为准做延迟对比（2026-10-28 简拼召回专项）。
+func BenchmarkComposeInitials(b *testing.B) {
+	d := mustSyntheticDict(b, 100000)
+	s := NewSession(d, nil)
+	inputs := []string{"yb", "yy", "sc", "sj", "ld", "sxj", "zg", "bj"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Reset()
+		_, _ = s.Input(inputs[i%len(inputs)])
+	}
+}

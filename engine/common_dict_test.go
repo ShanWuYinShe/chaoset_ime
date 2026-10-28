@@ -218,3 +218,47 @@ func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
 		t.Fatalf("shi 衍生词组 %d 条超出 prefix 上限（20±5），单字页位被词组洪水稀释", phrases)
 	}
 }
+
+// TestCommonDictInitialsRecall：简拼必须能打出高频双音节词（正向），且
+// 不反噬全拼首选（反向）。2026-10-28 扫描诊断：简拼精确匹配被 top20
+// 裁剪，yb 的 229 个候选词里「一百」排 20 名之外完全不可达，initials
+// 场景 miss 828/1455；exact 上限按形态放开到 120 后 miss 127。
+func TestCommonDictInitialsRecall(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	probe := []struct{ input, word string }{
+		{"yb", "一百"}, {"yy", "一一"}, {"sc", "上次"}, {"sj", "世界"},
+	}
+	for _, p := range probe {
+		s.Reset()
+		comp, err := s.Input(p.input)
+		if err != nil {
+			t.Fatalf("Input(%q) 失败: %v", p.input, err)
+		}
+		found := false
+		page := comp
+		for {
+			for _, c := range page.Candidates {
+				if c.Text == p.word {
+					found = true
+					break
+				}
+			}
+			if found || page.Page+1 >= page.PageCount {
+				break
+			}
+			if page, err = s.NextPage(); err != nil {
+				break
+			}
+		}
+		if !found {
+			t.Errorf("简拼 %q 翻遍候选也打不出「%s」", p.input, p.word)
+		}
+	}
+
+	// 反向：全拼首选不受 exact 放开影响
+	s.Reset()
+	comp, _ := s.Input("nihao")
+	if got := comp.Candidates[0].Text; got != "你好" {
+		t.Fatalf("nihao 第一候选 = %q, 期望「你好」", got)
+	}
+}

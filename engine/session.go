@@ -1161,16 +1161,25 @@ func (s *Session) compose() Composition {
 			if typoSuspicious {
 				exacts = s.dict.QueryTokensExact(qp, 20)
 			} else {
-				// 单音节完整音节：全量召回同音字（exact 上限放开、prefix
-				// 维持 20）。词典中单音节可达 100+ 字（shi 107 个），此前
-				// 精确匹配裁到词频 top 20——排 20 位之后的常用字（如 shi
-				// 的「示」第 33 位）完全进不了候选池，翻页也打不出来
-				// （2026-10-28 用户反馈）。排序仍在 compose 统一按词频，
-				// 多出的字只是落到后面的页；prefix 若随 exact 一并放大，
-				// 低频衍生词组会洪水般稀释单字页位并拖慢热路径（实测
-				// 34.9µs → 71µs），故拆分为独立上限。
+				// 精确匹配上限按形态分配，prefix 一律维持 20。此前一律裁到
+				// 词频 top 20 的后果随输入形态逐步暴露：
+				//   - 单音节全拼（2026-10-28 用户反馈）：shi 的 107 个同音
+				//     字里排 33 位的「示」进不了候选池，翻页也打不出来；
+				//   - 简拼/混拼（2026-10-28 扫描诊断）：yb 有 229 个满足
+				//     y?+b? 的双音节词，简拼「一百」排 20 名之外同样不可达，
+				//     initials 场景命中率仅 16.43%（miss 828/1455）。
+				// 上限分配依据（2026-10-28 实测）：
+				//   - 单音节全拼 → 120：同音字全量召回，热路径 31µs 无回归；
+				//   - 简拼/混拼 → 120：延迟由 prefix BFS 主导（0.93ms），
+				//     exact 放开近乎免费，miss 828 → 127；
+				//   - 多音节全拼保持 20：多条歧义切分路径 × exact 条数是
+				//     乘法放大（全形态 120 时 24.6µs → 246µs，60 仍 74µs）。
+				// prefix 若随 exact 一并放大，低频衍生词组洪水会稀释单字页位
+				// 并进一步拖慢热路径（实测 32.9µs → 71µs），故两类上限独立。
 				exactLimit, prefixLimit := 20, 20
 				if len(qp) == 1 && qp[0].IsExact {
+					exactLimit = 120
+				} else if hasInitials {
 					exactLimit = 120
 				}
 				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
