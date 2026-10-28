@@ -660,3 +660,61 @@ func TestAssociateEscapeAndPageKeys(t *testing.T) {
 		t.Fatalf("Esc 后组词应为空，实际 %q", got)
 	}
 }
+
+// ---- 2026-10-27 第四批：三端一致性别项（对齐 macOS 壳）----
+
+// TestShiftBackspaceClearsAll：Shift+Backspace 直接全部删除（对齐 macOS 壳
+// 把 Shift+Delete 归入全部删除；此前走逐字符回退，三端不一致）。
+func TestShiftBackspaceClearsAll(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	if got := e.sess.Compose().Input; got != "nihao" {
+		t.Fatalf("前置失败：组词应为 nihao，实际 %q", got)
+	}
+	handled, _ := e.ProcessKeyEvent(keysymBackspace, 0, ibusShiftMask)
+	if !handled {
+		t.Fatal("组词中 Shift+Backspace 应被消费")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("Shift+Backspace 应全部删除，实际剩余 %q", got)
+	}
+	if _, visible := fe.lastPreedit(); visible {
+		t.Fatal("全部删除后预编辑应收起")
+	}
+}
+
+// TestCtrlUClearsComposition：Ctrl+U 类终端整行清空（对齐 macOS 壳，
+// 组词中消费并全部删除；此前直接放行，控制字符可能进文档）。
+func TestCtrlUClearsComposition(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "nihao")
+	handled, _ := e.ProcessKeyEvent(uint32('u'), 0, ibusCtrlMask)
+	if !handled {
+		t.Fatal("组词中 Ctrl+U 应被消费")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("Ctrl+U 应清空组词，实际 %q", got)
+	}
+	// 非组词时 Ctrl+U 照旧放行
+	handled, _ = e.ProcessKeyEvent(uint32('u'), 0, ibusCtrlMask)
+	if handled {
+		t.Fatal("非组词 Ctrl+U 应放行给应用")
+	}
+}
+
+// TestPageKeyClearsCompositionWithoutCandidates：残缺组词按 PgUp/PgDn——
+// 先清空组词再放行（对齐 macOS/Windows 壳；此前静默吞键）。
+func TestPageKeyClearsCompositionWithoutCandidates(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "zzz")
+	if hasCandidates(e.sess) {
+		t.Skip("该词库下 zzz 有候选，用例前提不成立")
+	}
+	handled, _ := e.ProcessKeyEvent(keysymPageDown, 0, 0)
+	if handled {
+		t.Fatal("无候选时 PgDn 不应被消费（宿主应正常滚动）")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("放行前组词应清空，实际 %q", got)
+	}
+}

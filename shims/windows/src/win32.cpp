@@ -1324,8 +1324,9 @@ private:
 
         if (alt || win) return false;
         if (ctrl) {
-            // 组词中支持 Ctrl+Backspace 快速清空拼音；其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）全部放行
-            return isComposing() && (vk == kVkBackspace);
+            // 组词中支持 Ctrl+Backspace 快速清空拼音与 Ctrl+U 整行清空；
+            // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）全部放行
+            return isComposing() && (vk == kVkBackspace || vk == 'U');
         }
 
         // 联想模式：数字（有对应项）/空格/回车/Esc 由联想分支消费；- / =
@@ -1427,6 +1428,13 @@ private:
         if (ctrl) {
             if (vk == kVkBackspace && isComposing()) {
                 // Ctrl+Backspace：直接全部删除（清空全部拼音）
+                session_.reset();
+                endComposition();
+                comp_ = chaoset::Comp();
+                return true;
+            }
+            // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）
+            if (vk == 'U' && isComposing()) {
                 session_.reset();
                 endComposition();
                 comp_ = chaoset::Comp();
@@ -1536,8 +1544,9 @@ private:
         if (!isComposing()) return false;
 
         if (vk == kVkBackspace) {
-            if (GetKeyState(VK_CONTROL) & 0x8000) {
-                // Ctrl+Backspace：直接全部删除（清空全部拼音）
+            if ((GetKeyState(VK_CONTROL) | GetKeyState(VK_SHIFT)) & 0x8000) {
+                // Ctrl/Shift+Backspace：直接全部删除（对齐 macOS 壳把
+                // Shift+Delete 归入全部删除；此前 Shift 走逐字符回退，三端不一致）
                 session_.reset();
                 endComposition();
                 comp_ = chaoset::Comp();

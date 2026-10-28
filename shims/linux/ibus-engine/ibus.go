@@ -363,6 +363,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.hideLookupTable()
 			return true, nil
 		}
+		// Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）
+		if isComposing(e.sess) && keyval == 'u' {
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
+			return true, nil
+		}
 		e.exitAssociate()
 		return false, nil
 	}
@@ -413,6 +420,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	case keyval == keysymBackspace:
 		if !isComposing(e.sess) {
 			return false, nil
+		}
+		// Shift+Backspace：直接全部删除（对齐 macOS 壳把 Shift+Delete 归入
+		// 全部删除；此前走逐字符回退，三端不一致）
+		if state&ibusShiftMask != 0 {
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
+			return true, nil
 		}
 		// 普通 Backspace：慢慢部分删除（逐字符）
 		comp, _ := e.sess.Backspace()
@@ -507,8 +522,16 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == keysymPageUp || keyval == keysymPageDown:
-		// Page Up / Page Down 键盘翻页（组词中消费；空组词放行原键）
+		// Page Up / Page Down 键盘翻页（组词中且有候选时消费；空组词放行
+		// 原键）。残缺组词（无候选）时对齐 macOS/Windows 壳：先清空组词再
+		// 放行——此前静默吞键，宿主文档不滚动，用户感知为「按键失灵」。
 		if !isComposing(e.sess) {
+			return false, nil
+		}
+		if !hasCandidates(e.sess) {
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
 			return false, nil
 		}
 		var comp engine.Composition

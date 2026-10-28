@@ -120,6 +120,11 @@ final class CandidatePanelView: NSView {
     // 每项的命中区域（候选索引，0 起），draw 布局时更新
     private var hitAreas: [(rect: NSRect, index: Int)] = []
     private var contentHeight: CGFloat = 0
+    // 布局缓存：layout() 时算一次，draw() 复用——此前 layout()（经
+    // contentSize）与 draw() 各调一次 layoutRows()，每次按键对每个候选做
+    // 多次 NSString 文本测量，纯属重复计算（2026-10-27 性能审查）。
+    private var cachedRows: [Row] = []
+    private var cachedLineH: CGFloat = 0
 
     override var isFlipped: Bool { true }
 
@@ -128,7 +133,10 @@ final class CandidatePanelView: NSView {
         self.items = candidates
         self.page = page
         self.pageCount = pageCount
-        let size = contentSize()
+        let (rows, lineH) = layoutRows()
+        cachedRows = rows
+        cachedLineH = lineH
+        let size = contentSize(rows: rows, lineH: lineH)
         frame.size = size
         needsDisplay = true
         return size
@@ -197,8 +205,7 @@ final class CandidatePanelView: NSView {
         return (rows, lineH)
     }
 
-    private func contentSize() -> NSSize {
-        let (rows, lineH) = layoutRows()
+    private func contentSize(rows: [Row], lineH: CGFloat) -> NSSize {
         var width: CGFloat = 0
         for row in rows {
             let w = row.width + Layout.padding * 2 + Layout.chevronBoxW
@@ -226,7 +233,14 @@ final class CandidatePanelView: NSView {
         panelPath.lineWidth = 1
         panelPath.stroke()
 
-        let (rows, lineH) = layoutRows()
+        // 复用 layout() 的布局缓存（draw 必然发生在 layout 之后）；
+        // 防御性兜底：缓存为空但 items 非空时现算（不应发生）
+        var rows = cachedRows
+        let lineH = cachedLineH
+        if rows.isEmpty, !items.isEmpty {
+            let fresh = layoutRows()
+            rows = fresh.rows
+        }
         let idxAscent = indexFont.ascender
         let idxDescent = -indexFont.descender
         let idxH = ceil(idxAscent + idxDescent)

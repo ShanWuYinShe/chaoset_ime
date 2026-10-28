@@ -174,17 +174,22 @@ final class ChaosetController: IMKInputController {
                 }
                 return true
             } else if firstScalar >= 49, firstScalar <= 54,
-                      let list = associateCandidates,
-                      Int(firstScalar) - 49 < list.count {
-                let pick = list[Int(firstScalar) - 49]
-                if let committed = engine.associateSelect(word: pick.text, sylls: pick.syllables.split(separator: "'").map(String.init)) {
-                    client?.insertText(
-                        committed,
-                        replacementRange: NSRange(location: NSNotFound, length: 0)
-                    )
-                    enterAssociate(sylls: pick.syllables.split(separator: "'").map(String.init), client: client)
-                    return true
+                      let list = associateCandidates {
+                let pick = Int(firstScalar) - 49
+                if pick < list.count {
+                    if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
+                        client?.insertText(
+                            committed,
+                            replacementRange: NSRange(location: NSNotFound, length: 0)
+                        )
+                        enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
+                        return true
+                    }
                 }
+                // 越界序号或上屏失败：收起联想，数字落到正常流程进文档。
+                // 此前越界序号不匹配任何分支，落到 passThrough 只清组词不清
+                // 联想窗——数字进了文档而联想窗还挂在屏幕上（对齐 Win/Linux
+                // 壳的 clearAssociate 语义，2026-10-27 审查发现）。
                 exitAssociate()
             } else if firstScalar >= 97, firstScalar <= 122 {
                 // 字母键：退出联想，进入正常组词
