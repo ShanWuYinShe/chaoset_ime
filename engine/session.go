@@ -425,17 +425,10 @@ func (s *Session) Associate(sylls []string) []Candidate {
 			}
 		}
 	}
-	// 音节前缀层（回退）：字前缀已覆盖的词条由 seen 去重自然吸收。
-	// 音节层的词条规模 = 该音节前缀的全部衍生词（hao 前缀 40+ 条），
-	// 不做内部截断，统一由末尾 maxAssociate 截断
-	for _, e := range s.dict.QueryPrefix(sylls, "") {
-		add(e, false)
-	}
-	if s.user != nil {
-		for _, e := range s.user.QueryPhrasesPrefix(sylls) {
-			add(e, false)
-		}
-	}
+	// 2026-10-28 二次收紧：**严格按字**——不再回退到音节前缀层。回退层
+	// 会混入同音其它字的续接词（选「测试」也弹「策士团」），用户反馈
+	// 「同样的拼音不同的字却联想一样的候选词」正是这个观感。字前缀没有
+	// 续接词时不弹联想（与市面输入法的「词组续接」语义一致）。
 	if s.user != nil {
 		// 上下文加成：user.Score 含调频与「上屏词 → 联想词」共现（Bigram），
 		// 用户常打的联想词（如反复输入「现在的」跟随「现在」）排到前面。

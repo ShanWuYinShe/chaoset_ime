@@ -134,6 +134,7 @@ func TestAssociatePagingCap(t *testing.T) {
 	// 40 个「ni + 合法音节」的续接词条（第二音节从音节表取样）
 	tails := []string{"hao", "men", "de", "shuo", "kan", "xiang", "yao", "neng", "hui", "qu", "lai", "zuo", "xie", "gei", "zhao", "wen", "ting", "jiao", "dai", "ban", "pan", "wan", "tan", "man", "zhan", "guan", "chuan", "zhuan", "duan", "ruan", "suan", "nuan", "luan", "kuan", "huan", "tuan", "duo", "hai", "hei", "hun"}
 	var src strings.Builder
+	src.WriteString("你\tni\t95\n") // 单字「你」须是 ni 首选，上屏后按字查续接
 	for i, tail := range tails {
 		fmt.Fprintf(&src, "你%s\tni %s\t%d\n", tail, tail, 90-i)
 	}
@@ -142,6 +143,11 @@ func TestAssociatePagingCap(t *testing.T) {
 		t.Fatalf("构造词库失败: %v", err)
 	}
 	s := NewSession(d, nil)
+	// 严格按字：先上屏「你」（s.prev），再按 ni 查续接
+	s.Input("ni")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
 	assoc := s.Associate([]string{"ni"})
 	if len(assoc) != maxAssociate {
 		t.Fatalf("联想应返回上限 %d 条，实际 %d", maxAssociate, len(assoc))

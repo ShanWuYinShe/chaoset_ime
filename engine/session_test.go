@@ -195,14 +195,20 @@ func TestLongPinyinNoExponentialFreeze(t *testing.T) {
 	}
 }
 
-// 联想候选按词频降序：QueryPrefix 按 Trie 子树序收集、顺序与词频无关，
-// 联想展示给用户时应高频在前（毫米 64 不应排在 豪快 9 之后）。
+// 联想候选按词频降序：字前缀收集顺序与词频无关（QueryWordPrefix 内部
+// 已按词频排序，此处二次校验分层后的整体有序性），联想展示给用户时应
+// 高频在前（毫米 64 不应排在 豪快 9 之后）。2026-10-28 严格按字后，
+// 联想需先有上屏词（s.prev）。
 func TestAssociateSortedByFreq(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
+	s.Input("hao")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
 	out := s.Associate([]string{"hao"})
 	if len(out) < 2 {
-		t.Fatal("hao 应有联想候选")
+		t.Fatal("上屏「好」后应有「好」字开头的续接候选")
 	}
 	for i := 1; i < len(out); i++ {
 		if out[i-1].Score < out[i].Score {

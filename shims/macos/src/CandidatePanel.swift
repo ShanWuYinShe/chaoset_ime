@@ -398,19 +398,22 @@ final class CandidatePanelView: NSView {
         // 12pt 淡色「不容易看到」，加大到 13pt + hover 反馈增强可发现性
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
         let gearHovered = mouseLocationInView.map { gearRect.contains($0) } ?? false
-        if gearHovered {
-            let hoverBg = theme.highlightBg.withAlphaComponent(0.22)
-            let hoverPath = NSBezierPath(
-                roundedRect: gearRect.insetBy(dx: 1, dy: 3),
-                xRadius: 6, yRadius: 6)
-            hoverBg.setFill()
-            hoverPath.fill()
-        }
+        // 常驻键帽底（与序号键帽同款视觉）：齿轮是一个「按钮」而不是
+        // 混在候选里的一个字符——实机三轮反馈「不容易看到」，仅靠颜色
+        // 与字号不够，需要形状上把它区隔出来
+        let chipBg = gearHovered ? theme.highlightChipBg : theme.chipBg
+        let chipPath = NSBezierPath(
+            roundedRect: gearRect.insetBy(dx: 2, dy: 3),
+            xRadius: 6, yRadius: 6)
+        chipBg.setFill()
+        chipPath.fill()
+        let chipBorder = gearHovered ? theme.highlightBg : theme.chipBorder
+        chipBorder.setStroke()
+        chipPath.lineWidth = 1
+        chipPath.stroke()
         if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) {
-            // 用候选文字色（深色白/浅色近黑）：pageColor 是次级淡色，
-            // 实机反馈齿轮「配色太烂根本看不清」（2026-10-28）
-            let tint = gearHovered ? theme.highlightText : theme.text
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
+            let tint = gearHovered ? theme.highlightText : theme.chipDigit
             let sized = NSImage(size: gear.size, flipped: false) { rect in
                 tint.set()
                 gear.draw(in: rect)
@@ -817,5 +820,5 @@ enum AssociateSetting {
 
 // 齿轮图标尺寸（折叠区内、chevron 左侧）。
 enum SettingsGear {
-    static let boxW: CGFloat = 20
+    static let boxW: CGFloat = 24
 }
