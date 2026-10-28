@@ -572,7 +572,13 @@ enum CandidatePanelController {
             backing: .buffered,
             defer: false
         )
-        p.level = .popUpMenu
+        // 层级用 .floating(3) 而不是 .popUpMenu(101)：popUpMenu 高于系统
+        // 菜单栏（mainMenu=24）与一切下拉菜单，候选窗在光标行贴近屏幕顶部
+        // 向上翻到菜单区域时，会整块压住菜单拦截点击——表现为「有时候无法
+        // 点击其他 app 的菜单」（2026-10-28 用户反馈）。floating 仍浮于
+        // 全部普通窗口内容之上（配合 canJoinAllSpaces/fullScreenAuxiliary
+        // 保持全屏与多 Space 可见），但不再遮蔽菜单栏。
+        p.level = .floating
         p.isOpaque = false
         p.backgroundColor = .clear
         // 面板自身接收鼠标以支持点击选词；不抢焦点（nonactivatingPanel），
@@ -705,7 +711,8 @@ enum ModeToastController {
             backing: .buffered,
             defer: false
         )
-        p.level = .popUpMenu
+        // 层级同候选窗用 .floating（不遮蔽菜单栏，见候选窗处注释）
+        p.level = .floating
         p.isOpaque = false
         p.backgroundColor = .clear
         // 纯提示：不接收鼠标（点击穿透到宿主），不抢焦点，跟随 Space/全屏
