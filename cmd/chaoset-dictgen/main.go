@@ -87,13 +87,33 @@ func run(jiebaPath, pinyinPath, singlePath, outPath string) error {
 		return fmt.Errorf("词频表 %s 没有有效词频", jiebaPath)
 	}
 
+	// 繁体变体剔除：简体输入法的 -traditional 输出是运行时转换
+	// （engine.ToTraditional），词典不需要繁体词条——jieba 语料混入的
+	// 繁体词（時/師/實/歷史…）与对应简体词同音同义，只会在候选页里
+	// 占位（2026-10-28 专项：词典 14.4 万条中约 2000 条繁体变体）。
+	// 规则：词条经 ToSimplified 回退后改变、且简体版本身也会被收录时，
+	// 丢弃繁体版；简体版不存在的（如「絁」→ 扩展区「𫄟」不在词库）保留。
+	simplifiedExists := make(map[string]bool, len(rawFreqs))
+	for _, wf := range rawFreqs {
+		if cjkWordOK(wf.word) {
+			simplifiedExists[engine.ToSimplified(wf.word)] = true
+		}
+	}
+
 	entries := make([]entry, 0, len(rawFreqs))
 	skipped := 0
+	tradSkipped := 0
 	for _, wf := range rawFreqs {
 		word, freq := wf.word, wf.freq
 		if !cjkWordOK(word) {
 			skipped++
 			continue
+		}
+		if sw := engine.ToSimplified(word); sw != word {
+			if simplifiedExists[sw] {
+				tradSkipped++
+				continue
+			}
 		}
 		sylls := pinyinOf(word, phrasePinyin, singlePinyin)
 		if sylls == nil {
@@ -117,7 +137,7 @@ func run(jiebaPath, pinyinPath, singlePath, outPath string) error {
 	if err := writeTSV(outPath, entries); err != nil {
 		return err
 	}
-	fmt.Printf("已写入 %s（%d 条，跳过 %d 条：非汉字/无拼音/非法音节）\n", outPath, len(entries), skipped)
+	fmt.Printf("已写入 %s（%d 条，跳过 %d 条：非汉字/无拼音/非法音节，其中繁体变体 %d 条）\n", outPath, len(entries), skipped, tradSkipped)
 	return nil
 }
 

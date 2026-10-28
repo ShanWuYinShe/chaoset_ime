@@ -153,7 +153,8 @@ func TestCommonDictScale(t *testing.T) {
 // 精确匹配的 top20 裁剪挡在候选池外，翻页也不存在。修后同音字全部进入
 // 候选池（落到后面的页），同时首选项与词组数量不受影响（双向回归）。
 func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
-	s := NewSession(mustCommonDict(t), nil)
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
 	comp, err := s.Input("shi")
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
@@ -197,15 +198,20 @@ func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
 	}
 
 	// 反向：prefix 词组不被 exactLimit 放大——单字召回数 = 词典中 shi
-	// 单音节词条数（107），词组保持在原 top20 量级而非洪水。
+	// 单音节词条数（去繁体前 107、去繁体后 93），词组保持在原 top20
+	// 量级而非洪水。
 	singles := 0
 	for _, c := range all {
 		if !strings.Contains(c.Syllables, "'") {
 			singles++
 		}
 	}
-	if singles != 107 {
-		t.Fatalf("shi 单字召回应恰好为词典全部 107 个同音字，实际 %d", singles)
+	dictSingles := len(d.QueryTokensExact([]Token{{Text: "shi", IsExact: true}}, 500))
+	if singles != dictSingles {
+		t.Fatalf("shi 单字召回 %d 应恰好等于词典同音字总数 %d（全量召回，不含繁体变体）", singles, dictSingles)
+	}
+	if dictSingles < 80 {
+		t.Fatalf("词典 shi 同音字 %d 过少，词库生成疑似异常", dictSingles)
 	}
 	phrases := len(all) - singles
 	if phrases > 25 {

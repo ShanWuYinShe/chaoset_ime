@@ -100,3 +100,62 @@ func ToTraditional(s string) string {
 	}
 	return b.String()
 }
+
+var (
+	t2sOnce  sync.Once
+	t2sChars map[rune]rune // 单字反向映射（繁体 → 首个推荐简体）
+)
+
+// t2sLazyInit 从 STCharacters.txt 构建繁→简反向映射：原表一行「简体 繁1
+// 繁2 …」，反向时每个繁体候选指回该行首列的简体（OpenCC 推荐字形）。
+func t2sLazyInit() {
+	t2sOnce.Do(func() {
+		t2sChars = make(map[rune]rune, 8192)
+		data, err := s2tDataFS.ReadFile("dp_data/STCharacters.txt")
+		if err != nil {
+			panic("engine: 读取内嵌简繁数据失败: " + err.Error())
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			key, val, ok := strings.Cut(line, "\t")
+			if !ok || key == "" || val == "" {
+				continue
+			}
+			keyR := []rune(key)
+			if len(keyR) != 1 {
+				continue
+			}
+			for _, trad := range strings.Fields(val) {
+				tr := []rune(trad)
+				if len(tr) == 1 {
+					if _, dup := t2sChars[tr[0]]; !dup {
+						t2sChars[tr[0]] = keyR[0]
+					}
+				}
+			}
+		}
+	})
+}
+
+// ToSimplified 把文本中的繁体字回退为简体（逐字反向映射，繁→简无歧义
+// 场景：一繁多简时取 OpenCC 首个推荐简体）。词典生成端用它识别并剔除
+// 繁体变体词条——简体输入法的 -traditional 输出是运行时转换
+// （ToTraditional），词典本身不需要繁体词条。
+func ToSimplified(s string) string {
+	t2sLazyInit()
+	runes := []rune(s)
+	changed := false
+	for i, r := range runes {
+		if s, ok := t2sChars[r]; ok {
+			runes[i] = s
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return string(runes)
+}

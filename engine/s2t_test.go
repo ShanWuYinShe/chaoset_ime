@@ -80,3 +80,19 @@ func TestSessionTraditional(t *testing.T) {
 		t.Fatalf("应输出 時光, 得到 %v", comp.Candidates)
 	}
 }
+
+// ToSimplified 必须是 ToTraditional 的可靠反向：繁体词条识别依赖它，
+// 映射错会误删词典简体词条（2026-10-28 dictgen 去繁体专项）。
+func TestToSimplifiedRoundTrip(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"時", "时"}, {"師", "师"}, {"實驗室", "实验室"}, {"歷史", "历史"},
+		{"適", "适"}, {"歷", "历"},
+		// 简体/ASCII 原样
+		{"时", "时"}, {"历史", "历史"}, {"hello 你好", "hello 你好"},
+	}
+	for _, c := range cases {
+		if got := ToSimplified(c.in); got != c.want {
+			t.Errorf("ToSimplified(%q) = %q, 期望 %q", c.in, got, c.want)
+		}
+	}
+}
