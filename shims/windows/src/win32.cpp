@@ -1463,10 +1463,12 @@ private:
             return isComposing() && (vk == kVkBackspace || vk == 'U');
         }
 
-        // 联想模式：数字（有对应项）/空格/回车/Esc 由联想分支消费；- / =
-        // 收起联想放行；其余按键退出联想后按正常流程判定（继续往下走）。
+        // 联想模式：数字（有对应项）/空格（选第一个）/回车/Esc/Backspace
+        //（收起）由联想分支消费；- / = 收起联想放行；其余按键退出联想后
+        // 按正常流程判定（继续往下走）。
         if (!assoc_.candidates.empty()) {
-            if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace) return true;
+            if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
+                vk == kVkBackspace) return true;
             if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return true;
             if (!shiftActive() && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
                 return assocPage_ * 6 + static_cast<int>(vk - kVkFirstDigit) <
@@ -1517,12 +1519,28 @@ private:
                 clearAssociate();
                 return true;
             }
+            // 空格：**默认选当前页第一个联想词上屏**（渐进组句闭环，
+            // 与 macOS 端一致），不再是透传
             if (vk == kVkSpace) {
+                if (!assoc_.candidates.empty()) {
+                    const chaoset::Candidate pick = assoc_.candidates[assocPage_ * 6];
+                    std::string committed;
+                    if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
+                        const std::string sylls = pick.syllables;
+                        commit(pic, committed);
+                        enterAssociate(sylls);
+                        return true;
+                    }
+                }
                 clearAssociate();
-                return false; // 空格透传给宿主
+                return true;
             }
-            // - / =：联想翻页（2026-10-28 翻页化，取代此前的「收起放行」；
-            // 边界页保持当前页，与组词翻页的钳制语义一致）
+            // - / =：联想翻页（边界页保持当前页）
+            // Backspace：收起联想并消费——透传会误删刚上屏的文字
+            if (vk == kVkBackspace) {
+                clearAssociate();
+                return true;
+            }
             if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus)) {
                 flipAssociate(vk == kVkOemPlus);
                 return true;

@@ -393,14 +393,26 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	if len(e.assoc) > 0 {
 		isDigit := (keyval >= '1' && keyval <= '9') || (keyval >= keysymKP1 && keyval <= keysymKP9)
 		switch {
-		case keyval == keysymEscape || keyval == keysymReturn:
+		case keyval == keysymEscape || keyval == keysymReturn || keyval == keysymBackspace:
+			// Backspace：收起联想并消费——透传会误删刚上屏的文字
 			e.exitAssociate()
 			return true, nil
 		case keyval == keysymSpace:
+			// 空格：**默认选当前页第一个联想词上屏**（渐进组句闭环，
+			// 与 macOS/Windows 端一致），不再是透传
+			if len(e.assoc) > 0 {
+				pick := e.assoc[0]
+				sylls := strings.Split(pick.Syllables, "'")
+				if word, err := e.sess.AssociateSelect(pick.Text, sylls); err == nil {
+					e.commit(word)
+					e.enterAssociate(sylls)
+					return true, nil
+				}
+			}
 			e.exitAssociate()
-			return false, nil
+			return true, nil
 		case keyval == '-' || keyval == '=':
-			// 联想翻页（2026-10-28 翻页化，取代此前的「收起放行」）
+			// 联想翻页（边界页保持当前页）
 			e.flipAssociate(keyval == '=')
 			return true, nil
 		case isDigit:

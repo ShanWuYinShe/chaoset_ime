@@ -793,3 +793,44 @@ func TestAssociateDisabledBySetting(t *testing.T) {
 		t.Fatalf("联想关闭时不应进入联想，实际 %d 条", len(e.assoc))
 	}
 }
+
+// TestAssociateSpacePicksFirst：联想挂着时按空格应**默认选第一个联想词
+// 上屏**（渐进组句闭环；此前是透传空格 + 收起联想）。
+func TestAssociateSpacePicksFirst(t *testing.T) {
+	e, fe := newAssociateTestEngine(t)
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0) // 上屏「你」，进入联想
+	if len(e.assoc) == 0 {
+		t.Fatal("前置失败：应进入联想")
+	}
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if !handled {
+		t.Fatal("联想中空格应被消费")
+	}
+	// 第一个联想词应为「你好」（好 90 > 们 70）
+	if got := fe.lastCommitText(); got != "你好" {
+		t.Fatalf("空格应上屏第一个联想词「你好」，实际 %q", got)
+	}
+}
+
+// TestAssociateBackspaceConsumed：联想挂着时按 Backspace 应收起联想并
+// 消费（透传会误删刚上屏的文字）。
+func TestAssociateBackspaceConsumed(t *testing.T) {
+	e, fe := newAssociateTestEngine(t)
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) == 0 {
+		t.Fatal("前置失败：应进入联想")
+	}
+	before := fe.count("CommitText")
+	handled, _ := e.ProcessKeyEvent(keysymBackspace, 0, 0)
+	if !handled {
+		t.Fatal("联想中 Backspace 应被消费（透传会误删刚上屏的字）")
+	}
+	if len(e.assoc) != 0 {
+		t.Fatal("Backspace 应收起联想")
+	}
+	if fe.count("CommitText") != before {
+		t.Fatal("收起联想不应产生新的上屏")
+	}
+}

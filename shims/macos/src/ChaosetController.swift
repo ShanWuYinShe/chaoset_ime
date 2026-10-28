@@ -166,12 +166,32 @@ final class ChaosetController: IMKInputController {
             let rawChars = event.charactersIgnoringModifiers ?? ""
             let firstScalar = rawChars.unicodeScalars.first?.value ?? 0
             if event.keyCode == 49 || event.keyCode == 36 {
-                // 空格/回车：结束联想（空格透传，回车消费）
-                let wasSpace = event.keyCode == 49
-                exitAssociate()
-                if wasSpace {
-                    return passThrough(client)
+                // 空格：**默认选当前页第一个联想词上屏**（市面输入法惯例，
+                // 渐进组句闭环——上屏后继续弹续接联想；2026-10-28 用户反馈
+                // 联想时空格不能默认选第一个很不方便）。回车：结束联想（消费）。
+                if event.keyCode == 49, let list = associateCandidates, !list.isEmpty {
+                    let pick = associatePage * Self.associatePageSize
+                    if pick < list.count {
+                        if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
+                            client?.insertText(
+                                committed,
+                                replacementRange: NSRange(location: NSNotFound, length: 0)
+                            )
+                            enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
+                            return true
+                        }
+                    }
                 }
+                exitAssociate()
+                if event.keyCode == 36 {
+                    return true // 回车消费
+                }
+                return passThrough(client)
+            } else if event.keyCode == 51 {
+                // 删除键：收起联想并**消费**——透传会误删刚上屏的文字
+                //（联想模式下用户连按删除的本意是回退编辑，误删文档字
+                // 代价高；2026-10-28 用户反馈）
+                exitAssociate()
                 return true
             } else if firstScalar >= 49, firstScalar <= 54,
                       let list = associateCandidates {
