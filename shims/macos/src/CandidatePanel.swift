@@ -347,8 +347,12 @@ final class CandidatePanelView: NSView {
         // 差分见 tests/visual-parity.sh。
         NSRect(x: dividerX, y: (bounds.height - divH) / 2, width: 1, height: divH).fill()
 
-        // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下
-        let chevX = dividerX + 2 + (Layout.chevronBoxW - 4) / 2
+        // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下。
+        // divider 右侧依次为齿轮区 → 翻页区，chevron 以翻页子区的中点居中
+        //（此前误用「divider 到右缘」的中点，正好落回齿轮位置——齿轮与
+        // 翻页箭头/页码重叠，2026-10-28 实机截图确认）。
+        let flipZoneX = dividerX + SettingsGear.boxW
+        let chevX = flipZoneX + (width - flipZoneX) / 2
         let pageText = pageCount > 1 ? "\(page + 1)/\(pageCount)" : nil
         let pageAttrs: [NSAttributedString.Key: Any] = [.font: indexFont, .foregroundColor: theme.pageColor]
         let pageSize = pageText.map { ($0 as NSString).size(withAttributes: pageAttrs) }
@@ -370,9 +374,10 @@ final class CandidatePanelView: NSView {
             (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + 8 + 3), withAttributes: pageAttrs)
         }
 
-        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义；齿轮区单独命中）
+        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义；命中区从齿轮
+        // 右侧开始，齿轮点击单独走 onSettings）
         if pageCount > 1 {
-            let flipRect = NSRect(x: dividerX, y: 0, width: width - dividerX, height: bounds.height)
+            let flipRect = NSRect(x: flipZoneX, y: 0, width: width - flipZoneX, height: bounds.height)
             hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
 
