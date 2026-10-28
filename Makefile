@@ -236,7 +236,7 @@ package-windows:
 		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
-		(cd shims/windows/installer && makensis /DVERSION=$(VERSION) chaoset.nsi); \
+		(cd shims/windows/installer && makensis -DVERSION=$(VERSION) chaoset.nsi); \
 	fi
 	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
 	rm -rf dist/chaoset-windows-x64

@@ -190,7 +190,7 @@ Section "MainSection" SEC01
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    ; 版本号由 makensis 的命令行 /DVERSION=… 注入（Makefile 从 git tag 推导）。
+    ; 版本号由 makensis 的命令行 -DVERSION=… 注入（Makefile 从 git tag 推导）。
     ; 此处曾写死 0.2.12，发版时必然漏改（2026-10-26 修复）。
     !ifndef VERSION
       !define VERSION "0.0.0-dev"
