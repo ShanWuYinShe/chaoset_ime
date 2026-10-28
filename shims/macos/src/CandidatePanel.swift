@@ -88,6 +88,8 @@ final class CandidatePanelView: NSView {
     var onPageDown: (() -> Void)?
     /// 末页时折叠区箭头变 ⌃，点击触发翻上一页。
     var onPageUp: (() -> Void)?
+    /// 点击设置齿轮。
+    var onSettings: (() -> Void)?
 
     // 排版参数（pt），与 skin/skin.go 的 Skin 字段保持一致
     // internal（非 private）：tools/panel_metrics.swift 需要读取这些常量，
@@ -176,7 +178,7 @@ final class CandidatePanelView: NSView {
         // 多页时附页码（按简单项处理，无键帽）
         var rows: [Row] = []
         var next = 0
-        let maxContent = Layout.maxWidth - Layout.padding * 2 - Layout.chevronBoxW
+        let maxContent = Layout.maxWidth - Layout.padding * 2 - Layout.chevronBoxW - SettingsGear.boxW
         var rowFrames: [(rect: NSRect, index: Int)] = []
         var rowW: CGFloat = 0
         var y: CGFloat = Layout.padding
@@ -332,7 +334,10 @@ final class CandidatePanelView: NSView {
         // 宽度随候选变化时它的相对位置恒定，不再浮在候选行尾随宽度漂移。
         // 折叠区可点击：翻到下一页（与 = / ] 键等效）。
         let width = bounds.width
-        let dividerX = width - Layout.chevronBoxW + 2
+        // 设置齿轮在折叠区（chevron）左侧：参考微信输入法候选栏右侧的
+        // 设置入口。divider 右侧依次为齿轮 → 翻页/页码。
+        let gearX = width - Layout.chevronBoxW - SettingsGear.boxW
+        let dividerX = gearX + 2
         let divH = Layout.textH * 55 / 100
         theme.divider.setFill()
         // 分割线**垂直居中**（与 Windows 壳 win32.cpp 的定位约定一致）。
@@ -365,11 +370,30 @@ final class CandidatePanelView: NSView {
             (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + 8 + 3), withAttributes: pageAttrs)
         }
 
-        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义）
+        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义；齿轮区单独命中）
         if pageCount > 1 {
             let flipRect = NSRect(x: dividerX, y: 0, width: width - dividerX, height: bounds.height)
             hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
+
+        // 设置齿轮：SF Symbol 绘制，hitArea -3 由 mouseDown 转发 onSettings
+        let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
+        if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) {
+            let tint = theme.pageColor
+            let sized = NSImage(size: gear.size, flipped: false) { rect in
+                tint.set()
+                gear.draw(in: rect)
+                return true
+            }
+            let iconSize = gear.size
+            sized.draw(in: NSRect(
+                x: gearRect.midX - iconSize.width / 2,
+                y: gearRect.midY - iconSize.height / 2,
+                width: iconSize.width,
+                height: iconSize.height))
+        }
+        hitAreas.append((gearRect, -3))
     }
 
     /// 折叠指示箭头：dirDown=true 画 ⌄（翻下页），false 画 ⌃（翻上页）。
@@ -404,6 +428,7 @@ final class CandidatePanelView: NSView {
             switch index {
             case -1: onPageDown?()
             case -2: onPageUp?()
+            case -3: onSettings?()
             default: onSelect?(index)
             }
             return
@@ -442,6 +467,8 @@ enum CandidatePanelController {
     static var onPageDown: (() -> Void)?
     /// 末页时折叠区箭头变 ⌃，点击翻上一页。
     static var onPageUp: (() -> Void)?
+    /// 候选栏齿轮点击（打开设置菜单）。
+    static var onSettings: (() -> Void)?
 
     /// 显示候选窗。originProvider 在内容尺寸确定后被调用，返回面板左上角
     /// 屏幕坐标（Controller 用它把候选窗钉在光标下方）。
@@ -456,6 +483,7 @@ enum CandidatePanelController {
         v.onSelect = { onSelect?($0) }
         v.onPageDown = { onPageDown?() }
         v.onPageUp = { onPageUp?() }
+        v.onSettings = { onSettings?() }
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
@@ -468,6 +496,7 @@ enum CandidatePanelController {
         onSelect = nil
         onPageDown = nil
         onPageUp = nil
+        onSettings = nil
     }
 
     private static func ensurePanel() -> NSPanel {
@@ -712,4 +741,27 @@ extension CandidatePanelView {
         axChildren = children
         return children
     }
+}
+
+// MARK: - 设置开关（词组联想）
+
+// 联想开关的持久化与读取。macOS 用 UserDefaults（候选栏齿轮菜单切换）；
+// Windows 用注册表、Linux 用 config.json——三端存储各自独立，语义一致
+// （未配置 = 开启）。
+enum AssociateSetting {
+    static let key = "AssociateEnabled"
+
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+
+    static func toggle() {
+        enabled = !enabled
+    }
+}
+
+// 齿轮图标尺寸（折叠区内、chevron 左侧）。
+enum SettingsGear {
+    static let boxW: CGFloat = 20
 }

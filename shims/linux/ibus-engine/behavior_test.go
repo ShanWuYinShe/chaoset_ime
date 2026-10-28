@@ -114,7 +114,7 @@ func newTestEngine(t *testing.T) (*ibusEngine, *fakeEmitter) {
 		t.Fatalf("构造测试词库失败: %v", err)
 	}
 	fe := &fakeEmitter{}
-	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
 	return e, fe
 }
 
@@ -564,7 +564,7 @@ func newAssociateTestEngine(t *testing.T) (*ibusEngine, *fakeEmitter) {
 		t.Fatalf("构造测试词库失败: %v", err)
 	}
 	fe := &fakeEmitter{}
-	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
 	return e, fe
 }
 
@@ -745,7 +745,7 @@ func TestAssociatePaging(t *testing.T) {
 		t.Fatalf("构造词库失败: %v", err)
 	}
 	fe := &fakeEmitter{}
-	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil)}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
 
 	typeKeys(e, "ni")
 	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
@@ -770,5 +770,26 @@ func TestAssociatePaging(t *testing.T) {
 	_, _ = e.ProcessKeyEvent(uint32('1'), 0, 0)
 	if got := fe.lastCommitText(); got != want.Text {
 		t.Fatalf("第 2 页数字 1 应选全局第 7 条 %q，实际上屏 %q", want.Text, got)
+	}
+}
+
+// TestAssociateDisabledBySetting：config associate=false 时选词上屏后
+// 不进入联想（设置项生效，2026-10-28）。
+func TestAssociateDisabledBySetting(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("你好\tni hao\t90\n你\tni\t80\n你们\tni men\t70\n")
+	d, err := engine.ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: false}
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0) // 上屏首选「你」
+	if got := fe.lastCommitText(); got != "你" {
+		t.Fatalf("上屏应正常（联想关闭不影响选词），实际 %q", got)
+	}
+	if len(e.assoc) != 0 {
+		t.Fatalf("联想关闭时不应进入联想，实际 %d 条", len(e.assoc))
 	}
 }

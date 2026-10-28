@@ -372,6 +372,7 @@ final class ChaosetController: IMKInputController {
 
     /// 进入联想模式：按上屏词音节查续接词组并展示（无候选则不进入）。
     private func enterAssociate(sylls: [String], client: (any IMKTextInput)?) {
+        guard AssociateSetting.enabled else { return }
         guard let comp = engine.associate(sylls: sylls), !comp.candidates.isEmpty else { return }
         associateCandidates = comp.candidates
         associatePage = 0
@@ -425,6 +426,9 @@ final class ChaosetController: IMKInputController {
         CandidatePanelController.onPageUp = { [weak self] in
             self?.associateFlip(next: false, client: self?.client())
         }
+        CandidatePanelController.onSettings = { [weak self] in
+            self?.showSettingsMenu()
+        }
         return CandidatePanelController.show(
             candidates: items,
             page: associatePage,
@@ -433,6 +437,30 @@ final class ChaosetController: IMKInputController {
                 Self.candidateOrigin(size: size, client: client, screen: screen)
             }
         )
+    }
+
+    // MARK: - 设置（候选栏齿轮入口，微信输入法交互参考）
+
+    /// 齿轮点击 → 设置菜单：菜单项带勾选态，点击即切换并立即生效
+    /// （关闭时收起联想窗，开启后下次选词生效）。
+    private func showSettingsMenu() {
+        let menu = NSMenu()
+        let item = NSMenuItem(
+            title: "词组联想",
+            action: #selector(toggleAssociateSetting(_:)),
+            keyEquivalent: "")
+        item.target = self
+        item.state = AssociateSetting.enabled ? .on : .off
+        menu.addItem(item)
+        menu.autoenablesItems = false
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func toggleAssociateSetting(_ sender: NSMenuItem) {
+        AssociateSetting.toggle()
+        if !AssociateSetting.enabled {
+            exitAssociate()
+        }
     }
 
     // MARK: - 展示
@@ -530,6 +558,10 @@ final class ChaosetController: IMKInputController {
             guard let self, let client = self.client() else { return }
             self.current = self.engine.prevPage()
             self.refresh(client)
+        }
+        // 候选栏齿轮 → 设置菜单（微信输入法交互参考）
+        CandidatePanelController.onSettings = { [weak self] in
+            self?.showSettingsMenu()
         }
         return CandidatePanelController.show(
             candidates: items,

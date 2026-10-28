@@ -145,6 +145,8 @@ type ibusEngine struct {
 	// 接入 Linux；2026-10-28 翻页化）。
 	assoc     []engine.Candidate
 	assocPage int
+	// assocOn 词组联想开关（config.json associate，默认开启）。
+	assocOn bool
 }
 
 // shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
@@ -199,19 +201,20 @@ func (t *shiftTracker) feed(keyval, state uint32) bool {
 // ibusFactory 是导出给 ibus-daemon 的工厂：CreateEngine 每次调用
 // 创建并导出一个独立的引擎实例（独立对象路径与组词会话）。
 type ibusFactory struct {
-	conn  *godbus.Conn
-	dict  *engine.Dictionary
-	user  *engine.UserDict
-	fuzzy bool
-	trad  bool
-	sp    string
+	conn    *godbus.Conn
+	dict    *engine.Dictionary
+	user    *engine.UserDict
+	fuzzy   bool
+	trad    bool
+	sp      string
+	assocOn bool // 词组联想开关（config.json associate，默认 true）
 
 	mu      sync.Mutex
 	seq     uint32 // 已创建的引擎实例计数（对象路径编号）
 	engines map[godbus.ObjectPath]*ibusEngine
 }
 
-func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string) (*ibusFactory, error) {
+func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string, assocOn bool) (*ibusFactory, error) {
 	conn, err := godbus.ConnectSessionBus()
 	if err != nil {
 		return nil, fmt.Errorf("连接 session bus 失败: %w", err)
@@ -223,6 +226,7 @@ func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad 
 		fuzzy:   fuzzy,
 		trad:    trad,
 		sp:      sp,
+		assocOn: assocOn,
 		engines: make(map[godbus.ObjectPath]*ibusEngine),
 	}, nil
 }
@@ -273,11 +277,12 @@ func (f *ibusFactory) CreateEngine(name string) (godbus.ObjectPath, *godbus.Erro
 
 	path := godbus.ObjectPath(fmt.Sprintf("%s/%d", enginePathBase, seq))
 	eng := &ibusEngine{
-		conn: f.conn,
-		dict: f.dict,
-		user: f.user,
-		path: path,
-		sess: engine.NewSession(f.dict, f.user),
+		conn:    f.conn,
+		dict:    f.dict,
+		user:    f.user,
+		path:    path,
+		sess:    engine.NewSession(f.dict, f.user),
+		assocOn: f.assocOn,
 	}
 	if f.fuzzy {
 		eng.sess.SetFuzzy(true)
@@ -756,6 +761,9 @@ func (e *ibusEngine) commit(text string) {
 // enterAssociate 选词上屏后按上屏词音节查续接词组并经候选表展示
 // （单页，engine.Associate 内部已按 maxAssociate=pageSize 截断）。
 func (e *ibusEngine) enterAssociate(sylls []string) {
+	if !e.assocOn {
+		return // 词组联想已被设置关闭（config.json associate=false）
+	}
 	e.assoc = nil
 	if len(sylls) == 0 {
 		return

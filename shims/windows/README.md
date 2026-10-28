@@ -78,6 +78,7 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | Shift+空格切换全角/半角标点（非组词状态也可切；GetKeyState 查 Shift 状态） | 已实现（编译级） |
 | 模式切换提示（中英/全半角切换时光标旁短暂 toast，约 1.2s 自动消失） | 已实现（编译级） |
 | 词组联想（选词后按上屏词音节查续接词组，复用候选窗展示；上限 30 条分页展示，数字连选/空格结束/字母退出/- = 翻页；associateSelect 学习路径与 select 一致） | 已实现（核心行为级） |
+| 候选栏设置入口（折叠区左侧齿轮 → 弹出「启用词组联想」勾选菜单，存 HKCU\Software\Chaoset） | 已实现（编译级；菜单交互待真机确认） |
 | Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 

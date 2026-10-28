@@ -185,6 +185,34 @@ struct CandidateColors {
     }
 };
 
+// ---- 设置：词组联想开关（HKCU\Software\Chaoset，DWORD Associate）----
+// 未写入时默认开启。候选栏齿轮菜单切换（参考微信输入法候选栏设置入口）；
+// Linux 用 config.json、macOS 用 UserDefaults，三端语义一致。
+
+bool RegGetAssociate() {
+    HKEY hKey = nullptr;
+    DWORD val = 1, sz = sizeof(val);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Chaoset",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegQueryValueExW(hKey, L"Associate", nullptr, nullptr,
+                         reinterpret_cast<LPBYTE>(&val), &sz);
+        RegCloseKey(hKey);
+    }
+    return val != 0;
+}
+
+void RegSetAssociate(bool on) {
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Chaoset", 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr,
+                        &hKey, nullptr) == ERROR_SUCCESS) {
+        DWORD v = on ? 1 : 0;
+        RegSetValueExW(hKey, L"Associate", 0, REG_DWORD,
+                       reinterpret_cast<const BYTE*>(&v), sizeof(v));
+        RegCloseKey(hKey);
+    }
+}
+
 bool isSystemDarkTheme() {
     HKEY hKey = nullptr;
     DWORD val = 1;
@@ -207,6 +235,8 @@ public:
 
     CandidateWindow(const CandidateWindow&) = delete;
     CandidateWindow& operator=(const CandidateWindow&) = delete;
+
+    HWND hwnd() const { return hwnd_; }
 
     void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {
         if (comp.candidates.empty()) {
@@ -460,7 +490,10 @@ private:
             curX += itemW + gap;
         }
 
-        int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW;
+        // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧
+        // 20px 齿轮，点击弹设置菜单（词组联想开关）。
+        int gearBoxW = scale(20, dpi);
+        int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW + gearBoxW;
         int winW = (std::max)(totalW, scale(120, dpi));
 
         chevronRect_.left = winW - chevronBoxW;
@@ -468,7 +501,12 @@ private:
         chevronRect_.right = winW;
         chevronRect_.bottom = winH;
 
-        dividerX_ = winW - chevronBoxW + scale(2, dpi);
+        settingsRect_.left = winW - chevronBoxW - gearBoxW;
+        settingsRect_.top = 0;
+        settingsRect_.right = winW - chevronBoxW;
+        settingsRect_.bottom = winH;
+
+        dividerX_ = settingsRect_.left + scale(2, dpi);
 
         SelectObject(memDC, oldFont);
         DeleteDC(memDC);
@@ -615,8 +653,26 @@ private:
         LineTo(memDC, dividerX_, divY + divH);
         DeleteObject(divPen);
 
+        // 设置齿轮（分割线右侧、翻页箭头左侧）：用 Segoe UI Symbol 的
+        // U+2699 字形，随主题淡色（与页码同色系）
+        {
+            const wchar_t* gear = L"\x2699";
+            HFONT gearFont = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL,
+                                         FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                                         L"Segoe UI Symbol");
+            HGDIOBJ oldGearFont = SelectObject(memDC, gearFont);
+            SetBkMode(memDC, TRANSPARENT);
+            SetTextColor(memDC, theme.pageColor);
+            RECT gearRc = settingsRect_;
+            DrawTextW(memDC, gear, -1, &gearRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(memDC, oldGearFont);
+            DeleteObject(gearFont);
+        }
+
         // 翻页箭头
-        int chevX = dividerX_ + (w - dividerX_) / 2;
+        int chevX = settingsRect_.right + (w - settingsRect_.right) / 2;
         bool hasNext = comp_.page + 1 < comp_.pageCount;
         bool hasPrev = comp_.page > 0;
         bool dirDown = hasNext || !hasPrev;
@@ -670,6 +726,7 @@ private:
     std::vector<ItemPos> items_;
     RECT chevronRect_{};
     int dividerX_ = 0;
+    RECT settingsRect_{}; // 设置齿轮命中区
 };
 
 // ---- 传输：TCP 回环（与 daemon -tcp 127.0.0.1:7949 配对） ----
@@ -1873,7 +1930,35 @@ private:
     }
 
     // 选词上屏后进入联想：查续接词组并复用候选窗展示（单页，页码 1/1）。
+    // 候选栏齿轮 → 设置菜单（微信输入法交互参考）：菜单项带勾选态，
+    // 点击即切换并立即生效（关闭时收起联想窗，开启后下次选词生效）。
+    // TrackPopupMenu 前需 SetForegroundWindow（否则菜单点外部不消失，
+    // MSDN KB135788 的经典要求），返回后补发 WM_NULL 复位。
+public:
+    void showSettingsMenu() {
+        HMENU menu = CreatePopupMenu();
+        const bool assoc = RegGetAssociate();
+        AppendMenuW(menu, MF_STRING | (assoc ? MF_CHECKED : 0), 1, L"启用词组联想");
+        POINT pt = caretPos_;
+        if (pt.x == 0 && pt.y == 0) GetCursorPos(&pt);
+        pt.y += caretLineHeight_ > 0 ? caretLineHeight_ : 20;
+        HWND owner = candidateWnd_.hwnd();
+        if (owner != nullptr) SetForegroundWindow(owner);
+        int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                                 pt.x, pt.y, 0, owner, nullptr);
+        DestroyMenu(menu);
+        if (owner != nullptr) PostMessageW(owner, WM_NULL, 0, 0);
+        if (cmd == 1) {
+            const bool now = !assoc;
+            RegSetAssociate(now);
+            if (!now) clearAssociate(); // 关闭时立即收起联想窗
+        }
+    }
+
+private:
+
     void enterAssociate(const std::string& syllables) {
+        if (!RegGetAssociate()) return; // 设置关闭词组联想
         assoc_ = chaoset::Comp();
         std::vector<std::string> sylls = splitSyllables(syllables);
         if (sylls.empty()) return;
@@ -1927,6 +2012,10 @@ private:
 
 void CandidateWindow::onLButtonDown(int x, int y) {
     POINT pt{ x, y };
+    if (tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
+        tip_->showSettingsMenu();
+        return;
+    }
     for (const auto& it : items_) {
         if (PtInRect(&it.itemRect, pt)) {
             if (tip_ != nullptr) {

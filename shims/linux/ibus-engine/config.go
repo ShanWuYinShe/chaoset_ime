@@ -24,11 +24,19 @@ import (
 	"path/filepath"
 )
 
-// userConfig 是 config.json 的结构。零值即「全部关闭」。
+// userConfig 是 config.json 的结构。
 type userConfig struct {
 	Fuzzy       bool   `json:"fuzzy"`       // 模糊音
 	Traditional bool   `json:"traditional"` // 繁体输出
 	Shuangpin   string `json:"shuangpin"`   // 双拼方案：zrm / mspy / flypy / 空
+	// Associate 控制词组联想（选词上屏后展示续接词组）。nil（配置未写）
+	// = 开启；显式 false 关闭。指针类型区分「未配置」与「显式关闭」。
+	Associate *bool `json:"associate"`
+}
+
+// AssociateEnabled 返回联想开关（未配置时默认开启）。
+func (c userConfig) AssociateEnabled() bool {
+	return c.Associate == nil || *c.Associate
 }
 
 // defaultConfigPath 返回 XDG 规范下的配置文件路径。

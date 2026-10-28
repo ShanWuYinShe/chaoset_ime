@@ -122,6 +122,7 @@ func main() {
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（也可在 ~/.config/chaoset/config.json 配 fuzzy）")
 	trad := flag.Bool("traditional", false, "候选输出繁体（也可在 config.json 配 traditional）")
 	sp := flag.String("shuangpin", "", "双拼方案：zrm/mspy/flypy（也可在 config.json 配 shuangpin）")
+	assoc := flag.Bool("associate", true, "启用词组联想（也可在 config.json 配 associate=false 关闭）")
 	cfgPath := flag.String("config", defaultConfigPath(), "配置文件路径（默认 XDG 配置目录）")
 	flag.Parse()
 	if len(dicts) == 0 {
@@ -148,9 +149,10 @@ func main() {
 	if !setFlags["shuangpin"] {
 		*sp = cfg.Shuangpin
 	}
-	if *fuzzy || *trad || *sp != "" {
-		log.Printf("配置生效：模糊音=%v 繁体=%v 双拼=%q", *fuzzy, *trad, *sp)
+	if !setFlags["associate"] && cfg.Associate != nil {
+		*assoc = *cfg.Associate
 	}
+	log.Printf("配置生效：模糊音=%v 繁体=%v 双拼=%q 联想=%v", *fuzzy, *trad, *sp, *assoc)
 
 	log.Printf("加载词库: %s", strings.Join(dicts, ", "))
 	dict, err := engine.LoadDictFiles(dicts)
@@ -162,7 +164,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp)
+	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp, *assoc)
 	if err != nil {
 		log.Fatal(err)
 	}
