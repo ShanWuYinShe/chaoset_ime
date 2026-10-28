@@ -41,7 +41,7 @@ func writeTemp(t *testing.T, name, content string) string {
 func runGen(t *testing.T, jieba, phrase, single string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.tsv")
-	if err := run(jieba, phrase, single, out); err != nil {
+	if err := run(jieba, phrase, single, "", out); err != nil {
 		t.Fatalf("run 失败: %v", err)
 	}
 	return out
