@@ -385,7 +385,9 @@ final class CandidatePanelView: NSView {
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
         if let gear = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")?
             .withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) {
-            let tint = theme.pageColor
+            // 用候选文字色（深色白/浅色近黑）：pageColor 是次级淡色，
+            // 实机反馈齿轮「配色太烂根本看不清」（2026-10-28）
+            let tint = theme.text
             let sized = NSImage(size: gear.size, flipped: false) { rect in
                 tint.set()
                 gear.draw(in: rect)

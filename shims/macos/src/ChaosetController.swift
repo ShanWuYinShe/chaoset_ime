@@ -441,26 +441,10 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 设置（候选栏齿轮入口，微信输入法交互参考）
 
-    /// 齿轮点击 → 设置菜单：菜单项带勾选态，点击即切换并立即生效
-    /// （关闭时收起联想窗，开启后下次选词生效）。
+    /// 齿轮点击 → 打开设置窗口（独立窗口含全部设置项；参考市面输入法，
+    /// 入口不止一个勾选框而是完整设置面板）。
     private func showSettingsMenu() {
-        let menu = NSMenu()
-        let item = NSMenuItem(
-            title: "词组联想",
-            action: #selector(toggleAssociateSetting(_:)),
-            keyEquivalent: "")
-        item.target = self
-        item.state = AssociateSetting.enabled ? .on : .off
-        menu.addItem(item)
-        menu.autoenablesItems = false
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-    }
-
-    @objc private func toggleAssociateSetting(_ sender: NSMenuItem) {
-        AssociateSetting.toggle()
-        if !AssociateSetting.enabled {
-            exitAssociate()
-        }
+        SettingsWindowController.show()
     }
 
     // MARK: - 展示
