@@ -1161,7 +1161,19 @@ func (s *Session) compose() Composition {
 			if typoSuspicious {
 				exacts = s.dict.QueryTokensExact(qp, 20)
 			} else {
-				exacts, prefixes = s.dict.QueryTokens(qp, 20)
+				// 单音节完整音节：全量召回同音字（exact 上限放开、prefix
+				// 维持 20）。词典中单音节可达 100+ 字（shi 107 个），此前
+				// 精确匹配裁到词频 top 20——排 20 位之后的常用字（如 shi
+				// 的「示」第 33 位）完全进不了候选池，翻页也打不出来
+				// （2026-10-28 用户反馈）。排序仍在 compose 统一按词频，
+				// 多出的字只是落到后面的页；prefix 若随 exact 一并放大，
+				// 低频衍生词组会洪水般稀释单字页位并拖慢热路径（实测
+				// 34.9µs → 71µs），故拆分为独立上限。
+				exactLimit, prefixLimit := 20, 20
+				if len(qp) == 1 && qp[0].IsExact {
+					exactLimit = 120
+				}
+				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
 			}
 
 			if !hasInitials {

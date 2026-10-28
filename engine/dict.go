@@ -284,8 +284,18 @@ func (d *Dictionary) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 // 返回 exactMatches（音节数恰好等于 len(tokens)）与 prefixMatches（更长的衍生词条），
 // 两组结果均已按词频降序排序，数量分别以 maxResults 为上限。
 func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Entry) {
+	return d.queryTokens(tokens, maxResults, maxResults)
+}
+
+// queryTokens 拆分 exact/prefix 上限：单音节全量召回同音字时 prefix 仍保持
+// 原扫描量——衍生词组扫描与 maxResults 联动，一并放大只会引入大量低频
+// 词组稀释单字页位并拖慢热路径（2026-10-28「示」字反馈修复）。
+func (d *Dictionary) queryTokens(tokens []Token, maxResults, exactMax int) ([]*Entry, []*Entry) {
 	if maxResults <= 0 {
 		maxResults = 50
+	}
+	if exactMax <= 0 {
+		exactMax = maxResults
 	}
 	curr := d.walkTokens(tokens)
 	if len(curr) == 0 {
@@ -308,8 +318,8 @@ func (d *Dictionary) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*E
 		}
 		return exactMatches[i].Word < exactMatches[j].Word
 	})
-	if len(exactMatches) > maxResults {
-		exactMatches = exactMatches[:maxResults]
+	if len(exactMatches) > exactMax {
+		exactMatches = exactMatches[:exactMax]
 	}
 
 	// 衍生偏长词（前缀匹配）：采用逐层探索（最多向下深入 2 层，即多 1~2 个音节），

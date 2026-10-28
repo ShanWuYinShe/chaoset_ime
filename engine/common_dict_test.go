@@ -2,6 +2,7 @@ package engine
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,5 +145,70 @@ func TestCommonDictScale(t *testing.T) {
 		if e.Freq < 1 || e.Freq > 99 {
 			t.Fatalf("词条 %q 词频 %d 超出 1..99", e.Word, e.Freq)
 		}
+	}
+}
+
+// TestCommonDictSingleSyllableFullRecall：单音节必须**全量召回**同音字。
+// 2026-10-28 用户反馈：输入 shi 打不出「示」——词频排 33 位的常用字被
+// 精确匹配的 top20 裁剪挡在候选池外，翻页也不存在。修后同音字全部进入
+// 候选池（落到后面的页），同时首选项与词组数量不受影响（双向回归）。
+func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	comp, err := s.Input("shi")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if got := comp.Candidates[0].Text; got != "是" {
+		t.Fatalf("shi 第一候选 = %q, 期望「是」（召回扩大不得冲乱首选）", got)
+	}
+
+	// 遍历全部页收集候选
+	var all []Candidate
+	page := comp
+	for {
+		all = append(all, page.Candidates...)
+		if page.Page+1 >= page.PageCount {
+			break
+		}
+		page, err = s.NextPage()
+		if err != nil {
+			t.Fatalf("NextPage 失败: %v", err)
+		}
+	}
+	if comp.PageCount <= 1 {
+		t.Fatalf("shi 应为多页（同音字 100+），实际 pageCount=%d", comp.PageCount)
+	}
+
+	// 正向：「示」必须在候选池中（此前不存在）
+	findText := func(text string) (int, bool) {
+		for i, c := range all {
+			if c.Text == text {
+				return i + 1, true
+			}
+		}
+		return 0, false
+	}
+	pos, ok := findText("示")
+	if !ok {
+		t.Fatalf("shi 的全部 %d 条候选中找不到「示」——单音节召回仍被裁剪", len(all))
+	}
+	if pos > 60 {
+		t.Fatalf("「示」位次 %d 过深（期望 ≤60，词频 50 属常用字）", pos)
+	}
+
+	// 反向：prefix 词组不被 exactLimit 放大——单字召回数 = 词典中 shi
+	// 单音节词条数（107），词组保持在原 top20 量级而非洪水。
+	singles := 0
+	for _, c := range all {
+		if !strings.Contains(c.Syllables, "'") {
+			singles++
+		}
+	}
+	if singles != 107 {
+		t.Fatalf("shi 单字召回应恰好为词典全部 107 个同音字，实际 %d", singles)
+	}
+	phrases := len(all) - singles
+	if phrases > 25 {
+		t.Fatalf("shi 衍生词组 %d 条超出 prefix 上限（20±5），单字页位被词组洪水稀释", phrases)
 	}
 }
