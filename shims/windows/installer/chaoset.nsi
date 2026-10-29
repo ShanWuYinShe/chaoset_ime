@@ -173,6 +173,13 @@ Section "MainSection" SEC01
     Sleep 200
     Exec '"$WINDIR\system32\ctfmon.exe"'
 
+    ; 系统输入宿主（开始菜单 / 搜索框）运行在 AppContainer 里，默认禁止
+    ; 回环连接，连不上 127.0.0.1:7949 的 daemon，拼音无从转换（2026-10-29
+    ; 实机反馈：开始菜单只能输英文）。授予回环豁免后即可正常打拼音；
+    ; 未获豁免的宿主连接被立即拒绝，壳自动降级为英文透传，绝不阻塞。
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.Search_cw5n1h2txyewy'
+
     ; 准备数据目录并同步词库
     CreateDirectory "$LOCALAPPDATA\Chaoset"
     CopyFiles /SILENT "$INSTDIR\dict.tsv" "$LOCALAPPDATA\Chaoset\dict.tsv"
@@ -221,6 +228,10 @@ Section "Uninstall"
     nsExec::Exec 'taskkill /F /IM ctfmon.exe'
     Sleep 200
     Exec '"$WINDIR\system32\ctfmon.exe"'
+
+    ; 移除安装时授予系统输入宿主的回环豁免
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.Search_cw5n1h2txyewy'
 
     ; 反注册 TSF COM 组件
     ${If} ${RunningX64}

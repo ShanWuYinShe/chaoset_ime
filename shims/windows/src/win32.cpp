@@ -1051,10 +1051,10 @@ public:
 
     bool ensureConnected() {
         if (sock_ != INVALID_SOCKET) return true;
-        // AppContainer (如 Windows 输入法切换宿主 TextInputHost / UWP 应用) 受网络隔离限制，
-        // 无法通过 TCP 连接 127.0.0.1，必须直接跳过，防止阻塞系统 UI 线程
-        if (isAppContainer()) return false;
-
+        // AppContainer 宿主（开始菜单 / 搜索框等）默认禁止回环连接，连接会
+        // 被立即拒绝 → 走下方失败冷却 2 秒后放行降级，绝不阻塞系统 UI 线程；
+        // 安装器已对这些宿主授予 CheckNetIsolation 回环豁免，豁免后这里就是
+        // 普通连接路径，拼音在开始菜单里即可正常转换（2026-10-29 实机反馈）。
         DWORD now = GetTickCount();
         if (now - lastFail_ < 2000) return false;  // 失败冷却 2 秒，避免频繁重试阻塞
 
@@ -1502,10 +1502,9 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
-        // 普通桌面应用中非阻塞预热连接（< 0.1ms），在 AppContainer（如输入法切换宿主）中直接跳过，绝不阻塞 UI
-        if (!isAppContainer()) {
-            transport_.ensureConnected();
-        }
+        // 非阻塞预热连接（< 0.1ms；AppContainer 未获回环豁免时是即时拒绝，
+        // 同样不阻塞，见 TcpTransport::ensureConnected 注释）
+        transport_.ensureConnected();
         return S_OK;
     }
 
@@ -1542,9 +1541,7 @@ public:
                 comp_ = chaoset::Comp();
             }
         } else {
-            if (!isAppContainer()) {
-                transport_.ensureConnected();
-            }
+            transport_.ensureConnected();
         }
         return S_OK;
     }
@@ -1802,9 +1799,9 @@ private:
 
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
 
-        // 若当前未处于组词状态且在 AppContainer 环境中，或后台服务不可达，一律放行按键，绝不抢占或吞掉宿主按键
+        // 组词中不再探测；未组词且后台服务不可达（含 AppContainer 未获
+        // 回环豁免的宿主）一律放行按键，绝不抢占或吞掉宿主按键
         if (!isComposing()) {
-            if (isAppContainer()) return false;
             if (!const_cast<TcpTransport&>(transport_).isConnected() &&
                 !const_cast<TcpTransport&>(transport_).ensureConnected()) {
                 return false;
@@ -2282,17 +2279,16 @@ private:
         }
 
         if (!caretFound_ || (caretPos_.x == 0 && caretPos_.y == 0)) {
+            // 锚点兜底链：真实 GDI 光标 → 鼠标位置。rcCaret 只在 hwndCaret
+            // 非空时有意义；浏览器等自绘应用没有 GDI 光标，借 hwndFocus 的
+            // rcCaret 只会拿到 (0,0)，候选窗飞到屏幕左上角（2026-10-29 实机
+            // 反馈）——该分支已删，直接退回鼠标位置（用户点哪儿鼠标在哪儿）。
             GUITHREADINFO gti{};
             gti.cbSize = sizeof(gti);
-            if (GetGUIThreadInfo(0, &gti) && gti.hwndCaret != nullptr) {
+            if (GetGUIThreadInfo(0, &gti) && gti.hwndCaret != nullptr &&
+                (gti.rcCaret.right > gti.rcCaret.left || gti.rcCaret.bottom > gti.rcCaret.top)) {
                 POINT pt{gti.rcCaret.left, gti.rcCaret.bottom};
                 ClientToScreen(gti.hwndCaret, &pt);
-                caretPos_ = pt;
-                caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
-                caretFound_ = true;
-            } else if (GetGUIThreadInfo(0, &gti) && gti.hwndFocus != nullptr) {
-                POINT pt{gti.rcCaret.left, gti.rcCaret.bottom};
-                ClientToScreen(gti.hwndFocus, &pt);
                 caretPos_ = pt;
                 caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
                 caretFound_ = true;
@@ -2304,13 +2300,17 @@ private:
         candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
     }
 
-    // 用合成范围更新候选窗锚点；View 不可用时保留旧位置（render 再退回鼠标）
+    // 用合成范围更新候选窗锚点；View 不可用或拿到零矩形时保留旧位置——
+    // Chromium 系浏览器对刚建立的合成文本还没完成布局，GetTextExt 会返回
+    // S_OK 但矩形全零（2026-10-29 实机反馈：候选窗因此飞到屏幕左上角），
+    // 必须按失败处理，等下一次渲染布局就绪后自然拿到真实位置。
     void updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange* range) {
         ITfContextView* view = nullptr;
         if (FAILED(ctx->GetActiveView(&view)) || view == nullptr) return;
         RECT rc{};
         BOOL fClipped = FALSE;
-        if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
+        if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped)) &&
+            (rc.right > rc.left || rc.bottom > rc.top)) {
             caretPos_.x = rc.left;
             caretPos_.y = rc.bottom;
             caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;

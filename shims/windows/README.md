@@ -82,6 +82,8 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | 候选窗置顶层级：TOPMOST 保持——Windows 下拉菜单是系统模态 topmost popup（弹出时位于 Z 序最上并独占鼠标），候选窗 frame 重叠不会拦截菜单点击；与 macOS 端「popUpMenu 拦截菜单点击 → 降级 floating」的修复互为对照 | 已实现（编译级） |
 | Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
 | 宿主上下文不支持 TSF 合成/插入时按键放行（开始菜单搜索框可正常唤起） | 已实现（编译级，待真机确认） |
+| 开始菜单/搜索框拼音：AppContainer 宿主默认禁回环，安装器授予 CheckNetIsolation 回环豁免（StartMenuExperienceHost / Search），壳尝试连接、失败即时降级英文透传 | 已实现（编译级，待真机确认） |
+| 候选窗锚点：合成范围 GetTextExt 拿到零矩形（Chromium 首帧未布局）或宿主无 GDI 光标时退回鼠标位置，不再借 hwndFocus 的恒零 rcCaret（此前候选窗飞到屏幕左上角） | 已实现（编译级，待真机确认） |
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 
 ## 排障日志（2026-10-29 起）
