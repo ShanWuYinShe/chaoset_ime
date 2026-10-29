@@ -807,9 +807,47 @@ func TestAssociateSpacePicksFirst(t *testing.T) {
 	if !handled {
 		t.Fatal("联想中空格应被消费")
 	}
-	// 第一个联想词应为「你好」（好 90 > 们 70）
-	if got := fe.lastCommitText(); got != "你好" {
-		t.Fatalf("空格应上屏第一个联想词「你好」，实际 %q", got)
+	// 第一个联想词是「你好」的**续接部分「好」**（好 90 > 们 70）。
+	// 2026-10-29 引擎语义修正（95adb9f）：联想候选只含续接部分，上屏「你」
+	// 之后联想项是「好」而非「你好」——原断言按剥前缀之前的口径写成
+	// 「你好」，引擎改了语义而该测试没同步，CI 从 95adb9f 起一直红。
+	if got := fe.lastCommitText(); got != "好" {
+		t.Fatalf("空格应上屏第一个联想词（续接部分「好」），实际 %q", got)
+	}
+}
+
+// TestAssociateKeepsSyllablesAligned：上屏多字词后，联想项的音节必须与
+// 上屏词对齐剥前缀——不能把上屏词**文本**当音节数组的长度基准。
+// 2026-10-29 回归：Linux 壳 enterAssociate 曾传音节串末位（或上屏文本），
+// 引擎按该参数长度切音节，导致「测试」→「题」被记成 shí'tí（字数 1 而
+// 音节 2），学习数据被污染。
+func TestAssociateKeepsSyllablesAligned(t *testing.T) {
+	src := `测试	ce shi	80
+测试题	ce shi ti	70
+`
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
+	typeKeys(e, "ceshi")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0) // 上屏「测试」，进入联想
+	if len(e.assoc) == 0 {
+		t.Fatal("前置失败：上屏「测试」后应进入联想")
+	}
+	pick := e.assoc[0]
+	if pick.Text != "题" {
+		t.Fatalf("联想首选应是续接部分「题」（测试题剥前缀），实际 %q", pick.Text)
+	}
+	// 音节必须严格对齐：单字「题」只应有 1 个音节 ti，不能是多音节的残片
+	if pick.Syllables != "ti" {
+		t.Fatalf("联想项音节应与续接部分对齐为「ti」，实际 %q", pick.Syllables)
+	}
+	// 选中后学习记录的音节同样必须对齐（污染检查）
+	e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if got := fe.lastCommitText(); got != "题" {
+		t.Fatalf("空格应上屏续接词「题」，实际 %q", got)
 	}
 }
 

@@ -2151,6 +2151,9 @@ private:
         if (vk >= kVkFirstDigit && vk <= kVkLastDigit && !shiftActive()) {
             int index = static_cast<int>(vk - kVkFirstDigit);
             if (index < static_cast<int>(comp_.candidates.size())) {
+                // 上屏候选的音节串必须在 selectPrefix 之前取：成功后
+                // comp_ 会被替换成剩余组词态（或清空），候选表丢了。
+                const std::string pickedSyllables = comp_.candidates[index].syllables;
                 // 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
                 //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）
                 chaoset::Comp rest;
@@ -2161,10 +2164,15 @@ private:
                         comp_ = rest;
                         render(pic);
                     } else {
-                        // 剩余耗尽：与整句上屏同收尾（进入联想）
+                        // 剩余耗尽：与整句上屏同收尾（进入联想）。
+                        // 2026-10-29 修复：此前传 rest.committed（上屏词
+                        // **文本**，如「题」），被当作音节数组传入引擎，
+                        // 单字词 → 1 个「音节」，多字词剥前缀时音节切错位
+                        // （「测试」→「题」记成 shí'tí）。改传候选自身的
+                        // 撇号音节串，长度与剥前缀基准一致。
                         comp_ = chaoset::Comp();
                         endComposition();
-                        enterAssociate(rest.committed);
+                        enterAssociate(pickedSyllables);
                     }
                 } else {
                     // daemon 不可达/越界：回退整句上屏（现状语义）
@@ -2190,6 +2198,8 @@ private:
         // 实机反馈的同族问题）。Shift+空格已在前面的全半角分支处理。
         if (vk == kVkSpace) {
             if (hasCandidates()) {
+                // 同数字选词：音节奏必须在 selectPrefix 之前取（见上）
+                const std::string pickedSyllables = comp_.candidates[0].syllables;
                 chaoset::Comp rest;
                 if (session_.selectPrefix(0, &rest) && !rest.committed.empty()) {
                     commit(pic, rest.committed);
@@ -2199,7 +2209,7 @@ private:
                     } else {
                         comp_ = chaoset::Comp();
                         endComposition();
-                        enterAssociate(rest.committed);
+                        enterAssociate(pickedSyllables);
                     }
                     return true;
                 }

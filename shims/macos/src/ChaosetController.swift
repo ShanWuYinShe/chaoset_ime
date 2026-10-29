@@ -379,6 +379,8 @@ final class ChaosetController: IMKInputController {
                 comp.committedText,
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
+            let assocSylls = cur.candidates[index].syllables
+                .split(separator: "'").map(String.init)
             if comp.preedit.isEmpty {
                 current = nil
             } else {
@@ -387,6 +389,13 @@ final class ChaosetController: IMKInputController {
                                page: comp.page, pageCount: comp.pageCount)
             }
             refresh(client)
+            // 剩余拼音耗尽 = 上屏收尾，与整句上屏同一收尾语义：进入联想。
+            // 2026-10-29 三端一致性审查：Windows/Linux 壳均在剩余耗尽后
+            // 进入联想，macOS 此前直接 return（选完最后一段不弹续接词，
+            // 三端行为不一致）。还剩拼音时继续组词，不进入联想。
+            if comp.preedit.isEmpty {
+                enterAssociate(sylls: assocSylls, client: client)
+            }
             return
         }
         // daemon 不可达（selectPrefix 返回 nil）：绝不能静默失败（键被消费、

@@ -790,26 +790,31 @@ func (e *ibusEngine) commit(text string) {
 	e.hideLookupTable()
 }
 
-// enterAssociate 选词上屏后按上屏词音节查续接词组并经候选表展示
-// （单页，engine.Associate 内部已按 maxAssociate=pageSize 截断）。
+// enterAssociate 选词上屏后按上屏词查续接词组并经候选表展示。
+//
+// 2026-10-29 修复：此前把上屏段音节的**最后一个音节**当查询参数
+// （enterAssociateForPrev(sylls[len(sylls)-1])），而引擎的剥前缀逻辑按
+// 该参数的长度对齐——传 ["ni"] 查不着「你好」以外的多字续接，传
+// 单音节查多字上屏词时更是直接把音节切错位（上屏「测试」→「题」被记成
+// shí'tí）。音节基准应由引擎自己的上屏记录决定（engine 侧已改为
+// s.prevSylls），壳这里只负责进入联想，参数传上屏词音节即可。
 func (e *ibusEngine) enterAssociate(sylls []string) {
 	if !e.assocOn {
 		return // 词组联想已被设置关闭（config.json associate=false）
 	}
 	e.assoc = nil
-	if len(sylls) == 0 {
-		return
-	}
-	e.enterAssociateForPrev(sylls[len(sylls)-1])
+	e.enterAssociateForPrev(strings.Join(sylls, "'"))
 }
 
 // enterAssociateForPrev 按上屏词（字前缀）查续接联想：渐进上屏的剩余
-// 耗尽收尾用（sylls 参数是上屏段音节，仅作兼容签名）。
-func (e *ibusEngine) enterAssociateForPrev(prev string) {
-	if !e.assocOn || prev == "" {
+// 耗尽收尾用。syllsOrWord 可为「撇号分隔的音节串」或上屏词文本——
+// 引擎会优先用自己记录的上屏音节（s.prevSylls）作为切分基准，
+// 因此传文本也不会造成音节错位（见 engine.Associate 注释）。
+func (e *ibusEngine) enterAssociateForPrev(syllsOrWord string) {
+	if !e.assocOn || syllsOrWord == "" {
 		return
 	}
-	cands := e.sess.Associate(strings.Split(prev, "'"))
+	cands := e.sess.Associate(strings.Split(syllsOrWord, "'"))
 	if len(cands) == 0 {
 		return
 	}

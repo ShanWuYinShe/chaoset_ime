@@ -350,6 +350,54 @@ func TestAssociateChainContinues(t *testing.T) {
 	}
 }
 
+// TestAssociateSyllablesUseEngineRecord：联想剥前缀必须按**引擎自己记录的
+// 上屏音节**（s.prevSylls）切，不能按调用方传入的音节数组长度切。
+//
+// 2026-10-29 回归：壳可以把任意东西传进来——Linux/Windows 壳的渐进上屏收尾
+// 传的是上屏词**文本**（「题」→ 长度 1），macOS 壳传的是候选音节。
+// 按调用方参数切时，多字上屏词（测试→题）会被剥错位，返回「题」的音节为
+// shi'ti（字数 1、音节 2），后续学习写入即污染词库。
+func TestAssociateSyllablesUseEngineRecord(t *testing.T) {
+	src := `测试	ce shi	80
+测试题	ce shi ti	70
+测试员	ce shi yuan	60
+`
+	d, err := ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	s := NewSession(d, nil)
+	s.Input("ceshi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+
+	// 壳传「上屏词文本」形态（长度 1）——引擎必须无视它，用上屏记录
+	// 的两音节 ce'shi 作基准剥前缀。
+	assoc := s.Associate([]string{"测试"})
+	if len(assoc) == 0 {
+		t.Fatal("应有联想候选")
+	}
+	if assoc[0].Text != "题" {
+		t.Fatalf("联想首选应是续接「题」，实际 %q（%+v）", assoc[0].Text, assoc)
+	}
+	// 关键断言：音节必须剥成单音节 ti，而不是残片 "shi'ti"
+	if assoc[0].Syllables != "ti" {
+		t.Fatalf("续接「题」的音节应为 ti，实际 %q——剥前缀基准取错"+
+			"（按调用方参数长度切而非引擎上屏记录）", assoc[0].Syllables)
+	}
+	// 反向：壳传正确音节数组时结果必须一致（正确路径不被反噬）
+	s.Reset()
+	s.Input("ceshi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	assoc2 := s.Associate([]string{"ce", "shi"})
+	if len(assoc2) == 0 || assoc2[0].Text != "题" || assoc2[0].Syllables != "ti" {
+		t.Fatalf("按候选音节传入时结果应与文本传入一致，实际 %+v", assoc2)
+	}
+}
+
 // TestSelectPrefixProgressive：渐进上屏——打长串拼音后选中「今天」，
 // 只消耗 jin'tian 两音节，剩余 wo'chi'le'yi'da'wan 回灌继续组词；
 // 逐段渐进上屏，每段进用户词库学习（2026-10-29 用户场景）。

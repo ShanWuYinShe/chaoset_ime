@@ -89,10 +89,17 @@ type learnEntry struct {
 // （词组进化）。不保证并发安全：IPC 服务端为每个连接建独立
 // Session，本地使用方自行串行化。
 type Session struct {
-	dict       *Dictionary
-	user       *UserDict
-	input      string // 仅小写字母与 '
-	prev       string
+	dict  *Dictionary
+	user  *UserDict
+	input string // 仅小写字母与 '
+	prev  string
+	// prevSylls 是 prev 上屏时的**音节序列**（引擎自己记录的权威值）。
+	// 联想剥前缀（Associate）必须按它切，不能按壳传进来的音节数组长度切：
+	// Linux/Windows 壳的渐进上屏收尾把「上屏词文本」当音节传
+	// （enterAssociate(rest.committed)），若单字符词被当成 1 个音节，
+	// 「测试→题」就会被剥成「题」=shí'tí（多字词全部错位），学习数据随之
+	// 污染。macOS 壳按候选音节传，一直是对的。2026-10-29 修复。
+	prevSylls  []string
 	history    []learnEntry
 	dquoteOpen bool // 中文双引号 “” 的开闭交替状态
 	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
@@ -321,6 +328,7 @@ func (s *Session) Reset() (Composition, error) {
 	s.composeMemoKey = ""
 	s.composeMemo = Composition{}
 	s.prev = ""
+	s.prevSylls = nil
 	s.history = nil
 	s.page = 0
 	s.resetPunctCycle()
@@ -391,6 +399,7 @@ func (s *Session) learnSelection(text string, sylls []string) {
 		s.learnPhrase()
 	}
 	s.prev = text
+	s.prevSylls = sylls
 }
 
 // SelectPrefix 渐进上屏：选中第 index 个候选，上屏其文本并只消耗其音节
@@ -444,6 +453,17 @@ func (s *Session) Associate(sylls []string) []Candidate {
 	if s.dict == nil || len(sylls) == 0 {
 		return nil
 	}
+	// 剥前缀的切分基准**一律取引擎自己记录的上屏音节**（s.prevSylls），
+	// 调用方传的 sylls 只作兜底：壳传来的数组长度不可信——Linux/Windows
+	// 壳的渐进上屏收尾把「上屏词文本」当音节传
+	// （enterAssociate(rest.committed)），单字「题」会被当成 1 个音节，
+	// 于是多字词（测试→题）剥错位成 shí'tí，学习数据跟着污染
+	// （2026-10-29 实测：Associate(["shi"]) 返回的「题」音节为 "shi'ti"，
+	// 而正确值是 "ti"）。引擎知道自己上屏了什么，就该用自己的记录。
+	prevSylls := s.prevSylls
+	if len(prevSylls) == 0 {
+		prevSylls = sylls
+	}
 	type assocItem struct {
 		cand   Candidate
 		byWord bool // 字前缀层（同分时排在音节前缀层之前）
@@ -464,9 +484,9 @@ func (s *Session) Associate(sylls []string) []Candidate {
 		// 等于上屏词）的条目跳过。
 		text, syllStr := e.Word, strings.Join(e.Syllables, "'")
 		if byWord && s.prev != "" && strings.HasPrefix(e.Word, s.prev) &&
-			len(e.Syllables) > len(sylls) {
+			len(e.Syllables) > len(prevSylls) {
 			text = e.Word[len(s.prev):]
-			syllStr = strings.Join(e.Syllables[len(sylls):], "'")
+			syllStr = strings.Join(e.Syllables[len(prevSylls):], "'")
 			if text == "" {
 				return
 			}
@@ -556,6 +576,7 @@ func (s *Session) AssociateSelect(word string, sylls []string) (string, error) {
 		s.learnPhrase()
 	}
 	s.prev = word
+	s.prevSylls = sylls
 	return word, nil
 }
 
