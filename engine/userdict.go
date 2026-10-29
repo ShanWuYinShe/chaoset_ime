@@ -74,6 +74,12 @@ type UserDict struct {
 
 	// dirty 表示内存态有尚未落盘的变更。
 	//
+	// 2026-10-29：FlushIfDirty 改为「锁内快照、锁外写盘」——此前写锁横跨
+	// MarshalIndent+WriteFile+Rename（Windows 上 Defender 让这口气几十到
+	// 几百 ms，词典越大越糟），期间所有按键 IPC 请求在锁上排队，表现为
+	// 「切到输入法后整个系统发卡」。writes 是变更加代计数：写盘期间若有
+	// 新变更（代数变化）则保持 dirty 留给下一轮。
+	//
 	// 为什么引入「延迟落盘」（2026-10-26）：一次上屏会触发 BumpWord +
 	// BumpBigram（+ BumpPhrase），即最多 3 次「全量 MarshalIndent + 写临时
 	// 文件 + rename」，全部在 IPC 响应返回前同步完成——壳因此阻塞在上屏路径
@@ -88,6 +94,7 @@ type UserDict struct {
 	// 两种模式下 Save() 都保证把当前内存态写盘。
 	dirty    bool
 	deferred bool
+	writes   uint64 // 变更加代计数（FlushIfDirty 快照一致性判定）
 }
 
 // NewUserDict 加载用户词典；文件不存在视为空词典。
@@ -154,6 +161,7 @@ func (u *UserDict) persistAfterBump() error {
 		return nil
 	}
 	u.dirty = true
+	u.writes++
 	if u.deferred {
 		return nil
 	}
@@ -595,13 +603,95 @@ func (u *UserDict) Save() error {
 // 与 Save 的区别只是语义命名（不强调「必须写」），实现一致。
 // daemon 用 time.Ticker 定期调用它，把「每次上屏都阻塞落盘」摊薄成
 // 「最多每 flushInterval 写一次」。
+// userFileSnapshot：FlushIfDirty 的锁内快照。记录是纯值结构，按值拷贝
+// 即可脱离 u.mu；拷贝耗时是微秒级内存操作，磁盘写入在锁外进行——按键
+// IPC 请求不再被落盘阻塞（2026-10-29 实测根因：Windows 上 Defender 使
+// 持锁写盘长达几十到几百 ms，表现为切到输入法后系统整体发卡）。
+type userFileSnapshot struct {
+	words   map[string]userRecord
+	phrases map[string]phraseRecord
+	bigrams map[string]userRecord
+	gen     uint64
+}
+
+func (u *UserDict) snapshotLocked() userFileSnapshot {
+	snap := userFileSnapshot{
+		words:   make(map[string]userRecord, len(u.file.Words)),
+		phrases: make(map[string]phraseRecord, len(u.file.Phrases)),
+		bigrams: make(map[string]userRecord, len(u.file.Bigrams)),
+		gen:     u.writes,
+	}
+	for k, v := range u.file.Words {
+		snap.words[k] = *v
+	}
+	for k, v := range u.file.Phrases {
+		snap.phrases[k] = *v
+	}
+	for k, v := range u.file.Bigrams {
+		snap.bigrams[k] = *v
+	}
+	return snap
+}
+
+func (u *UserDict) writeSnapshot(snap userFileSnapshot) error {
+	if u.path == "" {
+		return nil
+	}
+	if dir := filepath.Dir(u.path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("创建用户词典目录失败: %w", err)
+		}
+	}
+	out := userFile{
+		Words:   make(map[string]*userRecord, len(snap.words)),
+		Phrases: make(map[string]*phraseRecord, len(snap.phrases)),
+		Bigrams: make(map[string]*userRecord, len(snap.bigrams)),
+	}
+	for k, v := range snap.words {
+		vv := v
+		out.Words[k] = &vv
+	}
+	for k, v := range snap.phrases {
+		vv := v
+		out.Phrases[k] = &vv
+	}
+	for k, v := range snap.bigrams {
+		vv := v
+		out.Bigrams[k] = &vv
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := u.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("写入用户词典失败: %w", err)
+	}
+	if err := os.Rename(tmp, u.path); err != nil {
+		return fmt.Errorf("替换用户词典失败: %w", err)
+	}
+	return nil
+}
+
+// FlushIfDirty：锁内快照（微秒级）、锁外写盘。写盘期间有新 bump（代数
+// 变化）则保持 dirty，由下一轮 ticker 带上；返回 true 表示确实写了一次盘。
 func (u *UserDict) FlushIfDirty() (bool, error) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	if !u.dirty {
+		u.mu.Unlock()
 		return false, nil
 	}
-	return true, u.saveLocked()
+	snap := u.snapshotLocked()
+	u.mu.Unlock()
+	if err := u.writeSnapshot(snap); err != nil {
+		return true, err
+	}
+	u.mu.Lock()
+	if u.writes == snap.gen {
+		u.dirty = false
+	}
+	u.mu.Unlock()
+	return true, nil
 }
 
 // saveLocked 落盘（调用方须已持有写锁）。

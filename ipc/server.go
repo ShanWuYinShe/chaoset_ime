@@ -215,17 +215,22 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "punct":
 		var p struct {
 			Key string `json:"key"`
+			// Half 由壳随请求下发（壳本地持有全/半角开关，2026-10-29 起
+			// 快捷键切换不再与 daemon 往返）。指针区分「旧壳未携带」与
+			// 显式值：nil 时保持会话现状态。
+			Half *bool `json:"half"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, fmt.Errorf("解析 punct 参数失败: %w", err)
+		}
+		if p.Half != nil {
+			sess.SetHalfWidth(*p.Half)
 		}
 		text, err := sess.Punct(p.Key)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
-	case "toggleHalfWidth":
-		return map[string]bool{"half_width": sess.ToggleHalfWidth()}, nil
 	case "userStats":
 		if s.user == nil {
 			return nil, fmt.Errorf("未启用用户词典")

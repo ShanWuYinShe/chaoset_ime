@@ -90,9 +90,9 @@ public:
     // input/preedit/candidates=剩余），失败（通信/越界）返回 false。
     bool selectPrefix(int index, Comp* out);
     // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
-    bool punct(const std::string& key, std::string* committed);
-    // 全角/半角标点模式切换，返回切换后是否为半角；通信失败返回 false。
-    bool toggleHalfWidth();
+    // 标点键提交；halfWidth 由壳本地持有并随请求下发（2026-10-29 起
+    // 全/半角开关不再经 daemon 往返，daemon 只按状态产出标点文本）。
+    bool punct(const std::string& key, bool halfWidth, std::string* committed);
     // 词组联想：按上屏词音节查续接词组（响应结构与 Composition 同构，
     // candidates 为联想列表）；通信失败返回 ok=false。
     bool associate(const std::vector<std::string>& sylls, Comp* out);

@@ -25,6 +25,8 @@ final class ChaosetController: IMKInputController {
     // 这样即便系统把 Shift 的按下与松开都路由进来也只切一次，Shift+A 之类的
     // 组合也不会误切换（旧实现按下/松开各切一次，净效果为不切换）。
     private var enMode = false
+    /// 全/半角标点开关：壳本地持有（2026-10-29 起），随 punct 请求下发
+    private var halfWidth = false
     private var shiftArmed = false
 
     /// 左/右 Shift 的 keyCode（56/60）。系统可能以 flagsChanged 或 keyDown/keyUp
@@ -228,14 +230,13 @@ final class ChaosetController: IMKInputController {
         // 快速输入时 charactersIgnoringModifiers 对空格判定失灵（返回空/nil），
         // 会在前置守卫处透传——选词落空、空格漏进文档（2026-10-25 实机反馈）。
         // 组词中用户按空格的意图永远是「结束组词」，不应有裸空格进文档。
-        // Shift+空格：切换全角/半角标点模式（优先于首选上屏；daemon 不可达时放行）。
+        // Shift+空格：切换全角/半角标点模式（优先于首选上屏）。开关归壳本地
+        // 持有（2026-10-29 起），切换不再与 daemon 往返，状态随 punct 请求下发。
         // 非组词状态的空格照旧放行。切换后短暂提示当前状态（三端统一反馈）。
         if event.keyCode == 49, event.modifierFlags.contains(.shift) {
-            if let half = engine.toggleHalfWidth() {
-                showToast(half ? "半角标点" : "全角标点", client: client)
-                return true
-            }
-            return passThrough(client)
+            halfWidth.toggle()
+            showToast(halfWidth ? "半角标点" : "全角标点", client: client)
+            return true
         }
         if event.keyCode == 49, let cur = current, !cur.input.isEmpty {
             if hasCandidates {
@@ -306,7 +307,7 @@ final class ChaosetController: IMKInputController {
                 refresh(client)
                 return true
             }
-            guard let committed = engine.punct(chars) else {
+            guard let committed = engine.punct(chars, halfWidth: halfWidth) else {
                 return passThrough(client) // daemon 不可达/未知标点：原键放行
             }
             current = nil

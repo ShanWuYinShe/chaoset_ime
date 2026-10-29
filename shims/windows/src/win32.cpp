@@ -1406,8 +1406,10 @@ private:
         RegisterClassExW(&wc);
         // ModeToast 同候选窗：TOPMOST 保持（纯提示 ignoresMouseEvents
         // 本就不拦截点击；系统模态菜单弹出时位于最上），层级决策见候选窗
+        // WS_EX_TRANSPARENT：toast 无任何交互元素，整窗点击穿透——绝不
+        // 挡住下层应用的一次点击（2026-10-29 鼠标零干扰审计）
         hwnd_ = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
             cls.c_str(), L"ChaosetModeToast",
             WS_POPUP, 0, 0, 0, 0,
             nullptr, nullptr, hinst, nullptr);
@@ -1574,6 +1576,11 @@ public:
             tm_->Release();
             tm_ = nullptr;
         }
+        if (probeCtx_ != nullptr) {
+            probeCtx_->Release();
+            probeCtx_ = nullptr;
+            probeCan_ = false;
+        }
         return S_OK;
     }
 
@@ -1629,7 +1636,18 @@ public:
                     owned.ctx = focusContext();
                     ctx = owned.ctx;
                 }
-                const bool ok = letter ? canStartComposition(ctx) : canInsert(ctx);
+                bool ok;
+                if (letter && ctx == probeCtx_) {
+                    ok = probeCan_;  // 缓存命中：零 COM 调用
+                } else {
+                    ok = letter ? canStartComposition(ctx) : canInsert(ctx);
+                    if (letter && ctx != nullptr) {
+                        if (probeCtx_ != nullptr) probeCtx_->Release();
+                        probeCtx_ = ctx;
+                        probeCtx_->AddRef();
+                        probeCan_ = ok;
+                    }
+                }
                 if (!ok) {
                     *pfEaten = FALSE;
                     return S_OK;
@@ -2063,7 +2081,7 @@ private:
             }
             const bool composing = isComposing();
             std::string committed;
-            if (session_.punct(key, &committed)) {
+            if (session_.punct(key, halfWidth_, &committed)) {
                 // 上屏失败（上下文不可插入文本）且没有未决拼音时放行原键，
                 // 避免中文标点凭空消失；有未决拼音时仍需消费，保持组词状态机完整
                 if (commit(pic, committed) || composing) return true;
@@ -2083,8 +2101,10 @@ private:
         // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
         // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
-            const bool half = session_.toggleHalfWidth();
-            showModeToast(half ? L"半角标点" : L"全角标点");
+            // 全/半角开关归壳本地持有（2026-10-29 起）：快捷键切换不再与
+            // daemon 往返，状态随 punct 请求下发（daemon 只按状态产出文本）
+            halfWidth_ = !halfWidth_;
+            showModeToast(halfWidth_ ? L"半角标点" : L"全角标点");
             return true;
         }
 
@@ -2261,6 +2281,12 @@ private:
     // 在会话外被调用时无法拿 cookie，TF_ES_SYNC 失败（TS_E_SYNCHRONOUS）
     // 时保留上一次成功值比用 0 强——0 一定失败，旧值多半仍有效。
     TfEditCookie compEditCookie_ = 0;
+
+    // canStartComposition 按上下文缓存：同一上下文反复按键时避免每键
+    // GetStatus + 双 QueryInterface（不可合成宿主此前每键三次 COM 调用）。
+    // 持有引用保证指针不悬垂；合成建立/上下文切换由指针比较自然失效。
+    ITfContext* probeCtx_ = nullptr;
+    bool probeCan_ = false;
 
     // StartComposition/InsertTextAtSelection 语义上要求可写文档：只读上下文
     // 上调用属于 TS_E_READONLY，且部分宿主对只读文档的回调和出参处理不可靠。
@@ -2613,6 +2639,7 @@ private:
     TcpTransport transport_;
     chaoset::Session session_{transport_};
     chaoset::Comp comp_;
+    bool halfWidth_ = false; // 全/半角标点开关（壳本地持有，随 punct 请求下发）
     // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
     // 上屏词音节查续接词组继续展示，数字键可直接连选。
     chaoset::Comp assoc_;
@@ -2743,6 +2770,10 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             tip_->flipPage(dirDown);
         }
     }
+    // 鼠标零干扰（2026-10-29）：空白区（条内非候选/齿轮/翻页处）点击不再
+    // 静默吞掉，而是收起候选窗。跨进程无法做逐像素穿透，收起是等价语义——
+    // 用户的下一次点击必然落到下层应用。
+    hide();
 }
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----

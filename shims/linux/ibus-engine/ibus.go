@@ -147,6 +147,9 @@ type ibusEngine struct {
 	assocPage int
 	// assocOn 词组联想开关（config.json associate，默认开启）。
 	assocOn bool
+	// halfWidth 全/半角标点开关：壳本地持有（2026-10-29 起），随标点请求
+	// 经 SetHalfWidth 告知引擎，快捷键切换不与 daemon 往返。
+	halfWidth bool
 }
 
 // shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
@@ -515,9 +518,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return false, nil
 
 	case keyval == keysymSpace:
-		// Shift+空格：切换全角/半角标点模式（优先于首选上屏），并短暂提示
+		// Shift+空格：切换全角/半角标点模式（优先于首选上屏），并短暂提示。
+		// 开关归壳本地持有（2026-10-29 起），SetHalfWidth 随后告知引擎（进程内
+		// 直调，无往返），daemon/引擎只按状态产出标点文本。
 		if state&ibusShiftMask != 0 {
-			if e.sess.ToggleHalfWidth() {
+			e.halfWidth = !e.halfWidth
+			e.sess.SetHalfWidth(e.halfWidth)
+			if e.halfWidth {
 				e.showModeToast("半角标点")
 			} else {
 				e.showModeToast("全角标点")

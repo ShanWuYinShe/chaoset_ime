@@ -384,23 +384,17 @@ bool Session::selectPrefix(int index, Comp* out) {
     return true;
 }
 
-bool Session::punct(const std::string& key, std::string* committed) {
+bool Session::punct(const std::string& key, bool halfWidth, std::string* committed) {
     bool ok = false;
-    JsonValue result = call("punct", "{\"key\":\"" + jsonEscape(key) + "\"}", &ok);
+    JsonValue result = call("punct",
+                            std::string("{\"key\":\"" + jsonEscape(key) +
+                                        "\",\"half\":" + (halfWidth ? "true" : "false") + "}"),
+                            &ok);
     if (!ok) return false;
     std::string text = parseCommitted(result);
     if (text.empty()) return false;
     *committed = text;
     return true;
-}
-
-bool Session::toggleHalfWidth() {
-    bool ok = false;
-    JsonValue result = call("toggleHalfWidth", "", &ok);
-    if (!ok) return false;
-    const JsonValue* hw = result.find("half_width");
-    if (hw == nullptr || hw->type != JsonValue::Type::Bool) return false;
-    return hw->boolean;
 }
 
 // sylls 数组 → JSON 文本（音节为 ASCII + 撇号，escape 仅为统一口径）。

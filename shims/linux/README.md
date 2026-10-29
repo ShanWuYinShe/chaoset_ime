@@ -35,6 +35,9 @@ Page Up/Down 候选翻页（候选表随页刷新；残缺组词时清空组词�
 词组并经候选表展示（**上限 30 条，本地分页每页 6 条**），数字/小键盘选当前页
 候选（继续联想）、空格结束联想透传、回车/Esc 收起、字母退出联想进入正常组词、
 `-`/`=` 与 Page Up/Down 在联想中翻页。
+**全/半角标点**（Shift+空格）：开关归壳本地持有（2026-10-29 起三端统一），
+切换不经 daemon 往返，状态经 SetHalfWidth 随标点请求告知引擎。
+
 **设置项**：「词组联想」在三端一致的**设置窗口**里配置（2026-10-29 起）：
 ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
 运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /

@@ -266,15 +266,6 @@ final class EngineClient {
         return result["committed"] as? String
     }
 
-    // punct 提交标点键：组词中先上屏首选候选，随后输出映射后的中文标点。
-    // 返回 nil 表示 daemon 不可达或未知标点（调用方回退原键放行）。
-    /// 标点键提交。**不重试**：组词中会先上屏首选（写学习数据），重试会重复记录。
-    func punct(_ key: String) -> String? {
-        guard let result = call(method: "punct", params: ["key": key],
-                                retryOnFailure: false) else { return nil }
-        return result["committed"] as? String
-    }
-
     // nextPage / prevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
     func nextPage() -> Comp? {
         parseComp(call(method: "nextPage", params: [:]))
@@ -284,11 +275,15 @@ final class EngineClient {
         parseComp(call(method: "prevPage", params: [:]))
     }
 
-    // toggleHalfWidth 切换全角/半角标点模式，返回切换后是否为半角。
-    // 返回 nil 表示 daemon 不可达（调用方放行原键）。
-    func toggleHalfWidth() -> Bool? {
-        guard let result = call(method: "toggleHalfWidth", params: [:]) else { return nil }
-        return result["half_width"] as? Bool
+    /// 标点键提交。**不重试**：组词中会先上屏首选（写学习数据），重试会重复记录。
+    /// halfWidth 由壳本地持有、随请求下发（2026-10-29 起：全/半角开关不再
+    /// 与 daemon 往返，daemon 只按状态产出标点文本）。返回 nil 表示 daemon
+    /// 不可达（调用方放行原键）。
+    func punct(_ key: String, halfWidth: Bool) -> String? {
+        guard let result = call(method: "punct",
+                                params: ["key": key, "half": halfWidth],
+                                retryOnFailure: false) else { return nil }
+        return result["committed"] as? String
     }
 
     // associate 取联想候选：上屏词后拼音区已清空，候选窗继续展示的续接词组。

@@ -137,10 +137,20 @@ func (s *Session) SetTraditional(on bool) { s.traditional = on }
 
 // ToggleHalfWidth 切换全角/半角标点模式，返回切换后的状态
 // （true = 半角：标点键原样输出 ASCII）。
+// 2026-10-29 起壳侧改为本地持有开关并经 punct 请求下发（SetHalfWidth），
+// 本方法仅供测试与既有调用方过渡使用。
 func (s *Session) ToggleHalfWidth() bool {
 	s.halfWidth = !s.halfWidth
 	s.resetPunctCycle()
 	return s.halfWidth
+}
+
+// SetHalfWidth 由壳直接下发半角标点状态（2026-10-29 起：全/半角开关归壳
+// 本地持有，快捷键切换不再与 daemon 往返；daemon 只在标点请求里被动接收
+// 该状态，只负责按状态产出标点文本——daemon 不拥有 UI 开关）。
+func (s *Session) SetHalfWidth(on bool) {
+	s.halfWidth = on
+	s.resetPunctCycle()
 }
 
 // HalfWidth 报告当前是否为半角标点模式。
