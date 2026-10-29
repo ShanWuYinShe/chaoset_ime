@@ -433,9 +433,9 @@ func ParseDict(r io.Reader) (*Dictionary, error) {
 	return d, nil
 }
 
-// LoadDictFiles 依次解析多个词库文件并合并进同一 Dictionary
-// （daemon 用它把种子词库与热词词库叠加加载）；重复词条取较大词频。
-// 各文件沿用严格校验：任何一行非法即报错。
+// LoadDictFiles 依次解析多个词库文件并合并进同一 Dictionary；重复词条取
+// 较大词频。**严格**：任何一行非法即报错——用于内置词库（生成产物，正确性
+// 由 CI 保证）与其它需要立刻暴露脏数据的场景。
 func LoadDictFiles(paths []string) (*Dictionary, error) {
 	d := NewDictionary()
 	for _, p := range paths {
@@ -452,11 +452,71 @@ func LoadDictFiles(paths []string) (*Dictionary, error) {
 	return d, nil
 }
 
-// parseInto 解析词库进 d。strict 模式（种子/主词库）逐行强校验，
-// 遇到脏数据即报错；宽容模式（热词导入）跳过无效行并计数，
-// 缺省词频补 20、词频压缩到 1..99（用户学习权重远高于静态词频，
-// 压缩不影响「越用越顺手」的调频效果）。
-func parseInto(d *Dictionary, r io.Reader, strict bool) (skipped int, err error) {
+// LoadDictFilesLenient 宽松加载，供 daemon / ibus 引擎在**运行时**加载
+// 用户自备的第三方词库。
+//
+// 严格与宽松的分工（2026-10-30 明确）：
+//
+//   - 内置词库的正确性由 CI 保证：生成阶段 cmd/chaoset-dictgen 严格校验，
+//     引擎测试又严格解析 data/dict_common.tsv 与 data/dict_extra.tsv
+//     （见 engine/data_contract_test.go）。所以运行时不需要靠严格模式去
+//     「发现」内置词库的脏数据——那必须在构建期就失败；
+//   - 运行时面对的是用户从网上下载或手写的词库：一行坏数据不能让人家整个
+//     输入法起不来，因此跳过坏行并汇总报告。
+//
+// 具体语义：
+//   - 文件打不开（路径写错、权限不足）仍返回错误——那是配置错误，静默少
+//     加载一个词库只会让用户以为输入法坏了；
+//   - 坏行（缺列、空词/空拼音、非法音节、词频非正）跳过并计数，样本说明
+//     （含行号，最多 parseErrSamples 条）进 warnings；
+//   - 拼音归一化（去声调、ü→v、连写自动切分）、缺省词频补 20、超过 99 压到
+//     99——与 chaoset-import 导入热词同一套规则，手写词库可以直接用。
+//
+// warnings 为空表示所有行都合法；调用方应把非空 warnings 写日志。
+func LoadDictFilesLenient(paths []string) (*Dictionary, []string, error) {
+	d := NewDictionary()
+	var warnings []string
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("打开词库 %s 失败: %w", p, err)
+		}
+		st, perr := parseInto(d, f, false)
+		f.Close()
+		if perr != nil {
+			return nil, nil, fmt.Errorf("读取词库 %s 失败: %w", p, perr)
+		}
+		if st.skipped > 0 {
+			warnings = append(warnings, fmt.Sprintf("词库 %s 跳过 %d 行无效数据（%s）",
+				p, st.skipped, strings.Join(st.samples, "；")))
+		}
+	}
+	return d, warnings, nil
+}
+
+// parseErrSamples 是宽松解析时写进警告的坏行样本上限：够定位问题，又不至于
+// 让一条日志刷屏（第三方词库里坏行可能有上千条）。
+const parseErrSamples = 3
+
+// parseStats 汇总宽松解析的跳过情况；严格模式下 skipped 恒为 0（坏行会
+// 变成返回的错误）。
+type parseStats struct {
+	skipped int
+	samples []string // 前 parseErrSamples 条坏行说明（含行号）
+}
+
+func (s *parseStats) skip(lineNo int, reason string) {
+	s.skipped++
+	if len(s.samples) < parseErrSamples {
+		s.samples = append(s.samples, fmt.Sprintf("第 %d 行%s", lineNo, reason))
+	}
+}
+
+// parseInto 解析词库进 d。strict 模式（内置/主词库）逐行强校验，遇到脏数据
+// 即报错；宽松模式（用户自备词库、热词导入）跳过无效行并计数，缺省词频补
+// 20、词频压缩到 1..99（用户学习权重远高于静态词频，压缩不影响「越用越
+// 顺手」的调频效果）。
+func parseInto(d *Dictionary, r io.Reader, strict bool) (st parseStats, err error) {
 	sc := bufio.NewScanner(r)
 	lineNo := 0
 	for sc.Scan() {
@@ -468,9 +528,9 @@ func parseInto(d *Dictionary, r io.Reader, strict bool) (skipped int, err error)
 		parts := strings.Split(line, "\t")
 		if len(parts) < 2 {
 			if strict {
-				return skipped, fmt.Errorf("词库第 %d 行格式错误：应为「词\\t拼音\\t词频」", lineNo)
+				return st, fmt.Errorf("词库第 %d 行格式错误：应为「词\t拼音\t词频」", lineNo)
 			}
-			skipped++
+			st.skip(lineNo, "缺少制表符分隔（应为「词\t拼音\t词频」）")
 			continue
 		}
 		word := strings.TrimSpace(parts[0])
@@ -483,32 +543,50 @@ func parseInto(d *Dictionary, r io.Reader, strict bool) (skipped int, err error)
 		}
 		if strict {
 			if len(parts) != 3 {
-				return skipped, fmt.Errorf("词库第 %d 行格式错误：应为「词\\t拼音\\t词频」", lineNo)
+				return st, fmt.Errorf("词库第 %d 行格式错误：应为「词\t拼音\t词频」", lineNo)
 			}
 			if word == "" || len(sylls) == 0 {
-				return skipped, fmt.Errorf("词库第 %d 行词或拼音为空", lineNo)
+				return st, fmt.Errorf("词库第 %d 行词或拼音为空", lineNo)
 			}
 			if freq <= 0 {
-				return skipped, fmt.Errorf("词库第 %d 行词频不是正整数", lineNo)
+				return st, fmt.Errorf("词库第 %d 行词频不是正整数", lineNo)
 			}
 			for _, s := range sylls {
 				if !IsSyllable(s) {
-					return skipped, fmt.Errorf("词库第 %d 行拼音 %q 不是合法音节", lineNo, s)
+					return st, fmt.Errorf("词库第 %d 行拼音 %q 不是合法音节", lineNo, s)
 				}
 			}
 		} else {
-			// 宽容模式（热词导入）：先做拼音归一化（去声调/ü→v），
-			// 再补默认词频、压缩到 1..99（用户学习权重远高于静态词频）。
-			sylls = normalizePinyin(parts[1])
+			// 宽松模式分两步，顺序很重要：
+			//
+			//  1. 先按严格规则校验。通过则**原样保留音节**——这保证官方词库
+			//     走宽松加载与走严格加载得到完全相同的词条（内置词库在
+			//     daemon 里走的正是这里，而 CI 用严格加载断言，两条路径必须
+			//     一致，见 TestLenientLoadMatchesStrictForBuiltinDict）；
+			//  2. 校验不过才尝试归一化（去声调、ü→v、连写自动切分）——用户
+			//     手写或从别处导出的词库常见「nǐ hǎo」「nihao」这类写法；
+			//     归一化仍失败才跳过该行。
+			canonical := word != "" && len(sylls) > 0
+			if canonical {
+				for _, s := range sylls {
+					if !IsSyllable(s) {
+						canonical = false
+						break
+					}
+				}
+			}
+			if !canonical {
+				sylls = normalizePinyin(parts[1])
+				if word == "" || len(sylls) == 0 {
+					st.skip(lineNo, "词或拼音无法解析为合法音节")
+					continue
+				}
+			}
 			if freq <= 0 {
 				freq = 20
 			}
 			if freq > 99 {
 				freq = 99
-			}
-			if word == "" || sylls == nil {
-				skipped++
-				continue
 			}
 		}
 		key := word + "\x00" + strings.Join(sylls, " ")
@@ -522,9 +600,9 @@ func parseInto(d *Dictionary, r io.Reader, strict bool) (skipped int, err error)
 		d.add(word, sylls, freq)
 	}
 	if err := sc.Err(); err != nil {
-		return skipped, fmt.Errorf("读取词库失败: %w", err)
+		return st, fmt.Errorf("读取词库失败: %w", err)
 	}
-	return skipped, nil
+	return st, nil
 }
 
 // WriteTSV 把词条导出为 TSV（词频降序、同频按词、再按音节排序），

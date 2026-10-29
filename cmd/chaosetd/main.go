@@ -65,9 +65,22 @@ func main() {
 }
 
 func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
-	dict, err := engine.LoadDictFiles(dicts)
+	// 宽松加载词库：-dict 可能指向用户自备的第三方词库，一行坏数据不能让人家
+	// 整个输入法起不来。内置词库的正确性由 CI 保证（生成阶段严格校验 +
+	// engine/data_contract_test.go 严格解析断言），运行时只需跳过坏行并报告。
+	dict, dictWarnings, err := engine.LoadDictFilesLenient(dicts)
 	if err != nil {
 		return err
+	}
+	for _, w := range dictWarnings {
+		log.Printf("警告: %s", w)
+	}
+	// 词条数为 0 说明词库文件全坏/全空——此时静默启动等于给用户一个打不出字
+	// 的输入法，必须报错退出并说清原因（与「跳过坏行」不矛盾：那是局部脏数据，
+	// 这是整体不可用）。
+	if dict.Len() == 0 {
+		return fmt.Errorf("没有加载到任何词条，请检查 -dict 指定的词库是否为空或格式不对（%s）",
+			strings.Join(dicts, ", "))
 	}
 	log.Printf("已加载词典 %d 条（%s）", dict.Len(), strings.Join(dicts, ", "))
 

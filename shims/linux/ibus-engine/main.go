@@ -155,9 +155,17 @@ func main() {
 	log.Printf("配置生效：模糊音=%v 繁体=%v 双拼=%q 联想=%v", *fuzzy, *trad, *sp, *assoc)
 
 	log.Printf("加载词库: %s", strings.Join(dicts, ", "))
-	dict, err := engine.LoadDictFiles(dicts)
+	// 宽松加载：用户自备词库里的坏行跳过并汇总报告，不让一处脏数据毁掉
+	// 整个输入法。内置词库的正确性由 CI 保证（见 engine/data_contract_test.go）。
+	dict, dictWarnings, err := engine.LoadDictFilesLenient(dicts)
 	if err != nil {
 		log.Fatal(err)
+	}
+	for _, w := range dictWarnings {
+		log.Printf("警告: %s", w)
+	}
+	if dict.Len() == 0 {
+		log.Fatalf("没有加载到任何词条，请检查词库路径是否为空或格式不对（%s）", strings.Join(dicts, ", "))
 	}
 	// 宽松加载：用户词典损坏不能让 ibus 引擎退出（否则整个输入法不可用）。
 	// 损坏文件改名备份为 *.corrupt-<时间戳>，与 daemon 侧同一策略。

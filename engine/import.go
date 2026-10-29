@@ -35,8 +35,8 @@ func ParseDictAuto(r io.Reader) (*Dictionary, int, error) {
 		return ParseCCCEDICT(strings.NewReader(string(content)))
 	}
 	d := NewDictionary()
-	skipped, err := parseInto(d, strings.NewReader(stripYAMLHeader(string(content))), false)
-	return d, skipped, err
+	st, err := parseInto(d, strings.NewReader(stripYAMLHeader(string(content))), false)
+	return d, st.skipped, err
 }
 
 // stripYAMLHeader 若内容以 --- 开头（Rime dict.yaml），去掉到第二条

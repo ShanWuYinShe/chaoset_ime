@@ -143,9 +143,17 @@ func buildController(socket string, dicts []string, userPath string, fuzzy bool,
 		}
 		return c, func() { c.Close() }, nil
 	}
-	dict, err := engine.LoadDictFiles(dicts)
+	// 与 daemon 同策略：用户自备词库的坏行跳过并警告，不让一处脏数据
+	// 让测试台起不来（内置词库的正确性由 CI 的严格解析测试保证）。
+	dict, dictWarnings, err := engine.LoadDictFilesLenient(dicts)
 	if err != nil {
 		return nil, nil, err
+	}
+	for _, w := range dictWarnings {
+		fmt.Fprintf(os.Stderr, "警告: %s\n", w)
+	}
+	if dict.Len() == 0 {
+		return nil, nil, fmt.Errorf("没有加载到任何词条，请检查 -dict 指定的词库是否为空或格式不对")
 	}
 	user, err := engine.NewUserDict(userPath)
 	if err != nil {
