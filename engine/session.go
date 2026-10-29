@@ -188,6 +188,11 @@ func NewSession(dict *Dictionary, user *UserDict) *Session {
 // 双拼模式下按键两两成对解码为音节（见 double_pinyin.go）；
 // 首键暂存不产生组成变化，无效键码对整体丢弃。
 func (s *Session) Input(text string) (Composition, error) {
+	// 从空组词重新开始：上一轮渐进上屏的未完成分段不能带入本轮组词
+	// （否则退格到空后再打新词，会被拼成伪整句习惯，见 resetSeqIfEmpty）。
+	if s.input == "" {
+		s.seqSegs = nil
+	}
 	for _, r := range strings.ToLower(text) {
 		if s.dpScheme != "" {
 			switch {
@@ -252,6 +257,7 @@ func (s *Session) truncate() {
 // Backspace 删除最后一个输入字符。双拼模式下删除粒度是「按键事件」：
 // 暂存中的首键直接清除；已解码音节整段回滚（对应两键）。
 func (s *Session) Backspace() (Composition, error) {
+	defer s.resetSeqIfEmpty() // 退格到空 = 本轮组词中止，丢弃未完成分段
 	if s.dpScheme != "" {
 		if s.dpPending != 0 {
 			s.dpPending = 0
@@ -282,6 +288,7 @@ func (s *Session) Backspace() (Composition, error) {
 // BackspaceWord 删除末尾的一个完整音节或词段（对应 Option+Backspace）。
 // 若输入包含显式撇号或完整音节切分，回退到前一个音节边界；仅剩单音节或无法切分时清空。
 func (s *Session) BackspaceWord() (Composition, error) {
+	defer s.resetSeqIfEmpty() // 同 Backspace：清空组词即中止本轮渐进段累积
 	if s.dpScheme != "" {
 		// 双拼模式下单次 Backspace 已是完整音节回滚，直接复用
 		return s.Backspace()

@@ -47,6 +47,7 @@ func IsPunctKey(r rune) bool {
 // ' 送 Input）。映射表见 punctMap；双/单引号各自按开闭交替配对；
 // 句号/逗号支持同键连按循环；半角模式下标点原样输出（ToggleHalfWidth）。
 func (s *Session) Punct(key string) (string, error) {
+	defer s.resetSeqIfEmpty() // 标点丢弃残缺输入/上屏首选后，本轮渐进段累积作废
 	runes := []rune(key)
 	if len(runes) != 1 {
 		return "", fmt.Errorf("标点键必须是单字符，收到 %q", key)

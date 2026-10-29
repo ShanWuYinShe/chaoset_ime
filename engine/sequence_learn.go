@@ -114,12 +114,16 @@ func (s *Session) learnProgressiveSequence(segs []learnEntry) {
 	_ = s.user.BumpWordWithSegs(word, sylls, segWords)
 }
 
-// inferSegs 用主词典把「非词典整词」做最长词贪心切分，推断用户可能确认过
-// 的分段。只用于兼容两层数据：
-//  1. 2026-10-30 之前写下的旧学习记录（没有 Segs 字段）；
-//  2. 联想增量词（壳只回传 word+sylls）。
+// inferSegs 用主词典把「非词典整词」切成**分段数最少**的词典词序列。
 //
-// 每个分段都必须是词典词，否则返回 nil（宁可当普通词，也不臆造边界）。
+// 为什么不是最长词贪心（2026-10-30 探针 I5 实测踩坑）：旧数据「天星期一」
+// 用贪心会命中词典里的「天星」(tian xing) → 切成 [天星,期,一]，分段边界
+// 全错——联想在上屏「天」后不再给「星期一」，错误分段词「天星」还会被逐段
+// 调频后污染候选。改 DP 取最少段数后可得到用户实际确认的 [天,星期一]。
+//
+// 只用于兼容两层数据：① 2026-10-30 之前写下的旧学习记录（没有 Segs 字段）；
+// ② 联想增量词（壳只回传 word+sylls）。每个分段都必须是词典词；无法完全
+// 切分或切不出多段时返回 nil（宁可当普通词，也不臆造边界）。
 func (s *Session) inferSegs(word string, sylls []string) []string {
 	if s.dict == nil || len(sylls) < 2 {
 		return nil
@@ -128,24 +132,40 @@ func (s *Session) inferSegs(word string, sylls []string) []string {
 	if len(runes) != len(sylls) || s.dict.Contains(word, sylls) {
 		return nil
 	}
-	var segs []string
-	pos := 0
-	for pos < len(runes) {
-		matched := 0
-		for k := len(runes) - pos; k >= 1; k-- {
-			if s.dict.Contains(string(runes[pos:pos+k]), sylls[pos:pos+k]) {
-				matched = k
-				break
+	n := len(runes)
+	// best[pos]：覆盖 runes[:pos] 的最少分段数（-1 = 不可达）；
+	// prev[pos]：该最优解最后一段的起点，用于回溯。
+	best := make([]int, n+1)
+	prev := make([]int, n+1)
+	for i := range best {
+		best[i] = -1
+	}
+	best[0] = 0
+	for pos := 0; pos < n; pos++ {
+		if best[pos] < 0 {
+			continue
+		}
+		for k := 1; pos+k <= n; k++ {
+			if !s.dict.Contains(string(runes[pos:pos+k]), sylls[pos:pos+k]) {
+				continue
+			}
+			if best[pos+k] < 0 || best[pos+k] > best[pos]+1 {
+				best[pos+k] = best[pos] + 1
+				prev[pos+k] = pos
 			}
 		}
-		if matched == 0 {
-			return nil
-		}
-		segs = append(segs, string(runes[pos:pos+matched]))
-		pos += matched
 	}
-	if len(segs) < 2 {
+	if best[n] < 2 {
 		return nil
+	}
+	segs := make([]string, 0, best[n])
+	for pos := n; pos > 0; {
+		p := prev[pos]
+		segs = append(segs, string(runes[p:pos]))
+		pos = p
+	}
+	for i, j := 0, len(segs)-1; i < j; i, j = i+1, j-1 {
+		segs[i], segs[j] = segs[j], segs[i]
 	}
 	return segs
 }
@@ -179,6 +199,18 @@ func (s *Session) isSentenceEntry(e *Entry) bool {
 		return true // 旧数据：>4 音节且不在词典，只可能是整句
 	}
 	return len(s.inferSegs(e.Word, e.Syllables)) >= 2
+}
+
+// resetSeqIfEmpty 在组词输入被清空时丢弃未完成的渐进段累积。
+//
+// 2026-10-30 探针 J1 实测：渐进选「今天」→ 退格到空（未 Reset）→ 输入 wo
+// 选「我」，会把 [今天 我] 拼成伪整句学习记录——因为 seqSegs 只在
+// Reset/Select/AssociateSelect 清空，Backspace/标点丢弃残缺输入都没有清。
+// 已上屏的旧段属于上一轮组词，不能在下一轮组词完成时被拼成整句习惯。
+func (s *Session) resetSeqIfEmpty() {
+	if s.input == "" {
+		s.seqSegs = nil
+	}
 }
 
 // stripAtSegmentBoundary 在整句式学习记录的分段边界上剥掉已上屏前缀：

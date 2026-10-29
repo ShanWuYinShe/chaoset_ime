@@ -826,7 +826,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         第 2 条才是「天」70）；该尾巴还能被再次上屏学习（AssociateSelect），
         之后 tian 下「天星期一」#40 反超「天气」#46——学习污染循环成立。
       - **本次修复（engine）**：Words/Phrases 学习记录携带**分段**（`Segs`，
-        旧数据无分段时用主词典最长词切分推断）；整句学习（`BumpWordWithSegs`）
+        旧数据无分段时按主词典「分段数最少」DP 推断，见下方边界加固 ②）；
+        整句学习（`BumpWordWithSegs`）
         只在**完整输入**时作为整句候选参与调频加权，**不参与部分输入的前缀
         候选**；联想剥前缀只允许在用户确认过的分段边界发生（今天→星期一 ✓、
         今→天星期一 ✗）；逐段选择整串耗尽时把整句固化成带分段的整句习惯
@@ -835,10 +836,25 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         （jin'tian'…）下渐进失效（比较忽略 '，剩余串不以 ' 开头），
         `engine.Controller`/IPC Client 补齐 SelectPrefix，CLI 数字键走渐进
         上屏（本地测试台可验证渐进链路）。
+      - **边界加固（复检发现的两个边界 bug，同日修）**：① 渐进段累积
+        （seqSegs）此前只在 Reset/Select/AssociateSelect 清理，退格到空或标点
+        丢弃残缺输入后重新组词，会把上一轮已上屏段拼成伪整句（实测「今天」→
+        退格到空→打 wo 选「我」→学出「今天我 segs=[今天 我]」）；现在
+        Input/Backspace/BackspaceWord/Punct 在组词被清空时一律作废未完成分段。
+        ② 旧数据分段推断此前用「最长词贪心」，会被词典长词带偏（无 Segs 的
+        「天星期一」被切成 [天星,期,一]，联想上屏「天」后丢失「星期一」、错误
+        分段词「天星」污染候选），改为「分段数最少」DP 后恢复 [天,星期一]。
       - **双向回归**：engine/sequence_learn_test.go —— 正向（完整输入出带
         FromUser 的整句、今天→星期一/天气 续接保留、旧数据分段推断生效、
         撇号输入可渐进）；反向（jin/jintian 不出现整句候选、今 的联想没有
-        天星期一/天天气、只想输入今天时 今天 仍 #1）。
+        天星期一/天天气、只想输入今天时 今天 仍 #1、退格清空后不拼伪整句、
+        旧数据尾巴学到的分段必须正确）。
+      - **兼容性/边界口径（有意为之）**：① 末音节残缺或多打尾字母
+        （jintianxingqiy、jintianxingqiyix）仍给整句候选——这是续接预测形态，
+        选择时只消耗已覆盖音节、剩余字母保留（与渐进上屏一致），不属于
+        「部分输入整词匹配」；② 旧数据里「不在词典的多字词」一律按整句式处理
+        （带推断分段），不再作为部分输入的前缀候选——完整输入与分段边界续接
+        不受影响，是本次安全规范的兼容性权衡。
       - **五场景基线**：改动前后 full/tail1/tail2/initials/mixed 对比见提交
         说明与 `.workwork/verify/delta-2026-10-30.md`（gitignore，扫描口径见
         pinyin-quality-tuning skill）。

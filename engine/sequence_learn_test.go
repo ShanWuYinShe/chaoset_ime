@@ -410,3 +410,114 @@ func TestSentenceSyllableCap(t *testing.T) {
 		t.Fatalf("上限内的整句应学习（%d 音节）", maxSentenceSylls)
 	}
 }
+
+// TestInferSegsMinimalSegmentation 覆盖旧数据分段推断：必须取「最少分段数」
+// 的词典词序列，不能被最长词贪心带偏——2026-10-30 复检实测：旧记录「天星期一」
+// 无 Segs 时贪心会先命中词典词「天星」→ 切成 [天星,期,一]，分段边界错误、
+// 联想在上屏「天」后丢失「星期一」，错误分段词还会污染候选。
+func TestInferSegsMinimalSegmentation(t *testing.T) {
+	d, err := ParseDict(strings.NewReader("天星\ttian xing\t48\n天\ttian\t60\n期\tqi\t40\n一\tyi\t50\n星期一\txing qi yi\t80\n"))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	s := NewSession(d, nil)
+	got := s.inferSegs("天星期一", []string{"tian", "xing", "qi", "yi"})
+	want := []string{"天", "星期一"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("inferSegs(天星期一) 应取最少分段 [天 星期一]，实际 %#v", got)
+	}
+	if got := s.inferSegs("星期一", []string{"xing", "qi", "yi"}); got != nil {
+		t.Fatalf("词典词不应推断为整句式分段，实际 %#v", got)
+	}
+}
+
+// TestLegacySentenceTailBoundary 旧数据（无 Segs）的整句记录：
+// 上屏「天」后应在分段边界续接「星期一」；尾巴再上屏学习时分段应为
+// [天,星期一]（不是 [天星,期,一]），且不能把「天星」学成独立分段词。
+func TestLegacySentenceTailBoundary(t *testing.T) {
+	dictSrc := "天星\ttian xing\t48\n天\ttian\t60\n期\tqi\t40\n一\tyi\t50\n星期一\txing qi yi\t80\n"
+	d, err := ParseDict(strings.NewReader(dictSrc))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	now := time.Now().Unix()
+	legacy := map[string]any{
+		"words": map[string]any{
+			userKey("天星期一", []string{"tian", "xing", "qi", "yi"}): map[string]any{"count": 1, "last_used": now},
+		},
+		"phrases": map[string]any{},
+		"bigrams": map[string]any{},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("构造旧版用户词典失败: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("写入旧版用户词典失败: %v", err)
+	}
+	u, err := NewUserDict(path)
+	if err != nil {
+		t.Fatalf("加载旧版用户词典失败: %v", err)
+	}
+	s := NewSession(d, u)
+	s.Input("tian")
+	mustSelectText(t, s, "天")
+	assoc := s.Associate([]string{"tian"})
+	if !hasCandidate(assoc, "星期一") {
+		t.Fatalf("旧整句记录应在分段边界续接「星期一」，实际 %+v", assoc)
+	}
+	if _, err := s.AssociateSelect("天星期一", []string{"tian", "xing", "qi", "yi"}); err != nil {
+		t.Fatalf("AssociateSelect 失败: %v", err)
+	}
+	u2 := mustUserDict(t, path)
+	rec := u2.file.Words[userKey("天星期一", []string{"tian", "xing", "qi", "yi"})]
+	if rec == nil || len(rec.Segs) != 2 || rec.Segs[0] != "天" || rec.Segs[1] != "星期一" {
+		t.Fatalf("尾巴学习的分段应为 [天 星期一]，实际 %+v", rec)
+	}
+	if got := u2.file.Words[userKey("天星", []string{"tian", "xing"})]; got != nil {
+		t.Fatalf("错误分段词「天星」不应被学习，实际 %+v", got)
+	}
+}
+
+// TestSeqSegsResetWhenCompositionRestarts 覆盖组词中止后的伪整句防护：
+// 渐进选「今天」→ 退格到空（未 Reset）→ 输入 wo 选「我」，不能学习出
+// 「今天我 segs=[今天 我]」（2026-10-30 复检 J1：seqSegs 跨组词残留）。
+func TestSeqSegsResetWhenCompositionRestarts(t *testing.T) {
+	d, err := ParseDict(strings.NewReader("今天\tjin tian\t90\n今\tjin\t60\n我\two\t88\n星期一\txing qi yi\t80\n"))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "user.json")
+	u := mustUserDict(t, path)
+	s := NewSession(d, u)
+	s.Input("jintianxingqiyi")
+	idx := findCandidate(t, s, "今天")
+	if _, _, err := s.SelectPrefix(idx); err != nil {
+		t.Fatalf("渐进选「今天」失败: %v", err)
+	}
+	if s.Compose().Input == "" {
+		t.Fatalf("前置失败：选「今天」后应剩余拼音")
+	}
+	for i := 0; i < 32 && s.Compose().Input != ""; i++ {
+		if _, err := s.Backspace(); err != nil {
+			t.Fatalf("Backspace 失败: %v", err)
+		}
+	}
+	if s.Compose().Input != "" {
+		t.Fatalf("退格后组词应为空，实际 %q", s.Compose().Input)
+	}
+	s.Input("wo")
+	idx = findCandidate(t, s, "我")
+	if _, committed, err := s.SelectPrefix(idx); err != nil || committed != "我" {
+		t.Fatalf("新组词选「我」失败: committed=%q err=%v", committed, err)
+	}
+	if rec := u.file.Words[userKey("今天我", []string{"jin", "tian", "wo"})]; rec != nil {
+		t.Fatalf("退格清空后重新组词不应拼出伪整句记录，实际 %+v", rec)
+	}
+	for k := range u.file.Words {
+		if strings.HasPrefix(k, "今天我"+userKeySep) {
+			t.Fatalf("不应存在伪整句记录 %q", k)
+		}
+	}
+}
