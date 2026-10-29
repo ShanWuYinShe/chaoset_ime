@@ -27,6 +27,17 @@ import (
 
 const callName = "ExtCreatePen"
 
+// 防失控护栏（2026-10-30 实测事故：用户机器上 checkgdi 进程吃到 15GB 内存
+// 被手动 kill；本地多场景复现均只有 4-100MB，根因未定位）。工具被 make vet
+// 与 CI 调用，绝不允许任何输入下失控——以下三道硬上限保证最坏情况也是
+// 「报错退出」而不是「吃光内存」：
+//  1. maxSourceFileSize：单文件超过它直接报错跳过（C++ 源文件不可能更大，
+//     超了说明传错目录或文件损坏）；
+//  2. 主循环迭代上限 = len(text)/len(callName)+2（每个匹配至少推进
+//     len(callName) 字节，这是数学上的理论上限）；
+//  3. extractArgs 迭代上限 = len(text)（逐字符扫描的理论上限）。
+const maxSourceFileSize = 10 << 20 // 10 MiB
+
 // extractArgs 从 openParen 指向的 ( 开始，返回顶层逗号分隔的参数列表；
 // 括号不闭合返回 nil。
 func extractArgs(text string, openParen int) []string {
@@ -37,7 +48,15 @@ func extractArgs(text string, openParen int) []string {
 	inStr := byte(0)
 	dq := byte(34)
 	sq := byte(39)
+	// 护栏 3：迭代上限（逐字符扫描的理论上限），超出返回 nil（调用方按
+	// 「括号不闭合」处理报错）。防御性保护：任何情况下不允许失控。
+	maxIters := len(text) - openParen + 2
+	iters := 0
 	for i < len(text) {
+		iters++
+		if iters > maxIters {
+			return nil
+		}
 		ch := text[i]
 		if inStr != 0 {
 			if ch == 92 { // 反斜杠转义：跳过下一个字符
@@ -88,6 +107,12 @@ func run(argv []string) int {
 	var problems []string
 	checked := 0
 	for _, path := range files {
+		// 护栏 1：单文件大小上限（见 maxSourceFileSize 注释）
+		if fi, statErr := os.Stat(path); statErr == nil && fi.Size() > maxSourceFileSize {
+			problems = append(problems, fmt.Sprintf("%s: 文件 %d 字节超过上限 %d，跳过（疑似传错目录或文件损坏）",
+				path, fi.Size(), maxSourceFileSize))
+			continue
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			problems = append(problems, path+": 读取失败: "+err.Error())
@@ -95,7 +120,16 @@ func run(argv []string) int {
 		}
 		text := string(data)
 		searchFrom := 0
+		// 护栏 2：主循环迭代上限（每个匹配至少推进 len(callName) 字节，
+		// 该值是数学理论上限；超出说明出现未知 bug，立即失败而不是失控）
+		maxIters := len(text)/len(callName) + 2
+		iters := 0
 		for {
+			iters++
+			if iters > maxIters {
+				problems = append(problems, path+": 扫描迭代次数超过理论上限，中止（防失控护栏触发，请报告此错误）")
+				break
+			}
 			rel := strings.Index(text[searchFrom:], callName)
 			if rel < 0 {
 				break

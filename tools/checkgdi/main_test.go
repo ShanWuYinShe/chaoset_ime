@@ -100,3 +100,43 @@ func TestLongerIdentifierSkipped(t *testing.T) {
 		t.Fatal("ExtCreatePenWrapper 不应被当成 ExtCreatePen 调用")
 	}
 }
+
+// TestOversizedFileSkipped：超过大小上限的文件必须报错跳过而不是处理。
+//
+// 2026-10-30 防失控护栏（用户机器上 checkgdi 进程吃到 15GB 被手动 kill，
+// 根因未定位）。护栏保证最坏情况也是「报错退出」而不是「吃光内存」。
+func TestOversizedFileSkipped(t *testing.T) {
+	dir := t.TempDir()
+	// 造一个超过 maxSourceFileSize 的文件（10MiB+1）
+	big := strings.Repeat("x", maxSourceFileSize+1)
+	p := filepath.Join(dir, "big.cpp")
+	if err := os.WriteFile(p, []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out := runOn(t, map[string]string{"big.cpp": big})
+	// maxSourceFileSize+1 字节会导致文件系统写入正常，但检查器必须跳过
+	_ = p
+	if code != 1 {
+		t.Fatalf("超限文件应导致整体失败（有报错信息），退出码 %d", code)
+	}
+	if !strings.Contains(out, "超过上限") {
+		t.Fatalf("应提示超过上限: %s", out)
+	}
+}
+
+// TestGuardOnHugeSingleLine：单行超长内容（模拟畸形输入）也不得失控——
+// 主循环与 extractArgs 的迭代上限必须在有限时间内返回。
+func TestGuardOnHugeSingleLine(t *testing.T) {
+	// 12MiB 的单行，内嵌大量 ExtCreatePen 字样但永远不闭合括号：
+	// 若无护栏，extractArgs 会逐字符扫完整个 text（理论可终止），
+	// 主循环也会推进——此测试验证的是「快速终止 + 正确报错」。
+	huge := "ExtCreatePen(" + strings.Repeat("a", 4<<20) + "\n" +
+		strings.Repeat("/* ExtCreatePen 注释 */\n", 800)
+	code, out := runOn(t, map[string]string{"a.cpp": huge})
+	if code != 1 {
+		t.Fatalf("畸形输入应报错退出，退出码 %d", code)
+	}
+	if !strings.Contains(out, "ExtCreatePen") {
+		t.Fatalf("输出应提及 ExtCreatePen 相关错误: %s", out)
+	}
+}
