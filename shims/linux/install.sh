@@ -56,8 +56,17 @@ if [ ! -f data/dict.tsv ]; then
 fi
 
 # 设置窗口脚本（ibus-setup 的 <setup> 入口；GTK3 设置窗与 macOS/Windows 同构）
+#
+# 必须先建目录再 install：deb 安装时 dpkg 会创建 /usr/share/chaoset，但
+# tar.gz 安装（sudo ./install.sh）没有任何东西保证该目录存在。2026-10-29 加入
+# 设置窗口时本段被排在下面的 install -d 之前，于是**所有 tar.gz 用户安装即失败**：
+#   install: cannot create regular file '/usr/share/chaoset/chaoset-setup.py':
+#   No such file or directory
+# deb 冒烟先建了目录、随后随 dpkg -r 被删，正好轮到 tar.gz 冒烟才暴露——v0.2.15
+# 与 v0.2.16 两次 release 都挂在这里（2026-10-30 修）。
 if [ -f setup/chaoset-setup.py ]; then
   echo "==> 安装设置窗口到 $PREFIX_SHARE"
+  install -d "$PREFIX_SHARE"
   install -m755 setup/chaoset-setup.py "$PREFIX_SHARE/chaoset-setup.py"
 fi
 
