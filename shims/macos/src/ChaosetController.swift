@@ -260,10 +260,22 @@ final class ChaosetController: IMKInputController {
         // Shift+空格：切换全角/半角标点模式（优先于首选上屏）。开关归壳本地
         // 持有（2026-10-29 起），切换不再与 daemon 往返，状态随 punct 请求下发。
         // 非组词状态的空格照旧放行。切换后短暂提示当前状态（三端统一反馈）。
-        if event.keyCode == 49, event.modifierFlags.contains(.shift) {
-            halfWidth.toggle()
-            showToast(halfWidth ? "半角标点" : "全角标点", client: client)
-            return true
+        // 2026-10-29 修复（输入事件审计 F1）：Shift+空格**只在输入法真正介入时**
+        // 才消费——组词中或联想中。此前无状态前提地吃掉任何应用里的 Shift+Space：
+        // 游戏里 Shift=冲刺/潜行、Space=跳，「按住 Shift 跳不起来」；全屏应用同理。
+        // 输入法没有任何理由拦截非组词状态的组合键，此时一律放行给宿主。
+        if event.keyCode == 49, event.modifierFlags.contains(.shift),
+           event.modifierFlags.contains(.command) == false,
+           event.modifierFlags.contains(.control) == false,
+           event.modifierFlags.contains(.option) == false {
+            let composing = !(current?.input.isEmpty ?? true)
+            let associating = !(associateCandidates?.isEmpty ?? true)
+            if composing || associating {
+                halfWidth.toggle()
+                showToast(halfWidth ? "半角标点" : "全角标点", client: client)
+                return true
+            }
+            return passThrough(client)
         }
         if event.keyCode == 49, let cur = current, !cur.input.isEmpty {
             if hasCandidates {

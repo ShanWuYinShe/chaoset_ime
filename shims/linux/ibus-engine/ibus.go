@@ -51,6 +51,7 @@ const (
 	ibusReleaseMask = 1 << 30
 	ibusCtrlMask    = 1 << 2
 	ibusMod1Mask    = 1 << 3
+	ibusMod4Mask    = 1 << 6 // Super/Win 键（GNOME/KDE 大量占用 Super+字母）
 	ibusShiftMask   = 1 << 0
 )
 
@@ -372,6 +373,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	if state&ibusReleaseMask != 0 {
 		return false, nil
 	}
+	// Mod4(Super) 一并放行：2026-10-29 输入事件审计 F7——此前只覆盖 Ctrl/Mod1，
+	// Super+字母在非英文模式下会被当成普通字母喂进组词，吞掉桌面快捷键
+	// （GNOME Super+A/S/E、KDE Super 系）。Windows 壳有等价的 win 判定，
+	// Linux 此前缺失，三端不一致。
+	if state&ibusMod4Mask != 0 {
+		e.exitAssociate()
+		return false, nil
+	}
 	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
 		if isComposing(e.sess) && keyval == keysymBackspace {
 			e.sess.Reset()
@@ -535,6 +544,12 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		// 开关归壳本地持有（2026-10-29 起），SetHalfWidth 随后告知引擎（进程内
 		// 直调，无往返），daemon/引擎只按状态产出标点文本。
 		if state&ibusShiftMask != 0 {
+			// 只在输入法介入时（组词/联想）才消费。2026-10-29 修复
+			// （输入事件审计 F1）：此前无状态前提地吃掉任何应用里的
+			// Shift+Space——游戏里 Shift=冲刺、Space=跳。
+			if !isComposing(e.sess) && len(e.assoc) == 0 {
+				return false, nil
+			}
 			e.halfWidth = !e.halfWidth
 			e.sess.SetHalfWidth(e.halfWidth)
 			if e.halfWidth {

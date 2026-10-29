@@ -975,3 +975,55 @@ func TestAssociateBackspaceConsumed(t *testing.T) {
 		t.Fatal("收起联想不应产生新的上屏")
 	}
 }
+
+// TestShiftSpaceOnlyConsumedWhenComposing：Shift+空格只在输入法介入时消费。
+//
+// 2026-10-29 输入事件审计 F1：此前三端无条件吞掉 Shift+Space，导致游戏里
+// 「Shift=冲刺 + Space=跳」按不出来、全屏应用同样受影响。输入法没有理由
+// 拦截非组词状态下的组合键。
+func TestShiftSpaceOnlyConsumedWhenComposing(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	// 非组词：必须放行给宿主
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, ibusShiftMask)
+	if handled {
+		t.Fatal("非组词时 Shift+空格应放行给宿主（游戏 Shift+跳 不能被吞）")
+	}
+
+	// 组词中：消费并切换全/半角
+	typeKeys(e, "ni")
+	before := e.halfWidth
+	handled, _ = e.ProcessKeyEvent(keysymSpace, 0, ibusShiftMask)
+	if !handled {
+		t.Fatal("组词中 Shift+空格应被消费（切换全/半角）")
+	}
+	if e.halfWidth == before {
+		t.Fatal("组词中 Shift+空格应切换全/半角状态")
+	}
+}
+
+// TestSuperKeyPassthrough：Super(Mod4) 组合键必须放行。
+//
+// 2026-10-29 输入事件审计 F7：Linux 只放行 Ctrl/Mod1，Super+字母 在非英文
+// 模式下被当成普通字母喂进组词，吞掉 GNOME/KDE 的桌面快捷键。
+func TestSuperKeyPassthrough(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	// Super+A（GNOME 应用列表）必须放行
+	handled, _ := e.ProcessKeyEvent(uint32('a'), 0, ibusMod4Mask)
+	if handled {
+		t.Fatal("Super+A 应放行给桌面环境（不能当普通字母送进组词）")
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("Super+A 不应启动组词，实际 input=%q", got)
+	}
+
+	// 对照：不带修饰的 a 仍然正常组词
+	handled, _ = e.ProcessKeyEvent(uint32('a'), 0, 0)
+	if !handled {
+		t.Fatal("无修饰的字母应正常进入组词")
+	}
+	if got := e.sess.Compose().Input; got != "a" {
+		t.Fatalf("无修饰 a 应进入组词，实际 input=%q", got)
+	}
+}

@@ -1864,7 +1864,12 @@ private:
             }
         }
 
-        if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
+        // Shift+空格只在输入法介入时（组词/联想）才预告吞键。
+        // 2026-10-29 修复（输入事件审计 F1）：此前无条件 return true，
+        // 任何应用里 Shift+Space 都被拦——游戏里 Shift=冲刺/潜行、Space=跳。
+        if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
+            return isComposing() || !assoc_.candidates.empty();
+        }
 
         // 只在需要打字时介入（2026-10-29 用户要求）：未组词状态下，先判
         // 该键是否与组词相关——字母（不带 Shift）或标点才有「开始组词/出
@@ -2114,6 +2119,9 @@ private:
         // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
         // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
+            // 无组词/无联想时放行给宿主：输入法没有理由拦截应用自己的
+            // Shift+Space（2026-10-29 输入事件审计 F1）。
+            if (!isComposing() && assoc_.candidates.empty()) return false;
             // 全/半角开关归壳本地持有（2026-10-29 起）：快捷键切换不再与
             // daemon 往返，状态随 punct 请求下发（daemon 只按状态产出文本）
             halfWidth_ = !halfWidth_;
