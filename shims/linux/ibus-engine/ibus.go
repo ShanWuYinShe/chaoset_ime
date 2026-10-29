@@ -146,8 +146,18 @@ type ibusEngine struct {
 	// 接入 Linux；2026-10-28 翻页化）。
 	assoc     []engine.Candidate
 	assocPage int
-	// assocOn 词组联想开关（config.json associate，默认开启）。
+	// assocOn 词组联想开关的**当前生效值**（config.json associate，默认开启）。
+	// 运行中由 associateEnabled() 在每次进入联想前重读配置文件刷新；命令行
+	// 显式传 -associate 时（assocFlagSet）不再重读，flag 优先——排障覆盖语义。
 	assocOn bool
+	// assocConfigPath 用户配置文件路径（与 chaoset-setup.py 写入的是同一个
+	// $XDG_CONFIG_HOME/chaoset/config.json）；空串表示不重读。
+	assocConfigPath string
+	// assocFlagSet 表示命令行显式传了 -associate（flag.Visit 判定）。
+	assocFlagSet bool
+	// assocConfigErr 上次记录的配置文件读取错误，用于去重日志：配置坏掉时
+	// 每次进入联想都会重读，不能每个词刷一条日志。
+	assocConfigErr string
 	// halfWidth 全/半角标点开关：壳本地持有（2026-10-29 起），随标点请求
 	// 经 SetHalfWidth 告知引擎，快捷键切换不与 daemon 往返。
 	halfWidth bool
@@ -211,27 +221,35 @@ type ibusFactory struct {
 	fuzzy   bool
 	trad    bool
 	sp      string
-	assocOn bool // 词组联想开关（config.json associate，默认 true）
+	assocOn bool // 词组联想开关初始值（config.json associate，默认 true）
+	// assocConfigPath/assocFlagSet 用于「设置即时生效」：每个引擎实例在每次
+	// 进入联想前重读配置文件（见 ibusEngine.associateEnabled）；命令行显式
+	// 传 -associate 时 flag 覆盖配置，不再重读。
+	assocConfigPath string
+	assocFlagSet    bool
 
 	mu      sync.Mutex
 	seq     uint32 // 已创建的引擎实例计数（对象路径编号）
 	engines map[godbus.ObjectPath]*ibusEngine
 }
 
-func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string, assocOn bool) (*ibusFactory, error) {
+func newIBusFactory(dict *engine.Dictionary, user *engine.UserDict, fuzzy, trad bool, sp string,
+	assocOn bool, assocConfigPath string, assocFlagSet bool) (*ibusFactory, error) {
 	conn, err := godbus.ConnectSessionBus()
 	if err != nil {
 		return nil, fmt.Errorf("连接 session bus 失败: %w", err)
 	}
 	return &ibusFactory{
-		conn:    conn,
-		dict:    dict,
-		user:    user,
-		fuzzy:   fuzzy,
-		trad:    trad,
-		sp:      sp,
-		assocOn: assocOn,
-		engines: make(map[godbus.ObjectPath]*ibusEngine),
+		conn:            conn,
+		dict:            dict,
+		user:            user,
+		fuzzy:           fuzzy,
+		trad:            trad,
+		sp:              sp,
+		assocOn:         assocOn,
+		assocConfigPath: assocConfigPath,
+		assocFlagSet:    assocFlagSet,
+		engines:         make(map[godbus.ObjectPath]*ibusEngine),
 	}, nil
 }
 
@@ -281,12 +299,14 @@ func (f *ibusFactory) CreateEngine(name string) (godbus.ObjectPath, *godbus.Erro
 
 	path := godbus.ObjectPath(fmt.Sprintf("%s/%d", enginePathBase, seq))
 	eng := &ibusEngine{
-		conn:    f.conn,
-		dict:    f.dict,
-		user:    f.user,
-		path:    path,
-		sess:    engine.NewSession(f.dict, f.user),
-		assocOn: f.assocOn,
+		conn:            f.conn,
+		dict:            f.dict,
+		user:            f.user,
+		path:            path,
+		sess:            engine.NewSession(f.dict, f.user),
+		assocOn:         f.assocOn,
+		assocConfigPath: f.assocConfigPath,
+		assocFlagSet:    f.assocFlagSet,
 	}
 	if f.fuzzy {
 		eng.sess.SetFuzzy(true)
@@ -547,6 +567,9 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			// 只在输入法介入时（组词/联想）才消费。2026-10-29 修复
 			// （输入事件审计 F1）：此前无状态前提地吃掉任何应用里的
 			// Shift+Space——游戏里 Shift=冲刺、Space=跳。
+			// 注意（2026-10-30 三端一致性整改）：联想态实际到不了本分支——
+			// 上方联想分支已把空格（含 Shift+空格）当「选第一个联想词」消费，
+			// **不**切换全/半角（三端实测一致）；这里只处理组词态。
 			if !isComposing(e.sess) && len(e.assoc) == 0 {
 				return false, nil
 			}
@@ -816,6 +839,35 @@ func (e *ibusEngine) commit(text string) {
 	e.hideLookupTable()
 }
 
+// associateEnabled 返回当前词组联想开关，并在每次进入联想前重读 config.json。
+//
+// 为什么必须重读（2026-10-30 三端一致性整改）：此前 assocOn 由 main.go 在
+// 引擎启动时一次性快照进 ibusEngine，运行中不再读取——设置窗口（chaoset-setup.py）
+// 保存后要等整个 chaoset-engine 进程重启才生效，而脚本与 README 却宣称
+// 「保存后对新开的输入上下文生效」。macOS（ChaosetController 每次选词前读
+// UserDefaults）与 Windows（enterAssociate 每次 RegGetAssociate）都是即时生效，
+// 三端语义不一致。这里按同一语义在每次进入联想前重读。
+//
+// 成本：每次上屏后进联想读一次小 JSON（KB 级），用户感知不到；配置文件由
+// 设置脚本原子替换（os.replace），不会读到半截内容。读取失败时沿用上次生效值
+// 并只在错误文本变化时记日志（输入法不能因为配置坏了就不能用）。
+func (e *ibusEngine) associateEnabled() bool {
+	if e.assocFlagSet || e.assocConfigPath == "" {
+		return e.assocOn // 命令行显式覆盖，或没有配置文件路径：用启动值
+	}
+	cfg, err := loadUserConfig(e.assocConfigPath)
+	if err != nil {
+		if msg := err.Error(); msg != e.assocConfigErr {
+			e.assocConfigErr = msg
+			log.Printf("⚠ 读取联想设置失败（沿用上次值 %v）：%v", e.assocOn, err)
+		}
+		return e.assocOn
+	}
+	e.assocConfigErr = ""
+	e.assocOn = cfg.AssociateEnabled()
+	return e.assocOn
+}
+
 // enterAssociate 选词上屏后按上屏词查续接词组并经候选表展示。
 //
 // 2026-10-29 修复：此前把上屏段音节的**最后一个音节**当查询参数
@@ -825,7 +877,7 @@ func (e *ibusEngine) commit(text string) {
 // shí'tí）。音节基准应由引擎自己的上屏记录决定（engine 侧已改为
 // s.prevSylls），壳这里只负责进入联想，参数传上屏词音节即可。
 func (e *ibusEngine) enterAssociate(sylls []string) {
-	if !e.assocOn {
+	if !e.associateEnabled() {
 		return // 词组联想已被设置关闭（config.json associate=false）
 	}
 	e.assoc = nil
@@ -837,7 +889,7 @@ func (e *ibusEngine) enterAssociate(sylls []string) {
 // 引擎会优先用自己记录的上屏音节（s.prevSylls）作为切分基准，
 // 因此传文本也不会造成音节错位（见 engine.Associate 注释）。
 func (e *ibusEngine) enterAssociateForPrev(syllsOrWord string) {
-	if !e.assocOn || syllsOrWord == "" {
+	if syllsOrWord == "" || !e.associateEnabled() {
 		return
 	}
 	cands := e.sess.Associate(strings.Split(syllsOrWord, "'"))

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1025,5 +1027,123 @@ func TestSuperKeyPassthrough(t *testing.T) {
 	}
 	if got := e.sess.Compose().Input; got != "a" {
 		t.Fatalf("无修饰 a 应进入组词，实际 input=%q", got)
+	}
+}
+
+// TestAssociateSettingTakesEffectImmediately：设置窗口保存 config.json 后
+// 对**已打开**的输入上下文立即生效——每次进入联想前重读配置，无需重启
+// chaoset-engine 或 ibus。
+//
+// 2026-10-30 三端一致性整改：此前 assocOn 是 main.go 启动时的一次性快照，
+// 运行中不再读取，而 chaoset-setup.py 与 shims/linux/README 却宣称「保存后
+// 对新开的输入上下文生效」；macOS（每次选词前读 UserDefaults）与 Windows
+// （enterAssociate 每次 RegGetAssociate）都是即时生效。这里按同一语义锁死。
+func TestAssociateSettingTakesEffectImmediately(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	writeAssoc := func(enabled bool) {
+		t.Helper()
+		body := fmt.Sprintf(`{"associate":%t}`, enabled)
+		if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+			t.Fatalf("写配置文件失败: %v", err)
+		}
+	}
+	src := "你好\tni hao\t90\n你\tni\t80\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	writeAssoc(false)
+	// assocOn=true 是启动时的值；配置文件显式关闭以后者为准
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil),
+		assocOn: true, assocConfigPath: cfgPath}
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0) // 上屏「你」
+	if got := fe.lastCommitText(); got != "你" {
+		t.Fatalf("联想关闭不应影响正常选词，上屏 %q", got)
+	}
+	if len(e.assoc) != 0 {
+		t.Fatalf("配置 associate=false 时不应进入联想，实际 %d 条", len(e.assoc))
+	}
+
+	// 设置窗口保存（原子替换 config.json）——无需重启引擎
+	writeAssoc(true)
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) == 0 {
+		t.Fatal("配置改回 associate=true 后应立刻进入联想（设置即时生效）")
+	}
+}
+
+// TestAssociateExplicitFlagOverridesConfig：命令行显式传 -associate 时
+// flag 覆盖 config.json（排障时临时覆盖的语义），运行中不再重读。
+func TestAssociateExplicitFlagOverridesConfig(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"associate":false}`), 0o644); err != nil {
+		t.Fatalf("写配置文件失败: %v", err)
+	}
+	src := "你好\tni hao\t90\n你\tni\t80\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil),
+		assocOn: true, assocConfigPath: cfgPath, assocFlagSet: true}
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) == 0 {
+		t.Fatal("命令行显式 -associate=true 应覆盖 config.json，仍然进入联想")
+	}
+}
+
+// TestAssociateConfigReadErrorKeepsLastValue：配置文件损坏时输入法不能崩、
+// 也不能静默改变语义——沿用上次生效值继续工作（设置脚本原子写盘，手动编辑
+// 仍可能写坏；为此让整个联想功能不可用是不可接受的）。
+func TestAssociateConfigReadErrorKeepsLastValue(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, []byte("{broken"), 0o644); err != nil {
+		t.Fatalf("写配置文件失败: %v", err)
+	}
+	src := "你好\tni hao\t90\n你\tni\t80\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil),
+		assocOn: true, assocConfigPath: cfgPath}
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) == 0 {
+		t.Fatal("配置损坏时应沿用上次生效值（默认开启）并继续联想")
+	}
+}
+
+// TestAssociateShiftSpacePicksFirst：联想态按 Shift+空格的实际行为是
+// 「选当前页第一个联想词上屏」——三端一致（macOS/Windows/Linux 的联想
+// 分支都先消费空格、不判 Shift）。
+//
+// 2026-10-30 三端一致性整改：docs/ui-parity.md 的按键矩阵与三端源码注释
+// 此前写「组词中**或联想中**才消费 Shift+空格（切全半角）」，与实测行为
+// 冲突。以实际一致行为为准修正文档/注释；本测试锁定行为，防止后续按过期
+// 描述把它「改回去」。
+func TestAssociateShiftSpacePicksFirst(t *testing.T) {
+	e, fe := newAssociateTestEngine(t)
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0) // 上屏「你」，进入联想
+	if len(e.assoc) == 0 {
+		t.Fatal("前置失败：应进入联想")
+	}
+	before := e.halfWidth
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, ibusShiftMask)
+	if !handled {
+		t.Fatal("联想态 Shift+空格应被消费（选第一个联想词）")
+	}
+	if got := fe.lastCommitText(); got != "好" {
+		t.Fatalf("联想态 Shift+空格应选第一个联想词「好」，实际上屏 %q", got)
+	}
+	if e.halfWidth != before {
+		t.Fatal("联想态 Shift+空格不切全半角（实际行为是选第一个联想词，三端一致）")
 	}
 }

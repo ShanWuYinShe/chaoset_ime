@@ -177,7 +177,10 @@ func main() {
 		log.Printf("警告: %s", userWarn)
 	}
 
-	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp, *assoc)
+	// 联想开关传 configPath 与「flag 是否显式出现」：引擎在每次进入联想前
+	// 重读 config.json，设置窗口保存后对已打开的输入上下文立即生效
+	// （与 macOS/Windows 一致；命令行 -associate 显式覆盖时不再重读）。
+	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp, *assoc, *cfgPath, setFlags["associate"])
 	if err != nil {
 		log.Fatal(err)
 	}

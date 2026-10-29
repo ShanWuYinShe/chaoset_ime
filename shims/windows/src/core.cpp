@@ -248,6 +248,11 @@ Comp parseComposition(const JsonValue& result) {
             Candidate cand;
             if (item.isString("text", &cand.text)) {
                 item.isString("syllables", &cand.syllables);
+                // 学习标记：daemon 用 omitempty，缺失/false 都表示未加权。
+                if (const JsonValue* fu = item.find("from_user");
+                    fu != nullptr && fu->type == JsonValue::Type::Bool) {
+                    cand.fromUser = fu->boolean;
+                }
                 c.candidates.push_back(std::move(cand));
             }
         }

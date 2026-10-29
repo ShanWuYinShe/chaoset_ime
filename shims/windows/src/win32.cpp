@@ -81,6 +81,14 @@ constexpr DWORD kVkFirstLetter = 0x41;  // 'A'
 constexpr DWORD kVkLastLetter = 0x5A;   // 'Z'
 constexpr DWORD kVkFirstDigit = 0x31;   // '1'
 constexpr DWORD kVkLastDigit = 0x39;    // '9'
+// 小键盘数字（VK_NUMPAD0..9）。Windows 的大小键盘虚键完全独立，此前只认
+// VK_1-9：按小键盘数字落到「不可处理键」清空组词后放行，三端不一致
+//（macOS 按字符、Linux 认 KP_1-9，2026-10-30 审计 A7）。
+constexpr DWORD kVkNumpad1 = 0x61;      // VK_NUMPAD1
+constexpr DWORD kVkNumpad9 = 0x69;      // VK_NUMPAD9
+// 每页候选数：与 engine.PageSize() 一致（数字键 1-6 指位）。此前联想分页
+// 处散落 6 个字面量，引擎改页容量时会静默漂移（2026-10-30 审计 R20）。
+constexpr int kPageSize = 6;
 // OEM 标点虚键（US 键盘布局假设；真机联调时按实际布局核验）
 constexpr DWORD kVkOemSemicolon = 0xBA;      // ';'
 constexpr DWORD kVkOemComma = 0xBC;          // ','
@@ -417,6 +425,27 @@ std::wstring windowClassName(const wchar_t* base, HINSTANCE inst) {
     return std::wstring(buf);
 }
 
+// ---- 系统 DPI ----
+//
+// 候选窗 / 模式提示 / 设置窗口共用。MulDiv(pt, dpi, 72) 即 pt→设备像素。
+//
+// 已知限制（2026-10-30 三端一致性审计 A8，需 Windows 真机验证后再改）：
+// GetDeviceCaps(GetDC(NULL), LOGPIXELSY) 返回的是**主显示器** DPI。Per-Monitor
+// DPI aware 进程里，候选窗落到不同缩放的副屏时会按主屏比例布局（尺寸/字号
+// 偏差）；也没有处理 WM_DPICHANGED（窗口跨屏或用户改缩放后不重排）。
+// 正确做法 GetDpiForWindow(hwnd) / GetDpiForMonitor(MonitorFromPoint)，并在
+// WM_DPICHANGED 里重新 layoutAndPosition；改动面涉及候选窗/Toast/设置窗三处
+// 且无真机可验证，故列入 docs/ui-parity.md「已知功能差异」，不在此做未验证修改。
+int systemDpi() {
+    HDC hdc = GetDC(nullptr);
+    int dpi = 96;
+    if (hdc != nullptr) {
+        dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+        ReleaseDC(nullptr, hdc);
+    }
+    return dpi;
+}
+
 // ---- 候选窗主题配色：与 macOS CandidatePanel.swift / skin.DefaultSkinFor 像素级一致 ----
 
 struct CandidateColors {
@@ -432,38 +461,59 @@ struct CandidateColors {
     COLORREF pageColor;
     COLORREF divider;
     COLORREF chevron;
+    COLORREF userMark;  // 学习标记 *（用户数据加权候选）
 
+    // 半透明色在 GDI 里必须预先混合成不透明 RGB（GDI 没有逐字形 alpha）。
+    // macOS CandidateTheme 用带 alpha 的 NSColor 实时混合，Windows 侧把
+    // 「有效色」固化成常量——公式与最终值必须与 mac 一致，否则同一候选窗
+    // 在两端深浅不同（2026-10-30 三端一致性审计 R5/A5）：
+    //   有效色 = round(bg*(1-a) + fg*a)，bg 为该色实际叠加的面板/键帽底色。
+    // 审计实测的偏差：深色 page/chevron mac #7A7A80 vs 旧值 #98989F（+30）、
+    // 深色 chipBorder #838386 vs #78787C、浅色 page #A1A1A6 vs #8E8E93。
     static CandidateColors get(bool dark) {
         if (dark) {
             return {
-                RGB(44, 44, 46),       // panelBg #2C2C2E
-                RGB(72, 72, 74),       // panelBorder #48484A
+                RGB(44, 44, 46),       // panelBg #2C2C2E（mac 为 F5 alpha，GDI 侧不透明）
+                RGB(74, 74, 76),       // panelBorder：白 #24 alpha 叠加 panelBg → #4A4A4C
                 RGB(255, 255, 255),    // text #FFFFFF
                 RGB(0, 102, 235),      // highlightBg #0066EB
                 RGB(255, 255, 255),    // highlightText #FFFFFF
                 RGB(90, 90, 94),       // chipBg #5A5A5E
-                RGB(120, 120, 124),    // chipBorder
+                RGB(131, 131, 134),    // chipBorder：白 #40 alpha 叠加 chipBg → #838386
                 RGB(255, 255, 255),    // chipDigit #FFFFFF
                 RGB(69, 143, 240),     // highlightChipBg（0x45 alpha 白叠加在 #0066EB）
-                RGB(152, 152, 159),    // pageColor #98989F
-                RGB(63, 63, 66),       // divider
-                RGB(152, 152, 159)     // chevron
+                RGB(122, 122, 128),    // pageColor：mac #98989F alpha B8 叠加 panelBg → #7A7A80
+                RGB(69, 69, 71),       // divider：白 #1E alpha 叠加 panelBg → #454547
+                RGB(122, 122, 128),    // chevron 同 pageColor 有效值 #7A7A80
+                RGB(48, 209, 88)       // userMark #30D158（与 skin.UserMarkColor 深色一致）
             };
         }
         return {
-            RGB(246, 246, 248),        // panelBg #F6F6F8
-            RGB(212, 212, 216),        // panelBorder #D4D4D8
+            RGB(246, 246, 248),        // panelBg #F6F6F8（mac 为 F6 alpha）
+            RGB(221, 221, 223),        // panelBorder：黑 #1A alpha 叠加 panelBg → #DDDDDF
             RGB(29, 29, 31),           // text #1D1D1F（Apple 原生主文本色）
             RGB(0, 122, 255),          // highlightBg #007AFF（Apple 原生蓝胶囊）
             RGB(255, 255, 255),        // highlightText #FFFFFF
             RGB(255, 255, 255),        // chipBg #FFFFFF
-            RGB(208, 208, 212),        // chipBorder
+            RGB(195, 195, 195),        // chipBorder：黑 #3C alpha 叠加白键帽 → #C3C3C3
             RGB(29, 29, 31),           // chipDigit #1D1D1F
             RGB(69, 158, 255),         // highlightChipBg（0x45 alpha 白叠加在 #007AFF）
-            RGB(142, 142, 147),        // pageColor #8E8E93
-            RGB(226, 226, 228),        // divider
-            RGB(142, 142, 147)         // chevron
+            RGB(161, 161, 166),        // pageColor：mac #8E8E93 alpha D0 叠加 panelBg → #A1A1A6
+            RGB(226, 226, 228),        // divider：黑 #14 alpha 叠加 panelBg → #E2E2E4（沿用既有值）
+            RGB(161, 161, 166),        // chevron 同 pageColor 有效值 #A1A1A6
+            RGB(52, 199, 89)           // userMark #34C759（与 skin.UserMarkColor 浅色一致）
         };
+    }
+
+    // 把「已按 alpha 混合在 bg 上的有效色」的透明度再按 num/256 缩放：
+    // 结果 = bg + (有效色-bg)*num/256。用于单页翻页箭头置灰——macOS
+    // 用 chevron.withAlphaComponent(alpha/3)，GDI 没有 alpha，只能按同一
+    // 混合几何折算出等效不透明色（2026-10-30 审计 R16）。
+    static COLORREF fadeToward(COLORREF fg, COLORREF bg, int num) {
+        const int r = GetRValue(bg) + (GetRValue(fg) - GetRValue(bg)) * num / 256;
+        const int g = GetGValue(bg) + (GetGValue(fg) - GetGValue(bg)) * num / 256;
+        const int b = GetBValue(bg) + (GetBValue(fg) - GetBValue(bg)) * num / 256;
+        return RGB(r, g, b);
     }
 };
 
@@ -588,21 +638,43 @@ private:
         RECT chipRect{};
         RECT textRect{};
         bool isFirst = false;
+        // 学习标记：daemon Candidate.FromUser → 文本后绿色「*」。
+        // fromUser 来自 core::Candidate（IPC "from_user"），markW 是布局宽度
+        //（"*" 文本宽 + 2pt，含绘制起点 +1pt），与 mac markW 同口径。
+        bool fromUser = false;
+        int markW = 0;
     };
 
-    static int getDpi() {
-        HDC hdc = GetDC(nullptr);
-        int dpi = 96;
-        if (hdc != nullptr) {
-            dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-            ReleaseDC(nullptr, hdc);
-        }
-        return dpi;
-    }
+    static int getDpi() { return systemDpi(); }
 
-    static int scale(int px, int dpi) {
-        return MulDiv(px, dpi, 96);
-    }
+    // 候选窗统一以 **pt** 为布局单位：MulDiv(pt, dpi, 72)，与 macOS
+    // CandidatePanel.Layout 的 pt 值 1:1（2026-10-30 三端一致性整改 A1）。
+    //
+    // 历史：字号一直用 MulDiv(v,dpi,72)（pt→px），而间距/键帽/圆角/最大宽
+    // 用 MulDiv(v,dpi,96)（px@96）——同一面板两套换算基准，Windows 上「字
+    // 一样大、留白和键帽小 25%」，最大宽只有 macOS 的 0.75（候选更容易被
+    // 丢弃/截断）。现在全部改成 pt，各 DPI 下的实际像素值（MulDiv 四舍五入）：
+    //
+    //   参数             pt    96dpi  120dpi  144dpi  192dpi
+    //   padding           7      9      12      14      19
+    //   firstPadLeft      9     12      15      18      24
+    //   itemPadX          7      9      12      14      19
+    //   gap              11     15      18      22      29
+    //   chipPadX          4      5       7       8      11
+    //   chipPadY          2      3       3       4       5
+    //   pillMargin        2      3       3       4       5
+    //   chevronBoxW      36     48      60      72      96
+    //   gearBoxW         26     35      43      52      69
+    //   panelRadius       8     11      13      16      21（RoundRect 传直径 16pt）
+    //   textH            21     28      35      42      56
+    //   maxWidth        720    960    1200    1440    1920
+    //   minWidth         84    112     140     168     224
+    //   caret gap         6      8      10      12      16
+    //
+    // 均为正整数像素且远小于 720pt 上限；窗口定位仍按显示器 rcWork 钳制，
+    // 面板不会溢出屏幕。截断判定统一用「内容宽度上限 638pt」的 pt 换算值
+    // （见 layoutAndPosition 的 maxContent），与 mac 同口径。
+    static int pt(int v, int dpi) { return MulDiv(v, dpi, 72); }
 
     bool isInteractiveArea() const {
         POINT pt;
@@ -699,15 +771,16 @@ private:
         HDC memDC = CreateCompatibleDC(screenDC);
         HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
 
-        // 排版参数（与 macOS Layout 保持 1:1 像素级对齐）
-        int pad = scale(7, dpi);
-        int firstPadLeft = scale(9, dpi);
-        int itemPadX = scale(7, dpi);
-        int gap = scale(11, dpi);
-        int chipPadX = scale(4, dpi);
-        int chipPadY = scale(2, dpi);
-        int pillMargin = scale(2, dpi);
-        int chevronBoxW = scale(36, dpi);
+        // 排版参数（与 macOS Layout 1:1；统一 pt 口径，见 pt() 注释）
+        const int pad = pt(7, dpi);
+        const int firstPadLeft = pt(9, dpi);
+        const int itemPadX = pt(7, dpi);
+        const int gap = pt(11, dpi);
+        const int chipPadX = pt(4, dpi);
+        const int chipPadY = pt(2, dpi);
+        const int pillMargin = pt(2, dpi);
+        const int chevronBoxW = pt(36, dpi);
+        const int gearBoxW = pt(26, dpi);
 
         TEXTMETRICW tmText{}, tmIdx{};
         SelectObject(memDC, fontNormal);
@@ -715,7 +788,10 @@ private:
         SelectObject(memDC, fontIndex);
         GetTextMetricsW(memDC, &tmIdx);
 
-        int textH = (std::max)(static_cast<int>(tmText.tmHeight), scale(22, dpi));
+        // 行高：macOS Layout.textH = ceil(fontSize*1.4) = 21pt（CJK 安全值，
+        // 见 CandidatePanel.swift 注释：GDI/AppKit 西文 metrics 不含中文字形
+        // 上下延展，按它算会把第二行裁半行）。取 tmHeight 与 21pt 的较大者。
+        int textH = (std::max)(static_cast<int>(tmText.tmHeight), pt(21, dpi));
         int idxH = tmIdx.tmHeight;
         int chipH = idxH + chipPadY * 2;
         int contentH = (std::max)(textH, chipH);
@@ -725,17 +801,21 @@ private:
         items_.clear();
         int curX = pad;
 
-        // 面板最大内容宽度（对齐 macOS Layout.maxWidth=720pt）：单条长候选
-        // 此前可把面板撑出屏幕，右侧内容被裁掉且点不到（2026-10-27 审查）。
-        // 超宽的候选项不再排列（仍在候选列表里，可翻页查看）；首项独超宽时
-        // 逐字截断加省略号，保证至少能显示一条。
-        const int maxContent = scale(720, dpi) - pad * 2 - chevronBoxW;
+        // 面板最大内容宽度：与 macOS CandidatePanel.layoutRows 的公式逐项对齐
+        // （2026-10-30 审计 A11）：窗宽上限 720pt，扣内边距*2、翻页区 36pt、
+        // 齿轮区 26pt、首选胶囊外扩 pillMargin*2、2pt 安全余量，得 638pt。
+        // 此前只扣 pad 与 chevronBoxW，漏扣 gearBoxW 与 pillMargin，极限窗宽
+        // 可到 ~746px > 720 声明（首选胶囊/齿轮叠字）。
+        constexpr int kMaxWidthPt = 720;
+        constexpr int kMaxContentPt = kMaxWidthPt - 7 * 2 - 36 - 26 - 2 * 2 - 2;  // 638pt
+        const int maxContent = pt(kMaxContentPt, dpi);
         const wchar_t* kEllipsis = L"…";
 
         for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
             ItemPos item;
             item.index = static_cast<int>(i);
             item.isFirst = (i == 0);
+            item.fromUser = comp_.candidates[i].fromUser;
             item.indexStr = std::to_wstring(i + 1);
             item.textStr = toWide(comp_.candidates[i].text);
 
@@ -749,14 +829,25 @@ private:
             SIZE szTxt{};
             GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
 
+            // 学习标记宽度：与 mac 同口径——"*"（正文字体）宽度 + 2pt
+            //（CandidatePanel.layoutRows 的 markW = ceil("*"宽度)+2；
+            // draw 时在文本后 +1pt 起画，advance 加上该 markW）。
+            int markW = 0;
+            if (item.fromUser) {
+                SIZE szMark{};
+                GetTextExtentPoint32W(memDC, L"*", 1, &szMark);
+                markW = szMark.cx + pt(2, dpi);
+            }
+
             int chipW = szIdx.cx + chipPadX * 2;
-            int chipTextGap = (std::max)(scale(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
-            int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx;
+            int chipTextGap = (std::max)(pt(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
+            int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
 
             if (items_.empty()) {
-                // 首项独超宽：逐字截断加省略号（保证面板不出屏）
-                if (curX + itemW + chevronBoxW - gap > maxContent + pad) {
-                    const int avail = (std::max)(maxContent - padX * 2 - chipW - chipTextGap - chevronBoxW - scale(8, dpi), scale(20, dpi));
+                // 首项独超宽：逐字截断加省略号（保证内容不超出 maxContent）
+                const int avail = (std::max)(
+                    maxContent - padX * 2 - chipW - chipTextGap - markW, pt(20, dpi));
+                if (szTxt.cx > avail) {
                     SIZE szEll{};
                     SelectObject(memDC, fontNormal);
                     GetTextExtentPoint32W(memDC, kEllipsis, 1, &szEll);
@@ -767,7 +858,7 @@ private:
                     }
                     item.textStr += kEllipsis;
                     GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
-                    itemW = padX * 2 + chipW + chipTextGap + szTxt.cx;
+                    itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
                 }
             } else if (curX - pad + itemW > maxContent) {
                 // 后续项放不下：停止排列（候选仍在列表中，数字键可选）
@@ -800,15 +891,19 @@ private:
             item.textRect.right = textLeft + szTxt.cx;
             item.textRect.bottom = textTop + tmText.tmHeight;
 
+            item.markW = markW;  // onPaint 画学习标记用（0 = 未加权）
             items_.push_back(item);
             curX += itemW + gap;
         }
 
-        // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧
-        // 20px 齿轮，点击弹设置菜单（词组联想开关）。
-        int gearBoxW = scale(26, dpi);
+        // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧齿轮，
+        // 点击打开设置窗口（词组联想开关）。宽度与 mac SettingsGear.boxW=26pt 一致。
         int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW + gearBoxW;
-        int winW = (std::max)(totalW, scale(120, dpi));
+        // 最小窗宽与 mac contentSize 的 minW 同公式：
+        // padding*2 + chevronBoxW + gearBoxW + 8pt（2026-10-30 审计 R10：此前
+        // Windows 用 120px@96=90pt，比 mac 的 84pt 宽，不一致）。
+        int minW = pad * 2 + chevronBoxW + gearBoxW + pt(8, dpi);
+        int winW = (std::max)(totalW, minW);
 
         chevronRect_.left = winW - chevronBoxW;
         chevronRect_.top = 0;
@@ -820,7 +915,7 @@ private:
         settingsRect_.right = winW - chevronBoxW;
         settingsRect_.bottom = winH;
 
-        dividerX_ = settingsRect_.left + scale(2, dpi);
+        dividerX_ = settingsRect_.left + pt(2, dpi);
 
         SelectObject(memDC, oldFont);
         DeleteDC(memDC);
@@ -828,31 +923,42 @@ private:
         DeleteObject(fontNormal);
         DeleteObject(fontIndex);
 
-        POINT pt = targetPos_;
-        int lineH = targetLineHeight_ > 0 ? targetLineHeight_ : scale(20, dpi);
-        int winX = pt.x;
-        int winY = pt.y + scale(4, dpi);
+        // 定位：与 mac candidateOrigin 同语义——光标行下方 gap 6pt，
+        // 下方放不下且上方空间更大时改放上方，最后用工作区 rcWork 钳制。
+        // 2026-10-30 审计 R21：此前下方间距 4px@96（3pt）、无「上方更大」
+        // 判据，与 mac 的 6pt 不一致。
+        POINT anchor = targetPos_;
+        int lineH = targetLineHeight_ > 0 ? targetLineHeight_ : pt(20, dpi);
+        const int caretGap = pt(6, dpi);
+        const int edgeGap = pt(4, dpi);  // 屏幕边缘安全余量（mac 用 visibleFrame 钳制）
+        int winX = anchor.x;
+        int winY = anchor.y + caretGap;
 
-        HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        HMONITOR hMon = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi{};
         mi.cbSize = sizeof(mi);
         if (GetMonitorInfoW(hMon, &mi)) {
             RECT work = mi.rcWork;
             if (winX + winW > work.right) {
-                winX = work.right - winW - scale(4, dpi);
+                winX = work.right - winW - edgeGap;
             }
             if (winX < work.left) {
-                winX = work.left + scale(4, dpi);
+                winX = work.left + edgeGap;
+            }
+            const int spaceBelow = work.bottom - (anchor.y + caretGap);
+            const int spaceAbove = anchor.y - work.top;
+            if (winH > spaceBelow && spaceAbove > spaceBelow) {
+                winY = anchor.y - lineH - winH - caretGap;
             }
             if (winY + winH > work.bottom) {
-                winY = pt.y - lineH - winH - scale(4, dpi);
-                if (winY < work.top) {
-                    winY = work.top + scale(4, dpi);
-                }
+                winY = work.bottom - winH - edgeGap;
+            }
+            if (winY < work.top) {
+                winY = work.top + edgeGap;
             }
         }
 
-        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, scale(16, dpi), scale(16, dpi)), TRUE);
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, pt(16, dpi), pt(16, dpi)), TRUE);
         SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
@@ -882,7 +988,7 @@ private:
         HPEN borderPen = CreatePen(PS_SOLID, 1, theme.panelBorder);
         HGDIOBJ oldBrush = SelectObject(memDC, bgBrush);
         HGDIOBJ oldPen = SelectObject(memDC, borderPen);
-        RoundRect(memDC, 0, 0, w, h, scale(16, dpi), scale(16, dpi));
+        RoundRect(memDC, 0, 0, w, h, pt(16, dpi), pt(16, dpi));
 
         SetBkMode(memDC, TRANSPARENT);
 
@@ -907,7 +1013,7 @@ private:
                 HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
                 RoundRect(memDC, item.pillRect.left, item.pillRect.top,
                           item.pillRect.right, item.pillRect.bottom,
-                          scale(12, dpi), scale(12, dpi));
+                          pt(12, dpi), pt(12, dpi));
                 SelectObject(memDC, prevBrush);
                 SelectObject(memDC, prevPen);
                 DeleteObject(pillBrush);
@@ -918,7 +1024,7 @@ private:
                 prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
                 RoundRect(memDC, item.chipRect.left, item.chipRect.top,
                           item.chipRect.right, item.chipRect.bottom,
-                          scale(6, dpi), scale(6, dpi));
+                          pt(6, dpi), pt(6, dpi));
                 SelectObject(memDC, prevBrush);
                 SelectObject(memDC, prevPen);
                 DeleteObject(chipBrush);
@@ -934,6 +1040,16 @@ private:
                 SelectObject(memDC, fontNormal);
                 DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
                           DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+                // 学习标记 *：用户数据加权候选（与 mac theme.userMark 同色，
+                // 画在文本后 +1pt、宽 markW，与 CandidatePanel.draw 同口径）
+                if (item.fromUser) {
+                    SetTextColor(memDC, theme.userMark);
+                    RECT markRc = item.textRect;
+                    markRc.left = item.textRect.right + pt(1, dpi);
+                    markRc.right = markRc.left + item.markW;
+                    DrawTextW(memDC, L"*", 1, &markRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                }
             } else {
                 // 次选键帽：外边框 + 内部底色
                 HBRUSH chipBrush = CreateSolidBrush(theme.chipBg);
@@ -942,7 +1058,7 @@ private:
                 HGDIOBJ prevPen = chipPen != nullptr ? SelectObject(memDC, chipPen) : nullptr;
                 RoundRect(memDC, item.chipRect.left, item.chipRect.top,
                           item.chipRect.right, item.chipRect.bottom,
-                          scale(6, dpi), scale(6, dpi));
+                          pt(6, dpi), pt(6, dpi));
                 SelectObject(memDC, prevBrush);
                 if (prevPen != nullptr) SelectObject(memDC, prevPen);
                 DeleteObject(chipBrush);
@@ -959,12 +1075,26 @@ private:
                 SelectObject(memDC, fontNormal);
                 DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
                           DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+                // 学习标记 *（见首选分支注释）
+                if (item.fromUser) {
+                    SetTextColor(memDC, theme.userMark);
+                    RECT markRc = item.textRect;
+                    markRc.left = item.textRect.right + pt(1, dpi);
+                    markRc.right = markRc.left + item.markW;
+                    DrawTextW(memDC, L"*", 1, &markRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                }
             }
         }
 
-        // 绘制右侧折叠区：垂直分割线 + 翻页箭头 chevron + 页码
-        int divH = h * 55 / 100;
-        int divY = (h - divH) / 2;
+        // 绘制右侧折叠区：垂直分割线 + 设置齿轮 + 翻页箭头 chevron + 页码。
+        // 全部按 pt 口径（与 macOS CandidatePanel.draw 同几何）。
+        //
+        // 分割线高度：mac Layout.textH*55% = 21pt*0.55 = 11.55pt（此前用整个
+        // 窗高的 55%，高约 21-22px≈16pt，明显偏长——2026-10-30 审计 R18/A6）。
+        const int textH = pt(21, dpi);  // 与 CandidatePanel Layout.textH 一致
+        const int divH = textH * 55 / 100;
+        const int divY = (h - divH) / 2;
         HPEN divPen = CreatePen(PS_SOLID, 1, theme.divider);
         HGDIOBJ prevPen = divPen != nullptr ? SelectObject(memDC, divPen) : nullptr;
         MoveToEx(memDC, dividerX_, divY, nullptr);
@@ -973,15 +1103,15 @@ private:
         if (divPen != nullptr) DeleteObject(divPen);
 
         // 设置齿轮（分割线右侧、翻页箭头左侧）：**与 macOS 端完全相同的
-        // 矢量算法**（中心圆环 r3.4/线宽1.8 + 8 齿辐条 4.6→7.2/线宽2
-        // 圆头线帽——几何参数与色值逐一对应，三端 UI 一模一样，
-        // 2026-10-28 用户拍板）。颜色同 mac chipDigit：暗色纯白/
-        // 浅色 #1D1D1F，固定不变。GDI 几何笔（ExtCreatePen
-        // PS_GEOMETRIC）才有圆头线帽与真实线宽。
+        // 矢量算法**（中心圆环 r3.4pt/线宽1.8pt + 8 齿辐条 4.6pt→7.2pt/
+        // 线宽2pt 圆头线帽——几何参数与色值逐一对应，mac/Windows 两端视觉
+        // 一致，2026-10-28 用户拍板；Linux 用 ibus 原生面板无齿轮，见
+        // shims/linux/README.md）。颜色直接用 theme.chipDigit（与 mac
+        // theme.chipDigit 相同：暗色纯白/浅色 #1D1D1F），不再硬编码两份。
+        // GDI 几何笔（ExtCreatePen PS_GEOMETRIC）才有圆头线帽与真实线宽。
         {
-            const bool dark = isSystemDarkTheme();
-            const COLORREF gearColor = dark ? RGB(0xFF, 0xFF, 0xFF) : RGB(0x1D, 0x1D, 0x1F);
-            const double u = dpi / 96.0; // mac 端 pt 值按 1x 换算
+            const COLORREF gearColor = theme.chipDigit;
+            const double u = dpi / 72.0; // mac 端 pt 值 → 设备像素
             const double cx = (settingsRect_.left + settingsRect_.right) / 2.0;
             const double cy = h / 2.0;
             // 中心圆环：NULL_BRUSH 只描边不填充
@@ -1014,35 +1144,64 @@ private:
             if (spokePen != nullptr) DeleteObject(spokePen);
         }
 
-        // 翻页箭头
-        int chevX = settingsRect_.right + (w - settingsRect_.right) / 2;
+        // 折叠子区（齿轮右侧的翻页/页码区）：chevron 与页码的水平中心都取
+        // 该子区中点——与 mac CandidatePanel.draw 的 flipZoneX/chevX 公式一致
+        // （flipZoneX = dividerX + gearBoxW，chevX = flipZoneX + (w-flipZoneX)/2）。
+        // 2026-10-30 审计 R17：此前页码 RECT 从 dividerX_ 到窗口右缘居中，
+        // 中心落在 w-30，比 mac 的 chevX 左移约 13px，且与代码自身注释矛盾。
+        const int flipZoneX = dividerX_ + (settingsRect_.right - settingsRect_.left);
+        const int chevX = flipZoneX + (w - flipZoneX) / 2;
         bool hasNext = comp_.page + 1 < comp_.pageCount;
         bool hasPrev = comp_.page > 0;
         bool dirDown = hasNext || !hasPrev;
-        int arm = scale(3, dpi);
-        int chevY = (comp_.pageCount > 1) ? (h / 2 - scale(4, dpi)) : (h / 2);
-
-        HPEN chevPen = CreatePen(PS_SOLID, scale(1, dpi) < 2 ? 1 : 2, theme.chevron);
+        std::wstring pageStr;
+        int pageW = 0;
+        int pageH = 0;
+        if (comp_.pageCount > 1) {
+            pageStr = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
+            SelectObject(memDC, fontIndex);
+            SIZE szPage{};
+            GetTextExtentPoint32W(memDC, pageStr.c_str(), static_cast<int>(pageStr.size()), &szPage);
+            pageW = szPage.cx;
+            pageH = szPage.cy;
+        }
+        // blockH = 箭头块 8pt + 3pt 间隔 + 页码高；整体垂直居中（mac blockTop）。
+        const int blockH = pt(8, dpi) + (comp_.pageCount > 1 ? pt(3, dpi) + pageH : 0);
+        const int blockTop = (h - blockH) / 2;
+        const int arm = pt(3, dpi);
+        const int chevY = blockTop + pt(4, dpi);
+        const int chevDy = pt(2, dpi);  // mac arm*0.7 ≈ 2.1pt
+        // 单页置灰：mac chevron.withAlphaComponent(alpha/3)；GDI 无 alpha，按
+        // 同一混合几何折算为向面板底色回退 2/3 的等效不透明色（保留 1/3）。
+        const COLORREF chevronColor = (comp_.pageCount <= 1)
+            ? CandidateColors::fadeToward(theme.chevron, theme.panelBg, 85)
+            : theme.chevron;
+        // mac 线宽 1.5pt：pt(3)/2 四舍五入，保证任意 DPI 下 ≥1px。
+        int chevPenW = (pt(3, dpi) + 1) / 2;
+        if (chevPenW < 1) chevPenW = 1;
+        HPEN chevPen = CreatePen(PS_SOLID, chevPenW, chevronColor);
         prevPen = chevPen != nullptr ? SelectObject(memDC, chevPen) : nullptr;
         if (dirDown) {
-            MoveToEx(memDC, chevX - arm, chevY - scale(2, dpi), nullptr);
-            LineTo(memDC, chevX, chevY + scale(2, dpi));
-            LineTo(memDC, chevX + arm + 1, chevY - scale(2, dpi) - 1);
+            MoveToEx(memDC, chevX - arm, chevY - chevDy, nullptr);
+            LineTo(memDC, chevX, chevY + chevDy);
+            LineTo(memDC, chevX + arm, chevY - chevDy);
         } else {
-            MoveToEx(memDC, chevX - arm, chevY + scale(2, dpi), nullptr);
-            LineTo(memDC, chevX, chevY - scale(2, dpi));
-            LineTo(memDC, chevX + arm + 1, chevY + scale(2, dpi) + 1);
+            MoveToEx(memDC, chevX - arm, chevY + chevDy, nullptr);
+            LineTo(memDC, chevX, chevY - chevDy);
+            LineTo(memDC, chevX + arm, chevY + chevDy);
         }
         if (prevPen != nullptr) SelectObject(memDC, prevPen);
         if (chevPen != nullptr) DeleteObject(chevPen);
 
-        // 页码指示（多页时居中显示于 chevron 下方）
+        // 页码：水平居中于 chevron（mac x = chevX - pageW/2），
+        // 垂直位置 = blockTop + 8pt + 3pt。
         if (comp_.pageCount > 1) {
-            std::wstring pageStr = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
-            RECT pageRc{ dividerX_, chevY + scale(3, dpi), w, h };
+            RECT pageRc{ chevX - pageW / 2, blockTop + pt(11, dpi),
+                         chevX - pageW / 2 + pageW, blockTop + pt(11, dpi) + pageH + 2 };
             SetTextColor(memDC, theme.pageColor);
             SelectObject(memDC, fontIndex);
-            DrawTextW(memDC, pageStr.c_str(), -1, &pageRc, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            DrawTextW(memDC, pageStr.c_str(), -1, &pageRc,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE);
         }
 
         BitBlt(hdc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
@@ -1359,14 +1518,26 @@ public:
     ModeToast(const ModeToast&) = delete;
     ModeToast& operator=(const ModeToast&) = delete;
 
+    // 位置语义与 mac ModeToastController.show 一致：调用方传光标行下方
+    // 的锚点，本函数测量出胶囊尺寸后按工作区钳制（mac 用 candidateOrigin
+    // 的 clampTopLeft；Windows 此前完全不钳制，贴近屏幕边缘时提示会被截掉）。
     void show(HINSTANCE hinst, const std::wstring& text, int x, int y) {
         if (!ensureWindow(hinst)) return;
         text_ = text;
         dpi_ = systemDpi();
         measure();
-        int r = scale(10);
+        HMONITOR hMon = MonitorFromPoint(POINT{x, y}, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(hMon, &mi)) {
+            const int edge = pt(4);
+            if (x + w_ > mi.rcWork.right) x = mi.rcWork.right - w_ - edge;
+            if (x < mi.rcWork.left) x = mi.rcWork.left + edge;
+            if (y + h_ > mi.rcWork.bottom) y = mi.rcWork.bottom - h_ - edge;
+            if (y < mi.rcWork.top) y = mi.rcWork.top + edge;
+        }
         SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w_, h_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, r * 2, r * 2), TRUE);
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, pt(10) * 2, pt(10) * 2), TRUE);
         InvalidateRect(hwnd_, nullptr, TRUE);
         SetTimer(hwnd_, kTimerId, kDurationMs, nullptr);
     }
@@ -1382,17 +1553,9 @@ private:
     static constexpr UINT kTimerId = 1;
     static constexpr UINT kDurationMs = 1200;
 
-    static int systemDpi() {
-        HDC hdc = GetDC(nullptr);
-        int dpi = 96;
-        if (hdc != nullptr) {
-            dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-            ReleaseDC(nullptr, hdc);
-        }
-        return dpi;
-    }
-
-    static int scale(int px) { return MulDiv(px, systemDpi(), 96); }
+    // 提示条与候选窗同用 pt 口径（mac ModeToastView.size：文本 +28/+14，
+    // 圆角 10pt；此前 px@96 口径只有 0.75 倍，见 2026-10-30 审计 A1/R28）。
+    int pt(int v) const { return MulDiv(v, dpi_, 72); }
 
     bool ensureWindow(HINSTANCE hinst) {
         if (hwnd_ != nullptr) return true;
@@ -1404,12 +1567,13 @@ private:
         wc.hInstance = hinst;
         wc.lpszClassName = cls.c_str();
         RegisterClassExW(&wc);
-        // ModeToast 同候选窗：TOPMOST 保持（纯提示 ignoresMouseEvents
-        // 本就不拦截点击；系统模态菜单弹出时位于最上），层级决策见候选窗
-        // 鼠标零特例（2026-10-29 用户要求）：toast 就是一个普通提示窗，
-        // 不做穿透/置顶之外的特殊处理
+        // ModeToast 是**纯提示**：不接收鼠标（带 WS_EX_TRANSPARENT 穿透到
+        // 宿主应用，对应 macOS 端 ModeToastController 的 ignoresMouseEvents=true；
+        // 2026-10-30 审计 A12 修正：此前注释写「纯提示 ignoresMouseEvents」但
+        // 窗口实际没有穿透，提示显示 1.2s 内其区域会吃掉点击）。层级同候选窗
+        // TOPMOST 保持（系统模态菜单弹出时位于最上，不会挡菜单）。
         hwnd_ = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
             cls.c_str(), L"ChaosetModeToast",
             WS_POPUP, 0, 0, 0, 0,
             nullptr, nullptr, hinst, nullptr);
@@ -1428,8 +1592,9 @@ private:
         SelectObject(dc, old);
         DeleteObject(font);
         ReleaseDC(hwnd_, dc);
-        w_ = sz.cx + scale(28);
-        h_ = sz.cy + scale(12);
+        // mac ModeToastView.size：宽 = ceil(文本宽)+28，高 = ceil(文本高)+14
+        w_ = sz.cx + pt(28);
+        h_ = sz.cy + pt(14);
     }
 
     HFONT makeFont() const {
@@ -1446,8 +1611,8 @@ private:
         HPEN pen = CreatePen(PS_SOLID, 1, dark ? RGB(0x45, 0x45, 0x48) : RGB(0xC8, 0xC8, 0xCC));
         HGDIOBJ oldBrush = SelectObject(dc, bg);
         HGDIOBJ oldPen = SelectObject(dc, pen);
-        int r = scale(10);
-        RoundRect(dc, 0, 0, w_, h_, r * 2, r * 2);
+        // mac 圆角 r10pt（NSBezierPath xRadius/yRadius=10）→ GDI 直径 20pt
+        RoundRect(dc, 0, 0, w_, h_, pt(10) * 2, pt(10) * 2);
         SelectObject(dc, oldBrush);
         SelectObject(dc, oldPen);
         DeleteObject(bg);
@@ -1718,7 +1883,7 @@ public:
         g_lastOp = kOpCandidateClick;
         // 联想窗点击：联想候选直接上屏并继续联想（与数字键同路径）
         if (!assoc_.candidates.empty()) {
-            const int global = assocPage_ * 6 + index;
+            const int global = assocPage_ * kPageSize + index;
             if (index < 0 || global >= static_cast<int>(assoc_.candidates.size())) return;
             const chaoset::Candidate pick = assoc_.candidates[global];
             ContextRef ctx(focusContext());
@@ -1732,7 +1897,30 @@ public:
             return;
         }
         if (!hasCandidates()) return;
+        if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) return;
         ContextRef ctx(focusContext());
+        // 鼠标点选走与数字键/空格相同的**渐进上屏**路径（2026-10-30 三端
+        // 一致性整改 A4）：此前直接 session_.select(index)，长串拼音下点一个
+        // 候选会把整串拼音全部清空/上屏，而键盘点选只消耗该候选对应音节、
+        // 剩余拼音回灌继续组词——同一个候选窗两种选词语义。macOS
+        // ChaosetController.commit 与下方键盘路径都先 selectPrefix，失败
+        //（daemon 不可达/越界）才回退整句上屏。
+        const std::string pickedSyllables = comp_.candidates[index].syllables;
+        chaoset::Comp rest;
+        if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
+            commit(ctx.get(), rest.committed);
+            if (!rest.input.empty()) {
+                // 剩余拼音回灌：更新 comp_ 为剩余组词态并重渲染
+                comp_ = rest;
+                render(ctx.get());
+            } else {
+                // 剩余耗尽：与整句上屏同收尾（进入联想）
+                comp_ = chaoset::Comp();
+                endComposition();
+                enterAssociate(pickedSyllables);
+            }
+            return;
+        }
         std::string committed;
         if (session_.select(index, &committed)) {
             commit(ctx.get(), committed);
@@ -1822,6 +2010,19 @@ private:
         return nullptr;
     }
 
+    // 数字键 → 页内序号（0 起）：主键盘 1-9 与小键盘 1-9 都支持。
+    // 返回 -1 表示不是数字选词键。主键盘带 Shift 时产生 !@# 等字符，由调用方
+    // 另行判定（小键盘不受 Shift 影响）。
+    static int digitIndex(WPARAM vk) {
+        if (vk >= kVkFirstDigit && vk <= kVkLastDigit) {
+            return static_cast<int>(vk - kVkFirstDigit);
+        }
+        if (vk >= kVkNumpad1 && vk <= kVkNumpad9) {
+            return static_cast<int>(vk - kVkNumpad1);
+        }
+        return -1;
+    }
+
     // Shift/CapsLock 有效：字母按大写、数字/OEM 键按 Shift 变体处理
     static bool shiftActive() {
         return (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
@@ -1857,9 +2058,13 @@ private:
         if (!assoc_.candidates.empty()) {
             if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
                 vk == kVkBackspace) return true;
+            // 联想翻页键：PageUp/PageDown 不判 Shift（与 mac/Linux 一致：
+            // 联想态 Shift+PageUp/PageDown 同样翻联想页，2026-10-30 审计 A7）。
+            if (vk == kVkPrior || vk == kVkNext) return true;
             if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return true;
-            if (!shiftActive() && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
-                return assocPage_ * 6 + static_cast<int>(vk - kVkFirstDigit) <
+            const int digit = digitIndex(vk);
+            if (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive())) {
+                return assocPage_ * kPageSize + digit <
                        static_cast<int>(assoc_.candidates.size());
             }
         }
@@ -1867,6 +2072,10 @@ private:
         // Shift+空格只在输入法介入时（组词/联想）才预告吞键。
         // 2026-10-29 修复（输入事件审计 F1）：此前无条件 return true，
         // 任何应用里 Shift+Space 都被拦——游戏里 Shift=冲刺/潜行、Space=跳。
+        // 注意：联想态的 Shift+空格由上方联想分支先行消费——实际行为是
+        // 「选当前页第一个联想词上屏」，**不**切换全半角（三端实测一致；
+        // 2026-10-30 按实际行为修正文档与本节注释）；只有组词态才会走到
+        // handleKey 的全半角切换分支。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
             return isComposing() || !assoc_.candidates.empty();
         }
@@ -1896,10 +2105,12 @@ private:
         if (keyPunctChar(vk, shiftActive()) != nullptr) return true;
         if (!isComposing()) return false;
         // 数字选词只在不带 Shift 且本页确有该序号候选时；Shift+数字产生的
-        // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）
+        // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）。
+        // 小键盘 1-9（VK_NUMPAD1-9）同样可选词，且不受 Shift 影响。
+        const int digit = digitIndex(vk);
         return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-               ((vk >= kVkFirstDigit && vk <= kVkLastDigit) && !shiftActive() &&
-                static_cast<int>(vk - kVkFirstDigit) < static_cast<int>(comp_.candidates.size()));
+               (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive()) &&
+                digit < static_cast<int>(comp_.candidates.size()));
     }
 
     bool handleKey(WPARAM vk, ITfContext* pic) {
@@ -1921,7 +2132,7 @@ private:
             // 与 macOS 端一致），不再是透传
             if (vk == kVkSpace) {
                 if (!assoc_.candidates.empty()) {
-                    const chaoset::Candidate pick = assoc_.candidates[assocPage_ * 6];
+                    const chaoset::Candidate pick = assoc_.candidates[assocPage_ * kPageSize];
                     std::string committed;
                     if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
                         const std::string sylls = pick.syllables;
@@ -1944,17 +2155,20 @@ private:
             // 键集合一致（2026-10-29 三端一致性审查）。此前只认 - / =，
             // 其余键落到「其余按键退出联想」：面板收起而按键透传给宿主
             // （文档跟着滚动），与 macOS/Linux 行为各不相同。
-            if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus ||
-                           vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
-                           vk == kVkPrior || vk == kVkNext)) {
+            const bool assocPageKey =
+                vk == kVkPrior || vk == kVkNext ||
+                (!shift && (vk == kVkOemMinus || vk == kVkOemPlus ||
+                            vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
+            if (assocPageKey) {
                 const bool next = vk == kVkOemPlus || vk == kVkOemCloseBrackets ||
                                   vk == kVkNext;
                 flipAssociate(next);
                 return true;
             }
-            if (!shift && vk >= kVkFirstDigit && vk <= kVkLastDigit) {
+            const int assocDigit = digitIndex(vk);
+            if (assocDigit >= 0 && (vk >= kVkNumpad1 || !shift)) {
                 // 全局序号 = 当前页 × 每页条数 + 页内序号（候选窗展示的是切片）
-                const int index = assocPage_ * 6 + static_cast<int>(vk - kVkFirstDigit);
+                const int index = assocPage_ * kPageSize + assocDigit;
                 if (index < static_cast<int>(assoc_.candidates.size())) {
                     const chaoset::Candidate pick = assoc_.candidates[index];
                     std::string committed;
@@ -2118,6 +2332,8 @@ private:
         // 用户常在开始打字前先切模式，此前放在守卫之后导致空组词时永远
         // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
         // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
+        // 联想态到不了这里：上方联想分支已把空格当「选第一个联想词」消费
+        //（三端实测一致，2026-10-30 文档修正），因此本分支实际只处理组词态。
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
             // 无组词/无联想时放行给宿主：输入法没有理由拦截应用自己的
             // Shift+Space（2026-10-29 输入事件审计 F1）。
@@ -2164,8 +2380,9 @@ private:
         // 此前 select 失败仍 return true：数字凭空消失，既不选词也不进文档
         // （mac 壳 2026-10-26 已修，此处对齐）。带 Shift 的数字（!@# 等字符）
         // 不属于选词，同样落到末尾放行。
-        if (vk >= kVkFirstDigit && vk <= kVkLastDigit && !shiftActive()) {
-            int index = static_cast<int>(vk - kVkFirstDigit);
+        const int composeDigit = digitIndex(vk);
+        if (composeDigit >= 0 && (vk >= kVkNumpad1 || !shiftActive())) {
+            int index = composeDigit;
             if (index < static_cast<int>(comp_.candidates.size())) {
                 // 上屏候选的音节串必须在 selectPrefix 之前取：成功后
                 // comp_ 会被替换成剩余组词态（或清空），候选表丢了。
@@ -2658,10 +2875,14 @@ private:
     // 模式提示：放光标行下方（caretPos_ 是最后已知光标行底边的屏幕坐标）；
     // 没有历史位置时退回鼠标。
     void showModeToast(const wchar_t* text) {
-        POINT pt = caretPos_;
-        if (pt.x == 0 && pt.y == 0) GetCursorPos(&pt);
-        int lineH = caretLineHeight_ > 0 ? caretLineHeight_ : 20;
-        toast_.show(g_hInst, text, pt.x, pt.y + lineH + 6);
+        POINT anchor = caretPos_;
+        if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
+        // 与候选窗同锚点：光标行底边下方 6pt（mac showToast 复用
+        // candidateOrigin，候选窗与提示条位置一致）。2026-10-30 审计 A12：
+        // 此前是「光标行底 + 整行高 + 6px」，比候选窗低约一行且随 DPI 偏
+        // 0.75 倍；工作区钳制在 ModeToast::show 内做。
+        const int gap = MulDiv(6, systemDpi(), 72);
+        toast_.show(g_hInst, text, anchor.x, anchor.y + gap);
     }
     POINT caretPos_{0, 0};
     int caretLineHeight_ = 20;
@@ -2748,7 +2969,7 @@ private:
 
     // 展示联想当前页（本地分页：全量候选在 assoc_，每页 pageSize 条）。
     void showAssociatePage() {
-        const int per = 6; // 与 engine.PageSize 一致（数字键 1-6 指位）
+        const int per = kPageSize; // 与 engine.PageSize 一致（数字键 1-6 指位）
         const int total = static_cast<int>(assoc_.candidates.size());
         const int pageCount = (total + per - 1) / per;
         if (assocPage_ >= pageCount) assocPage_ = pageCount - 1;
@@ -2766,7 +2987,7 @@ private:
     // 联想翻页（- / = 键）：边界页保持当前页。返回是否发生了翻页。
     bool flipAssociate(bool next) {
         const int total = static_cast<int>(assoc_.candidates.size());
-        const int pageCount = (total + 5) / 6;
+        const int pageCount = (total + kPageSize - 1) / kPageSize;
         if (next && assocPage_ + 1 < pageCount) {
             ++assocPage_;
         } else if (!next && assocPage_ > 0) {
@@ -2830,9 +3051,20 @@ void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
 // 「Chaoset 设置」/ 分组「输入行为」/「词组联想」开关 / 说明文字 /
 // 底部「更多设置将在后续版本提供」。开关即时写 HKCU\Software\Chaoset
 // 并收起联想窗（applyAssociateSetting）。窗口单例：已打开则前置。
-static HWND g_settingsWnd = nullptr;       // 单例句柄
-static HFONT g_settingsFont = nullptr;     // 正文 9pt
-static HFONT g_settingsFontBold = nullptr; // 分组标题 9pt Bold
+// 设置窗口视觉与 macOS SettingsWindow 对齐（2026-10-30 三端一致性整改 A9）：
+// 分组标题 13pt Bold / 标签 13pt / 说明文字 11pt（此前全部 9pt——明显小于
+// mac 的 13/11pt）。窗口客户区 380×190pt（mac contentRect 同尺寸），控件
+// 坐标统一 pt 口径。
+//
+// 已知差异（需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」）：
+// 设置窗口仍固定浅色（COLOR_WINDOW 背景 + 硬编码次级灰文字）。macOS 用
+// 系统语义色自动跟随深色；Win32 要让标准控件随系统深色需要 DWM 深色标题栏
+// (DwmSetWindowAttribute) + 自绘 Static/GroupBox 背景与文字，改动面大且无
+// 真机无法验证，本次只做字号/几何对齐。
+static HWND g_settingsWnd = nullptr;        // 单例句柄
+static HFONT g_settingsFont = nullptr;      // 正文/标签 13pt
+static HFONT g_settingsFontBold = nullptr;  // 分组标题 13pt Bold
+static HFONT g_settingsFontHint = nullptr;  // 说明文字 11pt
 
 static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ChaosetTIP* tip = reinterpret_cast<ChaosetTIP*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -2861,6 +3093,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case WM_DESTROY:
             if (g_settingsFont != nullptr) { DeleteObject(g_settingsFont); g_settingsFont = nullptr; }
             if (g_settingsFontBold != nullptr) { DeleteObject(g_settingsFontBold); g_settingsFontBold = nullptr; }
+            if (g_settingsFontHint != nullptr) { DeleteObject(g_settingsFontHint); g_settingsFontHint = nullptr; }
             g_settingsWnd = nullptr;
             InterlockedDecrement(&g_liveSettingsWindows);
             return 0;
@@ -2885,19 +3118,17 @@ void ChaosetTIP::showSettingsWindow() {
     wc.lpszClassName = cls.c_str();
     RegisterClassExW(&wc);
 
-    int dpi = 96;
-    if (HDC dc = GetDC(nullptr)) {
-        dpi = GetDeviceCaps(dc, LOGPIXELSY);
-        ReleaseDC(nullptr, dc);
-    }
-    auto scalePx = [dpi](int px) { return MulDiv(px, dpi, 96); };
+    const int dpi = systemDpi();
+    // pt → 设备像素（与候选窗同一口径；窗口/控件坐标都按 mac 的 pt 值写）
+    auto ptPx = [dpi](int v) { return MulDiv(v, dpi, 72); };
 
     // 居中于光标所在显示器的工作区（macOS center 同语义）
     POINT anchor = caretPos_;
     if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
-    RECT fr = {0, 0, scalePx(400), scalePx(220)};
+    // mac SettingsWindow contentRect 380×190pt
+    RECT fr = {0, 0, ptPx(380), ptPx(190)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     MONITORINFO mi{};
@@ -2916,29 +3147,35 @@ void ChaosetTIP::showSettingsWindow() {
     g_settingsWnd = wnd;
     InterlockedIncrement(&g_liveSettingsWindows);
 
-    g_settingsFont = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_settingsFont = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    g_settingsFontBold = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    g_settingsFontBold = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    g_settingsFontHint = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
     auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text,
                        int cx, int cy, int cw, int ch, int id, HFONT font) {
         HWND c = CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
-                                 scalePx(cx), scalePx(cy), scalePx(cw), scalePx(ch), wnd,
+                                 ptPx(cx), ptPx(cy), ptPx(cw), ptPx(ch), wnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
         if (c != nullptr && font != nullptr) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         return c;
     };
     // 与 macOS SettingsWindow 逐项对应：分组「输入行为」→「词组联想」开关
-    // → 说明文字 → 底部「更多设置将在后续版本提供」
-    makeCtl(L"Button", BS_GROUPBOX, L"输入行为", 16, 14, 368, 92, 100, g_settingsFontBold);
+    // → 说明文字 → 底部「更多设置将在后续版本提供」。
+    // 坐标单位 pt：分组 (14,10,352,112)、开关 (32,36,160,24)、两条说明
+    // (32,64)/(32,86)、底部提示 (32,138)。13pt 字体行高约 17-18pt，
+    // 控件高度留 20-24pt，避免高 DPI 下文字被裁剪。
+    makeCtl(L"Button", BS_GROUPBOX, L"输入行为", 14, 10, 352, 112, 100, g_settingsFontBold);
     HWND chk = makeCtl(L"Button", BS_AUTOCHECKBOX | WS_TABSTOP, L"词组联想",
-                       34, 40, 140, 20, 101, g_settingsFont);
+                       32, 36, 160, 24, 101, g_settingsFont);
     SendMessageW(chk, BM_SETCHECK, RegGetAssociate() ? BST_CHECKED : BST_UNCHECKED, 0);
-    makeCtl(L"Static", 0, L"选词上屏后展示可续接的词组候选；", 34, 68, 340, 18, 102, g_settingsFont);
-    makeCtl(L"Static", 0, L"关闭后不再弹出联想候选。", 34, 86, 340, 18, 103, g_settingsFont);
-    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 34, 124, 340, 18, 104, g_settingsFont);
+    makeCtl(L"Static", 0, L"选词上屏后展示可续接的词组候选；", 32, 64, 320, 20, 102, g_settingsFontHint);
+    makeCtl(L"Static", 0, L"关闭后不再弹出联想候选。", 32, 86, 320, 20, 103, g_settingsFontHint);
+    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 32, 138, 320, 20, 104, g_settingsFontHint);
 
     HANDLE icoBig = LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
                                GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);

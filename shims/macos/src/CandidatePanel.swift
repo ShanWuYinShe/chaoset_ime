@@ -14,13 +14,17 @@
 // PNG 渲染链路（renderer 包 + candidateImage IPC）已于 2026-10-27 删除。
 //
 // 视觉复刻 skin.DefaultSkinFor 的设计（键帽序号 + 首选蓝胶囊 + 学习标记），
-// 色值与 skin/skin.go 保持一致，浅/深用动态色自动切换。
+// 色值与 skin/skin.go 保持一致；浅/深是两套**静态 sRGB NSColor**，每次 draw
+// 按 effectiveAppearance 选择（不是 NSColor 动态色——机制描述以代码为准，
+// 2026-10-30 审计 A16 修正过期注释）。
 
 import AppKit
 
 // MARK: - 主题色（与 skin.DefaultSkinFor 色值一一对应）
 
-private struct CandidateTheme {
+// internal（非 private）：tools/panel_metrics.swift 需要导出 13 个色值，
+// 与 Go 侧 skin/skin.go 做浅/深两套逐色比对（visual-parity.sh D 段）。
+struct CandidateTheme {
     let panelBg: NSColor
     let panelBorder: NSColor
     let text: NSColor
@@ -585,6 +589,22 @@ extension CandidatePanelView {
         let maxWidth: Double
         let panelRadius: Double
         let textH: Double
+        // 2026-10-30 审计 G8：以下参数此前没有任何机器断言，改动只靠肉眼。
+        // 全部导出给 panel_metrics，由 visual-parity.sh C 段对照文档期望值锁定
+        //（macOS 是视觉参考，这些常量被误改会直接改变三端对齐基准）。
+        let indexFontSize: Double
+        let firstPadLeft: Double
+        let itemPadX: Double
+        let gap: Double
+        let chipPadX: Double
+        let chipPadY: Double
+        let chipRadius: Double
+        let chevronBoxW: Double
+        let gearBoxW: Double
+        let pillMargin: Double
+        let maxRows: Int
+        /// 最小窗宽：与 contentSize() 的 minW 同公式。
+        let minWidth: Double
 
         static var current: LayoutSnapshot {
             LayoutSnapshot(
@@ -593,7 +613,19 @@ extension CandidatePanelView {
                 lineSpacing: Layout.lineSpacing,
                 maxWidth: Layout.maxWidth,
                 panelRadius: Layout.panelRadius,
-                textH: Layout.textH
+                textH: Layout.textH,
+                indexFontSize: Layout.indexFontSize,
+                firstPadLeft: Layout.firstPadLeft,
+                itemPadX: Layout.itemPadX,
+                gap: Layout.gap,
+                chipPadX: Layout.chipPadX,
+                chipPadY: Layout.chipPadY,
+                chipRadius: Layout.chipRadius,
+                chevronBoxW: Layout.chevronBoxW,
+                gearBoxW: SettingsGear.boxW,
+                pillMargin: Layout.pillMargin,
+                maxRows: Layout.maxRows,
+                minWidth: Layout.padding * 2 + Layout.chevronBoxW + SettingsGear.boxW + 8
             )
         }
     }
@@ -793,7 +825,11 @@ enum AssociateSetting {
     }
 }
 
-// 齿轮图标尺寸（折叠区内、chevron 左侧）。
+// 齿轮区宽度（pt，折叠区内、chevron 左侧）：
+// 齿轮矢量直径 2*7.2pt=14.4pt + 两侧各约 5.8pt 余量 = 26pt。
+// 与 Windows win32.cpp 的 gearBoxW（pt(26)）对应。
+// 历史：2026-10-28 995dd99 已删除「圆形淡底直径 22」方案，旧注释停留在
+// 删除前（2026-10-30 审计 A16 修正）。
 enum SettingsGear {
-    static let boxW: CGFloat = 26 // 圆形淡底直径 22 + 余量
+    static let boxW: CGFloat = 26
 }

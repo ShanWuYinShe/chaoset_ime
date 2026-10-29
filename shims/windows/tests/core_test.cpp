@@ -138,7 +138,8 @@ int main(int argc, char** argv) {
     // ---- JSON 单元断言 ----
     bool ok = false;
     JsonValue v = jsonParse("{\"id\":7,\"result\":{\"input\":\"nihao\",\"preedit\":\"ni'hao\","
-                            "\"candidates\":[{\"text\":\"你好\",\"score\":99},{\"text\":\"你号\"}]}}",
+                            "\"candidates\":[{\"text\":\"你好\",\"score\":99,\"from_user\":true},"
+                            "{\"text\":\"你号\"}]}}",
                             &ok);
     check(ok && v.type == JsonValue::Type::Obj, "JSON: 对象解析");
     check(v.find("id") != nullptr && v.find("id")->type == JsonValue::Type::Num && v.find("id")->number == 7,
@@ -151,6 +152,8 @@ int main(int argc, char** argv) {
     check(c.ok && c.input == "nihao" && c.preedit == "ni'hao" && c.candidates.size() == 2 &&
               c.candidates[0].text == "你好",
           "JSON: 候选数组提取");
+    check(c.candidates[0].fromUser, "JSON: 学习标记 from_user=true 解析");
+    check(!c.candidates[1].fromUser, "JSON: 缺省 from_user 视为未加权");
     check(parseCommitted(*result).empty(), "JSON: committed 缺省为空");
 
     JsonValue esc = jsonParse("{\"s\":\"a\\\"b\\u4f60\\n\"}", &ok);

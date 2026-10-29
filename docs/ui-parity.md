@@ -1,69 +1,218 @@
 # 候选窗三端参数对照表（UI 一致性审计）
 
-> 审计日期：2026-10-29（基于 commit 53efd57）。
+> 审计/整改日期：2026-10-30（基线 main `b4785e6`；2026-10-30 三端一致性整改
+> worktree `fix/ui-parity`）。上一版头注「基于 commit 53efd57」已过期，且 387d571
+> 之后的三端 Shift+空格/Super 行为变更未回写——本版按**当前代码实际行为**重写。
 > 维护规则见 AGENTS.md「候选窗为纯数据 IPC + 三端原生自绘」：候选窗任何 UI
 > 改动（控制区/齿轮/翻页/配色/层级）必须三端同步检查——只改一个平台 = 未完成。
-> 本表是审计基准：改动排版参数后必须同步更新两侧与本文。
+> 本表是审计基准；改动排版参数必须同步更新本表、`skin/skin_test.go`、
+> `shims/macos/tests/visual-parity.sh` C 段期望值与各端源码常量。
 
-## 排版参数（macOS Layout ↔ Windows scale，单位 pt/px@96dpi）
+## 单位口径（2026-10-30 统一为 pt）
 
-| 参数 | macOS `CandidatePanel.swift` Layout | Windows `win32.cpp` | 一致 |
+- **macOS**：AppKit 逻辑坐标即 pt。
+- **Windows**：统一 `pt(v) = MulDiv(v, dpi, 72)`（pt → 设备像素，四舍五入）。
+  历史上字号用 pt 口径，而间距/键帽/圆角/最大宽用 `MulDiv(v, dpi, 96)`
+  （px@96，物理只有 0.75 倍）——同一面板两套基准，Windows 上「字一样大、留白
+  和键帽小 25%」，最大宽只有 macOS 的 75%，候选更容易被丢弃/截断。2026-10-30
+  已全部改为 pt，与 macOS 1:1（`win32.cpp` 的 `pt()` 注释含逐 DPI 像素表）。
+  Windows 的多行/单行等布局机制差异见「已知功能差异」。
+- **Linux**：ibus 原生面板，无自绘参数。
+
+Windows 布局参数在各 DPI 下的设备像素值（`MulDiv(pt,dpi,72)` 四舍五入）：
+
+| 参数（pt） | 96dpi | 120dpi | 144dpi | 192dpi |
+|---|---|---|---|---|
+| padding 7 | 9 | 12 | 14 | 19 |
+| firstPadLeft 9 | 12 | 15 | 18 | 24 |
+| itemPadX 7 | 9 | 12 | 14 | 19 |
+| gap 11 | 15 | 18 | 22 | 29 |
+| chipPadX 4 / chipPadY 2 | 5 / 3 | 7 / 3 | 8 / 4 | 11 / 5 |
+| pillMargin 2 | 3 | 3 | 4 | 5 |
+| chevronBoxW 36 | 48 | 60 | 72 | 96 |
+| gearBoxW 26 | 35 | 43 | 52 | 69 |
+| panelRadius 8（RoundRect 直径 16pt） | 11（直径 21） | 13（直径 27） | 16（直径 32） | 21（直径 43） |
+| textH 21 | 28 | 35 | 42 | 56 |
+| maxWidth 720 | 960 | 1200 | 1440 | 1920 |
+| minWidth 84 | 112 | 140 | 168 | 224 |
+| 光标下间距 6 | 8 | 10 | 12 | 16 |
+
+计算方式见 `win32.cpp` 的 `pt()` 注释；全部为小正整数像素，窗口宽度另有
+显示器 `rcWork` 钳制，面板不会溢出屏幕。
+
+## 排版参数（macOS Layout ↔ Windows pt，单位 pt）
+
+| 参数 | macOS `CandidatePanel.swift` | Windows `win32.cpp` | 一致 |
 |---|---|---|---|
-| 主字号 | fontSize 15 | MulDiv(15, dpi, 72) | ✅ |
-| 序号字号 | indexFontSize 12 | MulDiv(12, dpi, 72) | ✅ |
-| 面板内边距 | padding 7 | pad scale(7) | ✅ |
-| 首选左缩进 | firstPadLeft 9 | firstPadLeft scale(9) | ✅ |
-| 候选间距 | itemPadX 7 | itemPadX scale(7) | ✅ |
-| 项间隔 | gap 11 | gap scale(11) | ✅ |
-| 键帽内距 X/Y | chipPadX 4 / chipPadY 2 | chipPadX scale(4) / chipPadY scale(2) | ✅ |
-| 首选胶囊外扩 | pillMargin 2 | pillMargin scale(2) | ✅ |
-| 翻页区宽 | chevronBoxW 36 | chevronBoxW scale(36) | ✅ |
-| 齿轮区宽 | SettingsGear.boxW 26 | gearBoxW scale(26) | ✅ |
-| 面板最大宽 | maxWidth 720 | scale(720) | ✅ |
-| 面板圆角 | panelRadius 8（NSBezierPath 抗锯齿） | RoundRect scale(16,16) 直径（=r8；SetWindowRgn 剪裁无抗锯齿） | ✅（形状等价，Windows 边缘锯齿为 GDI 限制） |
+| 主字号 | fontSize 15 | 字体高度 `-MulDiv(15,dpi,72)` | ✅ |
+| 序号字号 | indexFontSize 12 | `-MulDiv(12,dpi,72)` | ✅ |
+| 行高 | textH = ceil(fontSize*1.4) = 21（CJK 安全值） | `max(tmHeight, pt(21))` | ✅ 口径一致 |
+| 面板内边距 | padding 7 | `pt(7)` | ✅（2026-10-30 修正，原 0.75×） |
+| 首选左缩进 | firstPadLeft 9 | `pt(9)` | ✅（同上） |
+| 候选间距 | itemPadX 7 | `pt(7)` | ✅（同上） |
+| 项间隔 | gap 11 | `pt(11)` | ✅（同上） |
+| 键帽内距 X/Y | chipPadX 4 / chipPadY 2 | `pt(4)` / `pt(2)` | ✅（同上） |
+| 键帽圆角 | chipRadius 3 | RoundRect 直径 `pt(6)` | ✅ |
+| 首选胶囊外扩 | pillMargin 2 | `pt(2)` | ✅ |
+| 首选胶囊圆角 | max(panelRadius-pillMargin,4)=6 | RoundRect 直径 `pt(12)` | ✅ |
+| 翻页区宽 | chevronBoxW 36 | `pt(36)` | ✅（同上） |
+| 齿轮区宽 | SettingsGear.boxW 26 | `gearBoxW pt(26)` | ✅ |
+| 面板圆角 | panelRadius 8 | RoundRect / SetWindowRgn 直径 `pt(16)` | ✅（形状等价；Windows 无抗锯齿） |
+| 窗宽上限 | maxWidth 720 | 内容上限 `pt(638)` = 720−7×2−36−26−2×2−2；窗宽 = 内容 + pad×2 + 36 + 26 | ✅（2026-10-30 修正：原漏扣齿轮区与 pillMargin，极限窗宽可到 ~746px） |
+| 最小窗宽 | padding×2 + chevronBoxW + gearBoxW + 8 = 84 | `pad*2 + chevronBoxW + gearBoxW + pt(8)` = 84pt | ✅（2026-10-30 修正，原 120px@96=90pt） |
+| 最大行数 | maxRows 3（第 4 行起不绘制） | 单行 + 首项超宽省略号（后续项放不下不排列） | ❌ 已知差异（见下） |
+| 光标下间距 | candidateGap 6 | `pt(6)` | ✅（2026-10-30 修正，原 4px@96=3pt） |
+| 页码/分隔线 | 见「折叠区几何」 | 同公式 pt 化 | ✅ |
+| 学习标记宽度 | fromUser 时 markW = ceil("*")+2 | `markW = szMark.cx + pt(2)`，文本后 +1pt 起画 | ✅（2026-10-30 Windows 新增） |
 
-## 齿轮（三端统一矢量算法，2026-10-29）
+## 折叠区几何（mac/Win 同公式）
 
-中心圆环 r3.4/线宽 1.8 + 8 齿辐条 4.6→7.2/线宽 2 圆头线帽；颜色
-chipDigit 语义（暗色纯白/浅色 #1D1D1F）。macOS NSBezierPath 手绘；
-Windows GDI Ellipse(NULL_BRUSH)+ExtCreatePen(PS_GEOMETRIC 圆头)，几何参数
-按 dpi/96 与 mac pt 值一一对应。
+- 齿轮区：`gearX = width - chevronBoxW - gearBoxW`；分隔线 `dividerX = gearX + 2`。
+- 翻页/页码区：`flipZoneX = dividerX + gearBoxW`，中心 `chevX = flipZoneX + (width-flipZoneX)/2`。
+- 内容块：`blockH = 8 + (多页 ? 3 + 页码高 : 0)`，`blockTop = (height-blockH)/2`；
+  chevron 画在 `blockTop+4`（臂长 3、线宽 1.5、纵向 ±2.1），页码在
+  `blockTop+8+3` 且**水平居中于 chevX**（Windows 2026-10-30 修正：此前从
+  dividerX 到窗口右缘居中，中心偏左约 13px）。
+- 分隔线：高 = `textH*55%`（21pt → 11.55pt），垂直居中（Windows 2026-10-30
+  修正：此前用窗高 55%，约 19.5pt，明显偏长）。
+- 翻页箭头方向：有下页 ⌄ / 末页有上页 ⌃；**单页时箭头对比度降到约 1/3**
+  （mac alpha/3；Windows 2026-10-30 按同一混合几何折算为不透明色）。
+- 齿轮：圆环 r3.4 + 线宽 1.8 + 8 齿辐条 4.6→7.2、线宽 2 圆头；颜色 = chipDigit；
+  **只有 mac/Windows 两端**（Linux 用 ibus 原生面板、无齿轮）。
+
+## 色值（主色两端逐字一致；派生色按 alpha 有效值对齐）
+
+主色（自 `skin.DefaultSkinFor`）：
+
+| 色 | 浅色 | 深色 |
+|---|---|---|
+| panelBg | #F6F6F8F6（mac，Windows 不透明 #F6F6F8） | #2C2C2EF5（Windows 不透明 #2C2C2E） |
+| text | #1D1D1F | #FFFFFF |
+| highlightBg | #007AFF | #0066EB |
+| highlightText | #FFFFFF | #FFFFFF |
+| chipBg | #FFFFFF | #5A5A5E |
+| chipDigit | #1D1D1F | #FFFFFF |
+| userMark（学习标记） | #34C759 | #30D158 |
+
+派生色：macOS 用带 alpha 的 NSColor 在绘制时与底色实时混合；GDI 无逐字形
+alpha，Windows 把**有效色**预混合成不透明常量（公式
+`round(bg*(1-a)+fg*a)`，`win32.cpp CandidateColors::get` 注释列出逐色推导）。
+2026-10-30 修正了此前手抄错误的 5 个有效色：
+
+| 派生色 | mac 源色（alpha） | mac 有效值 | Windows 旧值 | Windows 现值 |
+|---|---|---|---|---|
+| panelBorder（浅） | 黑 1A on #F6F6F8 | #DDDDDF | #D4D4D8 | #DDDDDF |
+| panelBorder（深） | 白 24 on #2C2C2E | #4A4A4C | #48484A | #4A4A4C |
+| chipBorder（浅） | 黑 3C on #FFFFFF | #C3C3C3 | #D0D0D4 | #C3C3C3 |
+| chipBorder（深） | 白 40 on #5A5A5E | #838386 | #78787C | #838386 |
+| page/chevron（浅） | #8E8E93 α D0 | #A1A1A6 | #8E8E93 | #A1A1A6 |
+| page/chevron（深） | #98989F α B8 | #7A7A80 | #98989F | #7A7A80 |
+| divider（深） | 白 1E on #2C2C2E | #454547 | #3F3F42 | #454547 |
+| highlightChipBg | 白 45 on 高亮蓝 | 浅 #459EFF / 深 #458FF0 | 同 | 同（两端精确一致） |
+| divider（浅） | 黑 14 on #F6F6F8 | #E2E2E4（±1/255 舍入） | #E2E2E4 | #E2E2E4 |
+
+> 有效值为四舍五入结果；个别通道与「目测取整」差 1/255 属正常。Windows
+> 面板本身是不透明的（mac 是半透明 + 系统阴影），见「已知功能差异」。
+
+## 学习标记 `*`
+
+- daemon 的 `Candidate.from_user`（用户调频/词组/上下文加权）为 true 的候选，
+  在候选文本后绘制绿色 `*`（文本后 +1pt，advance 为星号宽 +2pt；首选也画）。
+- macOS：`CandidatePanelView.Item.fromUser` → theme.userMark。
+- Windows：`core::Candidate.fromUser`（2026-10-30 新增解析）→
+  `CandidateWindow::ItemPos.fromUser` → onPaint 用 `theme.userMark` 绘制
+  （几何与 mac 同口径）。
+- Linux：**不适用**——ibus 面板候选文本是唯一显示载体，没有独立装饰绘制层；
+  追加 `*` 会污染候选文本/无障碍朗读，且上游无 per-item 装饰接口。理由记录在
+  `shims/linux/README.md`；学习加权本身照常影响排序。
 
 ## 已知功能差异（有意/平台限制，非遗漏）
 
-| 差异 | macOS | Windows | 说明 |
+| 差异 | macOS | Windows | 说明/后续条件 |
 |---|---|---|---|
-| 多行折行 | maxRows 3 行折行 | 单行 + 超宽截断省略号 | Windows 单行布局为既有实现；折行需重排布局，待需求 |
-| 窗口层级 | .floating（不遮蔽菜单栏） | WS_EX_TOPMOST | Windows 下拉菜单为系统模态 popup，TOPMOST 不拦菜单点击；设计依据见 win32.cpp 注释 |
-| 齿轮 hover 高亮 | 无（固定色） | 无 | v5 起刻意移除（用户反馈「随输入变色」观感差） |
-| 设置入口 | 齿轮 → 设置窗口（NSSwitch 面板） | 齿轮 → 设置窗口（Win32 窗口 + BS_AUTOCHECKBOX） | 2026-10-29 起两端同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 / 说明文字。Windows 旧的 TrackPopupMenu 单勾选项已删除 |
-| 无障碍 | VoiceOver 子元素（AXPress 上屏） | 无 WM_GETOBJECT（待做） | 见审查报告遗留项 |
+| 多行折行 | maxRows 3 行折行；第 4 行起不绘制（数字键仍可能选中） | 单行布局；首项超宽逐字截断加…，后续放不下的项不排列（数字键仍可能选中） | 两端都存在「看不见但能选」的边角；Windows 折行需重排布局，待需求。数字键越界会收起联想/放行，不会静默选不可见项 |
+| 面板半透明/阴影 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1px 描边 + CS_DROPSHADOW + SetWindowRgn 圆角（无抗锯齿） | GDI 限制；用户可见差异是「Windows 无毛玻璃/真实阴影、圆角有锯齿」 |
+| 窗口层级 | .floating(3)（不遮蔽菜单栏） | WS_EX_TOPMOST | Windows 下拉菜单是系统模态 topmost popup，候选窗不会拦菜单点击；mac 因 popUpMenu 会压菜单栏而降级 |
+| 齿轮 hover | 无 | 无 | v5 起刻意移除（用户反馈「随输入变色」观感差） |
+| 设置入口 | 齿轮 → NSSwitch 设置窗 | 齿轮 → Win32 设置窗 | Windows **没有**语言栏菜单/托盘入口（此前 README 描述有误，已修正）；唯一入口是候选栏齿轮 |
+| 设置窗视觉 | 380×190pt、NSSwitch、13/11pt、跟随系统深浅 | 380×190pt、BS_AUTOCHECKBOX、13/11pt（2026-10-30 对齐）、**固定浅色** | Windows 深色需 DWM + 自绘 Static/GroupBox，无真机验证，待真机后做；mac/Linux 跟随系统 |
+| 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
+| 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | 无 WM_GETOBJECT/UIA/MSAA（待做） | docs 旧版已列 TODO，仍未实现，需 Windows 真机 |
+| 滚轮翻页 | 未实现 | 未实现 | 三端一致缺失，非不一致；ibus 面板由上游决定 |
+| Windows per-monitor DPI | 系统自动 | 取主屏 DPI（GetDeviceCaps），无 WM_DPICHANGED | 混合 DPI 多屏时副屏尺寸可能偏差。正确改造 GetDpiForWindow/GetDpiForMonitor + WM_DPICHANGED，**需 Windows 真机验证**，本次未改 |
+| Linux 学习标记 | — | — | 平台机制不适用（见上） |
+| 按键边角（ForwardDelete 等） | 见下 | 见下 | 三端主矩阵一致；以下边角差异按实际行为记录，未在本次改行为（避免无用户需求的行为变更） |
 
-## 按键与交互行为（三端已统一，2026-10-29 审计）
+已修复并移除的差异（2026-10-30）：Windows 单位口径（pt 统一）、Windows 学习
+标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
+Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
+Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
 
-联想态与组词态的按键语义必须完全一致——历史上三端各写一份实现，长期漂移
-（翻页键集合不同、macOS 联想窗残留、Windows 面板箭头点了没反应等）。
+## 按键与交互行为（三端已统一，2026-10-30 复核）
+
+联想态与组词态的按键语义必须完全一致——历史上三端各写一份实现，长期漂移。
 
 | 行为 | 键位 | 语义 |
 |---|---|---|
 | 组词翻页 | `-` `=` `[` `]` PageUp PageDown | 翻候选页；无候选/残缺组词时清空组词后放行 |
-| **联想翻页** | 同上六键 | 翻联想页（**与组词态同集合**）；面板翻页箭头同语义 |
-| 选词 | 空格 / 数字 1-N | 空格选首选并渐进上屏；数字选本页第 N 项，越界则收起联想并放行该键 |
-| 联想选词 | 空格 / 数字 1-9 | 空格选本页第 1 个联想词；1-9 越界时收起联想并放行 |
+| **联想翻页** | 同上六键 | 翻联想页（与组词态同集合）；面板翻页箭头同语义；**联想态带 Shift 的 PageUp/PageDown 同样翻页**（三端一致） |
+| 选词 | 空格 / 数字 1-9（含小键盘） | 空格选首选并渐进上屏；数字选本页第 N 项，越界则收起联想/放行该键 |
+| 联想选词 | 空格 / 数字 1-9（含小键盘） / Shift+空格 | 空格与 **Shift+空格都选当前页第一个联想词**并继续联想（Shift 不切全半角，三端实测一致）；数字越界收起联想并放行 |
 | 清空组词 | Ctrl+Backspace / Ctrl+U / Esc | 清空全部拼音并消费按键 |
 | 删到行首 | Ctrl+Backspace | 同清空（三端对齐） |
 | 中英切换 | Shift 空按 | 提示「英文模式」/「中文模式」并消费 |
-| 全半角 | Shift+空格 | 提示「半角标点」/「全角标点」，开关归壳本地持有 |
+| 全半角 | **组词态** Shift+空格 | 提示「半角标点」/「全角标点」，开关归壳本地持有；联想态不触发（见上） |
 
-提示文案统一为上述四种，三端逐字一致（机器检查不到的项靠本表约束）。
+提示文案统一为上述四种，三端逐字一致（机器检查只锁了 Linux 的 2 条与文档
+约束，其余靠 Code Review——见「机器检查覆盖」节，不做过度声明）。
+
+按键边角差异（实际行为，未统一；需要用户明确需求再改）：
+
+| 场景 | macOS | Windows | Linux |
+|---|---|---|---|
+| 组词态 ForwardDelete | 当作退格删拼音 | 未处理→清空组词后放行（删文档字符） | 未处理→清空组词后放行 |
+| 联想态 Delete（非 Backspace） | 保留联想窗并透传 | 收起联想并透传 | 收起联想并透传 |
+| 联想态 Ctrl/Alt/Super | 只清组词，联想窗残留到下次输入 | 收起联想 | 收起联想 |
 
 ## Linux
 
 候选窗由 ibus 原生面板渲染（UpdateLookupTable/UpdatePreeditText），
 无自绘 UI，本表排版参数部分不适用；模式提示经 UpdateAuxiliaryText。
-**按键与交互行为矩阵同样适用**（联想态翻页键集合、空格选词、Ctrl+Backspace
-等均已在 `shims/linux/ibus-engine` 实现并由 `behavior_test.go` 锁定）。
-设置入口经 ibus-setup 的「首选项」（组件 XML `<setup>`）打开同构的 GTK3 设置窗口。
+**按键与交互行为矩阵同样适用**（联想态翻页键集合、空格选词、Ctrl+Backspace、
+联想态 Shift+空格等均已在 `shims/linux/ibus-engine` 实现并由
+`behavior_test.go` 锁定）。
+
+设置入口经 ibus-setup 的「首选项」（组件 XML `<setup>`）打开同构的 GTK3 设置
+窗口，写 `config.json` 的 `associate`。**保存即时生效**：引擎在每次进入联想前
+重读配置（2026-10-30 修正，此前只在引擎启动时读一次，与 setup 脚本/README
+宣称不符），已打开的输入上下文下一次选词即按新设置执行（与 macOS/Windows
+「每次选词前重读设置」同语义）。`-associate` 显式传参时 flag 覆盖配置。
+
+## 机器检查覆盖（2026-10-30 据实修正）
+
+- **事实边界**：`skin/skin.go` 是 macOS 视觉的 Go 侧设计基准，**没有运行时
+  消费者**；真正渲染的是 `CandidatePanel.swift`（mac）与 `win32.cpp`
+  `CandidateColors`（Win）两份实现。「视觉参数真源 = skin」的说法按此理解。
+- `shims/macos/tests/visual-parity.sh`（CI macos-build 执行）实际断言：
+  - B：布局常量 5 项 Go↔Swift（fontSize/padding/lineSpacing/maxWidth/cornerRadius）；
+  - C：macOS Layout 其余 13 项参考常量 + divider height/y 的自检（macOS 是
+    视觉参考，误改必须 FAIL）；
+  - D：浅色 + 深色各 13 个色值 Go↔Swift 逐色比对（此前 Swift 色值从未导出，
+    该段只自证 Go 的 4 个浅色；divider 导出后也无人消费）。
+- `skin/skin_test.go` 锁定 Go 侧浅/深各 13 个色值的期望值（CI test job）；
+  visual-parity 负责 Go↔Swift 两侧一致，两者合起来才能同时防「单端漂移」与
+  「两端同步漂移」。
+- `shims/macos/tests/equivalence.sh` F 段只调用上面的脚本；文案已改为
+  「布局常量（Go↔Swift）+ macOS 参考常量 + 浅/深色值一致」，不再声称「双端
+  色值两段一致」或覆盖 Windows。
+- **Windows 候选窗没有任何运行时/几何机器断言**：只有 `tools/checkgdi` 的
+  ExtCreatePen 非空指针契约（`make vet`）+ 交叉编译。学习标记/页码/分隔线/
+  DPI/Toast/设置窗仍需 Windows 真机人工验收（本机无 Windows 运行时）。
+- `tests/key_routing` 是 macOS 按键路由回归测试，**未接入 Makefile/CI**（死
+  测试），属于待补；Linux 按键行为由 `behavior_test.go` 覆盖。
+- 提示文案/设置窗文案/齿轮参数没有跨端机器检查；本表 + Code Review 仍是唯一
+  防线。新增 `tools/checkuiparity` 静态检查器是后续建议（审计 G6），本次
+  未做——文档不再宣称已有此检查。
 
 ## 性能与资源基线（2026-10-29，Apple M1，负载 5.35）
 

@@ -205,9 +205,11 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色 NSColor
   动态色自动跟随、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
   Composition（纯数据 IPC）。**v2 统一候选窗贴图**（`candidateImage`
-  客户端方法 + NSPanel 贴图面板）已于 2026-10-27 删除——三端壳均为原生
-  自绘后，daemon 侧渲染链路整体移除；深浅色由壳按 `effectiveAppearance`
-  自动跟随，不存在渲染回退路径（原生面板不可用时回退 IMKCandidates，v1 起）。
+  客户端方法 + NSPanel 贴图面板）已于 2026-10-27 删除——mac/Windows 两端壳
+  均为原生自绘、Linux 改用 **ibus 原生面板**（不属本项目自绘）后，daemon 侧
+  渲染链路整体移除。深浅色是两套静态 sRGB NSColor，按 `effectiveAppearance`
+  选择并在外观切换时重绘（不是 NSColor 动态色；2026-10-30 修正注释）；
+  不存在渲染回退路径（原生面板不可用时回退 IMKCandidates，v1 起）。
   **2026-10-22 起面板跟随光标而非鼠标**：经
   `client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)` 取插入点
   矩形，优先放在光标行**下方**（`rect.minY - 6`）、下方空间不足时翻到**上方**

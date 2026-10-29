@@ -16,6 +16,11 @@ package main
 //
 // 为什么不用 ibus 的 <setup> 弹窗：那需要一个图形设置程序，Linux 端暂无条件
 // 做 GUI。用配置文件是最小可用方案，用户也可以直接编辑。
+//
+// 注意：loadUserConfig 同时被联想开关的**运行时重读**路径复用
+// （ibusEngine.associateEnabled，2026-10-30）：设置窗口保存 config.json 后，
+// 下一次进入联想前即重读生效，无需重启引擎——与 macOS/Windows 每次选词前
+// 重读设置的语义一致。
 
 import (
 	"encoding/json"

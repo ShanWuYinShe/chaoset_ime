@@ -30,11 +30,38 @@ type metrics struct {
 		MaxWidth     int     `json:"maxWidth"`
 		CornerRadius int     `json:"cornerRadius"`
 	} `json:"skin"`
-	Colors map[string]string `json:"colors"`
+	// Colors 浅色皮肤（对应 Swift CandidateTheme.theme(dark: false)），
+	// ColorsDark 深色皮肤（theme(dark: true)）。两套都做 Go↔Swift 逐色比对
+	//（2026-10-30 审计 G2：此前只导出浅色 9 色且 Swift 端根本未导出）。
+	Colors     map[string]string `json:"colors"`
+	ColorsDark map[string]string `json:"colorsDark"`
+}
+
+// skinColors 把 skin.Skin 的 13 个颜色字段映射为与 Swift CandidateTheme
+// 同名的 key（名称即 visual-parity 比对表：一一对应，缺一即脚本报错）。
+func skinColors(s skin.Skin) map[string]string {
+	rgba := func(c color.NRGBA) string {
+		return fmt.Sprintf("#%02X%02X%02X%02X", c.R, c.G, c.B, c.A)
+	}
+	return map[string]string{
+		"panelBg":         rgba(s.BgColor),
+		"panelBorder":     rgba(s.BorderColor),
+		"text":            rgba(s.FgColor),
+		"highlightBg":     rgba(s.HighlightBg),
+		"highlightText":   rgba(s.HighlightFg),
+		"chipBg":          rgba(s.IndexChipBg),
+		"chipBorder":      rgba(s.IndexChipBorder),
+		"chipDigit":       rgba(s.IndexColor),
+		"highlightChipBg": rgba(s.HighlightIndexChipBg),
+		"pageColor":       rgba(s.PreeditColor),
+		"userMark":        rgba(s.UserMarkColor),
+		"divider":         rgba(s.DividerColor),
+		"chevron":         rgba(s.ChevronColor),
+	}
 }
 
 func main() {
-	m := metrics{Colors: map[string]string{}}
+	m := metrics{Colors: map[string]string{}, ColorsDark: map[string]string{}}
 
 	s := skin.DefaultSkin()
 	m.Skin.FontSize = s.FontSize
@@ -43,19 +70,8 @@ func main() {
 	m.Skin.MaxWidth = s.MaxWidth
 	m.Skin.CornerRadius = s.CornerRadius
 
-	// 配色（浅色皮肤，对应 Swift CandidateTheme.theme(dark: false)）
-	rgba := func(c color.NRGBA) string {
-		return fmt.Sprintf("#%02X%02X%02X%02X", c.R, c.G, c.B, c.A)
-	}
-	m.Colors["panelBg"] = rgba(s.BgColor)
-	m.Colors["panelBorder"] = rgba(s.BorderColor)
-	m.Colors["text"] = rgba(s.FgColor)
-	m.Colors["highlightBg"] = rgba(s.HighlightBg)
-	m.Colors["chipBg"] = rgba(s.IndexChipBg)
-	m.Colors["chipBorder"] = rgba(s.IndexChipBorder)
-	m.Colors["chipDigit"] = rgba(s.IndexColor)
-	m.Colors["pageColor"] = rgba(s.PreeditColor)
-	m.Colors["userMark"] = rgba(s.UserMarkColor)
+	m.Colors = skinColors(skin.DefaultSkinFor(false))
+	m.ColorsDark = skinColors(skin.DefaultSkinFor(true))
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

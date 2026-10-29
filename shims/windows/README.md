@@ -70,7 +70,10 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | 功能特性 | 状态 |
 | :--- | :--- |
 | 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
-| 原生浮动候选词窗口（双缓冲 GDI、高 DPI 字体缩放、首选高亮、分页指示） | 已实现（编译级） |
+| 原生浮动候选词窗口（双缓冲 GDI、首选高亮、分页指示、**学习标记 `*`**、单页箭头置灰） | 已实现（编译级） |
+| 候选窗布局单位（2026-10-30）：全部 pt 口径 `MulDiv(v,dpi,72)`，与 macOS 1:1（间距/键帽/圆角/最大宽此前是 px@96 的 0.75 倍；96/120/144/192 dpi 像素表见 win32.cpp `pt()` 注释） | 已实现（编译级） |
+| 鼠标点选候选（2026-10-30）：与数字键/空格同路径——先 selectPrefix 渐进上屏、失败才整句 select；此前直接 select，长串下点候选会清空整串拼音 | 已实现（编译级） |
+| 模式提示 Toast：光标行下方 6pt（与候选窗同锚点）+ WS_EX_TRANSPARENT 点击穿透（mac ignoresMouseEvents 对应） | 已实现（编译级，待真机确认观感） |
 | 光标跟随与屏幕边缘碰撞反弹（GetTextExt -> GetGUIThreadInfo -> GetCursorPos） | 已实现（编译级） |
 | 后台服务完全静默（GUI Subsystem，零黑框，零控制台窗口常驻） | 已实现（编译级） |
 | `-` / `=` / `[` / `]` / PageUp / PageDown 候选翻页 | 已实现（核心行为级） |
@@ -110,11 +113,26 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   `ITfLangBarItemButton::GetIcon`（返回 `HICON`），并在 DLL 资源中提供
   16×16 与 32×32（高 DPI）两档图标；`ITfInputProcessorProfileMgr::RegisterProfile`
   的 `pszIconFile`/`iconIndex` 也要指向该资源，否则语言栏只有系统默认图标。
-- **设置界面不会自动生成**：Windows 不会给第三方 TSF 输入法提供配置页；需要自己做
-  设置窗口，并从语言栏菜单/托盘入口打开，配置项经 daemon IPC 下发。
+- **设置界面**：Windows 不会给第三方 TSF 输入法提供配置页，因此本壳自绘设置
+  窗口。**当前唯一入口是候选栏右侧齿轮**（`CandidateWindow::onLButtonDown` →
+  `ChaosetTIP::showSettingsWindow`）；语言栏菜单/托盘入口**尚未实现**
+  （`ITfLangBarItem`/托盘菜单在全仓 grep 无命中，此前本文写的「从语言栏菜单/
+  托盘入口打开」与代码不符，2026-10-30 修正）。设置项存
+  `HKCU\\Software\\Chaoset`（`Associate` DWORD），每次进入联想前重读、即时生效。
+- **设置窗口视觉**：380×190pt、13pt 标签 / 11pt 说明（与 macOS SettingsWindow
+  对齐，2026-10-30 从 9pt 修正）；但窗口仍为固定浅色（未接 DWM 深色与自绘
+  语义色），系统深色模式下与 macOS 不一致——已知差异，需真机验证后再做。
 
 ## 已知限制
 
+- **候选窗 DPI**：`getDpi()` 用 `GetDeviceCaps(GetDC(NULL), LOGPIXELSY)`（主显示器
+  DPI），无 `WM_DPICHANGED`——混合 DPI 多屏时落到不同缩放的副屏会按主屏比例
+  布局。正确改造（`GetDpiForWindow`/`GetDpiForMonitor` + `WM_DPICHANGED`）
+  需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」。
+- **候选窗为单行布局**（macOS 为 3 行折行）：首项超宽逐字截断加…，后续候选
+  放不下时不排列（数字键仍可选）。折行需重排布局，待需求。
+- **无障碍**：未实现 WM_GETOBJECT/UIA/MSAA（macOS 有 VoiceOver 子元素），
+  待 Windows 真机阶段补。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
 - 中文标点按 US 布局**字符级映射**（含 Shift 变体：`,` `.` `;` `[` `]` `\` `'`

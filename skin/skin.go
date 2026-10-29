@@ -1,7 +1,13 @@
-// Package skin 保存候选窗的视觉设计参数（几何 + 配色），是双端视觉的
-// Go 侧真源：macOS 原生候选窗（shims/macos/src/CandidatePanel.swift）
-// 与双端视觉一致性检查（tools/render_metrics.go，被
-// shims/macos/tests/visual-parity.sh 调用）都以本包为准。
+// Package skin 保存候选窗的视觉设计参数（几何 + 配色），是 macOS 视觉的
+// Go 侧设计基准：shims/macos/src/CandidatePanel.swift 按本包取值手写，
+// tools/render_metrics.go（被 shims/macos/tests/visual-parity.sh 调用）
+// 把本包参数/色值导出，与 Swift 端逐项机器比对（浅色 + 深色）。
+//
+// 诚实边界（2026-10-30 审计 G1）：本包目前**没有运行时消费者**——真正的
+// 渲染实例是 CandidatePanel.swift（macOS）与 win32.cpp CandidateColors
+// （Windows）两份实现；本包 + visual-parity 的作用是把 macOS 侧的漂移锁住、
+// 并作为文档化的参数基准，不是跨端代码生成。Windows 侧另有 pt 口径约束
+// （见 win32.cpp pt() 注释与 docs/ui-parity.md）。
 //
 // 历史背景：2026-10-25 前 daemon 还负责把候选窗渲染成 PNG（renderer 包 +
 // candidateImage IPC），三端壳先后改为自绘后渲染链路整体删除（2026-10-27），
@@ -37,6 +43,13 @@ type Skin struct {
 	IndexChipBg          color.NRGBA
 	IndexChipBorder      color.NRGBA
 	HighlightIndexChipBg color.NRGBA
+	// DividerColor / ChevronColor 是候选窗右侧折叠区的分隔线与翻页箭头。
+	// macOS 端这两个色不在旧的 12 色里，visual-parity 只比较 Go↔Swift 的
+	// 12 色时它们曾是「Swift 有、Go 无」的盲区（2026-10-30 审计 G2）。
+	// 注意：Windows 侧为 GDI 预混合的不透明有效色（见 win32.cpp
+	// CandidateColors），不是本文件的 alpha 值。
+	DividerColor color.NRGBA
+	ChevronColor color.NRGBA
 }
 
 // DefaultSkinFor 返回系统输入法风格的皮肤：dark=false 浅色、true 深色。
@@ -63,6 +76,8 @@ func DefaultSkinFor(dark bool) Skin {
 		skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
 		skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}  // 首选序号纯白
 		skin.UserMarkColor = color.NRGBA{0x30, 0xD1, 0x58, 0xFF}        // 学习标记绿
+		skin.DividerColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0x1E}         // 分隔线（半透白）
+		skin.ChevronColor = color.NRGBA{0x98, 0x98, 0x9F, 0xB8}         // 翻页箭头（次级文字色）
 		return skin
 	}
 	skin.BgColor = color.NRGBA{0xF6, 0xF6, 0xF8, 0xF6}              // macOS 浅色毛玻璃底
@@ -77,6 +92,8 @@ func DefaultSkinFor(dark bool) Skin {
 	skin.HighlightFg = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}          // 首选纯白文字
 	skin.HighlightIndexColor = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}  // 首选序号纯白
 	skin.UserMarkColor = color.NRGBA{0x34, 0xC7, 0x59, 0xFF}        // 学习标记绿
+	skin.DividerColor = color.NRGBA{0x00, 0x00, 0x00, 0x14}         // 分隔线（半透黑）
+	skin.ChevronColor = color.NRGBA{0x8E, 0x8E, 0x93, 0xD0}         // 翻页箭头（次级文字色）
 	return skin
 }
 

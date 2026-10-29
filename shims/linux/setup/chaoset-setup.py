@@ -10,8 +10,10 @@
 #
 # 配置文件：$XDG_CONFIG_HOME/chaoset/config.json（缺省 ~/.config/chaoset/），
 # 键 "associate"：缺省（未写）开启，显式 false 关闭——与 ibus-engine
-# config.go 的 *bool nil=开启语义一致。保存后对新开的输入上下文生效；
-# 要对所有已开窗口立即生效可运行 `ibus restart`。
+# config.go 的 *bool nil=开启语义一致。保存即生效：引擎在每次进入联想前
+# 重读本文件（ibusEngine.associateEnabled），无需重启 ibus/引擎进程，已打开
+# 的输入上下文下一次选词就按新设置执行（2026-10-30 起与 macOS/Windows
+# 「每次选词前重读设置」同语义）。
 
 import json
 import os

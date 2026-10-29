@@ -47,8 +47,20 @@ ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口
 运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
 Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 /
 说明文字）。窗口写 config.json 的 `"associate"`（缺省开启，显式 false 关闭），
-保存后对新开的输入上下文生效；要立即生效可运行 `ibus restart`。config.json
-仍可直接手工编辑。
+**保存即生效**：引擎在每次进入联想前重读 config.json，已打开的输入上下文下一次
+选词就按新设置执行（2026-10-30 起与 macOS/Windows「每次选词前重读设置」同语义，
+无需 `ibus restart`；此前只在引擎启动时读一次，是文档与实现不符的遗留问题）。
+config.json 仍可直接手工编辑。
+
+**学习标记（不适用）**：macOS/Windows 候选窗对「被用户数据加权」的候选在文本后
+绘制绿色 `*`；ibus 面板端不适用——`IBusLookupTable` 的候选文本是唯一显示载体
+（同时用于无障碍朗读与上屏数据源），没有 macOS/Windows 那样的独立装饰绘制层，
+追加 `*` 会污染候选文本，且 ibus 上游未提供 per-item 装饰接口。这是平台机制
+差异，非遗漏；学习加权本身在 Linux 端照常生效（只影响排序）。
+
+**联想态 Shift+空格**：与普通空格同语义（选当前页第一个联想词上屏并继续联想），
+**不**切换全/半角标点——三端实测一致（macOS/Windows 的联想分支同样先消费空格、
+不判 Shift）。全/半角切换只在组词态 Shift+空格生效。
 
 ## 验证状态（2026-09-23，Docker linux/arm64 + ibus 1.5.29）
 

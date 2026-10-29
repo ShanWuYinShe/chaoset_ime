@@ -261,9 +261,14 @@ final class ChaosetController: IMKInputController {
         // 持有（2026-10-29 起），切换不再与 daemon 往返，状态随 punct 请求下发。
         // 非组词状态的空格照旧放行。切换后短暂提示当前状态（三端统一反馈）。
         // 2026-10-29 修复（输入事件审计 F1）：Shift+空格**只在输入法真正介入时**
-        // 才消费——组词中或联想中。此前无状态前提地吃掉任何应用里的 Shift+Space：
-        // 游戏里 Shift=冲刺/潜行、Space=跳，「按住 Shift 跳不起来」；全屏应用同理。
+        // 才消费。此前无状态前提地吃掉任何应用里的 Shift+Space：游戏里
+        // Shift=冲刺/潜行、Space=跳，「按住 Shift 跳不起来」；全屏应用同理。
         // 输入法没有任何理由拦截非组词状态的组合键，此时一律放行给宿主。
+        //
+        // 注意（2026-10-30 三端一致性整改）：联想态实际走不到本分支——上方
+        // 联想分支已把空格（含 Shift+空格）按「选当前页第一个联想词上屏」
+        // 消费，**不**切换全/半角。docs/ui-parity.md 已按实测行为修正；本分支
+        // 保留 associating 判定仅作防御，行为不变。
         if event.keyCode == 49, event.modifierFlags.contains(.shift),
            event.modifierFlags.contains(.command) == false,
            event.modifierFlags.contains(.control) == false,

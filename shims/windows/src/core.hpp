@@ -16,6 +16,11 @@ namespace chaoset {
 struct Candidate {
     std::string text;
     std::string syllables;  // 撇号分隔的音节串（如 xian'zai），联想续接需要
+    // 用户学习标记：daemon 的 Candidate.FromUser（JSON "from_user"）——
+    // 该候选被用户调频/词组/上下文数据加权。macOS 候选窗在文本后画绿色
+    // 「*」（CandidatePanel.Item.fromUser）；Windows 此前完全不解析该字段，
+    // 三端视觉不一致（2026-10-30 三端一致性审计 A3）。
+    bool fromUser = false;
 };
 
 struct Comp {
