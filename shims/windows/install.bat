@@ -55,6 +55,8 @@ REM default; exempt them so they can reach the daemon at 127.0.0.1:7949 and
 REM convert pinyin there (2026-10-29: Start menu could only type English).
 CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy >nul 2>&1
 CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.Search_cw5n1h2txyewy >nul 2>&1
+CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy >nul 2>&1
+CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy >nul 2>&1
 
 echo ==^> Preparing user data directory %LOCALAPPDATA%\Chaoset
 if not exist "%LOCALAPPDATA%\Chaoset" mkdir "%LOCALAPPDATA%\Chaoset"
@@ -96,6 +98,8 @@ taskkill /F /IM ctfmon.exe >nul 2>&1
 start "" "%WINDIR%\System32\ctfmon.exe"
 CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy >nul 2>&1
 CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.Search_cw5n1h2txyewy >nul 2>&1
+CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy >nul 2>&1
+CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy >nul 2>&1
 echo ==^> Removing dictionary copy
 if exist "%LOCALAPPDATA%\Chaoset\dict.tsv" del /Q "%LOCALAPPDATA%\Chaoset\dict.tsv"
 echo ==^> Uninstalled. Remove the Chaoset keyboard in Settings if it is still listed.

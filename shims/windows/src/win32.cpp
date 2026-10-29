@@ -19,6 +19,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <wingdi.h>
+#include <appmodel.h>
 #include <msctf.h>
 #include <objbase.h>
 
@@ -206,6 +207,29 @@ void diagStamp(char* out, int cap) {
              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 }
 
+// 本进程所属包的日志目录（仅打包进程有包身份）：
+// %LOCALAPPDATA%\Packages\<Family>\LocalState\Chaoset
+// AppContainer 宿主里这是唯一保证可写的位置（2026-10-29 开始菜单排障：
+// 此前 tsf.log 对这些宿主完全静默，无法区分「没激活」和「写了但被拒」）。
+static bool diagPackageLogDir(wchar_t* out, int cap) {
+    UINT32 len = 0;
+    const LONG rc = GetCurrentPackageFullName(&len, nullptr);
+    if (rc != ERROR_INSUFFICIENT_BUFFER) return false;  // 非打包进程 / 无包身份
+    std::wstring full(len, L'\0');
+    if (GetCurrentPackageFullName(&len, full.data()) != ERROR_SUCCESS) return false;
+    full.resize(len);
+    // FullName: Name_Version_Arch_ResourceId_PublisherHash → Family: Name_PublisherHash
+    const size_t first = full.find(L'_');
+    const size_t last = full.rfind(L'_');
+    if (first == std::wstring::npos || last == std::wstring::npos || last <= first) return false;
+    wchar_t base[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return false;
+    const std::wstring family = full.substr(0, first) + L"_" + full.substr(last + 1);
+    const int wr = swprintf(out, cap, L"%s\\Packages\\%s\\LocalState\\Chaoset", base, family.c_str());
+    return wr > 0 && wr < cap;
+}
+
 void diagWrite(const wchar_t* name, const char* text, int len) {
     if (text == nullptr || len <= 0) return;
     wchar_t path[MAX_PATH];
@@ -229,7 +253,19 @@ void diagWrite(const wchar_t* name, const char* text, int len) {
     // FILE_APPEND_DATA：WriteFile 始终写到文件末尾，多进程/多线程不会覆盖旧记录
     HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) {
+        // AppContainer 宿主（开始菜单/搜索框）对 %LOCALAPPDATA% 无写权限，
+        // 回退到本进程所属包的 LocalState——打包应用唯一保证可写的目录。
+        // 日志会分散在各宿主的包目录下：\Packages\<Family>\LocalState\Chaoset
+        wchar_t pkg[MAX_PATH];
+        if (!diagPackageLogDir(pkg, MAX_PATH)) return;
+        CreateDirectoryW(pkg, nullptr);
+        wchar_t p2[MAX_PATH];
+        if (swprintf(p2, MAX_PATH, L"%s\\%s", pkg, name) <= 0) return;
+        h = CreateFileW(p2, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return;
+    }
     DWORD written = 0;
     WriteFile(h, text, static_cast<DWORD>(len), &written, nullptr);
     CloseHandle(h);
@@ -1180,6 +1216,15 @@ public:
 
         if (s == INVALID_SOCKET) {
             lastFail_ = now;
+            // 每进程只记一次：区分「宿主没激活 TIP」（无任何日志）与
+            // 「激活了但连不上 daemon」（回环豁免未生效 / LPAC 拒绝）
+            static volatile LONG failLogged = 0;
+            if (InterlockedCompareExchange(&failLogged, 1, 0) == 0 && diagBudget()) {
+                char host[260];
+                diagHostName(host, static_cast<int>(sizeof(host)));
+                diagPrintf(L"tsf.log", "connect failed host=%s addr=%s:%d appcontainer=%d\n",
+                           host, host_.c_str(), port_, isAppContainer() ? 1 : 0);
+            }
             return false;
         }
         sock_ = s;
@@ -2339,6 +2384,11 @@ private:
                 composition_ = nullptr;
                 return;
             }
+            // 先按上一轮布局查光标再改文本：Firefox(Gecko) 对「本次会话刚
+            // 修改过的范围」布局未刷新，SetText 之后再查会失败或拿到旧值；
+            // 改文本前合成起点不变、文档布局有效，这一查才是可靠锚点
+            // （Chrome 同步布局，两次都能成功，后一次覆盖前一次）。
+            updateCaretFromRange(ctx, ec, range);
             const HRESULT hrText =
                 range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
             if (FAILED(hrText)) {
@@ -2373,6 +2423,10 @@ private:
             insert->Release();
             return;
         }
+        // 首次建合成前先锚定插入点：此处文档已布局完成（Firefox 对新合成
+        // 文本的布局要等会话结束后才刷新，合成后再查会失败），即便首键
+        // 也能贴住光标；合成建立后再查一次，成功则覆盖为更精确的值。
+        updateCaretFromRange(ctx, ec, range);
         ITfContextComposition* cc = nullptr;
         hr = ctx->QueryInterface(IID_ITfContextComposition, reinterpret_cast<void**>(&cc));
         if (FAILED(hr) || cc == nullptr) {

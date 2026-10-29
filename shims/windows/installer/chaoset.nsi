@@ -179,6 +179,9 @@ Section "MainSection" SEC01
     ; 未获豁免的宿主连接被立即拒绝，壳自动降级为英文透传，绝不阻塞。
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.Search_cw5n1h2txyewy'
+    ; TextInputHost（打包应用输入管线宿主）与 ShellExperienceHost（Win10 开始菜单）
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy'
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy'
 
     ; 准备数据目录并同步词库
     CreateDirectory "$LOCALAPPDATA\Chaoset"
@@ -232,6 +235,8 @@ Section "Uninstall"
     ; 移除安装时授予系统输入宿主的回环豁免
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.Search_cw5n1h2txyewy'
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy'
+    nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy'
 
     ; 反注册 TSF COM 组件
     ${If} ${RunningX64}
