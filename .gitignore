@@ -41,3 +41,6 @@ chaoset-userdict.json.tmp
 /chaoset-dictgen
 /chaoset-userdict
 /chaoset-engine
+# 工具编译产物（2026-10-30 曾被 git add -A 意外带入仓库，a0d4bcc）
+/checkgdi
+/checkworkflows
