@@ -229,6 +229,25 @@ bool isSystemDarkTheme() {
 
 // ---- 候选词悬浮窗：双缓冲原生 GDI 渲染、DPI 感知、光标跟随、圆角胶囊与 macOS 视觉一致 ----
 
+// 圆头几何笔（齿轮辐条用）。ExtCreatePen 的 plbrush 是必填的
+// LOGBRUSH*：gdi32 在用户态先读 lbStyle/lbColor 再进内核
+// （ReactOS win32ss/gdi/gdi32/objects/brush.c 同构），传 nullptr 就是
+// 空指针解引用。TSF DLL 在宿主进程内，这里崩 = 宿主程序直接退出。
+// 2026-10-29 Windows 候选窗每次打字只画出空框后进程崩溃的根因。
+// 笔创建失败时退回普通实心笔：样式可以差一点，空句柄绝不能 SelectObject。
+HPEN createRoundCapPen(int width, COLORREF color) {
+    LOGBRUSH lb{};
+    lb.lbStyle = BS_SOLID;
+    lb.lbColor = color;
+    lb.lbHatch = 0;
+    const DWORD w = static_cast<DWORD>(width > 0 ? width : 1);
+    HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_ENDCAP_ROUND, w, &lb, 0, nullptr);
+    if (pen == nullptr) {
+        pen = CreatePen(PS_SOLID, static_cast<int>(w), color);
+    }
+    return pen;
+}
+
 class CandidateWindow {
 public:
     CandidateWindow() = default;
@@ -596,26 +615,28 @@ private:
         for (const auto& item : items_) {
             if (item.isFirst) {
                 // 首选：Apple 风格高亮蓝胶囊
+                // GDI 对象必须先摘出 DC 再 DeleteObject：仍被 DC 持有期间
+                // DeleteObject 会失败并泄漏句柄，候选窗每次重绘都漏一个。
                 HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
-                SelectObject(memDC, pillBrush);
-                HPEN nullPen = CreatePen(PS_NULL, 0, 0);
-                SelectObject(memDC, nullPen);
+                HGDIOBJ prevBrush = SelectObject(memDC, pillBrush);
+                HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
                 RoundRect(memDC, item.pillRect.left, item.pillRect.top,
                           item.pillRect.right, item.pillRect.bottom,
                           scale(12, dpi), scale(12, dpi));
+                SelectObject(memDC, prevBrush);
+                SelectObject(memDC, prevPen);
                 DeleteObject(pillBrush);
-                DeleteObject(nullPen);
 
                 // 蓝胶囊内键帽：半透白单层填充，无边框
                 HBRUSH chipBrush = CreateSolidBrush(theme.highlightChipBg);
-                SelectObject(memDC, chipBrush);
-                HPEN chipPen = CreatePen(PS_NULL, 0, 0);
-                SelectObject(memDC, chipPen);
+                prevBrush = SelectObject(memDC, chipBrush);
+                prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
                 RoundRect(memDC, item.chipRect.left, item.chipRect.top,
                           item.chipRect.right, item.chipRect.bottom,
                           scale(6, dpi), scale(6, dpi));
+                SelectObject(memDC, prevBrush);
+                SelectObject(memDC, prevPen);
                 DeleteObject(chipBrush);
-                DeleteObject(chipPen);
 
                 // 数字：白色
                 SetTextColor(memDC, theme.highlightText);
@@ -632,13 +653,15 @@ private:
                 // 次选键帽：外边框 + 内部底色
                 HBRUSH chipBrush = CreateSolidBrush(theme.chipBg);
                 HPEN chipPen = CreatePen(PS_SOLID, 1, theme.chipBorder);
-                SelectObject(memDC, chipBrush);
-                SelectObject(memDC, chipPen);
+                HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
+                HGDIOBJ prevPen = chipPen != nullptr ? SelectObject(memDC, chipPen) : nullptr;
                 RoundRect(memDC, item.chipRect.left, item.chipRect.top,
                           item.chipRect.right, item.chipRect.bottom,
                           scale(6, dpi), scale(6, dpi));
+                SelectObject(memDC, prevBrush);
+                if (prevPen != nullptr) SelectObject(memDC, prevPen);
                 DeleteObject(chipBrush);
-                DeleteObject(chipPen);
+                if (chipPen != nullptr) DeleteObject(chipPen);
 
                 // 数字：深色 (深色模式下为白色)
                 SetTextColor(memDC, theme.chipDigit);
@@ -658,10 +681,11 @@ private:
         int divH = h * 55 / 100;
         int divY = (h - divH) / 2;
         HPEN divPen = CreatePen(PS_SOLID, 1, theme.divider);
-        SelectObject(memDC, divPen);
+        HGDIOBJ prevPen = divPen != nullptr ? SelectObject(memDC, divPen) : nullptr;
         MoveToEx(memDC, dividerX_, divY, nullptr);
         LineTo(memDC, dividerX_, divY + divH);
-        DeleteObject(divPen);
+        if (prevPen != nullptr) SelectObject(memDC, prevPen);
+        if (divPen != nullptr) DeleteObject(divPen);
 
         // 设置齿轮（分割线右侧、翻页箭头左侧）：**与 macOS 端完全相同的
         // 矢量算法**（中心圆环 r3.4/线宽1.8 + 8 齿辐条 4.6→7.2/线宽2
@@ -679,30 +703,30 @@ private:
             HBRUSH ringBrush = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
             HPEN ringPen = CreatePen(PS_SOLID, static_cast<int>(1.8 * u + 0.5), gearColor);
             HGDIOBJ oldBrush = SelectObject(memDC, ringBrush);
-            HGDIOBJ oldPen = SelectObject(memDC, ringPen);
+            HGDIOBJ oldPen = ringPen != nullptr ? SelectObject(memDC, ringPen) : nullptr;
             const double rr = 3.4 * u;
             Ellipse(memDC,
                     static_cast<int>(cx - rr + 0.5), static_cast<int>(cy - rr + 0.5),
                     static_cast<int>(cx + rr + 0.5), static_cast<int>(cy + rr + 0.5));
             // 8 齿辐条：PS_GEOMETRIC 圆头线帽
-            HPEN spokePen = ExtCreatePen(PS_GEOMETRIC | PS_ENDCAP_ROUND,
-                                         static_cast<DWORD>(2 * u + 0.5),
-                                         nullptr, 0, nullptr);
-            SelectObject(memDC, spokePen);
-            for (int i = 0; i < 8; ++i) {
-                const double a = i * 3.14159265358979 / 4.0;
-                const double dx = cos(a), dy = sin(a);
-                MoveToEx(memDC,
-                         static_cast<int>(cx + dx * 4.6 * u + 0.5),
-                         static_cast<int>(cy + dy * 4.6 * u + 0.5), nullptr);
-                LineTo(memDC,
-                       static_cast<int>(cx + dx * 7.2 * u + 0.5),
-                       static_cast<int>(cy + dy * 7.2 * u + 0.5));
+            HPEN spokePen = createRoundCapPen(static_cast<int>(2 * u + 0.5), gearColor);
+            if (spokePen != nullptr) {
+                SelectObject(memDC, spokePen);
+                for (int i = 0; i < 8; ++i) {
+                    const double a = i * 3.14159265358979 / 4.0;
+                    const double dx = cos(a), dy = sin(a);
+                    MoveToEx(memDC,
+                             static_cast<int>(cx + dx * 4.6 * u + 0.5),
+                             static_cast<int>(cy + dy * 4.6 * u + 0.5), nullptr);
+                    LineTo(memDC,
+                           static_cast<int>(cx + dx * 7.2 * u + 0.5),
+                           static_cast<int>(cy + dy * 7.2 * u + 0.5));
+                }
             }
             SelectObject(memDC, oldBrush);
-            SelectObject(memDC, oldPen);
-            DeleteObject(ringPen);
-            DeleteObject(spokePen);
+            if (oldPen != nullptr) SelectObject(memDC, oldPen);
+            if (ringPen != nullptr) DeleteObject(ringPen);
+            if (spokePen != nullptr) DeleteObject(spokePen);
         }
 
         // 翻页箭头
@@ -714,7 +738,7 @@ private:
         int chevY = (comp_.pageCount > 1) ? (h / 2 - scale(4, dpi)) : (h / 2);
 
         HPEN chevPen = CreatePen(PS_SOLID, scale(1, dpi) < 2 ? 1 : 2, theme.chevron);
-        SelectObject(memDC, chevPen);
+        prevPen = chevPen != nullptr ? SelectObject(memDC, chevPen) : nullptr;
         if (dirDown) {
             MoveToEx(memDC, chevX - arm, chevY - scale(2, dpi), nullptr);
             LineTo(memDC, chevX, chevY + scale(2, dpi));
@@ -724,7 +748,8 @@ private:
             LineTo(memDC, chevX, chevY - scale(2, dpi));
             LineTo(memDC, chevX + arm + 1, chevY + scale(2, dpi) + 1);
         }
-        DeleteObject(chevPen);
+        if (prevPen != nullptr) SelectObject(memDC, prevPen);
+        if (chevPen != nullptr) DeleteObject(chevPen);
 
         // 页码指示（多页时居中显示于 chevron 下方）
         if (comp_.pageCount > 1) {

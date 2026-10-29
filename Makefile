@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows package-linux package-windows package-macos package-all version check-version
+.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-win32-gdi package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -48,6 +48,14 @@ vet:
 	go vet ./...
 	$(MAKE) lint-workflows
 	$(MAKE) check-version
+	$(MAKE) check-win32-gdi
+
+# Windows 壳 GDI 调用契约：ExtCreatePen 的 plbrush 不能为空指针。
+# 2026-10-29 事故：v0.2.14 传 nullptr 导致 gdi32 空指针解引用，
+# 候选窗首帧渲染即带走宿主进程；Linux CI 没有 Windows 运行时，
+# 只能在源码层把这条契约固定住。详见 tools/check-win32-gdi.py。
+check-win32-gdi:
+	python3 tools/check-win32-gdi.py shims/windows/src
 
 # 校验 .github/workflows 的结构完整性。
 # 为什么需要它：2026-10-25 一次文本替换误删了两个 job 的头部声明，YAML 语法
