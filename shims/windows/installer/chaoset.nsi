@@ -59,14 +59,25 @@ RequestExecutionLevel admin
         ${EndIf}
     ${EndIf}
 
+    ; 永不中止原则（2026-10-29 用户要求）：SetOverwrite try 让 File 写失败
+    ; 只置错误标志，绝不弹「无法写入」框卡住安装。写不进（文件仍被后台
+    ; 程序映射）就写到 .new 并预约重启时改名顶替，安装照常走完，最后统一
+    ; 提示用户重启完成更新。
+    SetOverwrite try
     ClearErrors
     File "/oname=$INSTDIR\${FILE_NAME}" "${SRC_PATH}\${FILE_NAME}"
     ${If} ${Errors}
-        ; 极端保护：若仍有只读或锁定限制，写为 .new 并预约重启替换
+        ClearErrors
         File "/oname=$INSTDIR\${FILE_NAME}.new" "${SRC_PATH}\${FILE_NAME}"
-        Rename /REBOOTOK "$INSTDIR\${FILE_NAME}.new" "$INSTDIR\${FILE_NAME}"
-        SetRebootFlag true
+        ${If} ${Errors}
+            ; 连 .new 都写不进（磁盘/权限问题）：记录警告继续安装，不中断
+            DetailPrint "警告：${FILE_NAME} 写入失败，本次未更新该文件"
+        ${Else}
+            Rename /REBOOTOK "$INSTDIR\${FILE_NAME}.new" "$INSTDIR\${FILE_NAME}"
+            SetRebootFlag true
+        ${EndIf}
     ${EndIf}
+    SetOverwrite on
 !macroend
 
 Section "MainSection" SEC01
@@ -115,7 +126,11 @@ Section "MainSection" SEC01
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-cli.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-import.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
+    ; 图标非关键文件：同样不因占用中止
+    SetOverwrite try
+    ClearErrors
     File "..\resources\chaoset.ico"
+    SetOverwrite on
 
     ; 注册 TSF COM 组件（同时支持 64 位原生程序与 32 位 WOW64 程序）
     ${If} ${RunningX64}
