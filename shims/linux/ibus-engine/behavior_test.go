@@ -488,8 +488,9 @@ func TestModeToastOnShiftToggle(t *testing.T) {
 	e.ProcessKeyEvent(keysymShiftLeft, 50, 0) // press
 	e.ProcessKeyEvent(keysymShiftLeft, 50, ibusReleaseMask)
 	text, visible := fe.lastAuxiliary()
-	if !visible || text != "英文" {
-		t.Fatalf("切英文后应提示「英文」，实际 visible=%v text=%q", visible, text)
+	// 文案三端统一为「英文模式」（macOS/Windows 同口径；2026-10-29 审查）
+	if !visible || text != "英文模式" {
+		t.Fatalf("切英文后应提示「英文模式」，实际 visible=%v text=%q", visible, text)
 	}
 }
 
@@ -770,6 +771,108 @@ func TestAssociatePaging(t *testing.T) {
 	_, _ = e.ProcessKeyEvent(uint32('1'), 0, 0)
 	if got := fe.lastCommitText(); got != want.Text {
 		t.Fatalf("第 2 页数字 1 应选全局第 7 条 %q，实际上屏 %q", want.Text, got)
+	}
+}
+
+// TestAssociatePagingKeySets：联想态的翻页键集合必须与组词态完全一致——
+// - / =、[ / ]、PageUp / PageDown 六键都翻联想页并消费。
+//
+// 2026-10-29 三端一致性审查：联想态此前只认 - / =，其余键落到「退出联想 +
+// 透传」：文档滚动了而联想窗收起（Linux/Windows），macOS 更糟——不清理
+// associateCandidates 就穿到 passThrough，面板挂在屏幕上不消失。三端行为
+// 各不相同，这条测试锁死统一语义。
+func TestAssociatePagingKeySets(t *testing.T) {
+	tails := []string{"hao", "men", "de", "shuo", "kan", "xiang", "yao", "neng",
+		"hui", "qu", "lai", "zuo", "xie", "gei", "zhao", "wen", "ting", "jiao",
+		"dai", "ban", "pan", "wan", "tan", "man", "zhan", "guan", "chuan",
+		"zhuan", "duan", "ruan", "suan", "nuan", "luan", "kuan", "huan", "tuan",
+		"duo", "hai", "hei", "hun"}
+	var src strings.Builder
+	src.WriteString("你	ni	95\n")
+	for i, tail := range tails {
+		fmt.Fprintf(&src, "你%s	ni %s	%d\n", tail, tail, 90-i)
+	}
+	d, err := engine.ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	cases := []struct {
+		name   string
+		keyval uint32
+		next   bool
+	}{
+		{"=", uint32('='), true},
+		{"]", uint32(']'), true},
+		{"PageDown", keysymPageDown, true},
+		{"-", uint32('-'), false},
+		{"[", uint32('['), false},
+		{"PageUp", keysymPageUp, false},
+	}
+	for _, c := range cases {
+		fe := &fakeEmitter{}
+		e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
+		typeKeys(e, "ni")
+		_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+		if len(e.assoc) != 30 {
+			t.Fatalf("%s: 前置失败，联想应 30 条，实际 %d", c.name, len(e.assoc))
+		}
+		first, _ := fe.lastLookupCandidates()
+		handled, _ := e.ProcessKeyEvent(c.keyval, 0, 0)
+		if !handled {
+			t.Fatalf("%s: 联想态翻页键应被消费（此前会透传给宿主）", c.name)
+		}
+		if len(e.assoc) == 0 {
+			t.Fatalf("%s: 联想态翻页键不应退出联想", c.name)
+		}
+		got, _ := fe.lastLookupCandidates()
+		if c.next {
+			if len(got) == 0 || got[0] == first[0] {
+				t.Fatalf("%s: 应翻到下一页（首条 %q 未变）", c.name, first[0])
+			}
+		} else if len(got) == 0 || got[0] != first[0] {
+			t.Fatalf("%s: 首页按上一页键应保持首页（首条 %q → %q）", c.name, first[0], got[0])
+		}
+	}
+}
+
+// TestAssociatePanelArrowFlips：联想中面板翻页箭头（ibus PageUp/PageDown
+// 回调）必须翻**联想页**，不是翻不可见的组词页。
+// 2026-10-29 三端一致性审查：此前无条件翻组词页——联想窗挂着时点箭头
+// 纹丝不动（macOS 面板箭头在联想态走 associateFlip，Windows 同理）。
+func TestAssociatePanelArrowFlips(t *testing.T) {
+	tails := []string{"hao", "men", "de", "shuo", "kan", "xiang", "yao", "neng",
+		"hui", "qu", "lai", "zuo", "xie", "gei", "zhao", "wen", "ting", "jiao",
+		"dai", "ban", "pan", "wan", "tan", "man", "zhan", "guan", "chuan",
+		"zhuan", "duan", "ruan", "suan", "nuan", "luan", "kuan", "huan", "tuan",
+		"duo", "hai", "hei", "hun"}
+	var src strings.Builder
+	src.WriteString("你	ni	95\n")
+	for i, tail := range tails {
+		fmt.Fprintf(&src, "你%s	ni %s	%d\n", tail, tail, 90-i)
+	}
+	d, err := engine.ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
+	typeKeys(e, "ni")
+	_, _ = e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if len(e.assoc) != 30 {
+		t.Fatalf("前置失败，联想应 30 条，实际 %d", len(e.assoc))
+	}
+	first, _ := fe.lastLookupCandidates()
+	_ = e.PageDown()
+	if e.assocPage != 1 {
+		t.Fatalf("联想中 PageDown 回调应翻到联想第 2 页，assocPage=%d", e.assocPage)
+	}
+	got, _ := fe.lastLookupCandidates()
+	if len(got) == 0 || got[0] == first[0] {
+		t.Fatalf("联想中 PageDown 后应展示联想第 2 页（首条 %q 未变）", first[0])
+	}
+	_ = e.PageUp()
+	if e.assocPage != 0 {
+		t.Fatalf("联想中 PageUp 回调应回到联想第 1 页，assocPage=%d", e.assocPage)
 	}
 }
 

@@ -1935,8 +1935,16 @@ private:
                 clearAssociate();
                 return true;
             }
-            if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus)) {
-                flipAssociate(vk == kVkOemPlus);
+            // 联想翻页键：- / =、[ / ]、PageUp / PageDown——与组词态翻页
+            // 键集合一致（2026-10-29 三端一致性审查）。此前只认 - / =，
+            // 其余键落到「其余按键退出联想」：面板收起而按键透传给宿主
+            // （文档跟着滚动），与 macOS/Linux 行为各不相同。
+            if (!shift && (vk == kVkOemMinus || vk == kVkOemPlus ||
+                           vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
+                           vk == kVkPrior || vk == kVkNext)) {
+                const bool next = vk == kVkOemPlus || vk == kVkOemCloseBrackets ||
+                                  vk == kVkNext;
+                flipAssociate(next);
                 return true;
             }
             if (!shift && vk >= kVkFirstDigit && vk <= kVkLastDigit) {

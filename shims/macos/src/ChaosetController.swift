@@ -153,6 +153,16 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
+        // Ctrl+Backspace：类终端「删到行首」，组词中直接全部删除。
+        // Windows/Linux 壳都有这一项（清空全部拼音并消费按键），macOS 此前
+        // 缺失——同一个快捷键在三端行为不同（2026-10-29 三端一致性审查）。
+        if isComposing, mods.contains(.control),
+           event.keyCode == 51 || event.keyCode == 117 {
+            current = engine.reset()
+            refresh(client)
+            return true
+        }
+
         // 带 Command/Control/Option 的系统快捷键（如 Cmd+C/Cmd+V）一律放行
         if mods.contains(.command) || mods.contains(.control) || mods.contains(.option) {
             return passThrough(client)
@@ -195,8 +205,13 @@ final class ChaosetController: IMKInputController {
                 // 代价高；2026-10-28 用户反馈）
                 exitAssociate()
                 return true
-            } else if firstScalar >= 49, firstScalar <= 54,
+            } else if firstScalar >= 49, firstScalar <= 57,
                       let list = associateCandidates {
+                // 数字范围必须是 1-9 而不是 1-6：联想每页 6 条，但 7/8/9 属于
+                // 「越界序号」——必须进本分支后由下面的 exitAssociate() 收起
+                // 联想窗再透传。写成 1-6 时 7/8/9 落不到任何分支、直接穿到
+                // 下面：数字进了文档而联想窗挂在屏幕上不消失（Windows/Linux
+                // 都按 1-9 判定，三端不一致，2026-10-29 审查发现）。
                 // 数字选当前页内的联想词（联想已翻页化，见 associateFlip）
                 let pick = associatePage * Self.associatePageSize + Int(firstScalar) - 49
                 if pick < list.count {
@@ -217,10 +232,17 @@ final class ChaosetController: IMKInputController {
             } else if firstScalar >= 97, firstScalar <= 122 {
                 // 字母键：退出联想，进入正常组词
                 exitAssociate()
-            } else if firstScalar == 45 || firstScalar == 61 {
-                // - / =：联想翻页（2026-10-28 联想翻页化：候选上限 30 条，
-                // 单页 6 条；翻页取代此前的「单页无翻页、收起放行」语义）
-                associateFlip(next: firstScalar == 61, client: client)
+            } else if firstScalar == 45 || firstScalar == 61 ||
+                      event.keyCode == 116 || event.keyCode == 121 ||
+                      firstScalar == 91 || firstScalar == 93 {
+                // 联想翻页键：- / =、[ / ]、PageUp / PageDown——与组词态
+                // 翻页键集合完全一致（2026-10-29 三端一致性审查）。
+                // 此前只认 - / =，其余键落不到任何分支：associateCandidates
+                // 不清理就穿到下面的 passThrough，文档滚动了而联想窗还挂在
+                // 屏幕上（三端行为各不相同，Linux 改为翻页、Windows 收起）。
+                let next = firstScalar == 61 || firstScalar == 93 ||
+                    event.keyCode == 121
+                associateFlip(next: next, client: client)
                 return true
             }
         }

@@ -354,10 +354,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.sess.Reset()
 		e.hidePreedit()
 		e.hideLookupTable()
+		// 提示文案三端统一为「英文模式」/「中文模式」：macOS
+		// （ChaosetController）与 Windows（win32.cpp）都是这个口径，
+		// 此前 Linux 单独用「英文」/「中文」，同一操作在三端文案不同
+		// （2026-10-29 三端一致性审查）。
 		if e.enMode {
-			e.showModeToast("英文")
+			e.showModeToast("英文模式")
 		} else {
-			e.showModeToast("中文")
+			e.showModeToast("中文模式")
 		}
 		return false, nil
 	}
@@ -414,9 +418,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			}
 			e.exitAssociate()
 			return true, nil
-		case keyval == '-' || keyval == '=':
-			// 联想翻页（边界页保持当前页）
-			e.flipAssociate(keyval == '=')
+		case keyval == '-' || keyval == '=' || keyval == '[' || keyval == ']':
+			// 联想翻页（边界页保持当前页）。键集合与组词态翻页键完全一致：
+			// - / =、[ / ]（2026-10-29 三端一致性审查）。
+			e.flipAssociate(keyval == '=' || keyval == ']')
+			return true, nil
+		case keyval == keysymPageUp || keyval == keysymPageDown:
+			// 联想中 Page Up / Down 翻联想页——与 - / = / [ / ] 同语义，
+			// 对齐 macOS/Windows 壳（2026-10-29 三端一致性审查）。
+			// 此前该键落到 default「退出联想 + 透传」，文档跟着滚动；
+			// 下方 switch 里那条「Page Up/Down 翻联想页」分支因此永远
+			// 不可达（死代码），现改由这里处理。
+			e.flipAssociate(keyval == keysymPageDown)
 			return true, nil
 		case isDigit:
 			// 全局序号 = 当前页 × 每页条数 + 页内序号（候选表展示的是切片）
@@ -569,10 +582,8 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 
 	case keyval == keysymPageUp || keyval == keysymPageDown:
 		// 联想中：Page Up / Down 翻联想页（与 - / = 同语义）
-		if len(e.assoc) > 0 {
-			e.flipAssociate(keyval == keysymPageDown)
-			return true, nil
-		}
+		// 联想态已在函数前半段的联想分支里 return（见上方 switch），
+		// 这里只处理组词态，无需再判 e.assoc。
 		// Page Up / Page Down 键盘翻页（组词中且有候选时消费；空组词放行
 		// 原键）。残缺组词（无候选）时对齐 macOS/Windows 壳：先清空组词再
 		// 放行——此前静默吞键，宿主文档不滚动，用户感知为「按键失灵」。
@@ -924,6 +935,13 @@ func (e *ibusEngine) SetCapabilities(caps uint32) *godbus.Error        { return 
 func (e *ibusEngine) PageUp() *godbus.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// 联想中：面板翻页箭头翻联想页（与 macOS 面板 onPageUp、联想态翻页键
+	// 同一语义）。2026-10-29 修复：此前无条件翻组词页——联想挂着时端点
+	// 箭头翻的是不可见的组词候选，联想窗纹丝不动（三端不一致）。
+	if len(e.assoc) > 0 {
+		e.flipAssociate(false)
+		return nil
+	}
 	comp, _ := e.sess.PrevPage()
 	e.refresh(comp)
 	return nil
@@ -932,6 +950,11 @@ func (e *ibusEngine) PageUp() *godbus.Error {
 func (e *ibusEngine) PageDown() *godbus.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// 联想中：翻联想页（见 PageUp 注释）
+	if len(e.assoc) > 0 {
+		e.flipAssociate(true)
+		return nil
+	}
 	comp, _ := e.sess.NextPage()
 	e.refresh(comp)
 	return nil
