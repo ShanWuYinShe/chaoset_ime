@@ -1406,10 +1406,10 @@ private:
         RegisterClassExW(&wc);
         // ModeToast 同候选窗：TOPMOST 保持（纯提示 ignoresMouseEvents
         // 本就不拦截点击；系统模态菜单弹出时位于最上），层级决策见候选窗
-        // WS_EX_TRANSPARENT：toast 无任何交互元素，整窗点击穿透——绝不
-        // 挡住下层应用的一次点击（2026-10-29 鼠标零干扰审计）
+        // 鼠标零特例（2026-10-29 用户要求）：toast 就是一个普通提示窗，
+        // 不做穿透/置顶之外的特殊处理
         hwnd_ = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             cls.c_str(), L"ChaosetModeToast",
             WS_POPUP, 0, 0, 0, 0,
             nullptr, nullptr, hinst, nullptr);
@@ -1866,9 +1866,14 @@ private:
 
         if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) return true;
 
-        // 组词中不再探测；未组词且后台服务不可达（含 AppContainer 未获
-        // 回环豁免的宿主）一律放行按键，绝不抢占或吞掉宿主按键
+        // 只在需要打字时介入（2026-10-29 用户要求）：未组词状态下，先判
+        // 该键是否与组词相关——字母（不带 Shift）或标点才有「开始组词/出
+        // 中文标点」的可能，其余键（数字/导航/F键/空格等）立即放行，且绝不
+        // 触碰连接状态；内容键才允许尝试 daemon 连接（服务不可达仍放行）。
         if (!isComposing()) {
+            const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter && !shiftActive()) ||
+                                  keyPunctChar(vk, shiftActive()) != nullptr;
+            if (!relevant) return false;
             if (!const_cast<TcpTransport&>(transport_).isConnected() &&
                 !const_cast<TcpTransport&>(transport_).ensureConnected()) {
                 return false;
@@ -2770,10 +2775,6 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             tip_->flipPage(dirDown);
         }
     }
-    // 鼠标零干扰（2026-10-29）：空白区（条内非候选/齿轮/翻页处）点击不再
-    // 静默吞掉，而是收起候选窗。跨进程无法做逐像素穿透，收起是等价语义——
-    // 用户的下一次点击必然落到下层应用。
-    hide();
 }
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
