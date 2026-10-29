@@ -1,3 +1,7 @@
+; Unicode 安装器：本脚本含大量中文，必须以 Unicode 编译。makensis 3.x 默认
+; 按 ANSI 读取无 BOM 脚本，中文会整体乱码且产物在非中文 locale 的 Windows 上
+; 界面乱码（2026-10-29 打包验证时发现）。
+Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 
