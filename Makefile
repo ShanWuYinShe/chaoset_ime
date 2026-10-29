@@ -153,6 +153,9 @@ package-linux:
 	# 此前只带 558 条的 dict_seed.tsv 而引擎默认要 dict_common.tsv，是装完
 	# 「引擎启动即退出」的直接原因。
 	cp data/dict_common.tsv dist/chaoset-linux-x86_64/data/dict.tsv
+	# 设置窗口：ibus-setup 的 <setup> 入口（三端一致的设置窗口，2026-10-29）
+	install -d dist/chaoset-linux-x86_64/setup
+	install -m755 shims/linux/setup/chaoset-setup.py dist/chaoset-linux-x86_64/setup/
 	cp shims/linux/install.sh dist/chaoset-linux-x86_64/
 	cp shims/linux/README.md dist/chaoset-linux-x86_64/
 	cp LICENSE dist/chaoset-linux-x86_64/LICENSE
@@ -173,6 +176,7 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/icons; \
 		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
+		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup.py dist/deb_staging/usr/share/chaoset/chaoset-setup.py; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
 		sed -e '/^#/d' -e "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \

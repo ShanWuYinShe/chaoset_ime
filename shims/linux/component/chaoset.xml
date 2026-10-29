@@ -18,6 +18,9 @@
       <rank>99</rank>
       <symbol>中</symbol>
       <icon>chaoset</icon>
+      <!-- 设置窗口：ibus-setup 显示「首选项」按钮并运行本命令（GTK3 设置窗，
+           与 macOS SettingsWindow / Windows 设置窗口三端同构） -->
+      <setup>/usr/share/chaoset/chaoset-setup.py</setup>
     </engine>
   </engines>
 </component>

@@ -100,6 +100,10 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // WM_PAINT 会跳到已卸载内存，崩掉 explorer / TextInputHost）。
  volatile LONG g_liveCandidateWindows = 0;
 
+// 存活中的设置窗口数量。设置窗口过程同样指向本 DLL 代码，开着时禁止
+// 宿主 FreeLibrary（与候选窗同一防卸载机制，见 DllCanUnloadNow）。
+ volatile LONG g_liveSettingsWindows = 0;
+
 std::string envOr(const char* name, const std::string& fallback) {
     char buf[256] = {0};
     DWORD n = GetEnvironmentVariableA(name, buf, sizeof(buf));
@@ -2597,24 +2601,15 @@ private:
     // TrackPopupMenu 前需 SetForegroundWindow（否则菜单点外部不消失，
     // MSDN KB135788 的经典要求），返回后补发 WM_NULL 复位。
 public:
-    void showSettingsMenu() {
-        HMENU menu = CreatePopupMenu();
-        const bool assoc = RegGetAssociate();
-        AppendMenuW(menu, MF_STRING | (assoc ? MF_CHECKED : 0), 1, L"启用词组联想");
-        POINT pt = caretPos_;
-        if (pt.x == 0 && pt.y == 0) GetCursorPos(&pt);
-        pt.y += caretLineHeight_ > 0 ? caretLineHeight_ : 20;
-        HWND owner = candidateWnd_.hwnd();
-        if (owner != nullptr) SetForegroundWindow(owner);
-        int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                                 pt.x, pt.y, 0, owner, nullptr);
-        DestroyMenu(menu);
-        if (owner != nullptr) PostMessageW(owner, WM_NULL, 0, 0);
-        if (cmd == 1) {
-            const bool now = !assoc;
-            RegSetAssociate(now);
-            if (!now) clearAssociate(); // 关闭时立即收起联想窗
-        }
+    // 设置窗口入口（三端一致的独立设置窗口，macOS SettingsWindow 同构；
+    // 定义在文件后部 CandidateWindow::onLButtonDown 附近）。
+    void showSettingsWindow();
+
+    // 设置窗口开关回调：写注册表并即时生效——关闭时立即收起联想窗
+    // （与 macOS SettingsWindow 的 chaosetAssociateDisabled 通知语义一致）
+    void applyAssociateSetting(bool on) {
+        RegSetAssociate(on);
+        if (!on) clearAssociate();
     }
 
 private:
@@ -2675,7 +2670,7 @@ private:
 void CandidateWindow::onLButtonDown(int x, int y) {
     POINT pt{ x, y };
     if (tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
-        tip_->showSettingsMenu();
+        tip_->showSettingsWindow();
         return;
     }
     for (const auto& it : items_) {
@@ -2694,6 +2689,134 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             tip_->flipPage(dirDown);
         }
     }
+}
+
+// ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
+//
+// 候选栏齿轮 → 独立设置窗口。此前这里是 TrackPopupMenu 的单个勾选项，
+// 用户要求与 macOS 一致的专门设置窗口。布局与 macOS 逐项对应：标题
+// 「Chaoset 设置」/ 分组「输入行为」/「词组联想」开关 / 说明文字 /
+// 底部「更多设置将在后续版本提供」。开关即时写 HKCU\Software\Chaoset
+// 并收起联想窗（applyAssociateSetting）。窗口单例：已打开则前置。
+static HWND g_settingsWnd = nullptr;       // 单例句柄
+static HFONT g_settingsFont = nullptr;     // 正文 9pt
+static HFONT g_settingsFontBold = nullptr; // 分组标题 9pt Bold
+
+static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    ChaosetTIP* tip = reinterpret_cast<ChaosetTIP*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_COMMAND:
+            if (LOWORD(wParam) == 101 && HIWORD(wParam) == BN_CLICKED) {
+                const bool on = SendMessageW(reinterpret_cast<HWND>(lParam),
+                                             BM_GETCHECK, 0, 0) == BST_CHECKED;
+                if (tip != nullptr) tip->applyAssociateSetting(on);
+            }
+            return 0;
+        case WM_CTLCOLORSTATIC: {
+            // 说明文字 / 底部提示用次级文本灰（macOS secondaryLabel 对应）
+            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+            if (id == 102 || id == 103 || id == 104) {
+                HDC dc = reinterpret_cast<HDC>(wParam);
+                SetTextColor(dc, RGB(110, 110, 115));
+                SetBkMode(dc, TRANSPARENT);
+                return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+            }
+            break;
+        }
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            if (g_settingsFont != nullptr) { DeleteObject(g_settingsFont); g_settingsFont = nullptr; }
+            if (g_settingsFontBold != nullptr) { DeleteObject(g_settingsFontBold); g_settingsFontBold = nullptr; }
+            g_settingsWnd = nullptr;
+            InterlockedDecrement(&g_liveSettingsWindows);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void ChaosetTIP::showSettingsWindow() {
+    // 单例：已打开则前置（macOS makeKeyAndOrderFront 同语义）
+    if (g_settingsWnd != nullptr && IsWindow(g_settingsWnd)) {
+        SetForegroundWindow(g_settingsWnd);
+        return;
+    }
+
+    const std::wstring cls = windowClassName(L"ChaosetSettingsWndClass", g_hInst);
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = SettingsWndProc;
+    wc.hInstance = g_hInst;
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(static_cast<INT_PTR>(COLOR_WINDOW + 1));
+    wc.lpszClassName = cls.c_str();
+    RegisterClassExW(&wc);
+
+    int dpi = 96;
+    if (HDC dc = GetDC(nullptr)) {
+        dpi = GetDeviceCaps(dc, LOGPIXELSY);
+        ReleaseDC(nullptr, dc);
+    }
+    auto scalePx = [dpi](int px) { return MulDiv(px, dpi, 96); };
+
+    // 居中于光标所在显示器的工作区（macOS center 同语义）
+    POINT anchor = caretPos_;
+    if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+    const DWORD exStyle = WS_EX_DLGMODALFRAME;
+    RECT fr = {0, 0, scalePx(400), scalePx(220)};
+    AdjustWindowRectEx(&fr, style, FALSE, exStyle);
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &mi)) {
+        const int w = fr.right - fr.left, h = fr.bottom - fr.top;
+        x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
+        y = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - h) / 2;
+    }
+
+    HWND wnd = CreateWindowExW(exStyle, cls.c_str(), L"Chaoset 设置", style,
+                               x, y, fr.right - fr.left, fr.bottom - fr.top,
+                               nullptr, nullptr, g_hInst, nullptr);
+    if (wnd == nullptr) return;
+    SetWindowLongPtrW(wnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    g_settingsWnd = wnd;
+    InterlockedIncrement(&g_liveSettingsWindows);
+
+    g_settingsFont = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    g_settingsFontBold = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text,
+                       int cx, int cy, int cw, int ch, int id, HFONT font) {
+        HWND c = CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
+                                 scalePx(cx), scalePx(cy), scalePx(cw), scalePx(ch), wnd,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
+        if (c != nullptr && font != nullptr) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        return c;
+    };
+    // 与 macOS SettingsWindow 逐项对应：分组「输入行为」→「词组联想」开关
+    // → 说明文字 → 底部「更多设置将在后续版本提供」
+    makeCtl(L"Button", BS_GROUPBOX, L"输入行为", 16, 14, 368, 92, 100, g_settingsFontBold);
+    HWND chk = makeCtl(L"Button", BS_AUTOCHECKBOX | WS_TABSTOP, L"词组联想",
+                       34, 40, 140, 20, 101, g_settingsFont);
+    SendMessageW(chk, BM_SETCHECK, RegGetAssociate() ? BST_CHECKED : BST_UNCHECKED, 0);
+    makeCtl(L"Static", 0, L"选词上屏后展示可续接的词组候选；", 34, 68, 340, 18, 102, g_settingsFont);
+    makeCtl(L"Static", 0, L"关闭后不再弹出联想候选。", 34, 86, 340, 18, 103, g_settingsFont);
+    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 34, 124, 340, 18, 104, g_settingsFont);
+
+    HANDLE icoBig = LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                               GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    if (icoBig != nullptr) SendMessageW(wnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icoBig));
+    HANDLE icoSmall = LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+    if (icoSmall != nullptr) SendMessageW(wnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icoSmall));
+
+    ShowWindow(wnd, SW_SHOWNORMAL);
+    SetForegroundWindow(wnd);
 }
 
 // ---- 类厂 ----
@@ -2735,6 +2858,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
         // （reserved != nullptr）时无需处理。
         UnregisterClassW(windowClassName(L"ChaosetCandidateWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetModeToastWndClass", hinstDLL).c_str(), hinstDLL);
+        UnregisterClassW(windowClassName(L"ChaosetSettingsWndClass", hinstDLL).c_str(), hinstDLL);
     }
     return TRUE;
 }
@@ -2765,6 +2889,7 @@ STDAPI DllCanUnloadNow() {
     // TextInputHost。因此有残留窗口时也返回 S_FALSE（不可卸载）。
     if (g_liveObjects != 0) return S_FALSE;
     if (g_liveCandidateWindows != 0) return S_FALSE;
+    if (g_liveSettingsWindows != 0) return S_FALSE;
     return S_OK;
 }
 

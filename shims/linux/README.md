@@ -35,9 +35,13 @@ Page Up/Down 候选翻页（候选表随页刷新；残缺组词时清空组词�
 词组并经候选表展示（**上限 30 条，本地分页每页 6 条**），数字/小键盘选当前页
 候选（继续联想）、空格结束联想透传、回车/Esc 收起、字母退出联想进入正常组词、
 `-`/`=` 与 Page Up/Down 在联想中翻页。
-**设置项**：config.json 可配 `"associate": false` 关闭词组联想（默认开启）——
-Linux 候选表由 ibus 面板渲染、无法加自定义按钮，设置入口是配置文件（macOS/
-Windows 在候选栏右侧有齿轮入口）。
+**设置项**：「词组联想」在三端一致的**设置窗口**里配置（2026-10-29 起）：
+ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
+运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
+Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 /
+说明文字）。窗口写 config.json 的 `"associate"`（缺省开启，显式 false 关闭），
+保存后对新开的输入上下文生效；要立即生效可运行 `ibus restart`。config.json
+仍可直接手工编辑。
 
 ## 验证状态（2026-09-23，Docker linux/arm64 + ibus 1.5.29）
 
@@ -77,8 +81,9 @@ Windows 在候选栏右侧有齿轮入口）。
 - **引擎与应用图标**：component XML 的 `<engine>` 声明 `<icon>chaoset</icon>`，
   对应 `icons/hicolor/{48x48,128x128,256x256,scalable}/apps/chaoset.{png,svg}`。
   全套图标统一为跨端新品牌标识：极光电光蓝渐变底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），在桌面环境与应用列表均保持高辨识度与现代质感。
-- **设置入口**：`<engine>` 还支持 `<setup>命令</setup>`，ibus-setup 会据此显示该引擎的
-  Preferences 按钮；系统不会自动生成配置项，当前引擎也没有配置界面。
+- **设置入口**：`<engine>` 的 `<setup>` 指向 `/usr/share/chaoset/chaoset-setup.py`，
+  ibus-setup 据此显示「首选项」按钮，点开即三端同构的设置窗口（GTK3）。
+  系统不会自动生成配置项，设置项由该脚本读写 config.json。
 - 已核对 IBus 上游源码（`ibusenginedesc.c` 的 XML 解析字段表，2026-10-22）：
   `icon`、`setup`、`symbol` 等元素均受支持。
 

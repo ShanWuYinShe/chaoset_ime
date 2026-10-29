@@ -26,6 +26,7 @@ uninstall() {
         "$PREFIX_LOCAL_BIN/chaoset-engine"
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
+  # 设置窗口脚本随 PREFIX_SHARE 目录一起删除（chaoset-setup.py 在其下）
   # 图标按 hicolor 目录逐个删（不整目录删，避免误删系统图标）
   find "$ICON_ROOT/hicolor" -path '*apps/chaoset.*' -delete 2>/dev/null || true
   echo "==> 已卸载。重启 ibus-daemon 生效：ibus restart"
@@ -54,9 +55,16 @@ if [ ! -f data/dict.tsv ]; then
   exit 1
 fi
 
+# 设置窗口脚本（ibus-setup 的 <setup> 入口；GTK3 设置窗与 macOS/Windows 同构）
+if [ -f setup/chaoset-setup.py ]; then
+  echo "==> 安装设置窗口到 $PREFIX_SHARE"
+  install -m755 setup/chaoset-setup.py "$PREFIX_SHARE/chaoset-setup.py"
+fi
+
 echo "==> 安装二进制到 $PREFIX_BIN"
 install -d "$PREFIX_BIN"
 install -d "$PREFIX_LOCAL_BIN"
+install -d "$PREFIX_SHARE"
 for b in chaosetd chaoset-cli chaoset-import chaoset-userdict chaoset-engine; do
   install -m 0755 "bin/$b" "$PREFIX_BIN/$b"
   ln -sf "$PREFIX_BIN/$b" "$PREFIX_LOCAL_BIN/$b" 2>/dev/null || true

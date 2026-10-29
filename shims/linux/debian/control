@@ -9,6 +9,8 @@ Installed-Size: 15000
 # 必须是 Depends 而非 Recommends：引擎依赖 ibus 的 session bus 与组件目录，
 # 纯 Recommends 允许 apt 在无桌面的机器上装完这个包却永远跑不起来（2026-10-26 修复）。
 Depends: ibus
+# 设置窗口（ibus-setup 的 <setup> 入口）用 GTK3 渲染；桌面 ibus 环境通常已带
+Recommends: python3-gi
 Homepage: https://github.com/ShanWuYinShe/chaoset_ime
 Description: Chaoset Pinyin IME - 傻瓜式现代拼音输入法
  Chaoset 是一个极简、开箱即用的现代中文拼音输入法。

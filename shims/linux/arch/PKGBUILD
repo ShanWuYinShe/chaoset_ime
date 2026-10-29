@@ -8,6 +8,7 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
 depends=('ibus')
+optdepends=('python3-gi: 设置窗口（ibus-setup 首选项入口）')
 makedepends=('go')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
@@ -43,6 +44,9 @@ package() {
 
     # IBus component
     install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
+
+    # 设置窗口（ibus-setup 的 <setup> 入口，GTK3）
+    install -Dm755 shims/linux/setup/chaoset-setup.py "$pkgdir/usr/share/chaoset/chaoset-setup.py"
 
     # Icons
     install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"
