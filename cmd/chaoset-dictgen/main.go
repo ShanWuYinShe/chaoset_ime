@@ -278,7 +278,22 @@ func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, charFreqPath,
 			continue
 		}
 		if mainSource[e.word+"\x00"+strings.Join(e.sylls, " ")] {
-			skipped++ // 主源已有该词条（避免输出重复行）
+			// 主源已有该词条：**取较大词频**而非跳过。
+			// 2026-10-29 修复：此前直接 skipped++，extra 想提升已有词条词频时
+			// 静默无效——支付宝/朋友圈在 jieba 里原始词频只有 3（压缩后 9 分），
+			// extra 补录也进不去。extra 是手工维护的权威补充，语义就是
+			// 「这个词很重要，至少该有这个分」。scaleFreq 单调，比较压缩值
+			// 等价于比较原始计数。
+			extraFreq := scaleFreq(e.freq, maxFreq)
+			for i := range entries {
+				if entries[i].word == e.word && strings.Join(entries[i].sylls, " ") == strings.Join(e.sylls, " ") {
+					if extraFreq > entries[i].freq {
+						entries[i].freq = extraFreq
+					}
+					break
+				}
+			}
+			skipped++
 			continue
 		}
 		entries = append(entries, entry{word: e.word, sylls: e.sylls, freq: scaleFreq(e.freq, maxFreq)})

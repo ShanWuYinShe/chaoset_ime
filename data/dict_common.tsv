@@ -1556,6 +1556,7 @@
 建造	jian zao	60
 开发区	kai fa qu	60
 强大	qiang da	60
+微信	wei xin	60
 微笑	wei xiao	60
 心情	xin qing	60
 志愿	zhi yuan	60
@@ -3045,6 +3046,7 @@
 推行	tui xing	55
 携带	xie dai	55
 摆脱	bai tuo	55
+支付宝	zhi fu bao	55
 支援	zhi yuan	55
 支配	zhi pei	55
 收到	shou dao	55
@@ -3919,6 +3921,7 @@
 曾	ceng	53
 有益	you yi	53
 有趣	you qu	53
+朋友圈	peng you quan	53
 服役	fu yi	53
 望	wang	53
 期	qi	53
@@ -4190,6 +4193,7 @@
 乃至	nai zhi	52
 乡镇	xiang zhen	52
 乡长	xiang chang	52
+二维码	er wei ma	52
 二者	er zhe	52
 产业化	chan ye hua	52
 亲	qin	52
@@ -4233,6 +4237,7 @@
 党内	dang nei	52
 全力	quan li	52
 全民	quan min	52
+公众号	gong zhong hao	52
 六部	liu bu	52
 兵部	bing bu	52
 内功	nei gong	52
@@ -4374,6 +4379,7 @@
 尊严	zun yan	52
 小声	xiao sheng	52
 小弟	xiao di	52
+小程序	xiao cheng xu	52
 少林寺	shao lin si	52
 少量	shao liang	52
 尔	er	52
@@ -4429,8 +4435,10 @@
 打仗	da zhang	52
 打电话	da dian hua	52
 执法	zhi fa	52
+扫码	sao ma	52
 扬州	yang zhou	52
 找	zhao	52
+抖音	dou yin	52
 抗议	kang yi	52
 报仇	bao chou	52
 拉开	la kai	52
@@ -4539,6 +4547,7 @@
 灯光	deng guang	52
 炸弹	zha dan	52
 点滴	dian di	52
+点赞	dian zan	52
 热点	re dian	52
 燃料	ran liao	52
 牙齿	ya chi	52
@@ -4569,6 +4578,7 @@
 省区	sheng qu	52
 真理	zhen li	52
 着手	zhuo shou	52
+短视频	duan shi pin	52
 石	shi	52
 矿山	kuang shan	52
 磕头	ke tou	52
@@ -5806,6 +5816,7 @@
 笔记本	bi ji ben	50
 笼罩	long zhao	50
 管道	guan dao	50
+粉丝	fen si	50
 精巧	jing qiao	50
 精度	jing du	50
 糊涂	hu tu	50
@@ -5864,6 +5875,7 @@
 衡量	heng liang	50
 衣衫	yi shan	50
 表决权	biao jue quan	50
+表情包	biao qing bao	50
 被动	bei dong	50
 西门	xi men	50
 要么	yao me	50
@@ -5959,6 +5971,7 @@
 驱逐	qu zhu	50
 驻华	zhu hua	50
 驾驶	jia shi	50
+验证码	yan zheng ma	50
 高压	gao ya	50
 高声	gao sheng	50
 高尚	gao shang	50
@@ -6061,6 +6074,7 @@
 傍晚	bang wan	49
 催促	cui cu	49
 元帅	yuan shuai	49
+充电宝	chong dian bao	49
 光线	guang xian	49
 入学率	ru xue lv	49
 全国性	quan guo xing	49
@@ -6194,6 +6208,7 @@
 堆积	dui ji	49
 增产	zeng chan	49
 复兴	fu xing	49
+外卖	wai mai	49
 外国人	wai guo ren	49
 多样	duo yang	49
 大举	da ju	49
@@ -6210,6 +6225,7 @@
 天赋	tian fu	49
 夫	fu	49
 失	shi	49
+头像	tou xiang	49
 头儿	tou er	49
 头陀	tou tuo	49
 头领	tou ling	49
@@ -6293,6 +6309,7 @@
 忍受	ren shou	49
 快步	kuai bu	49
 快照	kuai zhao	49
+快递员	kuai di yuan	49
 怀孕	huai yun	49
 怀抱	huai bao	49
 怕	pa	49
@@ -6312,10 +6329,12 @@
 成员国	cheng yuan guo	49
 戒指	jie zhi	49
 战乱	zhan luan	49
+截图	jie tu	49
 房	fang	49
 房县	fang xian	49
 所指	suo zhi	49
 所致	suo zhi	49
+手机号	shou ji hao	49
 手足	shou zu	49
 打发	da fa	49
 打工	da gong	49
@@ -6509,6 +6528,7 @@
 疑惑	yi huo	49
 病变	bing bian	49
 痛快	tong kuai	49
+登录	deng lu	49
 白衣	bai yi	49
 皇位	huang wei	49
 皇太极	huang tai ji	49
@@ -6558,10 +6578,13 @@
 缓和	huan he	49
 缺口	que kou	49
 缺点	que dian	49
+网购	wang gou	49
 罗	luo	49
 罗田	luo tian	49
 美味	mei wei	49
+美团	mei tuan	49
 群	qun	49
+群聊	qun liao	49
 翌年	yi nian	49
 翰林院	han lin yuan	49
 老山	lao shan	49
@@ -6623,6 +6646,7 @@
 请问	qing wen	49
 谈	tan	49
 豌豆	wan dou	49
+账号	zhang hao	49
 质地	zhi di	49
 贫苦	pin ku	49
 资	zi	49
@@ -7751,6 +7775,7 @@
 卑职	bei zhi	47
 卓越	zhuo yue	47
 南口	nan kou	47
+卡顿	ka dun	47
 卧室	wo shi	47
 卫生部	wei sheng bu	47
 危难	wei nan	47
@@ -7945,6 +7970,7 @@
 弥漫	mi man	47
 弱点	ruo dian	47
 弹劾	tan he	47
+弹幕	dan mu	47
 归于	gui yu	47
 归属	gui shu	47
 归纳	gui na	47
@@ -8082,6 +8108,7 @@
 明教	ming jiao	47
 星	xing	47
 星云	xing yun	47
+昵称	ni cheng	47
 显出	xian chu	47
 显露	xian lu	47
 晚	wan	47
@@ -8192,6 +8219,7 @@
 烟雾	yan wu	47
 烧饼	shao bing	47
 热心	re xin	47
+热搜	re sou	47
 焕然一新	huan ran yi xin	47
 照明	zhao ming	47
 照样	zhao yang	47
@@ -8309,6 +8337,7 @@
 而立	er li	47
 耗费	hao fei	47
 耳光	er guang	47
+耳机	er ji	47
 职	zhi	47
 职员	zhi yuan	47
 肝脏	gan zang	47
@@ -8393,6 +8422,7 @@
 身形	shen xing	47
 身心	shen xin	47
 车间	che jian	47
+转发	zhuan fa	47
 转念	zhuan nian	47
 转运	zhuan yun	47
 轻型	qing xing	47
@@ -9390,7 +9420,6 @@
 身躯	shen qu	46
 身高	shen gao	46
 车厢	che xiang	46
-转发	zhuan fa	46
 转折	zhuan zhe	46
 转而	zhuan er	46
 轮番	lun fan	46
@@ -9645,6 +9674,7 @@
 元旦	yuan dan	45
 元老	yuan lao	45
 充沛	chong pei	45
+充电器	chong dian qi	45
 先天	xian tian	45
 入手	ru shou	45
 入选	ru xuan	45
@@ -9682,6 +9712,7 @@
 制度化	zhi du hua	45
 制式	zhi shi	45
 制服	zhi fu	45
+刷屏	shua ping	45
 刺客	ci ke	45
 刻	ke	45
 前行	qian xing	45
@@ -9692,6 +9723,7 @@
 劝阻	quan zu	45
 办公厅	ban gong ting	45
 功课	gong ke	45
+加载	jia zai	45
 动乱	dong luan	45
 动植物	dong zhi wu	45
 动脉	dong mai	45
@@ -9724,6 +9756,7 @@
 卫国	wei guo	45
 危及	wei ji	45
 即日	ji ri	45
+卸载	xie zai	45
 压	ya	45
 压低	ya di	45
 原地	yuan di	45
@@ -9797,6 +9830,7 @@
 地雷	di lei	45
 坐骑	zuo qi	45
 坟墓	fen mu	45
+垃圾分类	la ji fen lei	45
 埃塞俄比亚	ai sai e bi ya	45
 堂堂	tang tang	45
 堵塞	du se	45
@@ -10021,6 +10055,7 @@
 推迟	tui chi	45
 推销	tui xiao	45
 提督	ti du	45
+摄像头	she xiang tou	45
 摄政王	she zheng wang	45
 摩洛哥	mo luo ge	45
 撞击	zhuang ji	45
@@ -10041,6 +10076,7 @@
 散	san	45
 数百	shu bai	45
 文凭	wen ping	45
+断网	duan wang	45
 新婚	xin hun	45
 新教	xin jiao	45
 新郎	xin lang	45
@@ -10137,6 +10173,7 @@
 水乡	shui xiang	45
 水手	shui shou	45
 水温	shui wen	45
+水电费	shui dian fei	45
 汉堡	han bao	45
 汗水	han shui	45
 污水	wu shui	45
@@ -10249,7 +10286,6 @@
 病理	bing li	45
 痛	tong	45
 瘫痪	tan huan	45
-登录	deng lu	45
 白人	bai ren	45
 白布	bai bu	45
 皇	huang	45
@@ -10269,6 +10305,7 @@
 相望	xiang wang	45
 相邻	xiang lin	45
 省市	sheng shi	45
+看不懂	kan bu dong	45
 看守	kan shou	45
 眼皮	yan pi	45
 眼眶	yan kuang	45
@@ -10340,9 +10377,11 @@
 统辖	tong xia	45
 继而	ji er	45
 维	wei	45
+缓存	huan cun	45
 编纂	bian zuan	45
 缘由	yuan you	45
 缝隙	feng xi	45
+网速	wang su	45
 罪	zui	45
 罪犯	zui fan	45
 羊毛	yang mao	45
@@ -10435,6 +10474,7 @@
 试卷	shi juan	45
 试探	shi tan	45
 诗	shi	45
+话费	hua fei	45
 该当	gai dang	45
 该是	gai shi	45
 详情	xiang qing	45
@@ -11057,6 +11097,7 @@
 开启	kai qi	44
 开挖	kai wa	44
 开花	kai hua	44
+开黑	kai hei	44
 弓箭	gong jian	44
 引力	yin li	44
 引桥	yin qiao	44
@@ -11065,6 +11106,7 @@
 张贴	zhang tie	44
 张飞	zhang fei	44
 弯腰	wan yao	44
+弹窗	dan chuang	44
 强占	qiang zhan	44
 强有力	qiang you li	44
 归结	gui jie	44
@@ -11154,6 +11196,8 @@
 换取	huan qu	44
 换届	huan jie	44
 换成	huan cheng	44
+掉帧	diao zhen	44
+掉线	diao xian	44
 掌心	zhang xin	44
 掌柜	zhang gui	44
 排挤	pai ji	44
@@ -11275,6 +11319,7 @@
 歌唱	ge chang	44
 正经	zheng jing	44
 死尸	si shi	44
+死机	si ji	44
 残忍	can ren	44
 残留	can liu	44
 殿下	dian xia	44
@@ -11406,6 +11451,7 @@
 看书	kan shu	44
 真主	zhen zhu	44
 真情	zhen qing	44
+真棒	zhen bang	44
 真菌	zhen jun	44
 眼角	yan jiao	44
 着陆	zhuo lu	44
@@ -11498,6 +11544,7 @@
 编织	bian zhi	44
 罐头	guan tou	44
 网球	wang qiu	44
+网课	wang ke	44
 美国国会	mei guo guo hui	44
 美容	mei rong	44
 老乡	lao xiang	44
@@ -11551,6 +11598,7 @@
 萎缩	wei suo	44
 萤石	ying shi	44
 蒸汽	zheng qi	44
+蓝屏	lan ping	44
 虔诚	qian cheng	44
 蚕豆	can dou	44
 蚯蚓	qiu yin	44
@@ -13378,6 +13426,7 @@
 发誓	fa shi	42
 发音	fa yin	42
 叔父	shu fu	42
+取关	qu guan	42
 取决于	qu jue yu	42
 取向	qu xiang	42
 取缔	qu di	42
@@ -15810,7 +15859,6 @@
 老老实实	lao lao shi shi	41
 老莱子	lao lai zi	41
 考究	kao jiu	41
-耳机	er ji	41
 耶律大石	ye lv da shi	41
 耸立	song li	41
 联网	lian wang	41
@@ -17757,7 +17805,6 @@
 绿林	lu lin	40
 缅怀	mian huai	40
 缓	huan	40
-缓存	huan cun	40
 缘	yuan	40
 缠绵	chan mian	40
 缩减	suo jian	40
@@ -17947,7 +17994,6 @@
 诗作	shi zuo	40
 诗意	shi yi	40
 诗经	shi jing	40
-话费	hua fei	40
 详见	xiang jian	40
 说	shui	40
 说	yue	40
@@ -18416,6 +18462,7 @@
 侵	qin	39
 俗语	su yu	39
 保重	bao zhong	39
+信不过	xin bu guo	39
 俩	lia	39
 俩	liang	39
 俭朴	jian pu	39
@@ -19509,6 +19556,7 @@
 翻腾	fan teng	39
 老外	lao wai	39
 老婆婆	lao po po	39
+老抽	lao chou	39
 老爹	lao die	39
 老祖宗	lao zu zong	39
 老远	lao yuan	39
@@ -19697,6 +19745,7 @@
 赞誉	zan yu	39
 赢利	ying li	39
 赴	fu	39
+赶不上	gan bu shang	39
 赶往	gan wang	39
 起哄	qi hong	39
 趁早	chen zao	39
@@ -27466,7 +27515,6 @@
 算不了	suan bu liao	35
 管弦乐	guan xian yue	35
 类比	lei bi	35
-粉丝	fen si	35
 粉尘	fen chen	35
 粒状	li zhuang	35
 粗放	cu fang	35
@@ -30091,7 +30139,6 @@
 败北	bai bei	34
 败类	bai lei	34
 账	zhang	34
-账号	zhang hao	34
 货源	huo yuan	34
 质押	zhi ya	34
 质检	zhi jian	34
@@ -30656,7 +30703,6 @@
 保暖	bao nuan	33
 保甲	bao jia	33
 保驾	bao jia	33
-信不过	xin bu guo	33
 信号处理	xin hao chu li	33
 信笺	xin jian	33
 倍加	bei jia	33
@@ -33175,7 +33221,6 @@
 加封	jia feng	32
 加权	jia quan	32
 加班费	jia ban fei	32
-加载	jia zai	32
 劣	lie	32
 劣迹	lie ji	32
 动因	dong yin	32
@@ -47345,7 +47390,6 @@
 春夏秋冬	chun xia qiu dong	27
 春茶	chun cha	27
 春风得意	chun feng de yi	27
-昵称	ni cheng	27
 晋朝	jin chao	27
 晏	yan	27
 晚婚	wan hun	27
@@ -55242,7 +55286,6 @@
 即景	ji jing	24
 卷面	juan mian	24
 卷须	juan xu	24
-卸载	xie zai	24
 厂址	chang zhi	24
 历下区	li xia qu	24
 历城	li cheng	24
@@ -60828,7 +60871,6 @@
 复返	fu fan	22
 夏利	xia li	22
 夏州	xia zhou	22
-外卖	wai mai	22
 外径	wai jing	22
 外派	wai pai	22
 外溢	wai yi	22
@@ -64092,7 +64134,6 @@
 戒毒所	jie du suo	21
 戕	qiang	21
 戕	zang	21
-截图	jie tu	21
 房中术	fang zhong shu	21
 房产证	fang chan zheng	21
 房地	fang di	21
@@ -68520,7 +68561,6 @@
 儋州	dan zhou	19
 儿童村	er tong cun	19
 元戎	yuan rong	19
-充电器	chong dian qi	19
 光亮度	guang liang du	19
 光伏	guang fu	19
 光杆	guang gan	19
@@ -69740,7 +69780,6 @@
 武鸣县	wu ming xian	19
 死乞白赖	si qi bai lai	19
 死囚牢	si qiu lao	19
-死机	si ji	19
 死沉	si chen	19
 死而复生	si er fu sheng	19
 死记	si ji	19
@@ -85652,7 +85691,6 @@
 二声	er sheng	11
 二婚头	er hun tou	11
 二滩水电站	er tan shui dian zhan	11
-二维码	er wei ma	11
 于都县	yu du xian	11
 云吞	yun tun	11
 云泥之别	yun ni zhi bie	11
@@ -95715,7 +95753,6 @@
 制程	zhi cheng	9
 制造业者	zhi zao ye zhe	9
 制酸剂	zhi suan ji	9
-刷屏	shua ping	9
 刷新纪录	shua xin ji lu	9
 刷耻	shua chi	9
 刹海	sha hai	9
@@ -104795,7 +104832,6 @@
 弹剑作歌	tan jian zuo ge	9
 弹劾案	tan he an	9
 弹子锁	dan zi suo	9
-弹幕	dan mu	9
 弹拨乐	tan bo yue	9
 弹斤估两	tan jin gu liang	9
 弹珠	dan zhu	9
@@ -108563,7 +108599,6 @@
 掉头鼠窜	diao tou shu cuan	9
 掉皮	diao pi	9
 掉秤	diao cheng	9
-掉线	diao xian	9
 掉膘	diao biao	9
 掉臂不顾	diao bi bu gu	9
 掉舌鼓唇	diao she gu chun	9
@@ -109313,7 +109348,6 @@
 攫为己有	jue wei ji you	9
 攫夺	jue duo	9
 攫戾执猛	jue li zhi meng	9
-支付宝	zhi fu bao	9
 支分族解	zhi fen zu jie	9
 支分节解	zhi fen jie jie	9
 支吾其词	zhi wu qi ci	9
@@ -111770,7 +111804,6 @@
 朋侪	peng chai	9
 朋克	peng ke	9
 朋党比周	peng dang bi zhou	9
-朋友圈	peng you quan	9
 朋比作奸	peng bi zuo jian	9
 朋辈	peng bei	9
 朋驰	peng chi	9
@@ -120132,7 +120165,6 @@
 看一看	kan yi kan	9
 看不上	kan bu shang	9
 看不出	kan bu chu	9
-看不懂	kan bu dong	9
 看不清	kan bu qing	9
 看不见	kan bu jian	9
 看人眉眼	kan ren mei yan	9
@@ -120179,7 +120211,6 @@
 真影	zhen ying	9
 真数	zhen shu	9
 真本事	zhen ben shi	9
-真棒	zhen bang	9
 真烈	zhen lie	9
 真爱	zhen ai	9
 真独简贵	zhen du jian gui	9
@@ -123904,7 +123935,6 @@
 老弱	lao ruo	9
 老戏骨	lao xi gu	9
 老成见到	lao cheng jian dao	9
-老抽	lao chou	9
 老拙	lao zhuo	9
 老景	lao jing	9
 老有所终	lao you suo zhong	9
@@ -129130,7 +129160,6 @@
 赵尔丰	zhao er feng	9
 赵州茶	zhao zhou cha	9
 赵忠尧	zhao zhong yao	9
-赶不上	gan bu shang	9
 赶不上趟	gan bu shang tang	9
 赶任务	gan ren wu	9
 赶先进	gan xian jin	9
@@ -135643,7 +135672,6 @@
 验查	yan cha	9
 验核	yan he	9
 验讫	yan qi	9
-验证码	yan zheng ma	9
 验钞机	yan chao ji	9
 骍	xing	9
 骏发	jun fa	9

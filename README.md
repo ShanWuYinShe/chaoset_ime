@@ -311,14 +311,24 @@ TSV，每行三列（`#` 开头为注释）：
 仓库自带 `data/dict_common.tsv`（内置常用词库），是 daemon 与测试台的默认词库；
 `data/dict_seed.tsv` 退化为演示/回归用的小词库（数百条，跑测试与容器验证时够用）。
 
-当前这份的实测规模：**143,824 条 / 3.0 MB**，词频区间 **6–99**（不是 1–99——jieba
-最低频的词经对数压缩后落在 6，最高频的「了/在/是」为 99）。按词长分布：1 字 11,578、
-2 字 72,994、3 字 21,696、4 字 36,452、5 字 775、6 字 329。
+当前这份的实测规模：**145,262 条 / 3.0 MB**，词频区间 **1–99**。按词长分布：
+1 字 13,834、2 字 72,677、3 字 21,600、4 字 36,049、5 字 774、6 字 328。
 
-该文件**由工具生成，禁止手工编辑**。生成源是三个上游数据文件（均 **MIT**，不随仓库分发）：
+词频来源：**多字词用 jieba**（对词组频率可靠），**单字用 Jun Da 现代汉语字频
+与 jieba 融合**（jieba 的单字词频是分词口径，生僻人名用字虚高——灏 2196 > 豪
+1182 这类倒挂会让生僻字抢占候选前排，详见 `cmd/chaoset-dictgen` 的
+`parseCharFrequency` 注释）。另有口语助词小幅补偿（吗/呢/吧 等在书面语料里
+被低估，否则「在吗」这类口语组合合成不出来）。
 
-- jieba 词频表 `dict.txt`（每行「词 词频 词性」）：
+该文件**由工具生成，禁止手工编辑**。生成源是四个上游数据文件（均 **MIT** 或
+Apache-2.0，不随仓库分发）：
+
+- jieba 词频表 `dict.txt`（每行「词 词频 词性」，**多字词**词频）：
   <https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt>
+- Jun Da 现代汉语字频表 `hanzi_db.csv`（**单字**字频排名，修 jieba 单字虚高）：
+  <https://github.com/ruddfawcett/hanziDB.csv>
+- Rime essay 语料 `essay.txt`（可选 `-corpus`，字频表缺省时的回退校正）：
+  <https://github.com/rime/essay>
 - phrase-pinyin-data 的 `large_pinyin.txt`（每行「词: pīn yīn」，词语拼音）：
   <https://raw.githubusercontent.com/mozillazg/phrase-pinyin-data/master/large_pinyin.txt>
 - pinyin-data 的 `pinyin.txt`（单字读音，`U+4E00: yī,yí,yì  # 一` 格式，补多音字）：
@@ -328,6 +338,7 @@ TSV，每行三列（`#` 开头为注释）：
 
 ```sh
 go run ./cmd/chaoset-dictgen -jieba dict.txt \
+  -charfreq hanzi_db.csv -corpus essay.txt \
   -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv
 ```
 
@@ -344,7 +355,9 @@ go run ./cmd/chaoset-dictgen -jieba dict.txt \
   该函数内部**逐音节**做 `IsSyllable` 校验，任一首节非法即返回 nil、整条丢弃
   （与热词导入走同一套规则，不把脏数据塞进词库）；
 - **拼音音节数必须等于字数**，不等就丢弃（避免「西安」配成单音节这类错配）；
-- jieba 原始词频按对数压缩映射到 **1–99**（单调、可复现），保证常用词压过生僻字；
+- **多字词**：jieba 原始词频按对数压缩映射到 1–99（单调、可复现）；
+- **单字**：Jun Da 字频排名与 jieba 词频融合折算（几何平均，另给口语助词
+  小幅补偿），jieba 里生僻人名用字的虚高分被语料排名压回；
 - 输出按词排序，**同一输入重复运行逐字节一致**（幂等，由 `TestGenIdempotent` 兜底）。
 
 文件头注释同样记录了来源 URL、许可与再生成命令；换了上游数据请重新生成而不是手改。

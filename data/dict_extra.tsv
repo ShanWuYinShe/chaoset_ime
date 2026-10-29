@@ -21,3 +21,62 @@
 紫外线	zi wai xian	300
 老抽	lao chou	200
 信不过	xin bu guo	200
+# ---- 现代数字生活高频词（2026-10-30 补录）----
+# jieba 语料较老（分词词典），智能手机时代的日常词大面积缺失
+# （审计实测 92 个现代高频词缺 28 个）。词频按日常口语频率估定，
+# 参考锚点：手机 4789→62 分、电脑 3427→59 分。
+微信	wei xin	4000
+支付宝	zhi fu bao	2000
+朋友圈	peng you quan	1500
+公众号	gong zhong hao	1200
+小程序	xiao cheng xu	1200
+二维码	er wei ma	1200
+扫码	sao ma	1200
+点赞	dian zan	1200
+短视频	duan shi pin	1200
+表情包	biao qing bao	1000
+抖音	dou yin	1200
+美团	mei tuan	800
+充电宝	chong dian bao	800
+快递员	kuai di yuan	800
+头像	tou xiang	800
+群聊	qun liao	800
+粉丝	fen si	1000
+验证码	yan zheng ma	1000
+截图	jie tu	800
+登录	deng lu	800
+账号	zhang hao	800
+密码	mi ma	800
+耳机	er ji	600
+手机号	shou ji hao	800
+私信	si xin	600
+昵称	ni cheng	600
+转发	zhuan fa	600
+评论	ping lun	600
+收藏	shou cang	600
+网购	wang gou	800
+外卖	wai mai	800
+弹幕	dan mu	600
+卡顿	ka dun	600
+热搜	re sou	600
+流量	liu liang	800
+套餐	tao can	600
+话费	hua fei	500
+网速	wang su	500
+缓存	huan cun	500
+加载	jia zai	500
+卸载	xie zai	500
+刷屏	shua ping	500
+摄像头	she xiang tou	500
+充电器	chong dian qi	500
+水电费	shui dian fei	500
+垃圾分类	la ji fen lei	500
+蓝屏	lan ping	400
+掉帧	diao zhen	400
+断网	duan wang	500
+死机	si ji	400
+弹窗	dan chuang	400
+网课	wang ke	400
+开黑	kai hei	400
+掉线	diao xian	400
+取关	qu guan	300
