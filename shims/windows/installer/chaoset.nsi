@@ -81,6 +81,16 @@ Section "MainSection" SEC01
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
     Sleep 300
 
+    ; 系统输入宿主自上次安装起就一直映射着旧 ChaosetIME.dll：LoadLibrary
+    ; 句柄不带 FILE_SHARE_DELETE，既不能删也不能改名（2026-10-29 实机升级
+    ; 报「无法写入 ChaosetIME.dll」的根因）。这些宿主由系统按需自动重启，
+    ; 强停无感；explorer 不动（用户桌面）。
+    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
+    nsExec::Exec 'taskkill /F /IM TextInputHost.exe'
+    nsExec::Exec 'taskkill /F /IM SearchHost.exe'
+    nsExec::Exec 'taskkill /F /IM StartMenuExperienceHost.exe'
+    Sleep 800
+
     ; 检查是否有正在运行的应用锁定了输入法 DLL（如用户先前打开的记事本、浏览器或聊天软件）
     ${If} ${FileExists} "$INSTDIR\ChaosetIME.dll"
         ClearErrors
@@ -215,6 +225,12 @@ Section "MainSection" SEC01
     ; 开始菜单快捷方式
     CreateDirectory "$SMPROGRAMS\Chaoset"
     CreateShortcut "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk" "$INSTDIR\uninstall.exe"
+
+    ; 仍有进程（后台驻留应用等）占用 DLL 时走的是 .new + 重启替换预约，
+    ; 必须明确告知用户重启完成更新，避免误以为装好了实际还是旧版
+    ${If} ${RebootFlag}
+        MessageBox MB_OK|MB_ICONINFORMATION "部分文件当前被后台程序占用，已预约重启替换：请重启电脑以完成本次更新（重启前输入法仍可正常使用旧版）。"
+    ${EndIf}
 SectionEnd
 
 Section "Uninstall"
