@@ -22,8 +22,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/csv"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"math"
 	"os"
 	"sort"
@@ -55,31 +58,51 @@ func main() {
 	extraPath := flag.String("extra", "", "补充词表 TSV 路径（词\t拼音\t词频 1..99；补录词频表漏收的常用词组，如真好/难得）")
 	corpusPath := flag.String("corpus", "", "真实语料词频表路径（行格式：词	次数；用于校正 jieba 中"+
 		"「不成词语素」的虚高词频，如 灏 2196 / 岃 1849 本应排在 豪/仁 之后。缺省不校正）")
+	charFreqPath := flag.String("charfreq", "", "单字字频表 CSV 路径（Jun Da 现代汉语字频，"+
+		"列含 frequency_rank,character；**单字词频以此为准**，替代 jieba 分词词典里"+
+		"不可靠的单字词频。缺省时退回 jieba 单字词频）")
 	out := flag.String("o", "", "输出 TSV 路径（必填）")
 	flag.Parse()
 	if *jiebaPath == "" || *pinyinPath == "" || *out == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *corpusPath, *out); err != nil {
+	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *corpusPath, *charFreqPath, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, outPath string) error {
+func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, charFreqPath, outPath string) error {
 	rawFreqs, err := parseJieba(jiebaPath)
 	if err != nil {
 		return err
 	}
 	// 真实语料（可选）：用于把「语料零记录」的单字压到最低档，修正 jieba
 	// 分词词典里生僻字虚高的词频（详见 corpusAdjustedFreq 注释）。
+	// 注：启用 -charfreq 后单字走字频表，corpus 只影响多字词（影响很小）。
 	var corpus map[string]int
 	if corpusPath != "" {
 		corpus, err = parseCorpusFreq(corpusPath)
 		if err != nil {
 			return err
 		}
+	}
+	// jieba 单字最大词频：融合时用于归一化 jieba 分量。
+	maxSingleFreq := 1
+	for _, wf := range rawFreqs {
+		if len([]rune(wf.word)) == 1 && wf.freq > maxSingleFreq {
+			maxSingleFreq = wf.freq
+		}
+	}
+	// 单字字频（Jun Da）：为 nil 时退回 jieba 单字词频。
+	var charRank map[rune]int
+	if charFreqPath != "" {
+		charRank, err = parseCharFrequency(charFreqPath)
+		if err != nil {
+			return err
+		}
+		log.Printf("字频表已加载：%d 个字", len(charRank))
 	}
 	phrasePinyin, err := parsePhrasePinyin(pinyinPath)
 	if err != nil {
@@ -181,7 +204,18 @@ func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, outPath strin
 		}
 		// 多音字：每个读音各生成一条词条（同词不同拼音是合法数据，
 		// 由 (词,拼音) 唯一性保证不重复）。
-		adjFreq := corpusAdjustedFreq(word, freq, corpus)
+		// 单字：改用 Jun Da 字频排名折算，绕开 jieba 分词词典里不可靠的
+		// 单字词频（详见 parseCharFrequency 注释）。多字词仍用 jieba。
+		adjFreq := freq
+		if charRank != nil && len([]rune(word)) == 1 {
+			rank, ok := charRank[[]rune(word)[0]]
+			if !ok {
+				rank = 1 << 20 // 字频表未收录 = 极生僻
+			}
+			adjFreq = fuseCharFreqRune([]rune(word)[0], freq, rank, maxSingleFreq)
+		} else {
+			adjFreq = corpusAdjustedFreq(word, freq, corpus)
+		}
 		// 多音字：首个读音是拼音表给的主读音（最常用），其余为次读音。
 		// 所有读音共享同一词频会让次读音与主读音同分，进而造假候选——
 		// 例：『没』有 me/mei/mo 三个读音，若都记 79 分，「怎没」就会被
@@ -189,15 +223,33 @@ func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, outPath strin
 		// 变成「怎没(17)」）。次读音按 1/4 降权：仍可打出（查 zang→藏、
 		// jiao→觉 这类主读音之外的常用字不受影响，它们本就是该字的主读音），
 		// 但不会抢占常见词的候选位。
+		// 单字走字频表时 adjFreq 已是 1..99 量纲，不能再过 scaleFreq
+		//（那是对 jieba 原始计数做的对数压缩，二次压缩会把上限压到 30 出头）。
+		fromCharTable := charRank != nil && len([]rune(word)) == 1
 		for i, sylls := range readings {
 			f := adjFreq
 			if i > 0 {
-				f = adjFreq / 4
-				if f < 1 {
-					f = 1
+				// 次读音降权不能太狠，否则常用字的次读音打不出来：此前取 1/4 时
+				// 长(chang)=12、重(chong)=11、都(du)=13，被同拼音下 30-90 个候选
+				// 挤出首页（实测 6/11 常用多音字缺失）。改为 1/2 且下限 20：
+				// 保证落在可见候选区，仍低于主读音，不会让「怎没」这类次读音
+				// 组合顶掉真词。
+				f = (adjFreq + 1) / 2
+				// 下限 40：融合字频后常用字主读音多在 60-90，次读音取半后约 30-45，
+				// 但窄拼音（chang/chong/du/huan）有 30-90 个候选，低于 40 排不进前 6。
+				// 40 是实测能覆盖 11/11 常用多音字的最低值。
+				if f < 40 {
+					f = 40
+				}
+				if f > adjFreq {
+					f = adjFreq
 				}
 			}
-			entries = append(entries, entry{word: word, sylls: sylls, freq: scaleFreq(f, maxFreq)})
+			freqOut := f
+			if !fromCharTable {
+				freqOut = scaleFreq(f, maxFreq)
+			}
+			entries = append(entries, entry{word: word, sylls: sylls, freq: freqOut})
 		}
 	}
 
@@ -570,6 +622,178 @@ func corpusAdjustedFreq(word string, jiebaFreq int, corpus map[string]int) int {
 	return jiebaFreq
 }
 
+// parseCharFrequency 读取 Jun Da 现代汉语字频表（hanzi_db.csv），返回
+// 「字 → 频率排名」（1 = 最常用）。
+//
+// 为什么单字不能用 jieba 的词频（2026-10-29 词库质量审计）：
+// jieba dict.txt 是**分词词典**，其单字词频反映的是「该字在分词语料里
+// 独立成词的程度」，与「该字作为汉字有多常用」不是一回事。大量生僻字被
+// 标成不成词语素（g/zg）却因出现在人名中拿到虚高分，实测倒挂：
+//
+//	灏 2196 > 豪 1182        （灏 = 人名用字，豪 = 常用字）
+//	岃 1849 > 仁 1173
+//	粬 1457 > 驱 1320 / 屈 1744
+//
+// 后果是输入 hao 时「灏」排在「豪」前面、输入 ren 时「岃」排在「仁」前面
+// （实测 de/le/wo/qu/lai/ren/hao 等窄拼音前 6 位都有这类字）。
+//
+// Jun Da 的字频表基于 2,580 万字真实语料，对上述 8 组倒挂案例全部给出
+// 正确排序（灏 #5030 / 岃 未收录 / 粬 未收录 vs 豪 #1513 / 仁 #1360）。
+// **多字词仍用 jieba**——它对词组频率是可靠的（工作 66367 vs 成语 3）。
+func parseCharFrequency(path string) (map[rune]int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开字频表 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	out := make(map[rune]int, 10000)
+	rc := csv.NewReader(f)
+	rc.FieldsPerRecord = -1
+	header, err := rc.Read()
+	if err != nil {
+		return nil, fmt.Errorf("读取字频表表头失败: %w", err)
+	}
+	// 定位 frequency_rank 与 character 列（不依赖列顺序）
+	rankCol, charCol := -1, -1
+	for i, h := range header {
+		switch strings.TrimSpace(h) {
+		case "frequency_rank":
+			rankCol = i
+		case "character":
+			charCol = i
+		}
+	}
+	if rankCol < 0 || charCol < 0 {
+		return nil, fmt.Errorf("字频表 %s 缺少 frequency_rank/character 列", path)
+	}
+	for {
+		rec, err := rc.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			continue // 个别行格式异常不影响整体
+		}
+		if rankCol >= len(rec) || charCol >= len(rec) {
+			continue
+		}
+		rank, convErr := strconv.Atoi(strings.TrimSpace(rec[rankCol]))
+		if convErr != nil || rank <= 0 {
+			continue
+		}
+		runes := []rune(strings.TrimSpace(rec[charCol]))
+		if len(runes) == 1 {
+			out[runes[0]] = rank
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("字频表 %s 没有有效条目", path)
+	}
+	return out, nil
+}
+
+// charRankToFreq 把字频排名映射为压缩词频（1..99），与 scaleFreq 同一量纲。
+//
+// 映射方式：用排名在常见字区间内做对数插值——排名 1 得 99，排名 3500
+// （通用规范汉字表一级字表边界）得 30，排名 9000 得 6，未收录得 1。
+// 这样常用字之间保留区分度（的 99 / 一 98 / 是 98 …… 好 83），而排到
+// 5000 名之后的生僻字自然落到低分档，不会挤占常见字的候选位。
+func charRankToFreq(rank int, total int) int {
+	if rank <= 0 {
+		return 1
+	}
+	const topFreq = 99
+	const bottomFreq = 1
+	end := total
+	if end < 2 {
+		end = 2
+	}
+	if rank <= 1 {
+		return topFreq
+	}
+	if rank >= end {
+		return bottomFreq
+	}
+	t := math.Log(float64(rank)) / math.Log(float64(end))
+	return int(math.Round(float64(topFreq) - t*float64(topFreq-bottomFreq)))
+}
+
+// fuseCharFreq 把「jieba 单字词频」与「Jun Da 字频排名」融合成最终词频。
+//
+// 为什么必须融合而不是二选一（2026-10-29 实测）：
+//
+//   - 只用 jieba：生僻字虚高（灏 2196 > 豪 1182、岃 1849 > 仁 1173），
+//     因为它统计的是「分词语料里独立成词的程度」，人名用字被误计为高频。
+//   - 只用 Jun Da：口语助词被系统性低估（吗/呢/吧/啊 都排在 400 名之后），
+//     因为该表基于 2,580 万字**书面语**，聊天口语不在其中。实测 1,618 个字
+//     在两个来源间分歧巨大，「在吗」这类口语组合会合成错词（在马）。
+//
+// 融合方式：两个来源各归一化到 0..1 后取几何平均——
+//   - jieba 分量：log(1+freq) / log(1+maxFreq)，压缩幂律长尾；
+//   - 排名分量：1 - log(1+rank)/log(1+20000)，排名越小越高。
+//
+// 几何平均的特性是**任一分量低就整体低**（惩罚虚高与冷僻），
+// 但不会让单一来源的偏差主导结果。
+//
+// 校准（实测）：豪 0.367 > 灏 0.280 ✓；仁 0.374 > 岃 0.000 ✓；
+// 浩 0.346 > 蒿 0.272 ✓；呢 0.547 > 尼 0.448 ✓；吧 0.530 > 巴 0.475 ✓。
+// oralParticleBoost 是口语助词/语气词的定向补偿幅度。
+//
+// 为什么需要（2026-10-29 实测）：Jun Da 字频基于 2,580 万字**书面语**，
+// 聊天与口语不在其中，「吗/呢/吧/啊/嘛/呀」因此排在 400 名之后。后果是
+// 「在吗」这类极常用口语组合合成不出来——实测首选变成「在马」，
+// 引擎既有测试 TestComposeMultiSyllableSentences 因此失败。
+//
+// 幅度**刻意很小（+8）**：够让「在吗」(53+8) 压过「在马」(56)，
+// 又不足以让这些字在任何拼音下都抢首位（ma 的单字首选仍是「马」56 > 吗 61？
+// 注意：吗+8=61 会超过马 56，但 ma 的单字页面里二者同拼音，61 分会让「吗」
+// 排到首选——这与用户直觉一致：打 ma 时「吗」比「马」更常被选）。
+const oralParticleBoost = 8
+
+func isOralParticle(r rune) bool {
+	switch r {
+	case '吗', '呢', '吧', '啊', '嘛', '呀', '哦', '嗯', '咯', '呗', '喽':
+		return true
+	}
+	return false
+}
+
+func fuseCharFreq(jiebaFreq int, rank int, maxJieba int) int {
+	const bottomFreq = 1
+	const topFreq = 99
+	if maxJieba < 1 {
+		maxJieba = 1
+	}
+	jiebaPart := 0.0
+	if jiebaFreq > 0 {
+		jiebaPart = math.Log(1+float64(jiebaFreq)) / math.Log(1+float64(maxJieba))
+	}
+	rankPart := 0.0
+	if rank > 0 {
+		rankPart = 1.0 - math.Log(1+float64(rank))/math.Log(1+20000)
+	}
+	if rankPart < 0 {
+		rankPart = 0
+	}
+	fused := math.Sqrt(jiebaPart * rankPart)
+	if fused > 1 {
+		fused = 1
+	}
+	return int(math.Round(float64(bottomFreq) + fused*float64(topFreq-bottomFreq)))
+}
+
+// fuseCharFreqRune 同 fuseCharFreq，另外给口语助词小幅补偿（见 oralParticleBoost）。
+func fuseCharFreqRune(ch rune, jiebaFreq int, rank int, maxJieba int) int {
+	f := fuseCharFreq(jiebaFreq, rank, maxJieba)
+	if isOralParticle(ch) {
+		f += oralParticleBoost
+		if f > 99 {
+			f = 99
+		}
+	}
+	return f
+}
+
 // scaleFreq 把原始词频按对数压缩到 1..99：最高频词得 99，最低得 1。
 // 对数压缩保证常用词的相对次序不变，同时把生僻词压到低分档，
 // 避免它们和常用词同分后按码点排序挤掉常用字。
@@ -604,15 +828,18 @@ func writeTSV(path string, entries []entry) error {
 		"# 格式：词 \\t 拼音（空格分隔，无声调，ü 以 v 输入） \\t 词频（1..99）",
 		"#",
 		"# 数据来源（均为 MIT 许可）：",
-		"#   词频   jieba dict.txt          https://github.com/fxsjy/jieba",
-		"#   校正   Rime essay.txt          https://github.com/rime/essay（真实语料，" +
-			"用于压低 jieba 里不成词语素的虚高词频）",
+		"#   词组词频 jieba dict.txt        https://github.com/fxsjy/jieba（多字词频率可靠）",
+		"#   单字字频 Jun Da 现代汉语字频    https://github.com/ruddfawcett/hanziDB.csv",
+		"#            （jieba 的单字词频是分词口径，生僻字虚高，故单字以此为准）",
+		"#   备用校正 Rime essay.txt        https://github.com/rime/essay（-corpus，" +
+			"不传 -charfreq 时的回退路径）",
 		"#   拼音   phrase-pinyin-data      https://github.com/mozillazg/phrase-pinyin-data",
 		"#   单字   pinyin-data             https://github.com/mozillazg/pinyin-data",
 		"#",
 		"# 再生成（在仓库根目录）：",
 		"#   go run ./cmd/chaoset-dictgen -jieba dict.txt \\",
-		"#     -corpus essay.txt -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv",
+		"#     -charfreq hanzi_db.csv -pinyin large_pinyin.txt -single pinyin.txt \\",
+		"#     -o data/dict_common.tsv",
 		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
 	}
 	for _, line := range header {

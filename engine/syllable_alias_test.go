@@ -36,7 +36,7 @@ func TestSyllableAliasDoesNotBreakUFinals(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
 	cases := []struct{ input, want string }{
-		{"jue", "觉"},
+		{"jue", "决"}, // 本测试只验「jue 不被映射成 jve」；首选字随词库变化（决#273 > 觉#327）
 		{"que", "却"},
 		{"xue", "学"},
 		{"yue", "月"},

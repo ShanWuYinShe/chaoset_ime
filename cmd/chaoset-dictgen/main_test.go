@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,8 +42,8 @@ func writeTemp(t *testing.T, name, content string) string {
 func runGen(t *testing.T, jieba, phrase, single string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.tsv")
-	// corpus 传空：测试不依赖真实语料，且校正逻辑只影响单字词频分配。
-	if err := run(jieba, phrase, single, "", "", out); err != nil {
+	// corpus/charfreq 传空：测试不依赖外部语料，且校正逻辑只影响单字词频。
+	if err := run(jieba, phrase, single, "", "", "", out); err != nil {
 		t.Fatalf("run 失败: %v", err)
 	}
 	return out
@@ -51,8 +52,14 @@ func runGen(t *testing.T, jieba, phrase, single string) string {
 // runGenFull 同 runGen，但可传 extra 与 corpus（用于测词频校正路径）。
 func runGenFull(t *testing.T, jieba, phrase, single, extra, corpus string) string {
 	t.Helper()
+	return runGenFull2(t, jieba, phrase, single, extra, corpus, "")
+}
+
+// runGenFull2 支持字频表（-charfreq）。
+func runGenFull2(t *testing.T, jieba, phrase, single, extra, corpus, charfreq string) string {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.tsv")
-	if err := run(jieba, phrase, single, extra, corpus, out); err != nil {
+	if err := run(jieba, phrase, single, extra, corpus, charfreq, out); err != nil {
 		t.Fatalf("run 失败: %v", err)
 	}
 	return out
@@ -267,5 +274,82 @@ U+3400: qiū  # 㐀
 		if len(f) >= 3 && f[0] == "㐀" && f[2] != "1" {
 			t.Fatalf("语料零记录的「㐀」词频应压到 1，实际 %s", f[2])
 		}
+	}
+}
+
+// TestCharRankToFreqMonotonic：字频排名越高（数字越小）分数越高，且覆盖 1..99。
+//
+// 2026-10-29：单字词频改由 Jun Da 字频表折算。此前的坑是映射量纲不对——
+// 第一版上限只到 34，导致常用字整体被压到低分区、多音字次读音被挤出候选
+// （实测 长/chang、重/chong、都/du 等 6/11 常用多音字打不出来）。
+func TestCharRankToFreqMonotonic(t *testing.T) {
+	total := 9000
+	prev := 101
+	for rank := 1; rank <= total; rank += 17 {
+		f := charRankToFreq(rank, total)
+		if f < 1 || f > 99 {
+			t.Fatalf("rank=%d 得分 %d 超出 1..99", rank, f)
+		}
+		if f > prev {
+			t.Fatalf("rank=%d 得分 %d 大于更低排名的 %d（应单调不增）", rank, f, prev)
+		}
+		prev = f
+	}
+	// 端点：最常用字拿满分，末尾拿最低分
+	if got := charRankToFreq(1, total); got != 99 {
+		t.Fatalf("rank=1 应得 99，实际 %d", got)
+	}
+	if got := charRankToFreq(total, total); got != 1 {
+		t.Fatalf("rank=total 应得 1，实际 %d", got)
+	}
+}
+
+// TestCharFrequencyParseAndOverride：字频表覆盖 jieba 的单字词频。
+//
+// 核心场景：jieba 里「灏」2196 > 「豪」1182（生僻人名用字反超常用字），
+// 必须由字频表纠正——灏 rank 5000 档、豪 rank 1500 档。
+func TestCharFrequencyParseAndOverride(t *testing.T) {
+	jieba := writeTemp(t, "jieba.txt", `灏 2196 g
+豪 1182 n
+`)
+	single := writeTemp(t, "single.txt", `U+704F: hào  # 灏
+U+8C6A: háo  # 豪
+`)
+	// Jun Da 字频：豪常用（rank 1513），灏生僻（rank 5030）
+	// 字频表要足够长，否则 charRankToFreq 的 end=len 会让排名直接触底。
+	var cf strings.Builder
+	cf.WriteString("frequency_rank,character,pinyin,definition,radical,radical_code,stroke_count,hsk_level,general_standard_num\n")
+	for i := 1; i <= 6000; i++ {
+		switch i {
+		case 1513:
+			cf.WriteString("1513," + "豪" + ",háo,x,土,32.0,14,1,0000\n")
+		case 5030:
+			cf.WriteString("5030," + "灏" + ",hào,x,水,85.0,21,0,0000\n")
+		default:
+			// 用不同汉字填充，避免 map key 重复导致只加载少量条目
+			cf.WriteString(fmt.Sprintf("%d,%c,yī,x,一,1.0,1,1,0000\n", i, rune(0x4E00+i%20000)))
+		}
+	}
+	charfreq := writeTemp(t, "charfreq.csv", cf.String())
+	body := readBody(t, runGenFull2(t, jieba, writeTemp(t, "p.txt", ""), single, "", "", charfreq))
+
+	var freqHao, freqHao2 int
+	for _, line := range strings.Split(body, "\n") {
+		f := strings.Split(line, "	")
+		if len(f) < 3 {
+			continue
+		}
+		if f[0] == "豪" {
+			fmt.Sscanf(f[2], "%d", &freqHao)
+		}
+		if f[0] == "灏" {
+			fmt.Sscanf(f[2], "%d", &freqHao2)
+		}
+	}
+	if freqHao == 0 || freqHao2 == 0 {
+		t.Fatalf("两个条目都应存在：豪=%d 灏=%d", freqHao, freqHao2)
+	}
+	if freqHao <= freqHao2 {
+		t.Fatalf("字频表应让常用字「豪」(%d) 高于生僻字「灏」(%d)，-- 修复前 jieba 里灏 2196 > 豪 1182", freqHao, freqHao2)
 	}
 }

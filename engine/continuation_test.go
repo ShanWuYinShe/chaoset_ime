@@ -74,7 +74,7 @@ func TestContinuationKeepsCommonInputs(t *testing.T) {
 		{"jisuanji", "计算机"},
 		{"ba", "把"},
 		{"jing", "经"},
-		{"xian", "先"},
+		{"xian", "现"}, // 2026-10-29 词库换用 Jun Da 字频 + jieba 融合：现(#70) 比 先(#188) 常用
 		{"chifanle", "吃饭了"},
 		{"kanyixia", "看一下"},
 		{"diannaoshang", "电脑上"},
