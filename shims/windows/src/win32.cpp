@@ -24,6 +24,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -134,7 +138,244 @@ bool isAppContainer() {
     return cached == 1;
 }
 
+// ---- 诊断日志（崩溃取证 + TSF 失败记录）----
+//
+// 2026-10-29 用户实机反馈：Windows Terminal 里输入拼音后整个进程消失，
+// 开始菜单里按字母既不出搜索框也没有任何反应。前者没有故障模块名无法
+// 定位，后者只能看到「键被吃掉」却看不到被哪一步吃掉。这里统一落盘：
+//
+//   %LOCALAPPDATA%\Chaoset\crash.log  未处理异常（VEH：异常码/地址/
+//                                      模块+偏移/调用栈/最后一次 TSF 操作）
+//   %LOCALAPPDATA%\Chaoset\tsf.log    TSF 调用失败与 TIP 生命周期
+//                                      （宿主进程名 + AppContainer 标志）
+//
+// 正常输入路径不写盘；tsf.log 每进程最多 200 条，避免刷爆用户磁盘。
+// 崩溃处理器只用栈缓冲与同步文件写入，不分配堆、不调用 TSF；记录完
+// 返回 EXCEPTION_CONTINUE_SEARCH，WER 与宿主自己的崩溃处理不受影响。
+
+enum DiagOp : LONG {
+    kOpNone = 0,
+    kOpActivate,
+    kOpDeactivate,
+    kOpTestKeyDown,
+    kOpKeyDown,
+    kOpRender,
+    kOpPreedit,
+    kOpCommit,
+    kOpEndComposition,
+    kOpCompositionTerminated,
+    kOpCandidateClick,
+};
+
+volatile LONG g_lastOp = kOpNone;
+
+const char* diagOpName(LONG op) {
+    switch (op) {
+        case kOpActivate: return "Activate";
+        case kOpDeactivate: return "Deactivate";
+        case kOpTestKeyDown: return "OnTestKeyDown";
+        case kOpKeyDown: return "OnKeyDown";
+        case kOpRender: return "render";
+        case kOpPreedit: return "applyPreedit";
+        case kOpCommit: return "applyCommit";
+        case kOpEndComposition: return "endComposition";
+        case kOpCompositionTerminated: return "OnCompositionTerminated";
+        case kOpCandidateClick: return "candidateClick";
+        default: return "None";
+    }
+}
+
+// 16 位大写十六进制（不依赖 CRT 的 %llX，崩溃处理器里也能用）
+void diagHex64(char* out, unsigned long long v) {
+    static const char kDigits[] = "0123456789ABCDEF";
+    for (int i = 15; i >= 0; --i) {
+        out[i] = kDigits[v & 0xF];
+        v >>= 4;
+    }
+    out[16] = '\0';
+}
+
+void diagStamp(char* out, int cap) {
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    snprintf(out, static_cast<size_t>(cap), "%04u-%02u-%02u %02u:%02u:%02u.%03u",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+}
+
+void diagWrite(const wchar_t* name, const char* text, int len) {
+    if (text == nullptr || len <= 0) return;
+    wchar_t path[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+
+    const wchar_t kSub[] = L"\\Chaoset";
+    const DWORD kSubLen = static_cast<DWORD>(sizeof(kSub) / sizeof(kSub[0]) - 1);
+    const DWORD kNameLen = static_cast<DWORD>(wcslen(name));
+    if (n + kSubLen + 1 + kNameLen + 1 > MAX_PATH) return;
+
+    wchar_t dir[MAX_PATH];
+    memcpy(dir, path, n * sizeof(wchar_t));
+    memcpy(dir + n, kSub, (kSubLen + 1) * sizeof(wchar_t));
+    CreateDirectoryW(dir, nullptr);
+
+    memcpy(path + n, kSub, kSubLen * sizeof(wchar_t));
+    path[n + kSubLen] = L'\\';
+    memcpy(path + n + kSubLen + 1, name, (kNameLen + 1) * sizeof(wchar_t));
+
+    // FILE_APPEND_DATA：WriteFile 始终写到文件末尾，多进程/多线程不会覆盖旧记录
+    HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(h, text, static_cast<DWORD>(len), &written, nullptr);
+    CloseHandle(h);
+}
+
+void diagPrintf(const wchar_t* name, const char* fmt, ...) {
+    char stamp[40];
+    diagStamp(stamp, static_cast<int>(sizeof(stamp)));
+    char line[1200];
+    int n = snprintf(line, sizeof(line), "[%s] ", stamp);
+    if (n < 0 || n >= static_cast<int>(sizeof(line))) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int m = vsnprintf(line + n, sizeof(line) - static_cast<size_t>(n), fmt, ap);
+    va_end(ap);
+    if (m < 0) return;
+    if (n + m >= static_cast<int>(sizeof(line))) m = static_cast<int>(sizeof(line)) - n - 1;
+    diagWrite(name, line, n + m);
+}
+
+// tsf.log 写入预算：每进程最多 200 条，失败路径集中爆发时不会写满磁盘
+bool diagBudget() {
+    static volatile LONG remaining = 200;
+    return InterlockedDecrement(&remaining) >= 0;
+}
+
+void diagTsfFail(const char* op, HRESULT hr) {
+    if (!diagBudget()) return;
+    diagPrintf(L"tsf.log", "%s failed hr=0x%08lX appcontainer=%d\n", op,
+               static_cast<unsigned long>(hr), isAppContainer() ? 1 : 0);
+}
+
+void diagHostName(char* out, int cap) {
+    wchar_t path[MAX_PATH] = {0};
+    DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    const wchar_t* base = (n > 0) ? wcsrchr(path, L'\\') : nullptr;
+    if (base != nullptr) ++base;
+    if (n == 0 || WideCharToMultiByte(CP_UTF8, 0, base, -1, out, cap, nullptr, nullptr) <= 0) {
+        snprintf(out, static_cast<size_t>(cap), "?");
+    }
+}
+
+// 地址 → 模块名 + 模块内偏移；地址不在任何模块（堆/栈/已卸载内存）时返回 false
+bool diagModuleOf(const void* addr, char* module, int cap, char* offsetHex) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0 || mbi.AllocationBase == nullptr) return false;
+    wchar_t full[MAX_PATH] = {0};
+    if (GetModuleFileNameW(static_cast<HMODULE>(mbi.AllocationBase), full, MAX_PATH) == 0) {
+        return false;
+    }
+    const wchar_t* base = wcsrchr(full, L'\\');
+    base = (base != nullptr) ? base + 1 : full;
+    if (WideCharToMultiByte(CP_UTF8, 0, base, -1, module, cap, nullptr, nullptr) <= 0) {
+        return false;
+    }
+    const unsigned long long offset = static_cast<unsigned long long>(
+        reinterpret_cast<const char*>(addr) - reinterpret_cast<const char*>(mbi.AllocationBase));
+    diagHex64(offsetHex, offset);
+    return true;
+}
+
+LONG CALLBACK diagCrashHandler(EXCEPTION_POINTERS* info) {
+    if (info == nullptr || info->ExceptionRecord == nullptr) return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    switch (code) {
+        case EXCEPTION_BREAKPOINT:
+        case EXCEPTION_SINGLE_STEP:
+        case 0x40010006:  // OutputDebugStringA
+        case 0x4001000A:  // OutputDebugStringW
+        case 0xE06D7363:  // MSVC C++ 异常
+        case 0xE0434352:  // CLR 异常
+            return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // 同一线程重入（日志写入本身触发异常）直接放弃，避免无限递归
+    static volatile LONG busy = 0;
+    if (InterlockedCompareExchange(&busy, 1, 0) != 0) return EXCEPTION_CONTINUE_SEARCH;
+
+    char stamp[40];
+    diagStamp(stamp, static_cast<int>(sizeof(stamp)));
+    char addrHex[17];
+    diagHex64(addrHex, reinterpret_cast<unsigned long long>(info->ExceptionRecord->ExceptionAddress));
+    char line[512];
+    int n = snprintf(line, sizeof(line),
+                     "[%s] CRASH pid=%lu tid=%lu code=0x%08lX addr=0x%s lastop=%s\n", stamp,
+                     static_cast<unsigned long>(GetCurrentProcessId()),
+                     static_cast<unsigned long>(GetCurrentThreadId()),
+                     static_cast<unsigned long>(code), addrHex, diagOpName(g_lastOp));
+    diagWrite(L"crash.log", line, n);
+
+    char module[260];
+    char offHex[17];
+    if (diagModuleOf(info->ExceptionRecord->ExceptionAddress, module, static_cast<int>(sizeof(module)),
+                     offHex)) {
+        n = snprintf(line, sizeof(line), "  fault %s+0x%s\n", module, offHex);
+        diagWrite(L"crash.log", line, n);
+    }
+
+    if (code == 0xC0000005 && info->ExceptionRecord->NumberParameters >= 2) {
+        const ULONG_PTR access = info->ExceptionRecord->ExceptionInformation[0];
+        const ULONG_PTR target = info->ExceptionRecord->ExceptionInformation[1];
+        char targetHex[17];
+        diagHex64(targetHex, static_cast<unsigned long long>(target));
+        const char* kind = access == 0 ? "read" : (access == 1 ? "write"
+                                                 : access == 8   ? "execute" : "other");
+        n = snprintf(line, sizeof(line), "  access %s at 0x%s\n", kind, targetHex);
+        diagWrite(L"crash.log", line, n);
+    }
+
+    void* frames[24];
+    USHORT count = CaptureStackBackTrace(1, 24, frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) {
+        if (!diagModuleOf(frames[i], module, static_cast<int>(sizeof(module)), offHex)) continue;
+        n = snprintf(line, sizeof(line), "  #%02u %s+0x%s\n", i, module, offHex);
+        diagWrite(L"crash.log", line, n);
+    }
+    diagWrite(L"crash.log", "----\n", 5);
+
+    InterlockedExchange(&busy, 0);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// 在 Activate 里惰性注册：DllMain/DllGetClassObject 处于加载器锁内，
+// 官方文档不建议在那里调用 AddVectoredExceptionHandler。
+void ensureCrashHandler() {
+    static volatile LONG installed = 0;
+    if (InterlockedCompareExchange(&installed, 1, 0) == 0) {
+        AddVectoredExceptionHandler(1, diagCrashHandler);
+    }
+}
+
 class ChaosetTIP;
+
+// ---- 窗口类名：带模块基址（防止 DLL 重载后沿用旧类的悬垂 WndProc）----
+//
+// TSF 会在宿主空闲时调用 DllCanUnloadNow 卸载本 DLL。Windows 不会随 DLL
+// 卸载注销窗口类（RegisterClassExW 文档原文：No window classes registered
+// by a DLL are unregistered when the DLL is unloaded）。重新加载后若模块
+// 基址变化，同名旧类的 lpfnWndProc 仍指向已卸载内存；RegisterClassExW
+// 失败后 CreateWindowExW 会沿用旧类，第一次 WM_PAINT 就跳到野指针，
+// 宿主进程直接退出（2026-10-29 审查发现，与「输入拼音后进程消失」的
+// 候选窗首帧时序一致）。
+//
+// 类名带上模块基址：基址相同 → 旧类 WndProc 地址与新映射完全一致，复用
+// 安全；基址不同 → 注册出新类，绝不复用旧映射里的函数指针。
+std::wstring windowClassName(const wchar_t* base, HINSTANCE inst) {
+    wchar_t buf[96] = {0};
+    wsprintfW(buf, L"%s-%p", base, static_cast<void*>(inst));
+    return std::wstring(buf);
+}
 
 // ---- 候选窗主题配色：与 macOS CandidatePanel.swift / skin.DefaultSkinFor 像素级一致 ----
 
@@ -282,8 +523,11 @@ public:
     }
 
     void destroy() {
-        if (hwnd_ != nullptr && IsWindow(hwnd_)) {
-            DestroyWindow(hwnd_);
+        // 即使窗口句柄已失效（IsWindow == FALSE）也要清空成员并归还计数：
+        // 此前只在 IsWindow 为真时才处理，句柄一旦失效 g_liveCandidateWindows
+        // 就永远不归零，DllCanUnloadNow 永远返回 S_FALSE。
+        if (hwnd_ != nullptr) {
+            if (IsWindow(hwnd_)) DestroyWindow(hwnd_);
             hwnd_ = nullptr;
             // 窗口过程已失效，此时才允许 DLL 被卸载（见 DllCanUnloadNow）
             InterlockedDecrement(&g_liveCandidateWindows);
@@ -335,13 +579,14 @@ private:
     void ensureWindow(HINSTANCE hinst) {
         if (hwnd_ != nullptr && IsWindow(hwnd_)) return;
 
+        const std::wstring cls = windowClassName(L"ChaosetCandidateWndClass", hinst);
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
         wc.style = CS_DROPSHADOW | CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = CandidateWndProc;
         wc.hInstance = hinst;
         wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-        wc.lpszClassName = L"ChaosetCandidateWndClass";
+        wc.lpszClassName = cls.c_str();
         RegisterClassExW(&wc);
 
         // 层级设计（三端对照，2026-10-28 复核）：候选窗保持 TOPMOST——
@@ -355,7 +600,7 @@ private:
         // （OnSetFocus(FALSE)），点击其它应用时候选窗先收起再切换。
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            L"ChaosetCandidateWndClass",
+            cls.c_str(),
             L"ChaosetCandidate",
             WS_POPUP,
             0, 0, 0, 0,
@@ -1102,18 +1347,19 @@ private:
 
     bool ensureWindow(HINSTANCE hinst) {
         if (hwnd_ != nullptr) return true;
+        const std::wstring cls = windowClassName(L"ChaosetModeToastWndClass", hinst);
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
         wc.style = CS_DROPSHADOW;
         wc.lpfnWndProc = ModeToast::wndProc;
         wc.hInstance = hinst;
-        wc.lpszClassName = L"ChaosetModeToastWndClass";
+        wc.lpszClassName = cls.c_str();
         RegisterClassExW(&wc);
         // ModeToast 同候选窗：TOPMOST 保持（纯提示 ignoresMouseEvents
         // 本就不拦截点击；系统模态菜单弹出时位于最上），层级决策见候选窗
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            wc.lpszClassName, L"ChaosetModeToast",
+            cls.c_str(), L"ChaosetModeToast",
             WS_POPUP, 0, 0, 0, 0,
             nullptr, nullptr, hinst, nullptr);
         if (hwnd_ != nullptr) {
@@ -1238,6 +1484,15 @@ public:
 
     // ITfTextInputProcessor
     HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override {
+        g_lastOp = kOpActivate;
+        ensureCrashHandler();
+        if (diagBudget()) {
+            char host[260];
+            diagHostName(host, static_cast<int>(sizeof(host)));
+            diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d\n",
+                       static_cast<unsigned long>(GetCurrentProcessId()), host,
+                       isAppContainer() ? 1 : 0);
+        }
         tm_ = ptim;
         if (tm_ != nullptr) tm_->AddRef();
         clientId_ = tid;
@@ -1294,8 +1549,9 @@ public:
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
+        g_lastOp = kOpTestKeyDown;
         if (isModifierKey(wParam)) {
             *pfEaten = FALSE;  // 修饰键始终放行
             return S_OK;
@@ -1304,12 +1560,43 @@ public:
             *pfEaten = FALSE;  // 英文模式全放行
             return S_OK;
         }
-        *pfEaten = wouldHandle(wParam) ? TRUE : FALSE;
+        if (!wouldHandle(wParam)) {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
+        // 需要新建合成（字母）或插入文本（标点）的键，在「不支持该操作的
+        // 上下文」里必须放行：2026-10-29 实机反馈，Windows 11 开始菜单里
+        // 按字母没有任何反应，搜索框也不出现——键在 OnTestKeyDown 被吃掉，
+        // 而 applyPreedit 在这个上下文里建不出合成，字符既不进文档也不进
+        // 宿主自己的搜索框。这里先做一次无副作用的接口探测（只读文档、
+        // 缺 ITfInsertAtSelection / ITfContextComposition 的上下文直接放行）；
+        // handleKey 里还有一道「渲染后仍无合成则放行」的兜底（OnKeyDown 的
+        // pfEaten 才是最终裁决，见 ITfKeyEventSink 两阶段设计）。
+        if (composition_ == nullptr) {
+            const bool shift = shiftActive();
+            const bool letter = !shift && wParam >= kVkFirstLetter && wParam <= kVkLastLetter;
+            const bool punct = keyPunctChar(wParam, shift) != nullptr;
+            if (letter || punct) {
+                ITfContext* ctx = pic;
+                ContextRef owned(nullptr);
+                if (ctx == nullptr) {
+                    owned.ctx = focusContext();
+                    ctx = owned.ctx;
+                }
+                const bool ok = letter ? canStartComposition(ctx) : canInsert(ctx);
+                if (!ok) {
+                    *pfEaten = FALSE;
+                    return S_OK;
+                }
+            }
+        }
+        *pfEaten = TRUE;
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                         BOOL* pfEaten) override {
+        g_lastOp = kOpKeyDown;
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             onShiftEvent(false);
             *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键与按键事件完整透传给宿主
@@ -1344,48 +1631,60 @@ public:
     }
 
     // ITfCompositionSink：合成被外部终止（焦点切换等）
-    HRESULT STDMETHODCALLTYPE OnCompositionTerminated(TfEditCookie /*ec*/, ITfComposition* /*pComposition*/) override {
+    HRESULT STDMETHODCALLTYPE OnCompositionTerminated(TfEditCookie /*ec*/,
+                                                      ITfComposition* /*pComposition*/) override {
+        g_lastOp = kOpCompositionTerminated;
         candidateWnd_.hide();
-        composition_ = nullptr;
+        // 引用所有权：TSF 只在「本服务以外的人」结束合成时回调（Microsoft
+        // SampleIME Composition.cpp 注释原文：whenever someone other than
+        // this service ends a composition）。这时成员仍持有引用，必须在此
+        // 释放；自己 EndComposition 的路径已先把成员摘成局部引用并自行
+        // Release，看到 nullptr 就不能再释放（否则二次释放）。
+        if (composition_ != nullptr) {
+            composition_->Release();
+            composition_ = nullptr;
+        }
+        releaseCompositionContext();
         session_.reset();
         comp_ = chaoset::Comp();
         return S_OK;
     }
 
     void selectCandidateByIndex(int index) {
+        g_lastOp = kOpCandidateClick;
         // 联想窗点击：联想候选直接上屏并继续联想（与数字键同路径）
         if (!assoc_.candidates.empty()) {
             const int global = assocPage_ * 6 + index;
             if (index < 0 || global >= static_cast<int>(assoc_.candidates.size())) return;
             const chaoset::Candidate pick = assoc_.candidates[global];
-            ITfContext* ctx = focusContext();
+            ContextRef ctx(focusContext());
             std::string committed;
             if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
                 const std::string sylls = pick.syllables;
-                commit(ctx, committed);
-                enterAssociate(sylls);
+                if (commit(ctx.get(), committed)) enterAssociate(sylls);
             } else {
                 clearAssociate();
             }
             return;
         }
         if (!hasCandidates()) return;
-        ITfContext* ctx = focusContext();
+        ContextRef ctx(focusContext());
         std::string committed;
         if (session_.select(index, &committed)) {
-            commit(ctx, committed);
+            commit(ctx.get(), committed);
         }
     }
 
     void flipPage(bool next) {
         if (!hasCandidates() || comp_.pageCount <= 1) return;
-        ITfContext* ctx = focusContext();
+        g_lastOp = kOpCandidateClick;
+        ContextRef ctx(focusContext());
         comp_ = next ? session_.nextPage() : session_.prevPage();
         if (!comp_.ok) {
             endComposition();
             return;
         }
-        render(ctx);
+        render(ctx.get());
     }
 
 private:
@@ -1552,8 +1851,9 @@ private:
                     std::string committed;
                     if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
                         const std::string sylls = pick.syllables;
-                        commit(pic, committed);
-                        enterAssociate(sylls);
+                        // 上屏确实写进了文档才继续联想：否则联想窗悬在
+                        // 「词没上屏却推下一批」的假状态（2026-10-29 审查）。
+                        if (commit(pic, committed)) enterAssociate(sylls);
                         return true;
                     }
                 }
@@ -1578,8 +1878,9 @@ private:
                     std::string committed;
                     if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
                         const std::string sylls = pick.syllables;
-                        commit(pic, committed);
-                        enterAssociate(sylls);
+                        // 上屏确实写进了文档才继续联想：否则联想窗悬在
+                        // 「词没上屏却推下一批」的假状态（2026-10-29 审查）。
+                        if (commit(pic, committed)) enterAssociate(sylls);
                     } else {
                         clearAssociate();
                     }
@@ -1660,6 +1961,20 @@ private:
                 return false;
             }
             render(pic);
+            // 渲染后仍没有合成对象：当前上下文不接受 TSF 合成（Windows 11
+            // 开始菜单搜索框等）。此时必须撤掉本地未决状态并放行原键，
+            // 否则就是「键被吃掉、字也没出来」——2026-10-29 实机反馈。
+            // OnKeyDown 返回 false 是两阶段按键模型的最终裁决，TSF 会把
+            // 原键交还宿主（OnTestKeyDown 的 eaten 只是预告）。
+            //
+            // 兜底条件必须同时覆盖两类拒绝：合成根本没建出来
+            // （composition_ == nullptr），以及 StartComposition「成功」但
+            // 预编辑 SetText 被拒（只读上下文在编辑会话里仍会拒绝写入，
+            // 此时有合成对象却没有合成文本——TS_ES_READONLY）。两者都
+            // 意味着键进不了文档，必须放行。
+            if (isComposing() && (composition_ == nullptr || !preeditWritten_)) {
+                return bailOutNoComposition();
+            }
             return true;
         }
 
@@ -1703,8 +2018,10 @@ private:
             const bool composing = isComposing();
             std::string committed;
             if (session_.punct(key, &committed)) {
-                commit(pic, committed);
-                return true;
+                // 上屏失败（上下文不可插入文本）且没有未决拼音时放行原键，
+                // 避免中文标点凭空消失；有未决拼音时仍需消费，保持组词状态机完整
+                if (commit(pic, committed) || composing) return true;
+                return false;
             }
             // daemon 不可达：清状态放行原键，不卡宿主应用
             if (composing) {
@@ -1844,19 +2161,120 @@ private:
         ITfContext* ctx = nullptr;
         doc->GetBase(&ctx);
         doc->Release();
-        return ctx;
+        return ctx;  // 调用方必须用 ContextRef 释放
+    }
+
+    // focusContext() 返回的引用计数上下文：析构时 Release。此前大多数调用点
+    // 直接丢弃返回值，每次鼠标选词/翻页都泄漏一个 ITfContext（2026-10-27
+    // 审查发现，本次一并修正）。
+    struct ContextRef {
+        explicit ContextRef(ITfContext* c) : ctx(c) {}
+        ~ContextRef() {
+            if (ctx != nullptr) ctx->Release();
+        }
+        ContextRef(const ContextRef&) = delete;
+        ContextRef& operator=(const ContextRef&) = delete;
+        ITfContext* get() const { return ctx; }
+        ITfContext* ctx;
+    };
+
+    // 上下文能力探测：只做 QI，不改文档、不产生副作用，可安全用于
+    // OnTestKeyDown。Windows 11 开始菜单等 XAML 宿主可能不提供合成接口。
+    static bool canInsert(ITfContext* ctx) {
+        if (ctx == nullptr) return false;
+        ITfInsertAtSelection* insert = nullptr;
+        if (FAILED(ctx->QueryInterface(IID_ITfInsertAtSelection,
+                                       reinterpret_cast<void**>(&insert))) ||
+            insert == nullptr) {
+            return false;
+        }
+        insert->Release();
+        return true;
+    }
+
+    static bool canCompose(ITfContext* ctx) {
+        if (!canInsert(ctx)) return false;
+        ITfContextComposition* cc = nullptr;
+        if (FAILED(ctx->QueryInterface(IID_ITfContextComposition,
+                                       reinterpret_cast<void**>(&cc))) ||
+            cc == nullptr) {
+            return false;
+        }
+        cc->Release();
+        return true;
+    }
+
+    // 合成所属上下文（render/applyPreedit 成功建立 composition_ 时记录）。
+    // 生命周期与 composition_ 一致：建立时记下，OnCompositionTerminated /
+    // commit / endComposition 清空。此后对合成的一切清理都必须对它做，
+    // 不能再用 focusContext() 现查——焦点可能已经切到别的文档。
+    ITfContext* compCtx_ = nullptr;
+
+    // composition_ 所属上下文的清理 cookie：同步编辑会话成功后写入
+    // （RequestEditSession 返回前 DoEditSession 已执行完）。endComposition
+    // 在会话外被调用时无法拿 cookie，TF_ES_SYNC 失败（TS_E_SYNCHRONOUS）
+    // 时保留上一次成功值比用 0 强——0 一定失败，旧值多半仍有效。
+    TfEditCookie compEditCookie_ = 0;
+
+    // StartComposition/InsertTextAtSelection 语义上要求可写文档：只读上下文
+    // 上调用属于 TS_E_READONLY，且部分宿主对只读文档的回调和出参处理不可靠。
+    // 探测顺序（与 SampleIME 一致）：GetStatus 查 TF_SD_READONLY → QueryInterface
+    // ITfInsertAtSelection → ITfContextComposition。全程零文档副作用，可安全
+    // 用于 OnTestKeyDown 预检（2026-10-29 实机反馈：Windows 11 开始菜单
+    // 搜索框等宿主的上下文需要放行）。
+    static bool canStartComposition(ITfContext* ctx) {
+        if (ctx == nullptr) return false;
+        TF_STATUS st{};
+        if (FAILED(ctx->GetStatus(&st))) return false;
+        if (st.dwStaticFlags & TF_SD_READONLY) return false;
+        return canCompose(ctx);  // canInsert + ITfContextComposition
+    }
+
+    // 「该键现在确实处理不了」→ 撤掉引擎未决状态并放行原键。渲染后仍无
+    // 合成对象（接口探测放过了但宿主仍拒绝建合成）即属此类：键必须还给
+    // 宿主，否则就是「键被吃掉、字也没出来」（2026-10-29 实机反馈）。
+    // OnKeyDown 返回 false 是两阶段按键模型的最终裁决，TSF 会把原键交还。
+    bool bailOutNoComposition() {
+        if (diagBudget()) {
+            char host[260];
+            diagHostName(host, static_cast<int>(sizeof(host)));
+            diagPrintf(L"tsf.log", "no composition after render host=%s preedit_len=%lu\n",
+                       host, static_cast<unsigned long>(comp_.preedit.size()));
+        }
+        session_.reset();
+        comp_ = chaoset::Comp();
+        candidateWnd_.hide();
+        // 走到这里时合成对象必然已不存在（未建出或 SetText 失败已当场结束），
+        // 上下文记录一并清掉，避免过期引用跨越焦点切换存活。
+        releaseCompositionContext();
+        return false;
     }
 
     // 把引擎候选状态渲染为预编辑合成与候选悬浮窗
     void render(ITfContext* pic) {
-        ITfContext* ctx = pic != nullptr ? pic : focusContext();
+        g_lastOp = kOpRender;
+        ContextRef owned(nullptr);
+        ITfContext* ctx = pic;
+        if (ctx == nullptr) {
+            owned.ctx = focusContext();
+            ctx = owned.ctx;
+        }
         if (ctx == nullptr) return;
+        // 记录合成所属上下文：此后所有对 composition_ 的清理必须对它做——
+        // 此前一律 focusContext()，焦点已切走时拿到的是新文档的上下文，
+        // 用它的 cookie 清旧合成必然失败，拼音文本永久残留（2026-10-29 审查）。
+        if (compCtx_ != ctx) {
+            if (compCtx_ != nullptr) compCtx_->Release();
+            compCtx_ = ctx;
+            ctx->AddRef();
+        }
         caretFound_ = false;
         EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
             static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
         });
-        es.run(tm_, clientId_);
+        const HRESULT hr = es.run(tm_, clientId_);
         es.Release();
+        if (FAILED(hr)) diagTsfFail("RequestEditSession(render)", hr);
 
         if (comp_.candidates.empty()) {
             candidateWnd_.hide();
@@ -1886,107 +2304,233 @@ private:
         candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
     }
 
+    // 用合成范围更新候选窗锚点；View 不可用时保留旧位置（render 再退回鼠标）
+    void updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange* range) {
+        ITfContextView* view = nullptr;
+        if (FAILED(ctx->GetActiveView(&view)) || view == nullptr) return;
+        RECT rc{};
+        BOOL fClipped = FALSE;
+        if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
+            caretPos_.x = rc.left;
+            caretPos_.y = rc.bottom;
+            caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
+            caretFound_ = true;
+        }
+        view->Release();
+    }
+
     void applyPreedit(ITfContext* ctx, TfEditCookie ec) {
-        std::wstring wide = toWide(comp_.preedit);
+        g_lastOp = kOpPreedit;
+        // 「预编辑是否真的写进了文档」：字符串为空视作已写（无需合成）；
+        // SetText 失败时保持 false，字母分支据此判定该上下文不可用并放行。
+        preeditWritten_ = comp_.preedit.empty();
+        const std::wstring wide = toWide(comp_.preedit);
         if (composition_ != nullptr) {
             ITfRange* range = nullptr;
-            if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
-                range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
-                ITfContextView* view = nullptr;
-                if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
-                    RECT rc{};
-                    BOOL fClipped = FALSE;
-                    if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
-                        caretPos_.x = rc.left;
-                        caretPos_.y = rc.bottom;
-                        caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
-                        caretFound_ = true;
-                    }
-                    view->Release();
-                }
-                range->Release();
+            const HRESULT hrRange = composition_->GetRange(&range);
+            if (FAILED(hrRange) || range == nullptr) {
+                diagTsfFail("ITfComposition::GetRange(preedit)",
+                            FAILED(hrRange) ? hrRange : E_POINTER);
+                composition_->Release();
+                composition_ = nullptr;
+                return;
             }
+            const HRESULT hrText =
+                range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
+            if (FAILED(hrText)) {
+                diagTsfFail("ITfRange::SetText(preedit)", hrText);
+                // 写不进（只读上下文 / 会话已被终止）：合成已无意义。
+                // EndComposition 交还引用，本地所有权一并清空——保留一个
+                // 写不进字的合成只会让后续兜底永远认为「合成还在」。
+                preeditWritten_ = false;
+                composition_->EndComposition(ec);
+                composition_->Release();
+                composition_ = nullptr;
+                updateCaretFromRange(ctx, ec, range);
+                range->Release();
+                return;
+            }
+            preeditWritten_ = true;
+            updateCaretFromRange(ctx, ec, range);
+            range->Release();
             return;
         }
         ITfInsertAtSelection* insert = nullptr;
-        if (FAILED(ctx->QueryInterface(IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert)))) return;
+        HRESULT hr = ctx->QueryInterface(IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert));
+        if (FAILED(hr) || insert == nullptr) {
+            diagTsfFail("ITfInsertAtSelection(preedit)", FAILED(hr) ? hr : E_NOINTERFACE);
+            return;
+        }
         ITfRange* range = nullptr;
         // QUERYONLY：只取插入点位置的范围，不插文本
-        if (SUCCEEDED(insert->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &range)) &&
-            range != nullptr) {
-            ITfContextComposition* cc = nullptr;
-            if (SUCCEEDED(ctx->QueryInterface(IID_ITfContextComposition, reinterpret_cast<void**>(&cc)))) {
-                if (SUCCEEDED(cc->StartComposition(ec, range, compositionSink(), &composition_))) {
-                    if (composition_ != nullptr) {
-                        range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
-                    }
-                }
-                cc->Release();
-            }
-            ITfContextView* view = nullptr;
-            if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
-                RECT rc{};
-                BOOL fClipped = FALSE;
-                if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped))) {
-                    caretPos_.x = rc.left;
-                    caretPos_.y = rc.bottom;
-                    caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
-                    caretFound_ = true;
-                }
-                view->Release();
-            }
-            range->Release();
+        hr = insert->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &range);
+        if (FAILED(hr) || range == nullptr) {
+            diagTsfFail("InsertTextAtSelection(QUERYONLY)", FAILED(hr) ? hr : E_POINTER);
+            insert->Release();
+            return;
         }
+        ITfContextComposition* cc = nullptr;
+        hr = ctx->QueryInterface(IID_ITfContextComposition, reinterpret_cast<void**>(&cc));
+        if (FAILED(hr) || cc == nullptr) {
+            diagTsfFail("ITfContextComposition", FAILED(hr) ? hr : E_NOINTERFACE);
+        } else {
+            ITfComposition* comp = nullptr;
+            hr = cc->StartComposition(ec, range, compositionSink(), &comp);
+            if (FAILED(hr) || comp == nullptr) {
+                diagTsfFail("StartComposition", FAILED(hr) ? hr : E_POINTER);
+                if (comp != nullptr) comp->Release();
+            } else {
+                composition_ = comp;
+                const HRESULT hrText =
+                    range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
+                if (FAILED(hrText)) {
+                    diagTsfFail("ITfRange::SetText(preedit)", hrText);
+                    // StartComposition 成功但文本写不进：与上面同理，
+                    // 必须立刻结束合成并清空所有权，否则字母分支的
+                    // 「渲染后仍无合成」兜底永远不触发，键照样被吃。
+                    preeditWritten_ = false;
+                    composition_->EndComposition(ec);
+                    composition_->Release();
+                    composition_ = nullptr;
+                } else {
+                    preeditWritten_ = true;
+                }
+            }
+            cc->Release();
+        }
+        // 合成建立失败也尝试取一次光标位置：候选窗仍能贴住插入点显示
+        updateCaretFromRange(ctx, ec, range);
+        range->Release();
         insert->Release();
     }
 
-    void commit(ITfContext* pic, const std::string& text) {
+    // 上屏；返回是否确实写进了文档（调用方据此决定失败时是否放行原键）
+    bool commit(ITfContext* pic, const std::string& text) {
+        g_lastOp = kOpCommit;
         candidateWnd_.hide();
-        ITfContext* ctx = pic != nullptr ? pic : focusContext();
-        if (ctx == nullptr) return;
+        ContextRef owned(nullptr);
+        ITfContext* ctx = pic;
+        if (ctx == nullptr) {
+            owned.ctx = focusContext();
+            ctx = owned.ctx;
+        }
+        if (ctx == nullptr) return false;
         committed_ = text;
+        commitWritten_ = false;
         EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
             static_cast<ChaosetTIP*>(user)->applyCommit(c, ec);
         });
-        es.run(tm_, clientId_);
+        const HRESULT hr = es.run(tm_, clientId_);
         es.Release();
+        if (FAILED(hr)) diagTsfFail("RequestEditSession(commit)", hr);
         comp_ = chaoset::Comp();
+        return SUCCEEDED(hr) && commitWritten_;
     }
 
-    void applyCommit(ITfContext* /*ctx*/, TfEditCookie ec) {
-        std::wstring wide = toWide(committed_);
-        if (composition_ != nullptr) {
+    void applyCommit(ITfContext* ctx, TfEditCookie ec) {
+        g_lastOp = kOpCommit;
+        commitWritten_ = false;
+        if (committed_.empty()) return;
+        const std::wstring wide = toWide(committed_);
+
+        // 先摘成员再用局部指针：EndComposition 之后成员值不再可信，且
+        // 「我方结束」与「外部终止」两条路径的引用所有权必须唯一
+        // （见 OnCompositionTerminated 的注释）。
+        ITfComposition* comp = composition_;
+        composition_ = nullptr;
+        if (comp != nullptr) {
             ITfRange* range = nullptr;
-            if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
-                range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
+            if (SUCCEEDED(comp->GetRange(&range)) && range != nullptr) {
+                const HRESULT hrText =
+                    range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
+                if (FAILED(hrText)) diagTsfFail("ITfRange::SetText(commit)", hrText);
+                else commitWritten_ = true;
                 range->Release();
             }
-            composition_->EndComposition(ec);
-            composition_->Release();
-            composition_ = nullptr;
+            const HRESULT hrEnd = comp->EndComposition(ec);
+            if (FAILED(hrEnd)) diagTsfFail("ITfComposition::EndComposition(commit)", hrEnd);
+            comp->Release();
+            releaseCompositionContext();
+        } else {
+            // 无合成（直接打标点 / 合成被外部终止）：必须自己插入文本。
+            // 此前这里什么都不做，标点会凭空消失。
+            ITfInsertAtSelection* insert = nullptr;
+            HRESULT hr = ctx->QueryInterface(IID_ITfInsertAtSelection,
+                                             reinterpret_cast<void**>(&insert));
+            if (FAILED(hr) || insert == nullptr) {
+                diagTsfFail("ITfInsertAtSelection(commit)", FAILED(hr) ? hr : E_NOINTERFACE);
+            } else {
+                ITfRange* range = nullptr;
+                hr = insert->InsertTextAtSelection(ec, 0, wide.c_str(),
+                                                   static_cast<LONG>(wide.size()), &range);
+                if (FAILED(hr)) {
+                    diagTsfFail("InsertTextAtSelection(commit)", hr);
+                } else {
+                    commitWritten_ = true;
+                    if (range != nullptr) range->Release();
+                }
+                insert->Release();
+            }
         }
         committed_.clear();
     }
 
+    // 取消/清理当前合成：必须经真实编辑会话拿到有效 cookie。旧实现用
+    // cookie 0 在编辑会话外调用 SetText/EndComposition，TSF 只会返回失败：
+    // 预编辑文本留在文档里、合成对象也泄漏（2026-10-29 审查）。
     void endComposition() {
         candidateWnd_.hide();
-        if (composition_ == nullptr) return;
-        ITfContext* ctx = focusContext();
-        if (ctx != nullptr) {
-            ITfRange* range = nullptr;
-            if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
-                range->SetText(ecScratch(ctx), 0, L"", 0);
-                range->Release();
-            }
-            composition_->EndComposition(ecScratch(ctx));
+        ITfComposition* comp = composition_;
+        if (comp == nullptr) return;
+        g_lastOp = kOpEndComposition;
+        composition_ = nullptr;  // 先摘成员：结束路径的引用所有权唯一（见 sink）
+        // 必须对合成所属的上下文做（render 时记录），不能用 focusContext()：
+        // 焦点切走后现查到的是新文档的上下文，RequestEditSession 会失败或
+        // 拿到无效 cookie，拼音文本永久残留（2026-10-29 审查）。
+        // 注意所有权：compCtx_ 的引用归 releaseCompositionContext() 释放，
+        // 这里绝不能把它包进 owning 的 ContextRef（会双重 Release）。
+        ITfContext* target = compCtx_;
+        ContextRef owned(nullptr);
+        if (target == nullptr) {
+            owned.ctx = focusContext();
+            target = owned.ctx;
         }
-        composition_->Release();
-        composition_ = nullptr;
+        if (target != nullptr) {
+            endTarget_ = comp;
+            EditSession es(target, this, [](void* user, ITfContext* c, TfEditCookie ec) {
+                static_cast<ChaosetTIP*>(user)->applyEndComposition(c, ec);
+            });
+            HRESULT hrSession = S_OK;
+            const HRESULT hr = target->RequestEditSession(
+                clientId_, &es, TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
+            if (FAILED(hr)) {
+                diagTsfFail("RequestEditSession(endComposition)", hr);
+            } else if (FAILED(hrSession)) {
+                // TF_ES_SYNC 在后台线程等场景会失败；保留最后一次成功的
+                // cookie 收尾——比换 cookie 0 强（0 必失败，旧值多半仍有效）。
+                diagTsfFail("RequestEditSession(endComposition).session", hrSession);
+                if (compEditCookie_ > 0) applyEndComposition(nullptr, compEditCookie_);
+            }
+            es.Release();
+            endTarget_ = nullptr;
+        }
+        comp->Release();
+        releaseCompositionContext();
     }
 
-    // endComposition 无 pic 可用时的占位 cookie：
-    // 清空预编辑属于残留清理，失败也不影响宿主（合成由 TSF 回收）。
-    static TfEditCookie ecScratch(ITfContext* /*ctx*/) { return 0; }
+    void applyEndComposition(ITfContext* /*ctx*/, TfEditCookie ec) {
+        ITfComposition* comp = endTarget_;
+        if (comp == nullptr) return;
+        if (ec > 0) compEditCookie_ = ec;  // 记录成功 cookie（endComposition 兜底用）
+        ITfRange* range = nullptr;
+        if (SUCCEEDED(comp->GetRange(&range)) && range != nullptr) {
+            const HRESULT hrText = range->SetText(ec, 0, L"", 0);
+            if (FAILED(hrText)) diagTsfFail("ITfRange::SetText(clear)", hrText);
+            range->Release();
+        }
+        const HRESULT hrEnd = comp->EndComposition(ec);
+        if (FAILED(hrEnd)) diagTsfFail("ITfComposition::EndComposition(clear)", hrEnd);
+    }
 
     LONG ref_ = 1;
     ITfThreadMgr* tm_ = nullptr;
@@ -2016,7 +2560,20 @@ private:
     chaoset::Comp assoc_;
     int assocPage_ = 0; // 联想当前页（0 起，本地分页每页 6 条）
     ITfComposition* composition_ = nullptr;
+    ITfComposition* endTarget_ = nullptr;  // endComposition 编辑会话内的目标
     std::string committed_;
+    bool commitWritten_ = false;
+    bool preeditWritten_ = false;  // 预编辑确实写进了文档（渲染兜底判定用）
+
+    // 合成结束（commit / endComposition / 外部终止）后调用：清空合成所属
+    // 上下文记录。composition_ 为空时 compCtx_ 必须为空，避免持有过期引用。
+    void releaseCompositionContext() {
+        if (compCtx_ != nullptr) {
+            compCtx_->Release();
+            compCtx_ = nullptr;
+        }
+        preeditWritten_ = false;
+    }
 
     // 撇号分隔的音节串 → 音节数组（"xian'zai" → ["xian","zai"]）。
     static std::vector<std::string> splitSyllables(const std::string& syllables) {
@@ -2168,9 +2725,16 @@ public:
 
 // ---- 导出 ----
 
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID) {
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         g_hInst = hinstDLL;
+    } else if (fdwReason == DLL_PROCESS_DETACH && reserved == nullptr && hinstDLL != nullptr) {
+        // 动态卸载（FreeLibrary）：注销本模块注册的窗口类。Windows 不会随
+        // DLL 卸载自动注销（RegisterClassExW 文档明示），不注销的话下次
+        // 加载时同名类的 lpfnWndProc 可能仍指向已卸载内存。进程终止
+        // （reserved != nullptr）时无需处理。
+        UnregisterClassW(windowClassName(L"ChaosetCandidateWndClass", hinstDLL).c_str(), hinstDLL);
+        UnregisterClassW(windowClassName(L"ChaosetModeToastWndClass", hinstDLL).c_str(), hinstDLL);
     }
     return TRUE;
 }
