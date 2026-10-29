@@ -183,8 +183,9 @@ func TestAssociateFollowsWord(t *testing.T) {
 	if len(assoc) == 0 {
 		t.Fatal("应有联想候选")
 	}
-	if !strings.HasPrefix(assoc[0].Text, "测试") {
-		t.Fatalf("上屏「测试」后联想首选应是「测试」开头，实际 %q（%+v）", assoc[0].Text, assoc)
+	// 2026-10-29 剥前缀语义：联想候选只含续接部分——测试题 → 「题」
+	if assoc[0].Text != "题" {
+		t.Fatalf("上屏「测试」后联想首选应是续接「题」（测试题剥前缀），实际 %q（%+v）", assoc[0].Text, assoc)
 	}
 
 	// 选「策士」上屏 → 联想首条应是「策士」开头（策士团）——同音节
@@ -204,8 +205,8 @@ func TestAssociateFollowsWord(t *testing.T) {
 	if len(assoc) == 0 {
 		t.Fatal("应有联想候选")
 	}
-	if !strings.HasPrefix(assoc[0].Text, "策士") {
-		t.Fatalf("上屏「策士」后联想首选应是「策士」开头，实际 %q（%+v）", assoc[0].Text, assoc)
+	if assoc[0].Text != "团" {
+		t.Fatalf("上屏「策士」后联想首选应是续接「团」（策士团剥前缀），实际 %q（%+v）", assoc[0].Text, assoc)
 	}
 }
 
@@ -219,13 +220,13 @@ func TestAssociateBigramBoostWithWordPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUserDict 失败: %v", err)
 	}
-	user.BumpBigram("好", "好家伙")
-	user.BumpBigram("好", "好家伙")
+	user.BumpBigram("好", "家伙")
+	user.BumpBigram("好", "家伙")
 	s := NewSession(d, user)
 	s.prev = "好"
 	out := s.Associate([]string{"hao"})
-	if len(out) == 0 || out[0].Text != "好家伙" {
-		t.Fatalf("有 Bigram 共现的「好家伙」应排首，实际首选 %+v", out[:min(3, len(out))])
+	if len(out) == 0 || out[0].Text != "家伙" {
+		t.Fatalf("有 Bigram 共现的「家伙」（好家伙续接）应排首，实际首选 %+v", out[:min(3, len(out))])
 	}
 }
 
@@ -262,13 +263,90 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 	assoc := s2.Associate([]string{"bu", "xing"})
 	found := false
 	for _, c := range assoc {
-		if c.Text == "不行的话" {
+		// 2026-10-29 剥前缀语义：「不行的话」的续接部分是「的话」
+		if c.Text == "的话" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("用户上屏过「不行的话」，联想候选中应包含它（共 %d 条：%+v）", len(assoc), assoc)
+		t.Fatalf("用户上屏过「不行的话」，联想候选中应包含续接「的话」（共 %d 条：%+v）", len(assoc), assoc)
+	}
+}
+
+// TestAssociateStripsCommittedPrefix：联想候选只含续接部分——2026-10-29
+// 用户反馈：先上屏「打字测试」，之后再上屏「打字」，联想弹的是
+// 「打字测试」而不是「测试」，选了会把已上屏的「打字」重复一遍。
+// 正确语义：以上一个确认词为基，只返回补全部分（文本与音节都剥前缀）。
+func TestAssociateStripsCommittedPrefix(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("打字\tda zi\t80\n打字测试\tda zi ce shi\t70\n打字机\tda zi ji\t60\n")
+	d, err := ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	user, err := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	if err != nil {
+		t.Fatalf("NewUserDict 失败: %v", err)
+	}
+	s := NewSession(d, user)
+	// 先上屏「打字测试」（整句学习进用户词库），再上屏「打字」
+	s.Input("daziceshi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	s.Reset()
+	s.Input("dazi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	assoc := s.Associate([]string{"da", "zi"})
+	if len(assoc) == 0 {
+		t.Fatal("应有联想候选")
+	}
+	for _, c := range assoc {
+		if strings.HasPrefix(c.Text, "打字") {
+			t.Fatalf("联想候选不应含已上屏前缀「打字」: %+v", assoc)
+		}
+	}
+	found := false
+	for _, c := range assoc {
+		if c.Text == "测试" && c.Syllables == "ce'shi" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("联想应含「测试」(ce'shi)（用户词库打字测试剥前缀），实际 %+v", assoc)
+	}
+}
+
+// TestAssociateChainContinues：续接词上屏后链式联想继续——上屏「打字」
+// 选续接「测试」后，基变为「测试」，再联想应出「题」（测试题剥前缀）。
+func TestAssociateChainContinues(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("打字\tda zi\t80\n打字测试\tda zi ce shi\t70\n测试题\tce shi ti\t75\n")
+	d, err := ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	user, _ := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	s := NewSession(d, user)
+	s.Input("dazi")
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	assoc := s.Associate([]string{"da", "zi"})
+	if len(assoc) == 0 || assoc[0].Text != "测试" {
+		t.Fatalf("上屏「打字」后联想首选应是续接「测试」，实际 %+v", assoc)
+	}
+	// 模拟壳的联想选择路径：associateSelect 以剥离后的文本/音节学习并设 prev
+	if _, err := s.AssociateSelect(assoc[0].Text, []string{"ce", "shi"}); err != nil {
+		t.Fatalf("AssociateSelect 失败: %v", err)
+	}
+	assoc = s.Associate([]string{"ce", "shi"})
+	if len(assoc) == 0 || assoc[0].Text != "题" {
+		t.Fatalf("上屏「测试」后联想首选应是续接「题」，实际 %+v", assoc)
 	}
 }
 

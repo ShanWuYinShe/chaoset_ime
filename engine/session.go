@@ -446,10 +446,25 @@ func (s *Session) Associate(sylls []string) []Candidate {
 			return
 		}
 		seen[key] = true
+		// 2026-10-29 用户反馈：联想候选必须只含**续接部分**。字前缀层查到
+		// 的是完整词条（上屏「打字」→ 词条「打字测试」），原样返回的话用户
+		// 再选一次会把已上屏的「打字」重复一遍。词条以 s.prev 开头时剥前缀：
+		// 文本取余部，音节剥掉前缀对应的个数（以本次查询入参为准，要求
+		// 词条音节数严格更多，避免同字异音词条剥穿）；余部为空（词条恰好
+		// 等于上屏词）的条目跳过。
+		text, syllStr := e.Word, strings.Join(e.Syllables, "'")
+		if byWord && s.prev != "" && strings.HasPrefix(e.Word, s.prev) &&
+			len(e.Syllables) > len(sylls) {
+			text = e.Word[len(s.prev):]
+			syllStr = strings.Join(e.Syllables[len(sylls):], "'")
+			if text == "" {
+				return
+			}
+		}
 		out = append(out, assocItem{
 			cand: Candidate{
-				Text:      e.Word,
-				Syllables: strings.Join(e.Syllables, "'"),
+				Text:      text,
+				Syllables: syllStr,
 				Score:     e.Freq,
 			},
 			byWord: byWord,

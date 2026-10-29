@@ -1489,9 +1489,9 @@ public:
         if (diagBudget()) {
             char host[260];
             diagHostName(host, static_cast<int>(sizeof(host)));
-            diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d\n",
+            diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d build=%s %s\n",
                        static_cast<unsigned long>(GetCurrentProcessId()), host,
-                       isAppContainer() ? 1 : 0);
+                       isAppContainer() ? 1 : 0, __DATE__, __TIME__);
         }
         tm_ = ptim;
         if (tm_ != nullptr) tm_->AddRef();
@@ -2741,6 +2741,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     if (!IsEqualCLSID(rclsid, CLSID_ChaosetTIP)) return CLASS_E_CLASSNOTAVAILABLE;
+    // 一次性记录宿主实例化 TIP：与 activate 行对读可以区分「宿主加载了
+    // DLL 但 Activate 没跑」和「宿主根本没加载」（2026-10-29 开始菜单
+    // 排障：tsf.log 里没有任何开始菜单相关宿主的记录，无法定位加载层）。
+    static volatile LONG logged = 0;
+    if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
+        char host[260];
+        diagHostName(host, static_cast<int>(sizeof(host)));
+        diagPrintf(L"tsf.log", "classobject host=%s build=%s %s\n", host,
+                   __DATE__, __TIME__);
+    }
     static ChaosetFactory factory;  // 无状态，静态实例即可
     return factory.QueryInterface(riid, ppv);
 }

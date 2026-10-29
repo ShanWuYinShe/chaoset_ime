@@ -60,6 +60,12 @@ func (s *Server) Serve() error {
 			}
 			return fmt.Errorf("接受连接失败: %w", err)
 		}
+		// TCP 连接记录到 daemon 日志（每壳进程一条持久连接，不会刷屏）：
+		// 开始菜单等 AppContainer 宿主能否到达 daemon，由此一眼可辨——
+		// 排障时与壳的 tsf.log 对读（2026-10-29 开始菜单排障）。
+		if _, isTCP := conn.RemoteAddr().(*net.TCPAddr); isTCP {
+			log.Printf("ipc 连接: %s", conn.RemoteAddr())
+		}
 		go s.handleConn(conn)
 	}
 }
