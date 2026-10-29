@@ -198,6 +198,11 @@ final class ChaosetController: IMKInputController {
                 if event.keyCode == 36 {
                     return true // 回车消费
                 }
+                // 空格一律消费：联想态下空格是「选第一个联想词」的意图，
+                // 上屏失败（daemon 不可达/越界）时也不能把裸空格漏进文档。
+                // Windows/Linux 壳在此场景都是 return true（2026-10-29
+                // 三端一致性审查：此前 macOS 走 passThrough，文档多个空格）。
+                return true
                 return passThrough(client)
             } else if event.keyCode == 51 {
                 // 删除键：收起联想并**消费**——透传会误删刚上屏的文字
