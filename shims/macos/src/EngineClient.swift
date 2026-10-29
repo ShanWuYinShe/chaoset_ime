@@ -129,7 +129,7 @@ final class EngineClient {
                 return false
             }
         }
-        // 连上后恢复常规模式（受 SO_RCVTIMEO/SO_SNDTIMEO 100ms 保护）
+        // 连上后恢复常规模式（受上面设置的 SO_RCVTIMEO/SO_SNDTIMEO 250ms 保护）
         _ = fcntl(sock, F_SETFL, flags)
         fd = sock
         return true

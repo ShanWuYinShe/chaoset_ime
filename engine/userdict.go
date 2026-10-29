@@ -99,7 +99,33 @@ type UserDict struct {
 
 // NewUserDict 加载用户词典；文件不存在视为空词典。
 // 兼容阶段 0 的扁平格式（仅 words 的 JSON），读取时自动迁移。
+//
+// 文件存在但**无法解析**时返回错误（严格语义）。daemon 等常驻进程应改用
+// NewUserDictLenient——理由见其注释。
 func NewUserDict(path string) (*UserDict, error) {
+	u, _, err := newUserDict(path, false)
+	return u, err
+}
+
+// NewUserDictLenient 与 NewUserDict 相同，但把「文件存在却无法解析」视为
+// **可恢复**，返回空词典与一条警告（调用方应写日志）。这是 daemon /
+// ibus 引擎启动路径必须的语义：
+//
+//	学习数据是增量优化，绝不能因为它让整个输入法起不来。
+//
+// 这条原则在落盘路径上已经确立（见 cmd/chaosetd 关于 SetDeferred 的注释：
+// 「落盘失败不能丢字符」）。此前加载路径没有对齐：userdict.json 一旦损坏
+// （断电、磁盘满、手工编辑、旧版本残留），NewUserDict 报错 → daemon
+// log.Fatal 退出 → 输入法彻底打不出字，用户只能手工删文件恢复。
+//
+// 损坏文件不静默删除：重命名为 <path>.corrupt-<时间戳> 保留现场便于排查。
+// 仅「解析失败」降级；**读取失败仍返回错误**（权限不足、路径是目录等），
+// 那类问题改名也解决不了，静默吞掉只会让用户误以为数据还在。
+func NewUserDictLenient(path string) (*UserDict, string, error) {
+	return newUserDict(path, true)
+}
+
+func newUserDict(path string, lenient bool) (*UserDict, string, error) {
 	u := &UserDict{
 		path: path,
 		now:  time.Now,
@@ -110,19 +136,40 @@ func NewUserDict(path string) (*UserDict, error) {
 		},
 	}
 	if path == "" {
-		return u, nil
+		return u, "", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return u, nil
+			return u, "", nil
 		}
-		return nil, fmt.Errorf("读取用户词典失败: %w", err)
+		return nil, "", fmt.Errorf("读取用户词典失败: %w", err)
 	}
 	if err := u.load(data); err != nil {
-		return nil, fmt.Errorf("解析用户词典 %s 失败: %w", path, err)
+		if !lenient {
+			return nil, "", fmt.Errorf("解析用户词典 %s 失败: %w", path, err)
+		}
+		// 解析可能已部分填充内存态，先清空再以空词典继续。
+		u.file = userFile{
+			Words:   make(map[string]*userRecord),
+			Phrases: make(map[string]*phraseRecord),
+			Bigrams: make(map[string]*userRecord),
+		}
+		bak := corruptUserDictBackupPath(path)
+		if rerr := os.Rename(path, bak); rerr != nil {
+			return u, fmt.Sprintf("用户词典 %s 解析失败（%v）；备份改名也失败（%v），本次以空词典启动",
+				path, err, rerr), nil
+		}
+		return u, fmt.Sprintf("用户词典 %s 解析失败（%v），已备份为 %s；本次以空词典启动",
+			path, err, bak), nil
 	}
-	return u, nil
+	return u, "", nil
+}
+
+// corruptUserDictBackupPath 生成损坏文件的备份路径。带毫秒时间戳：
+// 同一秒内连续两次恢复也几乎不可能撞名，且便于按时间定位现场。
+func corruptUserDictBackupPath(path string) string {
+	return path + ".corrupt-" + time.Now().Format("20060102-150405.000")
 }
 
 func (u *UserDict) load(data []byte) error {

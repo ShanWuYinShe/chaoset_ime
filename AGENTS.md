@@ -38,7 +38,7 @@
 ```bash
 make build       # 编译 bin/ 下的 chaosetd, chaoset-cli, chaoset-import, chaoset-dictgen, chaoset-userdict
 make test        # 运行引擎与协议测试 (go test ./...)
-make vet         # 静态分析（go vet + workflow 结构 + 版本号单一真源）
+make vet         # 静态分析（go vet + workflow 结构 + 版本号单一真源 + Windows GDI 契约）
 make fmt         # 代码格式化 (gofmt -l -w .)
 make version     # 当前版本（由 git tag 推导）
 make check-version  # 断言源码里没有写死的版本号
@@ -60,7 +60,7 @@ go build ./...                    # 秒级
 
 | CI job | 覆盖内容 | 为什么不在本地跑 |
 |---|---|---|
-| lint | gofmt / go vet / workflow 结构 / 版本检查 / 构建 | 快，但统一在 CI 跑保证一致 |
+| lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 构建 | 快，但统一在 CI 跑保证一致 |
 | test | go test ./...（含 CJK 字体渲染断言） | 要装字体、约 30s |
 | race | `go test -race` | 最重的一项，本机 45s+ |
 | linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页 | 需要 dbus + ibus，占资源 |

@@ -71,9 +71,15 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 	}
 	log.Printf("已加载词典 %d 条（%s）", dict.Len(), strings.Join(dicts, ", "))
 
-	user, err := engine.NewUserDict(userPath)
+	// 宽松加载：userdict.json 损坏（断电/磁盘满/手工编辑）不能让 daemon
+	// 起不来——学习数据是增量优化，损失它远好过输入法完全不可用。
+	// 损坏文件会被改名备份为 *.corrupt-<时间戳>，警告写日志便于排查。
+	user, userWarn, err := engine.NewUserDictLenient(userPath)
 	if err != nil {
 		return err
+	}
+	if userWarn != "" {
+		log.Printf("警告: %s", userWarn)
 	}
 	// daemon 常驻且上屏密集：开启延迟落盘，避免每次上屏都同步重写整份用户
 	// 词典（详见 engine/userdict.go 的 deferred 契约）。失败时的落盘错误由
@@ -152,11 +158,8 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 			case <-flushCtx.Done():
 				return
 			case <-t.C:
-				if wrote, ferr := user.FlushIfDirty(); ferr != nil {
+				if _, ferr := user.FlushIfDirty(); ferr != nil {
 					log.Printf("用户词典落盘失败: %v", ferr)
-				} else if wrote {
-					// 仅在真的写过盘时记录调试线索，避免刷屏
-					_ = wrote
 				}
 			}
 		}

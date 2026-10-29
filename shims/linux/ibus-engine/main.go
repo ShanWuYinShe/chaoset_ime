@@ -159,9 +159,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	user, err := engine.NewUserDict(*userPath)
+	// 宽松加载：用户词典损坏不能让 ibus 引擎退出（否则整个输入法不可用）。
+	// 损坏文件改名备份为 *.corrupt-<时间戳>，与 daemon 侧同一策略。
+	user, userWarn, err := engine.NewUserDictLenient(*userPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if userWarn != "" {
+		log.Printf("警告: %s", userWarn)
 	}
 
 	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp, *assoc)

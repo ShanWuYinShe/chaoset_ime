@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"chaoset.ime/engine"
 )
@@ -33,14 +34,44 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// pingTimeout 是 Ping 的硬上限。
+//
+// Ping 的契约是「探活，不等待」：daemon 未就绪时调用方应降级放行按键。
+// 但 call 本身是阻塞的（无 deadline），若 daemon 进程还在、socket 也活着
+// 却不回包（极端情况：卡在 GC 或持锁写盘），Ping 会一直阻塞，与契约相反。
+// 取值与壳侧 IPC 超时同量级（macOS 250ms / Windows 200ms）。
+const pingTimeout = 250 * time.Millisecond
+
 // Ping 探活：daemon 未就绪时调用方应降级放行按键，而不是等待。
+//
+// 自带 pingTimeout 截止时间。超时后**连接会被关闭**：流里可能残留半个
+// 请求/响应，继续在同一连接上解析会导致请求与响应错位（串包），所以宁可
+// 让调用方重新 Dial，也不在状态不可信的流上返回错误的结果。
 func (c *Client) Ping() error {
-	return c.call("ping", nil, nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.conn.SetDeadline(time.Now().Add(pingTimeout)); err != nil {
+		return fmt.Errorf("设置探活超时失败: %w", err)
+	}
+	err := c.callLocked("ping", nil, nil)
+	// 清除截止时间：deadline 是连接级状态，不清除会让后续正常调用继承它。
+	if clrErr := c.conn.SetDeadline(time.Time{}); clrErr != nil && err == nil {
+		return fmt.Errorf("清除探活超时失败: %w", clrErr)
+	}
+	if err != nil {
+		_ = c.conn.Close()
+	}
+	return err
 }
 
 func (c *Client) call(method string, params any, result any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.callLocked(method, params, result)
+}
+
+// callLocked 是 call 的持锁主体（Ping 需要在同一把锁内设置/清除 deadline）。
+func (c *Client) callLocked(method string, params any, result any) error {
 	c.next++
 	req := Request{ID: c.next, Method: method}
 	if params != nil {

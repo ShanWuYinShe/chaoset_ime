@@ -342,9 +342,19 @@ go run ./cmd/chaoset-dictgen -jieba dict.txt \
   -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv
 ```
 
-四个 flag：`-jieba`（词频，必填）、`-pinyin`（词语拼音，必填）、
-`-single`（单字拼音，可选）、`-o`（输出 TSV，必填）。
-生成过程约 0.8 秒（含读三个源文件）。`-single` 的作用是补多音字：词语拼音表
+七个 flag：
+
+| flag | 作用 | 必填 |
+|---|---|---|
+| `-jieba` | 词频表（多字词词频） | 是 |
+| `-pinyin` | 词语拼音表 | 是 |
+| `-o` | 输出 TSV | 是 |
+| `-single` | 单字拼音表（补多音字） | 否 |
+| `-charfreq` | 单字字频表（修正 jieba 单字虚高） | 否 |
+| `-corpus` | 真实语料词频（字频表缺省时的回退校正） | 否 |
+| `-extra` | 手工补充词表（现代词/口语高频词，见 `data/dict_extra.tsv`） | 否 |
+
+生成过程约 0.8 秒（含读源文件）。`-single` 的作用是补多音字：词语拼音表
 里没有的单字，靠它拿到读音；**不传时这些单字会被跳过**（不会瞎猜拼音）。
 
 生成规则（实现见 `cmd/chaoset-dictgen`）：
@@ -361,6 +371,22 @@ go run ./cmd/chaoset-dictgen -jieba dict.txt \
 - 输出按词排序，**同一输入重复运行逐字节一致**（幂等，由 `TestGenIdempotent` 兜底）。
 
 文件头注释同样记录了来源 URL、许可与再生成命令；换了上游数据请重新生成而不是手改。
+
+### 手工补充词表 `data/dict_extra.tsv`
+
+这是整个词库链路里**唯一允许手工编辑**的词表（格式与输出一致：词 / 拼音 / 原始
+词频，一行一条），经 `-extra` 合并进生成结果。用途是补上游词频表的空白：
+
+- **现代数字生活词**——jieba 语料较老，微信/扫码/表情包/抖音/卡顿/断网等
+  大面积缺失（2026-10-30 审计：92 个现代高频词缺 28 个）；
+- **口语高频拼合词**——jieba 未收录的组合（真好/来不及/对不起），不补录时
+  组句路径会被碎片过滤误杀，表现为「打不出这个词」；
+- **提升已有词条词频**——与主源重复时取较大词频（因此可以纠正被压得过低的
+  常用词，如支付宝/朋友圈）。
+
+维护规则：只收「确实常用、且上游词频表没有或明显偏低」的词；词频参考
+锚点（手机 4789→62 分、电脑 3427→59 分）。改完必须重新生成
+`data/dict_common.tsv` 并提交两者，生成产物仍禁止手改。
 
 ### 接入 CC-CEDICT 开源词库
 
@@ -538,6 +564,16 @@ bin/chaoset-userdict -userdict chaoset-userdict.json stats
 bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
 bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 ```
+
+### 文件损坏时的自动恢复
+
+学习数据是增量优化，**不能因为它让输入法起不来**。daemon 与 ibus 引擎启动时
+用宽松加载：`chaoset-userdict.json` 若无法解析（断电写坏、磁盘满、手工编辑、
+旧版本残留），会把它改名备份为 `chaoset-userdict.json.corrupt-<时间戳>`
+并日志记一条警告，然后以空词典继续启动——不会退出、不需要手工删文件。
+
+备份文件保留现场便于排查；确认无用后可自行删除。读取失败（权限不足等）
+仍会报错退出——那类问题改名解决不了，静默忽略只会让用户误以为数据还在。
 
 全量导出为多段 TSV（词 / 词组 / 上下文，含次数与最近使用时间，
 按次数降序、UTC 时间，输出稳定可 diff）；空段省略。`clear` 不可撤销，
