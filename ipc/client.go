@@ -205,9 +205,10 @@ func (c *Client) ToggleHalfWidth() (bool, error) {
 
 // SelectPrefix 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，
 // 剩余拼音回灌继续组词。返回剩余组词态（Committed=已上屏前缀段文本，
-// Preedit=剩余拼音，Candidates=剩余候选）。
-func (c *Client) SelectPrefix(index int) (engine.Composition, error) {
+// Preedit=剩余拼音，Candidates=剩余候选）与本次上屏文本，签名与本地
+// engine.Session.SelectPrefix 一致，供 engine.Controller 统一调用。
+func (c *Client) SelectPrefix(index int) (engine.Composition, string, error) {
 	var comp engine.Composition
 	err := c.call("selectPrefix", map[string]int{"index": index}, &comp)
-	return comp, err
+	return comp, comp.Committed, err
 }

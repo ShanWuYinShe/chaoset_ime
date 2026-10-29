@@ -404,7 +404,7 @@ func TestSelectPrefixProgressive(t *testing.T) {
 		t.Fatal("前置失败：候选中应有「今天」")
 	}
 
-	comp, err = client.SelectPrefix(idx)
+	comp, _, err = client.SelectPrefix(idx)
 	if err != nil {
 		t.Fatalf("SelectPrefix 失败: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestSelectPrefixProgressive(t *testing.T) {
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "我吃了一大碗" {
 		t.Fatalf("剩余候选首选应为整句「我吃了一大碗」：%+v", comp.Candidates)
 	}
-	comp2, err := client.SelectPrefix(0)
+	comp2, _, err := client.SelectPrefix(0)
 	if err != nil {
 		t.Fatalf("SelectPrefix(0) 失败: %v", err)
 	}

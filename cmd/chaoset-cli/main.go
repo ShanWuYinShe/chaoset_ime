@@ -90,12 +90,17 @@ func main() {
 			}
 			printComposition(comp)
 		case len(line) == 1 && line[0] >= '1' && line[0] <= '9':
-			text, err := ctrl.Select(int(line[0] - '1'))
+			// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
+			// （与三端壳的 selectPrefix 路径一致，本地测试台可验证渐进链路）。
+			comp, committed, err := ctrl.SelectPrefix(int(line[0] - '1'))
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue
 			}
-			fmt.Printf("上屏: %s\n", text)
+			fmt.Printf("上屏: %s\n", committed)
+			if comp.Input != "" {
+				printComposition(comp)
+			}
 		case len(line) == 1 && engine.IsPunctKey(rune(line[0])):
 			// 标点键：组词中先上屏首选候选再出中文标点，空组词直接出标点
 			text, err := ctrl.Punct(line)

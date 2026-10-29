@@ -45,14 +45,23 @@ func decay(lastUsed int64, now time.Time) float64 {
 type userRecord struct {
 	Count    int   `json:"count"`
 	LastUsed int64 `json:"last_used"`
+	// Segs 仅整句式调频记录携带：用户确认过的分段（词文本，按上屏顺序）。
+	// 整句（「今天星期一」）与单词共用 Words 表，靠它区分两种语义——
+	// 有分段的是「整句习惯」，只允许在完整输入时作为整句候选、联想只在
+	// 分段边界剥前缀；无分段的是普通词调频，行为与历史一致。
+	Segs []string `json:"segs,omitempty"`
 }
 
 // phraseRecord 是词组进化的产物：用户反复分字打出来的组合固化为词组。
 type phraseRecord struct {
-	Word     string `json:"word"`
-	Sylls    string `json:"sylls"` // 空格分隔
-	Count    int    `json:"count"`
-	LastUsed int64  `json:"last_used"`
+	Word  string `json:"word"`
+	Sylls string `json:"sylls"` // 空格分隔
+	// Segs 是合成词组的分段（进化时的两个上屏词）。联想剥前缀只允许在
+	// 这些分段边界上发生（2026-10-30 用户要求：不能因为学过「今天天气」
+	// 就在上屏「今」后给出「天天气」）。
+	Segs     []string `json:"segs,omitempty"`
+	Count    int      `json:"count"`
+	LastUsed int64    `json:"last_used"`
 }
 
 type userFile struct {
@@ -243,8 +252,27 @@ func (u *UserDict) touch(rec *userRecord) {
 	rec.LastUsed = u.now().Unix()
 }
 
-// BumpWord 记录一次静态词上屏。
+// BumpWord 记录一次静态词上屏（普通单词/单字，无整句分段）。
 func (u *UserDict) BumpWord(word string, syllables []string) error {
+	return u.bumpWord(word, syllables, nil)
+}
+
+// BumpWordWithSegs 记录一次**整句式**上屏：text 是用户确认过的整句/长词组，
+// segs 是用户逐段确认的分段（词文本，顺序与 syllables 对齐）。
+//
+// 与 BumpWord 的区别只在记录上带 Segs：整句习惯只允许在**完整输入**时作为
+// 整句候选出现，且在联想里只在分段边界剥前缀——否则「学过 今天星期一，
+// 打 今 就给 天星期一」这种整词贪婪匹配会把用户想要的「今天」候选挤掉
+// （2026-10-30 用户明确要求）。普通单词的 BumpWord 行为完全不变。
+func (u *UserDict) BumpWordWithSegs(word string, syllables, segs []string) error {
+	if len(segs) < 2 {
+		return u.bumpWord(word, syllables, nil)
+	}
+	return u.bumpWord(word, syllables, append([]string(nil), segs...))
+}
+
+// bumpWord 是 BumpWord / BumpWordWithSegs 的共同实现（调用方不持锁）。
+func (u *UserDict) bumpWord(word string, syllables, segs []string) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	key := userKey(word, syllables)
@@ -252,6 +280,9 @@ func (u *UserDict) BumpWord(word string, syllables []string) error {
 	if rec == nil {
 		rec = &userRecord{}
 		u.file.Words[key] = rec
+	}
+	if len(segs) >= 2 {
+		rec.Segs = append(rec.Segs[:0], segs...)
 	}
 	u.touch(rec)
 	return u.persistAfterBump()
@@ -286,6 +317,16 @@ func (u *UserDict) PairCount(prev, next string) int {
 
 // BumpPhrase 记录（或创建）一个用户合成词组的一次使用。
 func (u *UserDict) BumpPhrase(word string, syllables []string) error {
+	return u.bumpPhrase(word, syllables, nil)
+}
+
+// BumpPhraseWithSegs 与 BumpPhrase 相同，但记录合成词组的分段（进化时的
+// 前后两个上屏词）。联想剥前缀只允许在这些边界上发生。
+func (u *UserDict) BumpPhraseWithSegs(word string, syllables, segs []string) error {
+	return u.bumpPhrase(word, syllables, segs)
+}
+
+func (u *UserDict) bumpPhrase(word string, syllables, segs []string) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	key := userKey(word, syllables)
@@ -293,6 +334,9 @@ func (u *UserDict) BumpPhrase(word string, syllables []string) error {
 	if rec == nil {
 		rec = &phraseRecord{Word: word, Sylls: strings.Join(syllables, " ")}
 		u.file.Phrases[key] = rec
+	}
+	if len(segs) >= 2 {
+		rec.Segs = append(rec.Segs[:0], segs...)
 	}
 	rec.Count++
 	rec.LastUsed = u.now().Unix()
@@ -368,6 +412,7 @@ func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {
 			Word:      rec.Word,
 			Syllables: strings.Fields(rec.Sylls),
 			Freq:      u.phraseScore(rec),
+			Segs:      append([]string(nil), rec.Segs...),
 		})
 	}
 	return out
@@ -393,6 +438,7 @@ func (u *UserDict) QueryPhrasesPrefix(syllables []string) []*Entry {
 			Word:      rec.Word,
 			Syllables: strings.Fields(rec.Sylls),
 			Freq:      u.phraseScore(rec),
+			Segs:      append([]string(nil), rec.Segs...),
 		})
 	}
 	return out
@@ -430,6 +476,7 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 				Word:      rec.Word,
 				Syllables: sylls,
 				Freq:      u.phraseScore(rec),
+				Segs:      append([]string(nil), rec.Segs...),
 			})
 		}
 	}
@@ -456,6 +503,7 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 				Word:      word,
 				Syllables: sylls,
 				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+				Segs:      append([]string(nil), rec.Segs...),
 			})
 		}
 	}
@@ -507,6 +555,7 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 				Word:      rec.Word,
 				Syllables: sylls,
 				Freq:      u.phraseScore(rec),
+				Segs:      append([]string(nil), rec.Segs...),
 			}
 			if len(sylls) == len(tokens) {
 				exacts = append(exacts, e)
@@ -538,6 +587,7 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 				Word:      word,
 				Syllables: sylls,
 				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+				Segs:      append([]string(nil), rec.Segs...),
 			}
 			if len(sylls) == len(tokens) {
 				exacts = append(exacts, e)
@@ -586,7 +636,7 @@ func (u *UserDict) QueryContinuation(tokens []Token, frag string, maxResults int
 
 	var out []SyllableContinuation
 	seen := make(map[string]bool)
-	match := func(word string, sylls []string, score int) {
+	match := func(word string, sylls, segs []string, score int) {
 		if len(sylls) < len(tokens)+1 {
 			return
 		}
@@ -605,19 +655,20 @@ func (u *UserDict) QueryContinuation(tokens []Token, frag string, maxResults int
 		}
 		seen[key] = true
 		out = append(out, SyllableContinuation{
-			Entry:  &Entry{Word: word, Syllables: sylls, Freq: score},
+			Entry: &Entry{Word: word, Syllables: sylls, Freq: score,
+				Segs: append([]string(nil), segs...)},
 			Remain: next[len(frag):],
 		})
 	}
 	for _, rec := range u.file.Phrases {
-		match(rec.Word, strings.Fields(rec.Sylls), u.phraseScore(rec))
+		match(rec.Word, strings.Fields(rec.Sylls), rec.Segs, u.phraseScore(rec))
 	}
 	for key, rec := range u.file.Words {
 		word, sylls, ok := parseUserKey(key)
 		if !ok {
 			continue
 		}
-		match(word, sylls, int(float64(rec.Count*UserBoostPerCount)*decay(rec.LastUsed, u.now())))
+		match(word, sylls, rec.Segs, int(float64(rec.Count*UserBoostPerCount)*decay(rec.LastUsed, u.now())))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if len(out[i].Remain) != len(out[j].Remain) {
@@ -940,6 +991,7 @@ func (u *UserDict) QueryPhrasesByWordPrefix(prefix string) []*Entry {
 				Word:      rec.Word,
 				Syllables: strings.Fields(rec.Sylls),
 				Freq:      u.phraseScore(rec),
+				Segs:      append([]string(nil), rec.Segs...),
 			})
 		}
 	}
@@ -968,6 +1020,7 @@ func (u *UserDict) QueryWordsByWordPrefix(prefix string) []*Entry {
 				Word:      word,
 				Syllables: sylls,
 				Freq:      int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now())),
+				Segs:      append([]string(nil), rec.Segs...),
 			})
 		}
 	}

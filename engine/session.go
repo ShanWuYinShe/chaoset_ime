@@ -13,6 +13,10 @@ type Candidate struct {
 	Syllables string `json:"syllables"`
 	Score     int    `json:"score"`
 	FromUser  bool   `json:"from_user,omitempty"` // 是否被用户数据（调频/词组/上下文）加权
+	// Segments 仅「整句式」候选携带：用户确认过的分段词文本（DP 整句候选
+	// 来自其切分词序列，学习记录候选来自 Words 的 Segs）。壳不需要它；
+	// 引擎用它把「一键整句上屏」按逐段确认的等价路径学习。
+	Segments []string `json:"segments,omitempty"`
 }
 
 // Composition 是当前组词状态：原始输入、预编辑串、当前页候选与分页信息。
@@ -42,6 +46,9 @@ type Controller interface {
 	BackspaceWord() (Composition, error)
 	Reset() (Composition, error)
 	Select(index int) (string, error)
+	// SelectPrefix 渐进上屏：选中候选并只消耗其音节对应的输入前缀，
+	// 剩余输入回灌继续组词（Composition.Committed 为本次上屏文本）。
+	SelectPrefix(index int) (Composition, string, error)
 	// Punct 提交一个标点键：组词中先上屏首选候选（无候选的残缺输入
 	// 丢弃），随后输出映射后的中文标点；空组词直接输出中文标点。
 	Punct(key string) (string, error)
@@ -76,6 +83,11 @@ const (
 	maxLearnSylls = 4
 	// maxHistory 限制参与学习观察的上屏历史长度。
 	maxHistory = 8
+	// maxSentenceSylls 是「整句式输入习惯」可学习的最长音节数。整句学习
+	// 只服务完整输入的整句候选（2026-10-30 用户需求），超过该长度的输入
+	// 已是连打/误触而非习惯词，不记；5 音节「今天星期一」、9 音节
+	// 「今天天气真好」都在范围内。
+	maxSentenceSylls = 12
 )
 
 // learnEntry 记录一次上屏，供词组进化观察「相邻共现」。
@@ -99,8 +111,12 @@ type Session struct {
 	// （enterAssociate(rest.committed)），若单字符词被当成 1 个音节，
 	// 「测试→题」就会被剥成「题」=shí'tí（多字词全部错位），学习数据随之
 	// 污染。macOS 壳按候选音节传，一直是对的。2026-10-29 修复。
-	prevSylls  []string
-	history    []learnEntry
+	prevSylls []string
+	history   []learnEntry
+	// seqSegs 记录本次组词中已「渐进上屏」的各段（词+音节）。整串耗尽时
+	// 拼成整句习惯写入用户词库（见 learnProgressiveSequence）；普通
+	// 一次上屏清空组词时不会用到。
+	seqSegs    []learnEntry
 	dquoteOpen bool // 中文双引号 “” 的开闭交替状态
 	squoteOpen bool // 中文单引号 ‘’ 的开闭交替状态
 	page       int  // 当前候选页（0 起；输入变化时重置为 0）
@@ -330,6 +346,7 @@ func (s *Session) Reset() (Composition, error) {
 	s.prev = ""
 	s.prevSylls = nil
 	s.history = nil
+	s.seqSegs = nil
 	s.page = 0
 	s.resetPunctCycle()
 	s.dpPending = 0
@@ -359,7 +376,8 @@ func (s *Session) PrevPage() (Composition, error) {
 }
 
 // Select 选中候选（0 起）并「上屏」：记调频、记上下文、观察词组进化，
-// 清空组词并返回候选文本。
+// 清空组词并返回候选文本。候选若带分段（一次选中的整句复合词），学习按
+// 「整句式」记录（见 learnSelection）。
 func (s *Session) Select(index int) (string, error) {
 	comp := s.Compose()
 	if index < 0 || index >= len(comp.Candidates) {
@@ -368,15 +386,22 @@ func (s *Session) Select(index int) (string, error) {
 	c := comp.Candidates[index]
 	sylls := strings.Split(c.Syllables, "'")
 	text := c.Text
-	s.learnSelection(text, sylls)
+	s.learnSelection(text, sylls, c.Segments)
+	s.seqSegs = nil
 	s.input = ""
 	s.resetPunctCycle()
 	return text, nil
 }
 
 // learnSelection 记录一次上屏的学习数据：词频、与上一上屏词的 Bigram、
-// history 与词组进化。Select / SelectPrefix 共用。
-func (s *Session) learnSelection(text string, sylls []string) {
+// history 与词组进化。Select / SelectPrefix / AssociateSelect 共用。
+//
+// segs 是「整句式上屏」时用户确认过的分段词文本（逐段渐进拼出的整串，
+// 或一次选中的整句候选自带的分段），普通单词为 nil。整句式记录带分段：
+// 完整输入时作为整句候选参与调频加权；**部分输入不给整词候选、联想也只在
+// 分段边界剥前缀**——否则「学过 今天星期一，输入 今 就给 天星期一」会把
+// 用户真正想打的「今天」挤掉（2026-10-30 用户明确要求：不能直接匹配整个词）。
+func (s *Session) learnSelection(text string, sylls, segs []string) {
 	// 学习数据的写入失败**绝不能阻断上屏**。
 	//
 	// 输入法的铁律是「用户按了键就必须出字」。旧实现把 BumpWord/BumpBigram 的
@@ -384,19 +409,49 @@ func (s *Session) learnSelection(text string, sylls []string) {
 	// 这次上屏彻底失败——壳已经把按键消费掉了，用户看到的就是「按数字键毫无
 	// 反应，字也没进文档」（2026-10-26 复现确认）。学习是增量优化，失败只应
 	// 记录而不影响组词结果；下一次 flush 成功时会自动补上。
+	sentence := s.isSentenceSelection(text, sylls, segs)
 	if s.user != nil {
-		_ = s.user.BumpWord(text, sylls)
-		if s.prev != "" {
-			_ = s.user.BumpBigram(s.prev, text)
+		if sentence {
+			_ = s.user.BumpWordWithSegs(text, sylls, segs)
+		} else {
+			_ = s.user.BumpWord(text, sylls)
+			if s.prev != "" {
+				_ = s.user.BumpBigram(s.prev, text)
+			}
 		}
 	}
-	s.history = append(s.history, learnEntry{word: text, sylls: sylls})
-	if len(s.history) > maxHistory {
-		s.history = s.history[len(s.history)-maxHistory:]
-	}
-	if s.user != nil {
-		// 词组学习失败不阻断上屏（数据已落盘，学习是增量优化）
-		s.learnPhrase()
+	if sentence {
+		// 整句一键上屏：按「用户逐段确认」的等价路径再学一遍分段词与相邻
+		// 共现。这样一键整句与逐段渐进选择落下同一套习惯数据，后续打
+		// jintian 时「今天」同样会被调频加权，两条路径的学习不分叉。
+		parts := splitSyllsBySegs(sylls, segs)
+		prevWord := s.prev
+		for i, seg := range segs {
+			segSylls := parts[i]
+			if s.user != nil && seg != "" && len(segSylls) > 0 {
+				_ = s.user.BumpWord(seg, segSylls)
+				if prevWord != "" {
+					_ = s.user.BumpBigram(prevWord, seg)
+				}
+			}
+			s.history = append(s.history, learnEntry{word: seg, sylls: segSylls})
+			if len(s.history) > maxHistory {
+				s.history = s.history[len(s.history)-maxHistory:]
+			}
+			if s.user != nil {
+				// 词组学习失败不阻断上屏（数据已落盘，学习是增量优化）
+				s.learnPhrase()
+			}
+			prevWord = seg
+		}
+	} else {
+		s.history = append(s.history, learnEntry{word: text, sylls: sylls})
+		if len(s.history) > maxHistory {
+			s.history = s.history[len(s.history)-maxHistory:]
+		}
+		if s.user != nil {
+			s.learnPhrase()
+		}
 	}
 	s.prev = text
 	s.prevSylls = sylls
@@ -410,6 +465,12 @@ func (s *Session) learnSelection(text string, sylls []string) {
 // 后只消耗 jin'tian，剩余 wo'chi'le'yi'da'wan 继续弹「吃了一大碗」相关
 // 候选，逐段渐进拼出整句；每个上屏段都进用户词库学习（吸收用户习惯）。
 //
+// 2026-10-30 两个补强：
+//   - 输入带音节分隔符（jin'tian'…）时也能渐进——比较时忽略 '，剩余串
+//     不会以分隔符开头（此前 HasPrefix 恒不匹配、整串被清空）；
+//   - 整串由 >=2 段拼完时把整句记成带分段的整句习惯，下次完整输入同一串
+//     直接给出整句候选（见 learnProgressiveSequence）。
+//
 // 候选音节与 input 前缀不匹配时（简拼/模糊音场景的音节展开差异），
 // 回退为现状语义：整句上屏、input 全清。
 func (s *Session) SelectPrefix(index int) (comp Composition, committed string, err error) {
@@ -420,18 +481,28 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 	cand := c.Candidates[index]
 	committed = cand.Text
 	sylls := strings.Split(cand.Syllables, "'")
-	// 候选音节的字母连写（与 s.input 的连写形态对齐）
-	typed := strings.Join(sylls, "")
-	rest := s.input
-	if strings.HasPrefix(rest, typed) {
-		rest = rest[len(typed):]
-	} else {
+	rest, matched := consumeInputPrefix(s.input, strings.Join(sylls, ""))
+	if !matched {
 		rest = "" // 音节与前缀不匹配（简拼/模糊音展开）：回退全清
 	}
 
-	s.learnSelection(committed, sylls)
+	s.learnSelection(committed, sylls, cand.Segments)
 	s.prev = committed
 	s.input = rest
+	// 组词内容变了，回到第一页（与 afterAppend 一致）：否则用户在第 N 页
+	// 选段后，剩余拼音会停在原页码，首屏候选被跳过、页码显示错乱。
+	s.page = 0
+	if rest == "" {
+		// 本次组词由若干渐进上屏段拼完：把整串固化成整句习惯
+		// （分段 = 各段上屏词）。单段选完整个输入不触发（不是整句）。
+		if len(s.seqSegs) > 0 {
+			all := append(append([]learnEntry(nil), s.seqSegs...), learnEntry{word: committed, sylls: sylls})
+			s.learnProgressiveSequence(all)
+			s.seqSegs = nil
+		}
+	} else {
+		s.seqSegs = append(s.seqSegs, learnEntry{word: committed, sylls: sylls})
+	}
 	s.resetPunctCycle()
 	comp = s.Compose()
 	comp.Committed = committed
@@ -445,10 +516,14 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 // 2026-10-28 语义修正：续接按**上屏词的字**（s.prev）优先——同音不同字
 // （测试/策士）上屏后的续接候选应当跟着字走：选「测试」弹「测试题/
 // 测试员」，选「策士」弹「策士团」，而不是两者弹同一批 ce'shi 开头的
-// 词（用户反馈「联想不能只靠拼音，要跟字对应起来」）。
-// 分层：字前缀（词典 QueryWordPrefix + 用户词库 QueryPhrasesByWordPrefix）
-// 优先，音节前缀（QueryPrefix/QueryPhrasesPrefix）回退补充——上屏词没有
-// 更长的字面续接词时（如单字「了」）仍能出音节续接候选。
+// 词（用户反馈「联想不能只靠拼音，要跟字对应起来」）。字前缀层：词典
+// QueryWordPrefix + 用户词库 Phrases/Words，按词频与共现分排序。
+//
+// 2026-10-30 整句安全约束：「整句式」学习记录（今天星期一 / 今天天气）只在
+// 用户确认过的**分段边界**剥前缀——上屏「今天」给出「星期一」，上屏「今」
+// 不给出「天星期一」。否则学过整句后联想首条会变成整词尾巴（探针实测
+// 天星期一 score=500 顶到首位），把用户真正想要的「今天」路径挤掉
+// （用户明确要求：不能直接匹配整个词）。
 func (s *Session) Associate(sylls []string) []Candidate {
 	if s.dict == nil || len(sylls) == 0 {
 		return nil
@@ -470,23 +545,31 @@ func (s *Session) Associate(sylls []string) []Candidate {
 	}
 	var out []assocItem
 	seen := map[string]bool{}
-	add := func(e *Entry, byWord bool) {
+	// add 处理一条字前缀命中候选。learned 表示来自用户学习记录
+	// （Phrases/Words 表），否则来自主词典；只有学习记录才做整句分段边界校验。
+	add := func(e *Entry, byWord, learned bool) {
 		key := userKey(e.Word, e.Syllables)
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		// 2026-10-29 用户反馈：联想候选必须只含**续接部分**。字前缀层查到
-		// 的是完整词条（上屏「打字」→ 词条「打字测试」），原样返回的话用户
-		// 再选一次会把已上屏的「打字」重复一遍。词条以 s.prev 开头时剥前缀：
-		// 文本取余部，音节剥掉前缀对应的个数（以本次查询入参为准，要求
-		// 词条音节数严格更多，避免同字异音词条剥穿）；余部为空（词条恰好
-		// 等于上屏词）的条目跳过。
 		text, syllStr := e.Word, strings.Join(e.Syllables, "'")
-		if byWord && s.prev != "" && strings.HasPrefix(e.Word, s.prev) &&
-			len(e.Syllables) > len(prevSylls) {
-			text = e.Word[len(s.prev):]
-			syllStr = strings.Join(e.Syllables[len(prevSylls):], "'")
+		if byWord && s.prev != "" && strings.HasPrefix(e.Word, s.prev) && len(e.Syllables) > len(prevSylls) {
+			if learned {
+				if segs := s.entrySegs(e); len(segs) >= 2 {
+					var ok bool
+					text, syllStr, ok = s.stripAtSegmentBoundary(e, segs, s.prev, prevSylls)
+					if !ok {
+						return // 不在用户确认过的分段边界：不提供整词尾巴
+					}
+				} else {
+					text = e.Word[len(s.prev):]
+					syllStr = strings.Join(e.Syllables[len(prevSylls):], "'")
+				}
+			} else {
+				text = e.Word[len(s.prev):]
+				syllStr = strings.Join(e.Syllables[len(prevSylls):], "'")
+			}
 			if text == "" {
 				return
 			}
@@ -507,17 +590,17 @@ func (s *Session) Associate(sylls []string) []Candidate {
 	// 加成后的 541 分根本进不了列表，2026-10-28 探针实测）。
 	if s.prev != "" {
 		for _, e := range s.dict.QueryWordPrefix(s.prev, 200) {
-			add(e, true)
+			add(e, true, false)
 		}
 		if s.user != nil {
 			for _, e := range s.user.QueryPhrasesByWordPrefix(s.prev) {
-				add(e, true)
+				add(e, true, true)
 			}
 			// 用户调频词条（Words 表）：整句上屏/选词的记录都在这里，
 			// 是「之前输入过的词」的主体——漏查它，用户打过的词就不会
 			// 出现在联想候选（2026-10-28 用户反馈）。
 			for _, e := range s.user.QueryWordsByWordPrefix(s.prev) {
-				add(e, true)
+				add(e, true, true)
 			}
 		}
 	}
@@ -557,26 +640,15 @@ func (s *Session) Associate(sylls []string) []Candidate {
 // AssociateSelect 联想候选直接上屏：不需要拼音组词状态，学习路径与
 // Select 完全一致（调频、上下文共现、词组进化），保证「越用越顺手」
 // 对联想上屏同样成立。
+//
+// 联想增量词一般是普通词（的话/题）；万一收到多段拼成的增量长词（旧学习
+// 数据兼容），按整句式记录分段，避免把长尾巴写成不带分段的普通整词。
 func (s *Session) AssociateSelect(word string, sylls []string) (string, error) {
 	if word == "" || len(sylls) == 0 {
 		return "", fmt.Errorf("联想上屏参数为空")
 	}
-	// 同 Select：学习写入失败不阻断联想上屏。
-	if s.user != nil {
-		_ = s.user.BumpWord(word, sylls)
-		if s.prev != "" {
-			_ = s.user.BumpBigram(s.prev, word)
-		}
-	}
-	s.history = append(s.history, learnEntry{word: word, sylls: sylls})
-	if len(s.history) > maxHistory {
-		s.history = s.history[len(s.history)-maxHistory:]
-	}
-	if s.user != nil {
-		s.learnPhrase()
-	}
-	s.prev = word
-	s.prevSylls = sylls
+	s.learnSelection(word, sylls, s.inferSegs(word, sylls))
+	s.seqSegs = nil
 	return word, nil
 }
 
@@ -602,7 +674,9 @@ func (s *Session) learnPhrase() {
 	if s.user.PairCount(a.word, b.word) < learnThreshold {
 		return
 	}
-	_ = s.user.BumpPhrase(word, sylls)
+	// 记录分段（进化时的前后两个上屏词）：联想剥前缀只允许在这些边界发生，
+	// 否则学过「今天天气」后上屏「今」会得到「天天气」（2026-10-30 用户要求）。
+	_ = s.user.BumpPhraseWithSegs(word, sylls, []string{a.word, b.word})
 }
 
 func isInitial(s string) bool {
@@ -1019,6 +1093,17 @@ func (s *Session) compose() Composition {
 		if s.traditional {
 			word = ToTraditional(word) // 候选显示与上屏均为繁体
 		}
+		var segs []string
+		if len(e.Segs) >= 2 {
+			segs = append([]string(nil), e.Segs...)
+			if s.traditional {
+				// 繁体模式：候选显示/上屏是繁体，分段也要同步转成繁体，
+				// 保证 learnSelection 的「分段拼接 == 候选文本」校验成立。
+				for i := range segs {
+					segs[i] = ToTraditional(segs[i])
+				}
+			}
+		}
 		key := word + "\x00" + strings.Join(e.Syllables, " ")
 		if prev, ok := seen[key]; ok {
 			if score > items[prev].cand.Score {
@@ -1030,6 +1115,11 @@ func (s *Session) compose() Composition {
 			if r < items[prev].rank {
 				items[prev].rank = r
 			}
+			// 同一词条可能先由词典/DP 路径加入（无分段）、后由学习记录
+			// 加入（有分段）：补全分段，保证上屏学习走整句式路径。
+			if len(items[prev].cand.Segments) == 0 && len(segs) > 0 {
+				items[prev].cand.Segments = segs
+			}
 			return
 		}
 		seen[key] = len(items)
@@ -1039,6 +1129,7 @@ func (s *Session) compose() Composition {
 				Syllables: strings.Join(e.Syllables, "'"),
 				Score:     score,
 				FromUser:  fromUser,
+				Segments:  segs,
 			},
 			rank: r,
 		})
@@ -1342,6 +1433,7 @@ func (s *Session) compose() Composition {
 								Word:      sc.Text,
 								Syllables: sc.Syllables,
 								Freq:      sc.Score,
+								Segs:      append([]string(nil), sc.Words...),
 							}
 							addCandidate(e, sc.Score+boost, fromUser, rankSentence)
 						}
@@ -1380,6 +1472,7 @@ func (s *Session) compose() Composition {
 								Word:      sc.Text,
 								Syllables: sc.Syllables,
 								Freq:      avgScore,
+								Segs:      append([]string(nil), sc.Words...),
 							}
 							addCandidate(e, avgScore+boost, fromUser, rankInitialSentence)
 						}
@@ -1405,6 +1498,13 @@ func (s *Session) compose() Composition {
 					addCandidate(e, e.Freq, true, r)
 				}
 				for _, e := range uPrefixes {
+					// 整句式学习记录（今天星期一 / 今天天气）只在**完整输入**
+					// 时作为整句候选（走上面的 uExacts），绝不能在只打了前缀时
+					// 以「整词」候选出现——否则打 今 就会出现 今天星期一，
+					// 用户想打 今天 时反而被整词候选干扰（2026-10-30 用户要求）。
+					if s.isSentenceEntry(e) {
+						continue
+					}
 					r := rankPrefix
 					if hasInitials {
 						r = rankInitialPrefix
@@ -1471,6 +1571,7 @@ func (s *Session) compose() Composition {
 								Word:      sc.Text,
 								Syllables: sc.Syllables,
 								Freq:      sc.Score,
+								Segs:      append([]string(nil), sc.Words...),
 							}
 							addCandidate(e, sc.Score+boost, fromUser, r)
 						}

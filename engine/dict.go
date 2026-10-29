@@ -15,6 +15,10 @@ type Entry struct {
 	Word      string
 	Syllables []string
 	Freq      int
+	// Segs 仅用户学习记录查询结果携带：整句式词条（用户一次确认的整句/
+	// 长词组）的分段词文本。词典词条恒为空。联想剥前缀只允许在这些
+	// 分段边界发生（见 Session.entrySegs / Associate）。
+	Segs []string
 }
 
 type dictNode struct {
