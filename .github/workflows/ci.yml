@@ -49,11 +49,10 @@ jobs:
       # YAML 仍合法但 GitHub 判 workflow file issue、CI 全线不跑的教训。
       - name: 校验 workflow 结构
         run: |
-          python3 -m pip install --quiet pyyaml
-          python3 tools/check-workflows.py \
+          go run ./tools/checkworkflows \
             --expect-jobs lint,test,race,linux-e2e,macos-build \
             .github/workflows/ci.yml
-          python3 tools/check-workflows.py \
+          go run ./tools/checkworkflows \
             --expect-jobs test,package-macos,package-linux,package-windows,release \
             .github/workflows/release.yml
 

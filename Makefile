@@ -53,19 +53,20 @@ vet:
 # Windows 壳 GDI 调用契约：ExtCreatePen 的 plbrush 不能为空指针。
 # 2026-10-29 事故：v0.2.14 传 nullptr 导致 gdi32 空指针解引用，
 # 候选窗首帧渲染即带走宿主进程；Linux CI 没有 Windows 运行时，
-# 只能在源码层把这条契约固定住。详见 tools/check-win32-gdi.py。
+# 只能在源码层把这条契约固定住。详见 tools/checkgdi（Go，跨平台编译，
+# make vet 不再依赖 python3）。
 check-win32-gdi:
-	python3 tools/check-win32-gdi.py shims/windows/src
+	go run ./tools/checkgdi shims/windows/src
 
 # 校验 .github/workflows 的结构完整性。
 # 为什么需要它：2026-10-25 一次文本替换误删了两个 job 的头部声明，YAML 语法
 # 依然合法（yaml 能解析），但 GitHub 判「workflow file issue」，CI 全线不跑。
-# 详细背景与检查项见 tools/check-workflows.py 的文件头注释。
+# 详细背景与检查项见 tools/checkworkflows 的文件头注释（Go，跨平台编译）。
 lint-workflows:
-	python3 tools/check-workflows.py \
+	go run ./tools/checkworkflows \
 		--expect-jobs test \
 		.github/workflows/ci.yml
-	python3 tools/check-workflows.py \
+	go run ./tools/checkworkflows \
 		--expect-jobs test,package-macos,package-linux,package-windows,release \
 		.github/workflows/release.yml
 
