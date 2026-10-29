@@ -206,9 +206,13 @@ int main(int argc, char** argv) {
     Comp p1 = session.input("nihao");
     check(p1.ok, "标点用例前组词 nihao");
     std::string punctOut;
-    check(session.punct(",", &punctOut) && punctOut == "你好，", "组词中标点 = 你好，");
-    check(session.punct(".", &punctOut) && punctOut == "。", "空组词标点直映 。");
-    check(!session.punct("@", &punctOut), "未知标点判失败");
+    // punct 第三参数前还有个 halfWidth（2026-10-29 起全/半角开关由壳下发，
+    // f7919ae 给 core.hpp 加了该参数却漏改本测试——Windows 核心测试从那时起
+    // 编译不过，而它只在发版流水线里编译，CI 不覆盖，一直没人发现）。
+    // 这里全程用全角（halfWidth=false），与默认模式一致。
+    check(session.punct(",", false, &punctOut) && punctOut == "你好，", "组词中标点 = 你好，");
+    check(session.punct(".", false, &punctOut) && punctOut == "。", "空组词标点直映 。");
+    check(!session.punct("@", false, &punctOut), "未知标点判失败");
     Comp p2 = session.input("hao");
     check(p2.ok && !p2.candidates.empty(), "标点错误后连接仍可用");
 

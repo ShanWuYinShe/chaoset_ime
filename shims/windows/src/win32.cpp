@@ -2716,6 +2716,14 @@ public:
         if (!on) clearAssociate();
     }
 
+    // 面板当前是否在展示联想候选（候选窗箭头点击据此选择翻哪一组页）。
+    // 2026-10-29：联想与组词共用同一个候选窗，但分页数据源不同
+    // （assoc_ vs comp_），此前箭头点击无条件翻组词页。
+    bool isAssociatePanel() const { return !assoc_.candidates.empty(); }
+
+    // 联想翻页入口（供候选窗箭头调用；实现见下方 flipAssociate）。
+    void flipAssociateFromPanel(bool next);
+
 private:
 
     void enterAssociate(const std::string& syllables) {
@@ -2790,10 +2798,22 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             bool hasNext = comp_.page + 1 < comp_.pageCount;
             bool hasPrev = comp_.page > 0;
             bool dirDown = hasNext || !hasPrev;
-            tip_->flipPage(dirDown);
+            // 面板当前展示的可能是**联想**分页（showAssociatePage 传进来的是
+            // 联想页切片），此时必须翻联想页。2026-10-29 修复：此前无条件走
+            // flipPage（翻组词页）——而联想时组词态 comp_ 是空的，flipPage
+            // 首行 hasCandidates() 直接 return，**点箭头完全没反应**
+            // （macOS 面板箭头在联想态走 associateFlip、Linux 同理）。
+            if (tip_->isAssociatePanel()) {
+                tip_->flipAssociateFromPanel(dirDown);
+            } else {
+                tip_->flipPage(dirDown);
+            }
         }
     }
 }
+
+// 联想翻页的候选窗入口（public 转发，实现在 ChaosetTIP 私有区）。
+void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
 //
