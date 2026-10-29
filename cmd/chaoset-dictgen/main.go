@@ -27,6 +27,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"chaoset.ime/engine"
@@ -35,6 +36,10 @@ import (
 // maxWordLen 是内置词库收录的最长词长（字符数）。再长的词组输入成本高、
 // 命中率低，且会把词库撑大。
 const maxWordLen = 6
+
+// stCharactersPath 是 OpenCC 简→繁单字表路径（相对仓库根目录）。
+// 变量而非常量：测试工作目录是包目录，需要覆盖。
+var stCharactersPath = "engine/dp_data/STCharacters.txt"
 
 // entry 是待写入的一条词库记录。
 type entry struct {
@@ -48,22 +53,33 @@ func main() {
 	pinyinPath := flag.String("pinyin", "", "phrase-pinyin-data large_pinyin.txt 路径（必填）")
 	singlePath := flag.String("single", "", "pinyin-data pinyin.txt 路径（单字拼音；缺省时跳过无词组拼音的单字）")
 	extraPath := flag.String("extra", "", "补充词表 TSV 路径（词\t拼音\t词频 1..99；补录词频表漏收的常用词组，如真好/难得）")
+	corpusPath := flag.String("corpus", "", "真实语料词频表路径（行格式：词	次数；用于校正 jieba 中"+
+		"「不成词语素」的虚高词频，如 灏 2196 / 岃 1849 本应排在 豪/仁 之后。缺省不校正）")
 	out := flag.String("o", "", "输出 TSV 路径（必填）")
 	flag.Parse()
 	if *jiebaPath == "" || *pinyinPath == "" || *out == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *out); err != nil {
+	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *corpusPath, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(jiebaPath, pinyinPath, singlePath, extraPath, outPath string) error {
+func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, outPath string) error {
 	rawFreqs, err := parseJieba(jiebaPath)
 	if err != nil {
 		return err
+	}
+	// 真实语料（可选）：用于把「语料零记录」的单字压到最低档，修正 jieba
+	// 分词词典里生僻字虚高的词频（详见 corpusAdjustedFreq 注释）。
+	var corpus map[string]int
+	if corpusPath != "" {
+		corpus, err = parseCorpusFreq(corpusPath)
+		if err != nil {
+			return err
+		}
 	}
 	phrasePinyin, err := parsePhrasePinyin(pinyinPath)
 	if err != nil {
@@ -158,12 +174,31 @@ func run(jiebaPath, pinyinPath, singlePath, extraPath, outPath string) error {
 				continue
 			}
 		}
-		sylls := pinyinOf(word, phrasePinyin, singlePinyin)
-		if sylls == nil {
+		readings := pinyinOf(word, phrasePinyin, singlePinyin)
+		if readings == nil {
 			skipped++
 			continue
 		}
-		entries = append(entries, entry{word: word, sylls: sylls, freq: scaleFreq(freq, maxFreq)})
+		// 多音字：每个读音各生成一条词条（同词不同拼音是合法数据，
+		// 由 (词,拼音) 唯一性保证不重复）。
+		adjFreq := corpusAdjustedFreq(word, freq, corpus)
+		// 多音字：首个读音是拼音表给的主读音（最常用），其余为次读音。
+		// 所有读音共享同一词频会让次读音与主读音同分，进而造假候选——
+		// 例：『没』有 me/mei/mo 三个读音，若都记 79 分，「怎没」就会被
+		// 当成合法的 ze'me 词条（2026-10-29 实测 zenme 的第 2 位从「怎嚜」
+		// 变成「怎没(17)」）。次读音按 1/4 降权：仍可打出（查 zang→藏、
+		// jiao→觉 这类主读音之外的常用字不受影响，它们本就是该字的主读音），
+		// 但不会抢占常见词的候选位。
+		for i, sylls := range readings {
+			f := adjFreq
+			if i > 0 {
+				f = adjFreq / 4
+				if f < 1 {
+					f = 1
+				}
+			}
+			entries = append(entries, entry{word: word, sylls: sylls, freq: scaleFreq(f, maxFreq)})
+		}
 	}
 
 	// 补充词条追加（-extra 手工维护表）：同样过 CJK 与音节合法性检查
@@ -355,12 +390,21 @@ func parseSinglePinyin(path string) (map[rune][]string, error) {
 	return out, nil
 }
 
-// pinyinOf 返回词的音节切片：优先词组拼音表，单字回退单字拼音表
-// （多音字每个读音一条，按读音顺序）。都无法归一化时返回 nil。
-func pinyinOf(word string, phrase map[string]string, single map[rune][]string) []string {
+// pinyinOf 返回词的全部音节序列：优先词组拼音表，单字回退单字拼音表。
+//
+// **多音字必须返回每一个读音**（每个读音一条词条）。2026-10-29 修复：此前
+// 这里遇到第一个合法读音就 return，导致 3,358 个多音字只保留 1 个读音——
+// 常用字直接打不出来：chang 无「长」、chong 无「重」、hang 无「行」、
+// liao 无「了」、du 无「都」、huan 无「还」、huo 无「和」、kuai 无「会」、
+// de 无「地」、jiao 无「觉」、zang 无「藏」（实测 11/15 缺失）。
+// 函数注释「多音字每个读音一条」原本就是这么写的，是代码与注释不一致。
+// 词组层面一直是对的（银行/长城/重庆/了解 全对），塌陷只在单字。
+//
+// 返回值：非空切片 = 至少一个合法读音（多者返回多条）；nil = 无法归一化。
+func pinyinOf(word string, phrase map[string]string, single map[rune][]string) [][]string {
 	if py, ok := phrase[word]; ok {
 		if sylls := engine.NormalizePinyin(py); sylls != nil && len(sylls) == len([]rune(word)) {
-			return sylls
+			return [][]string{sylls}
 		}
 	}
 	runes := []rune(word)
@@ -371,12 +415,24 @@ func pinyinOf(word string, phrase map[string]string, single map[rune][]string) [
 	if !ok {
 		return nil
 	}
+	var out [][]string
+	seen := make(map[string]bool, len(readings))
 	for _, r := range readings {
-		if sylls := engine.NormalizePinyin(r); len(sylls) == 1 {
-			return sylls
+		sylls := engine.NormalizePinyin(r)
+		if len(sylls) != 1 {
+			continue
 		}
+		key := sylls[0]
+		if seen[key] {
+			continue // 同音重复读音（如 行 xíng 只记一次）
+		}
+		seen[key] = true
+		out = append(out, sylls)
 	}
-	return nil
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // cjkWordOK 判断词是否只含 CJK 汉字（基本区、扩展 A、兼容表意区、〇），
@@ -397,6 +453,121 @@ func cjkWordOK(word string) bool {
 		}
 	}
 	return true
+}
+
+// parseCorpusFreq 读取真实语料词频表（繁体字形，行格式「词<TAB>次数」），
+// 并转成简体后合并计数。
+//
+// 为什么需要（2026-10-29 词库质量审计）：jieba dict.txt 是**分词词典**，
+// 里面的单字词频并不等价于「该字独立成词的常用度」——大量生僻字被标成
+// 不成词语素（g/zg），却因在语料的人名/网文里高频出现而拿到虚高分：
+//
+//	灏 2196 / 岃 1849 / 粬 1457，而 豪 1182 / 仁 1173
+//
+// 结果就是输入 hao 时「灏」排在「豪」前面、输入 ren 时「岃」排在「仁」
+// 前面（实测 de/le/wo/qu/lai/ren/hao 等窄拼音前 6 位都有这类字）。
+// 真实语料（Rime essay.txt）对这批字是零记录或极低频，可据此校正。
+//
+// 语料是繁体字形（這/說/個），必须先经 OpenCC 反向映射转简体，
+// 否则简体常用字会被误判成「零记录」（实测会误伤 为/这/说/个 等 6/23）。
+func parseCorpusFreq(path string) (map[string]int, error) {
+	t2s := make(map[rune]rune, 4096)
+	// 直接用仓库内嵌的 OpenCC 简→繁表反向构建；dictgen 在仓库根目录运行。
+	// 变量而非常量：测试需从包目录覆盖为 ../engine/dp_data/... 。
+	data, err := os.ReadFile(stCharactersPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取 %s 失败（需在仓库根目录运行）: %w", stCharactersPath, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "	")
+		if !ok {
+			continue
+		}
+		if i := strings.IndexByte(val, ' '); i >= 0 {
+			val = val[:i] // 繁体多候选取首个
+		}
+		kr, vr := []rune(key), []rune(val)
+		if len(kr) == 1 && len(vr) == 1 {
+			if _, exists := t2s[vr[0]]; !exists {
+				t2s[vr[0]] = kr[0]
+			}
+		}
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开语料词频表 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	out := make(map[string]int, 450000)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		fields := strings.Split(strings.TrimSpace(sc.Text()), "	")
+		if len(fields) < 2 {
+			continue
+		}
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n <= 0 {
+			continue
+		}
+		simp := make([]rune, 0, len(fields[0]))
+		for _, r := range fields[0] {
+			if s, ok := t2s[r]; ok {
+				simp = append(simp, s)
+			} else {
+				simp = append(simp, r)
+			}
+		}
+		out[string(simp)] += n
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("读取语料词频表 %s 失败: %w", path, err)
+	}
+	return out, nil
+}
+
+// corpusAdjustedFreq 用语料校正单字词频。
+//
+// 判据：**该字在真实语料中的出现次数**。语料零记录 = 该字在现代汉语书面
+// 语料里根本不出现（多为编码噪声字 紝/鐨/鏈，或纯生僻字 灏/粬/岃），
+// 一律压到最低档 1——**保留可达性、不删除**：用户仍能打出，只是不占候选
+// 前排（与市面输入法一致）。
+//
+// 安全性依据（2026-10-29 实测）：繁→简转换后，40 个最高频常用字零误判；
+// 语料零记录的 1,211 个单字里没有日常用字。多字词**不参与**校正——语料对
+// 词组的覆盖只有 35.3%，连「一个/中国/我们」都不在表内，误伤风险极高。
+//
+// 只降不升：绝不把低分字抬高，避免引入新的倒挂。
+func corpusAdjustedFreq(word string, jiebaFreq int, corpus map[string]int) int {
+	if corpus == nil || len([]rune(word)) != 1 {
+		return jiebaFreq // 多字词不校正：语料对词组覆盖仅 35.3%，含「一个/中国/我们」
+	}
+	n := corpus[word]
+	if n == 0 {
+		return 1 // 语料零记录：编码噪声字或纯生僻字，压到最低档（保留可达性）
+	}
+	// 语料有记录但 jieba 词频明显虚高时按语料下调。
+	//
+	// 为什么需要这半步：这些字在语料里几乎只出现在**人名**中
+	// （灏 880 次几乎全是「翁文灏/陈灏珠」，岃 207 次同理），
+	// jieba 却把它当成独立词条计了 2196/1849 的高频——结果输入 hao 时
+	// 「灏」排在「豪(2416次)」前面、输入 ren 时「岃」排在「仁(3200次)」前面。
+	// 判据：语料次数低于 jieba 词频的 1/4 视为虚高，按语料次数收敛。
+	//
+	// 阈值 2（语料次数×2 < jieba 词频 → 判虚高）的由来：实测两组数据之间
+	// 有 2.85 倍的清晰间隔，没有重叠样本——
+	//   虚高组（语料/jieba）：灏 0.40、岃 0.11、粬 0.00、嘚 0.00；
+	//   正常组：蒿 1.14、是 1.48、豪 2.04、仁 2.73、耗 3.04、好 4.09。
+	// 0.5 落在间隔正中（对数中点 0.40~1.14 的几何均值 ≈0.68，取更保守的 0.5）。
+	if n*2 < jiebaFreq {
+		return n
+	}
+	return jiebaFreq
 }
 
 // scaleFreq 把原始词频按对数压缩到 1..99：最高频词得 99，最低得 1。
@@ -434,12 +605,14 @@ func writeTSV(path string, entries []entry) error {
 		"#",
 		"# 数据来源（均为 MIT 许可）：",
 		"#   词频   jieba dict.txt          https://github.com/fxsjy/jieba",
+		"#   校正   Rime essay.txt          https://github.com/rime/essay（真实语料，" +
+			"用于压低 jieba 里不成词语素的虚高词频）",
 		"#   拼音   phrase-pinyin-data      https://github.com/mozillazg/phrase-pinyin-data",
 		"#   单字   pinyin-data             https://github.com/mozillazg/pinyin-data",
 		"#",
 		"# 再生成（在仓库根目录）：",
 		"#   go run ./cmd/chaoset-dictgen -jieba dict.txt \\",
-		"#     -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv",
+		"#     -corpus essay.txt -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv",
 		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
 	}
 	for _, line := range header {

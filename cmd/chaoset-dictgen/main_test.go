@@ -41,10 +41,30 @@ func writeTemp(t *testing.T, name, content string) string {
 func runGen(t *testing.T, jieba, phrase, single string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.tsv")
-	if err := run(jieba, phrase, single, "", out); err != nil {
+	// corpus 传空：测试不依赖真实语料，且校正逻辑只影响单字词频分配。
+	if err := run(jieba, phrase, single, "", "", out); err != nil {
 		t.Fatalf("run 失败: %v", err)
 	}
 	return out
+}
+
+// runGenFull 同 runGen，但可传 extra 与 corpus（用于测词频校正路径）。
+func runGenFull(t *testing.T, jieba, phrase, single, extra, corpus string) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "out.tsv")
+	if err := run(jieba, phrase, single, extra, corpus, out); err != nil {
+		t.Fatalf("run 失败: %v", err)
+	}
+	return out
+}
+
+func readBody(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // 只收纯 CJK 词；非汉字词（jingchang、hello、标点）被跳过。
@@ -164,6 +184,88 @@ func TestCJKWordOK(t *testing.T) {
 	for _, w := range bad {
 		if cjkWordOK(w) {
 			t.Errorf("%q 应被拒绝", w)
+		}
+	}
+}
+
+// TestMultiReadingSingleChars：多音字的**每个读音都要生成词条**。
+//
+// 2026-10-29 修复：pinyinOf 此前遇到第一个合法读音就 return，导致 3,358 个
+// 多音字只保留 1 个读音——常用字直接打不出来（chang 无「长」、chong 无
+// 「重」、de 无「地」、huo 无「和」，实测 11/15 缺失）。函数注释本就写着
+// 「多音字每个读音一条」，属代码与注释不一致。
+func TestMultiReadingSingleChars(t *testing.T) {
+	jieba := writeTemp(t, "jieba.txt", `长 50000 n
+`)
+	single := writeTemp(t, "single.txt", `U+957F: zhǎng,cháng  # 长
+`)
+	body := readBody(t, runGen(t, jieba, writeTemp(t, "p.txt", ""), single))
+
+	// 两个读音都必须出现（同词不同拼音是合法的两条词条）
+	for _, want := range []string{"长	chang	", "长	zhang	"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("多音字「长」缺少读音条目 %q，实际输出：\n%s", want, body)
+		}
+	}
+}
+
+// TestMultiReadingSecondaryDownweighted：次读音词频必须低于主读音。
+//
+// 若所有读音同分，「没」的 me/mo 读音会把「怎没」顶成合法候选
+// （2026-10-29 实测 zenme 第 2 位原本是「怎嚜」，同分后变成「怎没」）。
+func TestMultiReadingSecondaryDownweighted(t *testing.T) {
+	jieba := writeTemp(t, "jieba.txt", `没 50000 v
+`)
+	single := writeTemp(t, "single.txt", `U+6CA1: méi,mò,me  # 没
+`)
+	body := readBody(t, runGen(t, jieba, writeTemp(t, "p.txt", ""), single))
+
+	freqs := map[string]string{}
+	for _, line := range strings.Split(body, "\n") {
+		f := strings.Split(line, "	")
+		if len(f) >= 3 && f[0] == "没" {
+			freqs[f[1]] = f[2]
+		}
+	}
+	if len(freqs) != 3 {
+		t.Fatalf("「没」应有 3 个读音条目，实际 %d：%v", len(freqs), freqs)
+	}
+	primary := freqs["mei"]
+	for reading, f := range freqs {
+		if reading == "mei" {
+			continue
+		}
+		if f >= primary {
+			t.Fatalf("次读音 %s 的词频 %s 应低于主读音 mei 的 %s", reading, f, primary)
+		}
+	}
+}
+
+// TestCorpusZeroRecordDownweight：语料零记录的单字压到最低档（保留可达性）。
+func TestCorpusZeroRecordDownweight(t *testing.T) {
+	jieba := writeTemp(t, "jieba.txt", `是 100000 v
+㐀 9000 g
+`)
+	single := writeTemp(t, "single.txt", `U+662F: shì  # 是
+U+3400: qiū  # 㐀
+`)
+	corpus := writeTemp(t, "corpus.txt", "是	50000\n")
+	// 测试工作目录是包目录，覆盖 OpenCC 表路径（相对仓库根时要 ../）
+	// 用绝对路径：测试进程的 cwd 不保证是包目录
+	abs, err := filepath.Abs("../../engine/dp_data/STCharacters.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPath := stCharactersPath
+	stCharactersPath = abs
+	t.Cleanup(func() { stCharactersPath = oldPath })
+
+	body := readBody(t, runGenFull(t, jieba, writeTemp(t, "p.txt", ""), single, "", corpus))
+
+	for _, line := range strings.Split(body, "\n") {
+		f := strings.Split(line, "	")
+		if len(f) >= 3 && f[0] == "㐀" && f[2] != "1" {
+			t.Fatalf("语料零记录的「㐀」词频应压到 1，实际 %s", f[2])
 		}
 	}
 }
