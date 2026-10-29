@@ -70,10 +70,11 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
-skin/              候选窗视觉参数真源（几何 + 浅/深配色，DefaultSkinFor(dark)）：
-                   三端候选窗均原生自绘（2026-10-27 起 daemon 贴图渲染链路已删），
-                   macOS 壳 shims/macos/src/CandidatePanel.swift 与双端视觉
-                   检查 tools/render_metrics.go 都以本包为准
+skin/              候选窗视觉参数设计基准（几何 + 浅/深配色，DefaultSkinFor(dark)）：
+                   无运行时消费者——实际渲染是 macOS CandidatePanel.swift 与
+                   Windows win32.cpp 两份实现；Go↔macOS 的布局/色值一致性由
+                   shims/macos/tests/visual-parity.sh 机器断言
+                   （2026-10-27 起 daemon 贴图渲染链路已删）
 cmd/
   chaosetd/          守护进程二进制（-dict 可多次叠加）
   chaoset-cli/       阶段 0 终端测试台（本地内嵌引擎或连接 daemon）
@@ -506,12 +507,17 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 `Candidate` 新增可选 `segments`（仅整句式候选携带，引擎学习用的分段词文本；
 壳无需渲染，解码时忽略即可），学习记录在 Words/Phrases 表内以 `segs` 持久化。
 IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
-候选窗由各平台壳原生自绘（macOS 用 AppKit，见 `shims/macos/src/CandidatePanel.swift`；
-Windows 用 GDI；Linux 用 ibus 原生面板）。历史上的 `candidateImage` 贴图方法
-（daemon 渲染 PNG）随三端壳全部改为自绘，已于 2026-10-27 删除。
+候选窗由 mac/Windows 壳原生自绘（macOS 用 AppKit，见
+`shims/macos/src/CandidatePanel.swift`；Windows 用 GDI），Linux 不重绘面板、
+用 ibus 原生 LookupTable/Preedit 呈现。历史上的 `candidateImage` 贴图方法
+（daemon 渲染 PNG）随壳不再使用，已于 2026-10-27 删除。
 
-视觉参数（几何 + 浅/深配色）的真源是 `skin/skin.go`（`DefaultSkinFor(dark)`），
-双端一致性由 `shims/macos/tests/visual-parity.sh` 机器断言。
+视觉参数（几何 + 浅/深配色）的设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，
+**无运行时消费者**）；mac/Windows 两份壳实现按它手写。Go↔macOS 的布局常量
+（5 项）+ macOS 参考常量（含 divider）+ 浅/深各 13 色由
+`shims/macos/tests/visual-parity.sh` 逐项机器断言；Windows 侧目前只有 pt
+口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
+「机器检查覆盖」）。
 
 传输形态：Linux/macOS 用 Unix socket；Windows 壳经 TCP 回环
 （daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
@@ -641,8 +647,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         布局与皮肤统一由 daemon 的 `renderer.Skin` 决定：默认横排候选栏 + 圆角 +
         系统浅/深色配色，壳只按 `candidateImage` 的 `dark`/`scale` 传参（见阶段 20）；
         Windows 壳贴图待真机环境。（**v0.2.0 起 macOS 改为壳内原生自绘候选窗**，
-        见阶段 24；**2026-10-27 起贴图渲染链路整体删除**——三端壳均为原生自绘，
-        视觉参数保留在 `skin/` 包，见阶段 27）
+        见阶段 24；**2026-10-27 起贴图渲染链路整体删除**——macOS/Windows 壳为
+        原生自绘、Linux 用 ibus 原生面板，视觉参数保留在 `skin/` 包，见阶段 27）
 - [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
       CLI 与三端壳转发接入
 - [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
@@ -701,7 +707,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         深浅色用 NSColor 动态色自动跟随，补齐贴图方案两大缺口：鼠标点选
         候选（原 ignoresMouseEvents=true 无法点选）与 VoiceOver 读取（原
         无任何无障碍标注）。Windows/Linux 壳当时继续贴图；candidateImage 与
-        renderer 已于 2026-10-27 删除（三端原生自绘，视觉真源迁至 skin/ 包）。
+        renderer 已于 2026-10-27 删除（macOS/Windows 原生自绘、Linux 用 ibus
+        面板；视觉参数迁至 skin/ 包）。
       - **序号键帽视觉**：候选序号收进 keycap（浅色白底黑边深黑数字、
         深色 #5A5A5E 底亮边白字、首选蓝胶囊内半透白键帽），数字字号 80%；
         修复深色键帽配色随 WithDarkMode 漏拷失效（改反射同步全部配色字段）。
@@ -798,9 +805,10 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         参数、macOS `EngineClient.candidateImage`（Swift 侧同样零调用）。
       - **留了什么**：视觉参数（几何 + 浅/深配色）迁至新包 `skin/`
         （`DefaultSkinFor(dark)`，去掉只服务渲染的 `FontPath`/`Horizontal` 字段），
-        作为 Go 侧视觉真源继续服务 `tools/render_metrics.go` 与
-        `tests/visual-parity.sh` 的双端一致性断言（字号/色值检查不变；
-        原场景尺寸比对随渲染器删除——其防回归目标与布局常量比对重叠）。
+        作为**设计基准**继续服务 `tools/render_metrics.go` 与
+        `tests/visual-parity.sh`（2026-10-30 起：Go↔macOS 布局 5 项 + macOS
+        参考常量 + 浅/深各 13 色逐项断言；**不覆盖 Windows**，Windows 无运行时
+        视觉断言——见阶段 29 与 docs/ui-parity.md）。
         后续若做「构建期由 skin 包生成 Swift 常量」（单一真源），生成源即此包。
 
 - [x] 阶段 28：整句输入习惯 + 整词贪婪防护（2026-10-30）
@@ -834,6 +842,35 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **五场景基线**：改动前后 full/tail1/tail2/initials/mixed 对比见提交
         说明与 `.workwork/verify/delta-2026-10-30.md`（gitignore，扫描口径见
         pinyin-quality-tuning skill）。
+
+- [x] 阶段 29：三端 UI 一致性审计与整改（2026-10-30）
+      - **审计（只读）**：对照 36 项三端 UI 行为/参数，发现 **17 项不一致**
+        （12 项一致、4 项已文档化平台差异、3 项需真机），核心问题：①Windows
+        候选窗单位口径混用——字号按 pt（1.0×）、间距/键帽/圆角/最大宽按 px@96
+        （0.75×），同一面板两套换算基准；②Linux 设置窗口关「词组联想」不生效
+        （引擎只在启动时读一次 config）；③学习标记 `*` 只有 macOS 渲染，
+        Windows IPC 结构根本没解析 `from_user`；④Windows 鼠标点选仍走非渐进
+        `select`（长串下整串清空）；⑤联想态 Shift+空格实际三端都是「选第一个
+        联想词」，与文档/注释冲突；⑥机器检查名不副实（visual-parity 只比 5 个
+        标量、Swift 色值从未参与、equivalence 却宣称「布局与色值两段一致」）。
+      - **整改**：Windows 候选窗布局全部统一 pt 口径（`pt(v)=MulDiv(v,dpi,72)`）
+        并修正 maxContent 漏扣 gear+pill（窗宽 ≤714pt<720）、minW 84pt；Windows
+        学习标记全链路补 `from_user`（core.hpp/core.cpp/win32.cpp 解析 + 绘制，
+        几何/色值与 mac 一致）；Linux 联想开关改为每次进联想前重读 config.json
+        （与 mac/Win 每次选词前重读同语义，保存即生效）+ 3 个测试；Windows 鼠标
+        点选改走 selectPrefix 渐进上屏；小键盘数字选词、联想态 Shift+PageUp/Down
+        对齐；P1 视觉细节（深色派生色 alpha 有效值、页码居中、分隔线口径、单页
+        箭头置灰、Toast 位置/点击穿透、设置窗字号几何）一并修正。
+      - **机器检查**：visual-parity.sh 断言 5 → 48 项（新增 macOS 参考常量 C 段 +
+        真正消费 divider、浅/深各 13 色 Go↔Swift D 段；负向验证可 FAIL）；
+        skin 补 divider/chevron 与深色 13 色期望值（加强非降低）；docs/ui-parity.md
+        按代码全量重写并明确未覆盖项（Windows 无运行时视觉断言、key_routing 未接
+        CI、无 checkuiparity）。平台限制与待真机项（per-monitor DPI、Windows
+        设置窗深色、多行折行、半透明/阴影、无障碍、滚轮、按键边角 3 处、Linux
+        设置窗单例）写入 docs「已知功能差异」。
+      - **验证**：本机 gofmt/build/go test ./.../make vet/visual-parity 48 项/
+        shims/windows/build.sh（core_test 含 from_user 断言 + mingw 交叉编译）
+        全过；重活交 CI。真机验收清单见 docs/ui-parity.md。
 
 ## 验收范围确认（2026-09-23）
 
