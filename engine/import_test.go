@@ -122,3 +122,40 @@ func TestLoadDictFiles(t *testing.T) {
 		t.Fatal("缺失文件应报错")
 	}
 }
+
+// TestWriteTSVDeterministicForMultiReading：同词多拼音时输出顺序必须确定。
+//
+// 2026-10-29：多音字全读音引入后，同一词条有了多条（词相同、拼音不同、
+// 词频相同）记录。原比较器「词频降序 → 同频按词排序」此时**不是全序**——
+// 「着 zhao」与「着 zhe」compare 恒为 false，sort 结果依赖输入顺序，
+// 导致 CLI 脚本与 GUI --selftest 两条导入路径产出不同的 dict.tsv
+// （等价性测试 B 段失败）。补音节为第三级排序键后必须确定。
+func TestWriteTSVDeterministicForMultiReading(t *testing.T) {
+	// 同一批词条，两种输入顺序（模拟两条导入路径拿到记录的先后不同）
+	mk := func(reversed bool) string {
+		entries := []*Entry{
+			{Word: "着", Syllables: []string{"zhao"}, Freq: 78},
+			{Word: "着", Syllables: []string{"zhe"}, Freq: 78},
+			{Word: "着", Syllables: []string{"zhuo"}, Freq: 78},
+		}
+		if reversed {
+			entries[0], entries[2] = entries[2], entries[0]
+		}
+		var buf bytes.Buffer
+		if err := WriteTSV(&buf, entries); err != nil {
+			t.Fatalf("导出失败: %v", err)
+		}
+		return buf.String()
+	}
+	a, b := mk(false), mk(true)
+	if a != b {
+		t.Fatalf("同一批词条的不同输入顺序应产出相同 TSV（否则两条导入路径不一致）：\n顺序A:\n%s\n顺序B:\n%s", a, b)
+	}
+	// 且必须是按音节升序（zhao < zhe < zhuo）
+	idxZhao := strings.Index(a, "着	zhao")
+	idxZhe := strings.Index(a, "着	zhe")
+	idxZhuo := strings.Index(a, "着	zhuo")
+	if !(idxZhao < idxZhe && idxZhe < idxZhuo) {
+		t.Fatalf("同词同频应按音节升序排列，实际位置 zhao=%d zhe=%d zhuo=%d", idxZhao, idxZhe, idxZhuo)
+	}
+}
