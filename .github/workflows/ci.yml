@@ -6,7 +6,8 @@ name: CI
 # 跑测试时拖慢正常用电脑。因此 CI 覆盖了所有耗时的端到端验证：
 #   - Go 单测 + race（race 本机要跑 45s+，是最重的一项）
 #   - Linux 容器内 ibus 端到端（需要 docker + dbus，本机跑占资源）
-#   - Windows 核心层行为测试（见 release.yml 的 package-windows job）
+#   - Windows 壳交叉编译 + 核心层行为测试 + NSIS 安装包（windows-build job；
+#     2026-10-31 从「只在 release.yml 打 tag 时编译」提到日常 CI）
 #   - macOS 构建 + 等价性 + 双端视觉一致性（见 release.yml 的 package-macos）
 #
 # 各 job 相互独立并行，单次提交约 3-5 分钟出全部结论。
@@ -50,7 +51,7 @@ jobs:
       - name: 校验 workflow 结构
         run: |
           go run ./tools/checkworkflows \
-            --expect-jobs lint,test,race,linux-e2e,macos-build \
+            --expect-jobs lint,test,race,linux-e2e,macos-build,windows-build \
             .github/workflows/ci.yml
           go run ./tools/checkworkflows \
             --expect-jobs test,package-macos,package-linux,package-windows,release \
@@ -183,3 +184,37 @@ jobs:
         run: |
           ./shims/macos/tests/equivalence.sh
           ./shims/macos/tests/visual-parity.sh
+
+  # ── 6. Windows 壳：交叉编译 + 核心行为测试 + 安装包（2026-10-31 新增）──
+  # 为什么需要：Windows 壳（C++/NSIS）此前只在打 tag 的 release.yml 里编译，
+  # 日常提交改坏 win32.cpp 或 chaoset.nsi 时 CI 仍全绿，到发版才暴露
+  #（2026-10-31 审计 A6）。这里每次 push/PR 跑与 release 相同的构建链：
+  # mingw 交叉编译 DLL + core_test 对真实 daemon 跑核心行为 + makensis 编译
+  # 安装脚本 + ZIP 内容自检。
+  windows-build:
+    name: Windows 构建（mingw + core_test + 安装包）
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 安装 mingw-w64 / NSIS / zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 \
+            nsis zip
+
+      - name: Windows 壳构建（DLL 交叉编译 + 核心行为测试）
+        run: |
+          make build
+          chmod +x shims/windows/build.sh
+          ./shims/windows/build.sh
+
+      - name: Windows 安装包（NSIS 脚本 + ZIP 内容自检）
+        run: make package-windows

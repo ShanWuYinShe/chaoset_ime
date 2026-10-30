@@ -143,14 +143,15 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 |---|---|---|---|
 | 多行折行 | maxRows 3 行折行；第 4 行起不绘制（数字键仍可能选中）；**首项超宽按字符截断加…**（2026-10-30 新增） | 单行布局；首项超宽逐字截断加…，后续放不下的项不排列（数字键仍可能选中） | 两端都存在「看不见但能选」的边角；Windows 折行需重排布局，待需求。首项截断策略两端已一致；数字键越界会收起联想/放行，不会静默选不可见项 |
 | 面板半透明/阴影 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1pt 描边（pt 化）+ CS_DROPSHADOW + SetWindowRgn 圆角（无抗锯齿） | GDI 限制；用户可见差异是「Windows 无毛玻璃/真实阴影、圆角有锯齿」 |
-| 窗口层级 | .floating(3)（不遮蔽菜单栏） | WS_EX_TOPMOST | Windows 下拉菜单是系统模态 topmost popup，候选窗不会拦菜单点击；mac 因 popUpMenu 会压菜单栏而降级 |
+| 窗口层级 | .floating(3)（不遮蔽菜单栏） | WS_EX_TOPMOST + **owner=宿主窗口**（2026-10-30 实机修复） | Windows 下拉菜单是系统模态 topmost popup，候选窗不会拦菜单点击；mac 因 popUpMenu 会压菜单栏而降级。owner 让 owned 候选窗恒在宿主之上，可跨 Windows 11 开始菜单/搜索的沉浸式 z 序 band（此前无主 topmost 被压住导致完全看不到）；ModeToast 同策略（2026-10-31） |
+| 全屏免打扰 | 无（AppKit 无对应机制） | D3D 全屏/演示模式下抑制候选窗（2026-10-31 实现）；`HKCU\Software\Chaoset\FullscreenSuppress` DWORD 缺省 1，可设 0 关闭 | 只抑制候选窗显示，不改按键/组词；无边框全屏返回 QUNS_ACCEPTS_NOTIFICATIONS 不触发（边界已记 windows README）；全屏浏览器/视频可能命中 D3D 全屏状态，可用注册表关闭 |
 | 齿轮 hover | 无 | 无 | v5 起刻意移除（用户反馈「随输入变色」观感差） |
 | 设置入口 | 齿轮 → NSSwitch 设置窗 | 齿轮 → Win32 设置窗 | Windows **没有**语言栏菜单/托盘入口（此前 README 描述有误，已修正）；唯一入口是候选栏齿轮 |
 | 设置窗视觉 | 380×190pt、NSSwitch、13/11pt、跟随系统深浅 | 380×190pt、BS_AUTOCHECKBOX、13/11pt（2026-10-30 对齐）、**固定浅色** | Windows 深色需 DWM + 自绘 Static/GroupBox，无真机验证，待真机后做；mac/Linux 跟随系统 |
 | 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗 | **下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除 UAF） | Linux 同为下次按键生效（只写 config.json）；mac 走通知立即收起 |
 | 双拼 mspy `;` 键 | 支持（2026-10-30） | 支持（2026-10-30） | 支持（2026-10-30） | 引擎 `Composition.shuangpin` 下发方案名，三端壳把双拼模式下的 `;` 路由到 `input`；会话级单测遍历全部音节锁可达性 |
-| Windows TSF 两阶段 | — | Shift 空按中英切换依赖 OnKeyDown；按 TSF 两阶段模型（OnTestKeyDown 吞键后才调 OnKeyDown）可能不可达 | **待 Windows 真机确认**；已记入 shims/windows/README「已知限制」。若真机证实，需把修饰键跟踪移到 OnTestKeyDown/OnTestKeyUp |
+| Windows TSF 两阶段 | — | Shift 空按中英切换依赖 OnKeyDown；按 TSF 两阶段模型（OnTestKeyDown 吞键后才调 OnKeyDown）可能不可达 | **待 Windows 真机确认**；2026-10-31 已加 `tsf.log` 一次性诊断（`modifier in OnTestKeyDown/OnKeyDown/OnKeyUp`、`shift toggle`），真机对照即可判定。若真机证实，需把修饰键跟踪移到 OnTestKeyDown/OnTestKeyUp |
 | 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | 无 WM_GETOBJECT/UIA/MSAA（待做） | docs 旧版已列 TODO，仍未实现，需 Windows 真机 |
 | 滚轮翻页 | 未实现 | 未实现 | 三端一致缺失，非不一致；ibus 面板由上游决定 |
 | Windows per-monitor DPI | 系统自动 | 取主屏 DPI（GetDeviceCaps），无 WM_DPICHANGED | 混合 DPI 多屏时副屏尺寸可能偏差。正确改造 GetDpiForWindow/GetDpiForMonitor + WM_DPICHANGED，**需 Windows 真机验证**，本次未改 |
@@ -161,6 +162,14 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第三轮（2026-10-30/31，v0.2.17 真机 + `fix/win-followup`）：Windows 开始菜单/
+搜索候选窗不显示（候选窗 owner 缺失 + UILess 类别声明与实现矛盾 + 安装器漏杀
+`SearchApp.exe`；v0.2.17 真机确认恢复）、候选窗 owner 生命周期计数泄漏（owner
+连带销毁时不归还 `g_liveCandidateWindows`）、ModeToast owner/防卸载计数缺失、
+便携 ZIP 升级路径未清理旧 UILess 类别/未按模块杀宿主、NSIS 32 位 PowerShell
+枚举 64 位模块失效、CI 缺 Windows 构建 job（已新增 `windows-build`）、全屏
+免打扰（D3D 全屏/演示模式抑制候选窗，注册表可关）。
 
 第二轮（同日 `fix/audit-p1`）：Windows 设置窗裸 TIP 指针 UAF、Windows 描边线宽
 pt 化、mac 首项超长候选截断/钳宽、三端「已确认段」收尾路径统一（Linux 三条路径
@@ -243,8 +252,10 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   「布局常量（Go↔Swift）+ macOS 参考常量 + 浅/深色值一致」，不再声称「双端
   色值两段一致」或覆盖 Windows。
 - **Windows 候选窗没有任何运行时/几何机器断言**：只有 `tools/checkgdi` 的
-  ExtCreatePen 非空指针契约（`make vet`）+ 交叉编译。学习标记/页码/分隔线/
-  DPI/Toast/设置窗仍需 Windows 真机人工验收（本机无 Windows 运行时）。
+  ExtCreatePen 非空指针契约（`make vet`）+ 交叉编译（2026-10-31 起 ci.yml 的
+  `windows-build` job 每次 push 都跑 mingw 交叉编译 + core_test + NSIS 安装包
+  编译，不再只在打 tag 时验证）。学习标记/页码/分隔线/DPI/Toast/设置窗仍需
+  Windows 真机人工验收（本机无 Windows 运行时）。
 - `tests/key_routing` 是 macOS 按键路由回归测试，**未接入 Makefile/CI**（死
   测试），属于待补；Linux 按键行为由 `behavior_test.go` 覆盖（2026-10-30 新增
   已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由 engine 的会话级测试覆盖

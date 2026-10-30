@@ -67,6 +67,7 @@ go build ./...                    # 秒级
 | race | `go test -race` | 最重的一项，本机 45s+ |
 | linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页 | 需要 dbus + ibus，占资源 |
 | macos-build | macOS 壳构建 + universal 自检 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
+| windows-build | Windows 壳 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 安装包编译 + ZIP 自检 | 需要 mingw-w64/NSIS，本机不装；2026-10-31 起不再只在打 tag 时验证 |
 
 本地真需要跑完整验证时，`make test`、`shims/linux/test-ci.sh`、
 `shims/macos/tests/equivalence.sh` 都能直接执行（与 CI 同一套脚本）。

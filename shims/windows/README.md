@@ -14,8 +14,15 @@ tests/core_test.cpp 核心层行为测试（原生编译，非交叉）。
 build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉编译 + 导出检查。
 ```
 
-## 验证状态（2026-09-23）
+## 验证状态（2026-10-31 更新）
 
+- **真机验证（2026-10-30/31，Windows 11）**：开始菜单/搜索框候选窗恢复显示
+  （owner 缺失 + UILess 类别误声明 + 安装器杀错进程三处修复，v0.2.17 实机
+  确认）；记事本/浏览器/终端等常规宿主正常。游戏/全屏、UWP/AppContainer 细节、
+  多会话（RDP/快切）、无障碍与 per-monitor DPI 仍待验（见「已知限制」）。
+- **CI 构建（2026-10-31 新增）**：`ci.yml` 的 `windows-build` job 每次 push/PR
+  都跑 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 编译安装脚本 +
+  ZIP 内容自检；不再只在打 tag 的 release 流程里编译 C++/NSIS。
 - **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环，
   即 Windows 壳的实际传输形态）跑通 17 项：协议帧、JSON（转义/中文/截断）、
   组词/预编辑/选词上屏/歧义切分/退格/重置、业务错误后连接复用。
@@ -50,6 +57,10 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 
 1. 右键 `install.bat` → 以管理员身份运行；
 2. 卸载：右键管理员运行 `install.bat uninstall`。
+
+> 覆盖升级（v0.2.17+）：`install.bat` 会先清理旧版残留的 UILess 类别并终止
+> 加载了旧 `ChaosetIME*.dll` 的进程（按模块名枚举，含 SearchApp 等开始菜单
+> 宿主），再注册新 DLL——与 NSIS 安装器的升级路径行为一致（2026-10-31）。
 
 ### 方式三：从源码
 
@@ -102,6 +113,15 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   与 TSF 调用失败（`RequestEditSession` / `StartComposition` / `SetText` 的 HRESULT；
   `no composition after render` 表示宿主上下文不接受合成——预编辑没建出或只读文档
   拒绝写入，按键已放行给宿主）。每个进程最多 200 条。
+  2026-10-30/31 起新增真机排障行：`candidate shown ... visible=...`（候选窗最终
+  落点/可见性）、`candidate window create FAILED`（创建失败错误码）、
+  `candidate suppressed (fullscreen)`（全屏免打扰命中）、
+  `candidate setOwner FAILED`（owner 设置被拒）、`activeflags ... uiless=0`
+  （宿主是否仍以 UILess 模式运行，修复生效后应为 0）。
+  Shift 跟踪（2026-10-31 A8）一次性诊断：`modifier in OnTestKeyDown/OnKeyDown/
+  OnKeyUp vk=...` 与 `shift toggle enMode=...`——真机按一次 Shift 后对照这四条：
+  若只有 OnTestKeyDown 出现而没有 OnKeyDown/OnKeyUp 与 shift toggle，说明 TSF
+  两阶段模型确实绕过了 OnKeyDown/OnKeyUp（见「已知限制」）。
 - `%LOCALAPPDATA%\Chaoset\crash.log`：宿主进程未处理异常。记录异常码、异常地址、
   故障模块 + 偏移、访问类型（读/写/执行）、调用栈与崩溃前最后一次 TSF 操作。
   记录后返回 `EXCEPTION_CONTINUE_SEARCH`，WER 与宿主自己的崩溃处理不受影响。
@@ -145,7 +165,14 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   应作为真机测试的第一步。
 
 **验证等级**：已通过 Windows 11 真机确认（2026-10-30，用户报告开始菜单
-候选窗恢复显示）。游戏/全屏独占场景**未测试**，见「已知限制」。
+候选窗恢复显示）。
+
+**2026-10-31 收尾（审计 A 批）**：owner 生命周期回收（owner 销毁时 owned
+候选窗被系统连带销毁，`WM_NCDESTROY` 统一清句柄 + 归还防卸载计数，避免计数
+永久泄漏导致 `DllCanUnloadNow` 恒 `S_FALSE`）、ModeToast 补 owner 与计数、
+便携 ZIP 升级路径补旧 UILess 类别清理与按模块杀宿主、NSIS 改用 Sysnative
+64 位 PowerShell 枚举 64 位模块、全屏免打扰、Shift 诊断日志。游戏/全屏独占
+场景仍未真机验证，见「已知限制」。
 
 ## 图标与设置界面
 
@@ -180,12 +207,18 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
     游戏里 WASD 会变成打拼音——这是**任何中文输入法激活时的固有行为**，
     不是本壳缺陷。用户需在游戏前切英文模式（Shift 空按或 Win+Space）。
     注意「Shift 空按切换中英」本身待真机确认（见上一条限制）。
-  - **无全屏检测**：全仓无 `SHQueryUserNotificationState` / `QUNS` /
-    `FullScreen` 判定。无边框全屏（borderless fullscreen）下候选窗可能盖住
-    游戏画面；独占全屏通常不显示窗口，但未验证。主流输入法（微软拼音、
-    搜狗）会检测全屏并抑制候选窗，本壳**未实现**。待真机验证后再定方案。
-  - **待办**：若真机测试确认全屏下有干扰，需在 `CandidateWindow::show`
-    前加全屏判定并抑制显示（同时保证按键仍能正常透传给游戏）。
+  - **全屏免打扰（2026-10-31 实现）**：`CandidateWindow::show` 前用
+    `SHQueryUserNotificationState` 判定 `QUNS_RUNNING_D3D_FULL_SCREEN` /
+    `QUNS_PRESENTATION_MODE` 时抑制候选窗显示（不改变按键/组词逻辑，避免
+    置顶窗口盖在全屏游戏上闪屏/干扰焦点）。
+    `HKCU\Software\Chaoset\FullscreenSuppress`（DWORD，缺省 1）可关闭——
+    部分全屏浏览器/视频也会命中 D3D 全屏状态，此时设 0 恢复候选窗。
+  - **边界**：无边框全屏（borderless fullscreen）返回
+    `QUNS_ACCEPTS_NOTIFICATIONS`，**不会**触发抑制；独占全屏游戏里是否还有
+    其它干扰仍需真机验证。
+  - **游戏内 WASD 被组词**：中文输入法激活时字母键会进入组词，这是 IME 固有
+    行为，不是本壳缺陷；游戏前请切英文模式（Shift 空按或 Win+Space，Shift
+    切换本身待真机确认）。
 
 - **候选窗 DPI**：`getDpi()` 用 `GetDeviceCaps(GetDC(NULL), LOGPIXELSY)`（主显示器
   DPI），无 `WM_DPICHANGED`——混合 DPI 多屏时落到不同缩放的副屏会按主屏比例
@@ -198,8 +231,10 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   `OnTestKeyUp` 恒 `FALSE`。按 TSF 两阶段模型（`OnTestKeyDown` 吞键后才调
   `OnKeyDown`），Shift 可能永远进不了跟踪函数 → 中英切换与 Shift+空格失效，
   同时 Ctrl/Alt/Win 的清理分支也可能成死代码。若真机证实，需把修饰键跟踪移到
-  `OnTestKeyDown`/`OnTestKeyUp`（或按 GetKeyState 轮询）。Windows 从未真机联调，
-  这条必须优先验证。
+  `OnTestKeyDown`/`OnTestKeyUp`（或按 GetKeyState 轮询）。
+  2026-10-31 已加一次性诊断日志（见「排障日志」）：真机按一次 Shift，若
+  `tsf.log` 只有 `modifier in OnTestKeyDown` 而没有 `OnKeyDown`/`OnKeyUp`
+  与 `shift toggle`，即确认两阶段模型绕过；这条必须优先验证。
 - **无障碍**：未实现 WM_GETOBJECT/UIA/MSAA（macOS 有 VoiceOver 子元素），
   待 Windows 真机阶段补。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）

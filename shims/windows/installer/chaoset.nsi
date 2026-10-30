@@ -106,7 +106,18 @@ Section "MainSection" SEC01
     ; 现在枚举所有加载了 ChaosetIME*.dll 的进程终止，与新版本名无关。
     ; 排除 explorer/dwm：杀 explorer 会重启桌面（用户无感中断），dwm 是
     ; 桌面合成器不能动；这两个若仍占用，由下方 .new + 重启预约兜底。
-    nsExec::Exec `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-Process | Where-Object { $$_.ProcessName -notin @('explorer','dwm') -and $$_.Id -ne $$PID } | ForEach-Object { try { if (@($$_.Modules | Where-Object { $$_.ModuleName -like 'ChaosetIME*' }).Count -gt 0) { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue } } catch {} }"`
+    ; 位数陷阱（2026-10-31 审计 A3）：NSIS 安装器是 32 位，nsExec 直接启动
+    ; "powershell.exe" 会被 WOW64 重定向到 32 位 PowerShell；.NET 从 32 位
+    ; 进程枚举 64 位进程的 Modules 会失败（LIST_MODULES_ALL 不支持 32 位
+    ; 调用者），try/catch 会静默跳过 → 64 位宿主（SearchApp/TextInputHost
+    ; 等）可能没被杀到。这里改用 Sysnative 的 64 位 PowerShell（纯 32 位
+    ; 系统回退 System32，本身就是 32 位）。
+    ${If} ${RunningX64}
+        StrCpy $R1 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    ${Else}
+        StrCpy $R1 "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    ${EndIf}
+    nsExec::Exec `"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-Process | Where-Object { $$_.ProcessName -notin @('explorer','dwm') -and $$_.Id -ne $$PID } | ForEach-Object { try { if (@($$_.Modules | Where-Object { $$_.ModuleName -like 'ChaosetIME*' }).Count -gt 0) { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue } } catch {} }"`
     ; 同时保留按名强停系统输入宿主（它们可能尚未加载 DLL，但持有 TSF 状态，
     ; 重启可让语言栏/输入法缓存刷新）。
     nsExec::Exec 'taskkill /F /IM ctfmon.exe'
@@ -126,7 +137,7 @@ Section "MainSection" SEC01
                 "检测到当前有正在运行的软件（如记事本、浏览器或聊天软件）正在使用旧版输入法。$\r$\n$\r$\n是否由安装程序尝试温和关闭这些软件，以便新版本能够【立即生效】？$\r$\n$\r$\n（若您在打开的软件中有未保存的内容，请先保存，或选择“否”并在安装完成后手动重新打开对应软件）" \
                 IDYES close_running_apps IDNO keep_running_apps
             close_running_apps:
-                nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$p = Get-Process | Where-Object { try { $_.Modules.ModuleName -contains \"ChaosetIME.dll\" -or $_.Modules.ModuleName -contains \"ChaosetIME32.dll\" } catch { $false } } | Where-Object { $_.ProcessName -notin @(\"explorer\", \"dwm\", \"ctfmon\", \"TextInputHost\", \"SearchHost\", \"ShellExperienceHost\") }; foreach ($x in $p) { $x.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 200 }"'
+                nsExec::Exec '"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$p = Get-Process | Where-Object { try { $_.Modules.ModuleName -contains \"ChaosetIME.dll\" -or $_.Modules.ModuleName -contains \"ChaosetIME32.dll\" } catch { $false } } | Where-Object { $_.ProcessName -notin @(\"explorer\", \"dwm\", \"ctfmon\", \"TextInputHost\", \"SearchHost\", \"ShellExperienceHost\") }; foreach ($x in $p) { $x.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 200 }"'
                 Sleep 500
             keep_running_apps:
         ${Else}
@@ -217,7 +228,7 @@ Section "MainSection" SEC01
     WriteRegDWORD HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
     ; 自动添加到用户当前语言列表并无条件强制刷新（免手动配置，即装即用 Win+Space 切换）
-    nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like \"zh*\" }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force"'
+    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like \"zh*\" }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force"'
 
     ; 重启 Windows 文本输入框架服务（ctfmon.exe），消除旧版输入法缓存，让系统任务栏与切换菜单立即加载专属图标
     nsExec::Exec 'taskkill /F /IM ctfmon.exe'
@@ -284,7 +295,7 @@ Section "Uninstall"
     Sleep 300
 
     ; 从用户语言列表中移除输入法
-    nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
+    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
     nsExec::Exec 'taskkill /F /IM ctfmon.exe'
     Sleep 200
     Exec '"$WINDIR\system32\ctfmon.exe"'

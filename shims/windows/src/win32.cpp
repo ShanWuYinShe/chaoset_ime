@@ -22,6 +22,7 @@
 #include <appmodel.h>
 #include <msctf.h>
 #include <objbase.h>
+#include <shellapi.h>  // SHQueryUserNotificationState（全屏免打扰，2026-10-31 A7）
 
 #include <algorithm>
 #include <cmath>
@@ -123,6 +124,35 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 存活中的设置窗口数量。设置窗口过程同样指向本 DLL 代码，开着时禁止
 // 宿主 FreeLibrary（与候选窗同一防卸载机制，见 DllCanUnloadNow）。
  volatile LONG g_liveSettingsWindows = 0;
+
+// 存活中的模式提示窗数量。提示窗窗口过程同样指向本 DLL 代码；此前没有
+// 计数（漏了防卸载保护），且 owner 为空时不会被宿主连带销毁。2026-10-31
+// 审计 A4 补计数 + owner 后统一纳入 DllCanUnloadNow。
+ volatile LONG g_liveToastWindows = 0;
+
+// 全屏免打扰（2026-10-31 审计 A7）：D3D 全屏游戏/演示模式下不弹候选窗——
+// 置顶候选窗盖在全屏游戏上会闪屏、干扰焦点，用户明确要求游戏场景不能被
+// 输入法打扰。只抑制候选窗显示，不改变按键/组词逻辑（WASD 仍会被组词，
+// 这是任何中文输入法激活时的固有行为，README 已说明游戏前切英文模式）。
+// 注册表 HKCU\Software\Chaoset\FullscreenSuppress（DWORD，缺省 1）可关闭：
+// 部分全屏浏览器/视频也会被判定为 D3D 全屏，此时设 0 即可恢复候选窗。
+static bool isFullscreenSuppressEnabled() {
+    DWORD v = 1;
+    DWORD sz = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"FullscreenSuppress",
+                     RRF_RT_REG_DWORD, nullptr, &v, &sz) != ERROR_SUCCESS) {
+        v = 1;  // 未配置 = 开启（用户 2026-10-30 明确要求游戏场景优先）
+    }
+    return v != 0;
+}
+
+// 只认「全屏独占 D3D / 演示模式」两种状态；普通最大化、无边框全屏返回
+// QUNS_ACCEPTS_NOTIFICATIONS，不在抑制范围（边界见 README 已知限制）。
+static bool isFullscreenAppActive() {
+    QUERY_USER_NOTIFICATION_STATE state = QUNS_ACCEPTS_NOTIFICATIONS;
+    if (FAILED(SHQueryUserNotificationState(&state))) return false;
+    return state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE;
+}
 
 std::string envOr(const char* name, const std::string& fallback) {
     char buf[256] = {0};
@@ -640,14 +670,33 @@ public:
         if (owner == ownerHwnd_) return;
         ownerHwnd_ = owner;
         if (hwnd_ != nullptr && IsWindow(hwnd_)) {
-            SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT,
-                              reinterpret_cast<LONG_PTR>(owner));
+            SetLastError(0);
+            const LONG_PTR prev = SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT,
+                                                    reinterpret_cast<LONG_PTR>(owner));
+            // SetWindowLongPtr 返回旧值；失败时返回 0 且 GetLastError 非 0
+            //（跨线程/跨完整性级别 owner 可能被拒）。真机排障需要这条日志：
+            // owner 没设上时开始菜单/搜索仍会看不到候选窗。
+            if (prev == 0 && GetLastError() != 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "candidate setOwner FAILED err=%lu owner=%p\n",
+                           static_cast<unsigned long>(GetLastError()),
+                           reinterpret_cast<void*>(owner));
+            }
         }
     }
 
     void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {
         if (comp.candidates.empty()) {
             hide();
+            return;
+        }
+        // 全屏免打扰：D3D 全屏游戏/演示模式下不显示候选窗（注册表可关，
+        // 见 isFullscreenSuppressEnabled）。只抑制显示，不改按键/组词。
+        if (isFullscreenSuppressEnabled() && isFullscreenAppActive()) {
+            hide();
+            if (diagBudget()) {
+                diagPrintf(L"tsf.log", "candidate suppressed (fullscreen) anchor=%ld,%ld\n",
+                           static_cast<long>(pt.x), static_cast<long>(pt.y));
+            }
             return;
         }
         comp_ = comp;
@@ -691,11 +740,23 @@ public:
     }
 
     void destroy() {
-        // 即使窗口句柄已失效（IsWindow == FALSE）也要清空成员并归还计数：
-        // 此前只在 IsWindow 为真时才处理，句柄一旦失效 g_liveCandidateWindows
-        // 就永远不归零，DllCanUnloadNow 永远返回 S_FALSE。
         if (hwnd_ != nullptr) {
-            if (IsWindow(hwnd_)) DestroyWindow(hwnd_);
+            // 主动销毁走 DestroyWindow：WM_NCDESTROY 里统一回收（见
+            // onWindowDestroyed），避免这里和窗口过程各减一次计数。
+            // DestroyWindow 失败（跨线程等）时兜底回收，防止计数泄漏。
+            if (!IsWindow(hwnd_) || !DestroyWindow(hwnd_)) onWindowDestroyed();
+        }
+        tip_ = nullptr;
+    }
+
+    // 窗口被销毁时统一回收：无论是我们主动 DestroyWindow，还是 owner 宿主
+    // 窗口销毁时系统连带销毁 owned 候选窗（2026-10-31 审计 A1）。此前
+    // WM_DESTROY 是空 case，owner 连带销毁路径不会清 hwnd_、也不递减
+    // g_liveCandidateWindows——同一 TIP 线程内关掉一个窗口再到另一个窗口
+    // 打字时，ensureWindow 会重建窗口并再次 ++，计数永久 >0，
+    // DllCanUnloadNow 恒 S_FALSE（升级时旧 DLL 无法卸载）。
+    void onWindowDestroyed() {
+        if (hwnd_ != nullptr) {
             hwnd_ = nullptr;
             // 窗口过程已失效，此时才允许 DLL 被卸载（见 DllCanUnloadNow）
             InterlockedDecrement(&g_liveCandidateWindows);
@@ -756,7 +817,7 @@ private:
 
     bool isInteractiveArea() const {
         POINT pt;
-        if (GetCursorPos(&pt) && hwnd_ != nullptr) {
+        if (GetCursorPos(&pt) && hwnd_ != nullptr && IsWindow(hwnd_)) {
             ScreenToClient(hwnd_, &pt);
             for (const auto& it : items_) {
                 if (PtInRect(&it.itemRect, pt)) return true;
@@ -767,7 +828,12 @@ private:
     }
 
     void ensureWindow(HINSTANCE hinst) {
-        if (hwnd_ != nullptr && IsWindow(hwnd_)) return;
+        if (hwnd_ != nullptr) {
+            if (IsWindow(hwnd_)) return;
+            // 句柄失效：owner 宿主窗口销毁时 owned 候选窗被系统连带销毁。
+            // 先归还计数再重建，否则每重建一次计数 +1（2026-10-31 审计 A1）。
+            onWindowDestroyed();
+        }
 
         const std::wstring cls = windowClassName(L"ChaosetCandidateWndClass", hinst);
         WNDCLASSEXW wc{};
@@ -848,7 +914,10 @@ private:
                     return TRUE;
                 }
                 break;
-            case WM_DESTROY:
+            case WM_NCDESTROY:
+                // 主动销毁与 owner 连带销毁的统一回收点（见 onWindowDestroyed）。
+                // 必须在 DefWindowProc 之前取 self（WM_NCDESTROY 之后 USERDATA 失效）。
+                if (self != nullptr) self->onWindowDestroyed();
                 break;
         }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1646,7 +1715,7 @@ public:
     }
 
     void hide() {
-        if (hwnd_ != nullptr) {
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) {
             KillTimer(hwnd_, kTimerId);
             ShowWindow(hwnd_, SW_HIDE);
         }
@@ -1661,7 +1730,11 @@ private:
     int pt(int v) const { return MulDiv(v, dpi_, 72); }
 
     bool ensureWindow(HINSTANCE hinst) {
-        if (hwnd_ != nullptr) return true;
+        if (hwnd_ != nullptr) {
+            if (IsWindow(hwnd_)) return true;
+            // owner 宿主窗口销毁会连带销毁提示窗：先归还计数再重建（A1/A4）。
+            onWindowDestroyed();
+        }
         const std::wstring cls = windowClassName(L"ChaosetModeToastWndClass", hinst);
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
@@ -1675,13 +1748,19 @@ private:
         // 2026-10-30 审计 A12 修正：此前注释写「纯提示 ignoresMouseEvents」但
         // 窗口实际没有穿透，提示显示 1.2s 内其区域会吃掉点击）。层级同候选窗
         // TOPMOST 保持（系统模态菜单弹出时位于最上，不会挡菜单）。
+        // owner 设为前台窗口：提示条与候选窗一样，无主 TOPMOST 窗口会被
+        // Windows 11 开始菜单/搜索的沉浸式 z 序 band 压住，模式切换就看不到
+        // 反馈（2026-10-31 审计 A4）。前台窗口拿不到时退回 nullptr（旧行为）。
+        HWND owner = GetForegroundWindow();
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
             cls.c_str(), L"ChaosetModeToast",
             WS_POPUP, 0, 0, 0, 0,
-            nullptr, nullptr, hinst, nullptr);
+            owner, nullptr, hinst, nullptr);
         if (hwnd_ != nullptr) {
             SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+            // 窗口过程指向本 DLL 代码：活着就禁止宿主 FreeLibrary（同候选窗）
+            InterlockedIncrement(&g_liveToastWindows);
         }
         return hwnd_ != nullptr;
     }
@@ -1752,14 +1831,25 @@ private:
                     return 0;
                 }
                 break;
+            case WM_NCDESTROY:
+                // 主动销毁与 owner 连带销毁的统一回收点（同候选窗 A1/A4）。
+                if (self != nullptr) self->onWindowDestroyed();
+                break;
         }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
     void destroy() {
         if (hwnd_ != nullptr) {
-            DestroyWindow(hwnd_);
+            if (!IsWindow(hwnd_) || !DestroyWindow(hwnd_)) onWindowDestroyed();
+        }
+    }
+
+    // 窗口销毁回收：清句柄并归还 DLL 防卸载计数（owner 连带销毁也会走到）。
+    void onWindowDestroyed() {
+        if (hwnd_ != nullptr) {
             hwnd_ = nullptr;
+            InterlockedDecrement(&g_liveToastWindows);
         }
     }
 
@@ -1919,6 +2009,16 @@ public:
                                             BOOL* pfEaten) override {
         g_lastOp = kOpTestKeyDown;
         if (isModifierKey(wParam)) {
+            // 一次性诊断（2026-10-31 A8）：Shift 空按切换中英依赖 OnKeyDown/
+            // OnKeyUp 收到修饰键；但按 TSF 两阶段模型，OnTestKeyDown 返回 FALSE
+            // 时 OnKeyDown 可能不会被调用。真机排障时对照这条与下面
+            // "modifier in OnKeyDown/OnKeyUp"、"shift toggle" 三条日志，
+            // 就能确定修饰键到底走到了哪一阶段（README 有排障说明）。
+            static volatile LONG loggedTestModifier = 0;
+            if (InterlockedCompareExchange(&loggedTestModifier, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "modifier in OnTestKeyDown vk=0x%02lX\n",
+                           static_cast<unsigned long>(wParam));
+            }
             *pfEaten = FALSE;  // 修饰键始终放行
             return S_OK;
         }
@@ -1975,6 +2075,11 @@ public:
                                         BOOL* pfEaten) override {
         g_lastOp = kOpKeyDown;
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            static volatile LONG loggedDownModifier = 0;
+            if (InterlockedCompareExchange(&loggedDownModifier, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "modifier in OnKeyDown vk=0x%02lX\n",
+                           static_cast<unsigned long>(wParam));
+            }
             onShiftEvent(false, pic);
             *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键与按键事件完整透传给宿主
             return S_OK;
@@ -1994,6 +2099,11 @@ public:
     HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            static volatile LONG loggedUpModifier = 0;
+            if (InterlockedCompareExchange(&loggedUpModifier, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "modifier in OnKeyUp vk=0x%02lX\n",
+                           static_cast<unsigned long>(wParam));
+            }
             onShiftEvent(true, pic);
             *pfEaten = FALSE;  // 只跟踪不消费
             return S_OK;
@@ -2121,6 +2231,12 @@ private:
         if (shiftDown_ == 0) {
             if (!sinceShift_) {
                 enMode_ = !enMode_;
+                // 真机诊断（A8）：看到这条 = Shift 空按在 OnKeyDown/OnKeyUp
+                // 阶段成功跟踪到；看不到而上面 OnTestKeyDown 日志出现，说明
+                // OnKeyDown/OnKeyUp 根本没被调用（TSF 两阶段模型问题）。
+                if (diagBudget()) {
+                    diagPrintf(L"tsf.log", "shift toggle enMode=%d\n", enMode_ ? 1 : 0);
+                }
                 // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），
                 // 纯拼音仍按旧语义丢弃；随后收起候选窗/提示条并弹模式提示。
                 // 此前直接 endComposition 会清空 confirmedPreedit_（审计 P1-3）。
@@ -3584,6 +3700,7 @@ STDAPI DllCanUnloadNow() {
     if (g_liveObjects != 0) return S_FALSE;
     if (g_liveCandidateWindows != 0) return S_FALSE;
     if (g_liveSettingsWindows != 0) return S_FALSE;
+    if (g_liveToastWindows != 0) return S_FALSE;
     return S_OK;
 }
 
@@ -3635,6 +3752,30 @@ static std::string guidToString(const GUID& g) {
     return narrow;
 }
 
+// 旧版（≤v0.2.16）注册过 UILess/UIELEMENTENABLED 类别；v0.2.17 起本壳不再
+// 声明该类别（不实现 ITfUIElementMgr）。NSIS 安装器有 DeleteRegKey 清理，
+// 但便携 ZIP 走 regsvr32 → DllRegisterServer 的路径没有清理步骤，升级用户
+// 会残留该类别，开始菜单/搜索继续按 UILess 模式期待宿主渲染候选窗
+//（2026-10-31 审计 A2）。这里在每个 DLL 注册时幂等清掉自己注册表视图下的
+// 残留：64 位 DLL 清 64 位视图，32 位 DLL（WOW64）清 32 位视图。
+static void removeLegacyUILessCategory() {
+    const GUID kLegacyUIElementEnabled = {
+        0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
+    // 1) 经类别管理器注销（若 COM 已初始化；失败不影响后续注册）
+    ITfCategoryMgr* catMgr = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                   kIID_ITfCategoryMgr, reinterpret_cast<void**>(&catMgr)))) {
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kLegacyUIElementEnabled, CLSID_ChaosetTIP);
+        catMgr->Release();
+    }
+    // 2) 直接删注册表残留（类别管理器注销在部分环境可能不落盘；幂等兜底）
+    std::string base = "Software\\Microsoft\\CTF\\TIPs\\" + guidToString(CLSID_ChaosetTIP) +
+                       "\\Category\\";
+    const std::string cat = guidToString(kLegacyUIElementEnabled);
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, (base + "Category\\" + cat).c_str());
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, (base + "Item\\" + cat).c_str());
+}
+
 STDAPI DllRegisterServer() {
     std::string clsid = guidToString(CLSID_ChaosetTIP);
     std::string profid = guidToString(GUID_ChaosetProfile);
@@ -3649,6 +3790,10 @@ STDAPI DllRegisterServer() {
 
     // 2. 通过 Windows TSF 标准 COM 接口注册配置文件与类别
     HRESULT hrCo = CoInitialize(nullptr);
+
+    // 升级清理：便携 ZIP（install.bat → regsvr32）路径没有 NSIS 的
+    // DeleteRegKey 步骤，必须在注册时自己清掉旧版残留的 UILess 类别（A2）。
+    removeLegacyUILessCategory();
 
     ITfInputProcessorProfiles* profiles = nullptr;
     if (SUCCEEDED(CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr,

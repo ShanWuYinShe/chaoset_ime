@@ -566,7 +566,7 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 |---|---|---|
 | Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
-| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（核心行为级 + DLL 编译级；真机联调待环境） |
+| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
 
 ### 渐进上屏的跨程序兼容模型（2026-10-30）
 
@@ -972,6 +972,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         （mac 按音节回退 / Windows 放行 / Linux 清空，记入 docs/ui-parity 按键边角差异）；
         双拼 `;` 的标点宽度 1 键瞬态（记入各端 README）。
 
+- [x] 阶段 31：Windows 真机首轮验证 + 审计 A 批收尾（2026-10-30/31）
+      - **触发**：v0.2.17 发布后用户 Windows 11 真机反馈「开始菜单/搜索框候选窗
+        不显示」。真机定位到两层根因：候选窗 owner 恒为 nullptr（无主 topmost
+        窗口被沉浸式 z 序 band 压住）+ 安装器硬编码进程名漏杀 SearchApp.exe
+        （旧 DLL 一直活着），另有 UILess 类别声明与实现矛盾。修复后真机确认恢复。
+      - **本轮 follow-up（审计 A 批）**：候选窗 owner 生命周期回收（owner 连带
+        销毁时清句柄 + 归还 DLL 防卸载计数，此前会永久泄漏计数）、ModeToast 补
+        owner/防卸载计数、便携 ZIP 升级路径清理旧 UILess 类别并按模块杀宿主
+        （此前只有 NSIS 安装器做了）、NSIS 改用 Sysnative 64 位 PowerShell 枚举
+        64 位进程模块、全屏免打扰（D3D 全屏/演示模式抑制候选窗，注册表可关）、
+        Shift 跟踪一次性诊断日志、CI 新增 windows-build job（日常提交即编译
+        Windows C++/NSIS，不再等到打 tag）。
+      - **验证**：本机 gofmt/build/go test ./.../make vet/shims/windows/build.sh
+        （core_test + mingw 交叉编译）全过；CI 新增 job 随推送验证。
+      - **未修（明确记录）**：Windows TSF 两阶段 Shift 跟踪仍待真机确认（已加
+        tsf.log 诊断，见 shims/windows/README.md）；无边框全屏不触发全屏抑制；
+        游戏内 WASD 被组词是 IME 固有行为（游戏前切英文模式）。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
@@ -981,7 +999,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 | # | 移出项 | 硬门控条件 | 恢复方式 |
 |---|---|---|---|
 | 1 | macOS 打字闭环验证 | 需人工在系统设置添加 ChaosetIME 并实际打字（已实测 `AXIsProcessTrusted=false`，按键模拟被系统策略禁止，无法脚本化） | 按 shims/macos/README 打字验证 |
-| 2 | Windows TSF 真机联调 | 需 Windows 环境（COM 注册/按键/渲染） | 按 shims/windows/README |
+| 2 | Windows TSF 真机联调 | 需 Windows 环境（COM 注册/按键/渲染） | 已于 2026-10-30/31 在 Windows 11 真机完成首轮验证（开始菜单/搜索候选窗、安装器升级、注册表类别）；游戏/全屏、UWP/多会话、无障碍、per-monitor DPI 仍待验，按 shims/windows/README |
 | 3 | Linux 桌面闭环 + 候选窗贴图接入 | 需 Linux 桌面环境（DBus 层端到端已在容器验证） | 按 shims/linux/README |
 
 各项的具体实现位置、部署命令、诊断工具均已在对应 README 与脚本中就位，
