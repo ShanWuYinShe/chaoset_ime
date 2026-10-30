@@ -164,9 +164,10 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		return map[string]string{"committed": text}, nil
 	case "selectPrefix":
 		// 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，剩余拼音
-		// 回灌继续组词。返回剩余组词态（committed=已上屏前缀段文本，
-		// input/preedit=剩余拼音，candidates=剩余候选），壳据此写文档、
-		// 恢复预编辑并刷新候选。
+		// 回灌继续组词。返回剩余组词态（committed=本次确认段文本——壳
+		// 据此把它并入预编辑/合成，整条组词结束才落盘（2026-10-30 起三
+		// 端统一，兼容对「组词中写正文」处理有缺陷的程序）；input/preedit=
+		// 剩余拼音，candidates=剩余候选），壳据此刷新预编辑与候选。
 		var p struct {
 			Index int `json:"index"`
 		}

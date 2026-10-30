@@ -1755,11 +1755,22 @@ public:
             candidateWnd_.hide();
             toast_.hide();
             clearAssociate();
-            // 失去焦点时清空未决预编辑与候选，防止跨窗口残留组词状态导致后续窗口吃键
-            if (isComposing()) {
+            // 失去焦点：已确认段先落盘（用户确认过的字不能丢；旧实现里这些
+            // 段早已在文档，净效果一致），纯拼音预编辑维持「清空」旧语义——
+            // 防止跨窗口残留组词状态导致后续窗口吃键。落盘必须对**合成所属
+            // 上下文**（compCtx_）做：此刻 GetFocus 可能已指向新窗口的文档，
+            // 经 focusContext() 兜底会把字写进错误的窗口（同 endComposition
+            // 的 2026-10-29 审查结论）。
+            if (isComposing() || !confirmedPreedit_.empty()) {
                 session_.reset();
-                endComposition();
                 comp_ = chaoset::Comp();
+                if (!confirmedPreedit_.empty()) {
+                    const std::string all = confirmedPreedit_;
+                    confirmedPreedit_.clear();
+                    commit(compCtx_, all);
+                } else {
+                    endComposition();
+                }
             }
         } else {
             transport_.ensureConnected();
@@ -1876,6 +1887,9 @@ public:
         releaseCompositionContext();
         session_.reset();
         comp_ = chaoset::Comp();
+        // 合成被宿主终止时 TSF 会把合成内文本（含已确认段）留在文档里，
+        // 缓冲使命已结束，必须清空——绝不能串进下一轮组词的预编辑。
+        confirmedPreedit_.clear();
         return S_OK;
     }
 
@@ -1908,22 +1922,26 @@ public:
         const std::string pickedSyllables = comp_.candidates[index].syllables;
         chaoset::Comp rest;
         if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
-            commit(ctx.get(), rest.committed);
-            if (!rest.input.empty()) {
-                // 剩余拼音回灌：更新 comp_ 为剩余组词态并重渲染
-                comp_ = rest;
+            // 单合成渐进（见 confirmedPreedit_ 注释）：确认段并入当前合成，
+            // 不再中途结束/重建合成。剩余耗尽才整串一次落盘并进入联想。
+            confirmedPreedit_ += rest.committed;
+            comp_ = rest;
+            if (!comp_.input.empty()) {
                 render(ctx.get());
             } else {
-                // 剩余耗尽：与整句上屏同收尾（进入联想）
                 comp_ = chaoset::Comp();
-                endComposition();
+                const std::string all = confirmedPreedit_;
+                confirmedPreedit_.clear();
+                commit(ctx.get(), all);
                 enterAssociate(pickedSyllables);
             }
             return;
         }
         std::string committed;
         if (session_.select(index, &committed)) {
-            commit(ctx.get(), committed);
+            const std::string all = confirmedPreedit_ + committed;
+            confirmedPreedit_.clear();
+            commit(ctx.get(), all);
         }
     }
 
@@ -2218,11 +2236,10 @@ private:
                 comp_ = chaoset::Comp();
                 return true;
             }
-            // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）：若处于组词中，先清空未决预编辑与候选窗，放行原键给宿主
-            if (isComposing()) {
-                session_.reset();
-                endComposition();
-                comp_ = chaoset::Comp();
+            // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）：若处于组词中，先收尾再放行
+            // 原键给宿主——已确认段随透传落盘（用户确认过的字不能丢）
+            if (isComposing() || !confirmedPreedit_.empty()) {
+                flushOrCancel(pic);
             }
             return false;
         }
@@ -2232,10 +2249,9 @@ private:
         // 混进拼音（mac 壳 isCompositionChar 只认小写，此处对齐）。
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
             if (shiftActive()) {
-                if (isComposing()) {
-                    session_.reset();
-                    endComposition();
-                    comp_ = chaoset::Comp();
+                // 大写英文不进组词：放行原字符，组词先收尾（已确认段随透传落盘）
+                if (isComposing() || !confirmedPreedit_.empty()) {
+                    flushOrCancel(pic);
                 }
                 return false;
             }
@@ -2252,8 +2268,9 @@ private:
                 }
             }
             if (!comp_.ok) {
-                // daemon 确实不可达：清状态放行原键，保证宿主应用不卡死
-                endComposition();
+                // daemon 确实不可达：收尾（已确认段落盘，不因 daemon 故障丢字）
+                // 并放行原键，保证宿主应用不卡死
+                flushOrCancel(pic);
                 return false;
             }
             render(pic);
@@ -2285,7 +2302,7 @@ private:
             bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
             comp_ = isPrev ? session_.prevPage() : session_.nextPage();
             if (!comp_.ok) {
-                endComposition();
+                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return true;
             }
             render(pic);
@@ -2305,7 +2322,7 @@ private:
                     }
                 }
                 if (!comp_.ok) {
-                    endComposition();
+                    flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                     return false;
                 }
                 render(pic);
@@ -2314,16 +2331,17 @@ private:
             const bool composing = isComposing();
             std::string committed;
             if (session_.punct(key, halfWidth_, &committed)) {
-                // 上屏失败（上下文不可插入文本）且没有未决拼音时放行原键，
-                // 避免中文标点凭空消失；有未决拼音时仍需消费，保持组词状态机完整
-                if (commit(pic, committed) || composing) return true;
+                // 标点收尾：已确认段 + 首选候选 + 标点一次落盘
+                //（上屏失败（上下文不可插入文本）且没有未决拼音时放行原键，
+                // 避免中文标点凭空消失；有未决拼音时仍需消费，保持组词状态机完整）
+                const std::string all = confirmedPreedit_ + committed;
+                confirmedPreedit_.clear();
+                if (commit(pic, all) || composing) return true;
                 return false;
             }
-            // daemon 不可达：清状态放行原键，不卡宿主应用
-            if (composing) {
-                session_.reset();
-                endComposition();
-                comp_ = chaoset::Comp();
+            // daemon 不可达：收尾（已确认段落盘）后放行原键，不卡宿主应用
+            if (composing || !confirmedPreedit_.empty()) {
+                flushOrCancel(pic);
             }
             return false;
         }
@@ -2350,28 +2368,44 @@ private:
         if (vk == kVkBackspace) {
             if ((GetKeyState(VK_CONTROL) | GetKeyState(VK_SHIFT)) & 0x8000) {
                 // Ctrl/Shift+Backspace：直接全部删除（对齐 macOS 壳把
-                // Shift+Delete 归入全部删除；此前 Shift 走逐字符回退，三端不一致）
+                // Shift+Delete 归入全部删除；此前 Shift 走逐字符回退，三端
+                // 不一致）。含未落盘的已确认段一并取消（与 Esc 同语义）。
                 session_.reset();
-                endComposition();
                 comp_ = chaoset::Comp();
+                confirmedPreedit_.clear();
+                endComposition();
                 return true;
             }
             // 普通 Backspace：慢慢部分删除（逐字符回退）
             comp_ = session_.backspace();
             if (!comp_.ok) {
-                endComposition();
+                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return true;
             }
-            if (comp_.input.empty()) endComposition();
+            if (comp_.input.empty()) {
+                if (!confirmedPreedit_.empty()) {
+                    // 剩余拼音删空：已确认段立即落盘收尾——不能继续挂在
+                    // 合成里变成「无拼音的孤合成」（对齐 macOS 壳）
+                    comp_ = chaoset::Comp();
+                    const std::string all = confirmedPreedit_;
+                    confirmedPreedit_.clear();
+                    commit(pic, all);
+                } else {
+                    endComposition();
+                }
+            }
             else render(pic);
             return true;
         }
 
         if (vk == kVkEscape) {
-            // Esc：直接全部删除（清空全部拼音）
+            // Esc：直接全部删除（清空全部拼音）。含未落盘的已确认段一并取消
+            //——与 macOS 壳/系统拼音语义一致：合成内已转换但未上屏的内容
+            // 随整条组词一起丢弃。
             session_.reset();
-            endComposition();
             comp_ = chaoset::Comp();
+            confirmedPreedit_.clear();
+            endComposition();
             return true;
         }
 
@@ -2388,30 +2422,33 @@ private:
                 // comp_ 会被替换成剩余组词态（或清空），候选表丢了。
                 const std::string pickedSyllables = comp_.candidates[index].syllables;
                 // 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
-                //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）
+                //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）。
+                // 单合成模型（见 confirmedPreedit_ 注释）：确认段并入当前
+                // 合成，不再中途结束/重建合成——部分 App 对合成重建的选区
+                // 记账有缺陷，会把刚上屏的段覆盖丢（用户实测选「今」丢字）。
                 chaoset::Comp rest;
                 if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
-                    commit(pic, rest.committed);
-                    if (!rest.input.empty()) {
-                        // 剩余拼音回灌：更新 comp_ 为剩余组词态并重渲染
-                        comp_ = rest;
+                    confirmedPreedit_ += rest.committed;
+                    comp_ = rest;
+                    if (!comp_.input.empty()) {
                         render(pic);
                     } else {
-                        // 剩余耗尽：与整句上屏同收尾（进入联想）。
-                        // 2026-10-29 修复：此前传 rest.committed（上屏词
-                        // **文本**，如「题」），被当作音节数组传入引擎，
-                        // 单字词 → 1 个「音节」，多字词剥前缀时音节切错位
-                        // （「测试」→「题」记成 shí'tí）。改传候选自身的
-                        // 撇号音节串，长度与剥前缀基准一致。
+                        // 剩余耗尽：整串一次落盘，与整句上屏同收尾（进入联想）。
+                        // 音节基准传候选自身的撇号音节串（2026-10-29 修复：
+                        // 不能把上屏词文本当音节传，单字词会切错位）。
                         comp_ = chaoset::Comp();
-                        endComposition();
+                        const std::string all = confirmedPreedit_;
+                        confirmedPreedit_.clear();
+                        commit(pic, all);
                         enterAssociate(pickedSyllables);
                     }
                 } else {
                     // daemon 不可达/越界：回退整句上屏（现状语义）
                     std::string committed;
                     if (session_.select(index, &committed)) {
-                        commit(pic, committed);
+                        const std::string all = confirmedPreedit_ + committed;
+                        confirmedPreedit_.clear();
+                        commit(pic, all);
                     }
                 }
                 return true;
@@ -2419,7 +2456,10 @@ private:
         }
 
         if (vk == kVkReturn && isComposing()) {
-            std::string raw = comp_.input;
+            // 回车语义：已确认段按确认文本、剩余拼音按原始串一起上屏
+            //（与 macOS 壳一致：已转换部分保留转换结果）
+            std::string raw = confirmedPreedit_ + comp_.input;
+            confirmedPreedit_.clear();
             session_.reset();
             commit(pic, raw);
             return true;
@@ -2435,20 +2475,25 @@ private:
                 const std::string pickedSyllables = comp_.candidates[0].syllables;
                 chaoset::Comp rest;
                 if (session_.selectPrefix(0, &rest) && !rest.committed.empty()) {
-                    commit(pic, rest.committed);
-                    if (!rest.input.empty()) {
-                        comp_ = rest;
+                    // 单合成渐进（见 confirmedPreedit_ 注释，与数字选词一致）
+                    confirmedPreedit_ += rest.committed;
+                    comp_ = rest;
+                    if (!comp_.input.empty()) {
                         render(pic);
                     } else {
                         comp_ = chaoset::Comp();
-                        endComposition();
+                        const std::string all = confirmedPreedit_;
+                        confirmedPreedit_.clear();
+                        commit(pic, all);
                         enterAssociate(pickedSyllables);
                     }
                     return true;
                 }
                 std::string committed;
                 if (session_.select(0, &committed)) {
-                    commit(pic, committed);
+                    const std::string all = confirmedPreedit_ + committed;
+                    confirmedPreedit_.clear();
+                    commit(pic, all);
                 }
                 return true;
             }
@@ -2459,11 +2504,10 @@ private:
         }
 
         // 不可处理的按键（方向键 / F 键 / 数字 0 / Shift+数字的 @# 等字符）：
-        // 组词中先清空再放行，避免预编辑与实文脱节（对齐 macOS 壳 passThrough）
-        if (isComposing()) {
-            session_.reset();
-            endComposition();
-            comp_ = chaoset::Comp();
+        // 组词中先收尾再放行，避免预编辑与实文脱节（对齐 macOS 壳 passThrough；
+        // 已确认段随透传落盘，用户确认过的字不能丢）
+        if (isComposing() || !confirmedPreedit_.empty()) {
+            flushOrCancel(pic);
         }
         return false;
     }
@@ -2563,6 +2607,7 @@ private:
         }
         session_.reset();
         comp_ = chaoset::Comp();
+        confirmedPreedit_.clear(); // 上下文已不可写：缓冲一并放弃，绝不串进下轮组词
         candidateWnd_.hide();
         // 走到这里时合成对象必然已不存在（未建出或 SetText 失败已当场结束），
         // 上下文记录一并清掉，避免过期引用跨越焦点切换存活。
@@ -2644,10 +2689,15 @@ private:
 
     void applyPreedit(ITfContext* ctx, TfEditCookie ec) {
         g_lastOp = kOpPreedit;
+        // 预编辑 = 已确认段（渐进上屏的已选字）+ 剩余拼音：二者同属**同一条
+        // 合成**，整条组词结束才落盘（见 confirmedPreedit_ 注释）。壳对文档
+        // 只做两类操作——同一合成内 SetText 更新（与逐键输入同原语）与
+        // 落盘提交（见 applyCommit），不存在「中途结束再重建合成」的易碎操作。
+        const std::string combinedPreedit = confirmedPreedit_ + comp_.preedit;
         // 「预编辑是否真的写进了文档」：字符串为空视作已写（无需合成）；
         // SetText 失败时保持 false，字母分支据此判定该上下文不可用并放行。
-        preeditWritten_ = comp_.preedit.empty();
-        const std::wstring wide = toWide(comp_.preedit);
+        preeditWritten_ = combinedPreedit.empty();
+        const std::wstring wide = toWide(combinedPreedit);
         if (composition_ != nullptr) {
             ITfRange* range = nullptr;
             const HRESULT hrRange = composition_->GetRange(&range);
@@ -2756,6 +2806,9 @@ private:
         es.Release();
         if (FAILED(hr)) diagTsfFail("RequestEditSession(commit)", hr);
         comp_ = chaoset::Comp();
+        // 提交即整条组词结束：确认段缓冲必须清空（调用方已先行取出拼接，
+        // 这里幂等兜底，防止异常路径把旧段串进下一轮组词的预编辑）。
+        confirmedPreedit_.clear();
         return SUCCEEDED(hr) && commitWritten_;
     }
 
@@ -2807,11 +2860,29 @@ private:
         committed_.clear();
     }
 
+    // 透传/故障型收尾（对齐 macOS 壳 passThrough）：已确认段先落盘——用户
+    // 确认过的字不能随透传（Ctrl+C 等）或 daemon 故障消失；纯拼音维持
+    // 「清空」旧语义。显式取消（Esc / 全部删除）不走这里，直接 endComposition。
+    void flushOrCancel(ITfContext* pic) {
+        session_.reset();
+        comp_ = chaoset::Comp();
+        if (!confirmedPreedit_.empty()) {
+            const std::string all = confirmedPreedit_;
+            confirmedPreedit_.clear();
+            commit(pic, all);
+        } else {
+            endComposition();
+        }
+    }
+
     // 取消/清理当前合成：必须经真实编辑会话拿到有效 cookie。旧实现用
     // cookie 0 在编辑会话外调用 SetText/EndComposition，TSF 只会返回失败：
     // 预编辑文本留在文档里、合成对象也泄漏（2026-10-29 审查）。
     void endComposition() {
         candidateWnd_.hide();
+        // 取消整条组词：未落盘的已确认段一并丢弃（与 macOS 壳 Esc 语义一致；
+        // 幂等兜底——落盘型收尾走 commit() 且已先行取出拼接）。
+        confirmedPreedit_.clear();
         ITfComposition* comp = composition_;
         if (comp == nullptr) return;
         g_lastOp = kOpEndComposition;
@@ -2891,6 +2962,23 @@ private:
     TcpTransport transport_;
     chaoset::Session session_{transport_};
     chaoset::Comp comp_;
+    // 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改，与 macOS 壳
+    // confirmedText 同语义）：SelectPrefix 返回的已确认文本**不再立即
+    // 结束合成写盘**，而是并入当前合成一起展示（applyPreedit 写
+    // confirmedPreedit_ + comp_.preedit），直到整条组词结束才一次落盘。
+    //
+    // 为什么（用户实测：长串组词中选 1（今），部分 App 里「今」丢失、
+    // 剩余拼音卡死）：旧实现每次渐进选择都「EndComposition + 立刻
+    // StartComposition」——对正确跟踪选区的 App 没问题，但对合成结束/
+    // 重建时选区记账有缺陷的 App（部分 Chromium/Java/旧 Win32 宿主），
+    // 新合成的锚点可能落回旧文本处，随后的 SetText 直接覆盖掉刚上屏的
+    // 「今」，只剩剩余拼音。改单合成模型后，渐进上屏与逐键输入使用完全
+    // 相同的原语（同一条合成内 SetText），不再中途结束/重建合成；落盘只剩
+    // 「整条组词结束」一个时机，与微软拼音「合成内已转换段」的行为一致。
+    // 清空时机：commit（落盘）、endComposition（取消）、OnCompositionTerminated
+    // （宿主终止，文本已随合成留在文档）、activateServer 之外的一切
+    // 会话结束路径——绝不能串进下一轮组词。
+    std::string confirmedPreedit_;
     bool halfWidth_ = false; // 全/半角标点开关（壳本地持有，随 punct 请求下发）
     // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
     // 上屏词音节查续接词组继续展示，数字键可直接连选。

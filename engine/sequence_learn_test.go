@@ -521,3 +521,71 @@ func TestSeqSegsResetWhenCompositionRestarts(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectPrefixPartialConsumeRecomposes：渐进上屏的部分消耗契约。
+//
+// 2026-10-30 兼容性整改（壳层「确认段并入预编辑/合成」模型）依赖的纯数据
+// 语义，带分隔符形态（用户报障场景 jin'tian'shi'xing'qi'yi 中选「今」同族）
+// 必须逐项成立：
+//   - Committed 返回已确认文本（壳据此并入预编辑，不立即写文档）；
+//   - 剩余输入原样保留：剥离分隔符后逐字母一致、不以 ' 开头；
+//   - 剩余输入**继续组词出候选**——「选 1 后拼音匹配停止」绝不来自引擎；
+//   - 页码回到 0（部分选择后的首屏候选可见）。
+func TestSelectPrefixPartialConsumeRecomposes(t *testing.T) {
+	s := NewSession(mustSeqDict(t), nil)
+	comp, err := s.Input("jin'tian'xing'qi'yi")
+	if err != nil {
+		t.Fatalf("输入失败: %v", err)
+	}
+	idx := -1
+	for i, c := range comp.Candidates {
+		if c.Text == "今天" && c.Syllables == "jin'tian" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("首屏应有音节为 jin'tian 的「今天」，实际: %+v", comp.Candidates)
+	}
+	rest, committed, err := s.SelectPrefix(idx)
+	if err != nil {
+		t.Fatalf("SelectPrefix 失败: %v", err)
+	}
+	if committed != "今天" || rest.Committed != "今天" {
+		t.Fatalf("committed=%q rest.Committed=%q, 期望均为 今天", committed, rest.Committed)
+	}
+	const wantRest = "xing'qi'yi"
+	if rest.Input != wantRest {
+		t.Fatalf("剩余输入 = %q, 期望 %q", rest.Input, wantRest)
+	}
+	if strings.HasPrefix(rest.Input, "'") {
+		t.Fatalf("剩余输入不应以分隔符开头: %q", rest.Input)
+	}
+	if rest.Page != 0 {
+		t.Fatalf("部分选择后应回第一页, 实际 Page=%d", rest.Page)
+	}
+	hasMonday := false
+	for _, c := range rest.Candidates {
+		if c.Text == "星期一" {
+			hasMonday = true
+		}
+	}
+	if !hasMonday {
+		t.Fatalf("剩余输入必须继续出候选（缺 星期一）: %+v", rest.Candidates)
+	}
+	// 剩余段继续渐进：整串耗尽后引擎侧可完成学习（seqSegs 闭合）
+	mon := -1
+	for i, c := range rest.Candidates {
+		if c.Text == "星期一" {
+			mon = i
+			break
+		}
+	}
+	final, committed2, err := s.SelectPrefix(mon)
+	if err != nil || committed2 != "星期一" {
+		t.Fatalf("剩余段选择失败: committed=%q err=%v", committed2, err)
+	}
+	if final.Input != "" {
+		t.Fatalf("整串应耗尽, 实际剩余 %q", final.Input)
+	}
+}

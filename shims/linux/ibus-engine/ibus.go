@@ -161,6 +161,21 @@ type ibusEngine struct {
 	// halfWidth 全/半角标点开关：壳本地持有（2026-10-29 起），随标点请求
 	// 经 SetHalfWidth 告知引擎，快捷键切换不与 daemon 往返。
 	halfWidth bool
+	// confirmedPreedit 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改，
+	// 与 macOS 壳 confirmedText / Windows 壳 confirmedPreedit_ 同语义）：
+	// SelectPrefix 返回的已确认文本**不再立即 CommitText 写入文档**，而是
+	// 并入预编辑一起展示（UpdatePreeditText 发 confirmedPreedit+剩余拼音），
+	// 直到整条组词结束才一次 CommitText 落盘。
+	//
+	// 为什么（用户实测：长串组词中选 1（今），部分程序里「今」丢失、候选
+	// 清空、剩余拼音卡死）：旧实现每次渐进选择都「CommitText + 随即更新
+	// 预编辑」两步文档变更——GTK/Qt 等正确实现 ibus 协议的工具包没问题，
+	// 但 XIM 桥接、自绘输入的老程序对「预编辑激活期间收到 CommitText」
+	// 处理有缺陷：提交被丢或预编辑状态错乱，结果正是丢字 + 组词中断。
+	// 逐键输入之所以在所有程序都正常，是因为它只做一步 UpdatePreeditText。
+	// 并入后，渐进上屏与逐键输入使用完全相同的原语，兼容面一致；落盘只剩
+	// 「整条组词结束」一个时机，与 ibus-rime 等「合成内已确认段」模型一致。
+	confirmedPreedit string
 }
 
 // shiftTracker 识别「Shift 空按」手势——按下 Shift 后未按任何其他键
@@ -493,8 +508,10 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			return false, nil
 		}
 		// Shift+Backspace：直接全部删除（对齐 macOS 壳把 Shift+Delete 归入
-		// 全部删除；此前走逐字符回退，三端不一致）
+		// 全部删除；此前走逐字符回退，三端不一致）。含未落盘的已确认段一并
+		// 取消（与 Esc 同语义，三端统一）
 		if state&ibusShiftMask != 0 {
+			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
@@ -506,8 +523,11 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return true, nil
 
 	case keyval == keysymEscape:
-		// Esc：直接全部删除
-		if isComposing(e.sess) {
+		// Esc：直接全部删除。含未落盘的已确认段一并取消——与系统拼音/
+		// macOS 壳语义一致：预编辑内已转换但未上屏的内容随整条组词丢弃
+		//（三端统一，2026-10-30 行为矩阵同步修订）
+		if isComposing(e.sess) || e.confirmedPreedit != "" {
+			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
@@ -529,27 +549,33 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if idx >= len(comp.Candidates) {
 			return false, nil
 		}
-		// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
+		// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词。
+		// 单预编辑模型（见 confirmedPreedit 字段注释）：确认段并入预编辑，
+		// 不再中途 CommitText——部分程序对「预编辑激活期间收到提交」处理
+		// 有缺陷，会把刚上屏的段丢掉（用户实测选「今」丢字）。
 		rest, committed, err := e.sess.SelectPrefix(idx)
 		if err != nil {
 			return false, nil
 		}
-		e.commit(committed)
+		e.confirmedPreedit += committed
 		if rest.Input != "" {
-			// 剩余拼音回灌：预编辑显示剩余串，候选表刷新为剩余组词
+			// 剩余拼音回灌：预编辑（含确认段）刷新，候选表更新为剩余组词
 			e.refresh(rest)
 			return true, nil
 		}
-		// 剩余耗尽：进入联想（与整句上屏同收尾）
+		// 剩余耗尽：整串一次落盘（与整句上屏同收尾），进入联想
+		e.commit(e.confirmedPreedit)
 		e.enterAssociateForPrev(e.sess.PrevWord())
 		return true, nil
 
 	case keyval == keysymReturn:
-		// 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
+		// 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键。
+		// 回车语义与 macOS 壳一致：已确认段按确认文本、剩余拼音按原始串一起上屏。
 		if e.sess != nil {
 			comp := e.sess.Compose()
-			if comp.Input != "" {
-				raw := comp.Input
+			if comp.Input != "" || e.confirmedPreedit != "" {
+				raw := e.confirmedPreedit + comp.Input
+				e.confirmedPreedit = ""
 				e.sess.Reset()
 				e.hidePreedit()
 				e.hideLookupTable()
@@ -591,23 +617,26 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 		if hasCandidates(e.sess) {
 			// 渐进上屏：只消耗首选音节对应的拼音前缀，剩余回灌继续组词
+			//（单预编辑模型，与数字选词一致，见 confirmedPreedit 注释）
 			rest, committed, err := e.sess.SelectPrefix(0)
 			if err != nil {
 				text, serr := e.sess.Select(0)
 				if serr != nil {
+					e.confirmedPreedit = "" // 同「全部取消」：整条组词丢弃
 					e.sess.Reset()
 					e.hidePreedit()
 					e.hideLookupTable()
 					return true, nil
 				}
-				e.commit(text)
+				e.commit(e.confirmedPreedit + text)
 				return true, nil
 			}
-			e.commit(committed)
+			e.confirmedPreedit += committed
 			if rest.Input != "" {
 				e.refresh(rest)
 				return true, nil
 			}
+			e.commit(e.confirmedPreedit)
 			e.enterAssociateForPrev(e.sess.PrevWord())
 			return true, nil
 		}
@@ -667,7 +696,8 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			if err != nil {
 				return false, nil
 			}
-			e.commit(text)
+			// 标点收尾：已确认段 + 首选候选 + 标点一次落盘
+			e.commit(e.confirmedPreedit + text)
 			return true, nil
 		}
 		return false, nil
@@ -684,18 +714,23 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if err != nil {
 			return false, nil // 未知标点：不消费，放行原键
 		}
-		e.commit(text)
+		e.commit(e.confirmedPreedit + text)
 		return true, nil
 	}
 
 	// 不可处理的按键（方向键 / Tab / F 键 / 大写字母 / 数字 0 / Alt+字母等）：
-	// 组词中先清空再放行——否则字符插进文档的同时预编辑与候选窗仍挂在原地，
+	// 组词中先收尾再放行——否则字符插进文档的同时预编辑与候选窗仍挂在原地，
 	// 光标移走后下一个字母会接着旧组词继续，预编辑与实文彻底脱节
-	// （对齐 macOS 壳 passThrough，2026-10-27 审查发现）。
-	if isComposing(e.sess) {
+	// （对齐 macOS 壳 passThrough，2026-10-27 审查发现）。已确认段随透传
+	// 落盘：用户确认过的字不能随透传消失；纯拼音维持「清空」旧语义。
+	if isComposing(e.sess) || e.confirmedPreedit != "" {
 		e.sess.Reset()
-		e.hidePreedit()
-		e.hideLookupTable()
+		if e.confirmedPreedit != "" {
+			e.commit(e.confirmedPreedit)
+		} else {
+			e.hidePreedit()
+			e.hideLookupTable()
+		}
 	}
 	return false, nil
 }
@@ -816,7 +851,12 @@ func (e *ibusEngine) showModeToast(text string) {
 // 路径）。若按「有无候选」决定可见性，用户敲了字母却什么都看不见——
 // 与 macOS 壳（preedit 非空即显示）不一致，2026-10-26 审查发现。
 func (e *ibusEngine) refresh(comp engine.Composition) {
-	e.updatePreedit(comp.Preedit, comp.Preedit != "")
+	// 预编辑 = 已确认段（渐进上屏的已选字）+ 剩余拼音：二者同属一条预编辑，
+	// 整条组词结束才 CommitText 落盘（见 confirmedPreedit 字段注释）。
+	// 壳对文档只做两类操作——UpdatePreeditText 更新（与逐键输入同原语）与
+	// CommitText 终态落盘，不存在「组词中途提交正文」这一易碎操作。
+	preedit := e.confirmedPreedit + comp.Preedit
+	e.updatePreedit(preedit, preedit != "")
 	e.updateLookupTable(comp)
 }
 
@@ -837,6 +877,9 @@ func (e *ibusEngine) commit(text string) {
 		godbus.MakeVariant(newIBusText(text)))
 	e.hidePreedit()
 	e.hideLookupTable()
+	// 提交即整条组词结束：确认段缓冲必须清空（调用方传入的 text 已含
+	// 全部确认段，这里兜底防串进下一轮组词的预编辑）。
+	e.confirmedPreedit = ""
 }
 
 // associateEnabled 返回当前词组联想开关，并在每次进入联想前重读 config.json。
@@ -971,9 +1014,14 @@ func (e *ibusEngine) FocusIn() *godbus.Error {
 // 切到 B 窗口后，组词状态仍残留（下次击键会接着 A 的内容继续组），而
 // 候选面板还可能挂在 B 窗口上显示 A 的候选（2026-10-26 审查发现此前是空实现）。
 // 中英模式（enMode）**不清**：那属于用户输入习惯，不该随窗口切换改变。
+// 已确认段先落盘（2026-10-30 起确认段住在预编辑里，不落盘就会随焦点切换
+// 丢失；旧实现里这些段早已在文档，净效果一致），纯拼音维持「收起」旧语义。
 func (e *ibusEngine) FocusOut() *godbus.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.confirmedPreedit != "" {
+		e.commit(e.confirmedPreedit)
+	}
 	e.sess.Reset()
 	e.shift.reset()
 	e.exitAssociate()
@@ -984,10 +1032,15 @@ func (e *ibusEngine) FocusOut() *godbus.Error {
 
 // Reset：ibus 要求重置输入状态（如按 Esc 或切换上下文时）。
 // 清空组词**并收起面板**——此前只清 session、不发隐藏信号，面板会显示
-// 过期候选直到下一次按键。
+// 过期候选直到下一次按键。已确认段先落盘：部分工具包会在组词中调用
+// Reset，若按「取消」丢弃确认段，用户确认过的字会随一次协议复位蒸发
+// （落盘与旧行为净效果一致：旧实现里确认段早已在文档）。
 func (e *ibusEngine) Reset() *godbus.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.confirmedPreedit != "" {
+		e.commit(e.confirmedPreedit)
+	}
 	e.sess.Reset()
 	e.exitAssociate()
 	e.hidePreedit()

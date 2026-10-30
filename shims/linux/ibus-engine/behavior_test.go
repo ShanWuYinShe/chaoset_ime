@@ -1147,3 +1147,104 @@ func TestAssociateShiftSpacePicksFirst(t *testing.T) {
 		t.Fatal("联想态 Shift+空格不切全半角（实际行为是选第一个联想词，三端一致）")
 	}
 }
+
+// ---- 渐进上屏的单预编辑模型（2026-10-30 兼容性整改）----
+//
+// 用户实测：长串组词中选 1（今），部分程序里「今」丢失、候选清空、剩余
+// 拼音卡死。根因是旧实现每次渐进选择都「CommitText + 更新预编辑」两步
+// 文档变更，预编辑激活期间的提交在部分程序（XIM 桥接/自绘输入）里被丢
+// 或状态错乱。整改后渐进选段与逐键输入同原语（只更新预编辑），整条组
+// 词结束才落盘。以下测试锁住该契约。
+
+// newProgressiveEngine：词库含 今天/今/星期一，供渐进上屏契约测试。
+func newProgressiveEngine(t *testing.T) (*ibusEngine, *fakeEmitter) {
+	t.Helper()
+	src := "今天\tjin tian\t90\n今\tjin\t60\n星期一\txing qi yi\t80\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
+	return e, fe
+}
+
+// selectCandidateText 翻页找到候选文本并按对应数字键选中。
+func selectCandidateText(e *ibusEngine, text string) bool {
+	for page := 0; ; page++ {
+		comp := e.sess.Compose()
+		for i, c := range comp.Candidates {
+			if c.Text == text {
+				e.ProcessKeyEvent(uint32('1'+i), 0, 0)
+				return true
+			}
+		}
+		if page >= comp.PageCount-1 {
+			return false
+		}
+		e.ProcessKeyEvent('=', 0, 0)
+	}
+}
+
+// TestProgressivePartialNoMidCommitText：渐进选段中途**不得**发 CommitText，
+// 预编辑必须是「已确认段+剩余拼音」整体；整条组词结束才一次落盘。
+func TestProgressivePartialNoMidCommitText(t *testing.T) {
+	e, fe := newProgressiveEngine(t)
+	typeKeys(e, "jintianxingqiyi")
+	if !selectCandidateText(e, "今天") {
+		t.Fatal("找不到候选 今天")
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("渐进选段中途不应 CommitText（部分程序会因此丢字），实际 %d 次", got)
+	}
+	if text, visible := fe.lastPreedit(); !visible || text != "今天xing'qi'yi" {
+		t.Fatalf("预编辑应为 已确认段+剩余拼音（今天xing'qi'yi），实际 %q visible=%v", text, visible)
+	}
+	// 剩余段空格收尾：整串一次落盘
+	e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("整串耗尽应恰好落盘 1 次，实际 %d 次", got)
+	}
+	if got := fe.lastCommitText(); got != "今天星期一" {
+		t.Fatalf("落盘文本应为全部确认段拼接（今天星期一），实际 %q", got)
+	}
+}
+
+// TestProgressiveEscapeDiscardsConfirmed：Esc 取消整条组词（含未落盘的
+// 已确认段，三端统一语义），且取消后不得把确认段串进新一轮组词。
+func TestProgressiveEscapeDiscardsConfirmed(t *testing.T) {
+	e, fe := newProgressiveEngine(t)
+	typeKeys(e, "jintianxingqiyi")
+	if !selectCandidateText(e, "今天") {
+		t.Fatal("找不到候选 今天")
+	}
+	e.ProcessKeyEvent(keysymEscape, 0, 0)
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("Esc 取消不应落盘，实际 CommitText %d 次", got)
+	}
+	typeKeys(e, "jin")
+	e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if got := fe.lastCommitText(); got != "今" {
+		t.Fatalf("取消后新组词上屏应为 今，实际 %q（确认段泄漏进下一轮）", got)
+	}
+}
+
+// TestProgressiveFocusOutFlushesConfirmed：失焦把已确认段落盘——用户确认
+// 过的字不能随焦点切换丢失（纯拼音维持「收起」旧语义不变）。
+func TestProgressiveFocusOutFlushesConfirmed(t *testing.T) {
+	e, fe := newProgressiveEngine(t)
+	typeKeys(e, "jintianxingqiyi")
+	if !selectCandidateText(e, "今天") {
+		t.Fatal("找不到候选 今天")
+	}
+	_ = e.FocusOut()
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("失焦应把已确认段落盘恰好 1 次，实际 %d 次", got)
+	}
+	if got := fe.lastCommitText(); got != "今天" {
+		t.Fatalf("失焦落盘应为已确认段 今天，实际 %q", got)
+	}
+	if _, visible := fe.lastPreedit(); visible {
+		t.Fatal("失焦后预编辑应收起")
+	}
+}

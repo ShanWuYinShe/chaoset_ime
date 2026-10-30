@@ -15,6 +15,23 @@ final class ChaosetController: IMKInputController {
 
     private let engine = EngineClient()
     private var current: Comp?
+    // 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改）。
+    //
+    // SelectPrefix 返回的已确认文本**不再立即 insertText 写入文档**，而是并入
+    // 预编辑（marked text）一起展示，直到整条组词结束时一次 insertText 落盘。
+    //
+    // 为什么（用户实测：长串组词中选 1（今），部分 App 里「今」丢失、候选清空、
+    // 剩余拼音卡死在文档里）：旧实现对宿主做「insertText 已确认段 + setMarkedText
+    // 剩余拼音」两步文档变更。正确实现 IMK 语义的 App 会用 insertText 替换整个
+    // marked 区，但不少 App（部分版本 Notes、Electron、终端等）对「marked 区
+    // 激活期间收到 insertText」处理有缺陷：丢弃插入、或按过期的 marked 范围回写
+    // 随后的 setMarkedText——结果正是「已选的今丢失 + 剩余拼音变成普通文本 +
+    // 组词中断」。逐键输入之所以在所有 App 都正常，是因为它只做一步 setMarkedText。
+    // 并入后，渐进上屏与逐键输入使用完全相同的原语（单步 setMarkedText），
+    // 兼容面与逐键输入一致；落盘只保留「整条组词结束」一个时机——与 macOS
+    // 系统拼音「合成内的已转换段」模型相同（选择候选后，已转换的字仍带下划线
+    // 留在合成里，最后一起上屏）。
+    private var confirmedText = ""
     // 联想模式：选词上屏后候选窗继续展示续接词组（非 nil 即联想中）；
     // 用户开始输入新字母或结束会话时清空，回到正常拼音匹配。
     private var associateCandidates: [Candidate]?
@@ -76,6 +93,9 @@ final class ChaosetController: IMKInputController {
                 } else {
                     current = nil
                 }
+                // 已确认段随模式切换落盘：用户确认过的字不能丢（旧实现里这些
+                // 段早已写入文档，此处保持净效果一致）
+                flushConfirmed(client)
                 showToast(enMode ? "英文模式" : "中文模式", client: client)
                 refresh(client)
             }
@@ -99,7 +119,11 @@ final class ChaosetController: IMKInputController {
                 exitAssociate()
                 return true
             }
-            if isComposing {
+            if isComposing || !confirmedText.isEmpty {
+                // 取消整条组词，**含未落盘的已确认段**——与系统拼音的 Esc 语义
+                // 一致：合成内已转换但未上屏的内容一并丢弃（2026-10-30 起
+                // 已确认段住在预编辑里，必须显式丢弃而不是留在文档里）
+                confirmedText = ""
                 current = engine.reset()
                 refresh(client)
                 return true
@@ -122,6 +146,7 @@ final class ChaosetController: IMKInputController {
             // 组词中按退格，独立分为全部删除与部分删除两种行为：
             // A. 直接全部删除（清空全部拼音）：Cmd+Delete / Ctrl+Delete / Shift+Delete
             if mods.contains(.command) || mods.contains(.control) || mods.contains(.shift) {
+                confirmedText = "" // 全部删除：未落盘的已确认段一并取消（与 Esc 一致）
                 current = engine.reset()
                 refresh(client)
                 return true // 必须消费，绝不让快捷删除穿透到宿主应用误删文档内容
@@ -132,6 +157,7 @@ final class ChaosetController: IMKInputController {
                 current = engine.backspaceWord()
                 if current?.input.isEmpty == true {
                     current = nil
+                    flushConfirmed(client) // 同普通退格：剩余删空即落盘收尾
                 }
                 refresh(client)
                 return true
@@ -141,6 +167,9 @@ final class ChaosetController: IMKInputController {
             current = engine.backspace()
             if current?.input.isEmpty == true {
                 current = nil
+                // 剩余拼音删空：已确认段立即落盘收尾——它们不能继续挂在
+                // 预编辑里变成「无组词的孤标记区」
+                flushConfirmed(client)
             }
             refresh(client)
             return true
@@ -148,6 +177,7 @@ final class ChaosetController: IMKInputController {
 
         // Ctrl+U：类终端整行清空，组词中直接全部删除
         if isComposing, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
+            confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
             current = engine.reset()
             refresh(client)
             return true
@@ -158,6 +188,7 @@ final class ChaosetController: IMKInputController {
         // 缺失——同一个快捷键在三端行为不同（2026-10-29 三端一致性审查）。
         if isComposing, mods.contains(.control),
            event.keyCode == 51 || event.keyCode == 117 {
+            confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
             current = engine.reset()
             refresh(client)
             return true
@@ -289,9 +320,10 @@ final class ChaosetController: IMKInputController {
                 let raw = engine.commitRaw() ?? cur.input
                 current = nil
                 client?.insertText(
-                    raw,
+                    confirmedText + raw,
                     replacementRange: NSRange(location: NSNotFound, length: 0)
                 )
+                confirmedText = ""
                 refresh(client)
             }
             return true
@@ -322,10 +354,13 @@ final class ChaosetController: IMKInputController {
         if (chars == "\r" || chars == "\n"), let cur = current, !cur.input.isEmpty {
             let raw = engine.commitRaw() ?? cur.input
             current = nil
+            // 回车语义：已确认段按确认文本上屏，剩余拼音按原始串上屏
+            //（与系统拼音回车一致：已转换部分保留转换结果）
             client?.insertText(
-                raw,
+                confirmedText + raw,
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
+            confirmedText = ""
             refresh(client)
             return true
         }
@@ -355,10 +390,12 @@ final class ChaosetController: IMKInputController {
                 return passThrough(client) // daemon 不可达/未知标点：原键放行
             }
             current = nil
+            // 标点收尾：已确认段 + 首选候选 + 标点一次落盘
             client?.insertText(
-                committed,
+                confirmedText + committed,
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
+            confirmedText = ""
             refresh(client)
             return true
         }
@@ -384,13 +421,27 @@ final class ChaosetController: IMKInputController {
         return passThrough(client)
     }
 
-    // 不可处理的按键：组词中先清空再放行，避免预编辑与实文脱节
+    // 不可处理的按键：组词中先清空再放行，避免预编辑与实文脱节。
+    // 已确认段先落盘——用户确认过的字不能随透传消失（旧实现里这些段
+    // 早已写入文档，此处保持净效果一致）。
     private func passThrough(_ client: (any IMKTextInput)?) -> Bool {
-        if current?.input.isEmpty == false {
+        if current?.input.isEmpty == false || !confirmedText.isEmpty {
             current = engine.reset()
+            flushConfirmed(client)
             refresh(client)
         }
         return false
+    }
+
+    /// 把已确认段一次性落盘并清空缓冲。调用时机 = 所有「不再继续组词」的
+    /// 路径：整条组词选完、退格删空剩余拼音、失焦、透传、模式切换。
+    /// 落盘必须用 insertText（替换整个 marked 区）——这是与整句上屏相同的、
+    /// 已在全部 App 验证兼容的操作；绝不 marked 区激活期间分步写入文档。
+    private func flushConfirmed(_ client: (any IMKTextInput)?) {
+        guard !confirmedText.isEmpty else { return }
+        let text = confirmedText
+        confirmedText = ""
+        client?.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
     private func isCompositionChar(_ chars: String) -> Bool {
@@ -419,32 +470,38 @@ final class ChaosetController: IMKInputController {
         // （2026-10-28 用户反馈「选一个候选就清空整个拼音」不合适，
         // 渐进拼句才是吸纳用户习惯的主途径）。
         if let comp = engine.selectPrefix(index: index), !comp.committedText.isEmpty {
-            client?.insertText(
-                comp.committedText,
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
             let assocSylls = cur.candidates[index].syllables
                 .split(separator: "'").map(String.init)
-            if comp.preedit.isEmpty {
+            // 已确认段并入预编辑，**不立即写文档**（见 confirmedText 注释）：
+            //   还剩拼音 → 与逐键输入同一原语，单步 setMarkedText 刷新；
+            //   整串耗尽 → 整条组词一次 insertText 落盘（与整句上屏同一收尾，
+            //   同为「替换 marked 区」这一全 App 兼容操作）。
+            confirmedText += comp.committedText
+            if comp.input.isEmpty {
                 current = nil
+                client?.insertText(
+                    confirmedText,
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                confirmedText = ""
+                refresh(client)
+                // 剩余拼音耗尽 = 上屏收尾，与整句上屏同一收尾语义：进入联想。
+                // 2026-10-29 三端一致性审查：Windows/Linux 壳均在剩余耗尽后
+                // 进入联想。还剩拼音时继续组词，不进入联想。
+                enterAssociate(sylls: assocSylls, client: client)
             } else {
                 current = Comp(input: comp.input, preedit: comp.preedit,
                                candidates: comp.candidates,
                                page: comp.page, pageCount: comp.pageCount)
-            }
-            refresh(client)
-            // 剩余拼音耗尽 = 上屏收尾，与整句上屏同一收尾语义：进入联想。
-            // 2026-10-29 三端一致性审查：Windows/Linux 壳均在剩余耗尽后
-            // 进入联想，macOS 此前直接 return（选完最后一段不弹续接词，
-            // 三端行为不一致）。还剩拼音时继续组词，不进入联想。
-            if comp.preedit.isEmpty {
-                enterAssociate(sylls: assocSylls, client: client)
+                refresh(client)
             }
             return
         }
         // daemon 不可达（selectPrefix 返回 nil）：绝不能静默失败（键被消费、
         // 文字没进文档 = 丢字）。退化为整句上屏，保证用户输入不丢失。
-        let committed = engine.select(index) ?? cur.input
+        // 已确认段随本次落盘一起收尾（缓冲必须清空，避免串进下一轮组词）。
+        let committed = confirmedText + (engine.select(index) ?? cur.input)
+        confirmedText = ""
         current = nil
         client?.insertText(
             committed,
@@ -560,7 +617,11 @@ final class ChaosetController: IMKInputController {
                 return
             }
         }
-        let marked = current?.preedit ?? ""
+        // 预编辑 = 已确认段（渐进上屏的已选字）+ 剩余拼音：二者同属一条
+        // marked 区，整条组词结束才落盘。壳对文档只做两类操作——
+        // setMarkedText 更新（与逐键输入同原语）与 insertText 终态落盘
+        // （与整句上屏同原语），不存在「组词中写正文」这一易碎操作。
+        let marked = confirmedText + (current?.preedit ?? "")
         if marked.isEmpty {
             // 组词结束：用 insertText("") 收掉 inline session。
             // 直接 setMarkedText("") 在多数客户端里等于「留一个空标记区」，
@@ -734,6 +795,10 @@ final class ChaosetController: IMKInputController {
     // 输入会话被提交（点击文本框外、切换应用/输入法时系统调用）：必须清空
     // 会话状态并收起候选窗，保证候选面板从屏幕彻底消失且不影响焦点。
     override func commitComposition(_ sender: Any!) {
+        // 宿主要求结束本次输入会话（点击文本框外/切换应用）：已确认段先落盘
+        //（用户确认过的字不能丢；旧实现里这些段早已在文档，净效果一致），
+        // 剩余拼音丢弃。
+        flushConfirmed(self.client())
         if current?.input.isEmpty == false {
             current = engine.reset()
         } else {
@@ -751,7 +816,9 @@ final class ChaosetController: IMKInputController {
         // 会话的 preedit 去和 daemon 组词，表现为「刚切换过来就打错字」。
         // 这里不调 daemon（reset 只请求 daemon 重置会话，代价一次 IPC）；
         // 直接丢弃本地状态即可——daemon 侧会话按连接维护，新连接本就是空的。
+        // 已确认段缓冲同样不得带入：此时写入会插进**新的**输入上下文。
         current = nil
+        confirmedText = ""
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()
@@ -759,8 +826,11 @@ final class ChaosetController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
-        // 切换输入法或失去焦点时：若无未决组词，坚决不发生任何阻塞性 IPC，
-        // 保证 WindowServer 与系统输入法切换 HUD 丝滑无卡顿
+        // 切换输入法或失去焦点时：已确认段先落盘（同一上下文内允许最后一次
+        // 插入；旧实现里这些段早已在文档，净效果一致），剩余拼音丢弃。
+        // 若无未决组词，坚决不发生任何阻塞性 IPC，保证 WindowServer 与系统
+        // 输入法切换 HUD 丝滑无卡顿。
+        flushConfirmed(self.client())
         if current?.input.isEmpty == false {
             current = engine.reset()
         } else {
@@ -773,6 +843,8 @@ final class ChaosetController: IMKInputController {
     }
 
     deinit {
+        // deinit 拿不到 client，无法补写已确认段；正常路径 deactivateServer /
+        // commitComposition 已先行落盘，这里只兜底清理 UI。
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()
