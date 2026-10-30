@@ -108,6 +108,45 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
 
 反馈崩溃问题时附上这两个文件（如存在），可直接定位到具体模块与偏移。
 
+## 踩坑记录：开始菜单候选窗不显示（2026-10-30）
+
+**症状**：记事本/浏览器/终端里候选窗正常，Windows 11 开始菜单/搜索框里
+完全看不到候选窗；预编辑（带下划线的拼音）显示正常。
+
+**根因是两层，缺一不可**：
+
+1. **候选窗 owner 为空**。`CreateWindowExW` 的 owner 参数一直是 `nullptr`，
+   候选窗是无主顶层窗口，只靠 `WS_EX_TOPMOST` 维持可见性。普通桌面宿主够用，
+   但开始菜单/搜索是**沉浸式 z 序 band** 窗口，无主 topmost 窗口会被压在整个
+   band 之下。修法：用 `ITfContextView::GetWnd()` 取宿主 HWND 作 owner
+   （`CandidateWindow::setOwner` / `hostWindowOf`），owned window 恒在 owner
+   之上，可跨 band。
+2. **安装器杀错进程名**。安装器硬编码 `ctfmon/TextInputHost/SearchHost/
+   StartMenuExperienceHost` 四个名字，但实机承载开始菜单输入的宿主是
+   **`SearchApp.exe`**（Windows 11 各版本叫法不同：`SearchUI.exe` →
+   `SearchApp.exe` → `SearchHost.exe`）。漏杀的那个进程带着旧 DLL 一直活着，
+   新版修复对它完全无效。修法：改为按模块名动态枚举——终止所有加载了
+   `ChaosetIME*.dll` 的进程（排除 `explorer`/`dwm`），不再依赖进程名。
+
+**为什么这个坑极难定位**（排障方法论，下次照此做）：
+
+- 「预编辑正常但没候选窗」把范围收窄到候选窗自身——排除了 daemon、IPC、
+  TSF 合成三类问题，因为预编辑就来自 daemon 返回的 `comp_.preedit`。
+- **`tsf.log` 零新增是最强的误导信号**。它可能是「没激活」，也可能是
+  「激活了但日志写不进」。AppContainer 进程的 `LOCALAPPDATA` 被系统重定向，
+  原实现两条路径都失败就静默 `return`。现加了第三条兜底：`TEMP`
+  （`\Packages\<Family>\LocalCache\Local\Temp\Chaoset\`）。
+- **决定性证据来自三份数据的交叉对照**：① 进程列表显示 `SearchApp` 加载了
+  DLL；② 日志零新增；③ `EnumWindows` 枚举发现 `firefox`/`WindowsTerminal`
+  有候选窗但 `SearchApp` 连窗口对象都没有。三者结合才排除「被盖住」与
+  「没渲染」，指向 owner 缺失。
+- 教训：**先确认装的是不是新构建**。用户 `LastWriteTime` 停留在旧时间戳，
+  前面几轮的修复其实从未被测到。`Get-Item <dll> | Select LastWriteTime`
+  应作为真机测试的第一步。
+
+**验证等级**：已通过 Windows 11 真机确认（2026-10-30，用户报告开始菜单
+候选窗恢复显示）。游戏/全屏独占场景**未测试**，见「已知限制」。
+
 ## 图标与设置界面
 
 - **应用与资源图标**：`resources/chaoset.ico` 提供包含 16×16、24×24、32×32、48×48、64×64、256×256
@@ -127,6 +166,26 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   语义色），系统深色模式下与 macOS 不一致——已知差异，需真机验证后再做。
 
 ## 已知限制
+
+- **游戏/全屏场景（2026-10-30 用户提出，未真机测试）**：用户明确要求
+  「游戏中一定不能干扰快捷键、鼠标，那会严重影响使用」。现状分析：
+  - **不会干扰鼠标**：全仓无 `SetWindowsHookEx` / `ClipCursor` / `SetCapture` /
+    `SendInput` / `mouse_event` / `keybd_event`（逐项 grep 均为 0）。鼠标事件
+    只有候选窗自身的 `WM_LBUTTONDOWN`（窗口内点击），不拦截全局鼠标。
+  - **不会干扰快捷键**：`wouldHandle` 对 `Alt`/`Win` 组合恒放行；`Ctrl` 组合
+    仅在组词中认 `Ctrl+Backspace`/`Ctrl+U`，其余放行；数字/导航/F 键/空格在
+    未组词时立即放行且不触碰 daemon 连接。
+  - **但中文输入法激活时字母键会被拦**：未组词状态按字母（不带 Shift）会
+    进入组词（`wouldHandle` 的 `relevant` 判定 → `handleKey` 字母分支）。
+    游戏里 WASD 会变成打拼音——这是**任何中文输入法激活时的固有行为**，
+    不是本壳缺陷。用户需在游戏前切英文模式（Shift 空按或 Win+Space）。
+    注意「Shift 空按切换中英」本身待真机确认（见上一条限制）。
+  - **无全屏检测**：全仓无 `SHQueryUserNotificationState` / `QUNS` /
+    `FullScreen` 判定。无边框全屏（borderless fullscreen）下候选窗可能盖住
+    游戏画面；独占全屏通常不显示窗口，但未验证。主流输入法（微软拼音、
+    搜狗）会检测全屏并抑制候选窗，本壳**未实现**。待真机验证后再定方案。
+  - **待办**：若真机测试确认全屏下有干扰，需在 `CandidateWindow::show`
+    前加全屏判定并抑制显示（同时保证按键仍能正常透传给游戏）。
 
 - **候选窗 DPI**：`getDpi()` 用 `GetDeviceCaps(GetDC(NULL), LOGPIXELSY)`（主显示器
   DPI），无 `WM_DPICHANGED`——混合 DPI 多屏时落到不同缩放的副屏会按主屏比例

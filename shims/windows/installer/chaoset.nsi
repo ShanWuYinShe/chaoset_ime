@@ -96,11 +96,26 @@ Section "MainSection" SEC01
     ; 句柄不带 FILE_SHARE_DELETE，既不能删也不能改名（2026-10-29 实机升级
     ; 报「无法写入 ChaosetIME.dll」的根因）。这些宿主由系统按需自动重启，
     ; 强停无感；explorer 不动（用户桌面）。
+    ;
+    ; **按模块名动态查找，不再硬编码进程名**（2026-10-30 修）：
+    ; 此前写死 ctfmon/TextInputHost/SearchHost/StartMenuExperienceHost 四个名字，
+    ; 但 Windows 11 各版本承载开始菜单与搜索的宿主叫法不同——实测用户机器上
+    ; 是 **SearchApp.exe**（历史还有 SearchUI.exe），不在列表里就杀不到，
+    ; 它带着旧 DLL 一直活着，新版候选窗修复对它完全无效（2026-10-30 实机：
+    ; 开始菜单打拼音零日志，因为跑的还是旧代码）。
+    ; 现在枚举所有加载了 ChaosetIME*.dll 的进程终止，与新版本名无关。
+    ; 排除 explorer/dwm：杀 explorer 会重启桌面（用户无感中断），dwm 是
+    ; 桌面合成器不能动；这两个若仍占用，由下方 .new + 重启预约兜底。
+    nsExec::Exec `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-Process | Where-Object { $$_.ProcessName -notin @('explorer','dwm') -and $$_.Id -ne $$PID } | ForEach-Object { try { if (@($$_.Modules | Where-Object { $$_.ModuleName -like 'ChaosetIME*' }).Count -gt 0) { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue } } catch {} }"`
+    ; 同时保留按名强停系统输入宿主（它们可能尚未加载 DLL，但持有 TSF 状态，
+    ; 重启可让语言栏/输入法缓存刷新）。
     nsExec::Exec 'taskkill /F /IM ctfmon.exe'
     nsExec::Exec 'taskkill /F /IM TextInputHost.exe'
     nsExec::Exec 'taskkill /F /IM SearchHost.exe'
     nsExec::Exec 'taskkill /F /IM StartMenuExperienceHost.exe'
-    Sleep 800
+    nsExec::Exec 'taskkill /F /IM SearchApp.exe'
+    nsExec::Exec 'taskkill /F /IM SearchUI.exe'
+    Sleep 1200
 
     ; 检查是否有正在运行的应用锁定了输入法 DLL（如用户先前打开的记事本、浏览器或聊天软件）
     ${If} ${FileExists} "$INSTDIR\ChaosetIME.dll"
@@ -154,13 +169,23 @@ Section "MainSection" SEC01
     WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "IconIndex" 0
     WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
-    ; 注册 TSF 类别（键盘、显示属性、沉浸式、托盘与无界面支持，确保现代设置界面与任务栏可见）
+    ; 注册 TSF 类别（键盘、显示属性、沉浸式、托盘；**不含 UILess/UIELEMENTENABLED**）
+    ;
+    ; 为什么删掉 {49d2f9cf-...}（2026-10-30 修）：该类别声明「本 TIP 以 UILess
+    ; 模式提供候选 UI」，TSF 在沉浸式宿主（Windows 11 开始菜单/搜索框）里会
+    ; 期望 TIP 通过 ITfUIElementMgr 提交候选元素、由宿主渲染。本壳不实现这些
+    ; 接口，候选窗是进程内自绘 GDI 弹窗——声明与实现矛盾，实机表现为开始菜单
+    ; 里完全看不到候选窗（记事本正常）。详见 win32.cpp 常量处注释。
+    ;
+    ; 升级路径：下面先 DeleteRegKey 再写，否则已装旧版的用户注册表里会残留
+    ; 该类别，导致修复对他们无效（安装器是直接写注册表的「双重保障」路径，
+    ; 不经过 DllRegisterServer）。
+    DeleteRegKey HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}"
+    DeleteRegKey HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}"
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-    WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
     WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
@@ -174,12 +199,13 @@ Section "MainSection" SEC01
         WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "IconIndex" 0
         WriteRegDWORD HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
+        ; 32 位视图同样剔除 UILess 类别（升级残留清理，理由见上方 64 位注释）
+        DeleteRegKey HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}"
+        DeleteRegKey HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}"
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{34745c63-b2f0-4784-8b67-5e12c8701a31}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{046602e4-c36a-4f66-82f7-b44d5fd81ac4}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
-        WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{49d2f9cf-1f5e-11d7-a6d3-00065b84435c}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Item\{13a016df-560b-46cd-947a-4c3af1e0e35d}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""
         WriteRegStr HKLM "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\Category\Category\{25504fb4-7bab-4bc1-9c69-cf81890f0ef5}\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}" "" ""

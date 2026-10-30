@@ -61,9 +61,20 @@ const GUID kGUID_TFCAT_TIP_KEYBOARD = {
     0x34745c63, 0xb2f0, 0x4784, {0x8b, 0x67, 0x5e, 0x12, 0xc8, 0x70, 0x1a, 0x31}};
 const GUID kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER = {
     0x046602e4, 0xc36a, 0x4f66, {0x82, 0xf7, 0xb4, 0x4d, 0x5f, 0xd8, 0x1a, 0xc4}};
-// 现代 Windows (Windows 8/10/11) 沉浸式与托盘支持能力分类，确保在现代系统设置与 UWP 应用中可见
-const GUID kGUID_TFCAT_TIPCAP_UIELEMENTENABLED = {
-    0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
+// 现代 Windows (Windows 8/10/11) 沉浸式与托盘支持能力分类，确保在现代系统设置与 UWP 应用中可见。
+//
+// **刻意不注册 TFCAT_TIPCAP_UIELEMENTENABLED**（2026-10-30 修）：
+// 该类别声明「本 TIP 以 UILess 模式提供候选 UI」——TSF 在沉浸式宿主
+// （Windows 11 开始菜单 / 搜索框等）里据此期望 TIP 通过
+// ITfUIElementMgr::BeginUIElement 提交 ITfUIElement，由宿主自行渲染。
+// 本壳从未实现这些接口（全文件 ITfUIElementMgr / BeginUIElement 出现 0 次），
+// 候选窗是进程内自建的 GDI 弹窗——声明与实现矛盾。
+// 实机症状：记事本（普通 Win32 宿主）候选窗正常，开始菜单里完全看不到
+// （2026-10-30 用户反馈）。撤掉声明让 TSF 按「TIP 自绘候选」的普通路径
+// 对待，与实现保持一致。
+//
+// 保留 IMMERSIVESUPPORT / SYSTRAYSUPPORT：它们只影响「在现代设置与任务栏
+// 中可见」，与候选窗渲染路径无关。
 const GUID kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT = {
     0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0xe3, 0x5d}};
 const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
@@ -272,7 +283,27 @@ void diagWrite(const wchar_t* name, const char* text, int len) {
         if (swprintf(p2, MAX_PATH, L"%s\\%s", pkg, name) <= 0) return;
         h = CreateFileW(p2, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                         nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) return;
+        if (h == INVALID_HANDLE_VALUE) {
+            // 第三兜底：TEMP。AppContainer 进程的 TEMP 被系统重定向到
+            // \Packages\<Family>\LocalCache\Local\Temp，是**任何**打包进程
+            // 都保证可写的少数位置之一（2026-10-30 开始菜单排障：前两条
+            // 都失败时完全静默，无法区分「没激活」与「写不进」）。
+            wchar_t tmp[MAX_PATH];
+            const DWORD tn = GetEnvironmentVariableW(L"TEMP", tmp, MAX_PATH);
+            if (tn > 0 && tn < MAX_PATH) {
+                wchar_t tdir[MAX_PATH];
+                if (swprintf(tdir, MAX_PATH, L"%s\\Chaoset", tmp) > 0) {
+                    CreateDirectoryW(tdir, nullptr);
+                    wchar_t p3[MAX_PATH];
+                    if (swprintf(p3, MAX_PATH, L"%s\\%s", tdir, name) > 0) {
+                        h = CreateFileW(p3, FILE_APPEND_DATA,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    }
+                }
+            }
+            if (h == INVALID_HANDLE_VALUE) return;
+        }
     }
     DWORD written = 0;
     WriteFile(h, text, static_cast<DWORD>(len), &written, nullptr);
@@ -600,6 +631,20 @@ public:
 
     HWND hwnd() const { return hwnd_; }
 
+    // 设置候选窗 owner（宿主窗口）。窗口已创建时用 GWLP_HWNDPARENT 改 owner
+    // （SetWindowLongPtr(hwnd, GWLP_HWNDPARENT) 的语义就是 SetWindowLong 的
+    // owner 设置，不是父窗口——WS_POPUP 窗口没有父窗口）。
+    // 必须在 show() 之前设置才能作用于 CreateWindowExW；已创建时改 owner
+    // 会重建 z 序关系，同样有效。
+    void setOwner(HWND owner) {
+        if (owner == ownerHwnd_) return;
+        ownerHwnd_ = owner;
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) {
+            SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT,
+                              reinterpret_cast<LONG_PTR>(owner));
+        }
+    }
+
     void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {
         if (comp.candidates.empty()) {
             hide();
@@ -610,11 +655,33 @@ public:
         targetPos_ = pt;
         targetLineHeight_ = lineH;
         ensureWindow(hinst);
-        if (hwnd_ == nullptr) return;
+        if (hwnd_ == nullptr) {
+            // 创建失败此前完全静默：开始菜单「看不到候选窗」时无法区分
+            // 「没建出来」与「建了但被盖住/跑到屏幕外」（2026-10-30 排障）。
+            if (diagBudget()) {
+                diagPrintf(L"tsf.log", "candidate window create FAILED err=%lu anchor=%ld,%ld\n",
+                           static_cast<unsigned long>(GetLastError()),
+                           static_cast<long>(pt.x), static_cast<long>(pt.y));
+            }
+            return;
+        }
 
         layoutAndPosition();
         InvalidateRect(hwnd_, nullptr, TRUE);
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        // 记录最终落点与可见性：ShowWindow 成功但 IsWindowVisible 为假，
+        // 或落点在所有显示器工作区之外，都能在这里看出来。
+        if (diagBudget()) {
+            RECT wr{};
+            GetWindowRect(hwnd_, &wr);
+            HMONITOR hMon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONULL);
+            diagPrintf(L"tsf.log",
+                       "candidate shown pos=%ld,%ld size=%ldx%ld visible=%d monitor=%d anchor=%ld,%ld\n",
+                       static_cast<long>(wr.left), static_cast<long>(wr.top),
+                       static_cast<long>(wr.right - wr.left), static_cast<long>(wr.bottom - wr.top),
+                       IsWindowVisible(hwnd_) ? 1 : 0, hMon != nullptr ? 1 : 0,
+                       static_cast<long>(pt.x), static_cast<long>(pt.y));
+        }
     }
 
     void hide() {
@@ -710,7 +777,15 @@ private:
         wc.hInstance = hinst;
         wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         wc.lpszClassName = cls.c_str();
-        RegisterClassExW(&wc);
+        // 注册失败原因此前被丢弃。ERROR_CLASS_ALREADY_EXISTS 属正常复用
+        // （同名类已由本模块注册），其它错误码则意味着窗口注定创建失败。
+        if (RegisterClassExW(&wc) == 0 && diagBudget()) {
+            const DWORD err = GetLastError();
+            if (err != ERROR_CLASS_ALREADY_EXISTS) {
+                diagPrintf(L"tsf.log", "RegisterClassEx failed err=%lu\n",
+                           static_cast<unsigned long>(err));
+            }
+        }
 
         // 层级设计（三端对照，2026-10-28 复核）：候选窗保持 TOPMOST——
         // 微软自带拼音与搜狗等输入法的候选窗同样是置顶 popup。Windows 的
@@ -721,13 +796,25 @@ private:
         // 候选窗被宿主文档窗口盖住，不可行。
         // 全链路防拦截：WS_EX_NOACTIVATE 不抢焦点 + 失焦即收候选窗
         // （OnSetFocus(FALSE)），点击其它应用时候选窗先收起再切换。
+        //
+        // **owner 窗口**（2026-10-30 开始菜单排障）：owner 此前恒为 nullptr，
+        // 候选窗是无主顶层窗口，仅靠 WS_EX_TOPMOST 维持可见性。普通桌面宿主
+        // （记事本/浏览器/终端）够用，但 Windows 11 开始菜单/搜索这类**沉浸式
+        // band** 窗口自带独立 z 序层级，无主 topmost 窗口会被压在整个 band 之下。
+        // 实机取证（2026-10-30 用户机器枚举）：SearchApp 里候选窗根本不存在，
+        // 而 firefox/WindowsTerminal 里存在且 Owner=0x0——说明 owner 缺失与
+        // 「只有沉浸式宿主看不到」高度相关。
+        // owner 设为宿主窗口后，owned window 恒在其 owner 之上，可跨 band 显示
+        //（微软拼音与搜狗候选窗同样以宿主窗口为 owner）。
+        HWND owner = ownerHwnd_;
+        if (owner == nullptr || !IsWindow(owner)) owner = GetForegroundWindow();
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             cls.c_str(),
             L"ChaosetCandidate",
             WS_POPUP,
             0, 0, 0, 0,
-            nullptr, nullptr, hinst, nullptr
+            owner, nullptr, hinst, nullptr
         );
         if (hwnd_ != nullptr) {
             SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
@@ -1232,6 +1319,11 @@ private:
     }
 
     HWND hwnd_ = nullptr;
+    // 候选窗的 owner 窗口（宿主窗口）。非空时候选窗是其 owned window，
+    // 恒在 owner 之上，可跨越 Windows 11 开始菜单/搜索的沉浸式 z 序 band。
+    // 由 show() 的调用方经 setOwner() 设置（来源见 ChaosetTIP::render 里
+    // 的 ITfContextView::GetWnd 探测）。
+    HWND ownerHwnd_ = nullptr;
     chaoset::Comp comp_;
     ChaosetTIP* tip_ = nullptr;
     POINT targetPos_{0, 0};
@@ -1720,6 +1812,27 @@ public:
             diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d build=%s %s\n",
                        static_cast<unsigned long>(GetCurrentProcessId()), host,
                        isAppContainer() ? 1 : 0, __DATE__, __TIME__);
+        }
+        // UILess 模式探测（2026-10-30 开始菜单候选窗排障）：
+        // ITfThreadMgrEx::GetActiveFlags 返回 TF_TMF_UIELEMENTENABLEDONLY(0x4)
+        // 表示**当前宿主**以 UI-less 模式运行 TIP——此时 TSF 期望 TIP 用
+        // ITfUIElementMgr 提交候选、由宿主渲染；本壳不实现这些接口，候选窗
+        // 是自绘 GDI 弹窗，在 UILess 宿主里必然看不到。这是判断「撤掉
+        // UIELEMENTENABLED 类别是否奏效」的直接证据：修复生效后该位应为 0。
+        if (diagBudget() && ptim != nullptr) {
+            ITfThreadMgrEx* tme = nullptr;
+            DWORD flags = 0;
+            HRESULT hrEx = ptim->QueryInterface(IID_ITfThreadMgrEx,
+                                                reinterpret_cast<void**>(&tme));
+            HRESULT hrFlags = (SUCCEEDED(hrEx) && tme != nullptr)
+                                  ? tme->GetActiveFlags(&flags)
+                                  : E_NOINTERFACE;
+            if (tme != nullptr) tme->Release();
+            diagPrintf(L"tsf.log", "activeflags hr_qi=0x%08lX hr=0x%08lX flags=0x%08lX uiless=%d\n",
+                       static_cast<unsigned long>(hrEx),
+                       static_cast<unsigned long>(hrFlags),
+                       static_cast<unsigned long>(flags),
+                       (SUCCEEDED(hrFlags) && (flags & 0x4)) ? 1 : 0);
         }
         tm_ = ptim;
         if (tm_ != nullptr) tm_->AddRef();
@@ -2748,7 +2861,27 @@ private:
                 caretLineHeight_ = 20;
             }
         }
+        // 候选窗 owner = 宿主窗口（2026-10-30 开始菜单排障）。
+        // ITfContextView::GetWnd 返回承载本上下文的宿主 HWND；拿不到时退回
+        // 前台窗口。owner 关系让候选窗恒在其宿主之上，可跨 Windows 11
+        // 开始菜单/搜索的沉浸式 z 序 band——无主 topmost 窗口会被压住。
+        candidateWnd_.setOwner(hostWindowOf(ctx));
         candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
+    }
+
+    // 取上下文宿主窗口：优先 ITfContextView::GetWnd（TSF 标准途径，
+    // 直接给出承载该文档的 HWND），失败退回前台窗口。
+    static HWND hostWindowOf(ITfContext* ctx) {
+        if (ctx != nullptr) {
+            ITfContextView* view = nullptr;
+            if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
+                HWND wnd = nullptr;
+                const HRESULT hr = view->GetWnd(&wnd);
+                view->Release();
+                if (SUCCEEDED(hr) && wnd != nullptr && IsWindow(wnd)) return wnd;
+            }
+        }
+        return GetForegroundWindow();
     }
 
     // 用合成范围更新候选窗锚点；View 不可用或拿到零矩形时保留旧位置——
@@ -3537,7 +3670,7 @@ STDAPI DllRegisterServer() {
                                    reinterpret_cast<void**>(&catMgr)))) {
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_ChaosetTIP);
+        // 不注册 UIELEMENTENABLED：本壳不实现 ITfUIElementMgr（见常量处注释）
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
@@ -3554,7 +3687,7 @@ STDAPI DllRegisterServer() {
     const GUID* catGuids[] = {
         &kGUID_TFCAT_TIP_KEYBOARD,
         &kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
-        &kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+        // 不含 UIELEMENTENABLED：本壳不实现 ITfUIElementMgr（见常量处注释）
         &kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
         &kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
     };
@@ -3584,7 +3717,11 @@ STDAPI DllUnregisterServer() {
                                    reinterpret_cast<void**>(&catMgr)))) {
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_ChaosetTIP);
+        // 注销旧版注册过的 UILess 类别（本版不再注册，但升级用户的注册表里
+        // 仍残留，卸载必须清干净；GUID 直接内联，常量已随修复删除）。
+        const GUID kLegacyUIElementEnabled = {
+            0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kLegacyUIElementEnabled, CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
