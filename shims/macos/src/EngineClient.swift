@@ -16,8 +16,13 @@ struct Comp {
     let candidates: [Candidate]
     let page: Int       // 0 起页码
     let pageCount: Int  // 总页数（page_count）
-    // 渐进上屏（selectPrefix）返回时非空：本次实际上屏的前缀段文本
+    // 本次调用额外上屏、需要壳写入文档的文本（空 = 无）：
+    // ① selectPrefix 渐进上屏的前缀段；② 双拼模式下按下的 ';' 标点键
+    //（引擎把「组词中首选词 + 分号」放进 committed，壳不能自己把 ';' 当标点）。
     var committedText: String = ""
+    // 双拼方案名（IPC "shuangpin"，空 = 全拼）。壳据此把 ';' 路由到 input：
+    // mspy 的 ing 韵母键是 ';'，若一律当标点，明/听/星/京整类音节打不出。
+    var shuangpin: String = ""
 }
 
 final class EngineClient {
@@ -32,6 +37,10 @@ final class EngineClient {
 
     private var fd: Int32 = -1
     private var nextID: UInt64 = 0
+    /// 最近一次 Composition 响应里的双拼方案名（空 = 全拼）。每次响应都会
+    /// 覆盖——daemon 从双拼切回全拼时字段为空，缓存必须跟着清掉，否则 ';'
+    /// 会被错误路由到 input。
+    private(set) var doublePinyinScheme: String = ""
     private var lastFailAt: TimeInterval = 0
     private let cooldown: TimeInterval = 1.0 // 连不上时的重试冷却，避免每次击键都白连
     private let socketPath: String
@@ -234,7 +243,13 @@ final class EngineClient {
         }
         let page = result["page"] as? Int ?? 0
         let pageCount = result["page_count"] as? Int ?? 1
-        return Comp(input: input, preedit: preedit, candidates: list, page: page, pageCount: pageCount)
+        // 顶层 committed：渐进上屏段与双拼 ';' 的上屏文本都放这里；
+        // shuangpin：每次响应都带（全拼为空），壳据此路由 ';'。
+        let committed = result["committed"] as? String ?? ""
+        let shuangpin = result["shuangpin"] as? String ?? ""
+        doublePinyinScheme = shuangpin
+        return Comp(input: input, preedit: preedit, candidates: list, page: page,
+                    pageCount: pageCount, committedText: committed, shuangpin: shuangpin)
     }
 
     func input(_ text: String) -> Comp? {
@@ -301,6 +316,8 @@ final class EngineClient {
         guard let result = call(method: "selectPrefix",
                                 params: ["index": index]) else { return nil }
         let committed = result["committed"] as? String ?? ""
+        let shuangpin = result["shuangpin"] as? String ?? ""
+        doublePinyinScheme = shuangpin
         let input = result["input"] as? String ?? ""
         let preedit = result["preedit"] as? String ?? ""
         let page = (result["page"] as? Int ?? 0)
@@ -316,7 +333,8 @@ final class EngineClient {
             }
         }
         return Comp(input: input, preedit: preedit, candidates: list,
-                    page: page, pageCount: pageCount, committedText: committed)
+                    page: page, pageCount: pageCount, committedText: committed,
+                    shuangpin: shuangpin)
     }
 
     func associateSelect(word: String, sylls: [String]) -> String? {

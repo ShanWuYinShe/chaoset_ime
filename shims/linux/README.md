@@ -21,15 +21,20 @@ ibus-engine/
 ```
 
 按键：字母组词、`1`-`9`（主键盘与小键盘 KP_1-9）选候选（越界序号放行原键、
-组词保持原样）、空格/回车首选上屏（残缺组词顶屏原始拼音，裸空格不进文档）、
-退格删除（Shift+退格整段清空；Ctrl+U 整行清空）、Esc 清空、标点键（`,` `.` `;` 等）输出中文标点（组词中先上屏首选；
-组词中的 `'` 为音节分隔符；句号/逗号连按全角⇄半角循环）、`-`/`=` 与
-Page Up/Down 候选翻页（候选表随页刷新；残缺组词时清空组词放行）、Shift 空按切换中英（释放事件放行给
-应用，英文模式全透传；混按 Shift+字母 不误触）、Shift+空格切换全角/半角标点。
+组词保持原样）、空格/回车首选上屏（残缺组词顶屏原始拼音，裸空格不进文档；
+**有已确认段时 = 确认段 + 原始拼音一次上屏**）、退格删除（逐字符；Shift+退格
+整段清空；Ctrl+U 整行清空）、Esc 取消整条组词、标点键（`,` `.` `;` 等）输出中文标点
+（组词中先上屏首选；组词中的 `'` 为音节分隔符；句号/逗号连按全角⇄半角循环；
+`[` `]` 本身是标点键，输出【】）、`-`/`=` 与 Page Up/Down 候选翻页（候选表随页刷新；
+残缺组词时清空组词放行）、Shift 空按切换中英（释放事件放行给应用，英文模式全透传；
+混按 Shift+字母 不误触）、Shift+空格切换全角/半角标点。
 两类切换均经辅助文本（auxiliary text）短暂提示目标模式（约 1.2s 自动消失）；
 预编辑带整串下划线标记与末尾光标位置（应用可分辨「正在组词」）。
-带 Ctrl/Alt 修饰或未消费的按键放行给应用，组词中放行前先清空组词（防预编辑
-与实文脱节，对齐 macOS 壳）。
+**已确认段（渐进上屏）**：与 mac 语义一致——退格删空剩余拼音立即落盘；
+Shift 切中英先落盘；Ctrl+Backspace / Ctrl+U / Esc 取消整条（含未落盘确认段）；
+Ctrl/Alt/Super 透传前先落盘确认段（防预编辑与实文脱节，2026-10-30 统一）。
+**双拼 `;` 键（2026-10-30）**：`-shuangpin mspy` 时 `;` 是 ing 韵母键
+（`m`+`;`=ming），非双拼模式/Shift+`;` 仍是中文标点。
 
 **词组联想**（2026-10-27 接入，对齐 macOS 壳）：选词上屏后按上屏词音节查续接
 词组并经候选表展示（**上限 30 条，本地分页每页 6 条**），数字/小键盘选当前页
@@ -55,8 +60,9 @@ config.json 仍可直接手工编辑。
 **学习标记（不适用）**：macOS/Windows 候选窗对「被用户数据加权」的候选在文本后
 绘制绿色 `*`；ibus 面板端不适用——`IBusLookupTable` 的候选文本是唯一显示载体
 （同时用于无障碍朗读与上屏数据源），没有 macOS/Windows 那样的独立装饰绘制层，
-追加 `*` 会污染候选文本，且 ibus 上游未提供 per-item 装饰接口。这是平台机制
-差异，非遗漏；学习加权本身在 Linux 端照常生效（只影响排序）。
+追加 `*` 会污染候选文本。IBusText 本身支持 per-item 文本属性（引擎自己就在用
+underline），但只能改候选文本本身、没有独立装饰层，因此结论不变（2026-10-30
+修正表述）。学习加权本身在 Linux 端照常生效（只影响排序）。
 
 **联想态 Shift+空格**：与普通空格同语义（选当前页第一个联想词上屏并继续联想），
 **不**切换全/半角标点——三端实测一致（macOS/Windows 的联想分支同样先消费空格、
@@ -75,8 +81,9 @@ config.json 仍可直接手工编辑。
   `ProcessKeyEvent`——n/i/h/a/o 五键全部 handled=true，空格触发
   `CommitText` 信号，dbus-monitor 捕获到中文「你好」上屏。
 - **候选表（端到端）**：组词中引擎发出 `UpdateLookupTable` 信号，
-  dbus-monitor 确认载荷为 `IBusLookupTable` 元组（page_size=9、
-  candidates 为 IBusText av），与 ibus_lookup_table_serialize 逐字段
+  dbus-monitor 确认载荷为 `IBusLookupTable` 元组（page_size=6，直接取
+  `engine.PageSize()` 单一来源；历史上曾写死 9 与引擎脱节，2026-10-26 已改）、
+  candidates 为 IBusText av，与 ibus_lookup_table_serialize 逐字段
   对应；数字键选择不再是盲选。
 - **多实例（端到端）**：`CreateEngine` 两次创建独立实例，交错打字
   （实例 1=ni、实例 2=hao）后各自空格，`CommitText` 分别为 你好 / 好，
@@ -94,6 +101,13 @@ config.json 仍可直接手工编辑。
   （SetCursorLocation）待真机桌面。
 - 候选窗由 ibus 原生面板显示（历史上的 daemon 贴图 candidateImage
   已随 renderer 包于 2026-10-27 删除，此壳无接入计划）。
+- **候选表/预编辑语义由上游面板决定**：候选高亮固定首选（`CursorUp/Down` 空实现，
+  面板内不可移动）；无候选时隐藏候选表但预编辑可独立可见；翻页箭头可用性与
+  页码由面板绘制，引擎拿不到 pageCount 之外的分页状态，**单页箭头无法像
+  mac/Win 那样置灰**。这些是平台机制差异，不是缺陷。
+- 设置窗口读 `config.json` 失败时回退默认值，保存会整文件覆盖（手工写了
+  `fuzzy`/`traditional`/`shuangpin` 等字段且 JSON 有语法错误时会丢）——已知
+  小坑，建议手工编辑后先 `python3 -m json.tool` 校验。
 
 ## 图标与设置界面
 
@@ -103,6 +117,8 @@ config.json 仍可直接手工编辑。
 - **设置入口**：`<engine>` 的 `<setup>` 指向 `/usr/share/chaoset/chaoset-setup.py`，
   ibus-setup 据此显示「首选项」按钮，点开即三端同构的设置窗口（GTK3）。
   系统不会自动生成配置项，设置项由该脚本读写 config.json。
+  **安装包必须带这个脚本**：deb 与 tar.gz 本来就有；Arch 二进制包此前漏装
+  （点「首选项」无反应），2026-10-30 已补，release 冒烟对三个包都断言该文件存在。
 - 已核对 IBus 上游源码（`ibusenginedesc.c` 的 XML 解析字段表，2026-10-22）：
   `icon`、`setup`、`symbol` 等元素均受支持。
 
@@ -149,7 +165,8 @@ sudo ./install.sh          # 装二进制 + 词库 + ibus 组件 + 图标，并�
 
 安装脚本会做四件事：
 
-1. 二进制装到 `/usr/local/bin`（chaosetd / chaoset-cli / chaoset-import / chaoset-userdict / chaoset-engine）；
+1. 二进制装到 `/usr/bin`（chaosetd / chaoset-cli / chaoset-import / chaoset-userdict / chaoset-engine），
+   另在 `/usr/local/bin` 建兼容软链；
 2. **常用词库**（14 万条）装到 `/usr/share/chaoset/dict.tsv`；
 3. ibus 组件描述装到 `/usr/share/ibus/component/chaoset.xml`，图标装进 hicolor 主题；
 4. **自检**：从 `/` 拉起一次引擎，确认它能找到词库——找不到就直接报错退出，

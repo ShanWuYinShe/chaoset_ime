@@ -22,8 +22,9 @@ var punctMap = map[rune]string{
 	'^':  "……",
 }
 
-// punctCycles 是同键连按的循环序列（微软拼音惯例：全角与半角交替，
-// 循环停留于末项——句号连按得 。.. ..）。不在表内的标点固定输出。
+// punctCycles 是同键连按的循环序列（微软拼音惯例：全角与半角交替）。
+// 按 modulo 回绕——句号连按依次得 。.。.…，不会在末项停住；punct_test.go
+// 的 TestPunctRepeatCycle 明确断言了回绕。不在表内的标点固定输出。
 var punctCycles = map[rune][]string{
 	'.': {"。", "."},
 	',': {"，", ","},

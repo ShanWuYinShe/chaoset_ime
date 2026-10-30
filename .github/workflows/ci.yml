@@ -83,12 +83,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # renderer 的测试要渲染候选窗 PNG，需要 CJK 字体；缺字体会跳过断言。
-      - name: 安装 CJK 字体
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
-
+      # 注：renderer 包已于 2026-10-27 删除，不再需要 CJK 字体做候选窗 PNG 渲染断言
+      #（2026-10-30 审计清理）。如后续新增需要字体的测试，再在此安装。
       - name: 运行单元测试
         run: make test
 
@@ -104,11 +100,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-
-      - name: 安装 CJK 字体
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
 
       - name: race detector
         run: make race

@@ -31,6 +31,10 @@ struct Comp {
     int page = 0;       // 当前候选页（0 起）
     int pageCount = 0;  // 总页数（无候选为 0）
     std::string committed;  // 渐进上屏（selectPrefix）返回的已上屏前缀段文本
+    // 双拼方案名（IPC "shuangpin"；zrm/mspy/flypy）。daemon 启用双拼时每次
+    // Compose 都会回填，壳据此把 ';' 路由给 input（引擎当组词键处理）而不是
+    // punct——双拼引擎把 ';' 当键码参与两两成对解码。
+    std::string shuangpin;
 };
 
 // 传输抽象：Windows 下是 TCP 回环（与 daemon -tcp 配对），

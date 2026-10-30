@@ -7,7 +7,7 @@
 // 2026-10-30 三端一致性审计 G2/G8 加固：
 //   - 导出浅/深**两套全部 13 个色值**（此前 Swift 端一个色值都没导出，
 //     visual-parity 只能自证 Go 侧 4 个浅色）；
-//   - 导出 Layout 的 12 个附加常量（indexFontSize/firstPadLeft/.../minWidth）
+//   - 导出 Layout 的 13 个附加常量（indexFontSize/firstPadLeft/.../minWidth）
 //     与 divider 的 height/y（divider 此前导出后无人消费，是死断言）；
 //   - 由 visual-parity.sh 的 C 段对照 docs/ui-parity.md 的期望值锁定 macOS
 //     参考常量，D 段做 Go↔Swift 逐色比对（浅+深）。

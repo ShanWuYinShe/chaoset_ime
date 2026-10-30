@@ -108,8 +108,8 @@ shims/
    （`jin`/`jintian`）不出现整句候选；联想也只在用户确认过的**分段边界**
    剥前缀——上屏「今天」会联想「星期一」，上屏「今」绝不会给出「天星期一」，
    所以学过整句后「只想输入今天」的路径完全不受影响。旧版本学习数据没有
-   分段信息时，用主词典最长词切分推断边界；推断不出的按普通词处理。
-   所有学习数据随 daemon 即时原子落盘，重启不丢。
+   分段信息时，用主词典「分段数最少」DP 推断边界（不是最长词贪心）；推断不出的按普通词处理。
+   学习数据由 daemon 每 2 秒批量原子落盘（temp+rename），正常退出前同步落盘；异常强杀最多丢最近 2 秒（Windows 无优雅退出，只靠定时器）。
 
 ## 中文标点
 
@@ -264,6 +264,13 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 成对解码，无效键码对整体丢弃；退格按按键事件粒度整段回滚。
 见 `engine/double_pinyin.go`。
 
+**`;` 键的三端路由（2026-10-30）**：mspy 的 `ing` 韵母键是 `;`，而 `;` 平时是
+中文标点键。引擎在 `Composition` 里下发 `shuangpin` 方案名，三端壳据此把双拼
+模式下的 `;` 路由到 `input`（`dpPending` 非 0 时参与成对解码；为 0 时按标点
+语义上屏「首选词 + 分号」，文本经 `committed` 返回）；非双拼模式与 Shift+`;`
+（`:`）仍走标点。会话级单测遍历三方案全部反向键码锁可达性，防止再出现
+「解码层能解、会话层收不到」的断链。
+
 小鹤按 Rime double_pinyin_flypy schema 键位实现；该 schema 与官方
 小鹤键位存在出入（ia/ua 键位等），官方键位图为图片无法文本核验，
 故以可核验的 schema 语义为准。
@@ -312,9 +319,9 @@ TSV，每行三列（`#` 开头为注释）：
 
 **词频的约定取值是 1–99**，内置词库与导入工具都按这个区间生成：
 
-- 严格模式（`-dict` 加载的主词库，含 `data/` 下两份）只校验「正整数」，
-  不强制上限；写成 200 不会报错，但**没有额外收益**（原因见下）；
-- 宽容模式（`chaoset-import` 的热词导入）缺省补 20、超过 99 的**压到 99**。
+- 运行期 `-dict` 词库（含 `data/` 下两份）走**宽松模式**（见「词库校验」表）：
+  坏行跳过并汇总警告、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20、超过 99 的**压到 99**；
+- 构建期**严格模式**只用于内置产物与测试：要求恰好 3 列、每个音节合法、词频为正（`engine/data_contract_test.go` 在 CI 严格解析）。
 
 上限之所以是 99 而不是「越大越好」，是因为静态词频只是**基础分**：用户学习权重
 按次累加（`engine.UserBoostPerCount = 500`，上下文共现
@@ -356,7 +363,8 @@ Apache-2.0，不随仓库分发）：
 ```sh
 go run ./cmd/chaoset-dictgen -jieba dict.txt \
   -charfreq hanzi_db.csv -corpus essay.txt \
-  -pinyin large_pinyin.txt -single pinyin.txt -o data/dict_common.tsv
+  -pinyin large_pinyin.txt -single pinyin.txt \
+  -extra data/dict_extra.tsv -o data/dict_common.tsv
 ```
 
 七个 flag：
@@ -452,7 +460,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 
 ```sh
 # 环境：Apple M1 / macOS，Go 版本见 go.mod（go 1.27）
-# 三个基准都在 engine/scale_bench_test.go，词库为代码合成的 10 万条双音节词，
+# 四个基准都在 engine/scale_bench_test.go，词库为代码合成的 10 万条双音节词，
 # 不依赖任何外部词库文件，因此在任何机器上都能复跑。
 go test ./engine/ -bench . -benchtime 3x
 ```
@@ -483,12 +491,12 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 
 | 基准函数 | 测的是什么 | 结果（Apple M1 / go1.27.3） |
 |---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 143,824 条真实词库建索引（daemon 启动时跑一次） | ~109ms |
-| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | ~0.0097ms/键 |
+| `BenchmarkLoadCommonDict` | 解析 145,262 条真实词库建索引（daemon 启动时跑一次） | ~109ms（阶段 15 记录值） |
+| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | ~25–31µs/键（2026-10-30 复测） |
 
-词库自身规模：**143,824 条 / 3.0 MB**，词频区间 6–99；按词长分布为
-1 字 11,578、2 字 72,994、3 字 21,696、4 字 36,452、5 字 775、6 字 329。
-即换用真实词库后 daemon 冷启动多花约 0.1 秒，而逐键组词仍在**微秒级**（约 10μs），
+词库自身规模：**145,262 条 / 3.0 MB**（3,180,344 字节），词频区间 1–92；按词长分布为
+1 字 13,834、2 字 72,677、3 字 21,600、4 字 36,049、5 字 774、6 字 328。
+即换用真实词库后 daemon 冷启动多花约 0.1 秒，而逐键组词仍在**数十微秒级**（本机复测约 25–31µs，负载下偏高），
 对打字延迟没有可感知影响。
 
 ## IPC 协议
@@ -498,14 +506,24 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 - 请求：`{"id":1,"method":"input","params":{"text":"nihao"}}`
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
-方法：`ping` / `input` / `backspace` / `reset` / `select`（`{"index":0}`，
+方法（16 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
+`reset` / `commitRaw`（回车：返回原始拼音并清空组词）/ `select`（`{"index":0}`，
 返回 `{"committed":"你好"}`）/ `selectPrefix`（`{"index":0}`，**渐进上屏**：只消耗
 候选音节对应的 input 前缀，返回剩余组词状态 + `committed`，壳据此上屏前缀段并
 用剩余 `preedit` 继续组词——三端选词走此路径）/ `nextPage` / `prevPage`（候选翻页，
-返回 current 组成状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：
-组词中返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）。
+返回当前组词状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：
+组词中返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
+`associate`（`{"sylls":["xian","zai"]}`，返回与 Composition 同构的联想候选列表）/
+`associateSelect`（`{"word":"现在时间","sylls":[...]}`，联想词上屏）/
+`userStats` / `userClear` / `userExport`（用户词典导出：可选 `offset`/`limit`
+按行分页，返回 `{"tsv":"...","next":N}`，`next=-1` 表示已导出完；客户端
+自动循环拼接，词典再大也不会撞 1 MiB 帧上限）。
 `Candidate` 新增可选 `segments`（仅整句式候选携带，引擎学习用的分段词文本；
 壳无需渲染，解码时忽略即可），学习记录在 Words/Phrases 表内以 `segs` 持久化。
+`Composition` 另有 `shuangpin`（双拼方案名，全拼为空；壳据此把双拼模式下的
+`;` 键路由到 `input` 而不是 `punct`——mspy 的 ing 韵母键是 `;`）与顶层
+`committed`（本次调用需壳写入文档的文本：渐进上屏段，或双拼 `;` 触发的
+「首选词+标点」）。
 IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
 候选窗由 mac/Windows 壳原生自绘（macOS 用 AppKit，见
 `shims/macos/src/CandidatePanel.swift`；Windows 用 GDI），Linux 不重绘面板、
@@ -524,7 +542,7 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 
 ## 下载与安装（GitHub Release）
 
-推 `v*` tag 时，CI（`.github/workflows/ci.yml`）会自动三端打包并创建 Release：
+推 `v*` tag 时，Release workflow（`.github/workflows/release.yml`）会自动三端打包并创建 Release：
 
 | 平台 | 下载文件 | 安装方式 |
 |---|---|---|
@@ -548,7 +566,7 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 |---|---|---|
 | Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
-| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；预编辑合成 + 数字盲选 | 已实现（核心行为级 + DLL 编译级；真机联调待环境） |
+| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（核心行为级 + DLL 编译级；真机联调待环境） |
 
 ### 渐进上屏的跨程序兼容模型（2026-10-30）
 
@@ -588,7 +606,8 @@ Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（�
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
 > `ime.chaoset.inputmethod.ChaosetIME`，输入模式为
-> `ime.chaoset.inputmethod.ChaosetIME.Hans`。**bundle id 必须含内层
+> `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（`.Hans` 仅作为历史别名保留在
+> 安装器的语言映射里）。**bundle id 必须含内层
 > `.inputmethod.` 段**（仅以 `inputmethod` 结尾的写法 TIS 不收录）。
 > 安装用 `shims/macos/install.sh`（含 `TISRegisterInputSource`）。
 >
@@ -644,6 +663,12 @@ bin/chaoset-userdict -userdict chaoset-userdict.json stats
 bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
 bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 ```
+
+> **平台限制**：`chaoset-cli` / `chaoset-userdict` 目前只支持 Unix socket（macOS/Linux）。
+> Windows 包里的同名 exe 连不上走 TCP 回环的 daemon，只能加 `-userdict` 走本地文件模式
+> （daemon 运行时会被其内存态覆盖，建议先停 daemon）。
+>
+> 导出经 IPC 分页传输（客户端自动拼接），学习数据再大也不会撞 1 MiB 单帧上限。
 
 ### 文件损坏时的自动恢复
 
@@ -908,16 +933,44 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         点选改走 selectPrefix 渐进上屏；小键盘数字选词、联想态 Shift+PageUp/Down
         对齐；P1 视觉细节（深色派生色 alpha 有效值、页码居中、分隔线口径、单页
         箭头置灰、Toast 位置/点击穿透、设置窗字号几何）一并修正。
-      - **机器检查**：visual-parity.sh 断言 5 → 48 项（新增 macOS 参考常量 C 段 +
+      - **机器检查**：visual-parity.sh 断言 5 → 46 条（另有 2 条「导出成功」提示；新增 macOS 参考常量 C 段 +
         真正消费 divider、浅/深各 13 色 Go↔Swift D 段；负向验证可 FAIL）；
         skin 补 divider/chevron 与深色 13 色期望值（加强非降低）；docs/ui-parity.md
         按代码全量重写并明确未覆盖项（Windows 无运行时视觉断言、key_routing 未接
         CI、无 checkuiparity）。平台限制与待真机项（per-monitor DPI、Windows
         设置窗深色、多行折行、半透明/阴影、无障碍、滚轮、按键边角 3 处、Linux
         设置窗单例）写入 docs「已知功能差异」。
-      - **验证**：本机 gofmt/build/go test ./.../make vet/visual-parity 48 项/
+      - **验证**：本机 gofmt/build/go test ./.../make vet/visual-parity 46 条断言（+2 条导出提示）/
         shims/windows/build.sh（core_test 含 from_user 断言 + mingw 交叉编译）
         全过；重活交 CI。真机验收清单见 docs/ui-parity.md。
+
+- [x] 阶段 30：审计后 P1 修复批次（2026-10-30）
+      - **触发**：阶段 29 之后的三端 UI 一致性复审 + 引擎功能完整性审计（4 路只读审计，
+        共 P0=0 / P1=15 / P2 若干）。除 Windows TSF 两阶段语义（需 Windows 真机
+        确认，已记入已知限制）外，P1 清单全部修复：
+      - **双拼 `;` 键（mspy ing）全链路打通**：引擎 `Session.Input` 双拼模式接受 `;`
+        （dpPending 参与 pair 解码；否则按标点语义处理），`Composition` 新增 `shuangpin`
+        字段供壳识别，三端壳在双拼模式把 `;` 路由到 `input` 并上屏 `Committed`。
+      - **渐进上屏丢字**：`SelectPrefix` 前缀消费改按 `canonicalSyllable`/模糊等价逐音节
+        匹配（`xveshengwomen` 选「学生」不再清空剩余 `women`）；并补 alias/fuzzy 双向回归。
+      - **单一预编辑模型收尾统一**：Linux 的 Ctrl+Backspace/Ctrl+U、Shift 中英切换、
+        退格删空、空格无候选四条路径补齐「取消/落盘确认段」；Windows 的 Alt/Win 透传、
+        Shift 切换、空格无候选、翻页失败同样改为落盘；mac 本就正确。
+      - **Windows 壳**：设置窗不再保存裸 TIP 指针（消除 UAF）；描边线宽改 pt 口径；
+        `Comp` 解析 `shuangpin` 并支持双拼 `;`。
+      - **macOS 壳**：首项超长候选按字符截断加「…」，面板内容宽恒 ≤638pt、窗宽 ≤714pt，
+        不再越出屏幕（与 Windows 策略对齐）。
+      - **IPC/持久化**：`userExport` 分页（>1MiB 学习数据可导出）；用户词典写盘串行化 +
+        唯一临时文件（消除 clear 被旧快照覆盖/写坏的竞态）；Linux ibus 引擎启用延迟落盘
+        （不再每次选词全量重写）；daemon 关停先停 ticker 再落盘。
+      - **Linux 打包**：Arch 二进制包补装 `chaoset-setup.py`（ibus-setup「首选项」不再失效），
+        release 冒烟对 deb/tar.gz/Arch 三个包都断言该文件存在。
+      - **文档**：本轮同步修正 README/AGENTS/docs/ui-parity 与各端 README 的过期宣称
+        （词库规模/再生成命令 `-extra`/`.Pinyin`/release workflow/IPC 方法表/Linux page_size 等）。
+      - **未修（明确记录）**：Windows TSF 两阶段下 Shift 跟踪可达性（需真机确认，见
+        `shims/windows/README.md`「已知限制」）；Option/Alt+Backspace 三端语义差异
+        （mac 按音节回退 / Windows 放行 / Linux 清空，记入 docs/ui-parity 按键边角差异）；
+        双拼 `;` 的标点宽度 1 键瞬态（记入各端 README）。
 
 ## 验收范围确认（2026-09-23）
 

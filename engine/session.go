@@ -32,8 +32,16 @@ type Composition struct {
 	Candidates []Candidate `json:"candidates"`
 	Page       int         `json:"page"`
 	PageCount  int         `json:"page_count"`
-	// Committed 仅 SelectPrefix（渐进上屏）返回时非空：本次实际上屏的
-	// 前缀段文本，壳据此写入文档并用 Preedit（剩余拼音）恢复预编辑。
+	// Shuangpin 是当前会话启用的双拼方案名（zrm/mspy/flypy），全拼为空。
+	// 三端壳据此把 ';' 键路由到 input() 而不是 punct()：mspy 的 ing 韵母键
+	// 正是 ';'，壳若一律当标点，明/听/零/星/京整类音节永远打不出，还会
+	// 误上屏中文「；」。壳从任意一次响应缓存该字段即可。
+	Shuangpin string `json:"shuangpin,omitempty"`
+	// Committed 是本次调用额外上屏、需要壳写入文档的文本（空 = 无）。
+	// 两个来源：① SelectPrefix 渐进上屏的前缀段；② 双拼模式下 dpPending
+	// 为 0 时按下的 ';' 标点键（组词中先上屏首选词再上屏标点，壳不能自己
+	// 把 ';' 当标点，否则首选词丢字）。壳据此写文档并用 Preedit（剩余
+	// 拼音）恢复预编辑。
 	Committed string `json:"committed,omitempty"`
 }
 
@@ -134,7 +142,7 @@ type Session struct {
 
 	traditional bool // 繁体输出：候选词经简繁映射（默认关闭，见 s2t.go）
 
-	dpScheme  string // 双拼方案（zrm/mspy，见 double_pinyin.go；空 = 关闭）
+	dpScheme  string // 双拼方案（zrm/mspy/flypy，见 double_pinyin.go；空 = 关闭）
 	dpPending rune   // 双拼首键（等待第二键成对解码；0 = 无）
 	dpLens    []int  // 每次「按键事件」实际追加到 input 的字符数（退格回滚用）
 }
@@ -144,11 +152,15 @@ type Session struct {
 func (s *Session) SetDoublePinyin(scheme string) {
 	if scheme == "" {
 		s.dpScheme = ""
-		return
-	}
-	if _, ok := dpSchemes[scheme]; ok {
+	} else if _, ok := dpSchemes[scheme]; ok {
 		s.dpScheme = scheme
+	} else {
+		return // 未知方案按关闭处理（不改当前状态）
 	}
+	// 方案名会随每次 Compose 下发（Composition.Shuangpin），且决定 ';' 键
+	// 的路由语义：切换后旧记忆化结果必须作废，否则壳会继续按旧方案路由。
+	s.composeMemoKey = ""
+	s.composeMemo = Composition{}
 }
 
 // SetFuzzy 开关模糊音（规则表见 fuzzy.go）。须在首次查询前设置。
@@ -185,8 +197,15 @@ func NewSession(dict *Dictionary, user *UserDict) *Session {
 
 // Input 追加输入。非小写字母与 ' 的字符被过滤；标点键走 Punct
 // （引擎侧统一映射为中文标点，壳只负责转发标点键）。
-// 双拼模式下按键两两成对解码为音节（见 double_pinyin.go）；
-// 首键暂存不产生组成变化，无效键码对整体丢弃。
+//
+// 双拼模式下按键两两成对解码为音节（见 double_pinyin.go）：首键暂存不产生
+// 组成变化，无效键码对整体丢弃。双拼模式额外接受 ';'（mspy 的 ing 韵母键）：
+//   - 首键暂存中：';' 与字母一样参与成对解码（如 ling 的键码 l;）；
+//   - 首键为空：';' 退回标点身份，按 Punct(";") 语义处理（组词中先上屏
+//     首选词再加「；」），上屏文本经返回的 Composition.Committed 交给壳写
+//     文档。壳不得自己把 ';' 当标点，否则组词中的首选词永远上不了屏。
+//
+// 全拼模式行为不变（';' 被过滤，标点由壳走 Punct 请求）。
 func (s *Session) Input(text string) (Composition, error) {
 	// 从空组词重新开始：上一轮渐进上屏的未完成分段不能带入本轮组词
 	// （否则退格到空后再打新词，会被拼成伪整句习惯，见 resetSeqIfEmpty）。
@@ -200,7 +219,19 @@ func (s *Session) Input(text string) (Composition, error) {
 				s.input += "'"
 				s.dpLens = append(s.dpLens, 1)
 				s.afterAppend()
-			case r >= 'a' && r <= 'z':
+			case r == ';' && s.dpPending == 0:
+				// 没有暂存首键时 ';' 只能是标点：走完整 Punct 语义（含半角、
+				// 同键循环与「组词中先上屏首选」），把上屏文本放进 Committed。
+				// 不处理同一 text 中 ';' 之后的字符：Punct 已结束本轮组词，
+				// 壳按单键转发 ';'，批量文本的后续内容不属于本次上屏。
+				out, err := s.Punct(";")
+				if err != nil {
+					return s.Compose(), err
+				}
+				comp := s.Compose()
+				comp.Committed = out
+				return comp, nil
+			case (r >= 'a' && r <= 'z') || r == ';':
 				if s.dpPending == 0 {
 					s.dpPending = r
 					continue // 首键暂存；同一文本中的后续键继续成对解码
@@ -478,8 +509,12 @@ func (s *Session) learnSelection(text string, sylls, segs []string) {
 //   - 整串由 >=2 段拼完时把整句记成带分段的整句习惯，下次完整输入同一串
 //     直接给出整句候选（见 learnProgressiveSequence）。
 //
-// 候选音节与 input 前缀不匹配时（简拼/模糊音场景的音节展开差异），
-// 回退为现状语义：整句上屏、input 全清。
+// 候选音节是标准拼写，input 可能是省写/别名/模糊形态（xve→xue、jve→jue、
+// shuei→shui、-fuzzy 下 zheng 命中 zen）：消费时逐音节按 canonicalSyllable
+// 与模糊等价匹配（见 consumeInputPrefix），能匹配多少消耗多少——部分匹配的
+// 剩余输入继续组词（打 xveshengwomen 选「学生」不能丢 women）。只有候选与
+// 输入一个音节都对不上时（整句/简拼展开形态差异）才回退旧语义：整句上屏、
+// input 全清。
 func (s *Session) SelectPrefix(index int) (comp Composition, committed string, err error) {
 	c := s.Compose()
 	if index < 0 || index >= len(c.Candidates) {
@@ -488,9 +523,9 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 	cand := c.Candidates[index]
 	committed = cand.Text
 	sylls := strings.Split(cand.Syllables, "'")
-	rest, matched := consumeInputPrefix(s.input, strings.Join(sylls, ""))
-	if !matched {
-		rest = "" // 音节与前缀不匹配（简拼/模糊音展开）：回退全清
+	rest, matched := consumeInputPrefix(s.input, sylls, s.fuzzy)
+	if matched == 0 {
+		rest = "" // 一个音节都对不上（整句/简拼展开形态差异）：回退全清
 	}
 
 	s.learnSelection(committed, sylls, cand.Segments)
@@ -905,22 +940,27 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 	return out
 }
 
-// typoMaxCorrections 是一次错拼修正最多尝试的修正串数量。
+// typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
 // 单次编辑能生成的串数上限约 3n + 26(n+1) + 25n（n = 输入长度），十来个
-// 字母就有上千条，全查太贵。取 160 的依据：纠错只在「输入连简拼路径都
-// 排不出来」时触发（正常打字零开销），typoCorrections 已把最有价值的
-// 「相邻互换 + 删除」排在最前，160 条足以覆盖它们并给插入留足额度。
-// typoMaxQueries 限制实际拿去查词典的条数（见下方），生成可以更多。
-// 实测 24 条会让「中段漏字」（zhonguo → zhongguo，需要在中间插 g）的
-// 修正被靠前位置的候选挤掉。
+// 字母就有上千条，全查太贵。取 32 是实测折中：纠错只在「输入连简拼路径都
+// 排不出来」时触发（正常打字零开销），而 typoCorrections 已把最有价值的
+// 「相邻互换 → 删除 → 粘键折叠 → 邻键替换」排在最前（实际顺序见
+// syllable.go 的 typoCorrections），32 条足以覆盖它们，并给末尾的「插入」
+// 留出额度——中段漏字（zhonguo → zhongguo，需要在中间插 g）就靠这部分。
+// 实测把生成上限从 160 降到 32，zhogn 的单键耗时从 2.1ms 降到百微秒级，
+// 而修正效果不变（zhogn → 中 仍为首选）。
+//
+// 注意「生成上限」与本文件下方的「查询上限」（typoMaxQueries）是两档：
+// 生成只做纯音节 DP 校验、很便宜；真正花时间的是每条一次的词典 Trie 查询。
 const typoMaxCorrections = 32
 
-// typoMaxQueries 限制实际拿去查词典的修正串数量。
+// typoMaxQueries 是一次错拼修正最多**查询**的修正串数量。
 //
-// 生成（typoCorrections）很便宜——实测约 39µs，因为它只做纯音节 DP 校验；
-// 贵的是每条一次的词典 Trie 遍历。实测把上限从 160 降到 32，zhogn 的单键
-// 耗时从 2.1ms 降到百微秒级，而修正效果不变（zhogn → 中 仍为首选）。
+// 与 typoMaxCorrections 是两档上限：typoCorrections 生成很便宜（实测约
+// 39µs，只做纯音节 DP 校验），贵的是每条一次的词典 Trie 遍历。实测把查询
+// 上限从 160 降到 32，zhogn 的单键耗时从 2.1ms 降到百微秒级，而修正效果
+// 不变（zhogn → 中 仍为首选）。
 const typoMaxQueries = 32
 
 // typoPromoteRatio 是纠错候选升级为领跑的门槛：纠错命中的词频必须达到
@@ -1076,7 +1116,9 @@ func (s *Session) Compose() Composition {
 
 // compose 是 Compose 的实际实现（见上方 Compose 的记忆化说明）。
 func (s *Session) compose() Composition {
-	comp := Composition{Input: s.input}
+	// 双拼方案随每次组词状态下发（壳据此把 ';' 路由到 Input）；记忆化缓存
+	// 存的是整个 Composition，命中路径同样带该字段。
+	comp := Composition{Input: s.input, Shuangpin: s.dpScheme}
 	if s.input == "" {
 		return comp
 	}
@@ -1320,8 +1362,9 @@ func (s *Session) compose() Composition {
 	if typoSuspicious || midSuspicious || tailSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
-		// 才是这部分的主要成本。typoCorrections 已按价值排序
-		// （相邻互换 → 删除 → 插入 → 替换），前若干条覆盖绝大多数真实手误。
+		// 才是这部分的主要成本。typoCorrections 已按价值排序（相邻互换 →
+		// 删除 → 粘键折叠 → 邻键替换 → 插入 → 远端替换），前若干条覆盖绝大
+		// 多数真实手误。
 		if len(fixes) > typoMaxQueries {
 			fixes = fixes[:typoMaxQueries]
 		}
@@ -1660,31 +1703,6 @@ func (s *Session) compose() Composition {
 	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
 	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
 	//   ⑥ 综合得分、词长、字典序。
-	// 部分消耗标记：rankExact/rankInitialExact 候选按序匹配的输入段数
-	// 少于输入段数（打满多段却只命中前面几段）时为 true。
-	partial := make([]bool, len(items))
-	for i := range items {
-		if items[i].rank != rankExact && items[i].rank != rankInitialExact {
-			continue
-		}
-		sylls := strings.Split(items[i].cand.Syllables, "'")
-		cons := 0
-		for k, cs := range sylls {
-			if k >= inputSegs {
-				break
-			}
-			is := ""
-			if k < len(tokenPatterns[0]) {
-				is = tokenPatterns[0][k].Text
-			}
-			if cs == is || strings.HasPrefix(cs, is) || strings.HasPrefix(is, cs) {
-				cons++
-			} else {
-				break
-			}
-		}
-		partial[i] = cons < inputSegs
-	}
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i].cand, items[j].cand
 		aRank, bRank := items[i].rank, items[j].rank

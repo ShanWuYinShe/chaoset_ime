@@ -138,6 +138,7 @@ int main(int argc, char** argv) {
     // ---- JSON 单元断言 ----
     bool ok = false;
     JsonValue v = jsonParse("{\"id\":7,\"result\":{\"input\":\"nihao\",\"preedit\":\"ni'hao\","
+                            "\"shuangpin\":\"mspy\",\"committed\":\"你好\","
                             "\"candidates\":[{\"text\":\"你好\",\"score\":99,\"from_user\":true},"
                             "{\"text\":\"你号\"}]}}",
                             &ok);
@@ -154,7 +155,17 @@ int main(int argc, char** argv) {
           "JSON: 候选数组提取");
     check(c.candidates[0].fromUser, "JSON: 学习标记 from_user=true 解析");
     check(!c.candidates[1].fromUser, "JSON: 缺省 from_user 视为未加权");
-    check(parseCommitted(*result).empty(), "JSON: committed 缺省为空");
+    // 双拼方案名 + 顶层 committed：Windows 壳据此把 ';' 路由到 input 并把
+    // 引擎回传的上屏文本写入文档（跨端接口契约，2026-10-30）。
+    check(c.shuangpin == "mspy", "JSON: 双拼方案名 shuangpin=mspy 解析");
+    check(c.committed == "你好", "JSON: 顶层 committed 由 Composition 解析");
+    check(parseCommitted(*result) == "你好", "JSON: parseCommitted 与 Composition 字段一致");
+
+    // 非双拼/旧 daemon：两个字段都缺省 → 空串（壳保持旧行为：';' 仍走 punct）
+    JsonValue plain = jsonParse("{\"input\":\"ni\",\"candidates\":[]}", &ok);
+    Comp cPlain = parseComposition(plain);
+    check(ok && cPlain.ok && cPlain.shuangpin.empty() && cPlain.committed.empty(),
+          "JSON: 缺省 shuangpin/committed 均为空（非双拼模式）");
 
     JsonValue esc = jsonParse("{\"s\":\"a\\\"b\\u4f60\\n\"}", &ok);
     check(ok && esc.type == JsonValue::Type::Obj && esc.find("s") != nullptr &&

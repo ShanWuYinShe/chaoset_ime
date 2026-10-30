@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,28 +180,56 @@ func (c *Client) UserClear() error {
 	return c.call("userClear", nil, nil)
 }
 
+// userExportPageLimit 是分页导出的单页行数上限。
+//
+// 2000 行的典型行宽（词/拼音/次数/时间，约 50–150 字节）远小于 1 MiB 帧
+// 上限；取固定行数而不是按字节估算，是为了让页边界稳定、便于测试。
+const userExportPageLimit = 2000
+
 // UserExport 导出学习记录 TSV；phrasesOnly 只导出用户词组
 // （词\t拼音\t次数 三列，可直接作为 chaoset-import 输入）。
+//
+// 内部按 userExportPageLimit 行分页拉取后拼接，对外仍返回完整 TSV——
+// 调用方无需感知分页。为什么必须分页（2026-10-30 审计 P1）：帧上限
+// 1 MiB 只在读侧校验，整份 TSV 单帧在重度用户（学习数据无上限增长）下
+// 必然超限；客户端读帧被拒后流里残留未读 body，同一连接继续用会串包。
 func (c *Client) UserExport(phrasesOnly bool) (string, error) {
-	var out struct {
-		TSV string `json:"tsv"`
+	var b strings.Builder
+	offset := 0
+	for {
+		var out struct {
+			TSV  string `json:"tsv"`
+			Next int    `json:"next"`
+		}
+		params := map[string]any{
+			"phrases_only": phrasesOnly,
+			"offset":       offset,
+			"limit":        userExportPageLimit,
+		}
+		if err := c.call("userExport", params, &out); err != nil {
+			// 读帧失败（含单页超 maxMessageSize）时流状态不可信：body 可能
+			// 残留未读，继续在同一连接上发请求会请求/响应错位（串包）。
+			// 宁可关闭连接让调用方重新 Dial。
+			_ = c.conn.Close()
+			return "", err
+		}
+		if len(out.TSV) > maxMessageSize {
+			_ = c.conn.Close()
+			return "", fmt.Errorf("导出分页（offset=%d）超过协议上限 %d 字节", offset, maxMessageSize)
+		}
+		b.WriteString(out.TSV)
+		if out.Next < 0 {
+			return b.String(), nil
+		}
+		if out.Next <= offset {
+			// 防御：next 必须严格前进，否则循环不终止。旧版 daemon 不返回
+			// next（字段缺省为 0）也会走到这里——报错而不是把首屏当完整
+			// 导出返回，避免静默截断用户数据。
+			_ = c.conn.Close()
+			return "", fmt.Errorf("导出分页 next=%d 未前进（当前 offset=%d；旧版 daemon 可能不支持分页，请升级两端）", out.Next, offset)
+		}
+		offset = out.Next
 	}
-	params := map[string]bool{"phrases_only": phrasesOnly}
-	if err := c.call("userExport", params, &out); err != nil {
-		return "", err
-	}
-	return out.TSV, nil
-}
-
-// ToggleHalfWidth 切换全角/半角标点模式，返回切换后是否为半角。
-func (c *Client) ToggleHalfWidth() (bool, error) {
-	var out struct {
-		HalfWidth bool `json:"half_width"`
-	}
-	if err := c.call("toggleHalfWidth", nil, &out); err != nil {
-		return false, err
-	}
-	return out.HalfWidth, nil
 }
 
 // SelectPrefix 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，

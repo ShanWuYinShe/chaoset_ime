@@ -7,11 +7,11 @@
 ## 架构要点
 
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。
-- **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB）。macOS/Linux 默认走 Unix socket，Windows 走本机回环 TCP（127.0.0.1:7949）。
+- **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB）。macOS 走 Unix socket，Windows 走本机回环 TCP（127.0.0.1:7949）；Linux ibus 引擎进程内直调 `engine`，无 IPC 往返（daemon 仍可用于终端测试台）。
 - **候选窗为纯数据 IPC + mac/Windows 原生自绘、Linux ibus 面板（2026-10-27 起）**：daemon 只返回 Composition/Candidate 纯数据（`input`/`select` 等不变）。macOS 用 AppKit（`shims/macos/src/CandidatePanel.swift`：键帽序号、首选蓝胶囊、学习标记 `*`，浅/深两套静态 sRGB 按 appearance 选择，支持鼠标点选与 VoiceOver）；Windows 用 GDI（`win32.cpp`，同样绘制学习标记 `*`）；Linux **不重绘候选窗**，用 ibus 原生 LookupTable/Preedit 呈现（学习标记不适用理由记在 `shims/linux/README.md`）。**daemon 贴图渲染链路已删**（`renderer/` 包与 `candidateImage` IPC，2026-10-27；勿在文档或壳里引用）。
 - **视觉参数与一致性检查**：设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，**无运行时消费者**），实际渲染实现是 macOS `CandidatePanel.swift` 与 Windows `win32.cpp` 两份。Go↔macOS 布局 5 项 + macOS 参考常量（含 divider）+ 浅/深各 13 色由 `shims/macos/tests/visual-parity.sh` 逐项机器断言（故意改字号/色值必须 FAIL）；**Windows 目前没有运行时视觉断言**（只有 pt 口径、交叉编译与核心行为测试），不要把它写成「双端已验证」。改动排版参数/按键矩阵必须同步更新 `docs/ui-parity.md` 与机器断言。
 - **候选窗任何 UI 改动（控制区/齿轮/翻页/配色/层级）必须三端同步检查**：macOS `CandidatePanel.swift`、Windows `win32.cpp`（`settingsRect_`/齿轮绘制）、Linux ibus（无自绘 UI 时在 `shims/linux/README.md` 记录不适用理由）——只改一个平台 = 未完成（2026-10-28 齿轮五轮迭代漏同步 Windows 的教训）。绘制机制按平台落地但**视觉形态必须一致**（齿轮 = 圆环+8 齿矢量算法，**仅 macOS/Windows 两端**同几何参数同色值；Linux ibus 面板无齿轮；macOS 端 SF Symbol 模板图离屏着色失效因此手绘矢量，Windows GDI 同算法实现），机制说明记录在各壳源码注释。Windows 布局/字号/间距统一 **pt 口径**（`pt(v)=MulDiv(v,dpi,72)`），不要退回 px@96。
-- **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 原子写盘（`chaoset-userdict.json`，已 `.gitignore`）。
+- **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 每 2 秒批量原子写盘（temp+rename，无 fsync；正常退出同步落盘，异常强杀最多丢最近 2 秒）。Linux ibus 引擎同样启用延迟落盘。`chaoset-userdict.json` 已 `.gitignore`。
 
 ## macOS 输入源图标（用户明确要求，禁止回退）
 
@@ -63,7 +63,7 @@ go build ./...                    # 秒级
 | CI job | 覆盖内容 | 为什么不在本地跑 |
 |---|---|---|
 | lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 构建 | 快，但统一在 CI 跑保证一致 |
-| test | go test ./...（含 CJK 字体渲染断言） | 要装字体、约 30s |
+| test | go test ./...（数据契约/引擎/壳行为测试） | 约 30s |
 | race | `go test -race` | 最重的一项，本机 45s+ |
 | linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页 | 需要 dbus + ibus，占资源 |
 | macos-build | macOS 壳构建 + universal 自检 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |

@@ -1248,3 +1248,303 @@ func TestProgressiveFocusOutFlushesConfirmed(t *testing.T) {
 		t.Fatal("失焦后预编辑应收起")
 	}
 }
+
+// ---- 2026-10-30 三端一致性整改：确认段收尾（P1-1/2/3/4/5）----
+//
+// 单预编辑模型下，渐进选段（SelectPrefix）的已确认段住在预编辑缓冲里，
+// 只有「整条组词结束」才落盘。因此所有「不再继续组词」的路径都必须明确
+// 选择：落盘（用户确认过的字不能丢）或取消（Esc / Ctrl+Backspace / Ctrl+U
+// 的整行清空语义）。以下测试锁死这四条此前会丢字/残留的收尾路径。
+
+// newProgressiveConfirmed 造一个「已渐进确认 want、剩余输入 rest」的引擎：
+// 输入 input 后按数字键选中 want（selectCandidateText 会自动翻页）。
+func newProgressiveConfirmed(t *testing.T, input, want string) (*ibusEngine, *fakeEmitter) {
+	t.Helper()
+	e, fe := newProgressiveEngine(t)
+	typeKeys(e, input)
+	if !selectCandidateText(e, want) {
+		t.Fatalf("前置失败：输入 %q 后找不到候选 %q", input, want)
+	}
+	if e.confirmedPreedit != want {
+		t.Fatalf("前置失败：确认段应为 %q，实际 %q", want, e.confirmedPreedit)
+	}
+	return e, fe
+}
+
+// TestProgressiveCtrlBackspaceDiscardsConfirmed：Ctrl+Backspace 是「清空整行」
+// 的取消语义——未落盘的已确认段必须一并丢弃且**不落盘**（对齐 macOS
+// Ctrl+Delete 分支 confirmedText = ""）。此前只 Reset+hide，确认段残留，
+// 下一轮输入会被当幽灵前缀一起提交（P1-1）。
+func TestProgressiveCtrlBackspaceDiscardsConfirmed(t *testing.T) {
+	e, fe := newProgressiveConfirmed(t, "jintianx", "今天")
+	handled, _ := e.ProcessKeyEvent(keysymBackspace, 0, ibusCtrlMask)
+	if !handled {
+		t.Fatal("组词中 Ctrl+Backspace 应被消费")
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("取消整行不应落盘任何文本，实际 CommitText %d 次", got)
+	}
+	if e.confirmedPreedit != "" {
+		t.Fatalf("确认段应被取消清空，实际 %q", e.confirmedPreedit)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("组词应被清空，实际 %q", got)
+	}
+	if text, visible := fe.lastPreedit(); visible || text != "" {
+		t.Fatalf("预编辑应收起，实际 %q visible=%v", text, visible)
+	}
+	// 取消后新组词不得带出旧确认段（幽灵前缀回归检查）
+	typeKeys(e, "jin")
+	e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if got := fe.lastCommitText(); got != "今" {
+		t.Fatalf("取消后新组词上屏应为 今，实际 %q（确认段泄漏进下一轮）", got)
+	}
+}
+
+// TestProgressiveCtrlUDiscardsConfirmed：Ctrl+U 同 Ctrl+Backspace（类终端
+// 整行清空），确认段随整条组词一并取消、不得落盘（P1-1）。
+func TestProgressiveCtrlUDiscardsConfirmed(t *testing.T) {
+	e, fe := newProgressiveConfirmed(t, "jintianx", "今天")
+	handled, _ := e.ProcessKeyEvent(uint32('u'), 0, ibusCtrlMask)
+	if !handled {
+		t.Fatal("组词中 Ctrl+U 应被消费")
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("取消整行不应落盘任何文本，实际 CommitText %d 次", got)
+	}
+	if e.confirmedPreedit != "" {
+		t.Fatalf("确认段应被取消清空，实际 %q", e.confirmedPreedit)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("组词应被清空，实际 %q", got)
+	}
+}
+
+// TestProgressiveShiftToggleFlushesConfirmed：Shift 空按切中英前把已确认段
+// 落盘（对齐 macOS flushConfirmed）——用户确认过的字不能随一次模式切换消失。
+// 此前只 Reset+hide，确认段留在缓冲里，切回中文再输入就变成幽灵前缀（P1-2）。
+func TestProgressiveShiftToggleFlushesConfirmed(t *testing.T) {
+	e, fe := newProgressiveConfirmed(t, "jintianx", "今天")
+	e.ProcessKeyEvent(keysymShiftLeft, 50, 0) // press
+	handled, _ := e.ProcessKeyEvent(keysymShiftLeft, 50, ibusReleaseMask)
+	if handled {
+		t.Fatal("Shift 空按释放应放行（绝不吞宿主应用的按键状态机）")
+	}
+	if !e.enMode {
+		t.Fatal("Shift 空按应切换到英文模式")
+	}
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("模式切换应把已确认段恰好落盘 1 次，实际 %d 次", got)
+	}
+	if got := fe.lastCommitText(); got != "今天" {
+		t.Fatalf("模式切换落盘应为已确认段 今天，实际 %q", got)
+	}
+	if e.confirmedPreedit != "" {
+		t.Fatalf("落盘后确认段应清空，实际 %q", e.confirmedPreedit)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("切换后组词应清空，实际 %q", got)
+	}
+	if text, visible := fe.lastPreedit(); visible || text != "" {
+		t.Fatalf("切换后预编辑应收起，实际 %q visible=%v", text, visible)
+	}
+}
+
+// TestProgressiveBackspaceToEmptyFlushesConfirmed：普通退格把剩余拼音删空时，
+// 已确认段立即落盘收尾（对齐 macOS flushConfirmed / Windows 同路径）——否则
+// 预编辑变成「无组词的孤标记区」，下次输入又把确认段带进新组词（P1-3）。
+func TestProgressiveBackspaceToEmptyFlushesConfirmed(t *testing.T) {
+	e, fe := newProgressiveConfirmed(t, "jintianx", "今天")
+	if got := e.sess.Compose().Input; got != "x" {
+		t.Fatalf("前置失败：剩余输入应为 x，实际 %q", got)
+	}
+	handled, _ := e.ProcessKeyEvent(keysymBackspace, 0, 0)
+	if !handled {
+		t.Fatal("组词中普通退格应被消费")
+	}
+	if got := fe.count("CommitText"); got != 1 {
+		t.Fatalf("剩余删空应把已确认段落盘恰好 1 次，实际 %d 次", got)
+	}
+	if got := fe.lastCommitText(); got != "今天" {
+		t.Fatalf("剩余删空落盘应为已确认段 今天，实际 %q", got)
+	}
+	if e.confirmedPreedit != "" {
+		t.Fatalf("落盘后确认段应清空，实际 %q", e.confirmedPreedit)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("剩余删空后组词应为空，实际 %q", got)
+	}
+	if text, visible := fe.lastPreedit(); visible || text != "" {
+		t.Fatalf("剩余删空后预编辑应收起，实际 %q visible=%v", text, visible)
+	}
+}
+
+// TestProgressiveSpaceNoCandidatesCommitsConfirmedPlusRaw：残缺组词（无候选）
+// 按空格应上屏「已确认段 + 剩余原始拼音」（对齐 macOS insertText(confirmedText+raw)）。
+// 此前只提交 raw，commit 顺带清空确认段缓冲——用户确认过的字被静默丢弃（P1-4）。
+func TestProgressiveSpaceNoCandidatesCommitsConfirmedPlusRaw(t *testing.T) {
+	e, fe := newProgressiveConfirmed(t, "jintianzzz", "今天")
+	if got := e.sess.Compose().Input; got != "zzz" {
+		t.Fatalf("前置失败：剩余输入应为 zzz，实际 %q", got)
+	}
+	if hasCandidates(e.sess) {
+		t.Fatal("前置失败：剩余 zzz 应无候选")
+	}
+	handled, _ := e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if !handled {
+		t.Fatal("组词中空格应被消费（裸空格不应漏进文档）")
+	}
+	if got := fe.lastCommitText(); got != "今天zzz" {
+		t.Fatalf("应上屏「已确认段+原始拼音」= 今天zzz，实际 %q（确认段被丢弃）", got)
+	}
+	if e.confirmedPreedit != "" {
+		t.Fatalf("落盘后确认段应清空，实际 %q", e.confirmedPreedit)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("空格收尾后组词应为空，实际 %q", got)
+	}
+}
+
+// TestProgressivePassthroughFlushesConfirmed：透传/放行类按键（方向键、
+// Ctrl/Alt/Super 组合、无候选 PgDn）前必须把已确认段落盘——README 与
+// docs/ui-parity 宣称「失焦/透传/切换时已确认段先落盘」，此前这些分支
+// 只 Reset+hide 或什么都不做（P1-5）。
+func TestProgressivePassthroughFlushesConfirmed(t *testing.T) {
+	cases := []struct {
+		name   string
+		keyval uint32
+		state  uint32
+	}{
+		{"方向键", 0xFF51, 0}, // Left
+		{"Ctrl+A", uint32('a'), ibusCtrlMask},
+		{"Alt+A", uint32('a'), ibusMod1Mask},
+		{"Super+A", uint32('a'), ibusMod4Mask},
+		{"无候选PgDn", keysymPageDown, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, fe := newProgressiveConfirmed(t, "jintianzzz", "今天")
+			if hasCandidates(e.sess) {
+				t.Fatal("前置失败：剩余 zzz 应无候选")
+			}
+			handled, _ := e.ProcessKeyEvent(c.keyval, 0, c.state)
+			if handled {
+				t.Fatalf("%s 应放行给宿主应用", c.name)
+			}
+			if got := fe.count("CommitText"); got != 1 {
+				t.Fatalf("放行前应把已确认段落盘恰好 1 次，实际 %d 次", got)
+			}
+			if got := fe.lastCommitText(); got != "今天" {
+				t.Fatalf("放行前落盘应为已确认段 今天，实际 %q", got)
+			}
+			if e.confirmedPreedit != "" {
+				t.Fatalf("放行后确认段应清空，实际 %q", e.confirmedPreedit)
+			}
+			if got := e.sess.Compose().Input; got != "" {
+				t.Fatalf("放行后组词应清空，实际 %q", got)
+			}
+			if text, visible := fe.lastPreedit(); visible || text != "" {
+				t.Fatalf("放行后预编辑应收起，实际 %q visible=%v", text, visible)
+			}
+		})
+	}
+}
+
+// ---- 2026-10-30 双拼 ';' 路由 ----
+
+// newDoublePinyinTestEngine：双拼测试引擎（词库含 ming 音节的词）。
+// dpScheme 与 session 的双拼设置必须同时就位：前者决定壳如何路由按键，
+// 后者是引擎实际解码方案。
+func newDoublePinyinTestEngine(t *testing.T, scheme string) (*ibusEngine, *fakeEmitter) {
+	t.Helper()
+	src := "明\tming\t90\n名\tming\t80\n你\tni\t70\n"
+	d, err := engine.ParseDict(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("构造测试词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil),
+		assocOn: true, dpScheme: scheme}
+	e.sess.SetDoublePinyin(scheme)
+	return e, fe
+}
+
+// requireDoublePinyinSemicolon 断言引擎侧双拼 ';' 契约已实现（task-5）：
+// 双拼模式 dpPending != 0 时 ';' 必须与字母一样成对解码（m + ; = ming）。
+// 壳侧路由与引擎解码是同一个功能的两半，任一半缺失都应在测试里立刻暴露，
+// 而不是静默跳过。
+func requireDoublePinyinSemicolon(t *testing.T, d *engine.Dictionary, scheme string) {
+	t.Helper()
+	probe := engine.NewSession(d, nil)
+	probe.SetDoublePinyin(scheme)
+	probe.Input("m")
+	comp, _ := probe.Input(";")
+	if comp.Input != "ming" {
+		t.Fatalf("引擎双拼 ';' 契约未就绪（依赖 task-5）：双拼模式 Input(%q) 应把 m+; 解码为 ming，实际 input=%q", ";", comp.Input)
+	}
+}
+
+// TestDoublePinyinSemicolonComposesIng：微软双拼的 ing 韵母落在 ';' 键上，
+// 喂 'm' 再喂 ';'（keyval 0x3B）应组成 ming 预编辑，绝不能把「；」当标点
+// 提交（否则双拼用户永远打不出 ing 音节）。
+func TestDoublePinyinSemicolonComposesIng(t *testing.T) {
+	e, fe := newDoublePinyinTestEngine(t, engine.DPSchemeMSPY)
+	requireDoublePinyinSemicolon(t, e.dict, engine.DPSchemeMSPY)
+	handled, _ := e.ProcessKeyEvent(uint32('m'), 0, 0)
+	if !handled {
+		t.Fatal("双拼首键 m 应被消费")
+	}
+	handled, _ = e.ProcessKeyEvent(uint32(';'), 0, 0)
+	if !handled {
+		t.Fatal("双拼 ';' 应被消费（ing 韵母键），不能透传给应用")
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("双拼 ';' 不应作为标点上屏，实际 CommitText %d 次", got)
+	}
+	if text, visible := fe.lastPreedit(); !visible || text != "ming" {
+		t.Fatalf("预编辑应为 ming（m + ; 组成 ing），实际 %q visible=%v", text, visible)
+	}
+	// 链路闭环：空格选词应上屏 ming 首选
+	e.ProcessKeyEvent(keysymSpace, 0, 0)
+	if got := fe.lastCommitText(); got != "明" {
+		t.Fatalf("空格应上屏 ming 首选「明」，实际 %q", got)
+	}
+	// Shift+';' 在 ibus 里是 ':'（0x3A）：仍走标点分支输出「：」，不得进组词
+	e.ProcessKeyEvent(uint32(':'), 0, ibusShiftMask)
+	if got := fe.lastCommitText(); got != "：" {
+		t.Fatalf("Shift+';' 应输出「：」，实际 %q", got)
+	}
+}
+
+// TestDoublePinyinSemicolonPunctWhenIdle：双拼模式下没有待解码首键时按 ';'
+// 保持「；」标点语义——引擎按 Punct(";") 处理并把上屏文本放进
+// Composition.Committed（task-5 契约），壳据此落盘而不是吞键。
+func TestDoublePinyinSemicolonPunctWhenIdle(t *testing.T) {
+	e, fe := newDoublePinyinTestEngine(t, engine.DPSchemeMSPY)
+	probe := engine.NewSession(e.dict, nil)
+	probe.SetDoublePinyin(engine.DPSchemeMSPY)
+	if comp, _ := probe.Input(";"); comp.Committed != "；" {
+		t.Fatalf("引擎双拼 ';' 标点契约未就绪（依赖 task-5）：空组词 Input(%q) 应返回 Committed=「；」，实际 %q", ";", comp.Committed)
+	}
+	handled, _ := e.ProcessKeyEvent(uint32(';'), 0, 0)
+	if !handled {
+		t.Fatal("双拼模式下 ';' 应被消费（引擎按标点语义处理）")
+	}
+	if got := fe.lastCommitText(); got != "；" {
+		t.Fatalf("空组词按 ';' 应上屏「；」，实际 %q", got)
+	}
+}
+
+// TestSemicolonStillPunctWithoutDoublePinyin：非双拼模式 ';' 仍走标点分支
+// （组词中先上屏首选再出「；」）——双拼路由不得影响普通全拼用户。
+func TestSemicolonStillPunctWithoutDoublePinyin(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "ni")
+	handled, _ := e.ProcessKeyEvent(uint32(';'), 0, 0)
+	if !handled {
+		t.Fatal("非双拼模式 ';' 应走标点分支被消费")
+	}
+	if got := fe.lastCommitText(); got != "你；" {
+		t.Fatalf("组词中 ';' 应上屏首选+「；」，实际 %q", got)
+	}
+}

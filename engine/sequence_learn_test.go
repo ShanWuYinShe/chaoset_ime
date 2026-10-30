@@ -364,23 +364,117 @@ func TestSelectPrefixApostropheInput(t *testing.T) {
 	}
 }
 
-// TestConsumeInputPrefix 直接锁定前缀消耗规则（含撇号与不匹配回退）。
+// TestSelectPrefixAliasInput 覆盖：输入是省写/别名形态（xve→xue）时的渐进
+// 上屏（2026-10-30 审计 P1-2）。修复前 consumeInputPrefix 逐字母比较失配，
+// 剩余输入被整串清空——打 xveshengwomen 选「学生」后 women 消失，既不继续
+// 组词也不进入整句学习。
+func TestSelectPrefixAliasInput(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	if _, err := s.Input("xveshengwomen"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx := findCandidate(t, s, "学生")
+	rest, committed, err := s.SelectPrefix(idx)
+	if err != nil || committed != "学生" {
+		t.Fatalf("渐进选「学生」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "women" {
+		t.Fatalf("选「学生」后剩余输入 = %q, 期望 women（修复前被清空）", rest.Input)
+	}
+	if rest.Preedit != "wo'men" {
+		t.Fatalf("剩余预编辑 = %q, 期望 wo'men", rest.Preedit)
+	}
+	if !hasCandidate(rest.Candidates, "我们") {
+		t.Fatalf("剩余输入 women 应继续出「我们」，实际 %+v", rest.Candidates)
+	}
+	// 反向：标准拼写输入的行为不变（归一匹配不得影响既有路径）
+	s2 := NewSession(mustCommonDict(t), nil)
+	if _, err := s2.Input("xueshengwomen"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx = findCandidate(t, s2, "学生")
+	rest, committed, err = s2.SelectPrefix(idx)
+	if err != nil || committed != "学生" {
+		t.Fatalf("标准拼写渐进选「学生」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "women" {
+		t.Fatalf("标准拼写选「学生」后剩余输入 = %q, 期望 women", rest.Input)
+	}
+}
+
+// TestSelectPrefixFuzzyInput 覆盖：-fuzzy 下输入按模糊形态（zheng→zen）而
+// 候选音节是标准拼写时的渐进上屏（审计 P1-2 第二个复现场景：zhengmehao
+// 选「怎么」丢 hao）。
+func TestSelectPrefixFuzzyInput(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	s.SetFuzzy(true)
+	if _, err := s.Input("zhengmewomen"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx := findCandidate(t, s, "怎么")
+	rest, committed, err := s.SelectPrefix(idx)
+	if err != nil || committed != "怎么" {
+		t.Fatalf("渐进选「怎么」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "women" {
+		t.Fatalf("选「怎么」后剩余输入 = %q, 期望 women（修复前被清空）", rest.Input)
+	}
+	if !hasCandidate(rest.Candidates, "我们") {
+		t.Fatalf("剩余输入 women 应继续出「我们」，实际 %+v", rest.Candidates)
+	}
+}
+
+// TestSelectPrefixInitialsCandidateFallback 反向锁定回退语义：简拼候选与输入
+// 形态完全对不上（input yb / 音节 yi'bai）时仍应整句上屏并清空 input——归一
+// 匹配不能把不相关输入残留在组词里（保留旧兜底）。
+func TestSelectPrefixInitialsCandidateFallback(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	if _, err := s.Input("yb"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx := findCandidate(t, s, "一百")
+	rest, committed, err := s.SelectPrefix(idx)
+	if err != nil || committed != "一百" {
+		t.Fatalf("渐进选「一百」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "" {
+		t.Fatalf("一个音节都对不上时应回退全清, 剩余输入 = %q", rest.Input)
+	}
+}
+
+// TestConsumeInputPrefix 直接锁定逐音节前缀消耗规则：标准拼写、省写/别名
+// （xve/jve/shuei/niou）、模糊形态（zheng→zen）、撇号与部分匹配。
 func TestConsumeInputPrefix(t *testing.T) {
 	cases := []struct {
-		input, typed, want string
-		ok                 bool
+		input string
+		sylls []string
+		fuzzy bool
+		want  string
+		n     int
 	}{
-		{"jintianxingqiyi", "jintian", "xingqiyi", true},
-		{"jin'tian'xing'qi'yi", "jintian", "xing'qi'yi", true},
-		{"jin'tian", "jin", "tian", true},
-		{"jintian", "jintian", "", true},
-		{"jin", "jintian", "", false},
-		{"zhongg", "zhongguo", "", false},
+		// 标准拼写（含撇号）
+		{"jintianxingqiyi", []string{"jin", "tian"}, false, "xingqiyi", 2},
+		{"jin'tian'xing'qi'yi", []string{"jin", "tian"}, false, "xing'qi'yi", 2},
+		{"jin'tian", []string{"jin"}, false, "tian", 1},
+		{"jintian", []string{"jin", "tian"}, false, "", 2},
+		{"jin", []string{"jin", "tian"}, false, "", 1}, // 输入耗尽：只消耗已敲部分
+		// 部分匹配：剩余输入必须保留（旧实现直接清空）
+		{"zhongg", []string{"zhong", "guo"}, false, "g", 1},
+		{"zzz", []string{"jin"}, false, "zzz", 0},
+		// 省写/别名形态：候选音节是标准拼写
+		{"xveshengwomen", []string{"xue", "sheng"}, false, "women", 2},
+		{"jvece", []string{"jue", "ce"}, false, "", 2},
+		{"shueijiao", []string{"shui", "jiao"}, false, "", 2},
+		{"niourou", []string{"niu", "rou"}, false, "", 2},
+		// 模糊形态：-fuzzy 下 zheng 命中 zen；关闭时不认
+		{"zhengmewomen", []string{"zen", "me"}, true, "women", 2},
+		{"zhengmewomen", []string{"zen", "me"}, false, "zhengmewomen", 0},
 	}
 	for _, c := range cases {
-		got, ok := consumeInputPrefix(c.input, c.typed)
-		if got != c.want || ok != c.ok {
-			t.Errorf("consumeInputPrefix(%q,%q) = (%q,%v), 期望 (%q,%v)", c.input, c.typed, got, ok, c.want, c.ok)
+		got, n := consumeInputPrefix(c.input, c.sylls, c.fuzzy)
+		if got != c.want || n != c.n {
+			t.Errorf("consumeInputPrefix(%q,%v,fuzzy=%v) = (%q,%d), 期望 (%q,%d)",
+				c.input, c.sylls, c.fuzzy, got, n, c.want, c.n)
 		}
 	}
 }

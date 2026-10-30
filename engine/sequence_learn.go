@@ -16,35 +16,74 @@ import "strings"
 // 序列按「汉字字数 == 音节数」对齐（词库构建期强制的口径，引擎自己上屏的
 // 候选也来自词库条目）。任何对不上分段的数据一律退化为普通词学习，不臆造。
 
-// consumeInputPrefix 从 input 中吃掉候选音节的字母前缀，返回剩余输入。
+// consumeInputPrefix 从 input 中逐音节吃掉候选音节的输入前缀，返回剩余输入
+// 与完整匹配到的音节数。
 //
-// 比较时忽略用户敲下的音节分隔符 '（jin'tian… 形态），吃到字母后连同紧随
-// 的分隔符一起跳过，剩余串不会以 ' 开头。不匹配返回 ok=false（简拼/模糊音
-// 音节展开等形态差异），调用方回退为整段上屏。
-func consumeInputPrefix(input, typed string) (rest string, ok bool) {
-	if typed == "" {
-		return input, true
-	}
-	i, j := 0, 0
-	for j < len(typed) {
-		if i >= len(input) {
-			return "", false
-		}
-		c := input[i]
-		if c == '\'' {
-			i++
+// 候选音节是**标准拼写**（xue'sheng），而 input 保留用户原始敲法：可能是
+// 省写/别名（xve、jve、shuei、niou），也可能（开启模糊音时）是模糊形态
+// （zheng 命中 zen）。逐字母直接比较会在这些形态上失配，把剩余输入整串清空
+// （xveshengwomen 选「学生」丢掉 women，2026-10-30 审计 P1-2）。因此按音节
+// 匹配：对每个候选音节 syl，在当前输入位置尝试 maxSyllableLength 个字母以内
+// 的子串 sub，canonicalSyllable(sub) == syl 或（模糊开启时）属于
+// fuzzyVariants(syl) 即视为匹配，然后前进。
+//
+// 长度必须从长到短试：sheng 若先匹配 4 字母的 shen（shen 是 sheng 的模糊
+// 变体），剩下的 g 会混进后续音节；先试 5 字母的 sheng 才能精确消耗。
+//
+// 返回值：matched 为完整匹配的音节数；rest 是最后一个完整匹配音节之后的
+// 剩余输入（音节分隔符 ' 不参与比较，返回前会跳过）。部分匹配时 rest 保留
+// 未覆盖输入继续组词；matched == 0 表示一个音节都对不上（整句/简拼展开等
+// 形态差异），由调用方决定回退语义（SelectPrefix 回退为整句上屏、input 全清）。
+func consumeInputPrefix(input string, sylls []string, fuzzy bool) (rest string, matched int) {
+	i := 0
+	for _, syl := range sylls {
+		if syl == "" {
 			continue
 		}
-		if c != typed[j] {
-			return "", false
+		for i < len(input) && input[i] == '\'' {
+			i++ // 音节分隔符不参与比较
 		}
-		i++
-		j++
+		n := 0 // 本音节在 input 上消耗的字母数
+		for l := min(maxSyllableLength, len(input)-i); l >= 1; l-- {
+			sub := input[i : i+l]
+			if strings.IndexByte(sub, '\'') >= 0 {
+				continue // 子串不跨音节分隔符
+			}
+			if syllableMatchesInput(sub, syl, fuzzy) {
+				n = l
+				break
+			}
+		}
+		if n == 0 {
+			break
+		}
+		i += n
+		matched++
 	}
 	for i < len(input) && input[i] == '\'' {
 		i++
 	}
-	return input[i:], true
+	return input[i:], matched
+}
+
+// syllableMatchesInput 判定 input 子串 sub 是否对应标准音节 syl：先做输入侧
+// 归一（省写/别名，见 canonicalSyllable），再在模糊音开启时与 syl 的模糊等价
+// 集合比较。模糊音在查询侧是「标准音节 → 展开变体」，所以比较方向是
+// canonicalSyllable(sub) ∈ fuzzyVariants(syl)。
+func syllableMatchesInput(sub, syl string, fuzzy bool) bool {
+	canon := canonicalSyllable(sub)
+	if canon == syl {
+		return true
+	}
+	if !fuzzy {
+		return false
+	}
+	for _, v := range fuzzyVariants(syl) {
+		if canon == v {
+			return true
+		}
+	}
+	return false
 }
 
 // splitSyllsBySegs 按分段词的字数切分音节序列（「词长 == 音节数」）。

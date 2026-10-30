@@ -10,7 +10,7 @@
 # 覆盖（2026-10-30 加固，三端一致性审计 G2/G3/G8）：
 #   A. 导出两端度量（Go: tools/render_metrics.go；Swift: tools/panel_metrics.swift）
 #   B. 布局常量 Go↔Swift 5 项（fontSize/padding/lineSpacing/maxWidth/cornerRadius）
-#   C. macOS 参考常量自检：Layout 其余 12 项 + divider height/y 的期望值
+#   C. macOS 参考常量自检：Layout 其余 13 项 + divider height/y 的期望值
 #      （期望值来源 = docs/ui-parity.md 排版参数表；macOS 是视觉参考，只改一端
 #      的静默漂移必须在这里 FAIL。divider 导出此前无人消费，C 段是它的消费者）
 #   D. 色值 Go↔Swift 逐色比对：浅色 + 深色各 13 项（此前 Swift 端色值从未
@@ -87,6 +87,12 @@ print("== C. macOS 参考常量自检（期望值见 docs/ui-parity.md 排版参
 # macOS 是视觉参考：这些值被误改会直接改变三端对齐基准，因此单独锁死。
 # 改动 macOS 视觉参数 = 同时改这里 + docs/ui-parity.md + 另外两端。
 layout_expect = {
+    # 2026-10-30 审计 P2-9：lineSpacing/maxWidth/panelRadius 此前只在 B 段做
+    # Go↔Swift 互比——两端「同步改错」不会被任何检查发现。加进 C 段锁定 macOS
+    # 参考值（改动必须同时更新这里 + docs/ui-parity.md + 另外两端）。
+    "lineSpacing": 4,
+    "maxWidth": 720,
+    "cornerRadius": 8,  # Swift 导出名（对应 Layout.panelRadius）
     "indexFontSize": 12,
     "firstPadLeft": 9,
     "itemPadX": 7,

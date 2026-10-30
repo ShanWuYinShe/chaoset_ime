@@ -104,6 +104,25 @@ type UserDict struct {
 	dirty    bool
 	deferred bool
 	writes   uint64 // 变更加代计数（FlushIfDirty 快照一致性判定）
+
+	// writeMu 串行化所有「写临时文件 + rename」的落盘操作。
+	//
+	// 与 mu 分离：mu 保护内存态（快照/查询/变更），writeMu 只覆盖磁盘写入
+	// 段。锁序恒为 mu → writeMu（saveLocked 在持 mu 时获取 writeMu；
+	// writeSnapshot 不持 mu、只获取 writeMu），任何路径都不反向获取，
+	// 因此不会锁序反转死锁。
+	//
+	// 为什么需要（2026-10-30 审计 P1）：FlushIfDirty 的锁外写盘与
+	// Save/Clear 的 saveLocked 此前共用固定 <path>.tmp 且无串行化——两个
+	// 写者交错写同一 tmp 再 rename 可能落盘半截 JSON（下次启动 lenient 把
+	// 整份学习数据备份重置），Clear 也可能被更早的快照覆盖（清空失效）。
+	writeMu sync.Mutex
+	// lastWrittenGen 是最近一次成功落盘对应的变更加代（由 writeMu 保护）。
+	//
+	// 串行化只保证两个写者不交错，不保证获取 writeMu 的顺序：若先落盘的
+	// Save/Clear 被后到的旧 FlushIfDirty 快照覆盖，Clear 就白清了。所以
+	// 写盘前比较代数：比已落盘状态更旧的快照直接丢弃（见 writeState）。
+	lastWrittenGen uint64
 }
 
 // NewUserDict 加载用户词典；文件不存在视为空词典。
@@ -735,11 +754,6 @@ func (u *UserDict) writeSnapshot(snap userFileSnapshot) error {
 	if u.path == "" {
 		return nil
 	}
-	if dir := filepath.Dir(u.path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("创建用户词典目录失败: %w", err)
-		}
-	}
 	out := userFile{
 		Words:   make(map[string]*userRecord, len(snap.words)),
 		Phrases: make(map[string]*phraseRecord, len(snap.phrases)),
@@ -761,11 +775,66 @@ func (u *UserDict) writeSnapshot(snap userFileSnapshot) error {
 	if err != nil {
 		return err
 	}
-	tmp := u.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	_, err = u.writeState(data, snap.gen)
+	return err
+}
+
+// writeState 把一份完整 JSON 快照落盘；gen 是这份数据对应的变更加代。
+// 调用方不持 writeMu（saveLocked 可持 mu）。返回是否实际写了文件。
+//
+// 代数守卫：拿到 writeMu 时若已有更新的状态落盘（gen < lastWrittenGen），
+// 这份旧快照直接丢弃——否则并发 Save/Clear 写下的新状态会被更早的
+// FlushIfDirty 快照覆盖（清空失效）。
+func (u *UserDict) writeState(data []byte, gen uint64) (bool, error) {
+	u.writeMu.Lock()
+	defer u.writeMu.Unlock()
+	if gen < u.lastWrittenGen {
+		return false, nil
+	}
+	if err := u.writeFileLocked(data); err != nil {
+		return false, err
+	}
+	u.lastWrittenGen = gen
+	return true, nil
+}
+
+// writeFileLocked 以「临时文件 + rename」原子写入用户词典文件。
+// 调用方须持有 writeMu。
+//
+// tmp 用 os.CreateTemp 生成唯一名：即便未来有新的写者忘记串行化，也不会
+// 互相截断同一份 tmp；失败路径统一清理 tmp，不在用户数据目录留垃圾。
+func (u *UserDict) writeFileLocked(data []byte) error {
+	dir := filepath.Dir(u.path)
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("创建用户词典目录失败: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(u.path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("创建用户词典临时文件失败: %w", err)
+	}
+	tmpName := tmp.Name()
+	// 统一失败清理：rename 成功后 tmpName 已不存在，Remove 报错忽略即可。
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
 		return fmt.Errorf("写入用户词典失败: %w", err)
 	}
-	if err := os.Rename(tmp, u.path); err != nil {
+	// 与旧实现的 0644 保持一致（CreateTemp 默认 0600）。
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("设置用户词典权限失败: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("关闭用户词典临时文件失败: %w", err)
+	}
+	if err := os.Rename(tmpName, u.path); err != nil {
+		cleanup()
 		return fmt.Errorf("替换用户词典失败: %w", err)
 	}
 	return nil
@@ -797,21 +866,14 @@ func (u *UserDict) saveLocked() error {
 	if u.path == "" {
 		return nil
 	}
-	if dir := filepath.Dir(u.path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("创建用户词典目录失败: %w", err)
-		}
-	}
 	data, err := json.MarshalIndent(u.file, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := u.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("写入用户词典失败: %w", err)
-	}
-	if err := os.Rename(tmp, u.path); err != nil {
-		return fmt.Errorf("替换用户词典失败: %w", err)
+	// 文件写入段在 writeMu 内：与锁外写盘的 FlushIfDirty 串行化，避免两者
+	// 交错写 tmp/rename 写坏文件（锁序 mu → writeMu，见 UserDict.writeMu）。
+	if _, err := u.writeState(data, u.writes); err != nil {
+		return err
 	}
 	u.dirty = false
 	return nil
@@ -846,6 +908,10 @@ func (u *UserDict) Clear() error {
 		Phrases: make(map[string]*phraseRecord),
 		Bigrams: make(map[string]*userRecord),
 	}
+	// 清空也是一次全量状态变更：递增代数，让并发中的旧快照（gen 更小）
+	// 在 writeState 的代数守卫里被丢弃，避免清空结果被 FlushIfDirty 的
+	// 旧数据覆盖（2026-10-30 审计 P1）。
+	u.writes++
 	return u.saveLocked()
 }
 

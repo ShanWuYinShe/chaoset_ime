@@ -854,7 +854,7 @@ func writeTSV(path string, entries []entry) error {
 		"# 再生成（在仓库根目录）：",
 		"#   go run ./cmd/chaoset-dictgen -jieba dict.txt \\",
 		"#     -charfreq hanzi_db.csv -pinyin large_pinyin.txt -single pinyin.txt \\",
-		"#     -o data/dict_common.tsv",
+		"#     -extra data/dict_extra.tsv -o data/dict_common.tsv",
 		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
 	}
 	for _, line := range header {

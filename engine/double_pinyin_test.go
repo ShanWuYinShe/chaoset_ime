@@ -1,6 +1,10 @@
 package engine
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // 已知键位抽查——自然码（与 Rime 自然码方案语义一致）：
 // ni=ni、hao=hk、shi=ui、zhang=vh、zhuang=vd、liang=ld、kuai=ky、
@@ -262,5 +266,165 @@ func TestDoublePinyinSchemesList(t *testing.T) {
 	have := map[string]bool{schemes[0]: true, schemes[1]: true, schemes[2]: true}
 	if !have[DPSchemeZRM] || !have[DPSchemeMSPY] || !have[DPSchemeFLYPY] {
 		t.Fatalf("方案列表缺项: %v", schemes)
+	}
+}
+
+// TestDoublePinyinSessionReachability 是「反向表完整 → 会话可达」的升级
+// 回归（2026-10-30 审计 P1-1）：旧测试只验证 DoublePinyinDecode 解码层，
+// 而 Session.Input 过滤了 ';'，导致 mspy 的 ing 类音节（明/听/零/星/京）
+// 整类打不出且按 ';' 会误上屏中文「；」。这里对每个方案反向表的全部键码，
+// 逐键喂 Session.Input，断言会话 Input 与 Compose().Input 都等于对应音节，
+// 且键码对解码不产生 Committed。
+func TestDoublePinyinSessionReachability(t *testing.T) {
+	d := mustSeqDict(t)
+	for _, scheme := range DoublePinyinSchemes() {
+		t.Run(scheme, func(t *testing.T) {
+			s := NewSession(d, nil)
+			s.SetDoublePinyin(scheme)
+			for code, syl := range dpCodes[scheme] {
+				if len(code) != 2 {
+					t.Fatalf("%s 反向表出现非两键码 %q", scheme, code)
+				}
+				if code[0] < 'a' || code[0] > 'z' {
+					t.Fatalf("%s 键码 %q 首键不是字母", scheme, code)
+				}
+				s.Reset()
+				comp, err := s.Input(string(code[0]))
+				if err != nil {
+					t.Fatalf("%s 键码 %q 首键输入失败: %v", scheme, code, err)
+				}
+				if comp.Input != "" {
+					t.Fatalf("%s 键码 %q 首键应暂存, Input = %q", scheme, code, comp.Input)
+				}
+				comp, err = s.Input(string(code[1]))
+				if err != nil {
+					t.Fatalf("%s 键码 %q 第二键输入失败: %v", scheme, code, err)
+				}
+				if comp.Input != syl {
+					t.Fatalf("%s 键码 %q 应解码为 %q, 会话 Input = %q", scheme, code, syl, comp.Input)
+				}
+				if comp.Committed != "" {
+					t.Fatalf("%s 键码 %q 是解码键，不应触发 Committed: %q", scheme, code, comp.Committed)
+				}
+				if got := s.Compose().Input; got != syl {
+					t.Fatalf("%s 键码 %q Compose().Input = %q, 期望 %q", scheme, code, got, syl)
+				}
+			}
+		})
+	}
+}
+
+// TestDoublePinyinSessionMSPYIngKeys 锁定 mspy 的 ing 韵母键（';'）在会话级
+// 可用：ming/ling/ting/xing/jing/ying 都要能经 Input 解码（审计 P1-1 的
+// 直接复现场景）。
+func TestDoublePinyinSessionMSPYIngKeys(t *testing.T) {
+	s := NewSession(mustSeqDict(t), nil)
+	s.SetDoublePinyin(DPSchemeMSPY)
+	cases := []struct{ keys, syl string }{
+		{"m;", "ming"}, {"l;", "ling"}, {"t;", "ting"},
+		{"x;", "xing"}, {"j;", "jing"}, {"y;", "ying"},
+	}
+	for _, c := range cases {
+		s.Reset()
+		if _, err := s.Input(string(c.keys[0])); err != nil {
+			t.Fatalf("%s 首键输入失败: %v", c.keys, err)
+		}
+		comp, err := s.Input(";")
+		if err != nil {
+			t.Fatalf("%s 输入 ';' 失败: %v", c.keys, err)
+		}
+		if comp.Input != c.syl {
+			t.Fatalf("mspy 键码 %s 应解码为 %s, 实际 %q", c.keys, c.syl, comp.Input)
+		}
+		if comp.Committed != "" {
+			t.Fatalf("mspy 键码 %s 解码不应产生 Committed: %q", c.keys, comp.Committed)
+		}
+	}
+}
+
+// TestDoublePinyinSessionSemicolonPunct 锁定「首键为空时 ';' 退回标点」的
+// 语义：上屏文本（组词首选 + 「；」）经 Composition.Committed 交给壳写文档；
+// 壳若仍按 punct 请求转发，组词中的首选词会被丢掉。空组词、半角模式与
+// 全拼模式的既有行为一并锁定。
+func TestDoublePinyinSessionSemicolonPunct(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.SetDoublePinyin(DPSchemeMSPY)
+	if _, err := s.Input("ni"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	comp, err := s.Input(";")
+	if err != nil {
+		t.Fatalf("双拼 ';' 输入失败: %v", err)
+	}
+	if comp.Committed != "你好；" {
+		t.Fatalf("组词中 ';' 应上屏首选词+「；」, Committed = %q", comp.Committed)
+	}
+	if comp.Input != "" || len(comp.Candidates) != 0 {
+		t.Fatalf("';' 上屏后组词应为空: %+v", comp)
+	}
+	comp, _ = s.Input(";") // 空组词：直接输出「；」
+	if comp.Committed != "；" {
+		t.Fatalf("空组词 ';' 应上屏「；」, Committed = %q", comp.Committed)
+	}
+	s.SetHalfWidth(true) // 半角模式：原样输出 ASCII ';'
+	comp, _ = s.Input(";")
+	if comp.Committed != ";" {
+		t.Fatalf("半角模式 ';' 应上屏 ASCII ';', Committed = %q", comp.Committed)
+	}
+	// 全拼模式行为不变：';' 仍被过滤，不经 Committed
+	f := NewSession(mustDict(t), nil)
+	comp, _ = f.Input("ni;")
+	if comp.Input != "ni" || comp.Committed != "" {
+		t.Fatalf("全拼模式 ';' 应被过滤: Input=%q Committed=%q", comp.Input, comp.Committed)
+	}
+}
+
+// TestCompositionShuangpinField 锁定 Composition.Shuangpin：双拼模式下每次
+// 响应（空组词路径、缓存写入路径、缓存命中路径）都带方案名，全拼模式经
+// omitempty 省略；切换方案后记忆化缓存必须失效，否则壳会继续按旧方案路由
+// ';' 键。
+func TestCompositionShuangpinField(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	if comp := s.Compose(); comp.Shuangpin != "" {
+		t.Fatalf("全拼模式 Shuangpin 应为空, 实际 %q", comp.Shuangpin)
+	}
+	s.SetDoublePinyin(DPSchemeMSPY)
+	// 空组词路径（compose 提前返回，不写缓存）
+	if comp := s.Compose(); comp.Shuangpin != DPSchemeMSPY {
+		t.Fatalf("空组词路径 Shuangpin = %q, 期望 mspy", comp.Shuangpin)
+	}
+	if _, err := s.Input("n"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	comp, err := s.Input("i")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if comp.Shuangpin != DPSchemeMSPY {
+		t.Fatalf("缓存写入路径 Shuangpin = %q, 期望 mspy", comp.Shuangpin)
+	}
+	if cached := s.Compose(); cached.Shuangpin != DPSchemeMSPY {
+		t.Fatalf("缓存命中路径 Shuangpin = %q, 期望 mspy", cached.Shuangpin)
+	}
+	b, err := json.Marshal(comp)
+	if err != nil {
+		t.Fatalf("json.Marshal 失败: %v", err)
+	}
+	if !strings.Contains(string(b), "\"shuangpin\":\"mspy\"") {
+		t.Fatalf("双拼模式 JSON 应含 shuangpin=mspy: %s", b)
+	}
+	// 方案切换后缓存失效：Shuangpin 立即反映新状态
+	s.SetDoublePinyin("")
+	if comp := s.Compose(); comp.Shuangpin != "" {
+		t.Fatalf("切回全拼后 Shuangpin = %q, 期望空", comp.Shuangpin)
+	}
+	// 全拼模式 JSON：omitempty 省略字段
+	f := NewSession(mustDict(t), nil)
+	fb, err := json.Marshal(f.Compose())
+	if err != nil {
+		t.Fatalf("json.Marshal 失败: %v", err)
+	}
+	if strings.Contains(string(fb), "shuangpin") {
+		t.Fatalf("全拼模式 JSON 不应含 shuangpin: %s", fb)
 	}
 }

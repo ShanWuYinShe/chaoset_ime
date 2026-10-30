@@ -14,8 +14,9 @@ package main
 //     字段，用户照写静默无效果——2026-10-27 审查修正注释）；
 //   - 命令行显式传的 flag 优先（便于排障时临时覆盖）。
 //
-// 为什么不用 ibus 的 <setup> 弹窗：那需要一个图形设置程序，Linux 端暂无条件
-// 做 GUI。用配置文件是最小可用方案，用户也可以直接编辑。
+// 设置窗口：2026-10-29 起已实现 GTK3 设置窗（setup/chaoset-setup.py），由
+// component XML 的 <setup> 入口打开，读写本文件；config.json 仍可直接手工编辑。
+// （旧注释「Linux 端暂无条件做 GUI」已过期，2026-10-30 修正。）
 //
 // 注意：loadUserConfig 同时被联想开关的**运行时重读**路径复用
 // （ibusEngine.associateEnabled，2026-10-30）：设置窗口保存 config.json 后，

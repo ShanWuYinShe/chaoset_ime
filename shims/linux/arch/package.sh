@@ -29,6 +29,10 @@ mkdir -p "$TMP_DIR/usr/share/icons"
 
 cp "$SRC_DIR/bin/"* "$TMP_DIR/usr/bin/"
 cp "$SRC_DIR/data/dict.tsv" "$TMP_DIR/usr/share/chaoset/"
+# 设置窗口脚本：component XML 的 <setup> 指向 /usr/share/chaoset/chaoset-setup.py，
+# 此前 Arch 二进制包漏装该文件 → ibus-setup「首选项」点了没反应（2026-10-30 审计
+# B-P1-6；deb/tar.gz 两个包本来就有，只有 Arch 缺）。发布冒烟现在也断言它存在。
+cp "$SRC_DIR/setup/chaoset-setup.py" "$TMP_DIR/usr/share/chaoset/"
 cp "$SRC_DIR/component/chaoset.xml" "$TMP_DIR/usr/share/ibus/component/"
 cp -r "$SRC_DIR/icons/hicolor" "$TMP_DIR/usr/share/icons/"
 
@@ -38,6 +42,7 @@ ln -sf /usr/bin/chaosetd "$TMP_DIR/usr/local/bin/chaosetd"
 ln -sf /usr/bin/chaoset-cli "$TMP_DIR/usr/local/bin/chaoset-cli"
 
 chmod 0755 "$TMP_DIR/usr/bin/"*
+chmod 0755 "$TMP_DIR/usr/share/chaoset/chaoset-setup.py"
 chmod 0644 "$TMP_DIR/usr/share/chaoset/dict.tsv"
 chmod 0644 "$TMP_DIR/usr/share/ibus/component/chaoset.xml"
 

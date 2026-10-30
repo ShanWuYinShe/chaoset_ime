@@ -29,6 +29,9 @@ package() {
     ln -sf /usr/bin/chaoset-cli "$pkgdir/usr/local/bin/chaoset-cli"
 
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
+    # 设置窗口脚本（component XML 的 <setup> 指向它）：此前漏装导致
+    # ibus-setup「首选项」点了没反应（2026-10-30 审计 B-P1-6）。
+    install -Dm755 setup/chaoset-setup.py "$pkgdir/usr/share/chaoset/chaoset-setup.py"
     install -Dm644 component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
     # 目标目录必须先创建：`cp -r src dst/` 在 dst 不存在时直接失败

@@ -236,12 +236,19 @@ Comp parseComposition(const JsonValue& result) {
     c.ok = true;
     result.isString("input", &c.input);
     result.isString("preedit", &c.preedit);
+    // 双拼方案名：daemon 双拼启用时每次 Compose 都带；未启用时字段缺省为空
+    //（Go 侧 omitempty），壳按空值保持旧行为（';' 仍走 punct）。
+    result.isString("shuangpin", &c.shuangpin);
     if (const JsonValue* p = result.find("page"); p != nullptr && p->type == JsonValue::Type::Num) {
         c.page = static_cast<int>(p->number);
     }
     if (const JsonValue* pc = result.find("page_count"); pc != nullptr && pc->type == JsonValue::Type::Num) {
         c.pageCount = static_cast<int>(pc->number);
     }
+    // 顶层 committed：渐进上屏（selectPrefix）与双拼 ';' 的「上屏文本」都放
+    // 在这里（Composition.Committed，Go 侧 omitempty）。壳据此把文本写入
+    // 文档，所以必须与其它 Composition 字段一起解析，不能只让 selectPrefix 手工取。
+    result.isString("committed", &c.committed);
     const JsonValue* cands = result.find("candidates");
     if (cands != nullptr && cands->type == JsonValue::Type::Arr) {
         for (const JsonValue& item : cands->arr) {
@@ -378,12 +385,8 @@ bool Session::selectPrefix(int index, Comp* out) {
     bool ok = false;
     JsonValue result = call("selectPrefix", "{\"index\":" + std::to_string(index) + "}", &ok);
     if (!ok) return false;
-    Comp c = parseComposition(result);
+    Comp c = parseComposition(result);  // 含顶层 committed（见 parseComposition）
     if (!c.ok) return false;
-    // committed 在 Composition 的顶层字段（committed）
-    if (const JsonValue* cm = result.find("committed"); cm != nullptr && cm->type == JsonValue::Type::Str) {
-        c.committed = cm->str;
-    }
     if (c.committed.empty()) return false;
     if (out != nullptr) *out = std::move(c);
     return true;

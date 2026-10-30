@@ -74,6 +74,7 @@ fmt:
 	gofmt -l -w .
 
 cover:
+	@mkdir -p .workwork
 	go test -coverprofile=.workwork/cover.out ./...
 	go tool cover -func=.workwork/cover.out | tail -1
 

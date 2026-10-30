@@ -374,6 +374,29 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
+        // 双拼模式下 ';' 是引擎的组词/解码键（mspy 的 ing 韵母键，如 m;=ming），
+        // 不能按标点走 punct——否则明/听/星/京整类音节打不出，还会误上屏「；」。
+        // 引擎契约：input(";") 在 dpPending!=0 时参与两两解码，为 0 时按 punct
+        // 语义把「组词中首选词 + 分号」放进 Committed。Shift+';' 产生 ':'，
+        // 不在此列（仍走下方标点分支，与 Windows/Linux 字符级判定一致）。
+        if !engine.doublePinyinScheme.isEmpty, chars == ";" {
+            guard let comp = engine.input(chars) else {
+                return passThrough(client) // daemon 不可达：绝不吞键
+            }
+            current = comp
+            if !comp.committedText.isEmpty {
+                // 已确认段 + 本次上屏文本一次落盘（与 selectPrefix 收尾同原语）
+                client?.insertText(
+                    confirmedText + comp.committedText,
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                confirmedText = ""
+                current = nil
+            }
+            refresh(client)
+            return true
+        }
+
         // 标点键：组词中先上屏首选再出中文标点，空组词直接出中文标点。
         // 组词中的撇号仍是音节分隔符，交回组词流程。
         if chars.count == 1, let scalar = chars.unicodeScalars.first,

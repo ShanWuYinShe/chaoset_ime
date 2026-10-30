@@ -72,16 +72,19 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
 | 原生浮动候选词窗口（双缓冲 GDI、首选高亮、分页指示、**学习标记 `*`**、单页箭头置灰） | 已实现（编译级） |
 | 候选窗布局单位（2026-10-30）：全部 pt 口径 `MulDiv(v,dpi,72)`，与 macOS 1:1（间距/键帽/圆角/最大宽此前是 px@96 的 0.75 倍；96/120/144/192 dpi 像素表见 win32.cpp `pt()` 注释） | 已实现（编译级） |
+| 描边线宽（2026-10-30 补）：面板/键帽/分隔线/Toast 边框改为 pt 化 `max(1,MulDiv(1,dpi,72))`，与 mac 1pt 对齐（此前固定 1 设备像素，125%/150% 缩放下比 mac 细 33%–40%） | 已实现（编译级） |
 | 鼠标点选候选（2026-10-30）：与数字键/空格同路径——先 selectPrefix 渐进上屏、失败才整句 select；此前直接 select，长串下点候选会清空整串拼音 | 已实现（编译级） |
 | 模式提示 Toast：光标行下方 6pt（与候选窗同锚点）+ WS_EX_TRANSPARENT 点击穿透（mac ignoresMouseEvents 对应） | 已实现（编译级，待真机确认观感） |
 | 光标跟随与屏幕边缘碰撞反弹（GetTextExt -> GetGUIThreadInfo -> GetCursorPos） | 已实现（编译级） |
 | 后台服务完全静默（GUI Subsystem，零黑框，零控制台窗口常驻） | 已实现（编译级） |
 | `-` / `=` / `[` / `]` / PageUp / PageDown 候选翻页 | 已实现（核心行为级） |
-| Shift 空按切换中英（英文模式全放行；跟踪在按键事件层完成） | 已实现（编译级） |
-| Shift+空格切换全角/半角标点（非组词状态也可切；GetKeyState 查 Shift 状态） | 已实现（编译级） |
+| Shift 空按切换中英（英文模式全放行；已确认段先落盘）。**注意**：跟踪写在 OnKeyDown/OnKeyUp，按 TSF 两阶段模型可能不可达，见「已知限制」 | 已实现（编译级，待真机确认） |
+| Shift+空格切换全角/半角标点（**仅组词态可切**；联想态=选第一个联想词，不切全半角；GetKeyState 查 Shift 状态） | 已实现（编译级） |
+| 已确认段（渐进上屏）收尾（2026-10-30）：Alt/Win 透传、Shift 切中英、空格无候选、翻页通信失败都先落盘/拼接确认段再收尾（与 mac 语义一致，此前会丢已确认的字） | 已实现（编译级） |
+| 双拼 mspy `;` 键（2026-10-30）：`Comp.shuangpin` 下发方案名，双拼模式把 `;` 路由到 `input` 并上屏 `committed`（`m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 | 已实现（编译级） |
 | 模式切换提示（中英/全半角切换时光标旁短暂 toast，约 1.2s 自动消失） | 已实现（编译级） |
 | 词组联想（选词后按上屏词音节查续接词组，复用候选窗展示；上限 30 条分页展示，数字连选/空格结束/字母退出/- = 翻页；associateSelect 学习路径与 select 一致） | 已实现（核心行为级） |
-| 候选栏设置入口（折叠区左侧齿轮 → 独立设置窗口「Chaoset 设置」：输入行为分组 + 词组联想开关 + 说明文字，与 macOS SettingsWindow 同构；存 HKCU\Software\Chaoset，关闭联想立即收起联想窗） | 已实现（编译级；窗口交互待真机确认） |
+| 候选栏设置入口（折叠区左侧齿轮 → 独立设置窗口「Chaoset 设置」：输入行为分组 + 词组联想开关 + 说明文字，与 macOS SettingsWindow 同构；存 HKCU\Software\Chaoset）。**关闭联想后已显示的联想候选在下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除宿主进程 UAF；mac 仍即时收起） | 已实现（编译级；窗口交互待真机确认） |
 | 候选窗置顶层级：TOPMOST 保持——Windows 下拉菜单是系统模态 topmost popup（弹出时位于 Z 序最上并独占鼠标），候选窗 frame 重叠不会拦截菜单点击；与 macOS 端「popUpMenu 拦截菜单点击 → 降级 floating」的修复互为对照 | 已实现（编译级） |
 | Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
 | 快捷键零 daemon 往返（2026-10-29）：全/半角开关等 UI 开关归壳本地持有，状态随 punct 请求下发，daemon 只按状态产出文本；修饰键组合在 sink 内微秒级放行 | 已实现（编译级） |
@@ -131,10 +134,21 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」。
 - **候选窗为单行布局**（macOS 为 3 行折行）：首项超宽逐字截断加…，后续候选
   放不下时不排列（数字键仍可选）。折行需重排布局，待需求。
+- **中英切换依赖 TSF 两阶段（待真机确认，高风险）**：Shift 空按跟踪写在
+  `OnKeyDown`/`OnKeyUp`，但 `OnTestKeyDown` 对修饰键恒返回 `FALSE`、
+  `OnTestKeyUp` 恒 `FALSE`。按 TSF 两阶段模型（`OnTestKeyDown` 吞键后才调
+  `OnKeyDown`），Shift 可能永远进不了跟踪函数 → 中英切换与 Shift+空格失效，
+  同时 Ctrl/Alt/Win 的清理分支也可能成死代码。若真机证实，需把修饰键跟踪移到
+  `OnTestKeyDown`/`OnTestKeyUp`（或按 GetKeyState 轮询）。Windows 从未真机联调，
+  这条必须优先验证。
 - **无障碍**：未实现 WM_GETOBJECT/UIA/MSAA（macOS 有 VoiceOver 子元素），
   待 Windows 真机阶段补。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
+- 双拼 `;` 的标点宽度瞬态：全/半角开关归壳本地持有，引擎 session 的半角状态在
+  下一次 punct 请求时才更新；双拼模式下单独按 `;`（无暂存首键）时若刚切过
+  全/半角，可能按上一次的宽度出标点（1 键瞬态，2026-10-30 记录；修复需给
+  input 扩 halfWidth 参数，暂不扩协议）。
 - 中文标点按 US 布局**字符级映射**（含 Shift 变体：`,` `.` `;` `[` `]` `\` `'`
   与 Shift 产生的 `:` `<` `>` `?` `~` `!` `^` `(` `)` `"`，已对齐 macOS/ibus
   壳与 daemon 的字符集；2026-10-27 前 Shift 组合全部错映射、十个中文标点

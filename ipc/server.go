@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 
 	"chaoset.ime/engine"
 )
@@ -185,6 +186,10 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			"candidates": comp.Candidates,
 			"page":       comp.Page,
 			"page_count": comp.PageCount,
+			// 双拼方案名随响应下发（壳据此路由 ';'）：selectPrefix 是手工
+			// 拼的 map，不会自动带 Composition 字段，漏了会让壳在渐进上屏
+			// 后把双拼 ';' 错当标点。
+			"shuangpin": comp.Shuangpin,
 		}, nil
 	case "associate":
 		// 联想候选：选词上屏后拼音区已清空，按上屏词音节查续接词组
@@ -251,6 +256,14 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		}
 		var p struct {
 			PhrasesOnly bool `json:"phrases_only"`
+			// Offset/Limit 是分页参数：行偏移（0 起）与本页最大行数。
+			//
+			// 为什么分页（2026-10-30 审计 P1）：帧上限 1 MiB 只在读侧校验，
+			// 此前整份 TSV 塞进单帧——学习数据无上限增长，重度用户的导出
+			// 必然超过 1 MiB，客户端读帧被拒且流里残留未读 body（连接失步）。
+			// Limit<=0 保持旧行为（全量导出、next=-1），兼容旧客户端。
+			Offset int `json:"offset"`
+			Limit  int `json:"limit"`
 		}
 		if len(req.Params) > 0 {
 			if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -261,8 +274,37 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		if err := s.user.ExportTSV(&buf, p.PhrasesOnly); err != nil {
 			return nil, err
 		}
-		return map[string]string{"tsv": buf.String()}, nil
+		tsv, next := paginateTSV(buf.String(), p.Offset, p.Limit)
+		return map[string]any{"tsv": tsv, "next": next}, nil
 	default:
 		return nil, fmt.Errorf("未知方法 %q", req.Method)
 	}
+}
+
+// paginateTSV 把整份导出 TSV 按「行」切页：offset 是起始行号（0 起），
+// limit 是本页最大行数。返回本页文本与下一页 offset（全部导出完为 -1）。
+//
+// 每行保留行尾换行（SplitAfter），因此各页按序拼接与整份导出**逐字节一致**
+// ——客户端无需关心段头/排序，直接拼接即可。limit<=0 时保持旧协议行为：
+// 返回全量、next=-1。
+func paginateTSV(full string, offset, limit int) (page string, next int) {
+	if limit <= 0 {
+		return full, -1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	lines := strings.SplitAfter(full, "\n")
+	// SplitAfter 对以换行结尾的文本会多出一个空元素，去掉它，避免空页/多算一行。
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if offset >= len(lines) {
+		return "", -1
+	}
+	end := offset + limit
+	if end >= len(lines) {
+		return strings.Join(lines[offset:], ""), -1
+	}
+	return strings.Join(lines[offset:end], ""), end
 }

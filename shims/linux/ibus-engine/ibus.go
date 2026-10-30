@@ -141,6 +141,11 @@ type ibusEngine struct {
 	sess   *engine.Session
 	enMode bool // 英文模式：按键全部放行，组词/标点映射不介入
 	shift  shiftTracker
+	// dpScheme 是当前生效的双拼方案（zrm/mspy/flypy；空 = 未启用双拼）。
+	// 由工厂的 -shuangpin / config.json 值在 CreateEngine 时填入，用于把 ';'
+	// 键路由进组词流程：微软双拼的 ing 韵母落在 ';' 键上（m + ; = ming），
+	// 若仍按标点处理，双拼用户永远打不出 ing 音节（2026-10-30 双拼可达性）。
+	dpScheme string
 	// assoc 非空即联想中：选词上屏后按上屏词音节查到的续接词组，候选表
 	// 分页展示（assocPage 当前页）、数字键连选（对齐 macOS 壳，2026-10-27
 	// 接入 Linux；2026-10-28 翻页化）。
@@ -290,6 +295,14 @@ func (f *ibusFactory) run() error {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-stop
+		// 退出前同步落盘用户词典：本分支直接 os.Exit(0)，main 里的 defer 与
+		// 其它信号监听者都保证不了执行顺序（ipc-persist-fix 在 main.go 注册的
+		// flushUserDictOnExit 与这里存在竞争）。延迟落盘模式下不在这里收尾，
+		// 最多丢最近 2s 的学习数据（2026-10-30 审计 P1，与 chaosetd 退出路径
+		// 同一策略：先 FlushIfDirty 再 Save，错误只记日志不改变退出行为）。
+		if f.user != nil {
+			flushUserDictOnExit(f.user)
+		}
 		f.conn.Close()
 		os.Exit(0)
 	}()
@@ -299,6 +312,19 @@ func (f *ibusFactory) run() error {
 }
 
 // ---- org.freedesktop.IBus.Factory ----
+
+// enabledDPScheme 把配置里的双拼方案名归一为「引擎真正生效的方案」。
+// 未知方案名会被 engine.Session.SetDoublePinyin 按关闭处理；壳若照抄原始
+// 字符串，就会把 ';' 路由进 Input 再被过滤掉——用户既打不出「；」也打不出
+// ing 音节。这里按引擎导出的方案表判定，保证壳与引擎口径一致。
+func enabledDPScheme(sp string) string {
+	for _, s := range engine.DoublePinyinSchemes() {
+		if s == sp {
+			return sp
+		}
+	}
+	return ""
+}
 
 // CreateEngine 由 ibus-daemon 在激活每个 InputContext 时调用：
 // 创建独立引擎实例（独立会话/中英模式/Shift 跟踪）并导出到唯一
@@ -319,6 +345,7 @@ func (f *ibusFactory) CreateEngine(name string) (godbus.ObjectPath, *godbus.Erro
 		user:            f.user,
 		path:            path,
 		sess:            engine.NewSession(f.dict, f.user),
+		dpScheme:        enabledDPScheme(f.sp),
 		assocOn:         f.assocOn,
 		assocConfigPath: f.assocConfigPath,
 		assocFlagSet:    f.assocFlagSet,
@@ -387,6 +414,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	// 状态机」的铁律，2026-10-27 审查发现）。
 	if e.shift.feed(keyval, state) {
 		e.enMode = !e.enMode
+		// 已确认段随模式切换落盘（对齐 macOS 壳 flushConfirmed）：用户确认过的
+		// 字不能随一次 Shift 切换消失；未落盘的纯拼音按旧语义清空。
+		// 此前这里只 Reset+hide，确认段留在缓冲里，切回中文再输入就变成
+		// 幽灵前缀被一起提交（2026-10-30 三端一致性整改 P1-2）。
+		if e.confirmedPreedit != "" {
+			e.commit(e.confirmedPreedit) // commit 内部收起面板并清空确认段
+		}
+		e.exitAssociate() // 联想候选不得跨模式残留（对齐 macOS：切英文即收起）
 		e.sess.Reset()
 		e.hidePreedit()
 		e.hideLookupTable()
@@ -413,24 +448,35 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	// （GNOME Super+A/S/E、KDE Super 系）。Windows 壳有等价的 win 判定，
 	// Linux 此前缺失，三端不一致。
 	if state&ibusMod4Mask != 0 {
-		e.exitAssociate()
+		// 透传前先收尾：已确认段落盘、未落盘纯拼音丢弃、面板收起。
+		// README 宣称「组词中放行前先清空组词」，此前这里只 exitAssociate，
+		// 预编辑与候选窗挂在原地、确认段还会串进下一轮（P1-5）。
+		e.flushConfirmedAndReset()
 		return false, nil
 	}
 	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
+		// Ctrl+Backspace / Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费
+		// 并全部删除）。**取消语义**：含未落盘的已确认段一并丢弃——用户按
+		// 「清空整行」的意图是整条组词都不要，确认段若残留会在下一轮输入里
+		// 变成幽灵前缀被一起提交（P1-1）。
 		if isComposing(e.sess) && keyval == keysymBackspace {
+			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
 			return true, nil
 		}
-		// Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）
 		if isComposing(e.sess) && keyval == 'u' {
+			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
 			return true, nil
 		}
-		e.exitAssociate()
+		// 其余 Ctrl/Alt 组合透传给宿主：放行前先收尾（确认段落盘、纯拼音
+		// 丢弃、面板收起），否则字符进文档而预编辑与候选窗还挂在原地，
+		// 确认段也会串进下一轮（对齐 macOS passThrough，P1-5）。
+		e.flushConfirmedAndReset()
 		return false, nil
 	}
 
@@ -497,6 +543,24 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 	}
 
+	// 双拼 ';' 路由（2026-10-30 双拼可达性）：微软双拼的 ing 韵母落在 ';'
+	// 键上（m + ; = ming），必须先于标点分支送进组词流程，否则「；」被当
+	// 标点直接上屏，双拼用户永远打不出 ing 音节。
+	// 引擎契约（task-5）：dpPending != 0 时 ';' 与字母一样成对解码；
+	// dpPending == 0 时按 Punct(";") 语义处理，上屏文本经 Composition.Committed
+	// 返回（组词中先上屏首选再出「；」）。壳侧按 Committed 是否为空分流：
+	// 非空 = 本次有文本要落盘（壳侧已确认段先拼接，一次提交），空 = 仅刷新组词。
+	// Shift+';' 的 keyval 是 ':'（0x3A），仍走下方标点分支输出「：」。
+	if e.dpScheme != "" && keyval == ';' && state&ibusShiftMask == 0 {
+		comp, _ := e.sess.Input(";")
+		if comp.Committed != "" {
+			e.commit(e.confirmedPreedit + comp.Committed)
+		} else {
+			e.refresh(comp)
+		}
+		return true, nil
+	}
+
 	switch {
 	case keyval >= 'a' && keyval <= 'z':
 		comp, _ := e.sess.Input(string(rune(keyval)))
@@ -519,6 +583,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		}
 		// 普通 Backspace：慢慢部分删除（逐字符）
 		comp, _ := e.sess.Backspace()
+		if comp.Input == "" && e.confirmedPreedit != "" {
+			// 剩余拼音删空：已确认段立即落盘收尾（对齐 macOS flushConfirmed /
+			// Windows 同路径）。否则确认段留在缓冲里，预编辑变成「无组词的
+			// 孤标记区」，下一次输入又会把它当幽灵前缀带进新组词（P1-3）。
+			e.commit(e.confirmedPreedit) // commit 内部收起面板并清空确认段
+			e.sess.Reset()
+			return true, nil
+		}
 		e.refresh(comp)
 		return true, nil
 
@@ -640,11 +712,14 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.enterAssociateForPrev(e.sess.PrevWord())
 			return true, nil
 		}
+		// 残缺组词（无候选）空格：已确认段 + 剩余原始拼音一次落盘（对齐
+		// macOS insertText(confirmedText + raw)）。此前只提交 raw，而 commit
+		// 会顺带清空确认段缓冲——用户确认过的字被静默丢弃（P1-4）。
 		raw := e.sess.Compose().Input
 		e.sess.Reset()
 		e.hidePreedit()
 		e.hideLookupTable()
-		e.commit(raw)
+		e.commit(e.confirmedPreedit + raw)
 		return true, nil
 
 	case keyval == keysymPageUp || keyval == keysymPageDown:
@@ -658,9 +733,9 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			return false, nil
 		}
 		if !hasCandidates(e.sess) {
-			e.sess.Reset()
-			e.hidePreedit()
-			e.hideLookupTable()
+			// 残缺组词放行前先收尾（确认段落盘）：否则文档滚动了而预编辑
+			// 与候选窗还挂在原地（对齐 macOS passThrough，P1-5 同族）。
+			e.flushConfirmedAndReset()
 			return false, nil
 		}
 		var comp engine.Composition
@@ -700,6 +775,9 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.commit(e.confirmedPreedit + text)
 			return true, nil
 		}
+		// 无候选的 - / = 不是标点键：先收尾（确认段落盘、纯拼音丢弃）再放行，
+		// 否则字符进文档而预编辑还挂着（对齐 macOS passThrough，P1-5 同族）。
+		e.flushConfirmedAndReset()
 		return false, nil
 
 	case keyval == '\'' && isComposing(e.sess):
@@ -724,15 +802,30 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	// （对齐 macOS 壳 passThrough，2026-10-27 审查发现）。已确认段随透传
 	// 落盘：用户确认过的字不能随透传消失；纯拼音维持「清空」旧语义。
 	if isComposing(e.sess) || e.confirmedPreedit != "" {
-		e.sess.Reset()
-		if e.confirmedPreedit != "" {
-			e.commit(e.confirmedPreedit)
-		} else {
-			e.hidePreedit()
-			e.hideLookupTable()
-		}
+		e.flushConfirmedAndReset()
 	}
 	return false, nil
+}
+
+// flushConfirmedAndReset 是「不再继续组词」路径的统一收尾：已确认段先落盘
+// （用户确认过的字不能随透传/切换丢失，对齐 macOS passThrough + flushConfirmed），
+// 未落盘的纯拼音按旧语义丢弃，并收起预编辑、候选表与联想。
+//
+// 为什么抽出来：Ctrl/Alt/Super 透传、PgUp/PgDn 无候选放行、- / = 无候选放行
+// 与未处理键兜底此前各写一份「Reset+hide」，其中多数漏了确认段落盘
+// （2026-10-30 三端一致性整改 P1-5）。收尾语义只允许一个实现，避免再漂移。
+func (e *ibusEngine) flushConfirmedAndReset() {
+	if !isComposing(e.sess) && e.confirmedPreedit == "" && len(e.assoc) == 0 {
+		return // 无状态可收尾：不要发无意义的隐藏信号
+	}
+	if e.confirmedPreedit != "" {
+		e.commit(e.confirmedPreedit) // commit 内部收起面板并清空确认段
+	} else {
+		e.hidePreedit()
+		e.hideLookupTable()
+	}
+	e.sess.Reset()
+	e.exitAssociate()
 }
 
 func hasCandidates(s *engine.Session) bool {

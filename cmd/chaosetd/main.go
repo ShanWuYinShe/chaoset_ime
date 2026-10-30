@@ -163,7 +163,14 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 	// （被 kill -9、断电）时丢掉太多学习数据。正常退出走 Close() 同步落盘。
 	flushCtx, flushStop := context.WithCancel(context.Background())
 	defer flushStop()
+	// flushDone 在 ticker goroutine 退出后关闭：退出路径必须先停 ticker 并
+	// 等它退出，再 srv.Close()（内部 user.Save()）。否则 ticker 可能在 Save
+	// 之后才用旧快照写盘，把最后一次落盘覆盖回旧数据（2026-10-30 审计 P1；
+	// engine.UserDict 已用 writeMu + 代数守卫兜底，这里再从生命周期上保证
+	// 「停 ticker → Save」的顺序，避免依赖底层防御）。
+	flushDone := make(chan struct{})
 	go func() {
+		defer close(flushDone)
 		t := time.NewTicker(2 * time.Second)
 		defer t.Stop()
 		for {
@@ -186,6 +193,11 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 		return nil
 	case <-ctx.Done():
 		log.Printf("收到退出信号，保存用户词典并退出…")
+		// 顺序：先停 flush ticker 并等它退出，再 srv.Close()（内部 Save）。
+		// defer flushStop() 只兜底「异常提前返回」的路径，不能代替这里的
+		// 同步等待——defer 在进程退出（log.Fatal）时也不会执行。
+		flushStop()
+		<-flushDone
 		err := srv.Close()
 		// 主动删除套接字文件：正常退出后路径上不该再留下一个无人监听的
 		// 僵尸套接字——客户端连它会得到 ECONNREFUSED，表现为「输入法打不出字」。

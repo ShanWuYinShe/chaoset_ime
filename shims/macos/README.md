@@ -7,15 +7,16 @@ InputMethodKit 薄壳：只做「按键转发 + 文本上屏 + 候选窗展示�
 
 | 按键 | 行为 |
 |---|---|
-| a-z / ' | 进入或追加组词 |
-| 1-9 | 选择对应候选上屏 |
-| 空格 / 回车 | 首选候选上屏（无候选时放行原键） |
-| `-` / `=` | 候选上一页 / 下一页（有候选时；边界由 daemon 钳制） |
-| Shift 空按 | 切换中英（英文模式全透传）。IMK 对修饰键事件的分发待真机验证 |
-| Shift+空格 | 切换全角/半角标点（半角下标点原样输出） |
+| a-z / ' | 进入或追加组词（双拼方案下按键两两成对解码） |
+| 1-9 | 选择本页对应候选并渐进上屏（每页 6 个；越界则清空组词后放行） |
+| 空格 / 回车 | 组词中：空格选首选并渐进上屏（剩余无候选时=确认段+原始拼音上屏）；回车=确认段按文本+剩余按原始拼音一次上屏 |
+| `-` `=` `[` `]` PageUp/PageDown | 候选/联想翻页（`[` `]` 在无候选时是标点键，输出【】） |
+| Shift 空按 | 切换中英（英文模式全透传），提示「英文模式/中文模式」；已确认段先落盘 |
+| Shift+空格 | **组词态**切换全角/半角标点；联想态=选第一个联想词（不切全半角） |
+| 双拼 `;` | `-shuangpin mspy` 时 `;` 是 ing 韵母键（如 `m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 |
 | 标点键 `,` `.` `;` 等 | 输出中文标点（组词中先上屏首选候选）；组词中的 `'` 为音节分隔符 |
-| 退格 | 删除一个输入字母 |
-| Esc | 清空组词 |
+| 退格 | 逐字符回退剩余拼音；剩余删空=确认段立即落盘。Option+Delete=按音节回退；Shift/Ctrl+Delete=取消整条 |
+| Esc | 取消整条组词（含未落盘的已确认段） |
 
 ## 套接字约定
 
@@ -62,7 +63,8 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 # 3b. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
 ./verify.sh
 #    单独看枚举也可：./build/tis list | grep -i chaoset
-#    期望出现 ime.chaoset.inputmethod.ChaosetIME 与 ime.chaoset.inputmethod.ChaosetIME.Hans 两行
+#    期望出现父容器 ime.chaoset.inputmethod.ChaosetIME 与模式 ime.chaoset.inputmethod.ChaosetIME.Pinyin 两行
+#    （.Hans 是历史别名：install.sh 会禁用并清理旧模式残留）
 
 # 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset」，切到它开始打字
 ```
@@ -144,10 +146,10 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 对"短时间内反复异常退出"的输入法**直接禁止拉起**——调试期反复 `killall` 会踩到）。
 表现就是输入菜单里选中本输入法后**打字完全没反应**（进程没被拉起，按键被吞）。
 规避方式：**让输入法进程常驻**（实测常驻时客户端能正常 Activate Server，打字正常）。
-因此 `install.sh` 会额外安装两个 LaunchAgent：
-
-- `ime.chaoset.inputmethod` → 直接运行 `ChaosetIME.app/Contents/MacOS/ChaosetIME`（常驻，KeepAlive）；
-- `ime.chaoset.daemon` → 引擎 daemon（见下）。
+因此 `install.sh` 只安装 **一个** LaunchAgent：`ime.chaoset.daemon` → 引擎 daemon（见下）。
+输入法进程本身由系统 IMK 框架拉起（2026-10-26 起不再装 `ime.chaoset.inputmethod`
+常驻 LaunchAgent——额外的 LaunchAgent 会让活动监视器出现两个 ChaosetIME 进程；
+`install.sh` 会主动清理旧版遗留的该 plist）。
 
 `~/Library/LaunchAgents/ime.chaoset.daemon.plist`（把路径里的 `you` 换成实际值）：
 
@@ -180,11 +182,12 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 ## 卸载
 
 ```sh
-launchctl bootout gui/$(id -u)/ime.chaoset.inputmethod
 launchctl bootout gui/$(id -u)/ime.chaoset.daemon
-rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
 rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 rm -rf ~/Library/Input\ Methods/ChaosetIME.app
+# 旧版可能残留（已弃用，装新版时 install.sh 会自动清理）：
+launchctl bootout gui/$(id -u)/ime.chaoset.inputmethod 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
 ```
 
 ## 验证状态（2026-09-23，本机 macOS 15 / arm64）
@@ -202,8 +205,8 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
   `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
 - **v3 原生候选窗（当前默认）**：壳内 AppKit 自绘面板
-  （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色 NSColor
-  动态色自动跟随、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
+  （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色两套静态
+  sRGB 按 appearance 选择、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
   Composition（纯数据 IPC）。**v2 统一候选窗贴图**（`candidateImage`
   客户端方法 + NSPanel 贴图面板）已于 2026-10-27 删除——mac/Windows 两端壳
   均为原生自绘、Linux 改用 **ibus 原生面板**（不属本项目自绘）后，daemon 侧
@@ -220,7 +223,8 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
   `~/Library/Input Methods` 且注销重登，系统设置仍无此输入法，
   `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
   即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
-  单一 zh-Hans 模式（`…ChaosetIME.Hans`）修复。
+  单一 zh-Hans 模式（当时用 `…ChaosetIME.Hans`；现为 `…ChaosetIME.Pinyin`，
+  历史别名仅保留在 InfoPlist.strings 映射里）。
 - **2026-10-06 视觉与命名融入中国元素（显示名与图标部分已被 2026-10-22 取代）**：图标改为中国印章语汇——中国红渐变底、
   `0.022em` 白色外框 + 细内框、宋体（STSongti-SC-Bold，取不到则退系统中文字重）「超」字、
   大尺寸再叠三枚圆弧组成的如意云纹暗纹；当时中文显示名定为「超集拼音」（英文
@@ -518,6 +522,12 @@ rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 - 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；
   少数客户端（个别 Electron 应用、远程桌面）返回零矩形，此时退回鼠标位置，
   位置可能不理想。
+- 双拼 `;` 的标点宽度瞬态：全/半角开关归壳本地持有，引擎 session 的半角状态在
+  下一次 punct 请求时才更新；双拼模式下单独按 `;`（无暂存首键）时若刚切过
+  全/半角，可能按上一次的宽度出标点（1 键瞬态，2026-10-30 记录；修复需给
+  input 扩 halfWidth 参数，暂不扩协议）。
+- 首项超长候选现在按字符截断加「…」（2026-10-30），保证面板内容宽 ≤638pt、窗宽 ≤714pt；
+  候选文本本身不会被截断存储，VoiceOver 仍读完整文本。
 - 修改 app 后重装：`install.sh` 结束时会清 TIS 缓存并重启系统设置相关进程；重装期间
   如果系统设置正开着，请关掉后重新打开再看「添加输入法」列表（旧窗口可能停留在装前快照）。
   已经添加过的本输入法在该列表里呈灰色是正常现象（表示已启用，不能再添加一次）。

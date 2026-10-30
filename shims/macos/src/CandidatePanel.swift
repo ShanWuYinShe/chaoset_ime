@@ -131,6 +131,10 @@ final class CandidatePanelView: NSView {
     // 多次 NSString 文本测量，纯属重复计算（2026-10-27 性能审查）。
     private var cachedRows: [Row] = []
     private var cachedLineH: CGFloat = 0
+    // 首项超长候选的截断展示文本（索引 → 带省略号的文本）。布局时计算，
+    // draw 复用；未截断的候选不在表中（用 items 原文）。与 Windows 壳
+    // 「首项逐字截断 + …」策略对齐（2026-10-30 审计 A-P1-1）。
+    private var displayTexts: [Int: String] = [:]
     // VoiceOver 子元素的强引用（accessibilityChildren 每次刷新重建）
     var axChildren: [CandidateAXItem] = []
     override var isFlipped: Bool { true }
@@ -140,6 +144,7 @@ final class CandidatePanelView: NSView {
         self.items = candidates
         self.page = page
         self.pageCount = pageCount
+        displayTexts = [:] // 每次布局重算截断文本
         let (rows, lineH) = layoutRows()
         cachedRows = rows
         cachedLineH = lineH
@@ -196,9 +201,37 @@ final class CandidatePanelView: NSView {
             let p = pieces[next]
             let idxW = p.indexText.map { ceil(($0 as NSString).size(withAttributes: [.font: indexFont]).width) } ?? 0
             let chipW = idxW + Layout.chipPadX * 2
-            let textW = ceil((p.text as NSString).size(withAttributes: [.font: textFont]).width)
+            let chipTextGap = max(3, idxW * 45 / 100)
             let markW: CGFloat = p.fromUser ? ceil(("*" as NSString).size(withAttributes: [.font: textFont]).width) + 2 : 0
-            let boxW = p.padX * 2 + chipW + max(3, idxW * 45 / 100) + textW + markW
+            var textW = ceil((p.text as NSString).size(withAttributes: [.font: textFont]).width)
+            var boxW = p.padX * 2 + chipW + chipTextGap + textW + markW
+            // 首项独超宽：单条候选宽于内容上限时会把面板撑破 720pt、甚至越出
+            // 屏幕（Windows 壳早已按「首项逐字截断 + …」处理）。mac 是多行折行，
+            // 只有「一条候选自己就超宽」这一种情况需要截断，对齐 Windows 策略。
+            if rowFrames.isEmpty, boxW > maxContent {
+                let avail = maxContent - p.padX * 2 - chipW - chipTextGap - markW
+                let ellipsis = "…"
+                let ellipsisW = ceil((ellipsis as NSString).size(withAttributes: [.font: textFont]).width)
+                var display = ellipsis
+                if avail > ellipsisW {
+                    var chars = Array(p.text)
+                    while !chars.isEmpty {
+                        let candidate = String(chars) + ellipsis
+                        if ceil((candidate as NSString).size(withAttributes: [.font: textFont]).width) <= avail {
+                            display = candidate
+                            break
+                        }
+                        chars.removeLast()
+                    }
+                    if chars.isEmpty { display = ellipsis }
+                } else {
+                    display = "" // 极窄（理论上不会发生）：宁可不显示也不溢出
+                }
+                displayTexts[next] = display
+                textW = ceil((display as NSString).size(withAttributes: [.font: textFont]).width)
+                boxW = p.padX * 2 + chipW + chipTextGap + textW + markW
+                if boxW > maxContent { boxW = maxContent } // 防御：绝不突破内容上限
+            }
             let add = (rowFrames.isEmpty ? 0 : Layout.gap) + boxW
             if !rowFrames.isEmpty, rowW + add > maxContent {
                 newRow()
@@ -314,13 +347,15 @@ final class CandidatePanelView: NSView {
                 (idxText as NSString).draw(at: NSPoint(x: idxX, y: chipTop + Layout.chipPadY + (idxH - ceil(idxSize.height)) / 2), withAttributes: idxAttrs)
                 curX = chipRect.maxX + max(3, idxW * 45 / 100)
 
-                // 候选文本
+                // 候选文本（超长首项用布局阶段算好的截断文本，见 displayTexts；
+                // 未截断的候选直接用 items 原文，像素布局不变）
+                let displayText = displayTexts[frame.index] ?? item.text
                 let textAttrs: [NSAttributedString.Key: Any] = [
                     .font: textFont,
                     .foregroundColor: p ? theme.highlightText : theme.text,
                 ]
-                (item.text as NSString).draw(at: NSPoint(x: curX, y: y + (textH - textLineH) / 2), withAttributes: textAttrs)
-                let textW = ceil((item.text as NSString).size(withAttributes: [.font: textFont]).width)
+                (displayText as NSString).draw(at: NSPoint(x: curX, y: y + (textH - textLineH) / 2), withAttributes: textAttrs)
+                let textW = ceil((displayText as NSString).size(withAttributes: [.font: textFont]).width)
                 curX += textW
 
                 // 学习标记 *

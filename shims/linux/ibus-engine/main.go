@@ -7,11 +7,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"chaoset.ime/engine"
 )
@@ -86,6 +90,51 @@ func (f *repeatFlag) String() string { return strings.Join(*f, ",") }
 func (f *repeatFlag) Set(v string) error {
 	*f = append(*f, v)
 	return nil
+}
+
+// flushUserDictOnExit 退出路径的兜底落盘：先把延迟模式下的脏数据刷下去，
+// 再 Save 一次保证「内存态 = 磁盘态」。错误只记日志——退出路径上落盘失败
+// 不能反过来阻塞/改变退出码，学习数据是增量优化（与 chaosetd 同一原则）。
+func flushUserDictOnExit(u *engine.UserDict) {
+	if _, err := u.FlushIfDirty(); err != nil {
+		log.Printf("退出前用户词典落盘失败: %v", err)
+	}
+	if err := u.Save(); err != nil {
+		log.Printf("退出前保存用户词典失败: %v", err)
+	}
+}
+
+// startUserDictFlusher 启动延迟落盘的后台执行者（与 chaosetd 的 2s ticker
+// 同一策略，2026-10-30 审计 P1）。
+//
+// 为什么：Linux 此前只 NewUserDictLenient 而从未 SetDeferred(true)，每次
+// 选词都同步做 2–3 次「全量 MarshalIndent + 写临时文件 + rename」，学习
+// 数据越大按键越卡（daemon 侧早已修过同一问题，见 cmd/chaosetd）。
+// 错误只记一次，避免每 2s 刷屏；后续轮次仍会重试。
+func startUserDictFlusher(u *engine.UserDict) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		logged := false
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := u.FlushIfDirty(); err != nil && !logged {
+					logged = true
+					log.Printf("用户词典落盘失败: %v", err)
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // defaultUserDictPath 返回 XDG 规范下的用户词典路径。
@@ -176,15 +225,39 @@ func main() {
 	if userWarn != "" {
 		log.Printf("警告: %s", userWarn)
 	}
+	// 延迟落盘 + 2s 后台 ticker：与 daemon 对齐，避免每次选词同步全量重写
+	// 用户词典（2026-10-30 审计 P1：Linux 是唯一没启用延迟落盘的一端）。
+	user.SetDeferred(true)
+	stopFlusher := startUserDictFlusher(user)
+	defer stopFlusher()
 
 	// 联想开关传 configPath 与「flag 是否显式出现」：引擎在每次进入联想前
 	// 重读 config.json，设置窗口保存后对已打开的输入上下文立即生效
 	// （与 macOS/Windows 一致；命令行 -associate 显式覆盖时不再重读）。
 	factory, err := newIBusFactory(dict, user, *fuzzy, *trad, *sp, *assoc, *cfgPath, setFlags["associate"])
 	if err != nil {
+		// log.Fatal 走 os.Exit，defer 不会执行：先兜底落盘再退出。
+		flushUserDictOnExit(user)
 		log.Fatal(err)
 	}
+
+	// 进程退出兜底：factory.run() 收到 SIGINT/SIGTERM 时在内部直接
+	// os.Exit(0)（见 ibus.go），main 的 defer 不会执行。这里再注册一个信号
+	// 通道（signal.Notify 会广播给所有注册者），收到信号先同步落盘。
+	//
+	// 与 run() 内的 os.Exit 存在竞争：最坏情况仍只丢 2s（与 ticker 同量级）。
+	// 要做到零丢失需要 run() 的信号分支在 os.Exit 前同步落盘——那是
+	// ibus.go 的改动（本轮由另一 workstream 负责），已在报告中提交给 Lead。
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		flushUserDictOnExit(user)
+	}()
+
 	if err := factory.run(); err != nil {
+		flushUserDictOnExit(user)
 		log.Fatal(err)
 	}
+	flushUserDictOnExit(user)
 }

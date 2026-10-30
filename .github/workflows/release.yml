@@ -129,6 +129,9 @@ jobs:
           test -f dist/chaoset_amd64.deb || { echo "缺少 chaoset_amd64.deb"; exit 1; }
           sudo dpkg -i dist/chaoset_amd64.deb
           test -x /usr/bin/chaoset-engine || { echo "deb 未安装 /usr/bin/chaoset-engine"; exit 1; }
+          # 设置窗口脚本是 component XML <setup> 的入口，缺了会导致 ibus-setup
+          # 「首选项」点了没反应（2026-10-30 审计 B-P1-6）；deb/tar.gz/Arch 三个包都要有。
+          test -f /usr/share/chaoset/chaoset-setup.py || { echo "deb 缺少设置窗口脚本"; exit 1; }
           timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/deb-engine.log 2>&1 || true
           grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/deb-engine.log \
             || { echo "DEB 引擎未加载词库，日志："; cat /tmp/deb-engine.log; exit 1; }
@@ -143,11 +146,13 @@ jobs:
           grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/engine.log \
             || { echo "引擎未加载词库，日志："; cat /tmp/engine.log; exit 1; }
           grep -q '打开词库.*失败' /tmp/engine.log && { echo "引擎找不到词库"; cat /tmp/engine.log; exit 1; } || true
+          test -f /usr/share/chaoset/chaoset-setup.py || { echo "tar.gz 安装后缺少设置窗口脚本"; exit 1; }
           echo "tar.gz 冒烟校验通过"
 
           cd "$GITHUB_WORKSPACE"
           test -f dist/chaoset-ime-x86_64.pkg.tar.zst || { echo "缺少 chaoset-ime-x86_64.pkg.tar.zst"; exit 1; }
           tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q '.PKGINFO' || { echo "Arch 包缺少 .PKGINFO"; exit 1; }
+          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/chaoset/chaoset-setup.py'             || { echo "Arch 包缺少设置窗口脚本（ibus-setup 首选项会失效）"; exit 1; }
           echo "Arch Linux 包格式自检通过"
 
       - name: 上传产物
