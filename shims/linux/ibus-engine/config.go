@@ -27,7 +27,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+
+	"chaoset.ime/internal/appdirs"
 )
 
 // userConfig 是 config.json 的结构。
@@ -47,15 +48,11 @@ func (c userConfig) AssociateEnabled() bool {
 
 // defaultConfigPath 返回 XDG 规范下的配置文件路径。
 func defaultConfigPath() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".config")
+	path, err := appdirs.LinuxConfigPath()
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(base, "chaoset", "config.json")
+	return path
 }
 
 // loadUserConfig 读取配置文件。文件不存在视为全部默认（不报错）；

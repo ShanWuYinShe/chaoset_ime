@@ -1849,6 +1849,19 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：Python 单测（15+9 例）、`go test ./cmd/chaoset-userdict`、
         `make vet`/checker、`git diff --check` 通过。
 
+- [ ] 阶段 87：Linux 设置窗迁原生 GTK3 C（进行中，2026-11-01）
+      - **用户要求**：Linux shims 用原生实现，不额外引入 Python；macOS Swift /
+        Windows C++ 都是原生，Linux 不应是 Python。
+      - **本轮**：新增 `shims/linux/setup/chaoset-setup.c` + `setup_ctl.c/h`：
+        GTK3 设置窗（输入行为/学习数据/词库导入）与编排逻辑全部 C；只调用
+        Go 工具（chaoset-userdict / chaoset-import）和 ibus，不实现词库合并/
+        用户词典读写；`chaoset-userdict -print-paths` 新增 `config` 字段，
+        `appdirs.LinuxConfigPath` 与 ibus 引擎共用同一配置路径。
+      - **验证**：Ubuntu/Alpine 容器内 `pkg-config gtk+-3.0` 编译通过；
+        CI linux-e2e 新增原生 GTK3 编译步骤。
+      - **未完成**：Makefile/deb/Arch/tar/install.sh/component XML/CI/release/
+        checkuiparity 仍指向 Python 文件；下一步切换并删除 5 个 .py。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -126,6 +126,7 @@ func pathsJSON() (string, error) {
 	add("data", appdirs.DataDir)
 	add("userdict", appdirs.UserDictPath)
 	add("imported_dict", appdirs.ImportedDictPath)
+	add("config", appdirs.ConfigPath)
 	add("socket", appdirs.SocketPath)
 	data, err := json.Marshal(paths)
 	if err != nil {

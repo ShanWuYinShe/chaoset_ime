@@ -128,17 +128,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ibus dbus dbus-x11 gir1.2-ibus-1.0 python3-gi
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 python3-gi libgtk-3-dev
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
           chmod +x shims/linux/test-ci.sh
           ./shims/linux/test-ci.sh
 
-      # 设置窗脚本无法在无桌面 CI 里真正打开 GTK 窗口，但至少要保证：
-      #   ① 三个脚本语法正确（py_compile，不 import gi，可在无头环境跑）；
-      #   ② 学习数据 / 词库导入编排逻辑正确（依赖注入单测，不需要 GTK/ibus/真实
-      #      引擎；engine 包零改动的边界也由它们覆盖——只调用随包 CLI 本地模式）。
+      # Linux 设置窗正在从 Python/PyGObject 迁到原生 GTK3 C（用户要求 shim 用
+      # 原生实现、不引入 Python）。本步骤先保证 C 代码在真实 GTK3 头文件下可编译；
+      # 打包切换完成后，Python 步骤会被删除。
+      - name: 原生 GTK3 设置窗编译（C，无 Python）
+        run: |
+          sh shims/linux/setup/build.sh /tmp/chaoset-setup
+          file /tmp/chaoset-setup | grep -q ELF
+
+      # 迁移期保留 Python 设置窗测试（旧实现仍在包里）；原生 C 替换完成后删除。
       - name: 设置窗脚本语法检查 + 学习数据/词库导入助手单测（无 GTK）
         run: |
           python3 -m py_compile shims/linux/setup/chaoset-setup.py shims/linux/setup/userdict_ctl.py shims/linux/setup/dictimport_ctl.py

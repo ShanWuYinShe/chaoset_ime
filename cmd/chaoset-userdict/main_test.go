@@ -28,6 +28,9 @@ func TestPathsJSON(t *testing.T) {
 	if !strings.HasSuffix(paths["imported_dict"], "dict.tsv") {
 		t.Fatalf("imported_dict 路径错误: %q", paths["imported_dict"])
 	}
+	if !strings.HasSuffix(paths["config"], "config.json") {
+		t.Fatalf("config 路径错误: %q", paths["config"])
+	}
 }
 
 // TestRunDaemonTCPStats：daemon 模式的 endpoint 连接（TCP）能完成 stats 请求，
