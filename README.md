@@ -1865,6 +1865,16 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：Ubuntu/Alpine 容器内 GTK3 编译 + C 单测通过；
         `go test ./...`、`make vet`/checker、shell 语法检查通过。
 
+- [x] 阶段 88：原生设置窗无头启动冒烟 + Linux 测试脚本去 Python（2026-11-01）
+      - **CI**：linux-e2e 用 Xvfb 启动 `chaoset-setup` 3 秒，GTK 初始化/窗口
+        构建/配置读取在真实显示后端跑一遍；超时杀掉（124）视为正常常驻。
+      - **测试脚本**：`shims/linux/test.sh` 不再用 Python 启动引擎，改为 shell
+        `nohup ... &`；shim 与测试脚本均无 Python 依赖。
+      - **文档**：修正 `shims/linux/README` 的配置保存语义（C 实现只更新
+        associate、保留其它键，不再整文件覆盖）。
+      - **验证**：`bash -n shims/linux/test.sh`、checkworkflows、checkuiparity
+        通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

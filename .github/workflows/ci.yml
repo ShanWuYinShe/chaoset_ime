@@ -128,17 +128,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev file
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev file xvfb
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
           chmod +x shims/linux/test-ci.sh
           ./shims/linux/test-ci.sh
 
-      # Linux 设置窗正在从 Python/PyGObject 迁到原生 GTK3 C（用户要求 shim 用
-      # 原生实现、不引入 Python）。本步骤先保证 C 代码在真实 GTK3 头文件下可编译；
-      # 打包切换完成后，Python 步骤会被删除。
-      - name: 原生 GTK3 设置窗编译与无 GTK 单测（C，无 Python）
+      # Linux 设置窗是原生 GTK3 C（用户要求 shim 用原生实现、不引入 Python）。
+      # 除编译/无 GTK 单测外，再用 Xvfb 做一次无头启动冒烟：GTK 初始化、窗口
+      # 构建、配置读取都在真实显示后端下跑一遍；超时杀掉（124）视为正常常驻。
+      - name: 原生 GTK3 设置窗编译、单测与无头启动冒烟（C，无 Python）
         run: |
           sh shims/linux/setup/build.sh /tmp/chaoset-setup
           file /tmp/chaoset-setup | grep -q ELF
@@ -148,7 +148,17 @@ jobs:
             shims/linux/setup/test_setup_ctl.c shims/linux/setup/setup_ctl.c \
             $(pkg-config --libs glib-2.0)
           /tmp/test_setup_ctl
-
+          Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
+          sleep 1
+          set +e
+          DISPLAY=:99 timeout 3 /tmp/chaoset-setup > /tmp/setup-smoke.log 2>&1
+          smoke_rc=$?
+          set -e
+          if [ "$smoke_rc" -ne 124 ]; then
+            echo "设置窗未正常常驻（exit $smoke_rc）："
+            cat /tmp/setup-smoke.log
+            exit 1
+          fi
 
 
       # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄

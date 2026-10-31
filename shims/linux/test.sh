@@ -11,16 +11,11 @@ docker exec -d $NAME bash -c '
 export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus_addr)
 pkill -x chaoset-engine 2>/dev/null || true
 sleep 0.5
-python3 - <<"EOF" > /tmp/engine_launch.log 2>&1 &
-import subprocess, time, os
-addr = open("/tmp/dbus_addr").read().strip()
-env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=addr)
-# 常驻启动引擎
-subprocess.Popen(["/usr/local/bin/chaoset-engine",
-                  "-dict", "/usr/local/share/chaoset/dict.tsv",
-                  "-userdict", "/tmp/chaoset-userdict.json"], env=env)
-time.sleep(2)
-EOF
+# 直接后台启动引擎（不再经过 Python；shim 与测试脚本均不依赖 Python）。
+nohup /usr/local/bin/chaoset-engine \
+  -dict /usr/local/share/chaoset/dict.tsv \
+  -userdict /tmp/chaoset-userdict.json \
+  > /tmp/engine_launch.log 2>&1 &
 '
 
 sleep 4
