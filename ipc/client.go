@@ -104,6 +104,15 @@ func (c *Client) Input(text string) (engine.Composition, error) {
 	return comp, err
 }
 
+// InputWithHalfWidth 与 engine.Session.InputWithHalfWidth 对应：把壳侧的
+// 全/半角标点状态随 input 一起下发。双拼模式下 ';' 经 input 路径产生标点
+// 时，引擎必须用本次壳状态而不是上一次 punct 请求留下的旧值（2026-10-31）。
+func (c *Client) InputWithHalfWidth(text string, halfWidth bool) (engine.Composition, error) {
+	var comp engine.Composition
+	err := c.call("input", map[string]any{"text": text, "half": halfWidth}, &comp)
+	return comp, err
+}
+
 func (c *Client) Backspace() (engine.Composition, error) {
 	var comp engine.Composition
 	err := c.call("backspace", nil, &comp)

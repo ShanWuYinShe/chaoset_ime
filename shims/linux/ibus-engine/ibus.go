@@ -552,7 +552,10 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	// 非空 = 本次有文本要落盘（壳侧已确认段先拼接，一次提交），空 = 仅刷新组词。
 	// Shift+';' 的 keyval 是 ':'（0x3A），仍走下方标点分支输出「：」。
 	if e.dpScheme != "" && keyval == ';' && state&ibusShiftMask == 0 {
-		comp, _ := e.sess.Input(";")
+		// halfWidth 随每次 input 下发：dpPending==0 时引擎走 Punct(";") 语义，
+		// 标点宽度必须用本次壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出
+		// 标点（1 键瞬态，2026-10-31 修复）。
+		comp, _ := e.sess.InputWithHalfWidth(";", e.halfWidth)
 		if comp.Committed != "" {
 			e.commit(e.confirmedPreedit + comp.Committed)
 		} else {
@@ -563,7 +566,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 
 	switch {
 	case keyval >= 'a' && keyval <= 'z':
-		comp, _ := e.sess.Input(string(rune(keyval)))
+		comp, _ := e.sess.InputWithHalfWidth(string(rune(keyval)), e.halfWidth)
 		e.refresh(comp)
 		return true, nil
 
@@ -782,7 +785,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 
 	case keyval == '\'' && isComposing(e.sess):
 		// 组词中的撇号是音节分隔符（0x27 不在 a-z 分支内，在此分流）
-		comp, _ := e.sess.Input("'")
+		comp, _ := e.sess.InputWithHalfWidth("'", e.halfWidth)
 		e.refresh(comp)
 		return true, nil
 

@@ -191,6 +191,19 @@ func (s *Session) SetHalfWidth(on bool) {
 // HalfWidth 报告当前是否为半角标点模式。
 func (s *Session) HalfWidth() bool { return s.halfWidth }
 
+// InputWithHalfWidth 先同步壳侧的全/半角标点状态，再处理输入。
+//
+// 为什么需要单独一个方法：全/半角开关归壳本地持有，此前壳只在 punct 请求里
+// 下发 halfWidth；双拼模式下 ';' 经 input 路径处理（dpPending==0 时按
+// Punct(";") 语义上屏「首选词+分号」），引擎此时用的是上一次 punct 请求
+// 留下的旧状态——刚切完全/半角就单按 ';'，可能按旧宽度出标点（1 键瞬态，
+// 2026-10-30 记录、2026-10-31 修复）。壳现在每次 input 都带 half 字段，
+// 引擎先同步再处理，三端双拼 ';' 的标点宽度与全/半角开关严格一致。
+func (s *Session) InputWithHalfWidth(text string, halfWidth bool) (Composition, error) {
+	s.halfWidth = halfWidth
+	return s.Input(text)
+}
+
 func NewSession(dict *Dictionary, user *UserDict) *Session {
 	return &Session{dict: dict, user: user}
 }

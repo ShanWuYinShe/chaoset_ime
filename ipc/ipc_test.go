@@ -139,6 +139,65 @@ func TestServerPunct(t *testing.T) {
 	}
 }
 
+// input 的 half 字段：双拼 dpPending==0 时 ';' 的标点宽度必须用本次下发的
+// 壳状态（2026-10-31 修复 1 键瞬态）；省略 half 的旧客户端保持会话内旧状态。
+func TestServerInputHalfWidth(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "half.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	user, err := engine.NewUserDict(filepath.Join(dir, "user.json"))
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user, WithDoublePinyin(engine.DPSchemeMSPY))
+	go srv.Serve()
+
+	client, err := waitForDial(sock)
+	if err != nil {
+		t.Fatalf("连接 daemon 失败: %v", err)
+	}
+	defer client.Close()
+
+	// 半角：'；' 键应原样上屏 ASCII ';'
+	comp, err := client.InputWithHalfWidth(";", true)
+	if err != nil {
+		t.Fatalf("InputWithHalfWidth(半角) 失败: %v", err)
+	}
+	if comp.Committed != ";" {
+		t.Fatalf("半角模式 ';' 上屏 = %q, 期望 \";\"", comp.Committed)
+	}
+
+	// 全角：应上屏中文「；」
+	comp, err = client.InputWithHalfWidth(";", false)
+	if err != nil {
+		t.Fatalf("InputWithHalfWidth(全角) 失败: %v", err)
+	}
+	if comp.Committed != "；" {
+		t.Fatalf("全角模式 ';' 上屏 = %q, 期望「；」", comp.Committed)
+	}
+
+	// 旧客户端（不带 half）保持会话内旧状态：上一步刚设为全角，仍出「；」
+	comp, err = client.Input(";")
+	if err != nil {
+		t.Fatalf("旧客户端 Input(\";\") 失败: %v", err)
+	}
+	if comp.Committed != "；" {
+		t.Fatalf("旧客户端应保持会话内全角状态，实际 %q", comp.Committed)
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("关闭 server 失败: %v", err)
+	}
+}
+
 // userStats/userClear/userExport 协议往返：统计、清空、导出全链路。
 func TestServerUserDictMgmt(t *testing.T) {
 	dir := t.TempDir()

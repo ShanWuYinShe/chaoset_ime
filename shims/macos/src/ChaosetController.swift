@@ -380,7 +380,7 @@ final class ChaosetController: IMKInputController {
         // 语义把「组词中首选词 + 分号」放进 Committed。Shift+';' 产生 ':'，
         // 不在此列（仍走下方标点分支，与 Windows/Linux 字符级判定一致）。
         if !engine.doublePinyinScheme.isEmpty, chars == ";" {
-            guard let comp = engine.input(chars) else {
+            guard let comp = engine.input(chars, halfWidth: halfWidth) else {
                 return passThrough(client) // daemon 不可达：绝不吞键
             }
             current = comp
@@ -405,7 +405,7 @@ final class ChaosetController: IMKInputController {
                 exitAssociate()
             }
             if scalar == "'", current?.input.isEmpty == false {
-                current = engine.input(chars)
+                current = engine.input(chars, halfWidth: halfWidth)
                 refresh(client)
                 return true
             }
@@ -433,7 +433,7 @@ final class ChaosetController: IMKInputController {
         // 放行这个字母，让用户至少还能用英文继续输入，而不是静默吞掉。
         // （EngineClient 内部有 1 秒失败冷却，daemon 恢复后下一次按键会自动重连。）
         if isCompositionChar(chars) {
-            guard let comp = engine.input(chars) else {
+            guard let comp = engine.input(chars, halfWidth: halfWidth) else {
                 return passThrough(client)
             }
             current = comp

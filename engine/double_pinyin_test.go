@@ -139,6 +139,29 @@ func TestDoublePinyinSession(t *testing.T) {
 	}
 }
 
+// TestDoublePinyinSemicolonHalfWidth：双拼 dpPending==0 时 ';' 走 Punct 语义，
+// 标点宽度必须来自本次 input 下发的壳状态（InputWithHalfWidth），而不是上一次
+// punct 请求留下的旧值（2026-10-30 记录的 1 键瞬态）。
+func TestDoublePinyinSemicolonHalfWidth(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	s.SetDoublePinyin(DPSchemeMSPY)
+
+	comp, err := s.InputWithHalfWidth(";", true)
+	if err != nil {
+		t.Fatalf("半角 ';' 输入失败: %v", err)
+	}
+	if comp.Committed != ";" {
+		t.Fatalf("半角模式 ';' 应上屏 ASCII ';'，实际 %q", comp.Committed)
+	}
+	comp, err = s.InputWithHalfWidth(";", false)
+	if err != nil {
+		t.Fatalf("全角 ';' 输入失败: %v", err)
+	}
+	if comp.Committed != "；" {
+		t.Fatalf("全角模式 ';' 应上屏「；」，实际 %q", comp.Committed)
+	}
+}
+
 // 已知键位抽查——小鹤（与 Rime double_pinyin_flypy 方案语义一致）：
 // hao=hc、shi=ui、zhang=vh、zhuang=vl、xian=xm、kuai=kk、jiong=js、
 // hua=hx、bei=bw、dui=dv、xun=xy、ying=yk、an=aj、ang=ah、ai=ad、

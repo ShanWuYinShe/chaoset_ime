@@ -2576,7 +2576,7 @@ private:
                 return false;
             }
             std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));
-            comp_ = session_.input(ch);
+            comp_ = session_.input(ch, halfWidth_);
             if (!comp_.ok) {
                 // 偶发断开（连接已不在且不在失败冷却）：重连后重试一次，绝不
                 // 轻易泄露首字母到宿主程序。此前这里无条件 closeConn 清零
@@ -2584,7 +2584,7 @@ private:
                 // 宿主 UI 线程每键被阻塞 ~200ms；现在尊重 failConn 冷却，
                 // 冷却期内直接降级放行（2026-10-27 审查发现）。
                 if (!transport_.isConnected() && transport_.ensureConnected()) {
-                    comp_ = session_.input(ch);
+                    comp_ = session_.input(ch, halfWidth_);
                 }
             }
             if (!comp_.ok) {
@@ -2637,11 +2637,11 @@ private:
         // 不是 punct，引擎才能在双拼键位状态机里看到它。Shift+; 产生的
         // ':' 不在此列（仍走下方标点分支），与 mac 的字符级判定一致。
         if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftActive())) {
-            comp_ = session_.input(";");
+            comp_ = session_.input(";", halfWidth_);
             if (!comp_.ok) {
                 // 与字母/撇号分支同一重连策略：尊重连接失败冷却
                 if (!transport_.isConnected() && transport_.ensureConnected()) {
-                    comp_ = session_.input(";");
+                    comp_ = session_.input(";", halfWidth_);
                 }
             }
             if (!comp_.ok) {
@@ -2668,11 +2668,11 @@ private:
         if (const char* key = keyPunctChar(vk, shiftActive())) {
             if (vk == kVkOemQuotes && isComposing()) {
                 // 组词中的撇号是音节分隔符，走组词流程
-                comp_ = session_.input("'");
+                comp_ = session_.input("'", halfWidth_);
                 if (!comp_.ok) {
                     // 只在偶发断开时重连重试（尊重失败冷却，见字母分支注释）
                     if (!transport_.isConnected() && transport_.ensureConnected()) {
-                        comp_ = session_.input("'");
+                        comp_ = session_.input("'", halfWidth_);
                     }
                 }
                 if (!comp_.ok) {

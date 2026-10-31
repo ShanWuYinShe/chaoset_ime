@@ -213,6 +213,8 @@ package-windows:
 	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
+	# 用户词典管理工具：与 Linux 包对齐（Windows 上必须用 -tcp 连 daemon）。
+	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-userdict.exe ./cmd/chaoset-userdict
 	# 资源文件编译（将应用图标嵌入 DLL，确保 Windows 语言栏与切换菜单显示专属图标）
 	x86_64-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
 	i686-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
@@ -235,7 +237,7 @@ package-windows:
 	cp shims/windows/install.bat dist/chaoset-windows-x64/
 	cp shims/windows/README.md dist/chaoset-windows-x64/
 	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
-	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe; do \
+	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe dist/chaoset-windows-x64/chaoset-userdict.exe; do \
 		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
 	done
 	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }

@@ -336,9 +336,14 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     return JsonValue();
 }
 
-Comp Session::input(const std::string& text) {
+Comp Session::input(const std::string& text, bool halfWidth) {
     bool ok = false;
-    JsonValue result = call("input", "{\"text\":\"" + jsonEscape(text) + "\"}", &ok);
+    // half 与 Go 侧 ipc 的 input 可选字段对应（2026-10-31）：引擎在双拼
+    // dpPending==0 的 ';' 上走 Punct 语义，标点宽度必须用本次壳状态。
+    JsonValue result = call("input",
+                            "{\"text\":\"" + jsonEscape(text) + "\",\"half\":" +
+                                (halfWidth ? "true" : "false") + "}",
+                            &ok);
     if (!ok) return Comp();
     return parseComposition(result);
 }

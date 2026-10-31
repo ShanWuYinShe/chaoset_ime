@@ -1502,6 +1502,28 @@ func requireDoublePinyinSemicolon(t *testing.T, d *engine.Dictionary, scheme str
 	}
 }
 
+// TestDoublePinyinSemicolonHalfWidth：双拼 dpPending==0 时 ';' 走 Punct 语义，
+// 标点宽度必须用壳本次下发的全/半角状态，而不是上一次 punct 请求留下的旧值
+// （2026-10-30 记录的 1 键瞬态，2026-10-31 修复：input 带 half 字段）。
+func TestDoublePinyinSemicolonHalfWidth(t *testing.T) {
+	e, fe := newDoublePinyinTestEngine(t, engine.DPSchemeMSPY)
+
+	e.halfWidth = true
+	handled, _ := e.ProcessKeyEvent(uint32(';'), 0, 0)
+	if !handled {
+		t.Fatal("双拼 ';' 应被消费（走 input 路由）")
+	}
+	if got := fe.lastCommitText(); got != ";" {
+		t.Fatalf("半角模式 ';' 应上屏 ASCII ';'，实际 %q", got)
+	}
+
+	e.halfWidth = false
+	e.ProcessKeyEvent(uint32(';'), 0, 0)
+	if got := fe.lastCommitText(); got != "；" {
+		t.Fatalf("全角模式 ';' 应上屏「；」，实际 %q", got)
+	}
+}
+
 // TestDoublePinyinSemicolonComposesIng：微软双拼的 ing 韵母落在 ';' 键上，
 // 喂 'm' 再喂 ';'（keyval 0x3B）应组成 ming 预编辑，绝不能把「；」当标点
 // 提交（否则双拼用户永远打不出 ing 音节）。

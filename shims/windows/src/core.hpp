@@ -87,7 +87,11 @@ class Session {
 public:
     explicit Session(Transport& t) : t_(t) {}
 
-    Comp input(const std::string& text);
+    // 处理输入。halfWidth 是壳本地持有的全/半角标点状态，随每次 input 下发
+    // （IPC 可选字段 "half"）：双拼 dpPending==0 的 ';' 会走引擎 Punct 语义，
+    // 宽度必须用本次壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点
+    // （1 键瞬态，2026-10-31 修复）。默认 false 仅供核心层测试的旧调用。
+    Comp input(const std::string& text, bool halfWidth = false);
     Comp backspace();
     Comp reset();
     // 候选翻页：daemon 钳制边界；通信失败返回 ok=false。

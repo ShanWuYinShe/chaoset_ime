@@ -22,11 +22,11 @@ func check(_ cond: Bool, _ msg: String) {
 }
 
 // 1. 连接与组词
-let c1 = client.input("n")
+let c1 = client.input("n", halfWidth: false)
 check(c1 != nil, "连接 daemon（input 命令有响应）")
 
 // 2. 追加输入 + 预编辑 + 候选
-let c2 = client.input("ihao")
+let c2 = client.input("ihao", halfWidth: false)
 check(c2?.preedit == "ni'hao", "预编辑 ni'hao（实际 \(c2?.preedit ?? "nil")）")
 check(c2?.candidates.first?.text == "你好", "第一候选 你好（实际 \(c2?.candidates.first?.text ?? "nil")）")
 
@@ -38,7 +38,7 @@ check(committed == "你好", "上屏 你好（实际 \(committed ?? "nil")）")
 // （不用裸 xian 断言：真实词库里 xian 的单字候选太多，西安会排到十几页之后，
 //  那是正常排序，不能作为链路是否正常的判据。）
 _ = client.reset()
-let c3 = client.input("xi'an")
+let c3 = client.input("xi'an", halfWidth: false)
 check(c3?.preedit == "xi'an", "预编辑 xi'an（实际 \(c3?.preedit ?? "nil")）")
 check(c3?.candidates.first?.text == "西安", "xi'an 第一候选 西安（实际 \(c3?.candidates.first?.text ?? "nil")）")
 // 退格留在本次组词内（Reset 会清空输入，退格才对组词生效），故此处不 Reset

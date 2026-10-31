@@ -511,7 +511,10 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 
 帧格式：4 字节大端长度 + JSON 载荷（上限 1 MiB）。
 
-- 请求：`{"id":1,"method":"input","params":{"text":"nihao"}}`
+- 请求：`{"id":1,"method":"input","params":{"text":"nihao","half":false}}`
+  （`half` 可选：壳侧全/半角标点状态，2026-10-31 起每次 input 下发；旧壳省略
+  时保持会话内旧状态。双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次
+  壳状态，否则会有 1 键瞬态。）
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法（16 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
@@ -1024,15 +1027,31 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         import），shell 层版本仍看包信息（mac Info.plist / Windows DLL 暂无
         VERSIONINFO 资源）；④ Linux 进程内引擎不经过 daemon 的 IPC panic 隔离
         （引擎 panic 会重启 ibus 引擎进程，会话状态丢失；mac/Windows 走 daemon
-        的隔离路径）；⑤ 随包工具集不同——Linux 包含 daemon/cli/import/userdict/
-        engine，Windows 包含 daemon/cli/import，mac 包含 daemon/import（GUI
-        内嵌）。因此 `-tcp` 在 Windows 上随包可直接用的是 `chaoset-cli.exe`，
-        `chaoset-userdict.exe` 需源码构建；工具集补齐待后续打包批次。
+        的隔离路径）；⑤ 随包工具集——Linux 包含 daemon/cli/import/userdict/
+        engine，Windows 包含 daemon/cli/import/userdict（2026-10-31 补 userdict，
+        与 Linux 对齐；`-tcp` 可直接用），mac 包含 daemon/import（GUI 内嵌，
+        CLI 工具仍从源码构建）。
       - **未做（明确记录）**：滚轮翻页在 Windows 不可行（`WM_MOUSEWHEEL` 只发给
         焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，
         与用户「游戏不干扰鼠标」的硬要求冲突）；无障碍 UIA、per-monitor DPI、
-        设置窗深色、多行折行、Option/Alt+Backspace 三端语义、双拼 `;` 半角瞬态
-        仍记录在 docs/ui-parity 与各端 README。
+        设置窗深色、多行折行、Option/Alt+Backspace 三端语义仍记录在
+        docs/ui-parity 与各端 README。
+
+- [x] 阶段 33：双拼 `;` 标点宽度瞬态修复 + Windows 工具集对齐（2026-10-31）
+      - **双拼 `;` 半角瞬态（三端一致性问题）**：全/半角开关归壳本地持有，此前
+        壳只在 punct 请求里下发 `half`；双拼模式 `;` 经 input 路径处理
+        （dpPending==0 时按 Punct 语义上屏），引擎用的是上一次 punct 留下的旧
+        状态 → 刚切全/半角后单按 `;` 可能按旧宽度出标点。现在 `input` 新增可选
+        `half` 字段，三端壳每次按键下发全/半角状态（引擎 `InputWithHalfWidth`
+        先同步再处理）；旧壳省略字段时保持会话内旧状态（协议向后兼容）。
+      - **Windows 工具集对齐**：`chaoset-userdict.exe` 随 Windows zip 发布（此前
+        只有 Linux 包带该工具，Windows 用户需源码构建才能用 `-tcp` 管理用户
+        词典）；release 包内容自检同步断言该文件存在。
+      - **测试**：engine 新增 `TestDoublePinyinSemicolonHalfWidth`；IPC 新增
+        `TestServerInputHalfWidth`（含旧客户端省略 half 的兼容路径）；Linux 新增
+        `TestDoublePinyinSemicolonHalfWidth`（壳侧路由 + 引擎状态联动）。
+      - **文档**：README IPC 协议补 `half` 字段；ui-parity 双拼 `;` 行更新；
+        mac/windows README 的「已知限制」改为「已修复」说明。
 
 ## 验收范围确认（2026-09-23）
 

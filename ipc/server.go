@@ -139,9 +139,17 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "input":
 		var p struct {
 			Text string `json:"text"`
+			// Half 可选：壳侧全/半角标点状态（2026-10-31 起每次 input 下发）。
+			// nil = 旧壳未提供，保持会话内旧状态（向后兼容）；非 nil 时先同步
+			// 再处理——双拼 dpPending==0 的 ';' 走 Punct 语义，宽度必须用本次
+			// 壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点（1 键瞬态）。
+			Half *bool `json:"half"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, fmt.Errorf("解析 input 参数失败: %w", err)
+		}
+		if p.Half != nil {
+			return sess.InputWithHalfWidth(p.Text, *p.Half)
 		}
 		return sess.Input(p.Text)
 	case "backspace":

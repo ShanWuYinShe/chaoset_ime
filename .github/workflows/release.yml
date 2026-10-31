@@ -216,7 +216,7 @@ jobs:
         run: |
           unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
           cd /tmp/winpkg/chaoset-windows-x64
-          for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe README.md; do
+          for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaoset-cli.exe chaoset-import.exe chaoset-userdict.exe README.md; do
             test -f "$f" || { echo "缺少必要文件: $f"; ls -la; exit 1; }
           done
           file chaosetd.exe | grep -q 'PE32+' || { echo "chaosetd.exe 不是 Windows PE"; exit 1; }

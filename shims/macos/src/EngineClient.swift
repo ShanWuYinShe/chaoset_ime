@@ -252,8 +252,11 @@ final class EngineClient {
                     pageCount: pageCount, committedText: committed, shuangpin: shuangpin)
     }
 
-    func input(_ text: String) -> Comp? {
-        parseComp(call(method: "input", params: ["text": text]))
+    /// 处理输入。halfWidth 是壳本地持有的全/半角标点状态，随每次 input 下发：
+    /// 双拼 dpPending==0 的 ';' 会走引擎的 Punct 语义，宽度必须用本次壳状态，
+    /// 否则刚切全/半角后单按 ';' 会按旧宽度出标点（1 键瞬态，2026-10-31 修复）。
+    func input(_ text: String, halfWidth: Bool) -> Comp? {
+        parseComp(call(method: "input", params: ["text": text, "half": halfWidth]))
     }
 
     func backspace() -> Comp? {
