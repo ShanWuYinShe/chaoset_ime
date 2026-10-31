@@ -1516,6 +1516,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
         `git diff --check` 通过；linux-e2e 由 CI 真实验证。
 
+- [x] 阶段 62：Linux 设置窗耗时操作改后台线程（2026-10-31）
+      - **问题**：清空学习数据要 `ibus exit`/重启（~2s），导入大词库可能数秒；
+        此前同步跑在 GTK 主线程，设置窗口点按钮后「假死」无响应。
+      - **实现**：新增 `run_async(work, done)`——工作线程只跑 subprocess/文件 IO，
+        完成后经 `GLib.idle_add` 回主线程恢复窗口敏感度并显示结果；清空/导出/
+        导入三处接入。GTK 非线程安全，工作线程绝不碰控件。
+      - **机器检查**：checkuiparity「学习数据 GUI」组断言 linuxSetup 保留
+        `GLib.idle_add` / `threading.Thread`。
+      - **文档**：Linux README、README 阶段 62。
+      - **验证**：`py_compile`、Python 单测、`make vet`/checker、`git diff --check`
+        通过；GUI 线程行为需桌面环境真机点验。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

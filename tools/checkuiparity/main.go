@@ -445,7 +445,8 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "学习数据 GUI", winShell,
 		"userStats", "userClear", "userExportAll")
 	checkContains(fsys, &problems, "学习数据 GUI", linuxSetup,
-		"userdict_ctl.stats", "userdict_ctl.clear_learning_data", "userdict_ctl.export")
+		"userdict_ctl.stats", "userdict_ctl.clear_learning_data", "userdict_ctl.export",
+		"GLib.idle_add", "threading.Thread")
 	checkContains(fsys, &problems, "学习数据 GUI", linuxCtl,
 		"chaoset-userdict", "-userdict", "clear_learning_data", "ibus")
 	// engine 包纯净约束：Linux 设置窗只能走 chaoset-userdict 本地文件模式，

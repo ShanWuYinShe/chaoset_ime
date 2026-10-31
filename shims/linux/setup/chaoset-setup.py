@@ -24,10 +24,13 @@
 # 学习数据操作全部在 userdict_ctl.py、词库导入在 dictimport_ctl.py（均无 GTK
 # 依赖，便于 CI 单测）：只调用随包 chaoset-userdict / chaoset-import，engine
 # 包零改动（保持纯拼音逻辑）；导入的用户词库由 ibus 引擎启动时自动加载。
+# 耗时操作（清空/导入/导出）在后台线程执行，完成后经 GLib.idle_add 回主线程
+# 更新 UI——GTK 非线程安全，工作线程绝不碰控件（2026-10-31）。
 
 import json
 import os
 import sys
+import threading
 
 # 与本脚本同目录（安装后 /usr/share/chaoset/）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +44,7 @@ except ImportError as exc:
 try:
     import gi
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gtk
+    from gi.repository import GLib, Gtk
 except Exception as exc:  # noqa: BLE001 —— 无头环境/缺 GTK 时给出可读错误
     print("需要 GTK3（Debian/Ubuntu 装 python3-gi）：%s" % exc, file=sys.stderr)
     sys.exit(1)
@@ -177,6 +180,29 @@ class ChaosetSetupApp(Gtk.Application):
             ok, text = userdict_ctl.stats()
             stats_label.set_text(text if ok else "无法读取学习数据：%s" % text)
 
+        def run_async(work, done):
+            """耗时操作放后台线程，完成后经 GLib.idle_add 回主线程更新 UI。
+
+            GTK 不是线程安全的：工作线程只跑 subprocess/文件 IO，绝不碰控件；
+            清空学习数据要重启 ibus（~2s）、导入大词库可能数秒，同步执行会让
+            设置窗口「假死」（用户点按钮后界面无响应）。
+            """
+            win.set_sensitive(False)
+
+            def runner():
+                try:
+                    result = work()
+                except Exception as exc:  # noqa: BLE001 —— 后台异常必须回到 UI 显示
+                    result = (False, "操作失败：%s" % exc)
+                GLib.idle_add(finish, result)
+
+            def finish(result):
+                win.set_sensitive(True)
+                done(result)
+                return False  # GLib.idle_add 回调返回 False 表示只执行一次
+
+            threading.Thread(target=runner, daemon=True).start()
+
         def on_clear(_btn):
             dlg = Gtk.MessageDialog(transient_for=win, modal=True,
                                     message_type=Gtk.MessageType.WARNING,
@@ -189,13 +215,12 @@ class ChaosetSetupApp(Gtk.Application):
             dlg.destroy()
             if resp != Gtk.ResponseType.OK:
                 return
-            win.set_sensitive(False)
-            try:
-                ok, text = userdict_ctl.clear_learning_data()
-            finally:
-                win.set_sensitive(True)
-            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
-            refresh_stats()
+            def done(result):
+                ok, text = result
+                show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+                refresh_stats()
+
+            run_async(userdict_ctl.clear_learning_data, done)
 
         def on_export(_btn):
             chooser = Gtk.FileChooserDialog(
@@ -214,8 +239,10 @@ class ChaosetSetupApp(Gtk.Application):
             chooser.destroy()
             if resp != Gtk.ResponseType.OK or not path:
                 return
-            ok, text = userdict_ctl.export(path)
-            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+            run_async(lambda: userdict_ctl.export(path),
+                      lambda result: show_message(
+                          Gtk.MessageType.INFO if result[0] else Gtk.MessageType.ERROR,
+                          result[1]))
 
         def on_import_dict(_btn):
             chooser = Gtk.FileChooserDialog(
@@ -240,12 +267,10 @@ class ChaosetSetupApp(Gtk.Application):
             chooser.destroy()
             if resp != Gtk.ResponseType.OK or not paths:
                 return
-            win.set_sensitive(False)
-            try:
-                ok, text = dictimport_ctl.import_files(paths)
-            finally:
-                win.set_sensitive(True)
-            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+            run_async(lambda: dictimport_ctl.import_files(paths),
+                      lambda result: show_message(
+                          Gtk.MessageType.INFO if result[0] else Gtk.MessageType.ERROR,
+                          result[1]))
 
         clear_btn.connect("clicked", on_clear)
         export_btn.connect("clicked", on_export)
