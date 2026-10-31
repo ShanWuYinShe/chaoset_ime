@@ -68,6 +68,9 @@ if [ -f setup/chaoset-setup.py ]; then
   echo "==> 安装设置窗口到 $PREFIX_SHARE"
   install -d "$PREFIX_SHARE"
   install -m755 setup/chaoset-setup.py "$PREFIX_SHARE/chaoset-setup.py"
+  # 设置窗的「学习数据」操作模块（2026-10-31）；与设置窗同目录，缺失时
+  # GTK 脚本 import 失败 → 整个设置窗打不开，所以必须随 setup 一起装。
+  install -m755 setup/userdict_ctl.py "$PREFIX_SHARE/userdict_ctl.py"
 fi
 
 echo "==> 安装二进制到 $PREFIX_BIN"

@@ -1106,6 +1106,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         多选文件、取消对话框、错误词库文件（非法音节应失败且不改词库）、成功后
         daemon 重启与备份文件生成。
 
+- [x] 阶段 37：Linux 学习数据管理搬进 GTK 设置窗（2026-10-31，engine 零改动）
+      - **架构红线**：engine 包保持绝对纯净（只做拼音匹配，无任何平台相关代码）。
+        本阶段**没有**给引擎/ibus 壳加 DBus 或管理接口；GTK 设置窗改为调用随包
+        `chaoset-userdict` 的**本地文件模式**（`-userdict FILE` stats/clear/export，
+        与 daemon 模式共用同一份 `engine.UserDict` 逻辑）完成学习数据管理。
+      - **GTK 设置窗**：新增「学习数据」区（统计行、清空二次确认、导出 TSV），
+        与 macOS/Windows 设置窗同构；`userdict_ctl.py` 与设置窗同目录安装。
+      - **清空的安全编排**：引擎内存态会在延迟落盘（≤2s）时把旧数据写回文件，
+        所以清空前必须确认没有 `chaoset-engine` 进程存活——流程为 `ibus exit`
+        → SIGTERM 全部引擎并等待退出（超时 SIGKILL）→ 清空文件 → `ibus restart`
+        （失败再试 `ibus start`）；任何一步失败都中止且提示，绝不带着存活引擎清空。
+        清空会短暂重启输入法，确认框已提示。
+      - **测试**：`test_userdict_ctl.py` 11 项单测（依赖注入，无 GTK/ibus/引擎）覆盖
+        编排顺序与失败边界；本机用真实 `chaoset-userdict` 对临时 userdict 验证
+        stats/export/clear 全链路；CI linux-e2e 增加该单测步骤。
+      - **打包**：deb/tar.gz/Arch 三个包都安装 `userdict_ctl.py`，发布冒烟断言其
+        存在（缺了设置窗 import 失败、整个窗口打不开）。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -134,6 +134,12 @@ jobs:
         run: |
           chmod +x shims/linux/test-ci.sh
           ./shims/linux/test-ci.sh
+
+      # 设置窗「学习数据」编排逻辑（清空时停 ibus/引擎→清空→恢复）：
+      # 依赖注入单测，不需要 GTK/ibus/真实引擎；engine 包零改动的边界也由
+      # 本测试覆盖（只调用 chaoset-userdict 本地文件模式）。
+      - name: 设置窗学习数据助手单测（无 GTK）
+        run: python3 shims/linux/setup/test_userdict_ctl.py
   # ── 5. macOS 构建 + 等价性 + 双端视觉一致性（本机跑要 2-3 分钟）─────
   # 此前这些只在打 tag 的 release.yml 里跑，PR/日常提交无从验证——改动一旦
   # 破坏 macOS 壳或两端视觉一致性，要到发版才发现。现在 PR 也跑。

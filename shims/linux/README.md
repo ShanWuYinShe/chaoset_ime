@@ -47,17 +47,26 @@ Page Up/Down 六个键都翻联想页；面板翻页箭头（ibus PageUp/PageDow
 **全/半角标点**（Shift+空格）：开关归壳本地持有（2026-10-29 起三端统一），
 切换不经 daemon 往返，状态经 SetHalfWidth 随标点请求告知引擎。
 
-**设置项**：「词组联想」在三端一致的**设置窗口**里配置（2026-10-29 起）；
-学习数据统计/清空/导出暂未进 GTK 设置窗（引擎在 ibus 进程内、无 IPC，需引擎侧
-DBus 接口，后续；当前用 `chaoset-userdict` 高级兜底）：
+**设置项**：「词组联想」与「学习数据」（统计/清空/导出）都在三端一致的
+**设置窗口**里配置（联想 2026-10-29 起，学习数据 2026-10-31 起）：
 ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
 运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
 Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 /
-说明文字）。窗口写 config.json 的 `"associate"`（缺省开启，显式 false 关闭），
+分组「学习数据」/ 说明文字）。窗口写 config.json 的 `"associate"`（缺省开启，显式 false 关闭），
 **保存即生效**：引擎在每次进入联想前重读 config.json，已打开的输入上下文下一次
 选词就按新设置执行（2026-10-30 起与 macOS/Windows「每次选词前重读设置」同语义，
 无需 `ibus restart`；此前只在引擎启动时读一次，是文档与实现不符的遗留问题）。
 config.json 仍可直接手工编辑。
+
+**学习数据（2026-10-31）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
+提供「清空学习数据…」（二次确认）与「导出学习数据…」（TSV，可回灌
+`chaoset-import`）。实现刻意**不碰 engine 包**（保持纯拼音逻辑）也不改 ibus
+引擎壳：GTK 脚本调用随包 `chaoset-userdict` 的本地文件模式（-userdict FILE）
+完成 stats/clear/export，清空时由设置窗编排 `ibus exit` → SIGTERM 全部
+`chaoset-engine` 进程并等待退出 → 清空文件 → `ibus restart`（失败再试
+`ibus start`）。只有确认没有引擎存活才清空，否则引擎内存态会在下一次延迟落盘
+时把旧数据写回。清空会短暂重启输入法（期间不可用），确认框已提示；
+`userdict_ctl.py` 与设置窗同目录安装（缺了设置窗无法启动，发布冒烟已断言）。
 
 **学习标记（不适用）**：macOS/Windows 候选窗对「被用户数据加权」的候选在文本后
 绘制绿色 `*`；ibus 面板端不适用——`IBusLookupTable` 的候选文本是唯一显示载体

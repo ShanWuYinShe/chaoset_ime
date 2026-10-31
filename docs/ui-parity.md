@@ -148,7 +148,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 齿轮 hover | 无 | 无 | v5 起刻意移除（用户反馈「随输入变色」观感差） |
 | 设置入口 | 齿轮 → NSSwitch 设置窗 | 齿轮 → Win32 设置窗 | Windows **没有**语言栏菜单/托盘入口（此前 README 描述有误，已修正）；唯一入口是候选栏齿轮 |
 | 设置窗视觉 | 380×330pt（2026-10-31 加学习数据区）、NSSwitch、13/11pt、跟随系统深浅 | 380×390pt（2026-10-31 加词库区）、13/11pt、**跟随系统深浅**（DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）、per-monitor DPI | Windows 深色/DPI 为编译级实现，**需真机验收**；mac/Linux 跟随系统 |
-| 学习数据管理 | 设置窗「学习数据」区：统计 / 清空（二次确认）/ 导出 TSV（2026-10-31） | 同左（2026-10-31；设置窗独立 TcpTransport 连 daemon，不持有 TIP 指针） | Linux 待（引擎在 ibus 进程内无 IPC，需引擎侧 DBus 接口）；`chaoset-userdict` CLI 仅高级/无 GUI 兜底 |
+| 学习数据管理 | 设置窗「学习数据」区：统计 / 清空（二次确认）/ 导出 TSV（2026-10-31） | 同左（2026-10-31；设置窗独立 TcpTransport 连 daemon，不持有 TIP 指针） | 同左（2026-10-31；GTK 设置窗调用随包 `chaoset-userdict` 本地文件模式，清空时编排 `ibus exit` → 停引擎 → 清空 → `ibus restart`；**engine 包零改动**，无 DBus/平台代码进入引擎） |
 | 词库导入 | Setup.app GUI：种子+现用+所选 → 备份 → 原子替换（2026-10-26） | 设置窗「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ `chaoset-import` 合并 → 备份 → 同卷原子替换 → 重启 daemon（2026-10-31） | Linux 目前仅 CLI `chaoset-import`（GTK 设置窗导入待后续） |
 | 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗 | **下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除 UAF） | Linux 同为下次按键生效（只写 config.json）；mac 走通知立即收起 |
@@ -164,6 +164,10 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第七轮（2026-10-31，`feat/linux-gui-userdict`）：Linux 学习数据管理进 GTK 设置窗
+（调用 `chaoset-userdict` 本地文件模式；清空编排 `ibus exit`→停引擎→清空→
+`ibus restart`；engine 包零改动，无 DBus/平台代码）。
 
 第六轮（2026-10-31，`feat/win-settings-dark-dpi`）：Windows 设置窗深色跟随系统
 （DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）+ 三处 per-monitor DPI
