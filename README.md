@@ -27,7 +27,7 @@ macOS InputMethodKit 本身就是进程间模型）。
 ```
 ┌──────────────────── chaosetd (Go，一份代码) ────────────────────┐
 │  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习           │
-│  ipc  ：length-prefixed JSON over Unix socket / TCP 回环          │
+│  ipc  ：length-prefixed JSON over Unix socket / 命名管道 / TCP    │
 └────────┬───────────────────┬───────────────────┬───────────────┘
    macOS │             Windows│              Linux │
   IMK 薄壳          TSF COM 薄壳 DLL       ibus engine（DBus 胶水）
@@ -552,8 +552,9 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
 「机器检查覆盖」）。
 
-传输形态：Linux/macOS 用 Unix socket；Windows 壳经 TCP 回环
-（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
+传输形态：macOS/Linux 用 Unix socket；Windows daemon 已支持命名管道（`-pipe`，
+按当前用户 SID 生成、ACL 限当前用户），Windows 壳/安装器迁移中，当前仍兼容
+TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 
 ## 下载与安装（GitHub Release）
 
@@ -1728,6 +1729,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **依赖**：新增 `github.com/Microsoft/go-winio v0.6.4`（仅 Windows 文件引用）。
       - **验证**：`go test ./ipc`、`go build ./...`、`go vet ./...`、
         `make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 80：daemon 接入 Endpoint（-pipe + Unix socket 权限收口）（2026-11-01）
+      - **daemon**：`runWithContext` 改为接收 `ipc.Endpoint`；新增 `-pipe`（按当前
+        用户 SID 自动生成命名管道名）与 `-tcp` 互斥；Unix socket 单实例锁/残留
+        清理只在 unix 端点做，TCP/命名管道由系统命名空间互斥。
+      - **权限**：Unix socket chmod 0600 从 daemon 的 `listenUnix` 移入
+        `ipc.Listen`（传输层负责自己的安全属性），原权限测试改为
+        `TestEndpointUnixRestrictsPermission`。
+      - **测试**：`TestResolveEndpoint`（默认 unix / -tcp / -pipe 与 -tcp 互斥）；
+        生命周期测试全部改用 `ipc.Endpoint`；`go test ./cmd/chaosetd` 通过。
+      - **文档**：README 架构图/传输形态、AGENTS IPC 条目同步（Windows 壳迁移
+        仍待做，当前保留 TCP 兼容）。
+      - **验证**：`go build ./...`、`go test ./cmd/chaosetd ./ipc`、
+        `GOOS=windows go build ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 

@@ -3,7 +3,9 @@ package ipc
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net"
+	"os"
 )
 
 // Endpoint 描述 daemon 的本地 IPC 端点。传输与协议解耦：帧格式（4 字节大端
@@ -26,8 +28,20 @@ func (e Endpoint) String() string {
 // 走 go-winio（ACL 只允许当前用户 + SYSTEM + AppContainer 包）。
 func Listen(e Endpoint) (net.Listener, error) {
 	switch e.Network {
-	case "unix", "tcp":
-		return net.Listen(e.Network, e.Address)
+	case "unix":
+		ln, err := net.Listen("unix", e.Address)
+		if err != nil {
+			return nil, err
+		}
+		// 套接字默认权限来自 umask（常见 0755），同机其它用户可连接 daemon
+		// 旁听键盘输入；显式收紧到 0600。chmod 失败不阻断启动（个别文件系统
+		// 不支持），只记警告。
+		if chmodErr := os.Chmod(e.Address, 0o600); chmodErr != nil {
+			log.Printf("警告: 设置套接字权限失败（%s）: %v", e.Address, chmodErr)
+		}
+		return ln, nil
+	case "tcp":
+		return net.Listen("tcp", e.Address)
 	case "pipe":
 		return listenPipe(e.Address)
 	default:

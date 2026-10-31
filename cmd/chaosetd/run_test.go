@@ -40,7 +40,7 @@ func waitDaemon(t *testing.T, sock string) *ipc.Client {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := ipc.Dial("unix", sock)
+		c, err := ipc.DialEndpoint(ipc.Endpoint{Network: "unix", Address: sock})
 		if err == nil {
 			return c
 		}
@@ -63,7 +63,7 @@ func startDaemon(t *testing.T, sock, dict, userPath string) *runningDaemon {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runWithContext(ctx, sock, "", []string{dict}, userPath, false, false, "")
+		errCh <- runWithContext(ctx, ipc.Endpoint{Network: "unix", Address: sock}, []string{dict}, userPath, false, false, "")
 	}()
 	client := waitDaemon(t, sock)
 	t.Cleanup(func() { _ = client.Close() })
@@ -80,6 +80,21 @@ func (d *runningDaemon) stop(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("runWithContext 未在 5s 内退出")
+	}
+}
+
+// TestResolveEndpoint：命令行旗标到 IPC 端点的翻译；-pipe 与 -tcp 互斥。
+func TestResolveEndpoint(t *testing.T) {
+	ep, err := resolveEndpoint("chaoset.sock", "", false)
+	if err != nil || ep.Network != "unix" || ep.Address != "chaoset.sock" {
+		t.Fatalf("默认端点应为 unix:chaoset.sock，实际 %+v err=%v", ep, err)
+	}
+	ep, err = resolveEndpoint("", "127.0.0.1:7949", false)
+	if err != nil || ep.Network != "tcp" {
+		t.Fatalf("-tcp 端点错误: %+v err=%v", ep, err)
+	}
+	if _, err := resolveEndpoint("", "127.0.0.1:7949", true); err == nil {
+		t.Fatal("-pipe 与 -tcp 同时指定应报错")
 	}
 }
 
@@ -144,7 +159,7 @@ func TestRunWithContextRejectsSecondInstance(t *testing.T) {
 	dict := writeDict(t, dir, "dict.tsv", daemonTestDict)
 	d := startDaemon(t, sock, dict, filepath.Join(dir, "user.json"))
 
-	err := runWithContext(context.Background(), sock, "", []string{dict},
+	err := runWithContext(context.Background(), ipc.Endpoint{Network: "unix", Address: sock}, []string{dict},
 		filepath.Join(dir, "user2.json"), false, false, "")
 	if err == nil || !strings.Contains(err.Error(), "已有 chaosetd 在运行") {
 		t.Fatalf("第二个实例应被单实例锁拒绝，实际 %v", err)
@@ -161,21 +176,21 @@ func TestRunWithContextRejectsBadConfig(t *testing.T) {
 	userPath := filepath.Join(dir, "user.json")
 
 	t.Run("词库不存在", func(t *testing.T) {
-		err := runWithContext(context.Background(), filepath.Join(dir, "s1"), "",
+		err := runWithContext(context.Background(), ipc.Endpoint{Network: "unix", Address: filepath.Join(dir, "s1")},
 			[]string{filepath.Join(dir, "missing.tsv")}, userPath, false, false, "")
 		if err == nil {
 			t.Fatal("词库不存在时应报错")
 		}
 	})
 	t.Run("词库为空", func(t *testing.T) {
-		err := runWithContext(context.Background(), filepath.Join(dir, "s2"), "",
+		err := runWithContext(context.Background(), ipc.Endpoint{Network: "unix", Address: filepath.Join(dir, "s2")},
 			[]string{empty}, userPath, false, false, "")
 		if err == nil || !strings.Contains(err.Error(), "没有加载到任何词条") {
 			t.Fatalf("空词库应报「没有加载到任何词条」，实际 %v", err)
 		}
 	})
 	t.Run("TCP 端口非法", func(t *testing.T) {
-		err := runWithContext(context.Background(), "", "127.0.0.1:99999",
+		err := runWithContext(context.Background(), ipc.Endpoint{Network: "tcp", Address: "127.0.0.1:99999"},
 			[]string{good}, userPath, false, false, "")
 		if err == nil || !strings.Contains(err.Error(), "监听") {
 			t.Fatalf("非法 TCP 端口应报监听错误，实际 %v", err)

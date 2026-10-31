@@ -30,7 +30,8 @@ func (f *repeatFlag) Set(v string) error {
 
 func main() {
 	socket := flag.String("socket", "chaoset.sock", "Unix 套接字路径")
-	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；设置后忽略 -socket，供 Windows 壳使用）")
+	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；仅旧壳兼容，建议用 -pipe/-socket）")
+	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
@@ -65,9 +66,32 @@ func main() {
 		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 
-	if err := run(*socket, *tcpAddr, dicts, *userPath, *fuzzy, *trad, *shuangpin); err != nil {
+	ep, err := resolveEndpoint(*socket, *tcpAddr, *usePipe)
+	if err != nil {
 		log.Fatal(err)
 	}
+	if err := run(ep, dicts, *userPath, *fuzzy, *trad, *shuangpin); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// resolveEndpoint 把命令行旗标翻译成 IPC 端点。默认 Unix socket；-tcp 保留
+// 一版兼容旧 Windows 壳；-pipe 使用当前用户 SID 自动生成的命名管道名。
+func resolveEndpoint(socket, tcpAddr string, usePipe bool) (ipc.Endpoint, error) {
+	if usePipe && tcpAddr != "" {
+		return ipc.Endpoint{}, fmt.Errorf("-pipe 与 -tcp 只能二选一")
+	}
+	if tcpAddr != "" {
+		return ipc.Endpoint{Network: "tcp", Address: tcpAddr}, nil
+	}
+	if usePipe {
+		name, err := ipc.DefaultPipeName()
+		if err != nil {
+			return ipc.Endpoint{}, fmt.Errorf("生成命名管道名失败: %w", err)
+		}
+		return ipc.Endpoint{Network: "pipe", Address: name}, nil
+	}
+	return ipc.Endpoint{Network: "unix", Address: socket}, nil
 }
 
 // run 是 main 的入口：把 SIGINT/SIGTERM 转成 context 后交给 runWithContext。
@@ -79,15 +103,15 @@ func main() {
 // 会让进程直接消失——用户词典来不及落盘（最后一次上屏的学习数据丢失），
 // 套接字文件也会残留成无人监听的僵尸路径（客户端连接被拒，表现为
 // 「切换输入法后打不出字」）。2026-10-26 实测确认。
-func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
+func run(ep ipc.Endpoint, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runWithContext(ctx, socket, tcpAddr, dicts, userPath, fuzzy, trad, shuangpin)
+	return runWithContext(ctx, ep, dicts, userPath, fuzzy, trad, shuangpin)
 }
 
 // runWithContext 是 daemon 的完整生命周期：加载词库/用户词典、单实例锁、
 // 监听、serve、按 ctx 取消优雅退出（停 flush ticker → Save → 清理套接字）。
-func runWithContext(ctx context.Context, socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
+func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
 	// 宽松加载词库：-dict 可能指向用户自备的第三方词库，一行坏数据不能让人家
 	// 整个输入法起不来。内置词库的正确性由 CI 保证（生成阶段严格校验 +
 	// engine/data_contract_test.go 严格解析断言），运行时只需跳过坏行并报告。
@@ -127,9 +151,9 @@ func runWithContext(ctx context.Context, socket, tcpAddr string, dicts []string,
 	// 单实例保护：必须在 os.Remove(socket) 之前拿到锁。
 	// 否则第二个实例会先 unlink 掉正在运行的 daemon 的套接字文件，
 	// 再成功监听同名路径——两个进程都不报错（细节见 singleton_unix.go）。
-	// TCP 模式（Windows）由端口绑定天然互斥，锁在那边是空操作。
-	if tcpAddr == "" {
-		lock, lerr := acquireSingleton(socket)
+	// TCP/命名管道由系统命名空间天然互斥，不需要锁。
+	if ep.Network == "unix" {
+		lock, lerr := acquireSingleton(ep.Address)
 		if lerr != nil {
 			return lerr
 		}
@@ -137,24 +161,17 @@ func runWithContext(ctx context.Context, socket, tcpAddr string, dicts []string,
 	}
 
 	var ln net.Listener
-	if tcpAddr != "" {
-		// TCP 回环：Windows 壳的传输形态（Windows 服务无 Unix socket 语义）
-		ln, err = net.Listen("tcp", tcpAddr)
-		if err != nil {
-			return fmt.Errorf("监听 %s 失败: %w", tcpAddr, err)
-		}
-		log.Printf("chaosetd 就绪，TCP: %s", tcpAddr)
-	} else {
+	if ep.Network == "unix" {
 		// 拿到锁之后才清理残留套接字：此时可以确定没有其它实例在用这个路径。
-		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(ep.Address); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("清理旧套接字失败: %w", err)
 		}
-		ln, err = listenUnix(socket)
-		if err != nil {
-			return fmt.Errorf("监听 %s 失败: %w", socket, err)
-		}
-		log.Printf("chaosetd 就绪，套接字: %s", socket)
 	}
+	ln, err = ipc.Listen(ep)
+	if err != nil {
+		return fmt.Errorf("监听 %s 失败: %w", ep, err)
+	}
+	log.Printf("chaosetd 就绪，%s: %s", ep.Network, ep.Address)
 	var opts []ipc.Option
 	if fuzzy {
 		opts = append(opts, ipc.WithFuzzy(true))
@@ -217,30 +234,11 @@ func runWithContext(ctx context.Context, socket, tcpAddr string, dicts []string,
 		// 主动删除套接字文件：正常退出后路径上不该再留下一个无人监听的
 		// 僵尸套接字——客户端连它会得到 ECONNREFUSED，表现为「输入法打不出字」。
 		// 单实例锁仍持有，所以此时删掉的必然是我们自己的套接字。
-		if tcpAddr == "" {
-			if rmErr := os.Remove(socket); rmErr != nil && !os.IsNotExist(rmErr) {
+		if ep.Network == "unix" {
+			if rmErr := os.Remove(ep.Address); rmErr != nil && !os.IsNotExist(rmErr) {
 				log.Printf("清理套接字失败: %v", rmErr)
 			}
 		}
 		return err
 	}
-}
-
-// listenUnix 监听 Unix 套接字并收紧文件权限。
-//
-// 套接字文件权限默认由 umask 决定（常见 0755）——同机其它用户可以直接连接
-// daemon 收发组词/上屏数据，等于键盘输入被旁听。这里显式 chmod 0600，只允许
-// 当前用户连接（2026-10-31 审计 P2：套接字权限此前未收紧）。
-//
-// chmod 失败不阻断启动（个别文件系统不支持/权限模型不同），只记警告；
-// 连接本身仍由 daemon 的协议处理，不影响功能。
-func listenUnix(path string) (net.Listener, error) {
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		log.Printf("警告: 设置套接字权限失败（%s）: %v", path, err)
-	}
-	return ln, nil
 }
