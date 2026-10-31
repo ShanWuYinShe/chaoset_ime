@@ -70,6 +70,7 @@ const (
 	macSettings = "shims/macos/src/SettingsWindow.swift"
 	macEngine   = "shims/macos/src/EngineClient.swift"
 	macSetup    = "shims/macos/setup/main.swift"
+	macKeyTest  = "shims/macos/tests/key_routing/main.swift"
 	winShell    = "shims/windows/src/win32.cpp"
 	winCoreHpp  = "shims/windows/src/core.hpp"
 	linuxEngine = "shims/linux/ibus-engine/ibus.go"
@@ -469,6 +470,8 @@ func Run(fsys fs.FS) []string {
 	// 7. CI 覆盖不退化：key_routing 按键路由回归测试必须存在且被 CI 调用。
 	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "key_routing")
+	// 断言用例数守卫：防止有人删断言让回归测试静默变弱。
+	checkContains(fsys, &problems, "CI 覆盖", macKeyTest, "expectedChecks")
 
 	// 8. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
 	checkShellVarEscaping(fsys, &problems)

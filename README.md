@@ -1347,6 +1347,15 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./shims/linux/ibus-engine` 通过；`./shims/windows/build.sh`
         通过；mac key_routing 22/22；`make vet`/checker 通过；`git diff --check` 通过。
 
+- [x] 阶段 50：文档计数同步 + key_routing 断言用例数守卫（2026-10-31）
+      - **过期计数**：ui-parity 的 key_routing「11 项断言」实际已 22 项；
+        AGENTS.md 的 checkuiparity「11 组」已随新增检查增长——改为不写死数字
+        （以 `make check-uiparity` 输出为准），避免每次加检查都要改说明。
+      - **测试守卫**：key_routing 末尾断言 `pass == expectedChecks(22)`，删掉一条
+        断言会直接 FAIL（否则删断言 CI 仍绿，回归测试静默变弱）；checkuiparity
+        「CI 覆盖」组断言该守卫存在。
+      - **验证**：key_routing 22/22；`make vet` / checker 通过；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

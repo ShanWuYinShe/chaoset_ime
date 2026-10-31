@@ -161,5 +161,13 @@ let shiftU = NSEvent.keyEvent(with: .keyDown, location: .zero,
 let r15 = c.handle(shiftU, client: m)
 check("Ctrl+Shift+U 放行（不清空组词）", r15 == false, "ret=\(r15)")
 
+// 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
+// 新增/删除断言时同步更新 expectedChecks。
+let expectedChecks = 22
+if pass != expectedChecks {
+    fail += 1
+    print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")
+}
+
 print("\n结果: pass=\(pass) fail=\(fail)")
 exit(fail == 0 ? 0 : 1)

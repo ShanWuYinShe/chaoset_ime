@@ -297,7 +297,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   毛玻璃/Toast/DPI 表现）仍需 Windows 真机人工验收**（本机无 Windows 运行时）；
   `tools/checkgdi` 的 ExtCreatePen 非空指针契约 + 交叉编译仍在。
 - `tests/key_routing` 是 macOS 按键路由回归测试（合成 NSEvent 驱动
-  `ChaosetController.handle`，11 项断言）；**2026-10-31 起接入 CI**（审计 G7）：
+  `ChaosetController.handle`，22 项断言，且测试内断言用例数未减少）；
+  **2026-10-31 起接入 CI**（审计 G7）：
   `shims/macos/tests/key_routing/run.sh` 负责编译测试二进制 + 起临时 daemon +
   清理，macos-build job 每次 push 执行；`tools/checkuiparity` 断言该脚本存在且
   被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `behavior_test.go`
@@ -308,17 +309,19 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   CI 首跑 key_routing 就栽在这里。shims 下所有「`$VAR` 紧跟非 ASCII」已改为
   `${VAR}`，并由 `tools/checkuiparity`「shell 变量转义」组静态拦截。
 - IPC 侧 2026-10-30 新增 `userExport` 分页测试（含 >1MiB 场景）。
-- **设置窗文案/单例/学习数据 GUI/词库导入/导入安全/打包安装 + 候选窗静态几何/
-  配色字段 + CI 覆盖 + shell 变量转义** 已由 `tools/checkuiparity` 静态检查
-  （`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：设置窗共享文案三端逐字
-  一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧不得引入引擎 DBus
-  （engine 包纯净约束）、词库导入入口（Linux CLI 例外有文档记录）、**词库导入
-  安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷原子替换/
-  失败日志）、打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗
-  布局 pt 常量/派生值/齿轮矢量参数/13 个主题色字段名集合、key_routing 已接入 CI、
-  shims 下 `$VAR` 不紧跟非 ASCII（bash 3.2 UTF-8 locale 坑）、本表关键差异行存在。
-  **候选窗像素级渲染（抗锯齿/阴影/毛玻璃/Toast/DPI 观感）仍需 Windows 真机**，
-  本表 + Code Review 仍是那部分的防线。
+- **设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格与修饰键语义/
+  打包安装 + 候选窗静态几何/配色字段 + CI 覆盖 + shell 变量转义** 已由
+  `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：
+  设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧
+  不得引入引擎 DBus（engine 包纯净约束）、词库导入入口（Linux CLI 例外有文档记录）、
+  **词库导入安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷
+  原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
+  且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、
+  打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/
+  派生值/齿轮矢量参数/13 个主题色字段名集合、key_routing 已接入 CI 且断言用例数
+  未减少、shims 下 `$VAR` 不紧跟非 ASCII（bash 3.2 UTF-8 locale 坑）、本表关键差异
+  行存在。**候选窗像素级渲染（抗锯齿/阴影/毛玻璃/Toast/DPI 观感）仍需 Windows
+  真机**，本表 + Code Review 仍是那部分的防线。
 
 ## 性能与资源基线（2026-10-29，Apple M1，负载 5.35）
 
