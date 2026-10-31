@@ -36,7 +36,7 @@ func main() {
 	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
-	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（空串表示不落盘）")
+	userPath := flag.String("userdict", "", "用户词典路径（空=按平台用户数据目录生成；显式传空串表示不落盘）")
 	logPath := flag.String("log", "", "日志输出文件路径（为空则输出到标准日志）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
 	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
@@ -67,6 +67,16 @@ func main() {
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
+	userdictSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "userdict" {
+			userdictSet = true
+		}
+	})
+	resolvedUserPath, err := resolveUserDictPath(*userPath, userdictSet)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	socketPath := *socket
 	if socketPath == "" {
@@ -80,9 +90,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := run(ep, dicts, *userPath, *fuzzy, *trad, *shuangpin); err != nil {
+	if err := run(ep, dicts, resolvedUserPath, *fuzzy, *trad, *shuangpin); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// resolveUserDictPath 解析 -userdict：显式传入（含显式空串=不落盘）优先，
+// 未传入时用平台用户数据目录，避免 daemon 在 cwd 里写学习数据。
+func resolveUserDictPath(flagValue string, flagSet bool) (string, error) {
+	if flagSet {
+		return flagValue, nil
+	}
+	return appdirs.UserDictPath()
 }
 
 // resolveEndpoint 把命令行旗标翻译成 IPC 端点。默认 Unix socket；-tcp 保留

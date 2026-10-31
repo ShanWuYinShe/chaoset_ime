@@ -675,13 +675,13 @@ sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个�
 
 daemon / 工具 / Linux ibus 引擎共用 `internal/appdirs` 的路径约定（2026-11-01）：
 
-| 平台 | 数据目录 | 默认 socket |
-|---|---|---|
-| macOS | `~/Library/Application Support/chaoset` | `chaoset.sock`（同目录） |
-| Linux | `$XDG_DATA_HOME/chaoset`（缺省 `~/.local/share/chaoset`） | `$XDG_RUNTIME_DIR/chaoset/chaoset.sock`（无则数据目录） |
-| Windows | `%LOCALAPPDATA%\Chaoset` | 命名管道 `\\.\pipe\chaoset-<SID>` |
+| 平台 | 数据目录 | 默认 socket | 默认用户词典 |
+|---|---|---|---|
+| macOS | `~/Library/Application Support/chaoset` | `chaoset.sock`（同目录） | `userdict.json`（同目录） |
+| Linux | `$XDG_DATA_HOME/chaoset`（缺省 `~/.local/share/chaoset`） | `$XDG_RUNTIME_DIR/chaoset/chaoset.sock`（无则数据目录） | `userdict.json`（同目录） |
+| Windows | `%LOCALAPPDATA%\Chaoset` | 命名管道 `\\.\pipe\chaoset-<SID>` | `userdict.json`（同目录） |
 
-`chaosetd` / `chaoset-userdict` 的 `-socket` 默认值改为按平台生成；显式传路径仍优先。
+`chaosetd` 的 `-socket`/`-userdict` 与 `chaoset-userdict` 的 `-socket` 默认值都按平台生成；显式传路径仍优先（`chaosetd -userdict ""` 表示不落盘）。
 
 ## 用户词典管理
 
@@ -1814,6 +1814,16 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **文档**：README「默认路径」表、AGENTS 用户目录约定、阶段 83。
       - **验证**：`go test ./internal/appdirs ./cmd/chaosetd ./cmd/chaoset-userdict
         ./shims/linux/ibus-engine`、`make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 84：daemon 用户词典默认路径按平台生成（2026-11-01）
+      - **问题**：socket 已按平台生成，但 `chaosetd -userdict` 默认仍是 cwd 下的
+        `chaoset-userdict.json`，默认启动时学习数据会散落在不同工作目录。
+      - **实现**：`-userdict` 默认值改为空；用 `flag.Visit` 区分「没传」与
+        「显式传空串」——没传走 `appdirs.UserDictPath()`，显式空串仍表示不落盘。
+      - **测试**：`TestResolveUserDictPath`（默认平台路径 / 显式空串 / 显式路径）。
+      - **文档**：README 默认路径表加「默认用户词典」列、阶段 84。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 

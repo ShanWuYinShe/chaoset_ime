@@ -83,6 +83,24 @@ func (d *runningDaemon) stop(t *testing.T) {
 	}
 }
 
+// TestResolveUserDictPath：未传 -userdict 时落到平台用户目录；显式传入
+// （含显式空串=不落盘）时保持原值。
+func TestResolveUserDictPath(t *testing.T) {
+	path, err := resolveUserDictPath("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "userdict.json") {
+		t.Fatalf("默认用户词典路径应以 userdict.json 结尾，实际 %q", path)
+	}
+	if got, err := resolveUserDictPath("", true); err != nil || got != "" {
+		t.Fatalf("显式空串应保持不落盘，实际 %q err=%v", got, err)
+	}
+	if got, err := resolveUserDictPath("/tmp/x.json", true); err != nil || got != "/tmp/x.json" {
+		t.Fatalf("显式路径应原样返回，实际 %q err=%v", got, err)
+	}
+}
+
 // TestResolveEndpoint：命令行旗标到 IPC 端点的翻译；-pipe 与 -tcp 互斥。
 func TestResolveEndpoint(t *testing.T) {
 	ep, err := resolveEndpoint("chaoset.sock", "", false)
