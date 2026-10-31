@@ -62,6 +62,28 @@ func LinuxDataDir() (string, error) {
 	return filepath.Join(base, appName), nil
 }
 
+// LinuxConfigDir 返回 Linux 设置窗配置目录（$XDG_CONFIG_HOME/chaoset）。
+func LinuxConfigDir() (string, error) {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("定位用户主目录失败: %w", err)
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, appName), nil
+}
+
+// LinuxConfigPath 返回 Linux 设置窗配置文件路径。
+func LinuxConfigPath() (string, error) {
+	dir, err := LinuxConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
 // LinuxUserDictPath / LinuxImportedDictPath 是 Linux ibus 引擎/设置窗专用路径，
 // 与 dictimport_ctl.py / userdict_ctl.py 的 XDG 口径一致。
 func LinuxUserDictPath() (string, error) {

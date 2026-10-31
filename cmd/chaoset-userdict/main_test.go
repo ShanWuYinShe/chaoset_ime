@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +11,24 @@ import (
 	"chaoset.ime/engine"
 	"chaoset.ime/ipc"
 )
+
+// TestPathsJSON：-print-paths 输出当前平台的 userdict/imported_dict 路径。
+func TestPathsJSON(t *testing.T) {
+	text, err := pathsJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths map[string]string
+	if err := json.Unmarshal([]byte(text), &paths); err != nil {
+		t.Fatalf("pathsJSON 不是合法 JSON: %v (%s)", err, text)
+	}
+	if !strings.HasSuffix(paths["userdict"], "userdict.json") {
+		t.Fatalf("userdict 路径错误: %q", paths["userdict"])
+	}
+	if !strings.HasSuffix(paths["imported_dict"], "dict.tsv") {
+		t.Fatalf("imported_dict 路径错误: %q", paths["imported_dict"])
+	}
+}
 
 // TestRunDaemonTCPStats：daemon 模式的 endpoint 连接（TCP）能完成 stats 请求，
 // 覆盖 runDaemon 从 network/address 改为 ipc.Endpoint 后的路径。

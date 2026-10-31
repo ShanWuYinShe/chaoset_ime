@@ -683,6 +683,8 @@ daemon / 工具 / Linux ibus 引擎共用 `internal/appdirs` 的路径约定（2
 
 `chaosetd` 的 `-socket`/`-userdict` 与 `chaoset-userdict` 的 `-socket` 默认值都按平台生成；显式传路径仍优先（`chaosetd -userdict ""` 表示不落盘）。
 
+壳/脚本需要同一套路径时调用 `chaoset-userdict -print-paths`（JSON：`data`/`userdict`/`imported_dict`/`socket`），不要各自拼路径。
+
 ## 用户词典管理
 
 ```sh
@@ -1824,6 +1826,19 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **文档**：README 默认路径表加「默认用户词典」列、阶段 84。
       - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
         `git diff --check` 通过。
+
+- [x] 阶段 85：Go 设置逻辑起步（-print-paths + internal/setupctl）（2026-11-01）
+      - **背景**：Linux 设置窗仍是 Python（GTK3 + PyGObject），带来 python3-gi
+        运行时依赖；用户要求工具类全部 Go、不要 Python。
+      - **本轮**：先落不依赖 GUI 的 Go 基础——
+        ① `chaoset-userdict -print-paths` 输出平台路径 JSON（appdirs 单一来源）；
+        ② 新增 `internal/setupctl`：配置读写（原子替换）、学习数据
+        stats/clear/export（直接 engine.UserDict，与工具/引擎同语义），全部纯 Go
+        单测覆盖；`internal/appdirs` 补 Linux 配置目录。
+      - **未完成**：Linux GTK 设置窗仍为 Python；替换为 Go GTK3 后删除 5 个 .py，
+        并更新打包/CI/checker。
+      - **验证**：`go test ./internal/setupctl ./cmd/chaoset-userdict`、
+        `go build/vet ./...`、`make vet`/checker、`git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 

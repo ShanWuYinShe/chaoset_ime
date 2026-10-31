@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -36,9 +37,18 @@ func main() {
 	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
 	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
 	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
+	printPaths := flag.Bool("print-paths", false, "打印平台数据路径 JSON 后退出（设置窗/脚本用）")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(buildinfo.Info())
+		return
+	}
+	if *printPaths {
+		text, err := pathsJSON()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(text)
 		return
 	}
 	// 显式传入 -socket 又传 -tcp 视为用法错误；只看默认值无法区分「没传」
@@ -101,6 +111,27 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// pathsJSON 输出平台数据路径（JSON），供 Linux 设置窗等壳调用，避免壳里
+// 再各自拼一套 XDG/Application Support 规则。只包含当前平台可用的路径：
+// Windows 没有 Unix socket，socket 字段自然缺省。
+func pathsJSON() (string, error) {
+	paths := make(map[string]string)
+	add := func(key string, fn func() (string, error)) {
+		if value, err := fn(); err == nil {
+			paths[key] = value
+		}
+	}
+	add("data", appdirs.DataDir)
+	add("userdict", appdirs.UserDictPath)
+	add("imported_dict", appdirs.ImportedDictPath)
+	add("socket", appdirs.SocketPath)
+	data, err := json.Marshal(paths)
+	if err != nil {
+		return "", fmt.Errorf("序列化路径失败: %w", err)
+	}
+	return string(data), nil
 }
 
 // runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；清空无覆盖竞态）。
