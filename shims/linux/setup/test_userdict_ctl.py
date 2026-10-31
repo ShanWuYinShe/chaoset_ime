@@ -46,6 +46,16 @@ class UserdictCtlTest(unittest.TestCase):
             self.assertTrue(ud.userdict_path().endswith(
                 "/.local/share/chaoset/userdict.json"))
 
+    def test_tool_paths_parses_json(self):
+        self.run_results[(TOOL, "-print-paths")] = _proc(
+            out='{"userdict": "/x/userdict.json"}')
+        self.assertEqual(ud.tool_paths(), {"userdict": "/x/userdict.json"})
+
+    def test_userdict_path_prefers_go_tool(self):
+        with mock.patch.object(ud, "tool_paths",
+                               return_value={"userdict": "/tool/userdict.json"}):
+            self.assertEqual(ud.userdict_path(), "/tool/userdict.json")
+
     def test_stats_ok(self):
         self.run_results[(TOOL, "-userdict", "/p", "stats")] = _proc(
             out="词 3 条 / 词组 1 条 / 上下文 2 条\n")

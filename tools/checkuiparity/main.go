@@ -486,9 +486,13 @@ func Run(fsys fs.FS) []string {
 		"chaoset-import", "imported_dict_path", "restart_engines")
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
 		"imported-dict", "defaultImportedDictPath", "withImportedDict")
-	// 三处默认路径必须同口径：Python 拼 chaoset/dict.tsv，Go 引擎走
-	// internal/appdirs 的 LinuxImportedDictPath（与 Python 同一 XDG 口径）。
-	checkContains(fsys, &problems, "词库导入入口", linuxDictImport, `"chaoset", "dict.tsv"`)
+	// 三处默认路径必须同口径：Python 优先调用 Go 工具 -print-paths（唯一
+	// 来源 internal/appdirs），Go 引擎直接走 appdirs.LinuxImportedDictPath；
+	// Python 仍保留 XDG 回退供源码树未构建时使用。
+	checkContains(fsys, &problems, "词库导入入口", linuxCtl,
+		"-print-paths", "tool_paths")
+	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
+		"userdict_ctl.tool_paths", `"chaoset", "dict.tsv"`)
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
 		"appdirs.LinuxImportedDictPath")
 	// linux-e2e 必须真实验证导入词参与候选，而不只是日志里有加载路径。

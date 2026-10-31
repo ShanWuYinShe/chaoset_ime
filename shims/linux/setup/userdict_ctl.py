@@ -12,6 +12,7 @@
 # 无 GTK 依赖：便于在无桌面环境的 CI 里对编排逻辑做单测
 # （见 test_userdict_ctl.py）。
 
+import json
 import os
 import shutil
 import signal
@@ -19,8 +20,33 @@ import subprocess
 import time
 
 
+def tool_paths(tool=None):
+    """调用 Go 工具 `chaoset-userdict -print-paths` 获取平台路径。
+
+    路径规则唯一来源是 Go 的 internal/appdirs；这里不再自己拼 XDG。工具不可用
+    （源码树未构建/异常）时返回 None，由调用方回退到 XDG，保证设置窗在开发
+    环境仍能工作。"""
+    tool = tool or find_tool()
+    if tool is None:
+        return None
+    try:
+        r = _run([tool, "-print-paths"], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def userdict_path():
-    """与 ibus 引擎 main.go 的 defaultUserDictPath 同口径。"""
+    """与 ibus 引擎 main.go 的 defaultUserDictPath 同口径：优先问 Go 工具。"""
+    paths = tool_paths()
+    if paths and isinstance(paths.get("userdict"), str) and paths["userdict"]:
+        return paths["userdict"]
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     return os.path.join(base, "chaoset", "userdict.json")
 

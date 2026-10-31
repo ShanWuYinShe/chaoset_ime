@@ -17,9 +17,14 @@ import os
 import shutil
 import subprocess
 
+import userdict_ctl
+
 
 def imported_dict_path():
-    """与 ibus 引擎 main.go 的 defaultImportedDictPath 同口径。"""
+    """与 ibus 引擎 main.go 的 defaultImportedDictPath 同口径：优先问 Go 工具。"""
+    paths = userdict_ctl.tool_paths()
+    if paths and isinstance(paths.get("imported_dict"), str) and paths["imported_dict"]:
+        return paths["imported_dict"]
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     return os.path.join(base, "chaoset", "dict.tsv")
 
@@ -44,7 +49,6 @@ def _run(args, timeout=60):
 
 
 def _restart_engines():
-    import userdict_ctl  # 同目录；复用 ibus 退出/重启编排
     return userdict_ctl.restart_engines()
 
 

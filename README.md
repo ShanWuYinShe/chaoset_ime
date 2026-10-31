@@ -1837,6 +1837,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaoset-userdict`、`go build/vet ./...`、
         `make vet`/checker、`git diff --check` 通过。
 
+- [x] 阶段 86：Linux shim 路径改问 Go 工具（-print-paths）（2026-11-01）
+      - **背景**：Linux 设置窗的 `userdict_ctl.py` / `dictimport_ctl.py` 仍各自拼
+        XDG 路径，是 `internal/appdirs` 之外的第二份规则。
+      - **实现**：Python 侧 `tool_paths()` 调 `chaoset-userdict -print-paths` 取
+        `userdict`/`imported_dict`；工具不可用（源码树未构建）时回退 XDG，设置窗
+        仍可用。设置窗仍是 shim，不搬 Go。
+      - **守卫/测试**：Python 单测新增 tool_paths/优先 Go 工具/回退；checkuiparity
+        路径一致性组断言 Python 调 `-print-paths`、Go 引擎走
+        `appdirs.LinuxImportedDictPath`。
+      - **验证**：Python 单测（15+9 例）、`go test ./cmd/chaoset-userdict`、
+        `make vet`/checker、`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

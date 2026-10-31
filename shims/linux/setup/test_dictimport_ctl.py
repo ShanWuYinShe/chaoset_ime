@@ -33,6 +33,11 @@ class DictimportCtlTest(unittest.TestCase):
         self.tool_patch = mock.patch.object(di, "find_tool", return_value=TOOL)
         self.tool_patch.start()
         self.addCleanup(self.tool_patch.stop)
+        # 路径默认走 Go 工具；单测里显式关掉，保持 XDG 回退可断言。
+        self.paths_patch = mock.patch.object(di.userdict_ctl, "tool_paths",
+                                             return_value=None)
+        self.paths_patch.start()
+        self.addCleanup(self.paths_patch.stop)
         self.restart_patch = mock.patch.object(di, "_restart_engines",
                                                return_value=(True, "ibus 已重启"))
         self.restart_patch.start()
@@ -58,6 +63,11 @@ class DictimportCtlTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XDG_DATA_HOME": ""}):
             self.assertTrue(di.imported_dict_path().endswith(
                 "/.local/share/chaoset/dict.tsv"))
+
+    def test_imported_dict_path_prefers_go_tool(self):
+        with mock.patch.object(di.userdict_ctl, "tool_paths",
+                               return_value={"imported_dict": "/tool/dict.tsv"}):
+            self.assertEqual(di.imported_dict_path(), "/tool/dict.tsv")
 
     def test_import_requires_files(self):
         ok, text = di.import_files([], target=self.target)
