@@ -49,7 +49,7 @@ Page Up/Down 六个键都翻联想页；面板翻页箭头（ibus PageUp/PageDow
 **全/半角标点**（Shift+空格）：开关归壳本地持有（2026-10-29 起三端统一），
 切换不经 daemon 往返，状态经 SetHalfWidth 随标点请求告知引擎。
 
-**设置项**：「词组联想」与「学习数据」（统计/清空/导出）都在三端一致的
+**设置项**：「词组联想」「学习数据」（统计/清空/导出）与「词库导入」都在三端一致的
 **设置窗口**里配置（联想 2026-10-29 起，学习数据 2026-10-31 起）：
 ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
 运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
@@ -59,6 +59,12 @@ Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为�
 选词就按新设置执行（2026-10-30 起与 macOS/Windows「每次选词前重读设置」同语义，
 无需 `ibus restart`；此前只在引擎启动时读一次，是文档与实现不符的遗留问题）。
 config.json 仍可直接手工编辑。
+
+**词库导入（2026-10-31）**：设置窗「词库」区选择 Rime dict.yaml / CC-CEDICT txt /
+TSV（可多选），由 `dictimport_ctl.py` 调用随包 `chaoset-import` 合并到
+`$XDG_DATA_HOME/chaoset/dict.tsv`（旧文件先备份、临时文件原子替换），成功后
+重启 ibus 引擎；引擎启动时用 `-imported-dict` 把用户词库与系统词库一起加载
+（engine 包零改动，不需要 root）。
 
 **学习数据（2026-10-31）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
 提供「清空学习数据…」（二次确认）与「导出学习数据…」（TSV，可回灌
@@ -211,7 +217,10 @@ ibus-daemon 按 component XML 的 `<exec>` 拉起引擎，**不保证工作目�
 1. 编译期注入的绝对路径（打包时 `-ldflags -X main.buildTimeDict=...`，默认 `/usr/share/chaoset/dict.tsv`）；
 2. 可执行文件同级 `../data/dict.tsv` 等（解包即用的绿色形态）；
 3. `/usr/share/chaoset/dict.tsv`（安装包部署位置）；
-4. `data/dict_common.tsv`（在仓库里直接 `go run` 时）。
+4. `data/dict_common.tsv`（在仓库里直接 `go run` 时）；
+5. **用户导入词库（可选，2026-10-31）**：`$XDG_DATA_HOME/chaoset/dict.tsv`
+   （缺省 `~/.local/share/chaoset/dict.tsv`），设置窗「导入词库…」写入；
+   引擎启动时用 `-imported-dict` 与主词库一起宽松加载，文件不存在则忽略。
 
 > 2026-10-25 修的发行缺陷：此前默认值写死为相对路径 `data/dict_common.tsv`，
 > 而发布包里只有 558 条的 `dict_seed.tsv`。结果是装完引擎立刻报

@@ -50,9 +50,14 @@ export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 ibus-daemon --daemonize --panel=disable || true
 sleep 1
 
+# 用户导入词库（Linux 设置窗「导入词库」写入 XDG 数据目录；这里显式传
+# -imported-dict 模拟，验证引擎启动时会与主词库一起加载）。
+printf '测试词\tce shi ci\t99\n' > "$WORK/imported.tsv"
+
 echo "==> 启动 chaoset-engine"
 "$WORK/chaoset-engine" -ibus \
   -dict "$ROOT/data/dict_common.tsv" \
+  -imported-dict "$WORK/imported.tsv" \
   -userdict "$WORK/userdict.json" > "$WORK/engine.log" 2>&1 &
 ENGINE_PID=$!
 sleep 3
@@ -72,6 +77,12 @@ if ! grep -q "加载词库" "$WORK/engine.log"; then
   exit 1
 fi
 echo "PASS: 词库已加载"
+if ! grep -q "用户导入词库: $WORK/imported.tsv" "$WORK/engine.log"; then
+  echo "FAIL: 引擎未加载用户导入词库：" >&2
+  cat "$WORK/engine.log" >&2
+  exit 1
+fi
+echo "PASS: 用户导入词库已加载（$WORK/imported.tsv）"
 
 # 定位引擎的唯一总线名
 UN=""

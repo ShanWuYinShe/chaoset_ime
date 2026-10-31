@@ -7,6 +7,7 @@
 # 与 macOS SettingsWindow.swift / Windows 设置窗口三端同构：
 #   标题「Chaoset 设置」；分组「输入行为」；「词组联想」开关；
 #   分组「学习数据」（统计 / 清空 / 导出 TSV，2026-10-31 起）；
+#   分组「词库」（导入 Rime dict.yaml / CC-CEDICT txt / TSV，2026-10-31 起）；
 #   说明文字；底部「更多设置将在后续版本提供」。
 #
 # 单例：用 Gtk.Application（application_id=org.chaoset.Setup）注册唯一实例。
@@ -20,8 +21,9 @@
 # 的输入上下文下一次选词就按新设置执行（2026-10-30 起与 macOS/Windows
 # 「每次选词前重读设置」同语义）。
 #
-# 学习数据操作全部在 userdict_ctl.py（无 GTK 依赖，便于 CI 单测）：只调用随包
-# chaoset-userdict 的本地文件模式，engine 包零改动（保持纯拼音逻辑）。
+# 学习数据操作全部在 userdict_ctl.py、词库导入在 dictimport_ctl.py（均无 GTK
+# 依赖，便于 CI 单测）：只调用随包 chaoset-userdict / chaoset-import，engine
+# 包零改动（保持纯拼音逻辑）；导入的用户词库由 ibus 引擎启动时自动加载。
 
 import json
 import os
@@ -30,9 +32,10 @@ import sys
 # 与本脚本同目录（安装后 /usr/share/chaoset/）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    import userdict_ctl  # noqa: E402 —— 需先插入同目录到 sys.path
+    import dictimport_ctl  # noqa: E402 —— 需先插入同目录到 sys.path
+    import userdict_ctl  # noqa: E402
 except ImportError as exc:
-    print("缺少 userdict_ctl.py（安装包不完整）：%s" % exc, file=sys.stderr)
+    print("缺少设置窗模块（安装包不完整）：%s" % exc, file=sys.stderr)
     sys.exit(1)
 
 try:
@@ -135,6 +138,22 @@ class ChaosetSetupApp(Gtk.Application):
         data_hint.set_text("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。")
         box.pack_start(data_hint, False, False, 0)
 
+        # —— 词库（导入入口与 mac/Windows 设置窗对齐；2026-10-31）——
+        dict_group = Gtk.Label(xalign=0)
+        dict_group.set_markup("<b>词库</b>")
+        box.pack_start(dict_group, False, False, 0)
+
+        import_btn = Gtk.Button(label="导入词库…")
+        box.pack_start(import_btn, False, False, 0)
+
+        dict_hint = Gtk.Label(xalign=0)
+        dict_hint.set_line_wrap(True)
+        dict_hint.set_max_width_chars(40)
+        dict_hint.get_style_context().add_class("dim-label")
+        dict_hint.set_text("导入 Rime dict.yaml / CC-CEDICT txt / TSV（可多选），"
+                           "合并进用户词库并重启输入法生效。")
+        box.pack_start(dict_hint, False, False, 0)
+
         more = Gtk.Label(xalign=0)
         more.get_style_context().add_class("dim-label")
         more.set_text("更多设置将在后续版本提供")
@@ -198,8 +217,39 @@ class ChaosetSetupApp(Gtk.Application):
             ok, text = userdict_ctl.export(path)
             show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
 
+        def on_import_dict(_btn):
+            chooser = Gtk.FileChooserDialog(
+                title="导入词库", transient_for=win,
+                action=Gtk.FileChooserAction.OPEN,
+                buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                         Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
+            chooser.set_select_multiple(True)
+            for name, pattern in (("Rime 词库 (*.yaml)", "*.yaml"),
+                                  ("CC-CEDICT / 文本 (*.txt)", "*.txt"),
+                                  ("TSV (*.tsv)", "*.tsv")):
+                filt = Gtk.FileFilter()
+                filt.set_name(name)
+                filt.add_pattern(pattern)
+                chooser.add_filter(filt)
+            all_filt = Gtk.FileFilter()
+            all_filt.set_name("全部文件")
+            all_filt.add_pattern("*")
+            chooser.add_filter(all_filt)
+            resp = chooser.run()
+            paths = chooser.get_filenames()
+            chooser.destroy()
+            if resp != Gtk.ResponseType.OK or not paths:
+                return
+            win.set_sensitive(False)
+            try:
+                ok, text = dictimport_ctl.import_files(paths)
+            finally:
+                win.set_sensitive(True)
+            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+
         clear_btn.connect("clicked", on_clear)
         export_btn.connect("clicked", on_export)
+        import_btn.connect("clicked", on_import_dict)
 
         win.show_all()
         refresh_stats()  # 窗口显示后再读，避免读取慢拖慢打开

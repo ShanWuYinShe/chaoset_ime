@@ -10,9 +10,9 @@
 //     Linux Gtk.Application）；
 //  3. 学习数据管理三端都有 GUI 实现；Linux 侧只调 chaoset-userdict 本地文件
 //     模式，**不得**引入引擎 DBus 管理接口（engine 包纯净约束）；
-//  4. 词库导入：mac Setup.app 与 Windows 设置窗都有 GUI 入口；Linux 仍为 CLI，
-//     ui-parity 文档必须明确记录（不允许悄悄当作已支持）；
-//  5. 打包/安装一致性：userdict_ctl.py 必须被 Makefile/install.sh/Arch 打包/
+//  4. 词库导入：三端都有 GUI 入口（Linux 2026-10-31 起：设置窗调用 chaoset-import
+//     写用户词库，ibus 引擎启动时用 -imported-dict 自动加载）；
+//  5. 打包/安装一致性：userdict_ctl.py / dictimport_ctl.py 必须被 Makefile/install.sh/Arch 打包/
 //     release 冒烟引用；hicolor 必须有小尺寸图标；setup 脚本必须被组件 XML
 //     与 release 冒烟引用；
 //  6. ui-parity 文档保留关键差异行（学习数据管理/词库导入/设置窗单例/
@@ -67,24 +67,26 @@ var sharedSettingsText = []string{
 }
 
 const (
-	macPanel    = "shims/macos/src/CandidatePanel.swift"
-	macSettings = "shims/macos/src/SettingsWindow.swift"
-	macEngine   = "shims/macos/src/EngineClient.swift"
-	macSetup    = "shims/macos/setup/main.swift"
-	macKeyTest  = "shims/macos/tests/key_routing/main.swift"
-	winShell    = "shims/windows/src/win32.cpp"
-	winCoreHpp  = "shims/windows/src/core.hpp"
-	linuxEngine = "shims/linux/ibus-engine/ibus.go"
-	linuxSetup  = "shims/linux/setup/chaoset-setup.py"
-	linuxCtl    = "shims/linux/setup/userdict_ctl.py"
-	linuxTest   = "shims/linux/setup/test_userdict_ctl.py"
-	linuxComp   = "shims/linux/component/chaoset.xml"
-	makefile    = "Makefile"
-	installSh   = "shims/linux/install.sh"
-	archScript  = "shims/linux/arch/package.sh"
-	releaseYML  = ".github/workflows/release.yml"
-	ciYML       = ".github/workflows/ci.yml"
-	uiParityDoc = "docs/ui-parity.md"
+	macPanel        = "shims/macos/src/CandidatePanel.swift"
+	macSettings     = "shims/macos/src/SettingsWindow.swift"
+	macEngine       = "shims/macos/src/EngineClient.swift"
+	macSetup        = "shims/macos/setup/main.swift"
+	macKeyTest      = "shims/macos/tests/key_routing/main.swift"
+	winShell        = "shims/windows/src/win32.cpp"
+	winCoreHpp      = "shims/windows/src/core.hpp"
+	linuxEngine     = "shims/linux/ibus-engine/ibus.go"
+	linuxEngineMain = "shims/linux/ibus-engine/main.go"
+	linuxSetup      = "shims/linux/setup/chaoset-setup.py"
+	linuxCtl        = "shims/linux/setup/userdict_ctl.py"
+	linuxDictImport = "shims/linux/setup/dictimport_ctl.py"
+	linuxTest       = "shims/linux/setup/test_userdict_ctl.py"
+	linuxComp       = "shims/linux/component/chaoset.xml"
+	makefile        = "Makefile"
+	installSh       = "shims/linux/install.sh"
+	archScript      = "shims/linux/arch/package.sh"
+	releaseYML      = ".github/workflows/release.yml"
+	ciYML           = ".github/workflows/ci.yml"
+	uiParityDoc     = "docs/ui-parity.md"
 )
 
 // checkContains 断言文件包含全部子串；每个缺失项记一条问题。
@@ -432,7 +434,7 @@ func Run(fsys fs.FS) []string {
 		"chaoset-userdict", "-userdict", "clear_learning_data", "ibus")
 	// engine 包纯净约束：Linux 设置窗只能走 chaoset-userdict 本地文件模式，
 	// 不允许重新引入 DBus / ibus 引擎管理接口（2026-10-31 用户明确要求）。
-	for _, path := range []string{linuxSetup, linuxCtl} {
+	for _, path := range []string{linuxSetup, linuxCtl, linuxDictImport} {
 		checkExcludes(fsys, &problems, "engine 纯净约束", path,
 			"dbus-send", "org.freedesktop.IBus", "IBusEngine")
 	}
@@ -445,8 +447,14 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "词库导入入口", macSettings, "导入词库", "安装与设置")
 	checkContains(fsys, &problems, "词库导入入口", macSetup, "--import")
 	checkContains(fsys, &problems, "词库导入入口", winShell, "导入词库", "chaoset-import.exe")
-	checkContains(fsys, &problems, "词库导入入口", uiParityDoc, "Linux 目前仅 CLI")
-	checkExcludes(fsys, &problems, "词库导入入口", linuxSetup, "导入词库")
+	// Linux（2026-10-31 起）：GTK 设置窗「导入词库…」→ dictimport_ctl 调
+	// chaoset-import 写用户词库 → ibus 引擎启动时 -imported-dict 自动加载。
+	checkContains(fsys, &problems, "词库导入入口", linuxSetup, "导入词库", "dictimport_ctl")
+	checkExists(fsys, &problems, "词库导入入口", linuxDictImport)
+	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
+		"chaoset-import", "imported_dict_path", "restart_engines")
+	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
+		"imported-dict", "defaultImportedDictPath", "withImportedDict")
 
 	// 4b. 词库导入安全流程（备份/原子替换/退出码检查）不能退化。
 	checkImportSafety(fsys, &problems)
@@ -477,13 +485,14 @@ func Run(fsys fs.FS) []string {
 		"ibusCtrlMask", "ibusMod1Mask", "ibusMod4Mask")
 	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
-	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py")
-	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py")
-	checkContains(fsys, &problems, "打包安装", archScript, "userdict_ctl.py")
+	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py", "dictimport_ctl.py")
+	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py", "dictimport_ctl.py")
+	checkContains(fsys, &problems, "打包安装", archScript, "userdict_ctl.py", "dictimport_ctl.py")
 	checkContains(fsys, &problems, "打包安装", releaseYML,
-		"userdict_ctl.py", "chaoset-setup.py")
+		"userdict_ctl.py", "dictimport_ctl.py", "chaoset-setup.py")
 	checkContains(fsys, &problems, "打包安装", linuxComp, "chaoset-setup.py")
-	checkContains(fsys, &problems, "打包安装", ciYML, "test_userdict_ctl.py", "py_compile")
+	checkContains(fsys, &problems, "打包安装", ciYML,
+		"py_compile", "dictimport_ctl.py", "unittest discover")
 	checkExists(fsys, &problems, "打包安装", linuxTest)
 	checkExists(fsys, &problems, "打包安装", linuxCtl)
 	for _, size := range []string{"16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256"} {

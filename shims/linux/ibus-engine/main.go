@@ -152,6 +152,46 @@ func defaultUserDictPath() string {
 	return filepath.Join(base, "chaoset", "userdict.json")
 }
 
+// defaultImportedDictPath 返回 Linux 设置窗「导入词库」写入的用户词库路径。
+// 与 userdict_ctl.py / dictimport_ctl.py 的 imported_dict_path() 同口径：
+// $XDG_DATA_HOME/chaoset/dict.tsv（缺省 ~/.local/share/chaoset/dict.tsv）。
+func defaultImportedDictPath() string {
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "chaoset", "dict.tsv")
+}
+
+// withImportedDict 在文件可读时把用户导入词库追加到主词库列表。
+//
+// 这是可选文件：不存在（还没导入过）静默跳过；存在但不可读/不是普通文件时
+// 记录警告并跳过——否则 LoadDictFilesLenient 会因打开失败让整个引擎退出，
+// 一个损坏的导入文件就足以让输入法完全打不出字。
+func withImportedDict(dicts []string, path string) []string {
+	if path == "" {
+		return dicts
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("警告: 用户导入词库不可读，已跳过: %v", err)
+		}
+		return dicts
+	}
+	st, statErr := f.Stat()
+	f.Close()
+	if statErr != nil || st.IsDir() {
+		log.Printf("警告: 用户导入词库不是普通文件，已跳过: %s", path)
+		return dicts
+	}
+	return append(dicts, path)
+}
+
 func main() {
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入）")
@@ -173,9 +213,16 @@ func main() {
 	sp := flag.String("shuangpin", "", "双拼方案：zrm/mspy/flypy（也可在 config.json 配 shuangpin）")
 	assoc := flag.Bool("associate", true, "启用词组联想（也可在 config.json 配 associate=false 关闭）")
 	cfgPath := flag.String("config", defaultConfigPath(), "配置文件路径（默认 XDG 配置目录）")
+	// Linux 设置窗「导入词库」写入的用户词库（可选）：引擎启动时若文件存在
+	// 就与系统词库一起宽松加载，导入的词条立即参与匹配。
+	importedDict := flag.String("imported-dict", defaultImportedDictPath(), "用户导入词库 TSV 路径（默认 XDG 数据目录；文件不存在则忽略）")
 	flag.Parse()
 	if len(dicts) == 0 {
 		dicts = repeatFlag(resolveDefaultDicts())
+	}
+	if imported := withImportedDict(nil, *importedDict); len(imported) > 0 {
+		dicts = repeatFlag(append([]string(dicts), imported...))
+		log.Printf("用户导入词库: %s", imported[0])
 	}
 	_ = *ibusFlag
 

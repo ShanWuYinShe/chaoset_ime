@@ -71,6 +71,8 @@ if [ -f setup/chaoset-setup.py ]; then
   # 设置窗的「学习数据」操作模块（2026-10-31）；与设置窗同目录，缺失时
   # GTK 脚本 import 失败 → 整个设置窗打不开，所以必须随 setup 一起装。
   install -m755 setup/userdict_ctl.py "$PREFIX_SHARE/userdict_ctl.py"
+  # 设置窗的「词库导入」操作模块（2026-10-31）：同上，缺失会导致设置窗打不开。
+  install -m755 setup/dictimport_ctl.py "$PREFIX_SHARE/dictimport_ctl.py"
 fi
 
 echo "==> 安装二进制到 $PREFIX_BIN"

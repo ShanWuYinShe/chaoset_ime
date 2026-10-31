@@ -189,6 +189,36 @@ def clear_learning_data(path=None):
     return result
 
 
+def restart_engines():
+    """重启 ibus，让引擎重新加载词库（Linux 设置窗「导入词库」用）。
+
+    与 clear_learning_data 的编排同口径：先 `ibus exit` 停 daemon，再 SIGTERM
+    所有 chaoset-engine 并确认退出，最后 `ibus restart`（失败再试 `ibus start`）。
+    返回 (ok, message)。
+    """
+    pids = engine_pids()
+    ibus = shutil.which("ibus")
+    if pids and ibus is None:
+        return False, "输入法引擎正在运行，但找不到 ibus 命令，未能重启"
+    if pids:
+        try:
+            _run([ibus, "exit"], timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if not _terminate_engines(pids):
+            return False, "无法停止输入法引擎，未能重启"
+    if ibus is None:
+        return True, "ibus 未运行（下次启动输入法时生效）"
+    for sub in ("restart", "start"):
+        try:
+            r = _run([ibus, sub], timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0:
+            return True, "ibus 已重启，新词库已生效"
+    return False, "ibus 未能自动重启；请运行：ibus restart"
+
+
 if __name__ == "__main__":
     # 便于命令行自检（设置窗口本身通过 GTK 调用；这里不做参数解析）。
     ok, text = stats()

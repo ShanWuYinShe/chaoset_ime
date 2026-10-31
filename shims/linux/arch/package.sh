@@ -36,6 +36,8 @@ cp "$SRC_DIR/setup/chaoset-setup.py" "$TMP_DIR/usr/share/chaoset/"
 # 设置窗「学习数据」操作模块：GTK 脚本 import 同目录 userdict_ctl.py，
 # 缺了会导致设置窗直接启动失败（2026-10-31）。
 cp "$SRC_DIR/setup/userdict_ctl.py" "$TMP_DIR/usr/share/chaoset/"
+# 设置窗「词库导入」操作模块（2026-10-31）：与 userdict_ctl.py 同理必须随包。
+cp "$SRC_DIR/setup/dictimport_ctl.py" "$TMP_DIR/usr/share/chaoset/"
 cp "$SRC_DIR/component/chaoset.xml" "$TMP_DIR/usr/share/ibus/component/"
 cp -r "$SRC_DIR/icons/hicolor" "$TMP_DIR/usr/share/icons/"
 
@@ -45,7 +47,8 @@ ln -sf /usr/bin/chaosetd "$TMP_DIR/usr/local/bin/chaosetd"
 ln -sf /usr/bin/chaoset-cli "$TMP_DIR/usr/local/bin/chaoset-cli"
 
 chmod 0755 "$TMP_DIR/usr/bin/"*
-chmod 0755 "$TMP_DIR/usr/share/chaoset/chaoset-setup.py" "$TMP_DIR/usr/share/chaoset/userdict_ctl.py"
+chmod 0755 "$TMP_DIR/usr/share/chaoset/chaoset-setup.py" "$TMP_DIR/usr/share/chaoset/userdict_ctl.py" \
+    "$TMP_DIR/usr/share/chaoset/dictimport_ctl.py"
 chmod 0644 "$TMP_DIR/usr/share/chaoset/dict.tsv"
 chmod 0644 "$TMP_DIR/usr/share/ibus/component/chaoset.xml"
 

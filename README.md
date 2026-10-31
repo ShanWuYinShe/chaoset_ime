@@ -1400,6 +1400,30 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`./shims/windows/build.sh` 通过（原生 core_test + mingw）；
         `make vet`/checker 通过；`git diff --check` 通过。
 
+- [x] 阶段 54：Linux 设置窗补「词库导入」GUI（三端入口对齐）（2026-10-31）
+      - **背景**：Linux 词库导入此前只有 CLI `chaoset-import`，设置窗没有入口；
+        而系统词库 `/usr/share/chaoset/dict.tsv` 需要 root 才能改。
+      - **实现**：
+        - 引擎侧：ibus 引擎新增可选 `-imported-dict`（默认
+          `$XDG_DATA_HOME/chaoset/dict.tsv`，文件不存在则忽略），启动时与系统
+          词库一起宽松加载——**engine 包零改动**，只是壳多传一个词库路径。
+        - 设置窗：GTK 新增「词库」区「导入词库…」（文件多选，Rime yaml /
+          CC-CEDICT txt / TSV）；`dictimport_ctl.py` 调随包 `chaoset-import`
+          合并到用户词库（临时文件 + 备份 + `os.replace` 原子替换），成功后
+          复用 `userdict_ctl.restart_engines()` 重启 ibus 引擎让新词生效。
+        - 打包/CI：`dictimport_ctl.py` 随 deb/tar.gz/Arch 安装到
+          `/usr/share/chaoset/`（release 冒烟断言）；CI py_compile + 两个单测文件
+          （`unittest discover`）。
+        - checkuiparity：「词库导入入口」组改为三端 GUI 断言（Linux 设置窗/
+          dictimport_ctl/ibus `-imported-dict`），移除「Linux 仅 CLI」；打包安装组
+          增加 dictimport_ctl.py 引用检查。
+      - **测试**：`test_dictimport_ctl.py` 7 例（参数拼接/已有词库底表/备份/原子
+        替换/失败保留旧词库/重启失败提示）；`imported_dict_test.go` 验证可选文件
+        存在才追加；linux-e2e 真实 ibus 环境启动引擎并断言「用户导入词库已加载」。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过；py_compile + unittest
+        discover 通过；`make vet`/checker 通过；`git diff --check` 通过。GUI 交互
+        （点按钮→选文件→重启生效）需 Linux 桌面/ibus 真机验收。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

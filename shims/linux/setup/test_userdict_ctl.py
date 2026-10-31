@@ -149,6 +149,27 @@ class UserdictCtlTest(unittest.TestCase):
         self.assertIn("ibus restart", text)
         self.assertIn([IBUS, "start"], self.calls)
 
+    def test_restart_engines_stops_then_restarts(self):
+        pids = [[123]]
+
+        def fake_pids():
+            return pids.pop(0) if pids else []
+
+        with mock.patch.object(ud, "engine_pids", side_effect=fake_pids), \
+             mock.patch.object(ud, "_wait_engines_gone", return_value=True), \
+             mock.patch.object(ud.os, "kill"):
+            ok, text = ud.restart_engines()
+        self.assertTrue(ok)
+        self.assertEqual(self.calls[0], [IBUS, "exit"])
+        self.assertEqual(self.calls[1], [IBUS, "restart"])
+        self.assertIn("已重启", text)
+
+    def test_restart_engines_without_engines_skips_stop(self):
+        with mock.patch.object(ud, "engine_pids", return_value=[]):
+            ok, _ = ud.restart_engines()
+        self.assertTrue(ok)
+        self.assertEqual(self.calls, [[IBUS, "restart"]])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
