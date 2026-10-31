@@ -7,7 +7,8 @@
 #     $XDG_DATA_HOME/chaoset/dict.tsv（用户可写，不需要 root）；
 #   - ibus 引擎启动时自动加载该文件（-imported-dict，见 ibus-engine/main.go），
 #     导入后重启 ibus 引擎让新词库立即生效；
-#   - 替换用「临时文件 + 备份 + os.replace」保证原子性，导入失败旧词库不受影响。
+#   - 合并/备份/原子替换全部由 Go 工具 `chaoset-import` 负责（-backup 语义），
+#     本模块只做路径、调用与平台重启，避免在 shims 里重复实现工具逻辑。
 #
 # 无 GTK 依赖：便于在无桌面环境的 CI 里对编排逻辑做单测
 # （见 test_dictimport_ctl.py）。
@@ -15,7 +16,6 @@
 import os
 import shutil
 import subprocess
-import time
 
 
 def imported_dict_path():
@@ -51,8 +51,8 @@ def _restart_engines():
 def import_files(paths, target=None, tool=None, restart=None):
     """把词库文件导入用户词库并重启 ibus 引擎；返回 (ok, message)。
 
-    paths 为源文件（Rime dict.yaml / CC-CEDICT txt / TSV，可多个）；已有用户
-    词库作为底表一起传给 chaoset-import（重复词条取较大词频）。
+    paths 为源文件（Rime dict.yaml / CC-CEDICT txt / TSV，可多个）；目标文件
+    由 chaoset-import 作为底表读取（-o 指向它，重复词条取较大词频）。
     """
     paths = [p for p in (paths or []) if p]
     if not paths:
@@ -63,42 +63,17 @@ def import_files(paths, target=None, tool=None, restart=None):
         return False, "未找到 chaoset-import（请重新安装）"
     restart = restart or _restart_engines
 
-    try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-    except OSError as exc:
-        return False, "创建词库目录失败：%s" % exc
-
-    tmp = target + ".tmp"
-    try:
-        os.unlink(tmp)
-    except OSError:
-        pass
-
-    args = [tool, "-o", tmp]
-    if os.path.isfile(target):
-        args.append(target)  # 已有用户词库作为底表
-    args += list(paths)
+    # Go 工具负责合并、备份与原子替换：-o 直接指向目标，-backup 让工具在
+    # 写目标前备份旧词库。壳不再自己造临时文件/rename。
+    args = [tool, "-o", target, "-backup"] + list(paths)
     try:
         r = _run(args)
     except (OSError, subprocess.SubprocessError) as exc:
-        _cleanup(tmp)
         return False, "导入失败：%s" % exc
     if r.returncode != 0:
-        _cleanup(tmp)
         return False, (r.stderr or r.stdout or "导入失败").strip()
-    if not os.path.isfile(tmp):
-        _cleanup(tmp)
+    if not os.path.isfile(target):
         return False, "导入失败：未生成词库文件"
-
-    # 备份旧词库后原子替换：导入失败/中断时旧文件保持原样。
-    try:
-        if os.path.isfile(target):
-            bak = "%s.bak.%s" % (target, time.strftime("%Y%m%d-%H%M%S"))
-            shutil.copy2(target, bak)
-        os.replace(tmp, target)
-    except OSError as exc:
-        _cleanup(tmp)
-        return False, "写入词库失败（旧词库保持不变）：%s" % exc
 
     ok, msg = restart()
     if not ok:
@@ -107,13 +82,6 @@ def import_files(paths, target=None, tool=None, restart=None):
     if detail:
         detail = "；" + detail
     return True, "已导入到 %s%s；%s" % (target, detail, msg)
-
-
-def _cleanup(path):
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
 
 
 if __name__ == "__main__":

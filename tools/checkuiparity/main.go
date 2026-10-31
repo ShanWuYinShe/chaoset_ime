@@ -83,6 +83,7 @@ const (
 	linuxE2E        = "shims/linux/test-ci.sh"
 	linuxTest       = "shims/linux/setup/test_userdict_ctl.py"
 	linuxComp       = "shims/linux/component/chaoset.xml"
+	chaosetImport   = "cmd/chaoset-import/main.go"
 	makefile        = "Makefile"
 	installSh       = "shims/linux/install.sh"
 	archScript      = "shims/linux/arch/package.sh"
@@ -369,12 +370,14 @@ func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
 	}
 }
 
-// checkImportSafety 词库导入安全流程静态断言（mac Setup.app + Windows 设置窗）。
+// checkImportSafety 词库导入安全流程静态断言。
 //
-// 这两个关键安全点都是历史审查修出来的（2026-10-26 / 2026-10-31）：
+// 安全点都是历史审查修出来的（2026-10-26 / 2026-10-31 / 2026-11-01）：
 //  1. 必须检查导入器退出码，不能只看产物文件存在（导入器会写出残缺产物）；
-//  2. 必须先备份旧词库，再走同卷 staging + 原子替换，不能 remove+move；
-//  3. 失败要留下可排查的日志（Windows import.log / mac 返回 log 文本）。
+//  2. 必须先备份旧词库，再原子替换，不能 remove+move；
+//  3. 失败要留下可排查的日志（Windows import.log / mac 返回 log 文本）；
+//  4. 文件合并/备份/原子替换属于工具逻辑，必须由 Go `chaoset-import` 实现；
+//     Linux 壳只调用工具（-backup），不再在 Python 里重复 temp/copy/replace。
 //
 // 这里锁住实现关键片段，防止重构时把安全流程删掉。
 func checkImportSafety(fsys fs.FS, problems *[]string) {
@@ -393,14 +396,19 @@ func checkImportSafety(fsys fs.FS, problems *[]string) {
 		"MOVEFILE_REPLACE_EXISTING",
 		"import.log",
 	)
-	// Linux 设置窗（2026-10-31）：退出码检查 + 备份 + 临时文件/os.replace 原子
-	// 替换（导入失败旧词库保持原样）。
+	// Linux 设置窗（2026-11-01 起）：只调用 Go 工具并检查退出码；合并/备份/
+	// 原子替换由 chaoset-import 负责（-o 直接指向目标 + -backup）。
 	checkContains(fsys, problems, group, linuxDictImport,
 		"r.returncode != 0",
-		"shutil.copy2",
-		".bak.",
-		"os.replace",
-		`tmp = target + ".tmp"`,
+		`"-o", target`,
+		`"-backup"`,
+	)
+	checkExcludes(fsys, problems, group, linuxDictImport,
+		"os.replace", "shutil.copy2", `target + ".tmp"`,
+	)
+	// Go 工具是这些安全语义的唯一实现：seed/backup/原子替换都在这里。
+	checkContains(fsys, problems, group, chaosetImport,
+		`"seed"`, `"backup"`, "backupFile(", "os.Rename(",
 	)
 }
 

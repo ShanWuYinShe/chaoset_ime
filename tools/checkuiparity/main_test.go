@@ -110,10 +110,15 @@ func TestCheckImportSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取 Linux 导入模块失败：%v", err)
 	}
+	importText, err := os.ReadFile("../../" + chaosetImport)
+	if err != nil {
+		t.Fatalf("读取 chaoset-import 源码失败：%v", err)
+	}
 	fsys := fstest.MapFS{
 		macSetup:        &fstest.MapFile{Data: macText},
 		winShell:        &fstest.MapFile{Data: winText},
 		linuxDictImport: &fstest.MapFile{Data: linuxText},
+		chaosetImport:   &fstest.MapFile{Data: importText},
 	}
 	var problems []string
 	checkImportSafety(fsys, &problems)
@@ -127,26 +132,29 @@ func TestCheckImportSafety(t *testing.T) {
 	}
 	problems = nil
 	checkImportSafety(fstest.MapFS{
-		macSetup: &fstest.MapFile{Data: macText},
-		winShell: &fstest.MapFile{Data: []byte(mutated)},
+		macSetup:        &fstest.MapFile{Data: macText},
+		winShell:        &fstest.MapFile{Data: []byte(mutated)},
+		linuxDictImport: &fstest.MapFile{Data: linuxText},
+		chaosetImport:   &fstest.MapFile{Data: importText},
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "MOVEFILE_REPLACE_EXISTING") {
 		t.Fatalf("去掉原子替换标志应被捕获，实际：%v", problems)
 	}
 
-	// 替换所有出现（注释里也有 os.replace；只换第一处会让真实调用残留）。
-	linuxMutated := strings.ReplaceAll(string(linuxText), "os.replace", "shutil.move")
+	// Linux 现在只调 Go 工具：去掉 -backup 参数应被捕获（备份语义不能丢）。
+	linuxMutated := strings.Replace(string(linuxText), "\"-backup\"", "\"-no-backup\"", 1)
 	if linuxMutated == string(linuxText) {
-		t.Fatal("变异未生效：Linux 导入模块里找不到 os.replace")
+		t.Fatal("变异未生效：Linux 导入模块里找不到 \"-backup\"")
 	}
 	problems = nil
 	checkImportSafety(fstest.MapFS{
 		macSetup:        &fstest.MapFile{Data: macText},
 		winShell:        &fstest.MapFile{Data: winText},
 		linuxDictImport: &fstest.MapFile{Data: []byte(linuxMutated)},
+		chaosetImport:   &fstest.MapFile{Data: importText},
 	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "os.replace") {
-		t.Fatalf("Linux 去掉 os.replace 应被捕获，实际：%v", problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
+		t.Fatalf("Linux 去掉 -backup 应被捕获，实际：%v", problems)
 	}
 }
 

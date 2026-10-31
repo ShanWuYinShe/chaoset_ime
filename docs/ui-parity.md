@@ -150,7 +150,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 设置入口 | 齿轮 → NSSwitch 设置窗 | 齿轮 → Win32 设置窗 | Windows **没有**语言栏菜单/托盘入口（此前 README 描述有误，已修正）；唯一入口是候选栏齿轮 |
 | 设置窗视觉 | 380×330pt（2026-10-31 加学习数据区）、NSSwitch、13/11pt、跟随系统深浅 | 380×390pt（2026-10-31 加词库区）、13/11pt、**跟随系统深浅**（DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）、per-monitor DPI | Windows 深色/DPI 为编译级实现，**需真机验收**；mac/Linux 跟随系统 |
 | 学习数据管理 | 设置窗「学习数据」区：统计 / 清空（二次确认）/ 导出 TSV（2026-10-31） | 同左（2026-10-31；设置窗独立 TcpTransport 连 daemon，不持有 TIP 指针） | 同左（2026-10-31；GTK 设置窗调用随包 `chaoset-userdict` 本地文件模式，清空时编排 `ibus exit` → 停引擎 → 清空 → `ibus restart`；**engine 包零改动**，无 DBus/平台代码进入引擎） |
-| 词库导入 | Setup.app GUI：种子+现用+所选 → 备份 → 原子替换（2026-10-26）；**设置窗「词库」区也有「导入词库…」入口（2026-10-31）**：打开随包 `Chaoset.app` 并传 `--import`，由 Setup.app 弹选择面板（导入实现仍只有一份） | 设置窗「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ `chaoset-import` 合并 → 备份 → 同卷原子替换 → 重启 daemon（2026-10-31） | **设置窗「词库」区（2026-10-31）**：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ 随包 `chaoset-import` 合并到 `$XDG_DATA_HOME/chaoset/dict.tsv`（备份 + 原子替换）→ 重启 ibus 引擎；引擎启动时 `-imported-dict` 自动加载用户词库（engine 包零改动） |
+| 词库导入 | Setup.app GUI：种子+现用+所选 → 备份 → 原子替换（2026-10-26）；**设置窗「词库」区也有「导入词库…」入口（2026-10-31）**：打开随包 `Chaoset.app` 并传 `--import`，由 Setup.app 弹选择面板（导入实现仍只有一份） | 设置窗「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ `chaoset-import` 合并 → 备份 → 同卷原子替换 → 重启 daemon（2026-10-31） | **设置窗「词库」区（2026-10-31）**：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ 随包 `chaoset-import -o $XDG_DATA_HOME/chaoset/dict.tsv -backup`（合并/备份/原子替换在 Go 工具内，2026-11-01 起壳不再自己 temp+copy+replace）→ 重启 ibus 引擎；引擎启动时 `-imported-dict` 自动加载用户词库（engine 包零改动） |
 | 设置窗单例 | 有 | 有 | 有（2026-10-31：`Gtk.Application` application_id `org.chaoset.Setup` 唯一实例，重复点「首选项」激活并前置已有窗口）；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗（设置窗 post 通知） | **立即收起联想窗（2026-10-31）**：设置窗 `PostMessage(HWND_BROADCAST, RegisterWindowMessageW("Chaoset.AssociateChanged"))` → 各宿主进程候选窗转发 TIP `clearAssociate`；设置窗仍不持有 TIP 指针，无宿主进程 UAF | Linux 仍为下一次按键生效（只写 config.json，已知差异）；mac/Windows 均立即收起 |
 | 双拼 mspy `;` 键 | 支持（2026-10-30） | 支持（2026-10-30） | 支持（2026-10-30） | 引擎 `Composition.shuangpin` 下发方案名，三端壳把双拼模式下的 `;` 路由到 `input`；会话级单测遍历全部音节锁可达性。**标点宽度瞬态已修（2026-10-31）**：`input` 新增可选 `half` 字段，三端壳每次按键下发全/半角状态，引擎先同步再处理 |
@@ -322,8 +322,9 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   断言 DLL 无 `uiautomationcore.dll` 静态导入）、
   CI 安装包自检（日常 linux-e2e 构建 tar.gz/deb 并断言设置窗模块随包；
   macos-build 直接跑 `make package-macos` 产出 zip/dmg）、
-  **词库导入安全流程**（mac/Windows/Linux 三端都必须保留导入器退出码检查/旧词库
-  备份/原子替换/失败日志；Linux 用临时文件 + os.replace）、**关闭联想的即时性**
+  **词库导入安全流程**（mac/Windows/Linux 都必须保留导入器退出码检查；Linux 自
+  2026-11-01 起把合并/备份/原子替换交给 Go `chaoset-import -o ... -backup`，壳只
+  调用工具；mac/Windows 仍各自实现，待迁移）、**关闭联想的即时性**
   （mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**鼠标点选候选**（mac `mouseDown` / Windows `WM_LBUTTONDOWN` /
   Linux `CandidateClicked`；linux-e2e 断言点选上屏）、**退格与修饰键映射**

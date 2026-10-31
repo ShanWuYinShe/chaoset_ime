@@ -1680,6 +1680,22 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 77：工具收口——chaoset-import 支持 seed/backup，Linux 壳改为只调用工具（2026-11-01）
+      - **用户要求**：shims 只负责平台相关 + UI，工具类逻辑用 Go 实现，不要在
+        shims 混入工具实现；每个模块单一职责。
+      - **工具**：`chaoset-import` 新增 `-seed`（种子词库先并入底表）与 `-backup`
+        （写目标前备份 `<target>.bak.<时间戳>`，备份失败则中止）；合并/备份/原子
+        替换全部在 Go 工具内，壳不再自己 copy/rename。
+      - **Linux**：`dictimport_ctl.py` 删除临时文件、`shutil.copy2`、`os.replace`
+        逻辑，只保留路径/调用/重启 ibus；测试同步改为断言 `-o target -backup`
+        参数与失败时旧词库不变。
+      - **守卫**：checkuiparity「词库导入安全」组改为断言 Linux 调用 Go 工具
+        `-backup`、且不得再出现 `os.replace`/`shutil.copy2`/temp；同时断言 Go
+        工具保留 `seed`/`backup`/`backupFile`/`os.Rename`。
+      - **文档**：AGENTS 职责边界、ui-parity 词库导入行与机器检查说明同步。
+      - **验证**：`go test ./cmd/chaoset-import`、Python 单测、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # dictimport_ctl 单测：无 GTK、无 ibus、无真实 chaoset-import。
 #
-# 通过替换依赖（find_tool / _run / _restart_engines）验证：参数拼接（已有词库
-# 作为底表）、临时文件 + 备份 + 原子替换、失败时旧词库不变、重启失败提示。
+# 通过替换依赖（find_tool / _run / _restart_engines）验证：参数拼接（-o 目标 +
+# -backup，合并/备份/原子替换由 Go 工具负责）、失败时旧词库不变、重启失败提示。
 
 import os
 import sys
@@ -40,9 +40,12 @@ class DictimportCtlTest(unittest.TestCase):
 
     def _fake_run(self, args, timeout=60):
         self.calls.append(list(args))
-        # 模拟 chaoset-import：-o 指向的输出文件写出内容
+        # 模拟 chaoset-import：-o 指向目标；-backup 时先备份旧目标再原子写。
         out = args[args.index("-o") + 1]
         os.makedirs(os.path.dirname(out), exist_ok=True)
+        if "-backup" in args and os.path.isfile(out):
+            with open(out + ".bak.sim", "w", encoding="utf-8") as fh:
+                fh.write(Path(out).read_text(encoding="utf-8"))
         with open(out, "w", encoding="utf-8") as fh:
             fh.write("测试词\tce shi ci\t99\n")
         return _proc(out="已写入 %s（共 1 条）\n" % out)
@@ -73,9 +76,9 @@ class DictimportCtlTest(unittest.TestCase):
         self.assertTrue(ok, text)
         self.assertTrue(os.path.isfile(self.target))
         args = self.calls[0]
-        self.assertEqual(args[:3], [TOOL, "-o", self.target + ".tmp"])
-        self.assertNotIn(self.target, args)  # 首次导入没有底表
+        self.assertEqual(args[:4], [TOOL, "-o", self.target, "-backup"])
         self.assertEqual(args[-1], "/in.yaml")
+        self.assertNotIn(self.target + ".tmp", args)
 
     def test_import_uses_existing_target_as_base(self):
         os.makedirs(os.path.dirname(self.target), exist_ok=True)
@@ -84,8 +87,8 @@ class DictimportCtlTest(unittest.TestCase):
         ok, _ = di.import_files(["/in.yaml"], target=self.target)
         self.assertTrue(ok)
         args = self.calls[0]
-        self.assertIn(self.target, args)
-        # 备份存在
+        self.assertIn("-backup", args)
+        # 模拟 Go 工具的备份产物存在
         baks = [n for n in os.listdir(os.path.dirname(self.target))
                 if ".bak." in n]
         self.assertEqual(len(baks), 1)
