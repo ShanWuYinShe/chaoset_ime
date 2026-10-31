@@ -128,7 +128,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev file xvfb
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev file xvfb xdotool fonts-noto-cjk
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
@@ -136,8 +136,9 @@ jobs:
           ./shims/linux/test-ci.sh
 
       # Linux 设置窗是原生 GTK3 C（用户要求 shim 用原生实现、不引入 Python）。
-      # 除编译/无 GTK 单测外，再用 Xvfb 做一次无头启动冒烟：GTK 初始化、窗口
-      # 构建、配置读取都在真实显示后端下跑一遍；超时杀掉（124）视为正常常驻。
+      # 除编译/无 GTK 单测外，再用 Xvfb 做一次无头启动冒烟并核对窗口几何：
+      # 只检查进程存活不够——缺 CJK 字体时 GTK 窗口会退化成 32767 高/不可见，
+      # 所以这里装 Noto CJK 并用 xdotool 断言窗口已映射且尺寸合理。
       - name: 原生 GTK3 设置窗编译、单测与无头启动冒烟（C，无 Python）
         run: |
           sh shims/linux/setup/build.sh /tmp/chaoset-setup
@@ -150,15 +151,32 @@ jobs:
           /tmp/test_setup_ctl
           Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
           sleep 1
-          set +e
-          DISPLAY=:99 timeout 3 /tmp/chaoset-setup > /tmp/setup-smoke.log 2>&1
-          smoke_rc=$?
-          set -e
-          if [ "$smoke_rc" -ne 124 ]; then
-            echo "设置窗未正常常驻（exit $smoke_rc）："
+          DISPLAY=:99 /tmp/chaoset-setup > /tmp/setup-smoke.log 2>&1 &
+          SETUP_PID=$!
+          WID=""
+          for _ in 1 2 3 4 5; do
+            WID=$(DISPLAY=:99 xdotool search --onlyvisible --name "Chaoset 设置" 2>/dev/null | head -1)
+            [ -n "$WID" ] && break
+            sleep 1
+          done
+          if [ -z "$WID" ]; then
+            echo "设置窗未创建可搜索窗口："
             cat /tmp/setup-smoke.log
+            kill "$SETUP_PID" 2>/dev/null || true
             exit 1
           fi
+          GEO=$(DISPLAY=:99 xdotool getwindowgeometry --shell "$WID")
+          W=$(echo "$GEO" | awk -F= '/^WIDTH=/{print $2}')
+          H=$(echo "$GEO" | awk -F= '/^HEIGHT=/{print $2}')
+          echo "设置窗几何: ${W}x${H}"
+          if [ -z "$W" ] || [ -z "$H" ] || [ "$W" -lt 200 ] || [ "$H" -lt 200 ] || [ "$H" -gt 2000 ]; then
+            echo "设置窗几何异常（缺 CJK 字体/未映射？）：${W}x${H}"
+            cat /tmp/setup-smoke.log
+            kill "$SETUP_PID" 2>/dev/null || true
+            exit 1
+          fi
+          kill "$SETUP_PID" 2>/dev/null || true
+          wait "$SETUP_PID" 2>/dev/null || true
 
 
       # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄

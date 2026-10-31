@@ -2,6 +2,12 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **设置窗无头冒烟核对窗口几何**：CI 安装 Noto CJK + xdotool，Xvfb 下启动
+  `chaoset-setup` 并断言窗口已映射、尺寸合理（缺 CJK 字体会退化成 32767 高）。
+- **README 去 changelog 化**：历史阶段记录迁入本文件，README 只保留当前文档。
+
 ## v0.3.0（2026-11-01）
 
 - **Linux 设置窗迁原生 GTK3 C，彻底移除 Python/PyGObject**：删除 5 个 `.py`；
