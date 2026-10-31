@@ -88,6 +88,7 @@ const (
 	releaseYML      = ".github/workflows/release.yml"
 	ciYML           = ".github/workflows/ci.yml"
 	uiParityDoc     = "docs/ui-parity.md"
+	readmeDoc       = "README.md"
 )
 
 // checkContains 断言文件包含全部子串；每个缺失项记一条问题。
@@ -261,7 +262,9 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 	}
 	// 多行折行：Windows 2026-10-31 起与 mac 同算法（纯布局函数可在 macOS 单测），
 	// 断言头文件被 win32.cpp 引用，防止退回单行布局。
-	checkContains(fsys, problems, "候选窗几何", winShell, "candidate_layout.hpp")
+	checkContains(fsys, problems, "候选窗几何", winShell, "candidate_layout.hpp",
+		"wrapRows(boxes, maxContent, gap, contentH, kMaxRows)",
+		"const int lineSpacing = pt(4, dpi)")
 	checkNumericContracts(fsys, problems, "候选窗齿轮", gearContracts)
 	checkContains(fsys, problems, "候选窗齿轮", macPanel, "color: theme.chipDigit")
 	checkContains(fsys, problems, "候选窗齿轮", winShell, "const COLORREF gearColor = theme.chipDigit;")
@@ -526,6 +529,12 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍")
+	// README 阶段记录不能留下「Linux 仍只有 CLI」这类已过期的现状描述；
+	// 阶段 36/39 是历史条目，必须带「阶段 54 已补齐」的解决标注。
+	checkContains(fsys, &problems, "文档对照", readmeDoc, "阶段 54",
+		"Linux 设置窗补「词库导入」GUI")
+	checkExcludes(fsys, &problems, "文档对照", readmeDoc,
+		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
 
 	return problems
 }

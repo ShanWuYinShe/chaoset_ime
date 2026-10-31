@@ -1099,8 +1099,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         不会出现「旧词库已删、新词库没到位」的中间态。仅作用于安装器管理的默认
         词库路径（自定义 `-dict` 部署需手工替换，已写入 windows README）。
       - **与 macOS 对齐**：mac Setup.app 自 2026-10-26 起已有同语义 GUI 导入（种子+
-        现用+所选 → 备份 → 原子替换）；Windows 现在等价。Linux 目前仍只有 CLI
-        `chaoset-import`（GTK 设置窗导入待后续）。
+        现用+所选 → 备份 → 原子替换）；Windows 现在等价。Linux 当时仍只有 CLI
+        `chaoset-import`（GTK 设置窗导入已于阶段 54 补齐，2026-10-31）。
       - **验证**：Windows 壳 `build.sh` 编译 + `core_test` 通过；`make package-windows`
         通过（zip 内含 chaoset-import.exe，导入器路径与 DLL 同目录）；真机验收点：
         多选文件、取消对话框、错误词库文件（非法音节应失败且不改词库）、成功后
@@ -1148,7 +1148,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         实现存在（mac 静态 window / Windows g_settingsWnd / Linux Gtk.Application）；
         ③ 学习数据 GUI 三端存在，且 Linux 侧**不得**引入引擎 DBus/IBus 管理接口
         （engine 包纯净约束）；④ 词库导入入口（mac Setup.app + Windows 设置窗
-        GUI；Linux 仅 CLI 且 ui-parity 必须明确记录）；⑤ 打包安装一致性
+        GUI；Linux 当时仅 CLI（阶段 54 已补齐）；⑤ 打包安装一致性
         （userdict_ctl.py 被 Makefile/install.sh/Arch/release 冒烟引用、hicolor
         小图标齐全、CI py_compile/单测步骤存在）；⑥ ui-parity 关键差异行保留。
       - **测试**：`tools/checkuiparity/main_test.go` 覆盖规则助手 + 在真实仓库上
@@ -1435,6 +1435,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         增加空 XDG 回退 `~/.local/share` 用例。
       - **验证**：go test ./shims/linux/ibus-engine、Python 21 例、make vet/checker、
         git diff --check 通过；linux-e2e 由 CI 真实验证。
+
+- [x] 阶段 56：清理过期文档 + 锁死 Windows 多行折行接入（2026-10-31）
+      - **过期文档**：README 阶段 36/39 仍写「Linux 仍只有 CLI / 导入待后续」——
+        阶段 54 已补齐 Linux GUI 导入。历史条目改为「当时仍只有 CLI（已于阶段 54
+        补齐）」，并加阶段 56 记录。
+      - **checkuiparity**：「文档对照」组新增 README 断言——必须保留阶段 54 的
+        Linux 词库导入条目，且不得再出现过期现状（如「Linux 仍只有 CLI」/
+        「导入待后续」）；「候选窗几何」组新增 Windows 必须实际调用
+        `wrapRows(..., kMaxRows)` 且使用 `lineSpacing = pt(4, dpi)`，防止只留下
+        常量/头文件而退回单行布局。
+      - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、`git diff
+        --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 
