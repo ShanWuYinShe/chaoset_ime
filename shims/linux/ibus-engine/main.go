@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/appdirs"
 )
 
 // installedDictDir 是安装包把词库放进系统目录的位置（见 Makefile 的
@@ -141,30 +142,22 @@ func startUserDictFlusher(u *engine.UserDict) (stop func()) {
 // 优先 $XDG_DATA_HOME，否则 ~/.local/share；目录不可写时返回空串（退化为
 // 仅内存），避免因为一个可选功能让整个引擎起不来。
 func defaultUserDictPath() string {
-	base := os.Getenv("XDG_DATA_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".local", "share")
+	path, err := appdirs.LinuxUserDictPath()
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(base, "chaoset", "userdict.json")
+	return path
 }
 
 // defaultImportedDictPath 返回 Linux 设置窗「导入词库」写入的用户词库路径。
 // 与 userdict_ctl.py / dictimport_ctl.py 的 imported_dict_path() 同口径：
 // $XDG_DATA_HOME/chaoset/dict.tsv（缺省 ~/.local/share/chaoset/dict.tsv）。
 func defaultImportedDictPath() string {
-	base := os.Getenv("XDG_DATA_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".local", "share")
+	path, err := appdirs.LinuxImportedDictPath()
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(base, "chaoset", "dict.tsv")
+	return path
 }
 
 // withImportedDict 在文件可读时把用户导入词库追加到主词库列表。

@@ -9,12 +9,14 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/appdirs"
 	"chaoset.ime/internal/buildinfo"
 	"chaoset.ime/ipc"
 )
@@ -29,7 +31,7 @@ func (f *repeatFlag) Set(v string) error {
 }
 
 func main() {
-	socket := flag.String("socket", "chaoset.sock", "Unix 套接字路径")
+	socket := flag.String("socket", "", "Unix 套接字路径（空=按平台用户数据目录生成）")
 	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；仅旧壳兼容，建议用 -pipe/-socket）")
 	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
 	var dicts repeatFlag
@@ -66,7 +68,15 @@ func main() {
 		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 
-	ep, err := resolveEndpoint(*socket, *tcpAddr, *usePipe)
+	socketPath := *socket
+	if socketPath == "" {
+		p, err := appdirs.SocketPath()
+		if err != nil {
+			log.Fatal(err)
+		}
+		socketPath = p
+	}
+	ep, err := resolveEndpoint(socketPath, *tcpAddr, *usePipe)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -162,6 +172,12 @@ func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPa
 
 	var ln net.Listener
 	if ep.Network == "unix" {
+		// 默认路径可能位于尚未创建的用户目录（XDG_RUNTIME_DIR/Application Support）。
+		if dir := filepath.Dir(ep.Address); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return fmt.Errorf("创建套接字目录 %s 失败: %w", dir, err)
+			}
+		}
 		// 拿到锁之后才清理残留套接字：此时可以确定没有其它实例在用这个路径。
 		if err := os.Remove(ep.Address); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("清理旧套接字失败: %w", err)

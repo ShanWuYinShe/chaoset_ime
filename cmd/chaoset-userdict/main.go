@@ -25,12 +25,13 @@ import (
 	"path/filepath"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/appdirs"
 	"chaoset.ime/internal/buildinfo"
 	"chaoset.ime/ipc"
 )
 
 func main() {
-	socket := flag.String("socket", "chaoset.sock", "chaosetd 的 Unix 套接字路径；管理操作经 daemon 生效")
+	socket := flag.String("socket", "", "chaosetd 的 Unix 套接字路径（空=按平台用户数据目录生成）；管理操作经 daemon 生效")
 	tcpAddr := flag.String("tcp", "", "经该 TCP 地址连接 chaosetd（如 127.0.0.1:7949，旧壳兼容）；与 -socket/-pipe 二选一")
 	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
 	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
@@ -88,6 +89,12 @@ func main() {
 			ep = ipc.Endpoint{Network: "pipe", Address: name}
 		} else if *tcpAddr != "" {
 			ep = ipc.Endpoint{Network: "tcp", Address: *tcpAddr}
+		} else if ep.Address == "" {
+			socketPath, pathErr := appdirs.SocketPath()
+			if pathErr != nil {
+				log.Fatal(pathErr)
+			}
+			ep.Address = socketPath
 		}
 		err = runDaemon(ep, cmd, phrasesOnly, out)
 	}

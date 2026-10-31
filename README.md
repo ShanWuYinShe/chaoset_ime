@@ -285,9 +285,11 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 # 本地内嵌引擎模式
 go run ./cmd/chaoset-cli
 
-# 或经 IPC 连接 daemon（先起 daemon）
+# 或经 IPC 连接 daemon（先起 daemon；默认 socket 在平台用户目录）
 go run ./cmd/chaosetd &
-go run ./cmd/chaoset-cli --socket chaoset.sock
+# 显式指定 cwd 下的 socket 便于本地调试：
+# go run ./cmd/chaosetd -socket chaoset.sock &
+# go run ./cmd/chaoset-cli --socket chaoset.sock
 
 # Windows 命名管道（推荐；daemon/CLI 都按当前用户 SID 自动算管道名）
 go run ./cmd/chaosetd -pipe &
@@ -669,19 +671,32 @@ sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个�
 #       重启 daemon 生效 → 复核 IPC；加 --no-current 则只并入新词库
 ```
 
+## 默认路径（internal/appdirs）
+
+daemon / 工具 / Linux ibus 引擎共用 `internal/appdirs` 的路径约定（2026-11-01）：
+
+| 平台 | 数据目录 | 默认 socket |
+|---|---|---|
+| macOS | `~/Library/Application Support/chaoset` | `chaoset.sock`（同目录） |
+| Linux | `$XDG_DATA_HOME/chaoset`（缺省 `~/.local/share/chaoset`） | `$XDG_RUNTIME_DIR/chaoset/chaoset.sock`（无则数据目录） |
+| Windows | `%LOCALAPPDATA%\Chaoset` | 命名管道 `\\.\pipe\chaoset-<SID>` |
+
+`chaosetd` / `chaoset-userdict` 的 `-socket` 默认值改为按平台生成；显式传路径仍优先。
+
 ## 用户词典管理
 
 ```sh
 # 经运行中的 daemon 操作（推荐：清空同时生效于内存与磁盘）
-bin/chaoset-userdict -socket chaoset.sock stats
-bin/chaoset-userdict -socket chaoset.sock clear
-bin/chaoset-userdict -socket chaoset.sock export -o userdict-backup.tsv
+# 默认 socket 按平台用户目录生成；自定义 socket 时加 -socket PATH
+bin/chaoset-userdict stats
+bin/chaoset-userdict clear
+bin/chaoset-userdict export -o userdict-backup.tsv
 
 # daemon 未运行时直接操作文件（daemon 运行时清空会被其内存态覆盖）
 bin/chaoset-userdict -userdict chaoset-userdict.json stats
 
 # 只导出学到的词组（三列 TSV），回流词库：
-bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
+bin/chaoset-userdict export -phrases -o learned.tsv
 bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 
 # Windows 命名管道（daemon 以 -pipe 启动时）：
@@ -1783,6 +1798,22 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaoset-cli ./cmd/chaoset-userdict`、
         `GOOS=windows go build` 两个工具、`make vet`/checker、
         `git diff --check` 通过。
+
+- [x] 阶段 83：internal/appdirs 统一用户目录/socket 默认路径（2026-11-01）
+      - **新增 `internal/appdirs`**：`DataDir`（macOS Application Support /
+        Linux XDG / Windows LOCALAPPDATA）、`SocketPath`（Linux 优先
+        `$XDG_RUNTIME_DIR`）、`UserDictPath`/`ImportedDictPath`；另提供
+        `LinuxDataDir` 等固定 XDG 口径，供只在 Linux 运行的 ibus 引擎在 macOS
+        单测里也按 Linux 断言。
+      - **接入**：`chaosetd`/`chaoset-userdict` 的 `-socket` 默认值改为按平台生成；
+        daemon 启动时自动创建 socket 父目录（0700）；Linux ibus 引擎的用户词典/
+        导入词库路径改用 appdirs。
+      - **测试**：`internal/appdirs`（macOS/Linux 路径、Linux 固定 XDG、aux 路径）；
+        daemon/userdict/engine 测试通过；checkuiparity 的路径一致性断言改为
+        `appdirs.LinuxImportedDictPath`。
+      - **文档**：README「默认路径」表、AGENTS 用户目录约定、阶段 83。
+      - **验证**：`go test ./internal/appdirs ./cmd/chaosetd ./cmd/chaoset-userdict
+        ./shims/linux/ibus-engine`、`make vet`/checker、`git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 

@@ -14,6 +14,7 @@
 - **候选窗任何 UI 改动（控制区/齿轮/翻页/配色/层级）必须三端同步检查**：macOS `CandidatePanel.swift`、Windows `win32.cpp`（`settingsRect_`/齿轮绘制）、Linux ibus（无自绘 UI 时在 `shims/linux/README.md` 记录不适用理由）——只改一个平台 = 未完成（2026-10-28 齿轮五轮迭代漏同步 Windows 的教训）。绘制机制按平台落地但**视觉形态必须一致**（齿轮 = 圆环+8 齿矢量算法，**仅 macOS/Windows 两端**同几何参数同色值；Linux ibus 面板无齿轮；macOS 端 SF Symbol 模板图离屏着色失效因此手绘矢量，Windows GDI 同算法实现），机制说明记录在各壳源码注释。Windows 布局/字号/间距统一 **pt 口径**（`pt(v)=MulDiv(v,dpi,72)`），不要退回 px@96。
 - **三端设置窗（2026-10-31 新增）**：macOS `shims/macos/setup/`（`SettingsWindow.swift`，含「词库导入」入口——打开 Setup.app 并自动弹导入面板）、Windows 设置窗、Linux GTK 设置窗（`Gtk.Application` 单例 + hicolor 小尺寸图标，学习数据管理与词库导入搬进 GUI，engine 零改动）。三端的词库导入安全流程与设置项契约由 `tools/checkuiparity` 静态断言，改动任一端设置窗必须三端同步并更新 `docs/ui-parity.md`。
 - **三端 UI 一致性静态检查（`make check-uiparity`）**：`tools/checkuiparity` 覆盖设置窗、学习数据、词库导入与安全、联想即时性、退格/修饰键语义、候选窗几何/配色、CI 覆盖、shell 转义、文档对照等三端契约（组数以 `make check-uiparity` 输出为准，勿写死数字），已接入 `make vet` 与 CI 的 lint job。改 UI 契约时同步改断言，否则 `make vet` 红。
+- **用户目录约定**：daemon / 工具 / Linux ibus 引擎统一走 `internal/appdirs`（macOS Application Support、Linux XDG、Windows LOCALAPPDATA；Linux socket 优先 `$XDG_RUNTIME_DIR`），不要在壳里各自拼路径。
 - **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 每 2 秒批量原子写盘（temp+rename，无 fsync；正常退出同步落盘，异常强杀最多丢最近 2 秒）。Linux ibus 引擎同样启用延迟落盘。`chaoset-userdict.json` 已 `.gitignore`。
 
 ## macOS 输入源图标（用户明确要求，禁止回退）
