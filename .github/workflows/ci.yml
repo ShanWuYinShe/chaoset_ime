@@ -182,18 +182,21 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: 构建 macOS app（含 universal 架构自检）
+      # 直接跑 `make package-macos`（与 release 同一条打包链）：构建 universal
+      # app + 全部随包工具 universal 自检 + zip（有 hdiutil 时再出 dmg）。
+      # 此前日常 CI 只跑 build.sh，打包脚本/资源清单坏了要到打 tag 才发现
+      #（与 Linux 安装包自检同一类问题，2026-10-31 补齐）。
+      - name: macOS 构建 + 安装包（zip/dmg，含 universal 自检）
         run: |
-          make build
           chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
                    shims/macos/tests/visual-parity.sh
-          ./shims/macos/build.sh
-          for app in shims/macos/build/ChaosetIME.app shims/macos/build/ChaosetSetup.app; do
-            bin="$app/Contents/MacOS/$(basename "$app" .app)"
-            lipo -info "$bin"
-            lipo -info "$bin" | grep -q x86_64 || { echo "缺少 x86_64: $bin"; exit 1; }
-            lipo -info "$bin" | grep -q arm64  || { echo "缺少 arm64: $bin"; exit 1; }
-          done
+          make package-macos
+          test -f dist/chaoset-macos.zip || { echo "缺少 dist/chaoset-macos.zip"; exit 1; }
+          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetIME.app/Contents/MacOS/ChaosetIME' \
+            || { echo "zip 缺少主壳"; exit 1; }
+          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetSetup.app/Contents/Resources/chaoset-import' \
+            || { echo "zip 缺少 Setup 随包 chaoset-import"; exit 1; }
+          if [ -f dist/Chaoset.dmg ]; then echo "DMG 已生成"; else echo "（无 hdiutil，跳过 DMG）"; fi
 
       # 顺带断言所有随包工具都是 universal：chaoset-import 曾因裸 go build 只出
       # arm64，Intel 用户点「导入词库」直接 Bad CPU type（2026-10-26 修复）。

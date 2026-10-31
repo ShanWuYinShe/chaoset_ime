@@ -1475,6 +1475,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：本机 `make package-linux` 通过并人工核对 tar 内容；
         `make vet`/checker 通过；CI linux-e2e 实际执行该步骤。
 
+- [x] 阶段 59：macOS 安装包自检进日常 CI（2026-10-31）
+      - **问题**：macos-build 此前只跑 `build.sh` + universal 检查；打包脚本
+        `make package-macos`（zip/dmg、Setup.app 资源清单）只在 release 打 tag
+        时验证，日常改动可能悄悄漏装随包工具。
+      - **实现**：macos-build 改为直接跑 `make package-macos`（与 release 同一条
+        打包链）：构建 universal app + 全部随包工具 universal 自检 + zip（有
+        hdiutil 时再出 dmg）；步骤内断言 zip 含主壳与 Setup 随包
+        `chaoset-import`。
+      - **机器检查**：checkuiparity「CI 覆盖」组断言 ci.yml 保留
+        `make package-macos` 与打包步骤名，防止被删。
+      - **验证**：`make vet`/checker 通过；CI macos-build 实际执行打包步骤。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

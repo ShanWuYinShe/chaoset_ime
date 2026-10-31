@@ -318,7 +318,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   不得引入引擎 DBus（engine 包纯净约束）、词库导入入口（三端 GUI；Linux 用户词库由
   ibus 引擎 `-imported-dict` 自动加载，linux-e2e 断言导入词真的出现在候选）、
   Windows 无障碍基础能力（候选窗 `WM_GETOBJECT` + UIA 宿主 provider）、
-  CI 安装包自检（日常 linux-e2e 构建 tar.gz/deb 并断言设置窗模块随包）、
+  CI 安装包自检（日常 linux-e2e 构建 tar.gz/deb 并断言设置窗模块随包；
+  macos-build 直接跑 `make package-macos` 产出 zip/dmg）、
   **词库导入安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷
   原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、
