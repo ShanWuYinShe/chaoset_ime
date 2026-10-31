@@ -12,7 +12,7 @@
 //     模式，**不得**引入引擎 DBus 管理接口（engine 包纯净约束）；
 //  4. 词库导入：三端都有 GUI 入口（Linux 2026-10-31 起：设置窗调用 chaoset-import
 //     写用户词库，ibus 引擎启动时用 -imported-dict 自动加载）；
-//  5. 打包/安装一致性：userdict_ctl.py / dictimport_ctl.py 必须被 Makefile/install.sh/Arch 打包/
+//  5. 打包/安装一致性：Linux 原生设置窗 chaoset-setup / setup_ctl.c 必须被 Makefile/install.sh/Arch 打包/
 //     release 冒烟引用；hicolor 必须有小尺寸图标；setup 脚本必须被组件 XML
 //     与 release 冒烟引用；
 //  6. ui-parity 文档保留关键差异行（学习数据管理/词库导入/设置窗单例/
@@ -77,11 +77,11 @@ const (
 	winCoreHpp      = "shims/windows/src/core.hpp"
 	linuxEngine     = "shims/linux/ibus-engine/ibus.go"
 	linuxEngineMain = "shims/linux/ibus-engine/main.go"
-	linuxSetup      = "shims/linux/setup/chaoset-setup.py"
-	linuxCtl        = "shims/linux/setup/userdict_ctl.py"
-	linuxDictImport = "shims/linux/setup/dictimport_ctl.py"
+	linuxSetup      = "shims/linux/setup/chaoset-setup.c"
+	linuxCtl        = "shims/linux/setup/setup_ctl.c"
+	linuxDictImport = "shims/linux/setup/setup_ctl.c"
 	linuxE2E        = "shims/linux/test-ci.sh"
-	linuxTest       = "shims/linux/setup/test_userdict_ctl.py"
+	linuxTest       = "shims/linux/setup/test_setup_ctl.c"
 	linuxComp       = "shims/linux/component/chaoset.xml"
 	chaosetImport   = "cmd/chaoset-import/main.go"
 	makefile        = "Makefile"
@@ -401,8 +401,8 @@ func checkImportSafety(fsys fs.FS, problems *[]string) {
 	// Linux 设置窗（2026-11-01 起）：只调用 Go 工具并检查退出码；合并/备份/
 	// 原子替换由 chaoset-import 负责（-o 直接指向目标 + -backup）。
 	checkContains(fsys, problems, group, linuxDictImport,
-		"r.returncode != 0",
-		`"-o", target`,
+		"WIFEXITED",
+		`"-o"`,
 		`"-backup"`,
 	)
 	checkExcludes(fsys, problems, group, linuxDictImport,
@@ -449,7 +449,7 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "设置窗单例", macSettings, "private static var window: NSWindow?")
 	checkContains(fsys, &problems, "设置窗单例", winShell, "g_settingsWnd")
 	checkContains(fsys, &problems, "设置窗单例", linuxSetup,
-		"Gtk.Application", `application_id="org.chaoset.Setup"`)
+		"gtk_application_new", `org.chaoset.Setup`)
 
 	// 3. 学习数据 GUI 三端存在；Linux 侧不得引入引擎 DBus 管理接口。
 	checkContains(fsys, &problems, "学习数据 GUI", macEngine,
@@ -459,10 +459,10 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "学习数据 GUI", winShell,
 		"userStats", "userClear", "userExportAll")
 	checkContains(fsys, &problems, "学习数据 GUI", linuxSetup,
-		"userdict_ctl.stats", "userdict_ctl.clear_learning_data", "userdict_ctl.export",
-		"GLib.idle_add", "threading.Thread")
+		"setup_userdict_stats", "setup_userdict_clear", "setup_userdict_export",
+		"g_idle_add")
 	checkContains(fsys, &problems, "学习数据 GUI", linuxCtl,
-		"chaoset-userdict", "-userdict", "clear_learning_data", "ibus")
+		"chaoset-userdict", "-userdict", "setup_userdict_clear", "ibus")
 	// engine 包纯净约束：Linux 设置窗只能走 chaoset-userdict 本地文件模式，
 	// 不允许重新引入 DBus / ibus 引擎管理接口（2026-10-31 用户明确要求）。
 	for _, path := range []string{linuxSetup, linuxCtl, linuxDictImport} {
@@ -478,21 +478,21 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "词库导入入口", macSettings, "导入词库", "安装与设置")
 	checkContains(fsys, &problems, "词库导入入口", macSetup, "--import")
 	checkContains(fsys, &problems, "词库导入入口", winShell, "导入词库", "chaoset-import.exe")
-	// Linux（2026-10-31 起）：GTK 设置窗「导入词库…」→ dictimport_ctl 调
+	// Linux（2026-10-31 起）：原生 GTK3 设置窗「导入词库…」→ setup_ctl 调
 	// chaoset-import 写用户词库 → ibus 引擎启动时 -imported-dict 自动加载。
-	checkContains(fsys, &problems, "词库导入入口", linuxSetup, "导入词库", "dictimport_ctl")
+	checkContains(fsys, &problems, "词库导入入口", linuxSetup, "导入词库")
 	checkExists(fsys, &problems, "词库导入入口", linuxDictImport)
 	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
-		"chaoset-import", "imported_dict_path", "restart_engines")
+		"chaoset-import", "setup_import_dicts", "restart_engines")
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
 		"imported-dict", "defaultImportedDictPath", "withImportedDict")
-	// 三处默认路径必须同口径：Python 优先调用 Go 工具 -print-paths（唯一
+	// 三处默认路径必须同口径：C 侧优先调用 Go 工具 -print-paths（唯一
 	// 来源 internal/appdirs），Go 引擎直接走 appdirs.LinuxImportedDictPath；
-	// Python 仍保留 XDG 回退供源码树未构建时使用。
+	// C 仍保留 XDG 回退供源码树未构建时使用。
 	checkContains(fsys, &problems, "词库导入入口", linuxCtl,
-		"-print-paths", "tool_paths")
+		"-print-paths", "tool_path")
 	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
-		"userdict_ctl.tool_paths", `"chaoset", "dict.tsv"`)
+		`"imported_dict"`, `"dict.tsv"`)
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
 		"appdirs.LinuxImportedDictPath")
 	// linux-e2e 必须真实验证导入词参与候选，而不只是日志里有加载路径。
@@ -527,14 +527,13 @@ func Run(fsys fs.FS) []string {
 		"ibusCtrlMask", "ibusMod1Mask", "ibusMod4Mask")
 	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
-	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py", "dictimport_ctl.py")
-	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py", "dictimport_ctl.py")
-	checkContains(fsys, &problems, "打包安装", archScript, "userdict_ctl.py", "dictimport_ctl.py")
-	checkContains(fsys, &problems, "打包安装", releaseYML,
-		"userdict_ctl.py", "dictimport_ctl.py", "chaoset-setup.py")
-	checkContains(fsys, &problems, "打包安装", linuxComp, "chaoset-setup.py")
+	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", installSh, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", archScript, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", releaseYML, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", linuxComp, "chaoset-setup")
 	checkContains(fsys, &problems, "打包安装", ciYML,
-		"py_compile", "dictimport_ctl.py", "unittest discover")
+		"build.sh", "test_setup_ctl")
 	checkExists(fsys, &problems, "打包安装", linuxTest)
 	checkExists(fsys, &problems, "打包安装", linuxCtl)
 	for _, size := range []string{"16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256"} {

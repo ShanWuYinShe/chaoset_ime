@@ -11,6 +11,8 @@ shims/windows/build/
 # `git check-ignore shims/linux/build/chaoset-ibus-engine` 退出码 1（未忽略），
 # 一旦有人在 shims/linux/ 下误跑脚本再 git add -A 就会把二进制提交进来。
 shims/linux/build/
+# Linux 原生设置窗本地构建产物（build.sh 默认输出到源码目录）
+shims/linux/setup/chaoset-setup
 
 # 运行产物
 *.sock

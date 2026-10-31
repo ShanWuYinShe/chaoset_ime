@@ -26,7 +26,7 @@ uninstall() {
         "$PREFIX_LOCAL_BIN/chaoset-engine"
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
-  # 设置窗口脚本随 PREFIX_SHARE 目录一起删除（chaoset-setup.py 在其下）
+  # 设置窗口二进制随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下）
   # 图标按 hicolor 目录逐个删（不整目录删，避免误删系统图标）
   find "$ICON_ROOT/hicolor" -path '*apps/chaoset.*' -delete 2>/dev/null || true
   echo "==> 已卸载。重启 ibus-daemon 生效：ibus restart"
@@ -55,24 +55,19 @@ if [ ! -f data/dict.tsv ]; then
   exit 1
 fi
 
-# 设置窗口脚本（ibus-setup 的 <setup> 入口；GTK3 设置窗与 macOS/Windows 同构）
+# 设置窗口（ibus-setup 的 <setup> 入口；原生 GTK3 C，与 macOS/Windows 同构）
 #
 # 必须先建目录再 install：deb 安装时 dpkg 会创建 /usr/share/chaoset，但
 # tar.gz 安装（sudo ./install.sh）没有任何东西保证该目录存在。2026-10-29 加入
 # 设置窗口时本段被排在下面的 install -d 之前，于是**所有 tar.gz 用户安装即失败**：
-#   install: cannot create regular file '/usr/share/chaoset/chaoset-setup.py':
+#   install: cannot create regular file '/usr/share/chaoset/chaoset-setup':
 #   No such file or directory
 # deb 冒烟先建了目录、随后随 dpkg -r 被删，正好轮到 tar.gz 冒烟才暴露——v0.2.15
 # 与 v0.2.16 两次 release 都挂在这里（2026-10-30 修）。
-if [ -f setup/chaoset-setup.py ]; then
+if [ -f setup/chaoset-setup ]; then
   echo "==> 安装设置窗口到 $PREFIX_SHARE"
   install -d "$PREFIX_SHARE"
-  install -m755 setup/chaoset-setup.py "$PREFIX_SHARE/chaoset-setup.py"
-  # 设置窗的「学习数据」操作模块（2026-10-31）；与设置窗同目录，缺失时
-  # GTK 脚本 import 失败 → 整个设置窗打不开，所以必须随 setup 一起装。
-  install -m755 setup/userdict_ctl.py "$PREFIX_SHARE/userdict_ctl.py"
-  # 设置窗的「词库导入」操作模块（2026-10-31）：同上，缺失会导致设置窗打不开。
-  install -m755 setup/dictimport_ctl.py "$PREFIX_SHARE/dictimport_ctl.py"
+  install -m755 setup/chaoset-setup "$PREFIX_SHARE/chaoset-setup"
 fi
 
 echo "==> 安装二进制到 $PREFIX_BIN"

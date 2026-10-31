@@ -14,7 +14,7 @@ docker rm -f $NAME >/dev/null 2>&1 || true
 # PID 1 的进程树下，不会被后续 docker exec 会话的退出清理掉。
 docker run -d --name $NAME $IMAGE bash -c '
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ibus dbus gir1.2-ibus-1.0 python3-gi >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ibus dbus gir1.2-ibus-1.0 libgtk-3-dev >/dev/null
 mkdir -p /usr/local/share/chaoset
 dbus-daemon --session --fork --print-address > /tmp/dbus_addr
 export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus_addr)

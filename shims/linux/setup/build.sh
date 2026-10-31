@@ -3,8 +3,13 @@
 # 用法：shims/linux/setup/build.sh [输出路径]
 set -eu
 
-cd "$(dirname "$0")"
 OUT=${1:-chaoset-setup}
+# 输出路径必须在 cd 前解析成绝对路径：打包脚本传的是相对仓库根目录的路径。
+case "$OUT" in
+    /*) ;;
+    *) OUT="$(pwd)/$OUT" ;;
+esac
+cd "$(dirname "$0")"
 CC=${CC:-cc}
 
 # shellcheck disable=SC2086

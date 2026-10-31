@@ -116,7 +116,7 @@ jobs:
       - name: 安装 ibus 与 zstd 测试依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y ibus zstd
+          sudo apt-get install -y ibus zstd build-essential pkg-config libgtk-3-dev file
 
       - name: 编译与打包
         run: |
@@ -131,9 +131,7 @@ jobs:
           test -x /usr/bin/chaoset-engine || { echo "deb 未安装 /usr/bin/chaoset-engine"; exit 1; }
           # 设置窗口脚本是 component XML <setup> 的入口，缺了会导致 ibus-setup
           # 「首选项」点了没反应（2026-10-30 审计 B-P1-6）；deb/tar.gz/Arch 三个包都要有。
-          test -f /usr/share/chaoset/chaoset-setup.py || { echo "deb 缺少设置窗口脚本"; exit 1; }
-          test -f /usr/share/chaoset/userdict_ctl.py || { echo "deb 缺少设置窗学习数据模块"; exit 1; }
-          test -f /usr/share/chaoset/dictimport_ctl.py || { echo "deb 缺少设置窗词库导入模块"; exit 1; }
+          test -x /usr/share/chaoset/chaoset-setup || { echo "deb 缺少原生设置窗"; exit 1; }
           test -f /usr/share/icons/hicolor/16x16/apps/chaoset.png || { echo "deb 缺少 16x16 应用图标"; exit 1; }
           timeout 5 /usr/bin/chaoset-engine --ibus > /tmp/deb-engine.log 2>&1 || true
           grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/deb-engine.log \
@@ -149,18 +147,14 @@ jobs:
           grep -q '加载词库: /usr/share/chaoset/dict.tsv' /tmp/engine.log \
             || { echo "引擎未加载词库，日志："; cat /tmp/engine.log; exit 1; }
           grep -q '打开词库.*失败' /tmp/engine.log && { echo "引擎找不到词库"; cat /tmp/engine.log; exit 1; } || true
-          test -f /usr/share/chaoset/chaoset-setup.py || { echo "tar.gz 安装后缺少设置窗口脚本"; exit 1; }
-          test -f /usr/share/chaoset/userdict_ctl.py || { echo "tar.gz 安装后缺少设置窗学习数据模块"; exit 1; }
-          test -f /usr/share/chaoset/dictimport_ctl.py || { echo "tar.gz 安装后缺少设置窗词库导入模块"; exit 1; }
+          test -x /usr/share/chaoset/chaoset-setup || { echo "tar.gz 安装后缺少原生设置窗"; exit 1; }
           test -f /usr/share/icons/hicolor/16x16/apps/chaoset.png || { echo "tar.gz 安装后缺少 16x16 应用图标"; exit 1; }
           echo "tar.gz 冒烟校验通过"
 
           cd "$GITHUB_WORKSPACE"
           test -f dist/chaoset-ime-x86_64.pkg.tar.zst || { echo "缺少 chaoset-ime-x86_64.pkg.tar.zst"; exit 1; }
           tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q '.PKGINFO' || { echo "Arch 包缺少 .PKGINFO"; exit 1; }
-          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/chaoset/chaoset-setup.py'             || { echo "Arch 包缺少设置窗口脚本（ibus-setup 首选项会失效）"; exit 1; }
-          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/chaoset/userdict_ctl.py'              || { echo "Arch 包缺少设置窗学习数据模块"; exit 1; }
-          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/chaoset/dictimport_ctl.py'            || { echo "Arch 包缺少设置窗词库导入模块"; exit 1; }
+          tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/chaoset/chaoset-setup'               || { echo "Arch 包缺少原生设置窗（ibus-setup 首选项会失效）"; exit 1; }
           tar -tf dist/chaoset-ime-x86_64.pkg.tar.zst | grep -q 'usr/share/icons/hicolor/16x16/apps/chaoset.png' || { echo "Arch 包缺少 16x16 应用图标"; exit 1; }
           echo "Arch Linux 包格式自检通过"
 

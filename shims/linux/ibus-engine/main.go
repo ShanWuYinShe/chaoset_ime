@@ -150,7 +150,7 @@ func defaultUserDictPath() string {
 }
 
 // defaultImportedDictPath 返回 Linux 设置窗「导入词库」写入的用户词库路径。
-// 与 userdict_ctl.py / dictimport_ctl.py 的 imported_dict_path() 同口径：
+// 与原生设置窗 setup_ctl.c 的 imported_dict 路径同口径：
 // $XDG_DATA_HOME/chaoset/dict.tsv（缺省 ~/.local/share/chaoset/dict.tsv）。
 func defaultImportedDictPath() string {
 	path, err := appdirs.LinuxImportedDictPath()

@@ -99,7 +99,7 @@ func ConfigPath() (string, error) {
 }
 
 // LinuxUserDictPath / LinuxImportedDictPath 是 Linux ibus 引擎/设置窗专用路径，
-// 与 dictimport_ctl.py / userdict_ctl.py 的 XDG 口径一致。
+// 与 Linux 原生设置窗/ibus 引擎的 XDG 口径一致。
 func LinuxUserDictPath() (string, error) {
 	dir, err := LinuxDataDir()
 	if err != nil {
@@ -145,7 +145,7 @@ func UserDictPath() (string, error) {
 }
 
 // ImportedDictPath 返回 Linux 设置窗导入的用户词库路径（与 ibus 引擎、
-// dictimport_ctl.py 同口径）。
+// 原生设置窗同口径）。
 func ImportedDictPath() (string, error) {
 	dir, err := DataDir()
 	if err != nil {

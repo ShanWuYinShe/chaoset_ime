@@ -14,7 +14,7 @@ package main
 //     字段，用户照写静默无效果——2026-10-27 审查修正注释）；
 //   - 命令行显式传的 flag 优先（便于排障时临时覆盖）。
 //
-// 设置窗口：2026-10-29 起已实现 GTK3 设置窗（setup/chaoset-setup.py），由
+// 设置窗口：2026-11-01 起为原生 GTK3 C（setup/chaoset-setup.c），由
 // component XML 的 <setup> 入口打开，读写本文件；config.json 仍可直接手工编辑。
 // （旧注释「Linux 端暂无条件做 GUI」已过期，2026-10-30 修正。）
 //

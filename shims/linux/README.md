@@ -52,7 +52,7 @@ Page Up/Down 六个键都翻联想页；面板翻页箭头（ibus PageUp/PageDow
 **设置项**：「词组联想」「学习数据」（统计/清空/导出）与「词库导入」都在三端一致的
 **设置窗口**里配置（联想 2026-10-29 起，学习数据 2026-10-31 起）：
 ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
-运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
+运行 `/usr/share/chaoset/chaoset-setup`（原生 GTK3 C，与 macOS SettingsWindow /
 Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 /
 分组「学习数据」/ 说明文字）。窗口写 config.json 的 `"associate"`（缺省开启，显式 false 关闭），
 **保存即生效**：引擎在每次进入联想前重读 config.json，已打开的输入上下文下一次
@@ -61,7 +61,7 @@ Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为�
 config.json 仍可直接手工编辑。
 
 **词库导入（2026-10-31）**：设置窗「词库」区选择 Rime dict.yaml / CC-CEDICT txt /
-TSV（可多选），由 `dictimport_ctl.py` 调用随包 `chaoset-import` 合并到
+TSV（可多选），由原生设置窗 `setup_ctl.c` 调用随包 `chaoset-import` 合并到
 `$XDG_DATA_HOME/chaoset/dict.tsv`（旧文件先备份、临时文件原子替换），成功后
 重启 ibus 引擎；引擎启动时用 `-imported-dict` 把用户词库与系统词库一起加载
 （engine 包零改动，不需要 root）。CI 的 linux-e2e 会捕获引擎 LookupTable 信号，
@@ -70,13 +70,13 @@ TSV（可多选），由 `dictimport_ctl.py` 调用随包 `chaoset-import` 合�
 **学习数据（2026-10-31）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
 提供「清空学习数据…」（二次确认）与「导出学习数据…」（TSV，可回灌
 `chaoset-import`）。实现刻意**不碰 engine 包**（保持纯拼音逻辑）也不改 ibus
-引擎壳：GTK 脚本调用随包 `chaoset-userdict` 的本地文件模式（-userdict FILE）
+引擎壳：原生设置窗调用随包 `chaoset-userdict` 的本地文件模式（-userdict FILE）
 完成 stats/clear/export，清空时由设置窗编排 `ibus exit` → SIGTERM 全部
 `chaoset-engine` 进程并等待退出 → 清空文件 → `ibus restart`（失败再试
 `ibus start`）。只有确认没有引擎存活才清空，否则引擎内存态会在下一次延迟落盘
 时把旧数据写回。清空会短暂重启输入法（期间不可用），确认框已提示；
-`userdict_ctl.py` 与设置窗同目录安装（缺了设置窗无法启动，发布冒烟已断言）。
-清空/导入/导出等耗时操作在后台线程执行，完成后经 `GLib.idle_add` 回主线程
+`chaoset-setup` 二进制与设置窗逻辑同包安装（缺了设置窗无法启动，发布冒烟已断言）。
+清空/导入/导出等耗时操作在 GThread 后台线程执行，完成后经 `g_idle_add` 回主线程
 更新 UI（GTK 非线程安全，工作线程只跑 subprocess/文件 IO），避免设置窗「假死」。
 
 **学习标记（不适用）**：macOS/Windows 候选窗对「被用户数据加权」的候选在文本后
@@ -138,9 +138,9 @@ underline），但只能改候选文本本身、没有独立装饰层，因此�
   （2026-10-31 补齐 16/22/24/32/64 小尺寸 PNG，托盘/任务栏/小图标列表不再只依赖
   scalable 回退；全部由 256px 母图 LANCZOS 缩放，视觉与既有尺寸一致）。
   全套图标统一为跨端新品牌标识：极光电光蓝渐变底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），在桌面环境与应用列表均保持高辨识度与现代质感。
-- **设置入口**：`<engine>` 的 `<setup>` 指向 `/usr/share/chaoset/chaoset-setup.py`，
-  ibus-setup 据此显示「首选项」按钮，点开即三端同构的设置窗口（GTK3）。
-- **设置窗单例（2026-10-31）**：脚本改用 `Gtk.Application`（application_id
+- **设置入口**：`<engine>` 的 `<setup>` 指向 `/usr/share/chaoset/chaoset-setup`，
+  ibus-setup 据此显示「首选项」按钮，点开即三端同构的设置窗口（原生 GTK3 C）。
+- **设置窗单例（2026-10-31）**：改用 `Gtk.Application`（application_id
   `org.chaoset.Setup`）注册唯一实例——重复点「首选项」只会激活并前置已打开的
   窗口，不再开出多个 GTK 窗口（与 macOS/Windows 设置窗单例语义对齐）。
   系统不会自动生成配置项，设置项由该脚本读写 config.json。

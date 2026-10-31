@@ -1145,7 +1145,7 @@ func TestSuperKeyPassthrough(t *testing.T) {
 // chaoset-engine 或 ibus。
 //
 // 2026-10-30 三端一致性整改：此前 assocOn 是 main.go 启动时的一次性快照，
-// 运行中不再读取，而 chaoset-setup.py 与 shims/linux/README 却宣称「保存后
+// 运行中不再读取，而原生设置窗与 shims/linux/README 却宣称「保存后
 // 对新开的输入上下文生效」；macOS（每次选词前读 UserDefaults）与 Windows
 // （enterAssociate 每次 RegGetAssociate）都是即时生效。这里按同一语义锁死。
 func TestAssociateSettingTakesEffectImmediately(t *testing.T) {

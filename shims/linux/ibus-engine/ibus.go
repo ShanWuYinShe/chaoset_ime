@@ -156,7 +156,7 @@ type ibusEngine struct {
 	// 运行中由 associateEnabled() 在每次进入联想前重读配置文件刷新；命令行
 	// 显式传 -associate 时（assocFlagSet）不再重读，flag 优先——排障覆盖语义。
 	assocOn bool
-	// assocConfigPath 用户配置文件路径（与 chaoset-setup.py 写入的是同一个
+	// assocConfigPath 用户配置文件路径（与原生设置窗写入的是同一个
 	// $XDG_CONFIG_HOME/chaoset/config.json）；空串表示不重读。
 	assocConfigPath string
 	// assocFlagSet 表示命令行显式传了 -associate（flag.Visit 判定）。
@@ -1039,7 +1039,7 @@ func (e *ibusEngine) commit(text string) {
 // associateEnabled 返回当前词组联想开关，并在每次进入联想前重读 config.json。
 //
 // 为什么必须重读（2026-10-30 三端一致性整改）：此前 assocOn 由 main.go 在
-// 引擎启动时一次性快照进 ibusEngine，运行中不再读取——设置窗口（chaoset-setup.py）
+// 引擎启动时一次性快照进 ibusEngine，运行中不再读取——设置窗口（chaoset-setup）
 // 保存后要等整个 chaoset-engine 进程重启才生效，而脚本与 README 却宣称
 // 「保存后对新开的输入上下文生效」。macOS（ChaosetController 每次选词前读
 // UserDefaults）与 Windows（enterAssociate 每次 RegGetAssociate）都是即时生效，

@@ -128,7 +128,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ibus dbus dbus-x11 gir1.2-ibus-1.0 python3-gi libgtk-3-dev
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev file
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
@@ -138,33 +138,34 @@ jobs:
       # Linux 设置窗正在从 Python/PyGObject 迁到原生 GTK3 C（用户要求 shim 用
       # 原生实现、不引入 Python）。本步骤先保证 C 代码在真实 GTK3 头文件下可编译；
       # 打包切换完成后，Python 步骤会被删除。
-      - name: 原生 GTK3 设置窗编译（C，无 Python）
+      - name: 原生 GTK3 设置窗编译与无 GTK 单测（C，无 Python）
         run: |
           sh shims/linux/setup/build.sh /tmp/chaoset-setup
           file /tmp/chaoset-setup | grep -q ELF
+          cc -std=c11 -Wall -Wextra -Werror \
+            $(pkg-config --cflags glib-2.0) \
+            -o /tmp/test_setup_ctl \
+            shims/linux/setup/test_setup_ctl.c shims/linux/setup/setup_ctl.c \
+            $(pkg-config --libs glib-2.0)
+          /tmp/test_setup_ctl
 
-      # 迁移期保留 Python 设置窗测试（旧实现仍在包里）；原生 C 替换完成后删除。
-      - name: 设置窗脚本语法检查 + 学习数据/词库导入助手单测（无 GTK）
-        run: |
-          python3 -m py_compile shims/linux/setup/chaoset-setup.py shims/linux/setup/userdict_ctl.py shims/linux/setup/dictimport_ctl.py
-          python3 -m unittest discover -s shims/linux/setup -p 'test_*.py'
+
 
       # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄
-      # 漏装设置窗模块（2026-10-31 新加 dictimport_ctl.py 就是这类风险）。
-      # 这里在 PR/日常提交上构建 tar.gz（以及可用的 deb）并断言三个设置窗
-      # 脚本都在包里。
-      - name: Linux 安装包自检（设置窗模块必须随包）
+      # 漏装原生设置窗。这里在 PR/日常提交上构建 tar.gz（以及可用的 deb）
+      # 并断言设置窗二进制在包里。
+      - name: Linux 安装包自检（原生设置窗必须随包）
         run: |
           make package-linux
           tar -tzf dist/chaoset-linux-x86_64.tar.gz > /tmp/pkg-list.txt
-          for f in setup/chaoset-setup.py setup/userdict_ctl.py setup/dictimport_ctl.py data/dict.tsv; do
+          for f in setup/chaoset-setup data/dict.tsv; do
             grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
           done
           if command -v dpkg-deb >/dev/null 2>&1 && [ -f dist/chaoset_amd64.deb ]; then
-            dpkg-deb -c dist/chaoset_amd64.deb | grep -q 'usr/share/chaoset/dictimport_ctl.py' \
-              || { echo "deb 缺少 dictimport_ctl.py"; exit 1; }
+            dpkg-deb -c dist/chaoset_amd64.deb | grep -q 'usr/share/chaoset/chaoset-setup' \
+              || { echo "deb 缺少原生设置窗"; exit 1; }
           fi
-          echo "PASS: Linux 安装包包含设置窗三个模块"
+          echo "PASS: Linux 安装包包含原生设置窗"
   # ── 5. macOS 构建 + 等价性 + 双端视觉一致性（本机跑要 2-3 分钟）─────
   # 此前这些只在打 tag 的 release.yml 里跑，PR/日常提交无从验证——改动一旦
   # 破坏 macOS 壳或两端视觉一致性，要到发版才发现。现在 PR 也跑。

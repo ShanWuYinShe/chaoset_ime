@@ -1849,7 +1849,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：Python 单测（15+9 例）、`go test ./cmd/chaoset-userdict`、
         `make vet`/checker、`git diff --check` 通过。
 
-- [ ] 阶段 87：Linux 设置窗迁原生 GTK3 C（进行中，2026-11-01）
+- [x] 阶段 87：Linux 设置窗迁原生 GTK3 C，彻底移除 Python（2026-11-01）
       - **用户要求**：Linux shims 用原生实现，不额外引入 Python；macOS Swift /
         Windows C++ 都是原生，Linux 不应是 Python。
       - **本轮**：新增 `shims/linux/setup/chaoset-setup.c` + `setup_ctl.c/h`：
@@ -1857,10 +1857,13 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         Go 工具（chaoset-userdict / chaoset-import）和 ibus，不实现词库合并/
         用户词典读写；`chaoset-userdict -print-paths` 新增 `config` 字段，
         `appdirs.LinuxConfigPath` 与 ibus 引擎共用同一配置路径。
-      - **验证**：Ubuntu/Alpine 容器内 `pkg-config gtk+-3.0` 编译通过；
-        CI linux-e2e 新增原生 GTK3 编译步骤。
-      - **未完成**：Makefile/deb/Arch/tar/install.sh/component XML/CI/release/
-        checkuiparity 仍指向 Python 文件；下一步切换并删除 5 个 .py。
+      - **打包切换**：Makefile/deb/Arch/tar/install.sh/component XML/CI/release/
+        checkuiparity 全部切到 `chaoset-setup` 二进制 / `setup_ctl.c` /
+        `test_setup_ctl.c`；删除 5 个 Python 文件（设置窗、控制模块、两个单测）。
+      - **依赖**：deb/tar/Arch 由 `python3-gi` 改为 `libgtk-3`/`gtk3`；CI 安装
+        `libgtk-3-dev` 并编译 C、跑 `test_setup_ctl` 无 GTK 单测。
+      - **验证**：Ubuntu/Alpine 容器内 GTK3 编译 + C 单测通过；
+        `go test ./...`、`make vet`/checker、shell 语法检查通过。
 
 ## 验收范围确认（2026-09-23）
 

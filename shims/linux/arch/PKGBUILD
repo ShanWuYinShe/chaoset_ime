@@ -7,9 +7,8 @@ pkgdesc="Chaoset Pinyin IME - 傻瓜式现代拼音输入法"
 arch=('x86_64' 'aarch64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
-depends=('ibus')
-optdepends=('python3-gi: 设置窗口（ibus-setup 首选项入口）')
-makedepends=('go')
+depends=('ibus' 'gtk3')
+makedepends=('go' 'gtk3')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
@@ -45,8 +44,8 @@ package() {
     # IBus component
     install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
-    # 设置窗口（ibus-setup 的 <setup> 入口，GTK3）
-    install -Dm755 shims/linux/setup/chaoset-setup.py "$pkgdir/usr/share/chaoset/chaoset-setup.py"
+    # 设置窗口（ibus-setup 的 <setup> 入口，原生 GTK3 C）
+    sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
 
     # Icons
     install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"

@@ -61,7 +61,7 @@ check-win32-gdi:
 
 # 三端 UI 一致性契约（2026-10-31）：设置窗共享文案逐字一致、三端单例、
 # 学习数据 GUI 存在且 Linux 不引入引擎 DBus（engine 包纯净约束）、词库导入
-# 入口、打包安装一致性（userdict_ctl.py/hicolor/setup 脚本）、ui-parity
+# 入口、打包安装一致性（chaoset-setup/hicolor）、ui-parity
 # 关键差异行存在。详见 tools/checkuiparity 文件头。
 check-uiparity:
 	go run ./tools/checkuiparity .
@@ -163,11 +163,10 @@ package-linux:
 	# 此前只带 558 条的 dict_seed.tsv 而引擎默认要 dict_common.tsv，是装完
 	# 「引擎启动即退出」的直接原因。
 	cp data/dict_common.tsv dist/chaoset-linux-x86_64/data/dict.tsv
-	# 设置窗口：ibus-setup 的 <setup> 入口（三端一致的设置窗口，2026-10-29）
+	# 设置窗口：ibus-setup 的 <setup> 入口（三端一致的设置窗口，2026-10-29；
+	# 2026-11-01 起为原生 GTK3 C，不再依赖 Python/PyGObject）。
 	install -d dist/chaoset-linux-x86_64/setup
-	install -m755 shims/linux/setup/chaoset-setup.py dist/chaoset-linux-x86_64/setup/
-	install -m755 shims/linux/setup/userdict_ctl.py dist/chaoset-linux-x86_64/setup/
-	install -m755 shims/linux/setup/dictimport_ctl.py dist/chaoset-linux-x86_64/setup/
+	sh shims/linux/setup/build.sh dist/chaoset-linux-x86_64/setup/chaoset-setup
 	cp shims/linux/install.sh dist/chaoset-linux-x86_64/
 	cp shims/linux/README.md dist/chaoset-linux-x86_64/
 	cp LICENSE dist/chaoset-linux-x86_64/LICENSE
@@ -188,9 +187,7 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/icons; \
 		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
-		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup.py dist/deb_staging/usr/share/chaoset/chaoset-setup.py; \
-		install -Dm755 dist/chaoset-linux-x86_64/setup/userdict_ctl.py dist/deb_staging/usr/share/chaoset/userdict_ctl.py; \
-		install -Dm755 dist/chaoset-linux-x86_64/setup/dictimport_ctl.py dist/deb_staging/usr/share/chaoset/dictimport_ctl.py; \
+		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
 		sed -e '/^#/d' -e "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \

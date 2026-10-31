@@ -261,9 +261,9 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 宣称不符），已打开的输入上下文下一次选词即按新设置执行（与 macOS/Windows
 「每次选词前重读设置」同语义）。`-associate` 显式传参时 flag 覆盖配置。
 
-设置脚本的安装：deb 与 tar.gz 本来就带 `setup/chaoset-setup.py`；**Arch 二进制包
-此前漏装**（2026-10-30 修复），release 冒烟现在对三个包都断言
-`/usr/share/chaoset/chaoset-setup.py` 存在。
+设置窗的安装：deb 与 tar.gz 带 `setup/chaoset-setup`（原生 GTK3 C 二进制，2026-11-01
+起不再使用 Python）；**Arch 二进制包此前漏装**（2026-10-30 修复），release 冒烟现在
+对三个包都断言 `/usr/share/chaoset/chaoset-setup` 可执行。
 
 候选表/预编辑呈现语义（由 ibus 面板决定，文档明确记录以免当缺陷反复修）：
 每页 6 个（`engine.PageSize()` 单一来源，标签 `1.`…`6.`）；候选高亮固定首选
@@ -330,7 +330,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   Linux `CandidateClicked`；linux-e2e 断言点选上屏）、**退格与修饰键映射**
   （三端 `backspaceWord`/Delete 常量/修饰键标识）、**滚轮翻页**（三端一致缺失，
   文档记录原因）、
-  打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/
+  打包安装一致性（chaoset-setup 二进制/hicolor/CI 步骤）、候选窗布局 pt 常量/
   派生值/最大行数（Windows 必须用 `candidate_layout.hpp` 多行折行）/齿轮矢量参数/
   13 个主题色字段名集合、key_routing 已接入 CI 且断言用例数
   未减少、shims 下 `$VAR` 不紧跟非 ASCII（bash 3.2 UTF-8 locale 坑）、本表关键差异
