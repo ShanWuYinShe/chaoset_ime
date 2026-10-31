@@ -72,6 +72,41 @@ func TestCheckShellVarEscaping(t *testing.T) {
 	}
 }
 
+// TestCheckImportSafety 用真实两端源码验证导入安全契约，并做一次变异：
+// 去掉 Windows 的原子替换标志应被捕获。
+func TestCheckImportSafety(t *testing.T) {
+	macText, err := os.ReadFile("../../" + macSetup)
+	if err != nil {
+		t.Fatalf("读取 mac Setup.app 源码失败：%v", err)
+	}
+	winText, err := os.ReadFile("../../" + winShell)
+	if err != nil {
+		t.Fatalf("读取 Windows 壳源码失败：%v", err)
+	}
+	fsys := fstest.MapFS{
+		macSetup: &fstest.MapFile{Data: macText},
+		winShell: &fstest.MapFile{Data: winText},
+	}
+	var problems []string
+	checkImportSafety(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实导入实现未通过安全契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	mutated := strings.Replace(string(winText), "MOVEFILE_REPLACE_EXISTING", "MOVEFILE_NONE", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异未生效：Windows 源码里找不到 MOVEFILE_REPLACE_EXISTING")
+	}
+	problems = nil
+	checkImportSafety(fstest.MapFS{
+		macSetup: &fstest.MapFile{Data: macText},
+		winShell: &fstest.MapFile{Data: []byte(mutated)},
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "MOVEFILE_REPLACE_EXISTING") {
+		t.Fatalf("去掉原子替换标志应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckContains(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.txt": &fstest.MapFile{Data: []byte("hello 学习数据")},

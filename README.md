@@ -1222,6 +1222,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
         `git diff --check` 通过。GUI 交互（点按钮→弹导入面板）需真机点击验收。
 
+- [x] 阶段 44：checkuiparity 补「词库导入安全流程」静态断言（2026-10-31）
+      - **动机**：词库导入是高风险操作——只看产物文件存在会把「部分解析失败」
+        当成功；remove+move 会制造「旧词库已删、新词库没到位」的丢词库中间态。
+        这些安全点都是历史审查修出来的（2026-10-26 mac / 2026-10-31 Windows），
+        但没有机器检查，重构时容易被删。
+      - **新增 checkuiparity「词库导入安全」组**：
+        - mac Setup.app 必须保留 `r2.status == 0`（导入器退出码检查）、`.bak.`
+          （旧词库备份）、`replaceItemAt`（同卷原子替换）；
+        - Windows 设置窗必须保留 `code != 0`、`.bak.`、`MoveFileExW(` +
+          `MOVEFILE_REPLACE_EXISTING`（staging 原子替换）、`import.log`（失败可排查）；
+        - 新增 `TestCheckImportSafety`：真实两端源码跑契约 + 变异测试（去掉
+          Windows 原子替换标志必须被捕获）。
+      - **验证**：`go test ./tools/checkuiparity` 通过（7 个测试）；`make vet` 通过；
+        真实仓库 checkuiparity PASS；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

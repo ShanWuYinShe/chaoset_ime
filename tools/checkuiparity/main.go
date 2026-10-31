@@ -26,7 +26,10 @@
 //     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）；
 //  9. shell 脚本里 `$VAR` 不得紧跟非 ASCII 字符（macOS bash 3.2 在 UTF-8
 //     locale 下会把多字节字符并入变量名 → unbound variable；2026-10-31
-//     key_routing CI 首跑就栽在 `$ARCH）` 上，统一改用 `${VAR}`）。
+//     key_routing CI 首跑就栽在 `$ARCH）` 上，统一改用 `${VAR}`）；
+//  10. 词库导入安全流程不能退化：mac Setup.app 与 Windows 设置窗都必须保留
+//     「检查导入器退出码 / 旧词库备份 / 同卷原子替换」关键实现（只看产物文件
+//     存在会把部分解析失败当成功；直接 remove+move 会出现丢词库中间态）。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -337,6 +340,32 @@ func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkImportSafety 词库导入安全流程静态断言（mac Setup.app + Windows 设置窗）。
+//
+// 这两个关键安全点都是历史审查修出来的（2026-10-26 / 2026-10-31）：
+//  1. 必须检查导入器退出码，不能只看产物文件存在（导入器会写出残缺产物）；
+//  2. 必须先备份旧词库，再走同卷 staging + 原子替换，不能 remove+move；
+//  3. 失败要留下可排查的日志（Windows import.log / mac 返回 log 文本）。
+//
+// 这里锁住实现关键片段，防止重构时把安全流程删掉。
+func checkImportSafety(fsys fs.FS, problems *[]string) {
+	const group = "词库导入安全"
+	// mac Setup.app：退出码检查 + 备份 + FileManager.replaceItemAt 原子替换。
+	checkContains(fsys, problems, group, macSetup,
+		"r2.status == 0",
+		".bak.",
+		"replaceItemAt",
+	)
+	// Windows 设置窗：退出码检查 + 备份 + staging/MoveFileEx 原子替换 + 日志。
+	checkContains(fsys, problems, group, winShell,
+		"code != 0",
+		".bak.",
+		"MoveFileExW(",
+		"MOVEFILE_REPLACE_EXISTING",
+		"import.log",
+	)
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 func Run(fsys fs.FS) []string {
 	var problems []string
@@ -380,6 +409,9 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "词库导入入口", winShell, "导入词库", "chaoset-import.exe")
 	checkContains(fsys, &problems, "词库导入入口", uiParityDoc, "Linux 目前仅 CLI")
 	checkExcludes(fsys, &problems, "词库导入入口", linuxSetup, "导入词库")
+
+	// 4b. 词库导入安全流程（备份/原子替换/退出码检查）不能退化。
+	checkImportSafety(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py")
@@ -428,5 +460,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }
