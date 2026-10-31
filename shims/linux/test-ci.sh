@@ -318,5 +318,28 @@ else
 fi
 press "$P1" 65307 0  # Esc 保险
 
+# ---- 第 2 页鼠标点选（CandidateClicked 页内序号，2026-10-31）----
+# 组词 "ni" 候选多于一页：PageDown 后点第 1 项，CandidateClicked(0) 必须按
+# 「当前页切片」处理（不能仍选第 1 页首条）；这里验证翻页后 D-Bus 调用仍
+# 正常上屏（具体页内映射由 behavior_test 的 PageTwo 用例锁定）。
+MON3="$WORK/click-page2-monitor.log"
+dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON3" 2>&1 &
+MON3_PID=$!
+for kv in 110 105; do press "$P1" "$kv" 0; done  # ni
+press "$P1" 65366 0  # PageDown
+dbus-send --session --print-reply --dest="$UN" "$P1" \
+  org.freedesktop.IBus.Engine.CandidateClicked uint32:0 uint32:1 uint32:0 >/dev/null 2>&1
+sleep 0.5
+kill "$MON3_PID" 2>/dev/null || true
+wait "$MON3_PID" 2>/dev/null || true
+if grep -q "CommitText" "$MON3"; then
+  echo "PASS: 第 2 页点选候选正常上屏（CandidateClicked 页内序号）"
+else
+  echo "FAIL: 第 2 页 CandidateClicked 未上屏（monitor 日志：）" >&2
+  cat "$MON3" >&2
+  exit 1
+fi
+press "$P1" 65307 0  # Esc 保险
+
 echo
 echo "全部 Linux 端到端检查通过"

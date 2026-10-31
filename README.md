@@ -1555,6 +1555,15 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./shims/linux/ibus-engine -run TestCandidateClicked`
         6 例全过。
 
+- [x] 阶段 66：第 2 页鼠标点选的 linux-e2e 覆盖（2026-10-31）
+      - **背景**：CandidateClicked 的页内序号语义由单测覆盖，但 linux-e2e 只
+        验证了第 1 页；翻页后 D-Bus 调用是否仍正常没有端到端保障。
+      - **实现**：test-ci.sh 新增一段——组词 `ni` → PageDown → 调用
+        CandidateClicked(0)，捕获 CommitText 断言上屏成功（具体页内映射由
+        behavior_test 的 PageTwo 用例锁定）。
+      - **验证**：`bash -n shims/linux/test-ci.sh`、`make vet`/checker、
+        `git diff --check` 通过；linux-e2e 由 CI 真实验证。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
