@@ -1138,6 +1138,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         通过；GTK 窗口单例行为需 Linux 桌面真机验收（重复点「首选项」应前置
         已有窗口而不是开新窗）。
 
+- [x] 阶段 39：三端 UI 一致性静态检查器 checkuiparity（2026-10-31）
+      - **背景**：设置窗是三套独立实现（AppKit / Win32 GDI / GTK3），共享的
+        只有「应该一致」的文案与功能契约；此前靠人肉检查，改一端忘另一端
+        （2026-10-28 齿轮漏同步 Windows 的教训）。
+      - **新增 `tools/checkuiparity`**（Go，跨平台编译；`make vet` / CI lint 执行，
+        审计 G6 落地）：六组静态契约——① 设置窗共享文案三端逐字一致（标题/输入
+        行为/词组联想/学习数据/清空/导出/本机说明/底部提示）；② 三端设置窗单例
+        实现存在（mac 静态 window / Windows g_settingsWnd / Linux Gtk.Application）；
+        ③ 学习数据 GUI 三端存在，且 Linux 侧**不得**引入引擎 DBus/IBus 管理接口
+        （engine 包纯净约束）；④ 词库导入入口（mac Setup.app + Windows 设置窗
+        GUI；Linux 仅 CLI 且 ui-parity 必须明确记录）；⑤ 打包安装一致性
+        （userdict_ctl.py 被 Makefile/install.sh/Arch/release 冒烟引用、hicolor
+        小图标齐全、CI py_compile/单测步骤存在）；⑥ ui-parity 关键差异行保留。
+      - **测试**：`tools/checkuiparity/main_test.go` 覆盖规则助手 + 在真实仓库上
+        跑全量契约（删改任一约定文案/文件会先让 `go test ./...` 失败）。
+      - **验证**：`make vet` 通过（新增 check-uiparity 目标）；`go test
+        ./tools/checkuiparity` 通过；真实仓库检查 PASS。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-win32-gdi package-linux package-windows package-macos package-all version check-version
+.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -49,6 +49,7 @@ vet:
 	$(MAKE) lint-workflows
 	$(MAKE) check-version
 	$(MAKE) check-win32-gdi
+	$(MAKE) check-uiparity
 
 # Windows 壳 GDI 调用契约：ExtCreatePen 的 plbrush 不能为空指针。
 # 2026-10-29 事故：v0.2.14 传 nullptr 导致 gdi32 空指针解引用，
@@ -57,6 +58,13 @@ vet:
 # make vet 不再依赖 python3）。
 check-win32-gdi:
 	go run ./tools/checkgdi shims/windows/src
+
+# 三端 UI 一致性契约（2026-10-31）：设置窗共享文案逐字一致、三端单例、
+# 学习数据 GUI 存在且 Linux 不引入引擎 DBus（engine 包纯净约束）、词库导入
+# 入口、打包安装一致性（userdict_ctl.py/hicolor/setup 脚本）、ui-parity
+# 关键差异行存在。详见 tools/checkuiparity 文件头。
+check-uiparity:
+	go run ./tools/checkuiparity .
 
 # 校验 .github/workflows 的结构完整性。
 # 为什么需要它：2026-10-25 一次文本替换误删了两个 job 的头部声明，YAML 语法

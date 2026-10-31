@@ -283,9 +283,13 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由 engine 的会话级测试覆盖
   （遍历全部音节逐键喂 `Session.Input`）。
 - IPC 侧 2026-10-30 新增 `userExport` 分页测试（含 >1MiB 场景）。
-- 提示文案/设置窗文案/齿轮参数没有跨端机器检查；本表 + Code Review 仍是唯一
-  防线。新增 `tools/checkuiparity` 静态检查器是后续建议（审计 G6），本次
-  未做——文档不再宣称已有此检查。
+- **设置窗文案/单例/学习数据 GUI/词库导入/打包安装** 已由 `tools/checkuiparity`
+  静态检查（`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：设置窗共享
+  文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧不得
+  引入引擎 DBus（engine 包纯净约束）、词库导入入口（Linux CLI 例外有文档记录）、
+  打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、本表关键差异行
+  存在。**候选窗齿轮参数与像素级几何仍无跨端机器检查**（Windows 无运行时），
+  本表 + Code Review 仍是那部分的防线。
 
 ## 性能与资源基线（2026-10-29，Apple M1，负载 5.35）
 
