@@ -21,14 +21,10 @@ type Client struct {
 	next uint64
 }
 
-// Dial 连接 daemon。Unix socket 场景 network 为 "unix"、address 为套接字路径；
-// Windows 命名管道接入时换传输参数即可，协议不变。
+// Dial 连接 daemon（兼容旧调用）：network 为 "unix"/"tcp"；命名管道请用
+// DialEndpoint(Endpoint{Network: "pipe", Address: ...})。
 func Dial(network, address string) (*Client, error) {
-	conn, err := net.Dial(network, address)
-	if err != nil {
-		return nil, fmt.Errorf("连接输入法 daemon 失败: %w", err)
-	}
-	return &Client{conn: conn, br: bufio.NewReader(conn)}, nil
+	return DialEndpoint(Endpoint{Network: network, Address: address})
 }
 
 func (c *Client) Close() error {

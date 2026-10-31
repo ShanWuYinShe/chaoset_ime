@@ -1713,6 +1713,22 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         通过；`go test ./tools/checkuiparity`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 79：IPC Endpoint 抽象 + Windows 命名管道传输实现（2026-11-01）
+      - **用户方案**：shims 只做平台/UI，工具用 Go；IPC 不用固定 TCP 端口，
+        macOS/Linux 用 Unix socket，Windows 用命名管道。
+      - **Endpoint**：新增 `ipc.Endpoint{Network,Address}` 与 `ipc.Listen`/
+        `ipc.DialEndpoint`；协议帧不变，`Dial` 保留兼容。Network 支持 `unix`/
+        `pipe`/`tcp`（tcp 仅旧壳/测试过渡）。
+      - **命名管道**：`ipc/pipe_windows.go`（go-winio）——管道名
+        `\\.\pipe\chaoset-<当前用户SID>`，ACL `当前用户 + SYSTEM +
+        ALL APPLICATION PACKAGES`（开始菜单/搜索框 AppContainer 需要）；
+        `DefaultPipeName()` 供 daemon/壳按同一规则计算，无端口/发现文件。
+      - **测试**：`ipc/endpoint_test.go` Unix socket 完整协议往返 + 未知传输报错；
+        `GOOS=windows go test -c ./ipc` 与 Windows 目标二进制交叉编译通过。
+      - **依赖**：新增 `github.com/Microsoft/go-winio v0.6.4`（仅 Windows 文件引用）。
+      - **验证**：`go test ./ipc`、`go build ./...`、`go vet ./...`、
+        `make vet`/checker、`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
