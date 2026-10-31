@@ -1575,6 +1575,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 68：引擎 API 契约测试补齐 + NormalizePinyin 数字调号修复（2026-10-31）
+      - **背景**：引擎覆盖率审计（`go test -cover ./engine`，90.4%）发现若干
+        公共 API 0% 覆盖：`NormalizePinyin`、`PrevWord`、`PageSize`、
+        `FindSentenceCandidates`、`QueryPhrasesPrefix`、`queryVariants`。
+      - **修复**：`NormalizePinyin` 文档声称支持「去音调数字后缀」，但实现只
+        `TrimRight` 掉**末尾**数字——`ni3hao3` 这类连写带调号整串归一化失败。
+        改为删掉 token 内所有 `1-5`（拼音编码里数字只可能是调号），再走
+        `IsSyllable`/`segmentRunon` 判定；空格分隔的 `ni3 hao3` 行为不变。
+      - **测试**：新增 `engine/api_contract_test.go` 6 组契约（音调/数字后缀/ü/
+        连写切分/非法输入、PrevWord、PageSize、FindSentenceCandidates 包装、
+        QueryPhrasesPrefix、queryVariants 模糊展开）。
+      - **验证**：`go test ./engine ./cmd/chaoset-dictgen` 通过；`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
