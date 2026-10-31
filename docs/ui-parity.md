@@ -210,7 +210,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 | 选词 | 空格 / 数字 1-9（含小键盘） | 空格选首选并渐进上屏；数字选本页第 N 项，越界则收起联想/放行该键。**已确认段并入预编辑（以已转换形态显示），整条组词结束才一次落盘**——2026-10-30 起三端统一为「单一预编辑/合成」模型，修复部分程序渐进选段丢字（详见 README「渐进上屏的跨程序兼容模型」）。**空格在「有已确认段 + 剩余拼音无候选」时 = 确认段 + 原始拼音一次上屏**（三端 2026-10-30 统一，此前 Linux/Windows 丢确认段） |
 | 联想选词 | 空格 / 数字 1-9（含小键盘） / Shift+空格 | 空格与 **Shift+空格都选当前页第一个联想词**并继续联想（Shift 不切全半角，三端实测一致）；数字越界收起联想并放行 |
 | 组词回车 | Return | 已确认段按确认文本 + 剩余按原始拼音一次上屏（与系统拼音一致：已转换部分保留转换结果） |
-| 组词退格 | Backspace（逐字符）；Shift/Ctrl+Backspace 全部删除 | 普通 Backspace 只回退剩余拼音，剩余删空时已确认段立即落盘收尾；Shift/Ctrl+Backspace 取消整条组词（含未落盘确认段）并消费。**Option/Alt+Backspace 三端语义不同，见「按键边角差异」** |
+| 组词退格 | Backspace（逐字符）；Shift/Ctrl+Backspace 全部删除 | 普通 Backspace 只回退剩余拼音，剩余删空时已确认段立即落盘收尾；Shift/Ctrl+Backspace 取消整条组词（含未落盘确认段）并消费。**Option/Alt+Backspace 三端统一为按音节回退（2026-10-31，见下）** |
+| Option/Alt+Backspace | 按音节回退（`backspaceWord`） | **三端统一（2026-10-31）**：组词中回退一个完整音节并消费按键；非组词态放行给宿主（宿主通常删文档前一个词）；已确认段随剩余拼音删空时立即落盘收尾 |
 | 失焦 / 透传键 / 切换输入法 | — | 已确认段先落盘再切换/透传（用户确认过的字不丢；纯拼音维持「清空」旧语义） |
 | 清空组词 | Ctrl+Backspace / Ctrl+U / Esc | 取消**整条组词**（含未落盘的已确认段）并消费按键 |
 | 删到行首 | Ctrl+Backspace | 同清空（三端对齐） |
@@ -225,7 +226,6 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 
 | 场景 | macOS | Windows | Linux |
 |---|---|---|---|
-| Option/Alt+Backspace | 按音节回退（`backspaceWord`） | 已确认段落盘后放行 Alt+Backspace 给宿主（宿主通常删文档前一个词；无按音节回退） | 视为整段清空（Mod1 与 Ctrl 同分支） |
 | 组词态 ForwardDelete | 当作退格删拼音 | 未处理→清空组词后放行（删文档字符） | 未处理→清空组词后放行 |
 | 联想态 Delete（非 Backspace） | 保留联想窗并透传 | 收起联想并透传 | 收起联想并透传 |
 | 联想态 Ctrl/Alt/Super | 只清组词，联想窗残留到下次输入 | 收起联想 | 收起联想 |
@@ -282,7 +282,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   毛玻璃/Toast/DPI 表现）仍需 Windows 真机人工验收**（本机无 Windows 运行时）；
   `tools/checkgdi` 的 ExtCreatePen 非空指针契约 + 交叉编译仍在。
 - `tests/key_routing` 是 macOS 按键路由回归测试（合成 NSEvent 驱动
-  `ChaosetController.handle`，8 项断言）；**2026-10-31 起接入 CI**（审计 G7）：
+  `ChaosetController.handle`，11 项断言）；**2026-10-31 起接入 CI**（审计 G7）：
   `shims/macos/tests/key_routing/run.sh` 负责编译测试二进制 + 起临时 daemon +
   清理，macos-build job 每次 push 执行；`tools/checkuiparity` 断言该脚本存在且
   被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `behavior_test.go`

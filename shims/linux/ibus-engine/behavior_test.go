@@ -731,6 +731,43 @@ func TestCtrlUClearsComposition(t *testing.T) {
 	}
 }
 
+// TestAltBackspaceBacksOneSyllable：Alt+Backspace（Option+Backspace）组词中
+// 按音节回退（三端统一，2026-10-31；对齐 macOS ⌥⌫ 与引擎 BackspaceWord）。
+// 此前 Mod1 与 Ctrl 同分支，被当成「整段清空」，与 mac/Windows 不一致。
+func TestAltBackspaceBacksOneSyllable(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "nihao")
+	if got := e.sess.Compose().Input; got != "nihao" {
+		t.Fatalf("前置失败：组词应为 nihao，实际 %q", got)
+	}
+	handled, _ := e.ProcessKeyEvent(keysymBackspace, 0, ibusMod1Mask)
+	if !handled {
+		t.Fatal("组词中 Alt+Backspace 应被消费")
+	}
+	if got := e.sess.Compose().Input; got != "ni" {
+		t.Fatalf("Alt+Backspace 应回退一个音节到 ni，实际 %q", got)
+	}
+	// 非组词时 Alt+Backspace 放行给宿主（宿主通常删文档前一个词）
+	e.sess.Reset()
+	e.hidePreedit()
+	handled, _ = e.ProcessKeyEvent(keysymBackspace, 0, ibusMod1Mask)
+	if handled {
+		t.Fatal("非组词 Alt+Backspace 应放行给应用")
+	}
+}
+
+// TestAltUPassesThrough：Alt+U 是宿主快捷键，不得复用 Ctrl+U 的整行清空
+// 分支（2026-10-31 三端对齐：mac/Windows 都放行 Alt+U）。放行前的收尾
+// （清空纯拼音）是透传路径的既有语义，这里只断言按键不被输入法消费。
+func TestAltUPassesThrough(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "ni")
+	handled, _ := e.ProcessKeyEvent(uint32('u'), 0, ibusMod1Mask)
+	if handled {
+		t.Fatal("Alt+U 应放行给应用")
+	}
+}
+
 // TestPageKeyClearsCompositionWithoutCandidates：残缺组词按 PgUp/PgDn——
 // 先清空组词再放行（对齐 macOS/Windows 壳；此前静默吞键）。
 func TestPageKeyClearsCompositionWithoutCandidates(t *testing.T) {

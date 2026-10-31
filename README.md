@@ -983,9 +983,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **文档**：本轮同步修正 README/AGENTS/docs/ui-parity 与各端 README 的过期宣称
         （词库规模/再生成命令 `-extra`/`.Pinyin`/release workflow/IPC 方法表/Linux page_size 等）。
       - **未修（明确记录）**：Windows TSF 两阶段下 Shift 跟踪可达性（需真机确认，见
-        `shims/windows/README.md`「已知限制」）；Option/Alt+Backspace 三端语义差异
-        （mac 按音节回退 / Windows 放行 / Linux 清空，记入 docs/ui-parity 按键边角差异）；
-        双拼 `;` 的标点宽度 1 键瞬态（记入各端 README）。
+        `shims/windows/README.md`「已知限制」）；双拼 `;` 的标点宽度 1 键瞬态
+        （记入各端 README）。Option/Alt+Backspace 三端语义已于 2026-10-31 统一为
+        按音节回退（见阶段 46）。
 
 - [x] 阶段 31：Windows 真机首轮验证 + 审计 A 批收尾（2026-10-30/31）
       - **触发**：v0.2.17 发布后用户 Windows 11 真机反馈「开始菜单/搜索框候选窗
@@ -1038,8 +1038,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **未做（明确记录）**：滚轮翻页在 Windows 不可行（`WM_MOUSEWHEEL` 只发给
         焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，
         与用户「游戏不干扰鼠标」的硬要求冲突）；无障碍 UIA、per-monitor DPI、
-        设置窗深色、多行折行、Option/Alt+Backspace 三端语义仍记录在
-        docs/ui-parity 与各端 README。
+        设置窗深色、多行折行仍记录在 docs/ui-parity 与各端 README；
+        Option/Alt+Backspace 三端语义已于 2026-10-31 统一（见阶段 46）。
 
 - [x] 阶段 33：双拼 `;` 标点宽度瞬态修复 + Windows 工具集对齐（2026-10-31）
       - **双拼 `;` 半角瞬态（三端一致性问题）**：全/半角开关归壳本地持有，此前
@@ -1176,11 +1176,12 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 
 - [x] 阶段 41：key_routing 回归测试接入 CI + 两处 Swift 警告清理（2026-10-31）
       - **key_routing 接入 CI（审计 G7）**：`shims/macos/tests/key_routing/main.swift`
-        是合成 NSEvent 驱动 `ChaosetController.handle` 的 8 项按键路由回归
-        （keyUp 放行/字母组词/快捷键放行/Shift 空按中英切换/Shift+字母不误切），
-        此前未接入 Makefile/CI（死测试）。新增 `tests/key_routing/run.sh`：编译
-        测试二进制 → 起临时 daemon（临时 socket/userdict，结束 kill+wait 后清理）
-        → 跑断言；CI macos-build job 每次 push 执行。本机实测 8/8 通过。
+        是合成 NSEvent 驱动 `ChaosetController.handle` 的按键路由回归（keyUp 放行/
+        字母组词/快捷键放行/Shift 空按中英切换/Shift+字母不误切；2026-10-31 增
+        Option+Backspace 3 条后共 11 项），此前未接入 Makefile/CI（死测试）。新增
+        `tests/key_routing/run.sh`：编译测试二进制 → 起临时 daemon（临时 socket/
+        userdict，结束 kill+wait 后清理）→ 跑断言；CI macos-build job 每次 push
+        执行。本机实测 8/8（当时）/ 11/11（阶段 46 后）通过。
       - **checkuiparity 防退化**：新增「CI 覆盖」检查——run.sh 必须存在且
         ci.yml 必须调用 key_routing，防止以后又被摘掉变回死测试。
       - **顺带清理本次编译暴露的两处 Swift 警告**：
@@ -1259,6 +1260,32 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         + mingw 交叉编译 DLL）；`make vet`/`go test ./tools/checkuiparity` 通过；
         真实仓库 checkuiparity PASS；`git diff --check` 通过。窗口交互（关开关→
         联想窗立即消失）需 Windows 真机点击验收。
+
+- [x] 阶段 46：Option/Alt+Backspace 三端统一为「按音节回退」（2026-10-31）
+      - **背景**：docs/ui-parity「按键边角差异」记录三端语义不同——mac 按音节
+        回退（`engine.backspaceWord`）、Windows 放行给宿主删词、Linux 视为整段
+        清空（Mod1 与 Ctrl 同分支）。同一快捷键三种行为，用户无法形成肌肉记忆。
+      - **决策**：统一为 mac 语义「按音节回退」——中文输入法里 ⌥⌫ 的通行含义
+        是删一个音节（而非删宿主文档的一个词或清空整条拼音）；非组词态仍放行
+        给宿主（此时没有拼音可退，让宿主按系统语义删词）。
+      - **Windows**：core 层新增 `Session::backspaceWord()`（IPC `backspaceWord`）；
+        `wouldHandle` 对 Alt+Backspace 在组词中预告吞键、非组词放行；
+        `OnKeyDown` 在通用 Alt 透传前处理：组词中回退一个音节、剩余拼音删空时
+        已确认段立即落盘收尾（与普通 Backspace 同路径）。
+      - **Linux**：ibus 引擎把 Ctrl 与 Mod1 分支拆开——Ctrl+Backspace 仍整段清空、
+        Ctrl+U 仅 Ctrl；Alt+Backspace 在组词中调 `sess.BackspaceWord()` 按音节
+        回退，非组词放行；Alt+U 不再复用 Ctrl+U 清空分支（mac/Windows 都放行）。
+      - **macOS**：行为原本正确，key_routing 回归测试新增 3 条断言（⌥⌫ 消费、
+        回退到 ni、不再含 hao），防止未来退化。
+      - **checkuiparity**：新增「退格键语义」组——三端壳都必须调用
+        `backspaceWord`/`BackspaceWord`，ui-parity 必须保留「按音节回退」。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过（新增 2 个用例）；
+        `./shims/windows/build.sh` 通过（原生 core_test 含 backspaceWord 用例 +
+        mingw 交叉编译）；mac key_routing **11/11 通过**；`make vet` /
+        `go test ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。
+      - **真机验收**：Windows/Linux 组词中按 Alt+Backspace 应回退一个音节并消费；
+        非组词时仍由宿主删词。
 
 ## 验收范围确认（2026-09-23）
 

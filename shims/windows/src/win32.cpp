@@ -2443,7 +2443,10 @@ private:
         const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
 
-        if (alt || win) return false;
+        // Alt+Backspace：组词中按音节回退（三端统一，2026-10-31；对齐 macOS
+        // ⌥⌫ 与引擎 BackspaceWord）。非组词态仍放行给宿主删词。
+        if (alt) return isComposing() && vk == kVkBackspace;
+        if (win) return false;
         if (ctrl) {
             // 组词中支持 Ctrl+Backspace 快速清空拼音与 Ctrl+U 整行清空；
             // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）全部放行
@@ -2593,6 +2596,32 @@ private:
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
+
+        // Alt+Backspace：组词中按音节回退（三端统一，2026-10-31；对齐
+        // macOS ⌥⌫ 的 engine.backspaceWord）。必须在通用 Alt 透传之前处理，
+        // 否则会先 flush 再放行，退化成宿主删词（此前三端语义不同）。
+        if (alt && vk == kVkBackspace && isComposing()) {
+            comp_ = session_.backspaceWord();
+            if (!comp_.ok) {
+                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
+                return true;
+            }
+            syncDpScheme(comp_);
+            if (comp_.input.empty()) {
+                if (!confirmedPreedit_.empty()) {
+                    // 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）
+                    comp_ = chaoset::Comp();
+                    const std::string all = confirmedPreedit_;
+                    confirmedPreedit_.clear();
+                    commit(pic, all);
+                } else {
+                    endComposition();
+                }
+            } else {
+                render(pic);
+            }
+            return true;
+        }
 
         // Alt 或 Win 快捷键：先收尾未决组词，然后放行原键给宿主。
         // 收尾走 flushOrCancel 而不是 endComposition：用户已确认的段不能

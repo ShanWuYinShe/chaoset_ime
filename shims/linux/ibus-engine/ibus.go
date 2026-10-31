@@ -455,18 +455,33 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return false, nil
 	}
 	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
-		// Ctrl+Backspace / Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费
-		// 并全部删除）。**取消语义**：含未落盘的已确认段一并丢弃——用户按
-		// 「清空整行」的意图是整条组词都不要，确认段若残留会在下一轮输入里
-		// 变成幽灵前缀被一起提交（P1-1）。
-		if isComposing(e.sess) && keyval == keysymBackspace {
+		// Ctrl+Backspace：类终端整行清空（对齐 macOS 壳，组词中消费并全部
+		// 删除）。**取消语义**：含未落盘的已确认段一并丢弃——用户按「清空
+		// 整行」的意图是整条组词都不要，确认段若残留会在下一轮输入里变成
+		// 幽灵前缀被一起提交（P1-1）。
+		if state&ibusCtrlMask != 0 && isComposing(e.sess) && keyval == keysymBackspace {
 			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()
 			e.hideLookupTable()
 			return true, nil
 		}
-		if isComposing(e.sess) && keyval == 'u' {
+		// Alt+Backspace（Option+Backspace）：组词中按音节回退（三端统一，
+		// 2026-10-31；对齐 macOS ⌥⌫ 与引擎 BackspaceWord）。此前 Mod1 与
+		// Ctrl 同分支被当成「整段清空」，与 mac/Windows 不一致。
+		if state&ibusMod1Mask != 0 && isComposing(e.sess) && keyval == keysymBackspace {
+			comp, _ := e.sess.BackspaceWord()
+			if comp.Input == "" && e.confirmedPreedit != "" {
+				// 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）。
+				e.commit(e.confirmedPreedit)
+				e.sess.Reset()
+				return true, nil
+			}
+			e.refresh(comp)
+			return true, nil
+		}
+		// Ctrl+U：类终端整行清空（仅 Ctrl；Alt+U 是宿主快捷键，必须放行）。
+		if state&ibusCtrlMask != 0 && isComposing(e.sess) && keyval == 'u' {
 			e.confirmedPreedit = ""
 			e.sess.Reset()
 			e.hidePreedit()

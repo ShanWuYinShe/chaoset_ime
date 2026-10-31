@@ -277,13 +277,14 @@ rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
   未用的两个（KeyEquivalentKey / DefaultUINameKey）官方 Squirrel 同样没有——即不存在
   "漏写某个必需键"这一可能，剩余变量只剩登录扫描时机与旧 id 的记忆问题。
 - **2026-10-06 按键路由修复与回归测试**：`tests/key_routing/main.swift` 用合成 NSEvent
-  直接驱动 `ChaosetController.handle`：**新实现 8/8 通过**，同一套检查下**修复前旧实现
-  4/8 不通过**（keyUp 未放行、Cmd+S/Ctrl+A 被输入法吞、Shift 空按根本没切换）。
+  直接驱动 `ChaosetController.handle`：**新实现 11/11 通过**（2026-10-31 增 Option+Backspace
+  按音节回退 3 条），同一套检查下**修复前旧实现 4/8 不通过**（keyUp 未放行、
+  Cmd+S/Ctrl+A 被输入法吞、Shift 空按根本没切换）。
   三处修复：① 只处理 keyDown/flagsChanged，keyUp 一律放行（否则同一按键可能被处理两次）；
   ② 带 Command/Control/Option 的组合键一律放行；③ Shift 空按改为"按下装填、松开判定、
   期间出现其它按键即取消"，Shift+字母 不再误切换。
   用法：`shims/macos/tests/key_routing/run.sh`（需先 `./build.sh`；脚本自动编译测试、
-  起临时 daemon、跑 8 项断言并清理）；**2026-10-31 起已接入 CI macos-build job**
+  起临时 daemon、跑 11 项断言并清理）；**2026-10-31 起已接入 CI macos-build job**
   （审计 G7：此前是未接入 CI 的死测试）。
 - **2026-10-06 IPC 韧性修复**：客户端连接后设 `SO_NOSIGPIPE`。daemon 在写入途中退出时，
   `send()` 到已关闭套接字会触发 SIGPIPE（默认终止进程），**整个输入法进程会被信号杀死**；

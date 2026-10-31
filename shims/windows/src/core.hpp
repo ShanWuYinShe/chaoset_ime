@@ -100,6 +100,8 @@ public:
     // （1 键瞬态，2026-10-31 修复）。默认 false 仅供核心层测试的旧调用。
     Comp input(const std::string& text, bool halfWidth = false);
     Comp backspace();
+    // 按音节回退（Alt+Backspace，对齐 macOS ⌥⌫ 与引擎 BackspaceWord，2026-10-31）。
+    Comp backspaceWord();
     Comp reset();
     // 候选翻页：daemon 钳制边界；通信失败返回 ok=false。
     Comp nextPage();

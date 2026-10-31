@@ -209,6 +209,13 @@ int main(int argc, char** argv) {
     Comp c5 = session.reset();
     check(c5.ok && c5.input.empty(), "重置后输入为空");
 
+    // 按音节回退（Alt+Backspace）：三端统一走引擎 BackspaceWord（2026-10-31）。
+    Comp w1 = session.input("nihao");
+    check(w1.ok, "回退词用例前组词 nihao");
+    Comp w2 = session.backspaceWord();
+    check(w2.ok && w2.input == "ni", "按音节回退到 ni（Alt+Backspace）");
+    session.reset();
+
     // select 越界：daemon 返回业务 error，调用层应判失败且连接仍可用
     std::string dummy;
     check(!session.select(99, &dummy), "越界 select 判失败");

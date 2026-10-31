@@ -31,7 +31,9 @@
 //     「检查导入器退出码 / 旧词库备份 / 同卷原子替换」关键实现（只看产物文件
 //     存在会把部分解析失败当成功；直接 remove+move 会出现丢词库中间态）；
 //  11. 关闭联想的即时性不能退化：mac 设置窗 post 通知、Windows 设置窗跨进程广播
-//     （候选窗转发 TIP），Linux 仍为下次按键生效且必须在 ui-parity 记录。
+//     （候选窗转发 TIP），Linux 仍为下次按键生效且必须在 ui-parity 记录；
+//  12. Option/Alt+Backspace 三端语义统一为按音节回退（2026-10-31）：mac/Windows/
+//     Linux 都必须走引擎 `backspaceWord`，不能退回「放行/整段清空」旧行为。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -66,6 +68,8 @@ const (
 	macEngine   = "shims/macos/src/EngineClient.swift"
 	macSetup    = "shims/macos/setup/main.swift"
 	winShell    = "shims/windows/src/win32.cpp"
+	winCoreHpp  = "shims/windows/src/core.hpp"
+	linuxEngine = "shims/linux/ibus-engine/ibus.go"
 	linuxSetup  = "shims/linux/setup/chaoset-setup.py"
 	linuxCtl    = "shims/linux/setup/userdict_ctl.py"
 	linuxTest   = "shims/linux/setup/test_userdict_ctl.py"
@@ -421,6 +425,14 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "关闭联想即时性", winShell,
 		"Chaoset.AssociateChanged", "HWND_BROADCAST", "clearAssociateFromSettings")
 	checkContains(fsys, &problems, "关闭联想即时性", uiParityDoc, "下一次按键")
+
+	// 4d. Option/Alt+Backspace 三端统一为按音节回退（2026-10-31）：mac 壳、
+	// Windows 壳（含 core 层）、Linux ibus 壳都必须调用引擎 backspaceWord。
+	checkContains(fsys, &problems, "退格键语义", "shims/macos/src/ChaosetController.swift", "backspaceWord")
+	checkContains(fsys, &problems, "退格键语义", winShell, "backspaceWord")
+	checkContains(fsys, &problems, "退格键语义", winCoreHpp, "backspaceWord")
+	checkContains(fsys, &problems, "退格键语义", linuxEngine, "BackspaceWord")
+	checkContains(fsys, &problems, "退格键语义", uiParityDoc, "按音节回退")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py")
 	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py")
@@ -468,5 +480,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

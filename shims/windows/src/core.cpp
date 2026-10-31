@@ -355,6 +355,13 @@ Comp Session::backspace() {
     return parseComposition(result);
 }
 
+Comp Session::backspaceWord() {
+    bool ok = false;
+    JsonValue result = call("backspaceWord", "", &ok);
+    if (!ok) return Comp();
+    return parseComposition(result);
+}
+
 Comp Session::reset() {
     bool ok = false;
     JsonValue result = call("reset", "", &ok);

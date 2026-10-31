@@ -3,11 +3,16 @@ import InputMethodKit
 
 // 按键路由回归测试：用合成 NSEvent 直接驱动 ChaosetController.handle，
 // 覆盖 keyUp 放行、字母进组词、Cmd/Ctrl/Option 放行、Shift 空按切换中英、
-// Shift+字母不误切换。修复前（2026-10-06 之前）旧实现 4/8 不通过。
+// Shift+字母不误切换、Option+Backspace 按音节回退（2026-10-31 三端统一）。
+// 修复前（2026-10-06 之前）旧实现 4/8 不通过。
 //
-// 用法（在 shims/macos 目录下，需要 daemon 在跑）:
+// 推荐用法（自动编译 + 起临时 daemon + 清理）：
+//   shims/macos/tests/key_routing/run.sh
+//
+// 手动用法（在 shims/macos 目录下，需要 daemon 在跑）:
 //   swiftc -O -framework InputMethodKit -framework AppKit \
-//     tests/key_routing/main.swift src/ChaosetController.swift src/EngineClient.swift -o build/key_routing
+//     tests/key_routing/main.swift src/ChaosetController.swift src/EngineClient.swift \
+//     src/CandidatePanel.swift src/SettingsWindow.swift -o build/key_routing
 //   ./build/key_routing
 // （入口文件必须叫 main.swift：与其它文件一起编译时，顶层语句只允许出现在 main.swift）
 final class MockClient: NSObject, IMKTextInput {
@@ -77,6 +82,17 @@ _ = c.handle(ev("a", 0, [.shift]), client: m)              // Shift+A
 _ = c.handle(ev("", 56, [], .flagsChanged), client: m)     // Shift 松开
 let r7 = c.handle(ev("b", 11), client: m)
 check("Shift+字母不误切换（仍中文）", r7 == true, "ret=\(r7)")
+
+// Option+Backspace（⌥⌫）：组词中按音节回退（三端统一，2026-10-31）。
+// 先 Esc 清空上面的残余组词，再输入 nihao → ⌥⌫ 应回退到 ni。
+_ = c.handle(ev("", 53), client: m) // Esc
+for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31)] {
+    _ = c.handle(ev(ch, UInt16(code)), client: m)
+}
+check("Option+Backspace 前组词含 hao", m.marked.contains("hao"), "marked=\(m.marked)")
+let r8 = c.handle(ev("", 51, [.option]), client: m)
+check("Option+Backspace 按音节回退（消费）", r8 == true, "ret=\(r8)")
+check("Option+Backspace 回退到 ni", m.marked.contains("ni") && !m.marked.contains("hao"), "marked=\(m.marked)")
 
 print("\n结果: pass=\(pass) fail=\(fail)")
 exit(fail == 0 ? 0 : 1)
