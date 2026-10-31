@@ -67,7 +67,7 @@ go build ./...                    # 秒级
 | lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 三端 UI 一致性（`check-uiparity`）/ 构建 | 快，但统一在 CI 跑保证一致 |
 | test | go test ./...（数据契约/引擎/壳行为测试） | 约 30s |
 | race | `go test -race` | 最重的一项，本机 45s+ |
-| linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页 | 需要 dbus + ibus，占资源 |
+| linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页；Linux 安装包自检（tar.gz/deb 必含设置窗模块） | 需要 dbus + ibus，占资源 |
 | macos-build | macOS 壳构建 + universal 自检 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
 | windows-build | Windows 壳 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 安装包编译 + ZIP 自检 | 需要 mingw-w64/NSIS，本机不装；2026-10-31 起不再只在打 tag 时验证 |
 

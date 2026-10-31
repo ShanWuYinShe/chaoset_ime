@@ -143,6 +143,23 @@ jobs:
         run: |
           python3 -m py_compile shims/linux/setup/chaoset-setup.py shims/linux/setup/userdict_ctl.py shims/linux/setup/dictimport_ctl.py
           python3 -m unittest discover -s shims/linux/setup -p 'test_*.py'
+
+      # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄
+      # 漏装设置窗模块（2026-10-31 新加 dictimport_ctl.py 就是这类风险）。
+      # 这里在 PR/日常提交上构建 tar.gz（以及可用的 deb）并断言三个设置窗
+      # 脚本都在包里。
+      - name: Linux 安装包自检（设置窗模块必须随包）
+        run: |
+          make package-linux
+          tar -tzf dist/chaoset-linux-x86_64.tar.gz > /tmp/pkg-list.txt
+          for f in setup/chaoset-setup.py setup/userdict_ctl.py setup/dictimport_ctl.py data/dict.tsv; do
+            grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
+          done
+          if command -v dpkg-deb >/dev/null 2>&1 && [ -f dist/chaoset_amd64.deb ]; then
+            dpkg-deb -c dist/chaoset_amd64.deb | grep -q 'usr/share/chaoset/dictimport_ctl.py' \
+              || { echo "deb 缺少 dictimport_ctl.py"; exit 1; }
+          fi
+          echo "PASS: Linux 安装包包含设置窗三个模块"
   # ── 5. macOS 构建 + 等价性 + 双端视觉一致性（本机跑要 2-3 分钟）─────
   # 此前这些只在打 tag 的 release.yml 里跑，PR/日常提交无从验证——改动一旦
   # 破坏 macOS 壳或两端视觉一致性，要到发版才发现。现在 PR 也跑。

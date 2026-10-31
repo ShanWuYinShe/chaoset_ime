@@ -1463,6 +1463,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`./shims/windows/build.sh` 通过（mingw 编译 + core_test）；
         `make vet`/checker 通过。**需 Windows 真机 + Narrator 验收**。
 
+- [x] 阶段 58：Linux 安装包自检进日常 CI（2026-10-31）
+      - **问题**：安装包冒烟只在 release.yml 打 tag 时跑；日常改动若漏装
+        设置窗模块（如阶段 54 新加的 `dictimport_ctl.py`），要到发版才暴露。
+      - **实现**：linux-e2e job 新增「Linux 安装包自检」步骤——`make
+        package-linux` 后断言 tar.gz 内 `setup/chaoset-setup.py`、
+        `setup/userdict_ctl.py`、`setup/dictimport_ctl.py`、`data/dict.tsv` 都在；
+        若生成了 deb，再用 `dpkg-deb -c` 断言 `dictimport_ctl.py`。
+      - **机器检查**：checkuiparity「CI 覆盖」组断言 ci.yml 保留
+        `make package-linux` 与「Linux 安装包自检」，防止步骤被删。
+      - **验证**：本机 `make package-linux` 通过并人工核对 tar 内容；
+        `make vet`/checker 通过；CI linux-e2e 实际执行该步骤。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
