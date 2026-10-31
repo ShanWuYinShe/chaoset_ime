@@ -18,9 +18,16 @@ import InputMethodKit
 final class MockClient: NSObject, IMKTextInput {
     var marked = ""
     var inserted: [String] = []
-    func insertText(_ string: Any!, replacementRange: NSRange) { inserted.append(String(describing: string)) }
+    func insertText(_ string: Any!, replacementRange: NSRange) {
+        // Any! 实际是 String?；String(describing:) 会得到 "Optional(…)" 并把
+        // 清空标记区（insertText("")）误记为普通插入。这里显式解包，
+        // 空串时同步清空 marked（真实客户端行为）。
+        let s = (string as? String) ?? String(describing: string)
+        if s.isEmpty { marked = "" }
+        inserted.append(s)
+    }
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {
-        marked = String(describing: string)
+        marked = (string as? String) ?? String(describing: string)
     }
     func unmarkText() { marked = "" }
     func selectedRange() -> NSRange { return NSRange(location: 0, length: 0) }
@@ -93,6 +100,36 @@ check("Option+Backspace 前组词含 hao", m.marked.contains("hao"), "marked=\(m
 let r8 = c.handle(ev("", 51, [.option]), client: m)
 check("Option+Backspace 按音节回退（消费）", r8 == true, "ret=\(r8)")
 check("Option+Backspace 回退到 ni", m.marked.contains("ni") && !m.marked.contains("hao"), "marked=\(m.marked)")
+
+// 修饰键映射（2026-10-31 用户要求）：Command↔Win/Super、Control↔Ctrl、
+// Option↔Alt。组词中 Backspace/Delete 的优先级：Cmd/Ctrl/Shift 全部删除，
+// Option 按音节回退，无修饰逐字符回退；Delete 与 Backspace 同语义。
+func typeNihao() {
+    _ = c.handle(ev("", 53), client: m) // Esc 清空
+    for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31)] {
+        _ = c.handle(ev(ch, UInt16(code)), client: m)
+    }
+}
+
+typeNihao()
+let r9 = c.handle(ev("", 51, [.command]), client: m) // Cmd+Backspace
+check("Cmd+Backspace 全部删除（消费）", r9 == true, "ret=\(r9)")
+check("Cmd+Backspace 后组词为空", m.marked.isEmpty, "marked=\(m.marked)")
+
+typeNihao()
+let r10 = c.handle(ev("", 117, [.control]), client: m) // Ctrl+ForwardDelete
+check("Ctrl+Delete 全部删除（消费）", r10 == true, "ret=\(r10)")
+check("Ctrl+Delete 后组词为空", m.marked.isEmpty, "marked=\(m.marked)")
+
+typeNihao()
+let r11 = c.handle(ev("", 117), client: m) // 普通 ForwardDelete
+check("普通 Delete 逐字符回退（消费）", r11 == true, "ret=\(r11)")
+check("普通 Delete 只删一个字符", m.marked.contains("ha") && !m.marked.contains("hao"), "marked=\(m.marked)")
+
+typeNihao()
+let r12 = c.handle(ev("", 117, [.option]), client: m) // Option+ForwardDelete
+check("Option+Delete 按音节回退（消费）", r12 == true, "ret=\(r12)")
+check("Option+Delete 回退到 ni", m.marked.contains("ni") && !m.marked.contains("hao"), "marked=\(m.marked)")
 
 print("\n结果: pass=\(pass) fail=\(fail)")
 exit(fail == 0 ? 0 : 1)

@@ -33,7 +33,10 @@
 //  11. 关闭联想的即时性不能退化：mac 设置窗 post 通知、Windows 设置窗跨进程广播
 //     （候选窗转发 TIP），Linux 仍为下次按键生效且必须在 ui-parity 记录；
 //  12. Option/Alt+Backspace 三端语义统一为按音节回退（2026-10-31）：mac/Windows/
-//     Linux 都必须走引擎 `backspaceWord`，不能退回「放行/整段清空」旧行为。
+//     Linux 都必须走引擎 `backspaceWord`，不能退回「放行/整段清空」旧行为；
+//  13. 修饰键映射（2026-10-31 用户要求）：macOS Command↔Windows Win↔Linux Super、
+//     Control↔Ctrl、Option↔Alt；组词中 Backspace/Delete 按该映射统一语义，
+//     ui-parity 必须保留映射表。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -429,10 +432,21 @@ func Run(fsys fs.FS) []string {
 	// 4d. Option/Alt+Backspace 三端统一为按音节回退（2026-10-31）：mac 壳、
 	// Windows 壳（含 core 层）、Linux ibus 壳都必须调用引擎 backspaceWord。
 	checkContains(fsys, &problems, "退格键语义", "shims/macos/src/ChaosetController.swift", "backspaceWord")
-	checkContains(fsys, &problems, "退格键语义", winShell, "backspaceWord")
+	checkContains(fsys, &problems, "退格键语义", winShell, "backspaceWord", "kVkDelete")
 	checkContains(fsys, &problems, "退格键语义", winCoreHpp, "backspaceWord")
-	checkContains(fsys, &problems, "退格键语义", linuxEngine, "BackspaceWord")
+	checkContains(fsys, &problems, "退格键语义", linuxEngine, "BackspaceWord", "keysymDelete")
 	checkContains(fsys, &problems, "退格键语义", uiParityDoc, "按音节回退")
+
+	// 4e. 修饰键映射（2026-10-31 用户要求）：macOS Command↔Windows Win↔
+	// Linux Super、Control↔Ctrl、Option↔Alt。三端壳必须识别对应修饰键，
+	// 且 ui-parity 必须保留映射表（防止文档漂移后习惯不可迁移）。
+	checkContains(fsys, &problems, "修饰键映射", "shims/macos/src/ChaosetController.swift",
+		".command", ".control", ".option")
+	checkContains(fsys, &problems, "修饰键映射", winShell,
+		"VK_CONTROL", "VK_MENU", "VK_LWIN")
+	checkContains(fsys, &problems, "修饰键映射", linuxEngine,
+		"ibusCtrlMask", "ibusMod1Mask", "ibusMod4Mask")
+	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py")
 	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py")
@@ -480,5 +494,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

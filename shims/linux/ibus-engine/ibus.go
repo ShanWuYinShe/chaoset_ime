@@ -39,6 +39,7 @@ const (
 
 	// ibus keysym（与 X keysym 一致）
 	keysymBackspace = 0xFF08
+	keysymDelete    = 0xFFFF // Delete/ForwardDelete：组词中与 Backspace 同语义（对齐 mac）
 	keysymReturn    = 0xFF0D
 	keysymEscape    = 0xFF1B
 	keysymSpace     = 0x20
@@ -443,11 +444,19 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 	if state&ibusReleaseMask != 0 {
 		return false, nil
 	}
-	// Mod4(Super) 一并放行：2026-10-29 输入事件审计 F7——此前只覆盖 Ctrl/Mod1，
-	// Super+字母在非英文模式下会被当成普通字母喂进组词，吞掉桌面快捷键
-	// （GNOME Super+A/S/E、KDE Super 系）。Windows 壳有等价的 win 判定，
-	// Linux 此前缺失，三端不一致。
+	// Mod4(Super) 映射 macOS Command：组词中 Super+Backspace/Delete 全部删除
+	// （2026-10-31 用户要求三端修饰键对应：Ctrl↔Control、Alt↔Option、
+	// Super↔Command）。其余 Super 组合仍放行——2026-10-29 审计 F7：此前只覆盖
+	// Ctrl/Mod1，Super+字母在非英文模式下会被当成普通字母喂进组词，吞掉桌面
+	// 快捷键（GNOME Super+A/S/E、KDE Super 系）。
 	if state&ibusMod4Mask != 0 {
+		if isComposing(e.sess) && (keyval == keysymBackspace || keyval == keysymDelete) {
+			e.confirmedPreedit = ""
+			e.sess.Reset()
+			e.hidePreedit()
+			e.hideLookupTable()
+			return true, nil
+		}
 		// 透传前先收尾：已确认段落盘、未落盘纯拼音丢弃、面板收起。
 		// README 宣称「组词中放行前先清空组词」，此前这里只 exitAssociate，
 		// 预编辑与候选窗挂在原地、确认段还会串进下一轮（P1-5）。
@@ -455,21 +464,18 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		return false, nil
 	}
 	if state&(ibusCtrlMask|ibusMod1Mask) != 0 {
-		// Ctrl+Backspace：类终端整行清空（对齐 macOS 壳，组词中消费并全部
-		// 删除）。**取消语义**：含未落盘的已确认段一并丢弃——用户按「清空
-		// 整行」的意图是整条组词都不要，确认段若残留会在下一轮输入里变成
-		// 幽灵前缀被一起提交（P1-1）。
-		if state&ibusCtrlMask != 0 && isComposing(e.sess) && keyval == keysymBackspace {
-			e.confirmedPreedit = ""
-			e.sess.Reset()
-			e.hidePreedit()
-			e.hideLookupTable()
-			return true, nil
-		}
-		// Alt+Backspace（Option+Backspace）：组词中按音节回退（三端统一，
-		// 2026-10-31；对齐 macOS ⌥⌫ 与引擎 BackspaceWord）。此前 Mod1 与
-		// Ctrl 同分支被当成「整段清空」，与 mac/Windows 不一致。
-		if state&ibusMod1Mask != 0 && isComposing(e.sess) && keyval == keysymBackspace {
+		// 组词中 Backspace/Delete：修饰键映射与 macOS 对齐（2026-10-31 用户要求：
+		// Control↔Ctrl、Option↔Alt、Super↔Command）。优先级与 mac 一致：
+		// Ctrl/Shift → 全部删除（含未落盘确认段，与 Esc 同语义）；Alt → 按音节
+		// 回退（engine.BackspaceWord）；无修饰 → 下方 switch 逐字符回退。
+		if isComposing(e.sess) && (keyval == keysymBackspace || keyval == keysymDelete) {
+			if state&(ibusCtrlMask|ibusShiftMask) != 0 {
+				e.confirmedPreedit = ""
+				e.sess.Reset()
+				e.hidePreedit()
+				e.hideLookupTable()
+				return true, nil
+			}
 			comp, _ := e.sess.BackspaceWord()
 			if comp.Input == "" && e.confirmedPreedit != "" {
 				// 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）。
@@ -585,13 +591,13 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		e.refresh(comp)
 		return true, nil
 
-	case keyval == keysymBackspace:
+	case keyval == keysymBackspace || keyval == keysymDelete:
 		if !isComposing(e.sess) {
 			return false, nil
 		}
-		// Shift+Backspace：直接全部删除（对齐 macOS 壳把 Shift+Delete 归入
-		// 全部删除；此前走逐字符回退，三端不一致）。含未落盘的已确认段一并
-		// 取消（与 Esc 同语义，三端统一）
+		// Shift+Backspace/Delete：直接全部删除（对齐 macOS 壳把 Shift+Delete
+		// 归入全部删除；此前走逐字符回退，三端不一致）。含未落盘的已确认段
+		// 一并取消（与 Esc 同语义，三端统一）
 		if state&ibusShiftMask != 0 {
 			e.confirmedPreedit = ""
 			e.sess.Reset()

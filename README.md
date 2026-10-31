@@ -1300,6 +1300,33 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`bash -n shims/linux/test-ci.sh` 通过；真实 ibus 环境由 CI
         linux-e2e job 执行（本机为 macOS，无 Linux/ibus 运行时）。
 
+- [x] 阶段 48：三端修饰键映射统一（Command↔Win/Super、Control↔Ctrl、Option↔Alt）（2026-10-31）
+      - **用户要求**：Windows/Linux 的 Ctrl 对应 macOS Control、Alt 对应 Option、
+        Win/Super 对应 Command，要保持用户习惯在不同平台间的对应关系。
+      - **审计发现的不一致**：
+        - mac 组词中 Cmd/Ctrl/Shift+Delete 都「全部删除」，但 Windows Win+Backspace、
+          Linux Super+Backspace 仍放行；
+        - mac 把 ForwardDelete 当 Backspace 删拼音，Windows/Linux 的 Delete 在组词中
+          清空组词后放行（宿主删文档字符）；
+        - mac Option+Delete 按音节回退，Windows/Linux Alt+Delete 放行；
+        - mac Shift+Option+Backspace 因 Shift 优先而全部删除，Windows/Linux 只按
+          Alt 分支回退一个音节（优先级不同）。
+      - **统一规则（三端实现一致）**：组词中 Backspace/Delete——无修饰逐字符回退；
+        Option/Alt 按音节回退（`backspaceWord`）；Command(Win/Super)/Control(Ctrl)/Shift
+        全部删除；组合键按 mac 优先级 Command/Ctrl/Shift > Option。非组词态一律放行。
+      - **实现**：Windows 新增 `kVkDelete`，`wouldHandle`/`handleKey` 统一按修饰键映射；
+        Linux 新增 `keysymDelete`，拆分 Ctrl/Mod1/Mod4 分支并按 Shift 优先级；mac 行为
+        原本正确，补充 8 条 key_routing 断言（现 19/19）。
+      - **机器检查**：checkuiparity 新增「修饰键映射」组（三端修饰键标识 + ui-parity
+        映射表），「退格键语义」组增加 `kVkDelete`/`keysymDelete`。
+      - **文档**：ui-parity 新增「修饰键映射」节与组词退格/清空矩阵，移除
+        「组词态 ForwardDelete」差异行；三端 README 同步。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过（新增 Delete/修饰键矩阵 7 例）；
+        `./shims/windows/build.sh` 通过（原生 core_test + mingw）；mac key_routing 19/19；
+        `make vet`/`go test ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。**Win/Super 组合可能被系统外壳先拦截，需 Windows/Linux
+        真机确认实际可达性。**
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

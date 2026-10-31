@@ -768,6 +768,44 @@ func TestAltUPassesThrough(t *testing.T) {
 	}
 }
 
+// TestDeleteAndModifierMapping：Delete 与 Backspace 同语义，且修饰键映射与
+// macOS 对齐（2026-10-31 用户要求：Ctrl↔Control、Alt↔Option、Super↔Command）。
+func TestDeleteAndModifierMapping(t *testing.T) {
+	cases := []struct {
+		name    string
+		keyval  uint32
+		state   uint32
+		want    string
+		handled bool
+	}{
+		{"普通 Delete 逐字符回退", keysymDelete, 0, "niha", true},
+		{"Shift+Delete 全部删除", keysymDelete, ibusShiftMask, "", true},
+		{"Ctrl+Delete 全部删除", keysymDelete, ibusCtrlMask, "", true},
+		{"Alt+Delete 按音节回退", keysymDelete, ibusMod1Mask, "ni", true},
+		{"Super+Backspace 全部删除", keysymBackspace, ibusMod4Mask, "", true},
+		{"Alt+Shift+Backspace 全部删除（Shift 优先）", keysymBackspace,
+			ibusMod1Mask | ibusShiftMask, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _ := newTestEngine(t)
+			typeKeys(e, "nihao")
+			handled, _ := e.ProcessKeyEvent(tc.keyval, 0, tc.state)
+			if handled != tc.handled {
+				t.Fatalf("handled=%v, want %v", handled, tc.handled)
+			}
+			if got := e.sess.Compose().Input; got != tc.want {
+				t.Fatalf("组词剩余 %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// 非组词态 Delete 放行给应用（宿主删光标后字符）。
+	e, _ := newTestEngine(t)
+	if handled, _ := e.ProcessKeyEvent(keysymDelete, 0, 0); handled {
+		t.Fatal("非组词 Delete 应放行给应用")
+	}
+}
+
 // TestPageKeyClearsCompositionWithoutCandidates：残缺组词按 PgUp/PgDn——
 // 先清空组词再放行（对齐 macOS/Windows 壳；此前静默吞键）。
 func TestPageKeyClearsCompositionWithoutCandidates(t *testing.T) {

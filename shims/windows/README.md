@@ -234,9 +234,10 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   - **不会干扰鼠标**：全仓无 `SetWindowsHookEx` / `ClipCursor` / `SetCapture` /
     `SendInput` / `mouse_event` / `keybd_event`（逐项 grep 均为 0）。鼠标事件
     只有候选窗自身的 `WM_LBUTTONDOWN`（窗口内点击），不拦截全局鼠标。
-  - **不会干扰快捷键**：`wouldHandle` 对 `Alt`/`Win` 组合恒放行；`Ctrl` 组合
-    仅在组词中认 `Ctrl+Backspace`/`Ctrl+U`，其余放行；数字/导航/F 键/空格在
-    未组词时立即放行且不触碰 daemon 连接。
+  - **不会干扰快捷键**：组词中按修饰键映射只处理退格/Delete——`Alt+Backspace/Delete`
+    按音节回退、`Win+Backspace/Delete`（映射 macOS Command）全部删除、
+    `Ctrl+Backspace/Delete/U` 全部删除；其余 Alt/Win/Ctrl 组合放行。数字/导航/F 键/
+    空格在未组词时立即放行且不触碰 daemon 连接。
   - **但中文输入法激活时字母键会被拦**：未组词状态按字母（不带 Shift）会
     进入组词（`wouldHandle` 的 `relevant` 判定 → `handleKey` 字母分支）。
     游戏里 WASD 会变成打拼音——这是**任何中文输入法激活时的固有行为**，

@@ -205,5 +205,46 @@ else
 fi
 press "$P2" 65307 0   # Esc 清空（Alt+U 透传已 flush，保险）
 
+# ---- Delete 与修饰键映射（2026-10-31 用户要求）----
+# Delete(65535) 组词中与 Backspace 同语义；Ctrl=4、Alt=8、Super=64。
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65535 0)" = "1" ]; then
+  echo "PASS: 普通 Delete 组词中被消费（逐字符回退）"
+else
+  echo "FAIL: 普通 Delete 未被消费" >&2
+  exit 1
+fi
+press "$P2" 65307 0
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65535 4)" = "1" ]; then
+  echo "PASS: Ctrl+Delete 全部删除被消费"
+else
+  echo "FAIL: Ctrl+Delete 未被消费" >&2
+  exit 1
+fi
+press "$P2" 65307 0
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65535 8)" = "1" ]; then
+  echo "PASS: Alt+Delete 按音节回退被消费"
+else
+  echo "FAIL: Alt+Delete 未被消费" >&2
+  exit 1
+fi
+press "$P2" 65307 0
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65288 64)" = "1" ]; then
+  echo "PASS: Super+Backspace 全部删除被消费"
+else
+  echo "FAIL: Super+Backspace 未被消费" >&2
+  exit 1
+fi
+press "$P2" 65307 0
+if [ "$(handled "$P2" 65535 0)" = "0" ]; then
+  echo "PASS: 非组词 Delete 放行给宿主"
+else
+  echo "FAIL: 非组词 Delete 仍被拦截" >&2
+  exit 1
+fi
+
 echo
 echo "全部 Linux 端到端检查通过"

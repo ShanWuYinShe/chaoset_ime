@@ -87,6 +87,7 @@ const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
 constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
 constexpr DWORD kVkShift = 0x10;
 constexpr DWORD kVkBackspace = 0x08;
+constexpr DWORD kVkDelete = 0x2E;  // VK_DELETE：组词中与 Backspace 同语义（对齐 mac）
 constexpr DWORD kVkEscape = 0x1B;
 constexpr DWORD kVkReturn = 0x0D;
 constexpr DWORD kVkSpace = 0x20;
@@ -2443,15 +2444,13 @@ private:
         const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
 
-        // Alt+Backspace：组词中按音节回退（三端统一，2026-10-31；对齐 macOS
-        // ⌥⌫ 与引擎 BackspaceWord）。非组词态仍放行给宿主删词。
-        if (alt) return isComposing() && vk == kVkBackspace;
-        if (win) return false;
-        if (ctrl) {
-            // 组词中支持 Ctrl+Backspace 快速清空拼音与 Ctrl+U 整行清空；
-            // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）全部放行
-            return isComposing() && (vk == kVkBackspace || vk == 'U');
-        }
+        // 组词中 Backspace/Delete：修饰键映射与 macOS 对齐（2026-10-31 用户要求：
+        // Control↔Ctrl、Option↔Alt、Command↔Win）。两者都消费，具体行为在
+        // handleKey 里按「Command/Ctrl/Shift → 全部删除；Alt → 按音节回退；
+        // 无修饰 → 逐字符回退」处理。非组词态一律放行给宿主。
+        if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) return true;
+        if (ctrl) return isComposing() && vk == 'U';
+        if (alt || win) return false;
 
         // 联想模式：数字（有对应项）/空格（选第一个）/回车/Esc/Backspace
         //（收起）由联想分支消费；- / = 收起联想放行；其余按键退出联想后
@@ -2597,30 +2596,45 @@ private:
         const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
 
-        // Alt+Backspace：组词中按音节回退（三端统一，2026-10-31；对齐
-        // macOS ⌥⌫ 的 engine.backspaceWord）。必须在通用 Alt 透传之前处理，
-        // 否则会先 flush 再放行，退化成宿主删词（此前三端语义不同）。
-        if (alt && vk == kVkBackspace && isComposing()) {
-            comp_ = session_.backspaceWord();
-            if (!comp_.ok) {
-                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
+        // 组词中 Backspace/Delete：修饰键映射（2026-10-31 用户要求：
+        // Control↔Ctrl、Option↔Alt、Command↔Win）。优先级与 macOS 实现一致：
+        // Command/Ctrl/Shift → 全部删除（含未落盘确认段，与 Esc 同语义）；
+        // Alt → 按音节回退（engine.backspaceWord）；无修饰 → 下方逐字符回退。
+        // 非组词态一律放行给宿主。
+        //
+        // 注意：Win/Super 组合可能先被系统外壳拦截（TSF 未必收得到），
+        // 输入法只在收到按键时按 Command 语义处理——真机以实际到达为准。
+        if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) {
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (win || ctrl || shift) {
+                resetSession();
+                comp_ = chaoset::Comp();
+                confirmedPreedit_.clear();
+                endComposition();
                 return true;
             }
-            syncDpScheme(comp_);
-            if (comp_.input.empty()) {
-                if (!confirmedPreedit_.empty()) {
-                    // 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）
-                    comp_ = chaoset::Comp();
-                    const std::string all = confirmedPreedit_;
-                    confirmedPreedit_.clear();
-                    commit(pic, all);
-                } else {
-                    endComposition();
+            if (alt) {
+                comp_ = session_.backspaceWord();
+                if (!comp_.ok) {
+                    flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
+                    return true;
                 }
-            } else {
-                render(pic);
+                syncDpScheme(comp_);
+                if (comp_.input.empty()) {
+                    if (!confirmedPreedit_.empty()) {
+                        // 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）
+                        comp_ = chaoset::Comp();
+                        const std::string all = confirmedPreedit_;
+                        confirmedPreedit_.clear();
+                        commit(pic, all);
+                    } else {
+                        endComposition();
+                    }
+                } else {
+                    render(pic);
+                }
+                return true;
             }
-            return true;
         }
 
         // Alt 或 Win 快捷键：先收尾未决组词，然后放行原键给宿主。
@@ -2636,13 +2650,6 @@ private:
 
         // Ctrl 组合键：
         if (ctrl) {
-            if (vk == kVkBackspace && isComposing()) {
-                // Ctrl+Backspace：直接全部删除（清空全部拼音）
-                resetSession();
-                endComposition();
-                comp_ = chaoset::Comp();
-                return true;
-            }
             // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）
             if (vk == 'U' && isComposing()) {
                 resetSession();
@@ -2814,18 +2821,10 @@ private:
 
         if (!isComposing()) return false;
 
-        if (vk == kVkBackspace) {
-            if ((GetKeyState(VK_CONTROL) | GetKeyState(VK_SHIFT)) & 0x8000) {
-                // Ctrl/Shift+Backspace：直接全部删除（对齐 macOS 壳把
-                // Shift+Delete 归入全部删除；此前 Shift 走逐字符回退，三端
-                // 不一致）。含未落盘的已确认段一并取消（与 Esc 同语义）。
-                resetSession();
-                comp_ = chaoset::Comp();
-                confirmedPreedit_.clear();
-                endComposition();
-                return true;
-            }
-            // 普通 Backspace：慢慢部分删除（逐字符回退）
+        // 普通 Backspace / ForwardDelete（无修饰）：逐字符回退。
+        // Delete 与 Backspace 同语义（对齐 macOS 组词中两者都删拼音）；
+        // 带修饰的组合已在上面按映射处理。
+        if (vk == kVkBackspace || vk == kVkDelete) {
             comp_ = session_.backspace();
             if (!comp_.ok) {
                 flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
