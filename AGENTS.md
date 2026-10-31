@@ -103,3 +103,10 @@ go build ./...                    # 秒级
 - 内置词库：`data/dict_common.tsv` 是 `cmd/chaoset-dictgen` 的**生成产物，禁止手工编辑**；
   需要增删词条或改词频，先改生成工具再重新生成（同一输入必须逐字节一致）。来源与许可见文件头注释。
 - 中间文件：所有测试日志、原型草稿一律放 `.workwork/`，禁止提交根目录临时生成的 `*.sock` 或词库临时产物。
+
+## 按需加载的 skill（`.agents/skills/`）
+
+| skill | 何时加载 |
+|---|---|
+| `pinyin-quality-tuning` | 调拼音质量、候选排序、词库与评分参数 |
+| `ime-daemon-lifecycle` | 输入法 daemon 的启停、注册、自启与生命周期排障 |
