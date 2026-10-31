@@ -11,6 +11,7 @@
 // 数据经 EngineClient 走同一 IPC 通道，daemon 内存与磁盘一次生效。
 
 import AppKit
+import UniformTypeIdentifiers
 
 @objc final class AssociateSwitchTarget: NSObject {
     @objc func switchChanged(_ sender: NSSwitch) {
@@ -51,7 +52,9 @@ extension Notification.Name {
         let panel = NSSavePanel()
         panel.title = "导出学习数据"
         panel.nameFieldStringValue = "chaoset-userdict.tsv"
-        panel.allowedFileTypes = ["tsv"]
+        if let tsv = UTType(filenameExtension: "tsv") {
+            panel.allowedContentTypes = [tsv]
+        }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard let tsv = SettingsWindowController.engine.userExportAll() else {
             Self.showError("导出失败：daemon 未运行，或未启用用户词典。")

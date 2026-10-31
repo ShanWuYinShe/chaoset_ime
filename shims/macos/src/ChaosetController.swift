@@ -234,7 +234,6 @@ final class ChaosetController: IMKInputController {
                 // Windows/Linux 壳在此场景都是 return true（2026-10-29
                 // 三端一致性审查：此前 macOS 走 passThrough，文档多个空格）。
                 return true
-                return passThrough(client)
             } else if event.keyCode == 51 {
                 // 删除键：收起联想并**消费**——透传会误删刚上屏的文字
                 //（联想模式下用户连按删除的本意是回退编辑，误删文档字

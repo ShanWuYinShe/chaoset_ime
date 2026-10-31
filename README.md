@@ -1174,6 +1174,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
         `checkuiparity` PASS；`git diff --check` 通过。
 
+- [x] 阶段 41：key_routing 回归测试接入 CI + 两处 Swift 警告清理（2026-10-31）
+      - **key_routing 接入 CI（审计 G7）**：`shims/macos/tests/key_routing/main.swift`
+        是合成 NSEvent 驱动 `ChaosetController.handle` 的 8 项按键路由回归
+        （keyUp 放行/字母组词/快捷键放行/Shift 空按中英切换/Shift+字母不误切），
+        此前未接入 Makefile/CI（死测试）。新增 `tests/key_routing/run.sh`：编译
+        测试二进制 → 起临时 daemon（临时 socket/userdict，结束 kill+wait 后清理）
+        → 跑断言；CI macos-build job 每次 push 执行。本机实测 8/8 通过。
+      - **checkuiparity 防退化**：新增「CI 覆盖」检查——run.sh 必须存在且
+        ci.yml 必须调用 key_routing，防止以后又被摘掉变回死测试。
+      - **顺带清理本次编译暴露的两处 Swift 警告**：
+        - `ChaosetController.swift` 中 `return true` 后不可达的
+          `return passThrough(client)`（删除，无行为变化）；
+        - `SettingsWindow.swift` 的 `allowedFileTypes`（macOS 12 已废弃）改为
+          `allowedContentTypes = [UTType(filenameExtension: "tsv")]`。
+      - **验证**：`./shims/macos/build.sh` 通过（无警告）；key_routing 8/8 通过；
+        `go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库 checkuiparity
+        PASS；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

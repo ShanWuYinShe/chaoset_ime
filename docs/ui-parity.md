@@ -281,10 +281,13 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   13 个主题色字段名集合；改一端常量会 FAIL。**像素级渲染（抗锯齿/真实阴影/
   毛玻璃/Toast/DPI 表现）仍需 Windows 真机人工验收**（本机无 Windows 运行时）；
   `tools/checkgdi` 的 ExtCreatePen 非空指针契约 + 交叉编译仍在。
-- `tests/key_routing` 是 macOS 按键路由回归测试，**未接入 Makefile/CI**（死
-  测试），属于待补；Linux 按键行为由 `behavior_test.go` 覆盖（2026-10-30 新增
-  已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由 engine 的会话级测试覆盖
-  （遍历全部音节逐键喂 `Session.Input`）。
+- `tests/key_routing` 是 macOS 按键路由回归测试（合成 NSEvent 驱动
+  `ChaosetController.handle`，8 项断言）；**2026-10-31 起接入 CI**（审计 G7）：
+  `shims/macos/tests/key_routing/run.sh` 负责编译测试二进制 + 起临时 daemon +
+  清理，macos-build job 每次 push 执行；`tools/checkuiparity` 断言该脚本存在且
+  被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `behavior_test.go`
+  覆盖（2026-10-30 新增已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由
+  engine 的会话级测试覆盖（遍历全部音节逐键喂 `Session.Input`）。
 - IPC 侧 2026-10-30 新增 `userExport` 分页测试（含 >1MiB 场景）。
 - **设置窗文案/单例/学习数据 GUI/词库导入/打包安装 + 候选窗静态几何/配色字段**
   已由 `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；

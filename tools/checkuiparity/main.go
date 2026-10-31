@@ -21,7 +21,9 @@
 //     win32.cpp 的布局 pt 常量（字号/padding/gap/键帽/齿轮区/最大宽度）、
 //     齿轮矢量参数（圆环半径/线宽、8 齿内/外半径、线宽、颜色绑定）、
 //     13 个主题色字段名集合一致。**像素级渲染仍需真机**，但「常量被改一端」
-//     会在这里先 FAIL。
+//     会在这里先 FAIL；
+//  8. CI 覆盖不退化：key_routing 回归测试必须存在且被 ci.yml 的 macos-build
+//     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -359,7 +361,11 @@ func Run(fsys fs.FS) []string {
 	// 6. 候选窗静态几何/配色字段（mac ↔ Windows）。
 	checkCandidateWindow(fsys, &problems)
 
-	// 7. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
+	// 7. CI 覆盖不退化：key_routing 按键路由回归测试必须存在且被 CI 调用。
+	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
+	checkContains(fsys, &problems, "CI 覆盖", ciYML, "key_routing")
+
+	// 8. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍")
@@ -380,5 +386,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/CI 覆盖/文档对照）")
 }

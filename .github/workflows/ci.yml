@@ -189,6 +189,13 @@ jobs:
           done
           echo "随包工具全部 universal"
 
+      # 按键路由回归（审计 G7：tests/key_routing 此前未接入 CI，是「死测试」）。
+      # 脚本自己编译测试二进制 + 起临时 daemon + 跑 8 项断言 + 清理。
+      - name: 按键路由回归（key_routing，合成 NSEvent + 临时 daemon）
+        run: |
+          chmod +x shims/macos/tests/key_routing/run.sh
+          ./shims/macos/tests/key_routing/run.sh
+
       - name: 等价性 + 双端视觉一致性
         run: |
           ./shims/macos/tests/equivalence.sh
