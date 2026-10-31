@@ -316,7 +316,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：
   设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧
   不得引入引擎 DBus（engine 包纯净约束）、词库导入入口（三端 GUI；Linux 用户词库由
-  ibus 引擎 `-imported-dict` 自动加载）、
+  ibus 引擎 `-imported-dict` 自动加载，linux-e2e 断言导入词真的出现在候选）、
   **词库导入安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷
   原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、

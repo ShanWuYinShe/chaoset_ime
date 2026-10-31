@@ -79,6 +79,7 @@ const (
 	linuxSetup      = "shims/linux/setup/chaoset-setup.py"
 	linuxCtl        = "shims/linux/setup/userdict_ctl.py"
 	linuxDictImport = "shims/linux/setup/dictimport_ctl.py"
+	linuxE2E        = "shims/linux/test-ci.sh"
 	linuxTest       = "shims/linux/setup/test_userdict_ctl.py"
 	linuxComp       = "shims/linux/component/chaoset.xml"
 	makefile        = "Makefile"
@@ -455,6 +456,12 @@ func Run(fsys fs.FS) []string {
 		"chaoset-import", "imported_dict_path", "restart_engines")
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
 		"imported-dict", "defaultImportedDictPath", "withImportedDict")
+	// 三处默认路径必须同口径（Go/Python 都拼 chaoset/dict.tsv），否则设置窗
+	// 写入的文件引擎找不到（或反过来）。
+	checkContains(fsys, &problems, "词库导入入口", linuxDictImport, `"chaoset", "dict.tsv"`)
+	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain, `"chaoset", "dict.tsv"`)
+	// linux-e2e 必须真实验证导入词参与候选，而不只是日志里有加载路径。
+	checkContains(fsys, &problems, "词库导入入口", linuxE2E, "用户导入词库", "测试词", "UpdateLookupTable")
 
 	// 4b. 词库导入安全流程（备份/原子替换/退出码检查）不能退化。
 	checkImportSafety(fsys, &problems)

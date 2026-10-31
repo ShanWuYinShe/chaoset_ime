@@ -64,7 +64,8 @@ config.json 仍可直接手工编辑。
 TSV（可多选），由 `dictimport_ctl.py` 调用随包 `chaoset-import` 合并到
 `$XDG_DATA_HOME/chaoset/dict.tsv`（旧文件先备份、临时文件原子替换），成功后
 重启 ibus 引擎；引擎启动时用 `-imported-dict` 把用户词库与系统词库一起加载
-（engine 包零改动，不需要 root）。
+（engine 包零改动，不需要 root）。CI 的 linux-e2e 会捕获引擎 LookupTable 信号，
+断言导入词「测试词」真的出现在候选列表（不只是日志里有加载路径）。
 
 **学习数据（2026-10-31）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
 提供「清空学习数据…」（二次确认）与「导出学习数据…」（TSV，可回灌

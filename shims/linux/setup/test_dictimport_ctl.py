@@ -51,6 +51,11 @@ class DictimportCtlTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg"}):
             self.assertEqual(di.imported_dict_path(), "/tmp/xdg/chaoset/dict.tsv")
 
+    def test_imported_dict_path_defaults_to_local_share(self):
+        with mock.patch.dict(os.environ, {"XDG_DATA_HOME": ""}):
+            self.assertTrue(di.imported_dict_path().endswith(
+                "/.local/share/chaoset/dict.tsv"))
+
     def test_import_requires_files(self):
         ok, text = di.import_files([], target=self.target)
         self.assertFalse(ok)

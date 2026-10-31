@@ -31,3 +31,13 @@ func TestWithImportedDict(t *testing.T) {
 		t.Fatalf("空路径不应追加：%v", got)
 	}
 }
+
+// TestDefaultImportedDictPath：默认路径与 Python 侧 imported_dict_path() 同口径
+// （$XDG_DATA_HOME/chaoset/dict.tsv），避免两端路径漂移。
+func TestDefaultImportedDictPath(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-test")
+	want := filepath.Join("/tmp/xdg-test", "chaoset", "dict.tsv")
+	if got := defaultImportedDictPath(); got != want {
+		t.Fatalf("默认导入词库路径 = %q，期望 %q", got, want)
+	}
+}

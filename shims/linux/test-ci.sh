@@ -277,5 +277,24 @@ else
   exit 1
 fi
 
+# ---- 用户导入词库真的参与匹配（2026-10-31）----
+# 只断言「日志里有加载路径」不够：捕获引擎发出的 UpdateLookupTable 信号，
+# 打 "ceshici"（测试词 = ce shi ci），断言候选列表里出现导入词。
+MON="$WORK/monitor.log"
+dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON" 2>&1 &
+MON_PID=$!
+for kv in 99 101 115 104 105 99 105; do press "$P1" "$kv" 0; done  # ceshici
+sleep 0.5
+kill "$MON_PID" 2>/dev/null || true
+wait "$MON_PID" 2>/dev/null || true
+if grep -q "测试词" "$MON"; then
+  echo "PASS: 用户导入词库候选已出现在 LookupTable（测试词）"
+else
+  echo "FAIL: 用户导入词库未参与候选（monitor 日志：）" >&2
+  cat "$MON" >&2
+  exit 1
+fi
+press "$P1" 65307 0  # Esc 清空
+
 echo
 echo "全部 Linux 端到端检查通过"

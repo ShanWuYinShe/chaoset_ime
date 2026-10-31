@@ -1424,6 +1424,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         discover 通过；`make vet`/checker 通过；`git diff --check` 通过。GUI 交互
         （点按钮→选文件→重启生效）需 Linux 桌面/ibus 真机验收。
 
+- [x] 阶段 55：Linux 导入词库的端到端候选断言 + 路径一致性守卫（2026-10-31）
+      - **E2E**：linux-e2e 原来只断言引擎日志出现「用户导入词库: 路径」，
+        不能证明词条真的可用。现在捕获引擎 `UpdateLookupTable` 信号，打
+        `ceshici`（测试词 ce shi ci），断言候选列表出现「测试词」。
+      - **路径一致性**：checkuiparity 断言 Go 引擎与 `dictimport_ctl.py` 的默认
+        路径都拼 `chaoset/dict.tsv`（XDG_DATA_HOME 口径），防止两端漂移导致
+        设置窗写入的文件引擎找不到。
+      - **测试**：Go 增加 `TestDefaultImportedDictPath`（XDG_DATA_HOME）；Python
+        增加空 XDG 回退 `~/.local/share` 用例。
+      - **验证**：go test ./shims/linux/ibus-engine、Python 21 例、make vet/checker、
+        git diff --check 通过；linux-e2e 由 CI 真实验证。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
