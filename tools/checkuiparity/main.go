@@ -64,6 +64,7 @@ var sharedSettingsText = []string{
 	"导出学习数据",
 	"学习数据仅保存在本机",
 	"更多设置将在后续版本提供",
+	"Chaoset 版本",
 }
 
 const (
@@ -528,10 +529,10 @@ func Run(fsys fs.FS) []string {
 		"ibusCtrlMask", "ibusMod1Mask", "ibusMod4Mask")
 	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
-	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "Chaoset-$(VERSION).dmg")
 	checkContains(fsys, &problems, "打包安装", installSh, "chaoset-setup")
 	checkContains(fsys, &problems, "打包安装", archScript, "chaoset-setup")
-	checkContains(fsys, &problems, "打包安装", releaseYML, "chaoset-setup")
+	checkContains(fsys, &problems, "打包安装", releaseYML, "chaoset-setup", "Chaoset-*.dmg")
 	checkContains(fsys, &problems, "打包安装", linuxComp, "chaoset-setup")
 	checkContains(fsys, &problems, "打包安装", ciYML,
 		"build.sh", "test_setup_ctl")
@@ -549,6 +550,9 @@ func Run(fsys fs.FS) []string {
 	// 7. CI 覆盖不退化：key_routing 按键路由回归测试必须存在且被 CI 调用。
 	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "key_routing")
+	// 联想端到端（EngineClient + 真实 daemon）同样必须存在且被 CI 调用。
+	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/associate/run.sh")
+	checkContains(fsys, &problems, "CI 覆盖", ciYML, "associate/run.sh")
 	// 安装包自检：日常 CI 必须构建 Linux 包并断言设置窗模块随包，
 	// 不能只靠打 tag 时的 release 冒烟。
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "make package-linux", "Linux 安装包自检")

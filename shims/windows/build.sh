@@ -27,12 +27,15 @@ wait $DPID 2>/dev/null || true
 trap - EXIT
 
 echo "[3/3] mingw-w64 交叉编译 ChaosetIME.dll..."
+VERSION=${VERSION:-dev}
 CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
 # 图标资源必须链进 DLL：注册表 IconFile 指向本 DLL（win32.cpp RegisterProfile），
 # 此前 build.sh 从不编译 chaoset.rc，语言栏/切换菜单拿到的是空图标（2026-10-27 审查）。
 WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
 "$WINDRES" -I resources resources/chaoset.rc -O coff -o build/chaoset_rc.o
-"$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static -o build/ChaosetIME.dll \
+"$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static \
+  -DCHAOSET_VERSION="\"$VERSION\"" \
+  -o build/ChaosetIME.dll \
   src/win32.cpp src/core.cpp build/chaoset_rc.o \
   -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then

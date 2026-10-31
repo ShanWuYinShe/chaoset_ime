@@ -9,7 +9,7 @@
 | 操作系统 | 推荐安装包（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
 | :--- | :--- | :--- | :--- |
 | **Windows** (10 / 11) | [📥 ChaosetSetup.exe](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **直接双击安装**，点击「下一步」完成（已自动注册并开机自启） | `Win + 空格` |
-| **macOS** (12+) | [📥 Chaoset.dmg](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击打开**，打开里面的「Chaoset 安装与设置」，点击「一键安装」 | `Ctrl + 空格` 或 `Fn / 🌐` |
+| **macOS** (12+) | [📥 Chaoset-<版本>.dmg](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击打开**，打开里面的「Chaoset 安装与设置」，点击「一键安装」 | `Ctrl + 空格` 或 `Fn / 🌐` |
 | **Linux (Ubuntu / Debian / Mint)** | [📥 chaoset_amd64.deb](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在系统应用中心点击「安装」即可自动生效 | `Super + 空格` 或 `Ctrl + 空格` |
 | **Linux (Arch / Manjaro / EndeavourOS)** | [📥 chaoset-ime-x86_64.pkg.tar.zst](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在应用商店（Pamac/发现）点击「安装」，或 `sudo pacman -U <包名>` | `Super + 空格` 或 `Ctrl + 空格` |
 
@@ -568,11 +568,14 @@ TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 
 | 平台 | 下载文件 | 安装方式 |
 |---|---|---|
-| macOS | `chaoset-macos.zip` | 双击里面的 **ChaosetSetup.app**，图形界面点安装。universal 二进制（arm64 + x86_64），Intel 与 Apple Silicon 通用；ad-hoc 签名，首次打开需右键 →「打开」 |
+| macOS | `Chaoset-<版本>.dmg` 或 `chaoset-macos.zip` | 双击打开 DMG，运行 **ChaosetSetup.app**，图形界面点安装。DMG 文件名与卷名都带版本；universal 二进制（arm64 + x86_64），Intel 与 Apple Silicon 通用；ad-hoc 签名，首次打开需右键 →「打开」 |
 | Linux | `chaoset-linux-x86_64.tar.gz` | 解包后 `sudo ./install.sh`（装二进制 + 14 万条词库 + ibus 组件 + 图标，并自检） |
 | Windows | `chaoset-windows-x64.zip` | 解包后**右键 install.bat → 以管理员身份运行**（自动 regsvr32 注册 + 启动 daemon） |
 
 每个包都自带**完整的 14 万条常用词库**，装完即可用，不需要另配词库。
+
+> **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；macOS 的 DMG
+> 文件名/卷名也带版本号。升级后先看这里确认装的是新版本，再排查其他问题。
 
 > 2026-10-25 修复的发行缺陷（此前 Release 产物不可用）：Linux 包只带了 558 条的
 > 演示词库、引擎却要 `data/dict_common.tsv`，且相对路径依赖 cwd——装完引擎启动

@@ -14,6 +14,10 @@
 
 #include "setup_ctl.h"
 
+#ifndef CHAOSET_VERSION
+#define CHAOSET_VERSION "dev"
+#endif
+
 typedef struct {
     GtkApplication *app;
     GtkWidget *window;
@@ -324,6 +328,12 @@ static GtkWidget *build_window(AppCtx *ctx) {
     gtk_style_context_add_class(gtk_widget_get_style_context(more), "dim-label");
     gtk_box_pack_start(GTK_BOX(box), more, FALSE, FALSE, 0);
 
+    gchar *version_text = g_strdup_printf("Chaoset 版本 %s", CHAOSET_VERSION);
+    GtkWidget *version_label = gtk_label_new(version_text);
+    g_free(version_text);
+    gtk_label_set_xalign(GTK_LABEL(version_label), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(version_label), "dim-label");
+    gtk_box_pack_start(GTK_BOX(box), version_label, FALSE, FALSE, 0);
     g_signal_connect(sw, "state-set", G_CALLBACK(on_associate_toggled), ctx);
     g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_clicked), ctx);
     g_signal_connect(export_btn, "clicked", G_CALLBACK(on_export_clicked), ctx);

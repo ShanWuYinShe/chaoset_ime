@@ -28,7 +28,9 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ### 用发布包（推荐）
 
-1. 从 GitHub Release 下载 **`Chaoset.dmg`**（或 `chaoset-macos.zip`）；
+> 发布包文件名/卷名带版本（如 `Chaoset-0.3.1.dmg`）；设置窗底部和「Chaoset 安装与设置」状态页都会显示版本，升级后可先核对版本再排障。
+
+1. 从 GitHub Release 下载 **`Chaoset-<版本>.dmg`**（或 `chaoset-macos.zip`）；
 2. 双击打开 DMG 磁盘映象，直接运行里面的 **Chaoset 安装与设置**（`ChaosetSetup.app`）；
 3. 在图形界面中点击「一键安装 / 更新」，程序会自动将输入法组件配置到系统、部署常用词库并拉起后台服务；
 4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！

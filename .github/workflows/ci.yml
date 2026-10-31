@@ -233,7 +233,7 @@ jobs:
             || { echo "zip 缺少主壳"; exit 1; }
           unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetSetup.app/Contents/Resources/chaoset-import' \
             || { echo "zip 缺少 Setup 随包 chaoset-import"; exit 1; }
-          if [ -f dist/Chaoset.dmg ]; then echo "DMG 已生成"; else echo "（无 hdiutil，跳过 DMG）"; fi
+          ls dist/Chaoset-*.dmg >/dev/null 2>&1 && echo "DMG 已生成" || echo "（无 hdiutil，跳过 DMG）"
 
       # 顺带断言所有随包工具都是 universal：chaoset-import 曾因裸 go build 只出
       # arm64，Intel 用户点「导入词库」直接 Bad CPU type（2026-10-26 修复）。
@@ -252,6 +252,11 @@ jobs:
         run: |
           chmod +x shims/macos/tests/key_routing/run.sh
           ./shims/macos/tests/key_routing/run.sh
+
+      - name: 联想端到端回归（EngineClient + 临时 daemon）
+        run: |
+          chmod +x shims/macos/tests/associate/run.sh
+          ./shims/macos/tests/associate/run.sh
 
       - name: 等价性 + 双端视觉一致性
         run: |

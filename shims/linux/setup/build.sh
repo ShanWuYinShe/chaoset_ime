@@ -11,9 +11,11 @@ case "$OUT" in
 esac
 cd "$(dirname "$0")"
 CC=${CC:-cc}
+VERSION=${VERSION:-dev}
 
 # shellcheck disable=SC2086
 $CC -std=c11 -O2 -Wall -Wextra -Werror \
+    -DCHAOSET_VERSION="\"$VERSION\"" \
     $(pkg-config --cflags gtk+-3.0) \
     -o "$OUT" chaoset-setup.c setup_ctl.c \
     $(pkg-config --libs gtk+-3.0)

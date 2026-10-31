@@ -22,6 +22,9 @@ let modeID = "ime.chaoset.inputmethod.ChaosetIME.Pinyin"
 
 func res(_ name: String) -> String { (Bundle.main.resourcePath ?? ".") + "/" + name }
 func supportDir() -> String { NSHomeDirectory() + "/Library/Application Support/chaoset" }
+func appVersion() -> String {
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+}
 func inputMethodsDir() -> String { NSHomeDirectory() + "/Library/Input Methods" }
 func imeAppPath() -> String { inputMethodsDir() + "/" + imeTargetBundleName }
 func socketPath() -> String { supportDir() + "/chaoset.sock" }
@@ -179,31 +182,98 @@ func connectUnixSocket(_ path: String) -> Int32? {
     return fd
 }
 
+func xmlEscaped(_ value: String) -> String {
+    value.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+}
+
+func daemonLaunchAgentPath() -> String {
+    NSHomeDirectory() + "/Library/LaunchAgents/ime.chaoset.daemon.plist"
+}
+
+/// 写入/刷新 daemon 的 LaunchAgent。
+///
+/// 必须由 GUI 安装器自己写：此前只依赖 install.sh 建好的 plist，DMG 用户
+/// 全新安装时没有 LaunchAgent，restartDaemon 会退化为「从 DMG 里直接跑
+/// chaosetd」——daemon 一直占着磁盘映象，推出 DMG 时提示文件正在使用，
+/// 且重启电脑后没有任何进程被拉起。
+func installDaemonLaunchAgent(support: String) -> String {
+    let fm = FileManager.default
+    let path = daemonLaunchAgentPath()
+    do {
+        try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                              withIntermediateDirectories: true)
+        let daemon = xmlEscaped(support + "/chaosetd")
+        let socket = xmlEscaped(support + "/chaoset.sock")
+        let dict = xmlEscaped(support + "/dict.tsv")
+        let userdict = xmlEscaped(support + "/userdict.json")
+        let log = xmlEscaped(support + "/chaosetd.log")
+        let plist = """
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ime.chaoset.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>\(daemon)</string>
+    <string>-socket</string><string>\(socket)</string>
+    <string>-dict</string><string>\(dict)</string>
+    <string>-userdict</string><string>\(userdict)</string>
+    <string>-log</string><string>\(log)</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+"""
+        try plist.write(toFile: path, atomically: true, encoding: .utf8)
+        let lint = runTool("/usr/bin/plutil", ["-lint", path])
+        if lint.status != 0 { return "⚠ LaunchAgent 校验失败：\(lint.output)\n" }
+        return ""
+    } catch {
+        return "⚠ 写入 LaunchAgent 失败：\(error)\n"
+    }
+}
+
 func restartDaemon(support: String) -> String {
     var out = ""
-    let kill = runTool("/usr/bin/killall", ["chaosetd"])
-    if kill.status == 0 {
-        // 等 LaunchAgent 重新拉起，并**验证套接字真的能连**。
-        // 连不上就明确报错，不再用「会自动拉起」这种假设糊弄用户。
-        if waitDaemonReady(support: support) {
-            out += "已重启 daemon 并确认 IPC 就绪\n"
-        } else {
-            out += "⚠ daemon 已停止但 8 秒内未恢复运行。\n"
-            out += "   请检查 LaunchAgent：launchctl print gui/\(getuid())/ime.chaoset.daemon\n"
-        }
+    let daemon = support + "/chaosetd"
+    let dict = support + "/dict.tsv"
+    guard FileManager.default.isExecutableFile(atPath: daemon) else {
+        return "daemon 未部署，未启动（缺少 \(daemon)）\n"
+    }
+    out += installDaemonLaunchAgent(support: support)
+    let domain = "gui/\(getuid())"
+    let label = "ime.chaoset.daemon"
+    let laPath = daemonLaunchAgentPath()
+    _ = runTool("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
+    _ = runTool("/usr/bin/killall", ["chaosetd"])
+    Thread.sleep(forTimeInterval: 0.4)
+    let boot = runTool("/bin/launchctl", ["bootstrap", domain, laPath])
+    if boot.status != 0 {
+        _ = runTool("/bin/launchctl", ["kickstart", "-k", "\(domain)/\(label)"])
+    }
+    if waitDaemonReady(support: support) {
+        out += "已通过 LaunchAgent 重启 daemon 并确认 IPC 就绪\n"
         return out
     }
-    let daemon = res("chaosetd")
-    let dict = support + "/dict.tsv"
-    guard FileManager.default.isExecutableFile(atPath: daemon) else { return "daemon 未运行，且随包缺少 chaosetd\n" }
+    // launchd 拉起失败时兜底：从**Application Support 副本**直接启动，
+    // 绝不从 DMG 运行（否则 DMG 无法推出，且重启后无进程）。
     let p = Process()
     p.executableURL = URL(fileURLWithPath: daemon)
-    p.arguments = ["-socket", support + "/chaoset.sock", "-dict", dict, "-userdict", support + "/userdict.json"]
+    p.arguments = ["-socket", support + "/chaoset.sock", "-dict", dict,
+                   "-userdict", support + "/userdict.json",
+                   "-log", support + "/chaosetd.log"]
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
-    do { try p.run() } catch { return "daemon 启动失败：\(error)\n" }
-    out += "daemon 原未运行，已用随包版本启动\n"
-    Thread.sleep(forTimeInterval: 1.5)
+    do { try p.run() } catch { return out + "daemon 启动失败：\(error)\n" }
+    if waitDaemonReady(support: support) {
+        out += "LaunchAgent 未生效，已用 Application Support 副本启动 daemon\n"
+    } else {
+        out += "⚠ daemon 启动后 8 秒内 IPC 仍未就绪\n"
+    }
     return out
 }
 
@@ -354,6 +424,11 @@ func verifyText() -> String {
 func statusText() -> String {
     let fm = FileManager.default
     var out = ""
+    out += "Chaoset 版本 \(appVersion())\n"
+    if let installed = Bundle(url: URL(fileURLWithPath: imeAppPath()))?
+        .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+        out += "已安装输入法版本：\(installed)\n"
+    }
     out += fm.fileExists(atPath: imeAppPath()) ? "✓ 输入法已装入\n" : "✗ 输入法尚未装入（点「安装 / 更新」）\n"
     if let s = findSource() {
         out += "✓ 系统已收录：\(sourceProp(s, kTISPropertyInputSourceID))\n"
@@ -361,7 +436,14 @@ func statusText() -> String {
     } else {
         out += "✗ 系统输入源表里还没有本输入法 —— 装入/更新后必须【注销并重新登录】\n"
     }
-    out += fm.fileExists(atPath: socketPath()) ? "✓ 引擎服务（daemon）在运行\n" : "✗ 引擎服务未运行（点「安装 / 更新」会部署并启动）\n"
+    // 不能只看套接字文件：daemon 异常退出后会残留僵尸 socket，
+    // 状态页会误报「在运行」。这里用真实连接探活（连接失败立即返回）。
+    var daemonLive = false
+    if let fd = connectUnixSocket(socketPath()) {
+        Darwin.close(fd)
+        daemonLive = true
+    }
+    out += daemonLive ? "✓ 引擎服务（daemon）在运行\n" : "✗ 引擎服务未运行（点「安装 / 更新」会部署并启动）\n"
     if let c = try? String(contentsOfFile: supportDir() + "/dict.tsv", encoding: .utf8) {
         out += "✓ 当前词库：\(c.split(separator: "\n").count) 行\n"
     } else {
@@ -386,6 +468,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let title = NSTextField(labelWithString: "Chaoset · 设置与词库导入")
         title.font = NSFont.boldSystemFont(ofSize: 16)
+        let versionLabel = NSTextField(labelWithString: "Chaoset 版本 \(appVersion())")
+        versionLabel.font = NSFont.systemFont(ofSize: 11)
+        versionLabel.textColor = .secondaryLabelColor
 
         statusField = NSTextField(wrappingLabelWithString: "正在检查…")
         statusField.font = NSFont.systemFont(ofSize: 12)
@@ -413,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         logView.autoresizingMask = [.width]
         scroll.documentView = logView
 
-        let stack = NSStackView(views: [title, statusField, row, scroll])
+        let stack = NSStackView(views: [title, versionLabel, statusField, row, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10

@@ -125,12 +125,12 @@ package-macos:
 	mkdir -p dist
 	(cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
 	@if command -v hdiutil >/dev/null 2>&1; then \
-		echo "==> 构建 macOS 单文件磁盘映象 (Chaoset.dmg)..."; \
+		echo "==> 构建 macOS 单文件磁盘映象 (Chaoset-$(VERSION).dmg)..."; \
 		rm -rf dist/dmg_staging; \
 		mkdir -p dist/dmg_staging; \
 		cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/; \
-		printf "【Chaoset 输入法 macOS 安装说明】\n\n1. 直接双击运行「Chaoset 安装与设置」(ChaosetSetup.app)；\n2. 在窗口中点击「一键安装 / 更新」，程序将自动部署输入法组件并启动后台服务；\n3. 按快捷键【Ctrl + 空格】（或 Fn / 🌐 键）切换至 Chaoset 即可开始打字！\n\n※ 全程图形化自动安装，无需将文件拖入应用程序目录，无需使用终端或运行脚本。\n" > dist/dmg_staging/安装说明.txt; \
-		hdiutil create -volname "Chaoset" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset.dmg; \
+		printf "【Chaoset 输入法 macOS 安装说明】\n\n版本：$(VERSION)\n\n1. 直接双击运行「Chaoset 安装与设置」(ChaosetSetup.app)；\n2. 在窗口中点击「一键安装 / 更新」，程序将自动部署输入法组件并启动后台服务；\n3. 按快捷键【Ctrl + 空格】（或 Fn / 🌐 键）切换至 Chaoset 即可开始打字！\n\n※ 全程图形化自动安装，无需将文件拖入应用程序目录，无需使用终端或运行脚本。\n\n安装完成后请关闭「Chaoset 安装与设置」窗口，再推出本 DMG。\n" > dist/dmg_staging/安装说明.txt; \
+		hdiutil create -volname "Chaoset $(VERSION)" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset-$(VERSION).dmg || exit 1; \
 		rm -rf dist/dmg_staging; \
 	fi
 
@@ -166,7 +166,7 @@ package-linux:
 	# 设置窗口：ibus-setup 的 <setup> 入口（三端一致的设置窗口，2026-10-29；
 	# 2026-11-01 起为原生 GTK3 C，不再依赖 Python/PyGObject）。
 	install -d dist/chaoset-linux-x86_64/setup
-	sh shims/linux/setup/build.sh dist/chaoset-linux-x86_64/setup/chaoset-setup
+	VERSION=$(VERSION) sh shims/linux/setup/build.sh dist/chaoset-linux-x86_64/setup/chaoset-setup
 	cp shims/linux/install.sh dist/chaoset-linux-x86_64/
 	cp shims/linux/README.md dist/chaoset-linux-x86_64/
 	cp LICENSE dist/chaoset-linux-x86_64/LICENSE
@@ -229,11 +229,13 @@ package-windows:
 	i686-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
 	# 64 位 TSF 前端 DLL
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
+		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
 	i686-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
+		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32

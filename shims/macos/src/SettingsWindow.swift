@@ -244,6 +244,12 @@ enum SettingsWindowController {
         more.textColor = .tertiaryLabelColor
         content.addArrangedSubview(more)
 
+        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+        let versionLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
+        versionLabel.font = .systemFont(ofSize: 11)
+        versionLabel.textColor = .tertiaryLabelColor
+        content.addArrangedSubview(versionLabel)
+
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 440),
             styleMask: [.titled, .closable],

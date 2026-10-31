@@ -2,7 +2,17 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.3.1（2026-11-01）
+
+- **macOS 安装器修复**：GUI 安装器现在自己写 daemon 的 LaunchAgent（指向
+  `~/Library/Application Support/chaoset/chaosetd`），不再从 DMG 里直接启动
+  `chaosetd`——此前 daemon 占着 DMG 导致推出时提示「文件正在使用」，且重启后
+  没有进程被拉起。安装器状态页改用真实 IPC 连接探活，不再把僵尸 socket 当运行中。
+- **版本可见性（三端统一）**：设置窗底部显示 `Chaoset 版本 x.y.z`；macOS Setup
+  状态/窗口显示版本与已安装输入法版本；DMG 文件名改为 `Chaoset-<版本>.dmg`、
+  卷名带版本；Windows/Linux 设置窗同步显示版本。
+- **联想回归测试**：新增 macOS `EngineClient + 真实 daemon` 的 associate 端到端
+  测试（输入词组→选词上屏→续接候选），并接入 macOS CI。
 
 - **设置窗无头冒烟核对窗口几何**：CI 安装 Noto CJK + xdotool，Xvfb 下启动
   `chaoset-setup` 并断言窗口已映射、尺寸合理（缺 CJK 字体会退化成 32767 高）。

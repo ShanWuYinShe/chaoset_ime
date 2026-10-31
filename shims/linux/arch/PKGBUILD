@@ -45,7 +45,7 @@ package() {
     install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
     # 设置窗口（ibus-setup 的 <setup> 入口，原生 GTK3 C）
-    sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
+    VERSION=$pkgver sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
 
     # Icons
     install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"

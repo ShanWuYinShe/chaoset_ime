@@ -43,6 +43,10 @@
 #include "candidate_layout.hpp"
 #include "core.hpp"
 
+#ifndef CHAOSET_VERSION
+#define CHAOSET_VERSION "dev"
+#endif
+
 static HINSTANCE g_hInst = nullptr;
 
 // 无障碍（2026-10-31，基础能力）：候选窗处理 WM_GETOBJECT，向屏幕阅读器返回
@@ -3978,6 +3982,7 @@ static void settingsLayoutControls(HWND wnd) {
         {110, 32, 270, 150, 26},  // 导入词库（自绘按钮）
         {112, 32, 304, 320, 20},
         {104, 32, 344, 320, 20},
+        {113, 32, 368, 320, 20},
     };
     for (const auto& it : kItems) {
         HWND c = GetDlgItem(wnd, it.id);
@@ -3986,13 +3991,13 @@ static void settingsLayoutControls(HWND wnd) {
                      SWP_NOZORDER | SWP_NOACTIVATE);
         HFONT font = (it.id == 100 || it.id == 109)
                          ? g_settingsFontBold
-                         : ((it.id == 102 || it.id == 103 || it.id == 104 || it.id == 108)
+                         : ((it.id == 102 || it.id == 103 || it.id == 104 || it.id == 108 || it.id == 113)
                                 ? g_settingsFontHint
                                 : g_settingsFont);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
-    // 客户区 380×390pt（2026-10-31 增加「词库」区后调高），保持窗口左上角不变。
-    RECT rc = {0, 0, settingsPt(380), settingsPt(390)};
+    // 客户区 380×410pt（2026-11-01 增加版本行后调高），保持窗口左上角不变。
+    RECT rc = {0, 0, settingsPt(380), settingsPt(410)};
     const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_STYLE));
     const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_EXSTYLE));
     AdjustWindowRectEx(&rc, style, FALSE, exStyle);
@@ -4495,6 +4500,8 @@ void ChaosetTIP::showSettingsWindow() {
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导入词库…", 110);
     makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。", 112);
     makeCtl(L"Static", SS_LEFT, L"更多设置将在后续版本提供", 104);
+    std::wstring versionText = L"Chaoset 版本 " + toWide(CHAOSET_VERSION);
+    makeCtl(L"Static", SS_LEFT, versionText.c_str(), 113);
 
     settingsLayoutControls(wnd);
     settingsUpdateTheme(wnd);
