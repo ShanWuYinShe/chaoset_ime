@@ -1156,6 +1156,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`make vet` 通过（新增 check-uiparity 目标）；`go test
         ./tools/checkuiparity` 通过；真实仓库检查 PASS。
 
+- [x] 阶段 40：checkuiparity 扩展到候选窗静态几何/配色字段（2026-10-31）
+      - **补机器检查盲区**：上一阶段 checkuiparity 只覆盖设置窗与打包；本阶段
+        增加「候选窗（mac `CandidatePanel.swift` ↔ Windows `win32.cpp`）」静态契约：
+        - 布局 pt 常量 12 项（正文字号/序号字号/padding/首项左内边距/候选内边距/
+          候选间距/键帽横纵内边距/首选胶囊外扩/翻页区宽/齿轮区宽/面板最大宽度）；
+        - 派生值：`textH = ceil(fontSize*1.4)` 与 Windows `pt(21)` 一致；
+          `kMaxContentPt` 内联表达式按 mac 常量重建后去空白比对；
+        - 齿轮矢量参数 6 项（圆环半径 3.4pt/线宽 1.8pt、8 齿内 4.6pt/外 7.2pt/
+          线宽 2pt、chipDigit 颜色绑定）；分割线高度 `55/100` 公式；
+        - 13 个主题色字段名集合两端一致（任一新增/删除会 FAIL）。
+      - **边界**：这是静态常量/字段检查，不替代真机像素级验收（抗锯齿、真实
+        阴影、毛玻璃、Toast、DPI 观感仍需 Windows 真机）；文档已按此修正，
+        不再说「Windows 候选窗没有任何机器断言」。
+      - **测试**：`TestCheckCandidateWindow` 用真实两端源码跑契约 + 变异测试
+        （把 Windows 正文字号 15 改成 16 必须被捕获）。
+      - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
+        `checkuiparity` PASS；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

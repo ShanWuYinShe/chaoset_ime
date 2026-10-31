@@ -17,6 +17,41 @@ func TestRunOnRepo(t *testing.T) {
 	}
 }
 
+// TestCheckCandidateWindow 用真实候选窗源码验证候选窗契约，并做一次变异：
+// 改 Windows 正文字号应被「候选窗几何」捕获。
+func TestCheckCandidateWindow(t *testing.T) {
+	macText, err := os.ReadFile("../../" + macPanel)
+	if err != nil {
+		t.Fatalf("读取 mac 候选窗源码失败：%v", err)
+	}
+	winText, err := os.ReadFile("../../" + winShell)
+	if err != nil {
+		t.Fatalf("读取 Windows 壳源码失败：%v", err)
+	}
+	fsys := fstest.MapFS{
+		macPanel: &fstest.MapFile{Data: macText},
+		winShell: &fstest.MapFile{Data: winText},
+	}
+	var problems []string
+	checkCandidateWindow(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实候选窗源码未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	mutated := strings.Replace(string(winText), "-MulDiv(15, dpi, 72)", "-MulDiv(16, dpi, 72)", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异未生效：Windows 源码里找不到 -MulDiv(15, dpi, 72)")
+	}
+	problems = nil
+	checkCandidateWindow(fstest.MapFS{
+		macPanel: &fstest.MapFile{Data: macText},
+		winShell: &fstest.MapFile{Data: []byte(mutated)},
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "正文字号") {
+		t.Fatalf("改一端字号应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckContains(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.txt": &fstest.MapFile{Data: []byte("hello 学习数据")},

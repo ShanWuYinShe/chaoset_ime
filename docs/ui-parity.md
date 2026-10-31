@@ -273,23 +273,27 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 - `shims/macos/tests/equivalence.sh` F 段只调用上面的脚本；文案已改为
   「布局常量（Go↔Swift）+ macOS 参考常量 + 浅/深色值一致」，不再声称「双端
   色值两段一致」或覆盖 Windows。
-- **Windows 候选窗没有任何运行时/几何机器断言**：只有 `tools/checkgdi` 的
-  ExtCreatePen 非空指针契约（`make vet`）+ 交叉编译（2026-10-31 起 ci.yml 的
-  `windows-build` job 每次 push 都跑 mingw 交叉编译 + core_test + NSIS 安装包
-  编译，不再只在打 tag 时验证）。学习标记/页码/分隔线/DPI/Toast/设置窗仍需
-  Windows 真机人工验收（本机无 Windows 运行时）。
+- **Windows 候选窗没有运行时渲染断言，但已有静态几何/配色契约**（2026-10-31）：
+  `tools/checkuiparity` 比对 mac `CandidatePanel.swift` ↔ Windows `win32.cpp`
+  的布局 pt 常量（字号/padding/首项内边距/候选间距/键帽内边距/胶囊外扩/
+  翻页区/齿轮区/最大宽度）、派生值（textH 行高、kMaxContentPt 公式）与齿轮
+  矢量参数（圆环半径/线宽、8 齿内/外半径/线宽、chipDigit 颜色绑定），并锁住
+  13 个主题色字段名集合；改一端常量会 FAIL。**像素级渲染（抗锯齿/真实阴影/
+  毛玻璃/Toast/DPI 表现）仍需 Windows 真机人工验收**（本机无 Windows 运行时）；
+  `tools/checkgdi` 的 ExtCreatePen 非空指针契约 + 交叉编译仍在。
 - `tests/key_routing` 是 macOS 按键路由回归测试，**未接入 Makefile/CI**（死
   测试），属于待补；Linux 按键行为由 `behavior_test.go` 覆盖（2026-10-30 新增
   已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由 engine 的会话级测试覆盖
   （遍历全部音节逐键喂 `Session.Input`）。
 - IPC 侧 2026-10-30 新增 `userExport` 分页测试（含 >1MiB 场景）。
-- **设置窗文案/单例/学习数据 GUI/词库导入/打包安装** 已由 `tools/checkuiparity`
-  静态检查（`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：设置窗共享
-  文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧不得
-  引入引擎 DBus（engine 包纯净约束）、词库导入入口（Linux CLI 例外有文档记录）、
-  打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、本表关键差异行
-  存在。**候选窗齿轮参数与像素级几何仍无跨端机器检查**（Windows 无运行时），
-  本表 + Code Review 仍是那部分的防线。
+- **设置窗文案/单例/学习数据 GUI/词库导入/打包安装 + 候选窗静态几何/配色字段**
+  已由 `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；
+  审计 G6 落地）：设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI
+  三端存在且 Linux 侧不得引入引擎 DBus（engine 包纯净约束）、词库导入入口
+  （Linux CLI 例外有文档记录）、打包安装一致性（userdict_ctl.py/hicolor/setup
+  脚本/CI 步骤）、候选窗布局 pt 常量/派生值/齿轮矢量参数/13 个主题色字段名
+  集合、本表关键差异行存在。**候选窗像素级渲染（抗锯齿/阴影/毛玻璃/Toast/
+  DPI 观感）仍需 Windows 真机**，本表 + Code Review 仍是那部分的防线。
 
 ## 性能与资源基线（2026-10-29，Apple M1，负载 5.35）
 

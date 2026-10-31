@@ -16,7 +16,12 @@
 //     release 冒烟引用；hicolor 必须有小尺寸图标；setup 脚本必须被组件 XML
 //     与 release 冒烟引用；
 //  6. ui-parity 文档保留关键差异行（学习数据管理/词库导入/设置窗单例/
-//     Windows per-monitor DPI/双拼 mspy 等）。
+//     Windows per-monitor DPI/双拼 mspy 等）；
+//  7. 候选窗几何/配色字段静态对齐：mac CandidatePanel.swift ↔ Windows
+//     win32.cpp 的布局 pt 常量（字号/padding/gap/键帽/齿轮区/最大宽度）、
+//     齿轮矢量参数（圆环半径/线宽、8 齿内/外半径、线宽、颜色绑定）、
+//     13 个主题色字段名集合一致。**像素级渲染仍需真机**，但「常量被改一端」
+//     会在这里先 FAIL。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -25,7 +30,11 @@ package main
 import (
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -42,6 +51,7 @@ var sharedSettingsText = []string{
 }
 
 const (
+	macPanel    = "shims/macos/src/CandidatePanel.swift"
 	macSettings = "shims/macos/src/SettingsWindow.swift"
 	macEngine   = "shims/macos/src/EngineClient.swift"
 	macSetup    = "shims/macos/setup/main.swift"
@@ -93,6 +103,201 @@ func checkExists(fsys fs.FS, problems *[]string, group, path string) {
 	if _, err := fs.Stat(fsys, path); err != nil {
 		*problems = append(*problems, fmt.Sprintf("%s：缺少 %s", group, path))
 	}
+}
+
+// ---- 候选窗（mac CandidatePanel.swift ↔ Windows win32.cpp）----
+
+// numericContract 是两端同名 pt 常量的提取正则（第一个分组必须是数字）。
+type numericContract struct {
+	name  string
+	macRe string
+	winRe string
+}
+
+// 候选窗布局 pt 常量（与 docs/ui-parity.md 的「布局常量」一致）。
+var layoutContracts = []numericContract{
+	{"正文字号", `static let fontSize: CGFloat = ([0-9.]+)`, `int fontH = -MulDiv\(([0-9.]+), dpi, 72\);`},
+	{"序号字号", `static let indexFontSize: CGFloat = ([0-9.]+)`, `int idxFontH = -MulDiv\(([0-9.]+), dpi, 72\);`},
+	{"内边距", `static let padding: CGFloat = ([0-9.]+)`, `const int pad = pt\(([0-9.]+), dpi\);`},
+	{"首项左内边距", `static let firstPadLeft: CGFloat = ([0-9.]+)`, `const int firstPadLeft = pt\(([0-9.]+), dpi\);`},
+	{"候选内边距", `static let itemPadX: CGFloat = ([0-9.]+)`, `const int itemPadX = pt\(([0-9.]+), dpi\);`},
+	{"候选间距", `static let gap: CGFloat = ([0-9.]+)`, `const int gap = pt\(([0-9.]+), dpi\);`},
+	{"键帽横向内边距", `static let chipPadX: CGFloat = ([0-9.]+)`, `const int chipPadX = pt\(([0-9.]+), dpi\);`},
+	{"键帽纵向内边距", `static let chipPadY: CGFloat = ([0-9.]+)`, `const int chipPadY = pt\(([0-9.]+), dpi\);`},
+	{"首选胶囊外扩", `static let pillMargin: CGFloat = ([0-9.]+)`, `const int pillMargin = pt\(([0-9.]+), dpi\);`},
+	{"翻页区宽", `static let chevronBoxW: CGFloat = ([0-9.]+)`, `const int chevronBoxW = pt\(([0-9.]+), dpi\);`},
+	{"齿轮区宽", `static let boxW: CGFloat = ([0-9.]+)`, `const int gearBoxW = pt\(([0-9.]+), dpi\);`},
+	{"面板最大宽度", `static let maxWidth: CGFloat = ([0-9.]+)`, `constexpr int kMaxWidthPt = ([0-9.]+);`},
+}
+
+// 齿轮矢量参数（2026-10-28 用户拍板：两端同算法同几何同色）。
+var gearContracts = []numericContract{
+	{"圆环半径", `center\.x - ([0-9.]+)`, `const double rr = ([0-9.]+) \* u;`},
+	{"圆环线宽", `ring\.lineWidth = ([0-9.]+)`, `CreatePen\(PS_SOLID, static_cast<int>\(([0-9.]+) \* u \+ 0\.5\), gearColor\)`},
+	{"辐条数", `for i in 0\.\.<([0-9]+)`, `for \(int i = 0; i < ([0-9]+); \+\+i\)`},
+	{"辐条内半径", `spokes\.move\(to: NSPoint\(x: center\.x \+ dx \* ([0-9.]+)`, `(?s)MoveToEx\(memDC,\s*static_cast<int>\(cx \+ dx \* ([0-9.]+) \* u`},
+	{"辐条外半径", `spokes\.line\(to: NSPoint\(x: center\.x \+ dx \* ([0-9.]+)`, `(?s)LineTo\(memDC,\s*static_cast<int>\(cx \+ dx \* ([0-9.]+) \* u`},
+	{"辐条线宽", `spokes\.lineWidth = ([0-9.]+)`, `createRoundCapPen\(static_cast<int>\(([0-9.]+) \* u \+ 0\.5\), gearColor\)`},
+}
+
+func readText(fsys fs.FS, path string) (string, error) {
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func mustRead(fsys fs.FS, path string) string {
+	text, err := readText(fsys, path)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
+// firstFloat 用正则从文本中提取第一个分组为数字的值。
+func firstFloat(text, pattern string) (float64, bool) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return 0, false
+	}
+	m := re.FindStringSubmatch(text)
+	if len(m) < 2 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// checkNumericContracts 对比 mac/Windows 两端的同名 pt 常量，返回成功提取的值。
+func checkNumericContracts(fsys fs.FS, problems *[]string, group string, contracts []numericContract) map[string]float64 {
+	macText, err := readText(fsys, macPanel)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, macPanel, err))
+		return nil
+	}
+	winText, err := readText(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+		return nil
+	}
+	values := make(map[string]float64, len(contracts))
+	for _, c := range contracts {
+		mv, ok := firstFloat(macText, c.macRe)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：无法从 %s 解析「%s」（mac 端模式未命中，实现可能已重构，需同步更新检查器）", group, macPanel, c.name))
+			continue
+		}
+		wv, ok := firstFloat(winText, c.winRe)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：无法从 %s 解析「%s」（Windows 端模式未命中，实现可能已重构，需同步更新检查器）", group, winShell, c.name))
+			continue
+		}
+		values[c.name] = mv
+		if math.Abs(mv-wv) > 1e-6 {
+			*problems = append(*problems, fmt.Sprintf("%s：「%s」mac=%g Windows=%g 不一致", group, c.name, mv, wv))
+		}
+	}
+	return values
+}
+
+// checkCandidateWindow 候选窗静态几何/配色字段一致性（mac ↔ Windows）。
+// 像素级渲染仍需真机；这里锁住「常量被改一端」与主题色字段集合漂移。
+func checkCandidateWindow(fsys fs.FS, problems *[]string) {
+	values := checkNumericContracts(fsys, problems, "候选窗几何", layoutContracts)
+	macText := mustRead(fsys, macPanel)
+	winText := mustRead(fsys, winShell)
+	if fontSize, ok := values["正文字号"]; ok {
+		if factor, ok := firstFloat(macText, `static let textH: CGFloat = ceil\(fontSize \* ([0-9.]+)\)`); ok {
+			want := math.Ceil(fontSize * factor)
+			if got, ok := firstFloat(winText, `static_cast<int>\(tmText\.tmHeight\), pt\(([0-9.]+), dpi\)`); ok {
+				if math.Abs(got-want) > 1e-6 {
+					*problems = append(*problems, fmt.Sprintf("候选窗几何：行高 textH mac=ceil(%g*%g)=%g Windows=%g 不一致", fontSize, factor, want, got))
+				}
+			} else {
+				*problems = append(*problems, "候选窗几何：无法从 Windows 解析 textH 行高常量")
+			}
+		} else {
+			*problems = append(*problems, "候选窗几何：无法从 mac 解析 textH 公式")
+		}
+	}
+	// Windows 的 kMaxContentPt 是内联表达式（kMaxWidthPt - 7*2 - 36 - 26 - 2*2 - 2），
+	// 不是字面量；这里按 mac 常量重建表达式并做「去空白子串」比对。
+	need := []string{"内边距", "翻页区宽", "齿轮区宽", "首选胶囊外扩"}
+	if allPresent(values, need) {
+		expect := fmt.Sprintf("constexprintkMaxContentPt=kMaxWidthPt-%g*2-%g-%g-%g*2-2;",
+			values["内边距"], values["翻页区宽"], values["齿轮区宽"], values["首选胶囊外扩"])
+		if !strings.Contains(noSpace(winText), expect) {
+			*problems = append(*problems, fmt.Sprintf("候选窗几何：Windows 内容上限公式与 mac 常量不一致（期望 %s）", expect))
+		}
+	}
+	checkNumericContracts(fsys, problems, "候选窗齿轮", gearContracts)
+	checkContains(fsys, problems, "候选窗齿轮", macPanel, "color: theme.chipDigit")
+	checkContains(fsys, problems, "候选窗齿轮", winShell, "const COLORREF gearColor = theme.chipDigit;")
+	checkContains(fsys, problems, "候选窗分割线", macPanel, "Layout.textH * 55 / 100")
+	checkContains(fsys, problems, "候选窗分割线", winShell, "textH * 55 / 100")
+	checkThemeFieldParity(fsys, problems)
+}
+
+// noSpace 去掉全部空白，便于比对源码里被换行/缩进拆开的表达式。
+func noSpace(text string) string { return strings.Join(strings.Fields(text), "") }
+
+func allPresent(values map[string]float64, names []string) bool {
+	for _, n := range names {
+		if _, ok := values[n]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// checkThemeFieldParity 13 个主题色字段名必须两端一致（任一新增/删除都会 FAIL）。
+func checkThemeFieldParity(fsys fs.FS, problems *[]string) {
+	macText, err := readText(fsys, macPanel)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("候选窗配色：读取 %s 失败：%v", macPanel, err))
+		return
+	}
+	winText, err := readText(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("候选窗配色：读取 %s 失败：%v", winShell, err))
+		return
+	}
+	macFields := structFields(macText, `(?s)struct CandidateTheme \{.*?\n\}`, `(?m)^\s*let ([A-Za-z0-9_]+): NSColor`)
+	winFields := structFields(winText, `(?s)struct CandidateColors \{.*?\n\};`, `(?m)^\s*COLORREF ([A-Za-z0-9_]+);`)
+	sort.Strings(macFields)
+	sort.Strings(winFields)
+	if strings.Join(macFields, ",") != strings.Join(winFields, ",") {
+		*problems = append(*problems, fmt.Sprintf("候选窗配色：主题色字段集合不一致（mac=%v Windows=%v）", macFields, winFields))
+	}
+	if len(macFields) != 13 {
+		*problems = append(*problems, fmt.Sprintf("候选窗配色：mac 主题色字段数 = %d，期望 13", len(macFields)))
+	}
+}
+
+// structFields 在匹配 struct 区域内按字段模式提取字段名。
+func structFields(text, structRe, fieldRe string) []string {
+	sre, err := regexp.Compile(structRe)
+	if err != nil {
+		return nil
+	}
+	region := sre.FindString(text)
+	if region == "" {
+		return nil
+	}
+	fre, err := regexp.Compile(fieldRe)
+	if err != nil {
+		return nil
+	}
+	var fields []string
+	for _, m := range fre.FindAllStringSubmatch(region, -1) {
+		fields = append(fields, m[1])
+	}
+	return fields
 }
 
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
@@ -151,7 +356,10 @@ func Run(fsys fs.FS) []string {
 	}
 	checkExists(fsys, &problems, "打包安装", "shims/linux/icons/hicolor/scalable/apps/chaoset.svg")
 
-	// 6. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
+	// 6. 候选窗静态几何/配色字段（mac ↔ Windows）。
+	checkCandidateWindow(fsys, &problems)
+
+	// 7. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍")
@@ -172,5 +380,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/文档对照）")
 }
