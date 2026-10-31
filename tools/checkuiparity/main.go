@@ -548,6 +548,8 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "候选点选", winShell, "WM_LBUTTONDOWN")
 	checkContains(fsys, &problems, "候选点选", linuxEngine, "CandidateClicked")
 	checkContains(fsys, &problems, "候选点选", uiParityDoc, "鼠标点选候选")
+	// linux-e2e 必须真实验证 CandidateClicked（不只是单测）：防止 E2E 用例被删。
+	checkContains(fsys, &problems, "候选点选", linuxE2E, "CandidateClicked", "CommitText")
 
 	// 9. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
 	checkShellVarEscaping(fsys, &problems)
@@ -555,7 +557,7 @@ func Run(fsys fs.FS) []string {
 	// 10. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
-		"双拼 mspy", "无障碍")
+		"双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
 	// README 阶段记录不能留下「Linux 仍只有 CLI」这类已过期的现状描述；
 	// 阶段 36/39 是历史条目，必须带「阶段 54 已补齐」的解决标注。
 	checkContains(fsys, &problems, "文档对照", readmeDoc, "阶段 54",

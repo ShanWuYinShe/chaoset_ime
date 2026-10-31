@@ -1528,6 +1528,14 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`py_compile`、Python 单测、`make vet`/checker、`git diff --check`
         通过；GUI 线程行为需桌面环境真机点验。
 
+- [x] 阶段 63：候选点选 E2E 与滚轮差异文档守卫（2026-10-31）
+      - **候选点选**：checkuiparity「候选点选」组新增断言——linux-e2e 必须保留
+        `CandidateClicked` + `CommitText` 的真实调用（防止 E2E 用例被删只剩单测）。
+      - **文档对照**：ui-parity 关键行新增「鼠标点选候选」「滚轮翻页」；机器检查
+        说明补候选点选三端回调与 linux-e2e 断言、滚轮三端一致缺失。
+      - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

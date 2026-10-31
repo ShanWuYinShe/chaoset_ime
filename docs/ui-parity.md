@@ -324,7 +324,10 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   **词库导入安全流程**（mac/Windows/Linux 三端都必须保留导入器退出码检查/旧词库
   备份/原子替换/失败日志；Linux 用临时文件 + os.replace）、**关闭联想的即时性**
   （mac 通知/Windows 广播/Linux 下次按键
-  且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、
+  且文档记录）、**鼠标点选候选**（mac `mouseDown` / Windows `WM_LBUTTONDOWN` /
+  Linux `CandidateClicked`；linux-e2e 断言点选上屏）、**退格与修饰键映射**
+  （三端 `backspaceWord`/Delete 常量/修饰键标识）、**滚轮翻页**（三端一致缺失，
+  文档记录原因）、
   打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/
   派生值/最大行数（Windows 必须用 `candidate_layout.hpp` 多行折行）/齿轮矢量参数/
   13 个主题色字段名集合、key_routing 已接入 CI 且断言用例数
