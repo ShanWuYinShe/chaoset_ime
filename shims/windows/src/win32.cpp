@@ -24,6 +24,8 @@
 #include <objbase.h>
 #include <shellapi.h>  // SHQueryUserNotificationState（全屏免打扰，2026-10-31 A7）
 #include <commdlg.h>  // GetSaveFileNameW（设置窗口导出学习数据，2026-10-31）
+#include <shlobj.h>   // SHGetFolderPathW（设置窗口导入词库定位 %LOCALAPPDATA%，2026-10-31）
+#include <cderr.h>    // FNERR_BUFFERTOOSMALL（导入词库多选缓冲区不足）
 
 #include <algorithm>
 #include <cmath>
@@ -3659,7 +3661,7 @@ static void settingsUpdateTheme(HWND wnd) {
     if (g_settingsBgBrush != nullptr) DeleteObject(g_settingsBgBrush);
     g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
     settingsApplyDarkTitleBar(wnd, g_settingsDark);
-    for (int id : {101, 106, 107}) {
+    for (int id : {101, 106, 107, 110}) {
         HWND c = GetDlgItem(wnd, id);
         if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
     }
@@ -3679,7 +3681,10 @@ static void settingsLayoutControls(HWND wnd) {
         {106, 32, 180, 130, 26},
         {107, 172, 180, 130, 26},
         {108, 32, 214, 320, 20},
-        {104, 32, 264, 320, 20},
+        {111, 14, 246, 352, 20},  // 词库（加粗标题）
+        {110, 32, 270, 150, 26},  // 导入词库（自绘按钮）
+        {112, 32, 304, 320, 20},
+        {104, 32, 344, 320, 20},
     };
     for (const auto& it : kItems) {
         HWND c = GetDlgItem(wnd, it.id);
@@ -3693,8 +3698,8 @@ static void settingsLayoutControls(HWND wnd) {
                                 : g_settingsFont);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
-    // 客户区 380×330pt（与 mac 一致），保持窗口左上角不变。
-    RECT rc = {0, 0, settingsPt(380), settingsPt(330)};
+    // 客户区 380×390pt（2026-10-31 增加「词库」区后调高），保持窗口左上角不变。
+    RECT rc = {0, 0, settingsPt(380), settingsPt(390)};
     const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_STYLE));
     const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_EXSTYLE));
     AdjustWindowRectEx(&rc, style, FALSE, exStyle);
@@ -3847,6 +3852,216 @@ static void SettingsExportLearningData(HWND wnd) {
     MessageBoxW(wnd, L"学习数据已导出。", L"学习数据", MB_OK | MB_ICONINFORMATION);
 }
 
+// ---- 词库导入（GUI，2026-10-31）----
+//
+// 普通用户不再需要命令行：设置窗口「词库」区选择 Rime dict.yaml /
+// CC-CEDICT txt / TSV，调用随包 chaoset-import.exe 合并到
+// %LOCALAPPDATA%\Chaoset\dict.tsv（旧文件先备份、同卷 staging +
+// MoveFileEx 原子替换），然后重启 daemon（读安装器写入的 Run 项命令行）。
+// 与 macOS Setup.app 的导入流程同语义（合并而非覆盖、备份、原子替换、
+// 检查导入器退出码——只看产物文件会把部分解析失败当成成功）。
+
+static std::wstring settingsQuote(const std::wstring& s) { return L"\"" + s + L"\""; }
+
+// 运行子进程并等待退出；logPath 非空时把 stdout/stderr 重定向到该文件。
+// 返回 true 表示进程正常退出（*exitCode 为退出码）；超时/启动失败返回 false。
+static bool settingsRunProcess(const std::wstring& exe, const std::wstring& cmdLine,
+                               const std::wstring& logPath, DWORD* exitCode) {
+    if (exitCode != nullptr) *exitCode = 1;
+    HANDLE logFile = INVALID_HANDLE_VALUE;
+    HANDLE nul = INVALID_HANDLE_VALUE;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    if (!logPath.empty()) {
+        logFile = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                          OPEN_EXISTING, 0, nullptr);
+        if (logFile == INVALID_HANDLE_VALUE || nul == INVALID_HANDLE_VALUE) {
+            if (logFile != INVALID_HANDLE_VALUE) CloseHandle(logFile);
+            if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+            return false;
+        }
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = nul;
+        si.hStdOutput = logFile;
+        si.hStdError = logFile;
+    }
+    std::wstring mutableCmd = cmdLine;  // CreateProcessW 需要可写缓冲
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(exe.empty() ? nullptr : exe.c_str(), mutableCmd.data(),
+                                   nullptr, nullptr, logPath.empty() ? FALSE : TRUE,
+                                   CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    if (logFile != INVALID_HANDLE_VALUE) CloseHandle(logFile);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (!ok) return false;
+    const DWORD wait = WaitForSingleObject(pi.hProcess, 120000);
+    DWORD code = 1;
+    if (wait == WAIT_OBJECT_0) {
+        GetExitCodeProcess(pi.hProcess, &code);
+    } else {
+        TerminateProcess(pi.hProcess, 1);
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (exitCode != nullptr) *exitCode = code;
+    return wait == WAIT_OBJECT_0;
+}
+
+// 重启 daemon：从安装器写入的 Run 项（HKLM 优先、HKCU 兜底）取完整命令行。
+// 先 taskkill 旧进程再按原命令行启动；没有自启动项时返回 false（由调用方提示
+// 用户重启电脑/注销后生效）。
+static bool settingsRestartDaemon() {
+    const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    std::wstring run;
+    for (HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+        HKEY h = nullptr;
+        if (RegOpenKeyExW(root, kRunKey, 0, KEY_READ, &h) != ERROR_SUCCESS) continue;
+        DWORD type = 0;
+        DWORD size = 0;
+        if (RegQueryValueExW(h, L"ChaosetDaemon", nullptr, &type, nullptr, &size) == ERROR_SUCCESS &&
+            (type == REG_SZ || type == REG_EXPAND_SZ) && size > sizeof(wchar_t)) {
+            std::vector<wchar_t> val(size / sizeof(wchar_t) + 1, 0);
+            if (RegQueryValueExW(h, L"ChaosetDaemon", nullptr, nullptr,
+                                 reinterpret_cast<LPBYTE>(val.data()), &size) == ERROR_SUCCESS) {
+                run = val.data();
+                if (type == REG_EXPAND_SZ) {
+                    // Run 值若写成 %LOCALAPPDATA% 形式，CreateProcess 不会展开；
+                    // 安装器目前写的是已展开路径，这里兜底兼容手改过的部署。
+                    std::vector<wchar_t> expanded(32768, 0);
+                    const DWORD n = ExpandEnvironmentStringsW(run.c_str(), expanded.data(),
+                                                              static_cast<DWORD>(expanded.size()));
+                    if (n > 0 && n <= expanded.size()) run = expanded.data();
+                }
+            }
+        }
+        RegCloseKey(h);
+        if (!run.empty()) break;
+    }
+    if (run.empty()) return false;
+    wchar_t sysDir[MAX_PATH] = {0};
+    if (GetSystemDirectoryW(sysDir, MAX_PATH) == 0) return false;
+    const std::wstring taskkill = std::wstring(sysDir) + L"\\taskkill.exe";
+    settingsRunProcess(taskkill, settingsQuote(taskkill) + L" /IM chaosetd.exe /F", L"", nullptr);
+    // taskkill /F 立即生效，但进程退出与监听端口释放可能略滞后；给 1s 再启动，
+    // 避免新 daemon 因端口占用启动失败（导入是一次显式操作，1s 可接受）。
+    Sleep(1000);
+    DWORD code = 1;
+    return settingsRunProcess(L"", run, L"", &code);
+}
+
+static void SettingsImportDictionary(HWND wnd) {
+    // 1) 词库文件位置（安装器固定写 %LOCALAPPDATA%\Chaoset\dict.tsv）
+    wchar_t appData[MAX_PATH] = {0};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData))) {
+        MessageBoxW(wnd, L"无法定位用户数据目录。", L"导入词库", MB_OK | MB_ICONERROR);
+        return;
+    }
+    const std::wstring dataDir = std::wstring(appData) + L"\\Chaoset";
+    const std::wstring dictPath = dataDir + L"\\dict.tsv";
+    if (GetFileAttributesW(dictPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxW(wnd, L"找不到词库文件 dict.tsv。\n请先通过安装程序安装 Chaoset 后再导入。",
+                    L"导入词库", MB_OK | MB_ICONERROR);
+        return;
+    }
+    // 2) 随包导入器（与 DLL 同目录；便携 zip 里也在同目录）
+    wchar_t module[MAX_PATH] = {0};
+    if (GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0) return;
+    std::wstring dir(module);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return;
+    dir.resize(slash);
+    const std::wstring importer = dir + L"\\chaoset-import.exe";
+    if (GetFileAttributesW(importer.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxW(wnd, L"找不到 chaoset-import.exe（请使用完整安装包）。", L"导入词库",
+                    MB_OK | MB_ICONERROR);
+        return;
+    }
+    // 3) 选择词库文件（可多选）
+    std::vector<wchar_t> buf(4096, 0);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = wnd;
+    ofn.lpstrFilter = L"词库文件 (*.tsv;*.txt;*.yaml)\0*.tsv;*.txt;*.yaml\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = buf.data();
+    ofn.nMaxFile = static_cast<DWORD>(buf.size());
+    ofn.lpstrTitle = L"选择要导入的词库";
+    ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST |
+                OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) {
+        if (CommDlgExtendedError() == FNERR_BUFFERTOOSMALL) {
+            MessageBoxW(wnd, L"选择的文件过多，请分批导入。", L"导入词库", MB_OK | MB_ICONERROR);
+        }
+        return;
+    }
+    std::vector<std::wstring> files;
+    {
+        const wchar_t* p = buf.data();
+        const std::wstring first = p;
+        p += first.size() + 1;
+        if (*p == L'\0') {
+            files.push_back(first);
+        } else {
+            while (*p != L'\0') {
+                const std::wstring name = p;
+                files.push_back(first + L"\\" + name);
+                p += name.size() + 1;
+            }
+        }
+    }
+    if (files.empty()) return;
+    // 4) 合并：chaoset-import -o dict.tsv.import dict.tsv 所选文件...
+    //    先删旧临时产物（导入器会把已存在的 -o 文件当底表吸收）。
+    const std::wstring merged = dataDir + L"\\dict.tsv.import";
+    const std::wstring staging = dataDir + L"\\dict.tsv.tmp";
+    const std::wstring logPath = dataDir + L"\\import.log";
+    DeleteFileW(merged.c_str());
+    std::wstring cmd = settingsQuote(importer) + L" -o " + settingsQuote(merged) + L" " +
+                      settingsQuote(dictPath);
+    for (const auto& f : files) cmd += L" " + settingsQuote(f);
+    DWORD code = 1;
+    HCURSOR oldCursor = SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32514)));  // IDC_WAIT
+    const bool ran = settingsRunProcess(importer, cmd, logPath, &code);
+    SetCursor(oldCursor);
+    if (!ran || code != 0 || GetFileAttributesW(merged.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::wstring msg = L"导入失败";
+        if (ran) msg += L"（导入器退出码 " + std::to_wstring(code) + L"）";
+        msg += L"。\n\n详情见：" + logPath;
+        MessageBoxW(wnd, msg.c_str(), L"导入词库", MB_OK | MB_ICONERROR);
+        DeleteFileW(merged.c_str());
+        return;
+    }
+    // 5) 备份旧词库 → 同卷 staging + MoveFileEx 原子替换（绝不允许中间态丢词库）
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t stamp[32];
+    wsprintfW(stamp, L"%04d%02d%02d-%02d%02d%02d", st.wYear, st.wMonth, st.wDay,
+              st.wHour, st.wMinute, st.wSecond);
+    const std::wstring backup = dictPath + L".bak." + stamp;
+    if (!CopyFileW(dictPath.c_str(), backup.c_str(), FALSE)) {
+        MessageBoxW(wnd, L"备份旧词库失败，已取消导入（未改动词库）。", L"导入词库",
+                    MB_OK | MB_ICONERROR);
+        DeleteFileW(merged.c_str());
+        return;
+    }
+    DeleteFileW(staging.c_str());
+    if (!CopyFileW(merged.c_str(), staging.c_str(), FALSE) ||
+        !MoveFileExW(staging.c_str(), dictPath.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        MessageBoxW(wnd, L"替换词库失败，已保留旧词库。", L"导入词库", MB_OK | MB_ICONERROR);
+        DeleteFileW(staging.c_str());
+        DeleteFileW(merged.c_str());
+        return;
+    }
+    DeleteFileW(merged.c_str());
+    // 6) 重启 daemon（新词库在启动时加载）
+    const bool restarted = settingsRestartDaemon();
+    std::wstring msg = L"词库已导入。\n\n旧词库备份：" + backup;
+    msg += restarted ? L"\n\ndaemon 已重启，新词库立即生效。"
+                     : L"\n\n未找到 daemon 自启动项，请重启电脑或注销后重新登录使新词库生效。";
+    MessageBoxW(wnd, msg.c_str(), L"导入词库", MB_OK | MB_ICONINFORMATION);
+}
+
 static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_COMMAND:
@@ -3856,6 +4071,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == 107) {
                 SettingsExportLearningData(hwnd);
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == 110) {
+                SettingsImportDictionary(hwnd);
                 return 0;
             }
             if (LOWORD(wParam) == 101 && HIWORD(wParam) == BN_CLICKED) {
@@ -3882,7 +4101,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                     settingsDrawCheckbox(dis);
                     return TRUE;
                 }
-                if (dis->CtlID == 106 || dis->CtlID == 107) {
+                if (dis->CtlID == 106 || dis->CtlID == 107 || dis->CtlID == 110) {
                     settingsDrawButton(dis);
                     return TRUE;
                 }
@@ -3897,8 +4116,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             }
             const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
             const SettingsColors c = settingsColors(g_settingsDark);
-            const bool secondary = (id == 100 || id == 109 || id == 102 || id == 103 ||
-                                    id == 104 || id == 108);
+            const bool secondary = (id == 100 || id == 109 || id == 111 || id == 102 ||
+                                    id == 103 || id == 104 || id == 108 || id == 112);
             HDC dc = reinterpret_cast<HDC>(wParam);
             SetTextColor(dc, secondary ? c.secondary : c.text);
             SetBkMode(dc, TRANSPARENT);
@@ -3963,7 +4182,7 @@ void ChaosetTIP::showSettingsWindow() {
     // 居中于光标所在显示器的工作区（macOS center 同语义）
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
-    RECT fr = {0, 0, settingsPt(380), settingsPt(330)};
+    RECT fr = {0, 0, settingsPt(380), settingsPt(390)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     MONITORINFO mi{};
@@ -4003,6 +4222,9 @@ void ChaosetTIP::showSettingsWindow() {
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"清空学习数据…", 106);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导出学习数据…", 107);
     makeCtl(L"Static", SS_LEFT, L"学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。", 108);
+    makeCtl(L"Static", SS_LEFT, L"词库", 111);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导入词库…", 110);
+    makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。", 112);
     makeCtl(L"Static", SS_LEFT, L"更多设置将在后续版本提供", 104);
 
     settingsLayoutControls(wnd);

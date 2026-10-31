@@ -1089,6 +1089,23 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         Linux 无代码改动。真机验收点：深浅色切换即时重绘、副屏/混合 DPI 打开
         设置窗与候选窗、跨屏拖动设置窗。
 
+- [x] 阶段 36：Windows 词库导入搬进 GUI（2026-10-31，编译级待真机）
+      - **产品原则延续**：普通用户不再需要 `chaoset-import` 命令行。Windows 设置窗
+        新增「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ 调
+        随包 `chaoset-import.exe` 与 `%LOCALAPPDATA%\Chaoset\dict.tsv` 合并 → 旧词库
+        备份为 `dict.tsv.bak.<时间戳>` → 同卷 staging + `MoveFileEx` 原子替换 →
+        读安装器 `ChaosetDaemon` Run 项命令行重启 daemon，新词库立即生效。
+      - **安全边界**：导入器退出码非 0 / 无产物 / 备份或替换失败都中止并提示；
+        不会出现「旧词库已删、新词库没到位」的中间态。仅作用于安装器管理的默认
+        词库路径（自定义 `-dict` 部署需手工替换，已写入 windows README）。
+      - **与 macOS 对齐**：mac Setup.app 自 2026-10-26 起已有同语义 GUI 导入（种子+
+        现用+所选 → 备份 → 原子替换）；Windows 现在等价。Linux 目前仍只有 CLI
+        `chaoset-import`（GTK 设置窗导入待后续）。
+      - **验证**：Windows 壳 `build.sh` 编译 + `core_test` 通过；`make package-windows`
+        通过（zip 内含 chaoset-import.exe，导入器路径与 DLL 同目录）；真机验收点：
+        多选文件、取消对话框、错误词库文件（非法音节应失败且不改词库）、成功后
+        daemon 重启与备份文件生成。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
