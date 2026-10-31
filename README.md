@@ -1659,6 +1659,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaoset-userdict`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 75：daemon 生命周期可测试化（runWithContext）+ 启停测试（2026-11-01）
+      - **问题**：`chaosetd.run()` 内部直接 `signal.NotifyContext`，测试无法驱动
+        完整启停（不能向测试进程自己发 SIGTERM），daemon 主流程覆盖率仅 12.8%。
+      - **重构**：`run` 只负责把 SIGINT/SIGTERM 转成 context，再调
+        `runWithContext(ctx, ...)`；生命周期（加载词库/用户词典、单实例锁、监听、
+        serve、取消后停 flush ticker → Save → 清套接字）全部在后者，职责更清晰。
+      - **测试**：新增 `cmd/chaosetd/run_test.go`——完整启动 → Ping/Input →
+        cancel → 优雅退出 → 套接字清理；以及词库不存在/为空、非法 TCP 端口的
+        启动期错误。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

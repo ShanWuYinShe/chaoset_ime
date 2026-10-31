@@ -70,7 +70,24 @@ func main() {
 	}
 }
 
+// run 是 main 的入口：把 SIGINT/SIGTERM 转成 context 后交给 runWithContext。
+// 信号处理与生命周期分离后，测试可以用可取消 context 驱动完整启停，而不必
+// 向测试进程自己发信号。
+//
+// SIGTERM 必须一起处理：macOS 的 LaunchAgent（launchctl kickstart -k）与
+// 各平台的 init 系统都用 SIGTERM 停服务。只监听 os.Interrupt 时，SIGTERM
+// 会让进程直接消失——用户词典来不及落盘（最后一次上屏的学习数据丢失），
+// 套接字文件也会残留成无人监听的僵尸路径（客户端连接被拒，表现为
+// 「切换输入法后打不出字」）。2026-10-26 实测确认。
 func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runWithContext(ctx, socket, tcpAddr, dicts, userPath, fuzzy, trad, shuangpin)
+}
+
+// runWithContext 是 daemon 的完整生命周期：加载词库/用户词典、单实例锁、
+// 监听、serve、按 ctx 取消优雅退出（停 flush ticker → Save → 清理套接字）。
+func runWithContext(ctx context.Context, socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
 	// 宽松加载词库：-dict 可能指向用户自备的第三方词库，一行坏数据不能让人家
 	// 整个输入法起不来。内置词库的正确性由 CI 保证（生成阶段严格校验 +
 	// engine/data_contract_test.go 严格解析断言），运行时只需跳过坏行并报告。
@@ -153,14 +170,6 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 	}
 	srv := ipc.NewServer(ln, dict, user, opts...)
 
-	// SIGTERM 必须一起处理：macOS 的 LaunchAgent（launchctl kickstart -k）与
-	// 各平台的 init 系统都用 SIGTERM 停服务。只监听 os.Interrupt 时，SIGTERM
-	// 会让进程直接消失——用户词典来不及落盘（最后一次上屏的学习数据丢失），
-	// 套接字文件也会残留成无人监听的僵尸路径（客户端连接被拒，表现为
-	// 「切换输入法后打不出字」）。2026-10-26 实测确认。
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve() }()
 
@@ -198,7 +207,7 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 		}
 		return nil
 	case <-ctx.Done():
-		log.Printf("收到退出信号，保存用户词典并退出…")
+		log.Printf("收到退出请求，保存用户词典并退出…")
 		// 顺序：先停 flush ticker 并等它退出，再 srv.Close()（内部 Save）。
 		// defer flushStop() 只兜底「异常提前返回」的路径，不能代替这里的
 		// 同步等待——defer 在进程退出（log.Fatal）时也不会执行。
