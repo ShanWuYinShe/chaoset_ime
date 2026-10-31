@@ -1589,6 +1589,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./engine ./cmd/chaoset-dictgen` 通过；`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 69：IPC 客户端便捷方法与 Server Option 契约测试（2026-10-31）
+      - **背景**：`go test -cover ./ipc`（73.7%）审计发现 `Client.Backspace` /
+        `Reset` / `NextPage` / `PrevPage` 四个便捷方法 0% 覆盖；
+        `Server.WithFuzzy` / `WithTraditional` 两个 daemon 选项也 0%。
+      - **测试**：新增 `ipc/client_nav_test.go`——
+        ① 真实 Unix socket 往返覆盖四个导航/编辑方法（含翻页边界与 Reset）；
+        ② `WithTraditional(true)` 下 `guo` 首选必须是「國」；
+        ③ `WithFuzzy(true)` 下 `zongguo` 必须出「中国」。
+        顺带记录 macOS Unix socket 路径 104 字节上限：测试用 `os.MkdirTemp`
+        短路径而不是含长测试名的 `t.TempDir()`。
+      - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
