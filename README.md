@@ -1827,18 +1827,15 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
         `git diff --check` 通过。
 
-- [x] 阶段 85：Go 设置逻辑起步（-print-paths + internal/setupctl）（2026-11-01）
-      - **背景**：Linux 设置窗仍是 Python（GTK3 + PyGObject），带来 python3-gi
-        运行时依赖；用户要求工具类全部 Go、不要 Python。
-      - **本轮**：先落不依赖 GUI 的 Go 基础——
-        ① `chaoset-userdict -print-paths` 输出平台路径 JSON（appdirs 单一来源）；
-        ② 新增 `internal/setupctl`：配置读写（原子替换）、学习数据
-        stats/clear/export（直接 engine.UserDict，与工具/引擎同语义），全部纯 Go
-        单测覆盖；`internal/appdirs` 补 Linux 配置目录。
-      - **未完成**：Linux GTK 设置窗仍为 Python；替换为 Go GTK3 后删除 5 个 .py，
-        并更新打包/CI/checker。
-      - **验证**：`go test ./internal/setupctl ./cmd/chaoset-userdict`、
-        `go build/vet ./...`、`make vet`/checker、`git diff --check` 通过。
+- [x] 阶段 85：工具路径 API（-print-paths）；设置窗边界澄清（2026-11-01）
+      - **用户澄清**：设置窗属于 shims 平台 UI（macOS Swift / Windows C++ /
+        Linux Python GTK），**不搬进 Go**；Go 只承载工具逻辑。
+      - **保留**：`chaoset-userdict -print-paths` 输出平台路径 JSON
+        （appdirs 单一来源，供壳/脚本调用）。
+      - **移除**：上一轮误加的 `internal/setupctl`（无消费者，且把 shim 业务
+        放进了 Go internal 包，违背边界）。
+      - **验证**：`go test ./cmd/chaoset-userdict`、`go build/vet ./...`、
+        `make vet`/checker、`git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 
