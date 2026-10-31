@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/buildinfo"
 )
 
 type acc struct {
@@ -28,7 +29,12 @@ type acc struct {
 func main() {
 	out := flag.String("o", "", "输出 TSV 路径（必填）")
 	replace := flag.Bool("replace", false, "与已有词库重复的词条：true=以导入词频覆盖，false=取较大词频")
+	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.Info())
+		return
+	}
 	if *out == "" || flag.NArg() == 0 {
 		flag.Usage()
 		os.Exit(2)

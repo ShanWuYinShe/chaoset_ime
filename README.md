@@ -284,6 +284,14 @@ go run ./cmd/chaoset-cli
 # 或经 IPC 连接 daemon（先起 daemon）
 go run ./cmd/chaosetd &
 go run ./cmd/chaoset-cli --socket chaoset.sock
+
+# Windows 壳同款 TCP 形态（daemon 用 -tcp 起，CLI 也用 -tcp 连；Windows 上只能这样）
+go run ./cmd/chaosetd -tcp 127.0.0.1:7949 &
+go run ./cmd/chaoset-cli -tcp 127.0.0.1:7949
+
+# 构建信息（提交号/构建时间）：真机排障第一步，确认装的是不是新构建
+go run ./cmd/chaosetd -version
+go run ./cmd/chaoset-cli -version
 ```
 
 测试台与 daemon 默认都加载内置常用词库 `data/dict_common.tsv`（见「内置词库与再生成」），
@@ -989,6 +997,28 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **未修（明确记录）**：Windows TSF 两阶段 Shift 跟踪仍待真机确认（已加
         tsf.log 诊断，见 shims/windows/README.md）；无边框全屏不触发全屏抑制；
         游戏内 WASD 被组词是 IME 固有行为（游戏前切英文模式）。
+
+- [x] 阶段 32：遗留 P2 批次（2026-10-31）
+      - **Windows 中英切换（P1 级风险）**：Shift 空按跟踪从 `OnKeyDown/OnKeyUp`
+        移到 `OnTestKeyDown/OnTestKeyUp`——TSF 两阶段模型下，Test 阶段返回 FALSE
+        的按键不会再进 Key 阶段，原实现可能永远收不到修饰键（中英切换失效）。
+        「非 Shift 键取消空按窗口」同步移到 Test 阶段（Shift+方向键不再误切换）。
+        诊断日志保留，真机按一次 Shift 即可确认。
+      - **Windows 主题切换重绘**：`WM_SETTINGCHANGE`/`WM_THEMECHANGED` 立即失效
+        重绘候选窗与模式提示条，不再保持旧配色直到下次输入。
+      - **命令行工具**：`chaoset-cli`/`chaoset-userdict` 新增 `-tcp`（Windows 壳
+        同款回环形态，Windows 上 CLI 从此可连 daemon）；四个工具新增 `-version`
+        （读 Go 构建信息里的 VCS 提交号，无需打包注入，真机排障先确认新构建）。
+      - **安全/健壮性**：Unix 套接字权限显式 0600（同机其它用户不能再连 daemon
+        旁听键盘输入）；IPC 单连接 panic 隔离（一个畸形请求不再带走整个 daemon）。
+      - **macOS**：LaunchAgent 的 daemon 参数补 `-log`（launchd 下日志落
+        `~/Library/Application Support/chaoset/chaosetd.log`，此前日志丢失）。
+      - **仓库卫生**：`.gitignore` 补 `*.sock.lock` 与 `userdict.json.corrupt-*`。
+      - **未做（明确记录）**：滚轮翻页在 Windows 不可行（`WM_MOUSEWHEEL` 只发给
+        焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，
+        与用户「游戏不干扰鼠标」的硬要求冲突）；无障碍 UIA、per-monitor DPI、
+        设置窗深色、多行折行、Option/Alt+Backspace 三端语义、双拼 `;` 半角瞬态
+        仍记录在 docs/ui-parity 与各端 README。
 
 ## 验收范围确认（2026-09-23）
 

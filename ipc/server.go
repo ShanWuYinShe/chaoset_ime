@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime/debug"
 	"strings"
 
 	"chaoset.ime/engine"
@@ -86,6 +87,14 @@ func (s *Server) Close() error {
 
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	// 单连接 panic 隔离（2026-10-31 审计 P2）：畸形请求或引擎边界 bug 触发
+	// panic 时，Go 默认会带走整个 daemon——用户侧表现为输入法突然全部失效。
+	// 这里 recover 后只结束该连接并记录堆栈，其余会话/壳不受影响。
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ipc 连接处理 panic（已隔离，daemon 继续运行）: %v\n%s", r, debug.Stack())
+		}
+	}()
 	sess := engine.NewSession(s.dict, s.user)
 	if s.fuzzy {
 		sess.SetFuzzy(true)

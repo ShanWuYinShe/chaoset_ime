@@ -151,9 +151,9 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗 | **下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除 UAF） | Linux 同为下次按键生效（只写 config.json）；mac 走通知立即收起 |
 | 双拼 mspy `;` 键 | 支持（2026-10-30） | 支持（2026-10-30） | 支持（2026-10-30） | 引擎 `Composition.shuangpin` 下发方案名，三端壳把双拼模式下的 `;` 路由到 `input`；会话级单测遍历全部音节锁可达性 |
-| Windows TSF 两阶段 | — | Shift 空按中英切换依赖 OnKeyDown；按 TSF 两阶段模型（OnTestKeyDown 吞键后才调 OnKeyDown）可能不可达 | **待 Windows 真机确认**；2026-10-31 已加 `tsf.log` 一次性诊断（`modifier in OnTestKeyDown/OnKeyDown/OnKeyUp`、`shift toggle`），真机对照即可判定。若真机证实，需把修饰键跟踪移到 OnTestKeyDown/OnTestKeyUp |
+| Windows TSF 两阶段 | — | Shift 空按中英切换原写在 OnKeyDown/OnKeyUp；按 TSF 两阶段模型（OnTestKeyDown 返回 FALSE 的键不再调 OnKeyDown）可能永远收不到修饰键 | **2026-10-31 已把跟踪移到 OnTestKeyDown/OnTestKeyUp**（Test 阶段对每个按键都会调用），「非 Shift 键取消空按窗口」同步移到 Test 阶段；`tsf.log` 诊断保留（`modifier in OnTestKeyDown/OnTestKeyUp/OnKeyDown/OnKeyUp`、`shift toggle`）。**仍需 Windows 真机确认**（若某宿主连 OnTestKeyUp 都不调，需改 GetKeyState 轮询） |
 | 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | 无 WM_GETOBJECT/UIA/MSAA（待做） | docs 旧版已列 TODO，仍未实现，需 Windows 真机 |
-| 滚轮翻页 | 未实现 | 未实现 | 三端一致缺失，非不一致；ibus 面板由上游决定 |
+| 滚轮翻页 | 未实现 | **不可行**：`WM_MOUSEWHEEL` 只发给焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，与用户「游戏不干扰鼠标」硬要求冲突 | 三端一致缺失；mac 技术上可做，但为保持三端一致暂不做（2026-10-31 复核）。ibus 面板由上游决定 |
 | Windows per-monitor DPI | 系统自动 | 取主屏 DPI（GetDeviceCaps），无 WM_DPICHANGED | 混合 DPI 多屏时副屏尺寸可能偏差。正确改造 GetDpiForWindow/GetDpiForMonitor + WM_DPICHANGED，**需 Windows 真机验证**，本次未改 |
 | Linux 学习标记 | — | — | 平台机制不适用（见上） |
 | 按键边角（ForwardDelete 等） | 见下 | 见下 | 三端主矩阵一致；以下边角差异按实际行为记录，未在本次改行为（避免无用户需求的行为变更） |
@@ -162,6 +162,10 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第四轮（2026-10-31，`fix/p2-batch`）：Windows 主题切换重绘（`WM_SETTINGCHANGE`/
+`WM_THEMECHANGED` 立即失效重绘，此前保持旧配色到下次输入）、Windows Shift 空按
+跟踪从 Key 阶段移到 TSF Test 阶段（中英切换可达性，待真机复核）。
 
 第三轮（2026-10-30/31，v0.2.17 真机 + `fix/win-followup`）：Windows 开始菜单/
 搜索候选窗不显示（候选窗 owner 缺失 + UILess 类别声明与实现矛盾 + 安装器漏杀

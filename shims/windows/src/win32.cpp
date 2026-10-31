@@ -914,6 +914,14 @@ private:
                     return TRUE;
                 }
                 break;
+            case WM_SETTINGCHANGE:
+            case WM_THEMECHANGED:
+                // 系统深浅色/主题切换：onPaint 每帧按 isSystemDarkTheme() 取色，
+                // 但窗口不会自动重绘——候选窗会保持旧配色直到下次输入
+                // （2026-10-31 审计：Windows 主题切换不重绘）。立即失效重绘；
+                // 布局不依赖主题，无需重新 layoutAndPosition。
+                if (self != nullptr) InvalidateRect(hwnd, nullptr, TRUE);
+                break;
             case WM_NCDESTROY:
                 // 主动销毁与 owner 连带销毁的统一回收点（见 onWindowDestroyed）。
                 // 必须在 DefWindowProc 之前取 self（WM_NCDESTROY 之后 USERDATA 失效）。
@@ -1831,6 +1839,12 @@ private:
                     return 0;
                 }
                 break;
+            case WM_SETTINGCHANGE:
+            case WM_THEMECHANGED:
+                // 同候选窗：主题切换立即重绘（提示条仅 1.2s，仍可能在显示期间
+                // 遇到切换，保持配色一致）。
+                if (self != nullptr) InvalidateRect(hwnd, nullptr, TRUE);
+                break;
             case WM_NCDESTROY:
                 // 主动销毁与 owner 连带销毁的统一回收点（同候选窗 A1/A4）。
                 if (self != nullptr) self->onWindowDestroyed();
@@ -2009,19 +2023,30 @@ public:
                                             BOOL* pfEaten) override {
         g_lastOp = kOpTestKeyDown;
         if (isModifierKey(wParam)) {
-            // 一次性诊断（2026-10-31 A8）：Shift 空按切换中英依赖 OnKeyDown/
-            // OnKeyUp 收到修饰键；但按 TSF 两阶段模型，OnTestKeyDown 返回 FALSE
-            // 时 OnKeyDown 可能不会被调用。真机排障时对照这条与下面
-            // "modifier in OnKeyDown/OnKeyUp"、"shift toggle" 三条日志，
-            // 就能确定修饰键到底走到了哪一阶段（README 有排障说明）。
+            // Shift 空按切换中英的跟踪点（2026-10-31 修复）。
+            //
+            // 为什么从 OnKeyDown/OnKeyUp 移到这里：TSF 两阶段模型下，
+            // OnTestKeyDown 返回 FALSE 的按键（本壳对所有修饰键都返回 FALSE）
+            // **不会**再调用 OnKeyDown/OnKeyUp——原实现把跟踪写在 Key 阶段，
+            // 修饰键可能永远进不了跟踪函数（中英切换失效）。Test 阶段对每个
+            // 按键都会调用，是唯一可靠的位置（OnTestKeyUp 同理）。
             static volatile LONG loggedTestModifier = 0;
             if (InterlockedCompareExchange(&loggedTestModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnTestKeyDown vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
+            // 只有 Shift 参与「空按切换中英」；Ctrl/Alt/Win 等其它修饰键
+            // 只放行，绝不能进 onShiftEvent（否则松 Ctrl 会被误判成 Shift 空按）。
+            if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+                onShiftEvent(false, pic);
+            }
             *pfEaten = FALSE;  // 修饰键始终放行
             return S_OK;
         }
+        // 任何非 Shift 键按下都取消「Shift 空按」窗口。必须放在 Test 阶段：
+        // 原实现放在 OnKeyDown，Shift+方向键/功能键等未组词的按键不会进
+        // OnKeyDown → sinceShift_ 仍为 false → 松 Shift 时误切换中英。
+        sinceShift_ = true;
         if (enMode_) {
             *pfEaten = FALSE;  // 英文模式全放行
             return S_OK;
@@ -2075,37 +2100,48 @@ public:
                                         BOOL* pfEaten) override {
         g_lastOp = kOpKeyDown;
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            // 诊断保留：若这行出现，说明本宿主会走到 Key 阶段；跟踪已移到
+            // OnTestKeyDown/OnTestKeyUp（2026-10-31），这里不能再调
+            // onShiftEvent——否则两个阶段各计一次，shiftDown_ 失衡。
             static volatile LONG loggedDownModifier = 0;
             if (InterlockedCompareExchange(&loggedDownModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnKeyDown vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
-            onShiftEvent(false, pic);
-            *pfEaten = FALSE;  // 只跟踪不消费，Shift 组合键与按键事件完整透传给宿主
+            *pfEaten = FALSE;  // 只透传不消费，Shift 组合键与按键事件完整交给宿主
             return S_OK;
         }
-        sinceShift_ = true;  // 其他键按下：取消 Shift 空按窗口
+        sinceShift_ = true;  // 幂等兜底（正常已在 OnTestKeyDown 置位）
         *pfEaten = handleKey(wParam, pic) ? TRUE : FALSE;
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
-        (void)wParam;
+        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            static volatile LONG loggedTestUpModifier = 0;
+            if (InterlockedCompareExchange(&loggedTestUpModifier, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "modifier in OnTestKeyUp vk=0x%02lX\n",
+                           static_cast<unsigned long>(wParam));
+            }
+            // 与 OnTestKeyDown 对称：Key 阶段收不到修饰键时，这里也收不到；
+            // 跟踪必须放在 Test 阶段（见 OnTestKeyDown 注释）。
+            onShiftEvent(true, pic);
+        }
         *pfEaten = FALSE;  // KeyUp 一律不消费，保证宿主应用状态机完整，绝不导致宿主丢键或键盘卡死
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            // 诊断保留；跟踪在 OnTestKeyUp（见 OnKeyDown 注释，避免双计）。
             static volatile LONG loggedUpModifier = 0;
             if (InterlockedCompareExchange(&loggedUpModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnKeyUp vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
-            onShiftEvent(true, pic);
-            *pfEaten = FALSE;  // 只跟踪不消费
+            *pfEaten = FALSE;  // 只透传不消费
             return S_OK;
         }
         *pfEaten = FALSE;

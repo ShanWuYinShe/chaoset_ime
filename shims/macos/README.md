@@ -168,6 +168,8 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 		<string>/Users/you/Library/Application Support/chaoset/dict.tsv</string>
 		<string>-userdict</string>
 		<string>/Users/you/Library/Application Support/chaoset/userdict.json</string>
+		<string>-log</string>
+		<string>/Users/you/Library/Application Support/chaoset/chaosetd.log</string>
 	</array>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
@@ -178,6 +180,11 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 ```sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 ```
+
+`-log` 让 launchd 下的 daemon 日志落到
+`~/Library/Application Support/chaoset/chaosetd.log`（2026-10-31 补；此前
+launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」等信息看不到）。
+真机排障先跑 `chaosetd -version` 确认构建，再对照该日志。
 
 ## 卸载
 

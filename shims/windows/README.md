@@ -78,6 +78,23 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 > `make package-windows` 产出的是可直接分发的 zip，内含
 > `dict.tsv`（14 万条常用词库）、`install.bat`、DLL 与三个 exe。
 
+## 命令行工具
+
+Windows 上 daemon 走 TCP 回环（127.0.0.1:7949），命令行工具必须用 `-tcp`
+（Unix 套接字形态不存在）；`-version` 打印构建信息里的提交号/构建时间，
+**真机排障第一步先跑它确认装的是新构建**（2026-10-31 新增）：
+
+```bat
+REM 确认当前安装/解包的二进制是不是最新提交
+chaosetd.exe -version
+chaoset-cli.exe -version
+
+REM 终端测试台连 daemon（先确保 daemon 已启动）
+chaoset-cli.exe -tcp 127.0.0.1:7949
+```
+
+> 从源码构建的 `chaoset-userdict.exe` 同样支持 `-tcp 127.0.0.1:7949 stats|clear|export`。
+
 | 功能特性 | 状态 |
 | :--- | :--- |
 | 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
@@ -85,11 +102,12 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 | 候选窗布局单位（2026-10-30）：全部 pt 口径 `MulDiv(v,dpi,72)`，与 macOS 1:1（间距/键帽/圆角/最大宽此前是 px@96 的 0.75 倍；96/120/144/192 dpi 像素表见 win32.cpp `pt()` 注释） | 已实现（编译级） |
 | 描边线宽（2026-10-30 补）：面板/键帽/分隔线/Toast 边框改为 pt 化 `max(1,MulDiv(1,dpi,72))`，与 mac 1pt 对齐（此前固定 1 设备像素，125%/150% 缩放下比 mac 细 33%–40%） | 已实现（编译级） |
 | 鼠标点选候选（2026-10-30）：与数字键/空格同路径——先 selectPrefix 渐进上屏、失败才整句 select；此前直接 select，长串下点候选会清空整串拼音 | 已实现（编译级） |
+| 主题切换重绘（2026-10-31）：`WM_SETTINGCHANGE`/`WM_THEMECHANGED` 立即重绘候选窗与提示条，不再保持旧配色直到下次输入 | 已实现（编译级） |
 | 模式提示 Toast：光标行下方 6pt（与候选窗同锚点）+ WS_EX_TRANSPARENT 点击穿透（mac ignoresMouseEvents 对应） | 已实现（编译级，待真机确认观感） |
 | 光标跟随与屏幕边缘碰撞反弹（GetTextExt -> GetGUIThreadInfo -> GetCursorPos） | 已实现（编译级） |
 | 后台服务完全静默（GUI Subsystem，零黑框，零控制台窗口常驻） | 已实现（编译级） |
 | `-` / `=` / `[` / `]` / PageUp / PageDown 候选翻页 | 已实现（核心行为级） |
-| Shift 空按切换中英（英文模式全放行；已确认段先落盘）。**注意**：跟踪写在 OnKeyDown/OnKeyUp，按 TSF 两阶段模型可能不可达，见「已知限制」 | 已实现（编译级，待真机确认） |
+| Shift 空按切换中英（英文模式全放行；已确认段先落盘）。2026-10-31 跟踪移到 TSF Test 阶段（OnTestKeyDown/OnTestKeyUp），「非 Shift 键取消空按窗口」同步移入；见「已知限制」 | 已实现（编译级，待真机确认） |
 | Shift+空格切换全角/半角标点（**仅组词态可切**；联想态=选第一个联想词，不切全半角；GetKeyState 查 Shift 状态） | 已实现（编译级） |
 | 已确认段（渐进上屏）收尾（2026-10-30）：Alt/Win 透传、Shift 切中英、空格无候选、翻页通信失败都先落盘/拼接确认段再收尾（与 mac 语义一致，此前会丢已确认的字） | 已实现（编译级） |
 | 双拼 mspy `;` 键（2026-10-30）：`Comp.shuangpin` 下发方案名，双拼模式把 `;` 路由到 `input` 并上屏 `committed`（`m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 | 已实现（编译级） |
@@ -107,7 +125,10 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 
 ## 排障日志（2026-10-29 起）
 
-DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
+DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
+
+> 真机排障第一步（2026-10-31 教训）：`chaosetd.exe -version` / `chaoset-cli.exe
+> -version` 打印提交号与构建时间，先确认装的是不是新构建，再看日志。
 
 - `%LOCALAPPDATA%\Chaoset\tsf.log`：TIP 生命周期（宿主进程名、AppContainer 标志）
   与 TSF 调用失败（`RequestEditSession` / `StartComposition` / `SetText` 的 HRESULT；
@@ -118,10 +139,11 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   `candidate suppressed (fullscreen)`（全屏免打扰命中）、
   `candidate setOwner FAILED`（owner 设置被拒）、`activeflags ... uiless=0`
   （宿主是否仍以 UILess 模式运行，修复生效后应为 0）。
-  Shift 跟踪（2026-10-31 A8）一次性诊断：`modifier in OnTestKeyDown/OnKeyDown/
-  OnKeyUp vk=...` 与 `shift toggle enMode=...`——真机按一次 Shift 后对照这四条：
-  若只有 OnTestKeyDown 出现而没有 OnKeyDown/OnKeyUp 与 shift toggle，说明 TSF
-  两阶段模型确实绕过了 OnKeyDown/OnKeyUp（见「已知限制」）。
+  Shift 跟踪一次性诊断（2026-10-31）：`modifier in OnTestKeyDown/OnTestKeyUp/
+  OnKeyDown/OnKeyUp vk=...` 与 `shift toggle enMode=...`。真机按一次 Shift 后
+  正常应看到 `OnTestKeyDown` + `OnTestKeyUp` + `shift toggle`（OnKeyDown/OnKeyUp
+  可能不出现，这正是两阶段模型的表现）；若连 OnTestKeyUp 与 toggle 都没有，
+  说明该宿主连 Test 阶段都不完整（见「已知限制」）。
 - `%LOCALAPPDATA%\Chaoset\crash.log`：宿主进程未处理异常。记录异常码、异常地址、
   故障模块 + 偏移、访问类型（读/写/执行）、调用栈与崩溃前最后一次 TSF 操作。
   记录后返回 `EXCEPTION_CONTINUE_SEARCH`，WER 与宿主自己的崩溃处理不受影响。
@@ -226,15 +248,16 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O：
   需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」。
 - **候选窗为单行布局**（macOS 为 3 行折行）：首项超宽逐字截断加…，后续候选
   放不下时不排列（数字键仍可选）。折行需重排布局，待需求。
-- **中英切换依赖 TSF 两阶段（待真机确认，高风险）**：Shift 空按跟踪写在
-  `OnKeyDown`/`OnKeyUp`，但 `OnTestKeyDown` 对修饰键恒返回 `FALSE`、
-  `OnTestKeyUp` 恒 `FALSE`。按 TSF 两阶段模型（`OnTestKeyDown` 吞键后才调
-  `OnKeyDown`），Shift 可能永远进不了跟踪函数 → 中英切换与 Shift+空格失效，
-  同时 Ctrl/Alt/Win 的清理分支也可能成死代码。若真机证实，需把修饰键跟踪移到
-  `OnTestKeyDown`/`OnTestKeyUp`（或按 GetKeyState 轮询）。
-  2026-10-31 已加一次性诊断日志（见「排障日志」）：真机按一次 Shift，若
-  `tsf.log` 只有 `modifier in OnTestKeyDown` 而没有 `OnKeyDown`/`OnKeyUp`
-  与 `shift toggle`，即确认两阶段模型绕过；这条必须优先验证。
+- **中英切换已改到 TSF Test 阶段（2026-10-31，待真机确认）**：Shift 空按跟踪
+  原写在 `OnKeyDown`/`OnKeyUp`；按 TSF 两阶段模型，`OnTestKeyDown` 返回 `FALSE`
+  的按键不会再调 `OnKeyDown`，修饰键可能永远进不了跟踪函数（中英切换失效）。
+  现移到 `OnTestKeyDown`/`OnTestKeyUp`（Test 阶段对每个按键都会调用），
+  「非 Shift 键取消空按窗口」也移入 Test 阶段——顺带修掉 Shift+方向键等
+  未组词按键松 Shift 时误切换中英的问题。诊断日志保留（见「排障日志」）：
+  真机按一次 Shift，正常应看到 `modifier in OnTestKeyDown` +
+  `modifier in OnTestKeyUp` + `shift toggle`；若仍只有 TestKeyDown 而无
+  toggle，说明该宿主连 OnTestKeyUp 都不调（罕见），需改 GetKeyState 轮询。
+  这条必须真机验证。
 - **无障碍**：未实现 WM_GETOBJECT/UIA/MSAA（macOS 有 VoiceOver 子元素），
   待 Windows 真机阶段补。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）

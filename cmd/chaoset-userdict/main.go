@@ -9,6 +9,7 @@
 //	chaoset-userdict [-socket PATH] stats
 //	chaoset-userdict [-socket PATH] clear
 //	chaoset-userdict [-socket PATH] export [-phrases] [-o FILE]
+//	chaoset-userdict [-tcp ADDR] stats|clear|export ...（Windows 壳的 TCP 形态）
 //	chaoset-userdict -userdict FILE stats|clear|export ...
 //
 // export 的 -phrases 只导出用户词组（词\t拼音\t次数 三列），
@@ -23,13 +24,32 @@ import (
 	"os"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/buildinfo"
 	"chaoset.ime/ipc"
 )
 
 func main() {
 	socket := flag.String("socket", "chaoset.sock", "chaosetd 的 Unix 套接字路径；管理操作经 daemon 生效")
+	tcpAddr := flag.String("tcp", "", "经该 TCP 地址连接 chaosetd（如 127.0.0.1:7949，Windows 壳同款）；与 -socket 二选一")
 	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
+	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.Info())
+		return
+	}
+	// 显式传入 -socket 又传 -tcp 视为用法错误；只看默认值无法区分「没传」
+	// 与「显式传了默认值」，所以用 flag.Visit 检测是否出现过。
+	socketSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "socket" {
+			socketSet = true
+		}
+	})
+	if socketSet && *tcpAddr != "" {
+		fmt.Fprintln(os.Stderr, "-socket 与 -tcp 只能二选一")
+		os.Exit(2)
+	}
 
 	// Go 的 flag 包遇到子命令即停止，export 专属旗标用 FlagSet 二次解析
 	cmd := ""
@@ -49,15 +69,17 @@ func main() {
 	case "stats", "clear":
 		// 无专属旗标
 	default:
-		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -userdict FILE] stats|clear|export [-phrases] [-o FILE]")
+		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -userdict FILE] stats|clear|export [-phrases] [-o FILE]")
 		os.Exit(2)
 	}
 
 	var err error
 	if *userPath != "" {
 		err = runLocal(*userPath, cmd, phrasesOnly, out)
+	} else if *tcpAddr != "" {
+		err = runDaemon("tcp", *tcpAddr, cmd, phrasesOnly, out)
 	} else {
-		err = runDaemon(*socket, cmd, phrasesOnly, out)
+		err = runDaemon("unix", *socket, cmd, phrasesOnly, out)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -65,8 +87,9 @@ func main() {
 }
 
 // runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；清空无覆盖竞态）。
-func runDaemon(socket, cmd string, phrasesOnly bool, out string) error {
-	c, err := ipc.Dial("unix", socket)
+// network 为 "unix"（macOS/Linux）或 "tcp"（Windows 壳同款回环）。
+func runDaemon(network, address, cmd string, phrasesOnly bool, out string) error {
+	c, err := ipc.Dial(network, address)
 	if err != nil {
 		return fmt.Errorf("连接 daemon 失败（daemon 未运行可改用 -userdict 本地模式）: %w", err)
 	}

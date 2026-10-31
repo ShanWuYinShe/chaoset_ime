@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/internal/buildinfo"
 	"chaoset.ime/ipc"
 )
 
@@ -37,7 +38,12 @@ func main() {
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
 	trad := flag.Bool("traditional", false, "候选输出繁体（零错误单字映射，见 engine/s2t.go）")
 	shuangpin := flag.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）/ flypy（小鹤）；空关闭（键位表见 engine/double_pinyin.go）")
+	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出，真机排障先确认装的是不是新构建")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.Info())
+		return
+	}
 
 	// 降低 GC 频率，削掉输入路径上的停顿尖峰。
 	//
@@ -126,7 +132,7 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("清理旧套接字失败: %w", err)
 		}
-		ln, err = net.Listen("unix", socket)
+		ln, err = listenUnix(socket)
 		if err != nil {
 			return fmt.Errorf("监听 %s 失败: %w", socket, err)
 		}
@@ -209,4 +215,23 @@ func run(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, tr
 		}
 		return err
 	}
+}
+
+// listenUnix 监听 Unix 套接字并收紧文件权限。
+//
+// 套接字文件权限默认由 umask 决定（常见 0755）——同机其它用户可以直接连接
+// daemon 收发组词/上屏数据，等于键盘输入被旁听。这里显式 chmod 0600，只允许
+// 当前用户连接（2026-10-31 审计 P2：套接字权限此前未收紧）。
+//
+// chmod 失败不阻断启动（个别文件系统不支持/权限模型不同），只记警告；
+// 连接本身仍由 daemon 的协议处理，不影响功能。
+func listenUnix(path string) (net.Listener, error) {
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		log.Printf("警告: 设置套接字权限失败（%s）: %v", path, err)
+	}
+	return ln, nil
 }

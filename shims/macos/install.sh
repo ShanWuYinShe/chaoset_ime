@@ -214,6 +214,8 @@ if [ -x build/chaosetd ]; then
 		<string>$SUPPORT/dict.tsv</string>
 		<string>-userdict</string>
 		<string>$SUPPORT/userdict.json</string>
+		<string>-log</string>
+		<string>$SUPPORT/chaosetd.log</string>
 	</array>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>

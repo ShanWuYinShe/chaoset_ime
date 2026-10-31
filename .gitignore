@@ -14,8 +14,13 @@ shims/linux/build/
 
 # 运行产物
 *.sock
+# daemon 单实例 flock 锁文件（<socket>.lock）与损坏用户词典备份
+# （userdict.json.corrupt-<时间戳>）。2026-10-31 审计 P2：此前未忽略，
+# 误在仓库根跑 daemon/测试后会以未跟踪文件出现在 git status。
+*.sock.lock
 chaoset-userdict.json
 chaoset-userdict.json.tmp
+chaoset-userdict.json.corrupt-*
 
 # 中间产物与 worktree
 .worktrees/
