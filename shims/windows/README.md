@@ -19,7 +19,8 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 - **真机验证（2026-10-30/31，Windows 11）**：开始菜单/搜索框候选窗恢复显示
   （owner 缺失 + UILess 类别误声明 + 安装器杀错进程三处修复，v0.2.17 实机
   确认）；记事本/浏览器/终端等常规宿主正常。游戏/全屏、UWP/AppContainer 细节、
-  多会话（RDP/快切）、无障碍与 per-monitor DPI 仍待验（见「已知限制」）。
+  多会话（RDP/快切）、无障碍仍待验；per-monitor DPI 与设置窗深色已做编译级实现
+  （2026-10-31），需真机验收（见「已知限制」）。
 - **CI 构建（2026-10-31 新增）**：`ci.yml` 的 `windows-build` job 每次 push/PR
   都跑 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 编译安装脚本 +
   ZIP 内容自检；不再只在打 tag 的 release 流程里编译 C++/NSIS。
@@ -212,8 +213,12 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   托盘入口打开」与代码不符，2026-10-30 修正）。设置项存
   `HKCU\\Software\\Chaoset`（`Associate` DWORD），每次进入联想前重读、即时生效。
 - **设置窗口视觉**：380×330pt、13pt 标签 / 11pt 说明（与 macOS SettingsWindow
-  对齐；2026-10-31 增加「学习数据」区后由 380×190 调高）；但窗口仍为固定浅色（未接 DWM 深色与自绘
-  语义色），系统深色模式下与 macOS 不一致——已知差异，需真机验证后再做。
+  对齐；2026-10-31 增加「学习数据」区后由 380×190 调高）。**跟随系统深浅**：
+  DWM 深色标题栏（动态加载 dwmapi，属性 20/19）+ 自绘背景/文字/复选框/按钮，
+  `WM_SETTINGCHANGE`/`WM_THEMECHANGED` 即时重绘；分组标题改为加粗 Static
+  （与 mac 的 bold label 同构，避免 GroupBox 在深色下留下浅色边框）。
+  **per-monitor DPI**：按设置窗所在显示器 DPI 布局，`WM_DPICHANGED` 重排。
+  以上为编译级实现，**需真机验收**。
 
 ## 已知限制
 
@@ -243,10 +248,10 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
     行为，不是本壳缺陷；游戏前请切英文模式（Shift 空按或 Win+Space，Shift
     切换本身待真机确认）。
 
-- **候选窗 DPI**：`getDpi()` 用 `GetDeviceCaps(GetDC(NULL), LOGPIXELSY)`（主显示器
-  DPI），无 `WM_DPICHANGED`——混合 DPI 多屏时落到不同缩放的副屏会按主屏比例
-  布局。正确改造（`GetDpiForWindow`/`GetDpiForMonitor` + `WM_DPICHANGED`）
-  需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」。
+- **候选窗 DPI（2026-10-31 已改，待真机验收）**：`layoutAndPosition()` 改用
+  `dpiForPoint(targetPos_)`（动态加载 shcore!GetDpiForMonitor）按锚点所在显示器
+  布局，`onPaint` 复用缓存的 `layoutDpi_`；`WM_DPICHANGED` 重新布局+重绘。
+  Toast 同改（按提示位置取 DPI）。混合 DPI 多屏仍需真机验证。
 - **候选窗为单行布局**（macOS 为 3 行折行）：首项超宽逐字截断加…，后续候选
   放不下时不排列（数字键仍可选）。折行需重排布局，待需求。
 - **中英切换已改到 TSF Test 阶段（2026-10-31，待真机确认）**：Shift 空按跟踪

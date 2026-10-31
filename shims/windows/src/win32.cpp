@@ -491,13 +491,11 @@ std::wstring windowClassName(const wchar_t* base, HINSTANCE inst) {
 //
 // 候选窗 / 模式提示 / 设置窗口共用。MulDiv(pt, dpi, 72) 即 pt→设备像素。
 //
-// 已知限制（2026-10-30 三端一致性审计 A8，需 Windows 真机验证后再改）：
-// GetDeviceCaps(GetDC(NULL), LOGPIXELSY) 返回的是**主显示器** DPI。Per-Monitor
-// DPI aware 进程里，候选窗落到不同缩放的副屏时会按主屏比例布局（尺寸/字号
-// 偏差）；也没有处理 WM_DPICHANGED（窗口跨屏或用户改缩放后不重排）。
-// 正确做法 GetDpiForWindow(hwnd) / GetDpiForMonitor(MonitorFromPoint)，并在
-// WM_DPICHANGED 里重新 layoutAndPosition；改动面涉及候选窗/Toast/设置窗三处
-// 且无真机可验证，故列入 docs/ui-parity.md「已知功能差异」，不在此做未验证修改。
+// 2026-10-31：per-monitor DPI 已接入（候选窗 / Toast / 设置窗口）：
+//   - dpiForPoint：动态加载 shcore!GetDpiForMonitor，按锚点所在显示器取 DPI；
+//   - 三处窗口都处理 WM_DPICHANGED 重新布局/重绘（候选窗以锚点显示器为准）。
+// systemDpi() 保留为主屏/旧系统（Win8.1 之前无 shcore）兜底。
+// 仍需 Windows 真机验收混合 DPI 多屏（本机无 Windows 运行时）。
 int systemDpi() {
     HDC hdc = GetDC(nullptr);
     int dpi = 96;
@@ -506,6 +504,27 @@ int systemDpi() {
         ReleaseDC(nullptr, hdc);
     }
     return dpi;
+}
+
+// 取指定屏幕坐标所在显示器的 DPI（Win8.1+ 的 shcore!GetDpiForMonitor）。
+// 动态加载：Win7 没有 shcore.dll，缺失时退回主屏 DPI，不影响启动。
+int dpiForPoint(POINT pt) {
+    typedef HRESULT(WINAPI* GetDpiForMonitorFn)(HMONITOR, int, UINT*, UINT*);
+    static GetDpiForMonitorFn fn = []() -> GetDpiForMonitorFn {
+        HMODULE mod = LoadLibraryW(L"shcore.dll");
+        if (mod == nullptr) return nullptr;
+        // 经 void* 中转：FARPROC 与具体函数指针类型不同，直接 reinterpret_cast
+        // 会触发 -Wcast-function-type（不改编译选项）。
+        return reinterpret_cast<GetDpiForMonitorFn>(
+            reinterpret_cast<void*>(GetProcAddress(mod, "GetDpiForMonitor")));
+    }();
+    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    if (fn != nullptr && mon != nullptr) {
+        UINT x = 96, y = 96;
+        // MDT_EFFECTIVE_DPI = 0
+        if (SUCCEEDED(fn(mon, 0, &x, &y)) && x > 0) return static_cast<int>(x);
+    }
+    return systemDpi();
 }
 
 // ---- 候选窗主题配色：与 macOS CandidatePanel.swift / skin.DefaultSkinFor 像素级一致 ----
@@ -785,7 +804,10 @@ private:
         int markW = 0;
     };
 
-    static int getDpi() { return systemDpi(); }
+    // 候选窗按**锚点（光标）所在显示器**的 DPI 布局，而不是主屏 DPI：
+    // 混合 DPI 多屏下候选窗落到副屏时尺寸/字号才正确（2026-10-31）。
+    int getDpi() const { return layoutDpi_ > 0 ? layoutDpi_ : systemDpi(); }
+    int layoutDpi_ = 0;  // layoutAndPosition 时按 targetPos_ 计算并缓存，onPaint 复用
 
     // 候选窗统一以 **pt** 为布局单位：MulDiv(pt, dpi, 72)，与 macOS
     // CandidatePanel.Layout 的 pt 值 1:1（2026-10-30 三端一致性整改 A1）。
@@ -923,6 +945,13 @@ private:
                 // 布局不依赖主题，无需重新 layoutAndPosition。
                 if (self != nullptr) InvalidateRect(hwnd, nullptr, TRUE);
                 break;
+            case WM_DPICHANGED:
+                // 窗口跨屏（不同缩放）后重新布局：DPI 仍以锚点所在显示器为准。
+                if (self != nullptr) {
+                    self->layoutAndPosition();
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                break;
             case WM_NCDESTROY:
                 // 主动销毁与 owner 连带销毁的统一回收点（见 onWindowDestroyed）。
                 // 必须在 DefWindowProc 之前取 self（WM_NCDESTROY 之后 USERDATA 失效）。
@@ -933,7 +962,8 @@ private:
     }
 
     void layoutAndPosition() {
-        int dpi = getDpi();
+        const int dpi = dpiForPoint(targetPos_);
+        layoutDpi_ = dpi;
         int fontH = -MulDiv(15, dpi, 72);
         int idxFontH = -MulDiv(12, dpi, 72);
         HFONT fontNormal = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -1705,7 +1735,8 @@ public:
     void show(HINSTANCE hinst, const std::wstring& text, int x, int y) {
         if (!ensureWindow(hinst)) return;
         text_ = text;
-        dpi_ = systemDpi();
+        // 提示条跟随所在显示器的 DPI（混合 DPI 多屏）
+        dpi_ = dpiForPoint(POINT{x, y});
         measure();
         HMONITOR hMon = MonitorFromPoint(POINT{x, y}, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi{};
@@ -1845,6 +1876,17 @@ private:
                 // 同候选窗：主题切换立即重绘（提示条仅 1.2s，仍可能在显示期间
                 // 遇到切换，保持配色一致）。
                 if (self != nullptr) InvalidateRect(hwnd, nullptr, TRUE);
+                break;
+            case WM_DPICHANGED:
+                if (self != nullptr) {
+                    self->dpi_ = static_cast<int>(HIWORD(wParam));
+                    self->measure();
+                    RECT wr{};
+                    GetWindowRect(hwnd, &wr);
+                    SetWindowPos(hwnd, HWND_TOPMOST, wr.left, wr.top, self->w_, self->h_,
+                                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
                 break;
             case WM_NCDESTROY:
                 // 主动销毁与 owner 连带销毁的统一回收点（同候选窗 A1/A4）。
@@ -3543,15 +3585,198 @@ void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
 // 数据管理直接用独立的 TcpTransport + core::Session 连 daemon，与输入法
 // 主连接互不影响（daemon 支持多连接，每个连接独立组词会话）。
 //
-// 已知差异（需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」）：
-// 设置窗口仍固定浅色（COLOR_WINDOW 背景 + 硬编码次级灰文字）。macOS 用
-// 系统语义色自动跟随深色；Win32 要让标准控件随系统深色需要 DWM 深色标题栏
-// (DwmSetWindowAttribute) + 自绘 Static/GroupBox 背景与文字，改动面大且无
-// 真机无法验证，本次只做字号/几何对齐。
+// 2026-10-31 视觉对齐（编译级，需 Windows 真机验收）：
+// - 分组标题改为加粗 Static（与 macOS SettingsWindow 的 bold label 同构）；
+//   不再用 BS_GROUPBOX——Win32 分组框不跟随系统深色，深色下会留下浅色边框。
+// - 深浅色跟随系统：DWM 深色标题栏 + 自绘背景/文字/复选框/按钮；
+//   WM_SETTINGCHANGE / WM_THEMECHANGED 立即重绘。
+// - per-monitor DPI：按设置窗口所在显示器 DPI 布局，WM_DPICHANGED 重排。
 static HWND g_settingsWnd = nullptr;        // 单例句柄
+static int g_settingsDpi = 96;              // 设置窗所在显示器 DPI（per-monitor）
 static HFONT g_settingsFont = nullptr;      // 正文/标签 13pt
 static HFONT g_settingsFontBold = nullptr;  // 分组标题 13pt Bold
 static HFONT g_settingsFontHint = nullptr;  // 说明文字 11pt
+static HBRUSH g_settingsBgBrush = nullptr;  // 背景刷（主题切换时重建）
+static bool g_settingsDark = false;         // 当前系统是否深色
+static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘复选框）
+
+struct SettingsColors {
+    COLORREF bg;
+    COLORREF text;
+    COLORREF secondary;
+    COLORREF accent;
+    COLORREF border;
+};
+
+// 深浅色与 macOS SettingsWindow 的语义色对应（label / secondaryLabel / accent）。
+static SettingsColors settingsColors(bool dark) {
+    if (dark) {
+        return {RGB(0x1E, 0x1E, 0x20), RGB(0xF2, 0xF2, 0xF4), RGB(0x9E, 0x9E, 0xA6),
+                RGB(0x0A, 0x84, 0xFF), RGB(0x4A, 0x4A, 0x4F)};
+    }
+    return {RGB(0xFF, 0xFF, 0xFF), RGB(0x1D, 0x1D, 0x1F), RGB(0x6E, 0x6E, 0x73),
+            RGB(0x0A, 0x84, 0xFF), RGB(0xC8, 0xC8, 0xCC)};
+}
+
+static int settingsPt(int v) { return MulDiv(v, g_settingsDpi, 72); }
+
+static void settingsDeleteFonts() {
+    if (g_settingsFont != nullptr) { DeleteObject(g_settingsFont); g_settingsFont = nullptr; }
+    if (g_settingsFontBold != nullptr) { DeleteObject(g_settingsFontBold); g_settingsFontBold = nullptr; }
+    if (g_settingsFontHint != nullptr) { DeleteObject(g_settingsFontHint); g_settingsFontHint = nullptr; }
+}
+
+static void settingsCreateFonts() {
+    g_settingsFont = CreateFontW(-settingsPt(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    g_settingsFontBold = CreateFontW(-settingsPt(13), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    g_settingsFontHint = CreateFontW(-settingsPt(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+}
+
+// DWM 深色标题栏（Win10 1903+ 属性 20；1809 用 19）。动态加载 dwmapi：旧系统
+// 或服务器核心没有该 API，失败静默忽略（标题栏保持系统默认）。
+static void settingsApplyDarkTitleBar(HWND wnd, bool dark) {
+    typedef HRESULT(WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
+    static DwmSetWindowAttributeFn fn = []() -> DwmSetWindowAttributeFn {
+        HMODULE mod = LoadLibraryW(L"dwmapi.dll");
+        if (mod == nullptr) return nullptr;
+        return reinterpret_cast<DwmSetWindowAttributeFn>(
+            reinterpret_cast<void*>(GetProcAddress(mod, "DwmSetWindowAttribute")));
+    }();
+    if (fn == nullptr) return;
+    BOOL v = dark ? TRUE : FALSE;
+    if (FAILED(fn(wnd, 20, &v, sizeof(v)))) fn(wnd, 19, &v, sizeof(v));
+}
+
+// 主题切换：重建背景刷、标题栏、重绘所有自绘控件（候选窗/Toast 另有实现）。
+static void settingsUpdateTheme(HWND wnd) {
+    g_settingsDark = isSystemDarkTheme();
+    if (g_settingsBgBrush != nullptr) DeleteObject(g_settingsBgBrush);
+    g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+    settingsApplyDarkTitleBar(wnd, g_settingsDark);
+    for (int id : {101, 106, 107}) {
+        HWND c = GetDlgItem(wnd, id);
+        if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
+    }
+    InvalidateRect(wnd, nullptr, TRUE);
+}
+
+// 控件布局（pt 坐标；创建与 WM_DPICHANGED 共用，避免两套坐标）。
+static void settingsLayoutControls(HWND wnd) {
+    struct Item { int id, x, y, w, h; };
+    static const Item kItems[] = {
+        {100, 14, 10, 352, 20},   // 输入行为（加粗标题）
+        {101, 32, 36, 160, 24},   // 词组联想（自绘复选框）
+        {102, 32, 64, 320, 20},
+        {103, 32, 86, 320, 20},
+        {109, 14, 126, 352, 20},  // 学习数据（加粗标题）
+        {105, 32, 150, 320, 20},
+        {106, 32, 180, 130, 26},
+        {107, 172, 180, 130, 26},
+        {108, 32, 214, 320, 20},
+        {104, 32, 264, 320, 20},
+    };
+    for (const auto& it : kItems) {
+        HWND c = GetDlgItem(wnd, it.id);
+        if (c == nullptr) continue;
+        SetWindowPos(c, nullptr, settingsPt(it.x), settingsPt(it.y), settingsPt(it.w), settingsPt(it.h),
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        HFONT font = (it.id == 100 || it.id == 109)
+                         ? g_settingsFontBold
+                         : ((it.id == 102 || it.id == 103 || it.id == 104 || it.id == 108)
+                                ? g_settingsFontHint
+                                : g_settingsFont);
+        SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    }
+    // 客户区 380×330pt（与 mac 一致），保持窗口左上角不变。
+    RECT rc = {0, 0, settingsPt(380), settingsPt(330)};
+    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(wnd, GWL_EXSTYLE));
+    AdjustWindowRectEx(&rc, style, FALSE, exStyle);
+    RECT wr{};
+    GetWindowRect(wnd, &wr);
+    SetWindowPos(wnd, nullptr, wr.left, wr.top, rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void settingsApplyDpi(HWND wnd, int dpi) {
+    if (dpi <= 0) dpi = systemDpi();
+    g_settingsDpi = dpi;
+    settingsDeleteFonts();
+    settingsCreateFonts();
+    settingsLayoutControls(wnd);
+    InvalidateRect(wnd, nullptr, TRUE);
+}
+
+// 自绘按钮（深色模式下 Win32 标准按钮不跟随系统主题，故自绘）。
+static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
+    const SettingsColors c = settingsColors(g_settingsDark);
+    HDC dc = dis->hDC;
+    FillRect(dc, &dis->rcItem, g_settingsBgBrush);
+    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    RECT r = dis->rcItem;
+    const COLORREF fillColor = pressed ? c.border
+                                      : (g_settingsDark ? RGB(0x2C, 0x2C, 0x30) : RGB(0xF2, 0xF2, 0xF5));
+    HBRUSH fill = CreateSolidBrush(fillColor);
+    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(1)), c.border);
+    HGDIOBJ ob = SelectObject(dc, fill);
+    HGDIOBJ op = SelectObject(dc, pen);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, settingsPt(6), settingsPt(6));
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(fill);
+    DeleteObject(pen);
+    wchar_t text[64] = {0};
+    GetWindowTextW(dis->hwndItem, text, 64);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c.text);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_settingsFont));
+    DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, oldFont);
+    if ((dis->itemState & ODS_FOCUS) != 0) DrawFocusRect(dc, &r);
+}
+
+// 自绘复选框：14pt 圆角方框 + 勾 + 文本（深色/浅色都自绘，避免主题控件发白）。
+static void settingsDrawCheckbox(const DRAWITEMSTRUCT* dis) {
+    const SettingsColors c = settingsColors(g_settingsDark);
+    HDC dc = dis->hDC;
+    FillRect(dc, &dis->rcItem, g_settingsBgBrush);
+    const int box = settingsPt(14);
+    const int top = dis->rcItem.top + ((dis->rcItem.bottom - dis->rcItem.top) - box) / 2;
+    RECT br{dis->rcItem.left, top, dis->rcItem.left + box, top + box};
+    HBRUSH fill = CreateSolidBrush(g_settingsAssociate ? c.accent : c.bg);
+    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(1)),
+                         g_settingsAssociate ? c.accent : c.border);
+    HGDIOBJ ob = SelectObject(dc, fill);
+    HGDIOBJ op = SelectObject(dc, pen);
+    RoundRect(dc, br.left, br.top, br.right, br.bottom, settingsPt(4), settingsPt(4));
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(fill);
+    DeleteObject(pen);
+    if (g_settingsAssociate) {
+        HPEN checkPen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(2)), RGB(255, 255, 255));
+        HGDIOBJ old = SelectObject(dc, checkPen);
+        MoveToEx(dc, br.left + box * 28 / 100, br.top + box * 52 / 100, nullptr);
+        LineTo(dc, br.left + box * 44 / 100, br.top + box * 70 / 100);
+        LineTo(dc, br.left + box * 74 / 100, br.top + box * 32 / 100);
+        SelectObject(dc, old);
+        DeleteObject(checkPen);
+    }
+    RECT tr = dis->rcItem;
+    tr.left = br.right + settingsPt(8);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c.text);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_settingsFont));
+    DrawTextW(dc, L"词组联想", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, oldFont);
+    if ((dis->itemState & ODS_FOCUS) != 0) DrawFocusRect(dc, &tr);
+}
 
 // 学习数据区：统计刷新 / 清空 / 导出。全部经 IPC 连 daemon，不依赖 TIP。
 static void SettingsRefreshStats(HWND wnd) {
@@ -3634,6 +3859,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 return 0;
             }
             if (LOWORD(wParam) == 101 && HIWORD(wParam) == BN_CLICKED) {
+                // 自绘复选框：手动翻转状态（BS_OWNERDRAW 不自动切换）。
                 // 只写注册表，**不解引用 TIP**：设置窗的生命周期与 TIP 无关
                 // （TSF 随时可能 Release TIP，而窗口还开着——此前把裸
                 // ChaosetTIP* 存在 GWLP_USERDATA，TIP 释放后点复选框就是
@@ -3643,29 +3869,65 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 // 联想后，已弹出的联想候选会在**下一次按键**时自然收起
                 // （联想分支入口先退出联想），与 Linux 壳「配置下次进联想
                 // 才生效」的净效果一致，不会悬挂面板。
-                const bool on = SendMessageW(reinterpret_cast<HWND>(lParam),
-                                             BM_GETCHECK, 0, 0) == BST_CHECKED;
-                RegSetAssociate(on);
+                g_settingsAssociate = !g_settingsAssociate;
+                RegSetAssociate(g_settingsAssociate);
+                HWND chk = GetDlgItem(hwnd, 101);
+                if (chk != nullptr) InvalidateRect(chk, nullptr, TRUE);
             }
             return 0;
-        case WM_CTLCOLORSTATIC: {
-            // 说明文字 / 底部提示用次级文本灰（macOS secondaryLabel 对应）
-            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
-            if (id == 102 || id == 103 || id == 104 || id == 108) {
-                HDC dc = reinterpret_cast<HDC>(wParam);
-                SetTextColor(dc, RGB(110, 110, 115));
-                SetBkMode(dc, TRANSPARENT);
-                return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        case WM_DRAWITEM: {
+            const DRAWITEMSTRUCT* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+            if (dis != nullptr) {
+                if (dis->CtlID == 101) {
+                    settingsDrawCheckbox(dis);
+                    return TRUE;
+                }
+                if (dis->CtlID == 106 || dis->CtlID == 107) {
+                    settingsDrawButton(dis);
+                    return TRUE;
+                }
             }
             break;
         }
+        case WM_CTLCOLORSTATIC: {
+            // 说明文字/分组标题用次级文本色（macOS secondaryLabel 对应），
+            // 正文用主文本色；背景统一返回主题背景刷（深色模式必需）。
+            if (g_settingsBgBrush == nullptr) {
+                g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+            }
+            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+            const SettingsColors c = settingsColors(g_settingsDark);
+            const bool secondary = (id == 100 || id == 109 || id == 102 || id == 103 ||
+                                    id == 104 || id == 108);
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            SetTextColor(dc, secondary ? c.secondary : c.text);
+            SetBkMode(dc, TRANSPARENT);
+            return reinterpret_cast<LRESULT>(g_settingsBgBrush);
+        }
+        case WM_ERASEBKGND: {
+            if (g_settingsBgBrush == nullptr) {
+                g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+            }
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, g_settingsBgBrush);
+            return 1;
+        }
+        case WM_SETTINGCHANGE:
+        case WM_THEMECHANGED:
+            // 系统深浅色/主题切换：重建背景刷 + DWM 标题栏 + 重绘自绘控件。
+            settingsUpdateTheme(hwnd);
+            return 0;
+        case WM_DPICHANGED:
+            // 窗口跨到不同缩放的显示器：按新 DPI 重排控件与窗口尺寸。
+            settingsApplyDpi(hwnd, static_cast<int>(HIWORD(wParam)));
+            return 0;
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
-            if (g_settingsFont != nullptr) { DeleteObject(g_settingsFont); g_settingsFont = nullptr; }
-            if (g_settingsFontBold != nullptr) { DeleteObject(g_settingsFontBold); g_settingsFontBold = nullptr; }
-            if (g_settingsFontHint != nullptr) { DeleteObject(g_settingsFontHint); g_settingsFontHint = nullptr; }
+            settingsDeleteFonts();
+            if (g_settingsBgBrush != nullptr) { DeleteObject(g_settingsBgBrush); g_settingsBgBrush = nullptr; }
             g_settingsWnd = nullptr;
             InterlockedDecrement(&g_liveSettingsWindows);
             return 0;
@@ -3686,21 +3948,22 @@ void ChaosetTIP::showSettingsWindow() {
     wc.lpfnWndProc = SettingsWndProc;
     wc.hInstance = g_hInst;
     wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(static_cast<INT_PTR>(COLOR_WINDOW + 1));
+    wc.hbrBackground = nullptr;  // 自绘背景（深色模式跟随系统）
     wc.lpszClassName = cls.c_str();
     RegisterClassExW(&wc);
 
-    const int dpi = systemDpi();
-    // pt → 设备像素（与候选窗同一口径；窗口/控件坐标都按 mac 的 pt 值写）
-    auto ptPx = [dpi](int v) { return MulDiv(v, dpi, 72); };
-
-    // 居中于光标所在显示器的工作区（macOS center 同语义）
+    // per-monitor DPI：按光标（候选窗锚点）所在显示器取 DPI，副屏打开也正确。
     POINT anchor = caretPos_;
     if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
+    g_settingsDpi = dpiForPoint(anchor);
+    g_settingsDark = isSystemDarkTheme();
+    g_settingsAssociate = RegGetAssociate();
+    settingsCreateFonts();
+
+    // 居中于光标所在显示器的工作区（macOS center 同语义）
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
-    // mac SettingsWindow contentRect 380×330pt（2026-10-31 增加「学习数据」区）
-    RECT fr = {0, 0, ptPx(380), ptPx(330)};
+    RECT fr = {0, 0, settingsPt(380), settingsPt(330)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     MONITORINFO mi{};
@@ -3714,54 +3977,36 @@ void ChaosetTIP::showSettingsWindow() {
     HWND wnd = CreateWindowExW(exStyle, cls.c_str(), L"Chaoset 设置", style,
                                x, y, fr.right - fr.left, fr.bottom - fr.top,
                                nullptr, nullptr, g_hInst, nullptr);
-    if (wnd == nullptr) return;
+    if (wnd == nullptr) {
+        settingsDeleteFonts();
+        return;
+    }
     // 注意：这里**不再写 GWLP_USERDATA**（此前存的是裸 this）。设置窗的
     // 窗口过程只做 RegSetAssociate，不需要访问 TIP；不存指针就没有「TIP
     // 已释放、窗口还活着」的悬垂解引用（审计 P1-2）。
     g_settingsWnd = wnd;
     InterlockedIncrement(&g_liveSettingsWindows);
 
-    g_settingsFont = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    g_settingsFontBold = CreateFontW(-MulDiv(13, dpi, 72), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    g_settingsFontHint = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text,
-                       int cx, int cy, int cw, int ch, int id, HFONT font) {
-        HWND c = CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
-                                 ptPx(cx), ptPx(cy), ptPx(cw), ptPx(ch), wnd,
-                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
-        if (c != nullptr && font != nullptr) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        return c;
+    // 分组标题用加粗 Static（与 macOS 同构；深色下不会出现浅色 GroupBox 边框）；
+    // 复选框与按钮自绘（BS_OWNERDRAW），深色/浅色都跟随主题。
+    auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text, int id) {
+        return CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
+                               0, 0, 0, 0, wnd,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
     };
-    // 与 macOS SettingsWindow 逐项对应：分组「输入行为」→「词组联想」开关
-    // → 说明文字；分组「学习数据」→ 统计行 + 清空/导出按钮 → 说明；
-    // 底部「更多设置将在后续版本提供」。
-    // 坐标单位 pt：分组 (14,10,352,112)、开关 (32,36,160,24)、两条说明
-    // (32,64)/(32,86)；学习数据分组 (14,126,352,132)、统计 (32,150,320,20)、
-    // 按钮 (32,180)/(172,180)、说明 (32,214)；底部提示 (32,264)。
-    // 13pt 字体行高约 17-18pt，控件高度留 20-24pt，避免高 DPI 下文字被裁剪。
-    makeCtl(L"Button", BS_GROUPBOX, L"输入行为", 14, 10, 352, 112, 100, g_settingsFontBold);
-    HWND chk = makeCtl(L"Button", BS_AUTOCHECKBOX | WS_TABSTOP, L"词组联想",
-                       32, 36, 160, 24, 101, g_settingsFont);
-    SendMessageW(chk, BM_SETCHECK, RegGetAssociate() ? BST_CHECKED : BST_UNCHECKED, 0);
-    makeCtl(L"Static", 0, L"选词上屏后展示可续接的词组候选；", 32, 64, 320, 20, 102, g_settingsFontHint);
-    makeCtl(L"Static", 0, L"关闭后不再弹出联想候选。", 32, 86, 320, 20, 103, g_settingsFontHint);
+    makeCtl(L"Static", SS_LEFT, L"输入行为", 100);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"词组联想", 101);
+    makeCtl(L"Static", SS_LEFT, L"选词上屏后展示可续接的词组候选；", 102);
+    makeCtl(L"Static", SS_LEFT, L"关闭后不再弹出联想候选。", 103);
+    makeCtl(L"Static", SS_LEFT, L"学习数据", 109);
+    makeCtl(L"Static", SS_LEFT, L"读取中…", 105);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"清空学习数据…", 106);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导出学习数据…", 107);
+    makeCtl(L"Static", SS_LEFT, L"学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。", 108);
+    makeCtl(L"Static", SS_LEFT, L"更多设置将在后续版本提供", 104);
 
-    // —— 学习数据（普通用户 GUI 入口；CLI 仅高级/排障兜底）——
-    makeCtl(L"Button", BS_GROUPBOX, L"学习数据", 14, 126, 352, 132, 109, g_settingsFontBold);
-    makeCtl(L"Static", 0, L"读取中…", 32, 150, 320, 20, 105, g_settingsFont);
-    makeCtl(L"Button", BS_PUSHBUTTON | WS_TABSTOP, L"清空学习数据…",
-            32, 180, 130, 26, 106, g_settingsFont);
-    makeCtl(L"Button", BS_PUSHBUTTON | WS_TABSTOP, L"导出学习数据…",
-            172, 180, 130, 26, 107, g_settingsFont);
-    makeCtl(L"Static", 0, L"学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。",
-            32, 214, 320, 20, 108, g_settingsFontHint);
-    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 32, 264, 320, 20, 104, g_settingsFontHint);
+    settingsLayoutControls(wnd);
+    settingsUpdateTheme(wnd);
 
     HANDLE icoBig = LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
                                GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);

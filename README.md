@@ -1075,6 +1075,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         `userClear`，避免安装自检误清真实学习数据）；Windows 编译级 + core 行为
         测试；Go 侧无协议改动。
 
+- [x] 阶段 35：Windows 设置窗深色 + per-monitor DPI（2026-10-31，编译级待真机）
+      - **设置窗深色跟随系统**：DWM 深色标题栏（动态加载 dwmapi，Win10 1903+
+        属性 20、1809 回退 19）+ 自绘背景/文字/复选框/按钮；`WM_SETTINGCHANGE`/
+        `WM_THEMECHANGED` 即时重绘。分组标题从 BS_GROUPBOX 改为加粗 Static（与
+        mac 的 bold label 同构，避免 GroupBox 在深色下留下浅色边框）；复选框/
+        按钮改 BS_OWNERDRAW 自绘（标准按钮不随系统深色自动重绘）。
+      - **per-monitor DPI**：新增 `dpiForPoint`（动态加载 shcore!GetDpiForMonitor，
+        旧系统回退主屏）与三处 `WM_DPICHANGED` 处理——候选窗按光标锚点所在显示器
+        布局并缓存 `layoutDpi_` 供绘制复用；Toast 按提示位置取 DPI；设置窗按打开
+        时所在显示器布局并在跨屏时重排控件/窗口尺寸。
+      - **验证**：Windows 壳 `build.sh` 编译 + `core_test` 通过（无警告）；macOS/
+        Linux 无代码改动。真机验收点：深浅色切换即时重绘、副屏/混合 DPI 打开
+        设置窗与候选窗、跨屏拖动设置窗。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

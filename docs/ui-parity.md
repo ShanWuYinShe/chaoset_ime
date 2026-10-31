@@ -147,7 +147,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 全屏免打扰 | 无（AppKit 无对应机制） | D3D 全屏/演示模式下抑制候选窗（2026-10-31 实现）；`HKCU\Software\Chaoset\FullscreenSuppress` DWORD 缺省 1，可设 0 关闭 | 只抑制候选窗显示，不改按键/组词；无边框全屏返回 QUNS_ACCEPTS_NOTIFICATIONS 不触发（边界已记 windows README）；全屏浏览器/视频可能命中 D3D 全屏状态，可用注册表关闭 |
 | 齿轮 hover | 无 | 无 | v5 起刻意移除（用户反馈「随输入变色」观感差） |
 | 设置入口 | 齿轮 → NSSwitch 设置窗 | 齿轮 → Win32 设置窗 | Windows **没有**语言栏菜单/托盘入口（此前 README 描述有误，已修正）；唯一入口是候选栏齿轮 |
-| 设置窗视觉 | 380×330pt（2026-10-31 加学习数据区）、NSSwitch、13/11pt、跟随系统深浅 | 380×330pt、BS_AUTOCHECKBOX、13/11pt、**固定浅色** | Windows 深色需 DWM + 自绘 Static/GroupBox，无真机验证，待真机后做；mac/Linux 跟随系统 |
+| 设置窗视觉 | 380×330pt（2026-10-31 加学习数据区）、NSSwitch、13/11pt、跟随系统深浅 | 380×330pt、13/11pt、**跟随系统深浅**（2026-10-31：DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）、per-monitor DPI | Windows 深色/DPI 为编译级实现，**需真机验收**；mac/Linux 跟随系统 |
 | 学习数据管理 | 设置窗「学习数据」区：统计 / 清空（二次确认）/ 导出 TSV（2026-10-31） | 同左（2026-10-31；设置窗独立 TcpTransport 连 daemon，不持有 TIP 指针） | Linux 待（引擎在 ibus 进程内无 IPC，需引擎侧 DBus 接口）；`chaoset-userdict` CLI 仅高级/无 GUI 兜底 |
 | 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗 | **下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除 UAF） | Linux 同为下次按键生效（只写 config.json）；mac 走通知立即收起 |
@@ -155,7 +155,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | Windows TSF 两阶段 | — | Shift 空按中英切换原写在 OnKeyDown/OnKeyUp；按 TSF 两阶段模型（OnTestKeyDown 返回 FALSE 的键不再调 OnKeyDown）可能永远收不到修饰键 | **2026-10-31 已把跟踪移到 OnTestKeyDown/OnTestKeyUp**（Test 阶段对每个按键都会调用），「非 Shift 键取消空按窗口」同步移到 Test 阶段；Ctrl/Alt/Win 按下与释放同样取消空按窗口（与 mac/Linux 对齐，2026-10-31）；`tsf.log` 诊断保留（`modifier in OnTestKeyDown/OnTestKeyUp/OnKeyDown/OnKeyUp`、`shift toggle`）。**仍需 Windows 真机确认**（若某宿主连 OnTestKeyUp 都不调，需改 GetKeyState 轮询） |
 | 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | 无 WM_GETOBJECT/UIA/MSAA（待做） | docs 旧版已列 TODO，仍未实现，需 Windows 真机 |
 | 滚轮翻页 | 未实现 | **不可行**：`WM_MOUSEWHEEL` 只发给焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，与用户「游戏不干扰鼠标」硬要求冲突 | 三端一致缺失；mac 技术上可做，但为保持三端一致暂不做（2026-10-31 复核）。ibus 面板由上游决定 |
-| Windows per-monitor DPI | 系统自动 | 取主屏 DPI（GetDeviceCaps），无 WM_DPICHANGED | 混合 DPI 多屏时副屏尺寸可能偏差。正确改造 GetDpiForWindow/GetDpiForMonitor + WM_DPICHANGED，**需 Windows 真机验证**，本次未改 |
+| Windows per-monitor DPI | 系统自动 | **已实现（2026-10-31）**：`dpiForPoint` 动态加载 shcore!GetDpiForMonitor，按锚点/窗口所在显示器取 DPI；候选窗、Toast、设置窗三处都处理 `WM_DPICHANGED` 重排 | 候选窗按光标所在显示器布局，Toast 按提示位置，设置窗按打开时所在显示器；仍**需真机验收混合 DPI 多屏**（本机无 Windows 运行时） |
 | Linux 学习标记 | — | — | 平台机制不适用（见上） |
 | 按键边角（ForwardDelete 等） | 见下 | 见下 | 三端主矩阵一致；以下边角差异按实际行为记录，未在本次改行为（避免无用户需求的行为变更） |
 
@@ -163,6 +163,10 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第六轮（2026-10-31，`feat/win-settings-dark-dpi`）：Windows 设置窗深色跟随系统
+（DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）+ 三处 per-monitor DPI
+（候选窗/Toast/设置窗，`dpiForPoint` 动态加载 shcore + `WM_DPICHANGED`）。
 
 第五轮（2026-10-31，`fix/halfwidth-parity`）：双拼 `;` 标点宽度瞬态修复——`input`
 请求新增可选 `half` 字段，三端壳每次按键下发全/半角状态，引擎先同步再处理
