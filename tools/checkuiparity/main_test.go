@@ -126,9 +126,9 @@ func TestCheckImportSafety(t *testing.T) {
 		t.Fatalf("真实导入实现未通过安全契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
 
-	mutated := strings.Replace(string(winText), "MOVEFILE_REPLACE_EXISTING", "MOVEFILE_NONE", 1)
+	mutated := strings.ReplaceAll(string(winText), "-backup", "-nobackup")
 	if mutated == string(winText) {
-		t.Fatal("变异未生效：Windows 源码里找不到 MOVEFILE_REPLACE_EXISTING")
+		t.Fatal("变异未生效：Windows 源码里找不到 -backup")
 	}
 	problems = nil
 	checkImportSafety(fstest.MapFS{
@@ -137,12 +137,12 @@ func TestCheckImportSafety(t *testing.T) {
 		linuxDictImport: &fstest.MapFile{Data: linuxText},
 		chaosetImport:   &fstest.MapFile{Data: importText},
 	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "MOVEFILE_REPLACE_EXISTING") {
-		t.Fatalf("去掉原子替换标志应被捕获，实际：%v", problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
+		t.Fatalf("Windows 去掉 -backup 应被捕获，实际：%v", problems)
 	}
 
 	// Linux 现在只调 Go 工具：去掉 -backup 参数应被捕获（备份语义不能丢）。
-	linuxMutated := strings.Replace(string(linuxText), "\"-backup\"", "\"-no-backup\"", 1)
+	linuxMutated := strings.Replace(string(linuxText), "\"-backup\"", "\"-nobackup\"", 1)
 	if linuxMutated == string(linuxText) {
 		t.Fatal("变异未生效：Linux 导入模块里找不到 \"-backup\"")
 	}

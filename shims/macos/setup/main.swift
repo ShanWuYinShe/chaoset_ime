@@ -96,65 +96,32 @@ func disableLegacyModes() {
     }
 }
 
-// ---- 词库导入：种子 + 现用 + 用户所选 → 备份 → 原子替换 ----
+// ---- 词库导入：壳只选文件/传路径；合并、备份、原子替换全部交给 Go 工具 ----
+//
+// 2026-11-01 用户要求：工具逻辑用 Go，不在 shims 里重复实现。这里只调用
+// `chaoset-import -o dict.tsv -seed <随包种子> -backup <所选文件...>`：
+// 工具负责 seed/现用词库/所选文件的合并、旧词库备份与原子替换；壳检查退出码
+// 后重启 daemon。
 func importDictionaries(files: [String], support: String, importer: String, seed: String,
                         restart: Bool = true) -> String {
     let fm = FileManager.default
     guard !files.isEmpty else { return "没有选择词库文件。" }
     for f in files where !fm.fileExists(atPath: f) { return "找不到文件：\(f)" }
+    guard fm.fileExists(atPath: seed) else { return "随包缺少种子词库。" }
     try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
     let dictPath = support + "/dict.tsv"
-    let tmp = NSTemporaryDirectory() + "chaoset-import-\(UUID().uuidString)"
-    try? fm.createDirectory(atPath: tmp, withIntermediateDirectories: true)
-    defer { try? fm.removeItem(atPath: tmp) }
 
-    var log = ""
-    let base = tmp + "/base.tsv"
-    if fm.fileExists(atPath: dictPath) {
-        let r = runTool(importer, ["-o", base, seed, dictPath])
-        log += r.output
-    } else if fm.fileExists(atPath: seed) {
-        try? fm.copyItem(atPath: seed, toPath: base)
-    } else {
-        return "随包缺少种子词库。"
+    // 必须检查导入器的**退出码**：导入器对非法音节行会报错退出，不能只看
+    // 产物文件存在（2026-10-26 审查发现的教训）。
+    let r = runTool(importer, ["-o", dictPath, "-seed", seed, "-backup"] + files)
+    guard r.status == 0 else {
+        return "合并词库失败（导入器退出码 \(r.status)）：\n" + r.output
     }
-    let merged = tmp + "/merged.tsv"
-    let r2 = runTool(importer, ["-o", merged, base] + files)
-    log += r2.output
-    // 必须检查导入器的**退出码**，不能只看产物文件在不在。
-    // 导入器对非法音节行会报错退出，但残缺产物同样会被写出来——
-    // 只看文件存在会把「部分文件解析失败」当成成功，装进不完整词库
-    //（2026-10-26 审查发现）。
-    guard r2.status == 0 else {
-        return "合并词库失败（导入器退出码 \(r2.status)）：\n" + log
-    }
-    guard fm.fileExists(atPath: merged) else { return "合并失败：\n" + log }
-
-    if fm.fileExists(atPath: dictPath) {
-        let bak = dictPath + ".bak." + stamp()
-        try? fm.copyItem(atPath: dictPath, toPath: bak)
-        log += "旧词库已备份：\(bak)\n"
-    }
-    // 原子替换：绝不允许出现「旧词库已删、新词库没到位」的中间态。
-    //
-    // 2026-10-26 审查发现：此前是 removeItem(dictPath) 然后 moveItem——
-    // 若 move 失败（跨卷、权限、磁盘满），用户就彻底失去词库（输入法打不出字）。
-    // FileManager.replaceItemAt 在同一卷上是原子的，且自带旧文件处理。
-    let staging = dictPath + ".tmp"
-    do {
-        try? fm.removeItem(atPath: staging)
-        try fm.copyItem(atPath: merged, toPath: staging)
-        if fm.fileExists(atPath: dictPath) {
-            _ = try fm.replaceItemAt(URL(fileURLWithPath: dictPath),
-                                     withItemAt: URL(fileURLWithPath: staging))
-        } else {
-            try fm.moveItem(atPath: staging, toPath: dictPath)
-        }
-    } catch {
-        try? fm.removeItem(atPath: staging)
-        return "写入词库失败（旧词库保持不变）：\(error)"
+    guard fm.fileExists(atPath: dictPath) else {
+        return "合并失败：导入器未生成 \(dictPath)\n" + r.output
     }
 
+    var log = r.output
     let lines = (try? String(contentsOfFile: dictPath, encoding: .utf8))?.split(separator: "\n").count ?? 0
     log += "词库已更新：\(dictPath)（\(lines) 行）\n"
     if restart {

@@ -1696,6 +1696,23 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaoset-import`、Python 单测、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 78：mac/Windows 词库导入收口到 Go 工具（2026-11-01）
+      - **mac Setup.app**：删除临时目录/base/merged/`.bak.`/`replaceItemAt` 逻辑，
+        改为 `chaoset-import -o dict.tsv -seed 种子 -backup 所选文件...`，只检查
+        退出码并重启 daemon。
+      - **Windows 设置窗**：删除 `dict.tsv.import`/staging/`CopyFileW`/
+        `MoveFileExW` 备份替换，改为 `chaoset-import -o dict.tsv -backup 所选文件`；
+        只检查退出码 + `import.log`。
+      - **守卫**：checkuiparity「词库导入安全」组改为断言三端壳都调用 Go 工具
+        （mac `-seed`/`-backup`，Windows/Linux `-backup`）、检查退出码，且 mac 不得
+        再出现 `replaceItemAt`、Windows 不得再出现 `MoveFileExW`/
+        `MOVEFILE_REPLACE_EXISTING`；Go 工具保留 seed/backup/backupFile/
+        `os.Rename` 断言。
+      - **文档**：AGENTS 迁移进度、ui-parity 词库导入行/机器检查同步。
+      - **验证**：`./shims/macos/build.sh`、`./shims/windows/build.sh`（mingw 编译级）
+        通过；`go test ./tools/checkuiparity`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

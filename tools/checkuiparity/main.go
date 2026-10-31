@@ -377,25 +377,27 @@ func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
 //  2. 必须先备份旧词库，再原子替换，不能 remove+move；
 //  3. 失败要留下可排查的日志（Windows import.log / mac 返回 log 文本）；
 //  4. 文件合并/备份/原子替换属于工具逻辑，必须由 Go `chaoset-import` 实现；
-//     Linux 壳只调用工具（-backup），不再在 Python 里重复 temp/copy/replace。
+//     三端壳只调用工具（-seed/-backup），不再自己 temp/copy/replace。
 //
 // 这里锁住实现关键片段，防止重构时把安全流程删掉。
 func checkImportSafety(fsys fs.FS, problems *[]string) {
 	const group = "词库导入安全"
-	// mac Setup.app：退出码检查 + 备份 + FileManager.replaceItemAt 原子替换。
+	// mac Setup.app（2026-11-01 起）：只调 Go 工具，退出码检查 + seed/backup 参数。
 	checkContains(fsys, problems, group, macSetup,
-		"r2.status == 0",
-		".bak.",
-		"replaceItemAt",
+		"r.status == 0",
+		`"-seed"`,
+		`"-backup"`,
 	)
-	// Windows 设置窗：退出码检查 + 备份 + staging/MoveFileEx 原子替换 + 日志。
+	checkExcludes(fsys, problems, group, macSetup, "replaceItemAt")
+	// Windows 设置窗（2026-11-01 起）：只调 Go 工具，退出码检查 + backup 参数 +
+	// 失败日志；不再自己备份/替换。
 	checkContains(fsys, problems, group, winShell,
 		"code != 0",
-		".bak.",
-		"MoveFileExW(",
-		"MOVEFILE_REPLACE_EXISTING",
+		"-backup",
 		"import.log",
 	)
+	checkExcludes(fsys, problems, group, winShell, "MoveFileExW(",
+		"MOVEFILE_REPLACE_EXISTING")
 	// Linux 设置窗（2026-11-01 起）：只调用 Go 工具并检查退出码；合并/备份/
 	// 原子替换由 chaoset-import 负责（-o 直接指向目标 + -backup）。
 	checkContains(fsys, problems, group, linuxDictImport,

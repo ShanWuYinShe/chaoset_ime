@@ -7,7 +7,7 @@
 ## 架构要点
 
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。该约束由 `engine/purity_test.go` 机器守卫：只允许标准库 import、禁止 `//go:build` 构建标签 / CGO / 平台文件（`*_windows.go` 等），违反即 `go test ./...` 红。
-- **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`。当前迁移进度：Linux 词库导入已委托 `chaoset-import -o ... -backup`（阶段 77）；mac/Windows 壳仍在收口。
+- **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`。当前迁移进度：三端词库导入均已委托 `chaoset-import -o ... -seed ... -backup`（阶段 77–78）；IPC 传输层替换（Unix socket + Windows 命名管道）待做。
 - **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB）。macOS 走 Unix socket，Windows 走本机回环 TCP（127.0.0.1:7949）；Linux ibus 引擎进程内直调 `engine`，无 IPC 往返（daemon 仍可用于终端测试台）。
 - **候选窗为纯数据 IPC + mac/Windows 原生自绘、Linux ibus 面板（2026-10-27 起）**：daemon 只返回 Composition/Candidate 纯数据（`input`/`select` 等不变）。macOS 用 AppKit（`shims/macos/src/CandidatePanel.swift`：键帽序号、首选蓝胶囊、学习标记 `*`，浅/深两套静态 sRGB 按 appearance 选择，支持鼠标点选与 VoiceOver）；Windows 用 GDI（`win32.cpp`，同样绘制学习标记 `*`）；Linux **不重绘候选窗**，用 ibus 原生 LookupTable/Preedit 呈现（学习标记不适用理由记在 `shims/linux/README.md`）。**daemon 贴图渲染链路已删**（`renderer/` 包与 `candidateImage` IPC，2026-10-27；勿在文档或壳里引用）。
 - **视觉参数与一致性检查**：设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，**无运行时消费者**），实际渲染实现是 macOS `CandidatePanel.swift` 与 Windows `win32.cpp` 两份。Go↔macOS 布局 5 项 + macOS 参考常量（含 divider）+ 浅/深各 13 色由 `shims/macos/tests/visual-parity.sh` 逐项机器断言（故意改字号/色值必须 FAIL）；**Windows 没有运行时视觉断言**（`tools/checkuiparity` 只做静态几何/配色字段契约；另有 pt 口径、交叉编译与核心行为测试），不要把它写成「双端已验证」。改动排版参数/按键矩阵必须同步更新 `docs/ui-parity.md` 与机器断言。

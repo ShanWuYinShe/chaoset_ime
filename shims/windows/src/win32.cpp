@@ -4152,53 +4152,27 @@ static void SettingsImportDictionary(HWND wnd) {
         }
     }
     if (files.empty()) return;
-    // 4) 合并：chaoset-import -o dict.tsv.import dict.tsv 所选文件...
-    //    先删旧临时产物（导入器会把已存在的 -o 文件当底表吸收）。
-    const std::wstring merged = dataDir + L"\\dict.tsv.import";
-    const std::wstring staging = dataDir + L"\\dict.tsv.tmp";
+    // 4) 合并/备份/原子替换全部交给 Go 工具：壳只传 -o/-backup 和文件列表。
+    //    （2026-11-01 用户要求工具逻辑用 Go，不在 shims 里重复实现。）
     const std::wstring logPath = dataDir + L"\\import.log";
-    DeleteFileW(merged.c_str());
-    std::wstring cmd = settingsQuote(importer) + L" -o " + settingsQuote(merged) + L" " +
-                      settingsQuote(dictPath);
+    std::wstring cmd = settingsQuote(importer) + L" -o " + settingsQuote(dictPath) +
+                      L" -backup";
     for (const auto& f : files) cmd += L" " + settingsQuote(f);
     DWORD code = 1;
     HCURSOR oldCursor = SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32514)));  // IDC_WAIT
     const bool ran = settingsRunProcess(importer, cmd, logPath, &code);
     SetCursor(oldCursor);
-    if (!ran || code != 0 || GetFileAttributesW(merged.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    if (!ran || code != 0 || GetFileAttributesW(dictPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
         std::wstring msg = L"导入失败";
         if (ran) msg += L"（导入器退出码 " + std::to_wstring(code) + L"）";
         msg += L"。\n\n详情见：" + logPath;
         MessageBoxW(wnd, msg.c_str(), L"导入词库", MB_OK | MB_ICONERROR);
-        DeleteFileW(merged.c_str());
         return;
     }
-    // 5) 备份旧词库 → 同卷 staging + MoveFileEx 原子替换（绝不允许中间态丢词库）
-    SYSTEMTIME st{};
-    GetLocalTime(&st);
-    wchar_t stamp[32];
-    wsprintfW(stamp, L"%04d%02d%02d-%02d%02d%02d", st.wYear, st.wMonth, st.wDay,
-              st.wHour, st.wMinute, st.wSecond);
-    const std::wstring backup = dictPath + L".bak." + stamp;
-    if (!CopyFileW(dictPath.c_str(), backup.c_str(), FALSE)) {
-        MessageBoxW(wnd, L"备份旧词库失败，已取消导入（未改动词库）。", L"导入词库",
-                    MB_OK | MB_ICONERROR);
-        DeleteFileW(merged.c_str());
-        return;
-    }
-    DeleteFileW(staging.c_str());
-    if (!CopyFileW(merged.c_str(), staging.c_str(), FALSE) ||
-        !MoveFileExW(staging.c_str(), dictPath.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        MessageBoxW(wnd, L"替换词库失败，已保留旧词库。", L"导入词库", MB_OK | MB_ICONERROR);
-        DeleteFileW(staging.c_str());
-        DeleteFileW(merged.c_str());
-        return;
-    }
-    DeleteFileW(merged.c_str());
-    // 6) 重启 daemon（新词库在启动时加载）
+    // 5) 重启 daemon（新词库在启动时加载）
     const bool restarted = settingsRestartDaemon();
-    std::wstring msg = L"词库已导入。\n\n旧词库备份：" + backup;
+    std::wstring msg = L"词库已导入。\n\n旧词库已由导入器备份为 dict.tsv.bak.<时间戳>"
+                      L"（首次导入会跳过备份）。";
     msg += restarted ? L"\n\ndaemon 已重启，新词库立即生效。"
                      : L"\n\n未找到 daemon 自启动项，请重启电脑或注销后重新登录使新词库生效。";
     MessageBoxW(wnd, msg.c_str(), L"导入词库", MB_OK | MB_ICONINFORMATION);
