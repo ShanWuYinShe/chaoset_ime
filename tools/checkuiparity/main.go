@@ -73,6 +73,7 @@ const (
 	macSetup        = "shims/macos/setup/main.swift"
 	macKeyTest      = "shims/macos/tests/key_routing/main.swift"
 	winShell        = "shims/windows/src/win32.cpp"
+	winBuild        = "shims/windows/build.sh"
 	winCoreHpp      = "shims/windows/src/core.hpp"
 	linuxEngine     = "shims/linux/ibus-engine/ibus.go"
 	linuxEngineMain = "shims/linux/ibus-engine/main.go"
@@ -268,6 +269,9 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 	// 无障碍基础能力不能退化：候选窗必须处理 WM_GETOBJECT 并动态加载 UIA。
 	checkContains(fsys, problems, "候选窗几何", winShell,
 		"WM_GETOBJECT", "UiaRootObjectId", "uiautomationcore.dll")
+	// UIA 必须动态加载：构建脚本断言 DLL 没有 uiautomationcore 静态导入。
+	checkContains(fsys, problems, "候选窗几何", winBuild,
+		"uiautomationcore", "静态导入")
 	checkNumericContracts(fsys, problems, "候选窗齿轮", gearContracts)
 	checkContains(fsys, problems, "候选窗齿轮", macPanel, "color: theme.chipDigit")
 	checkContains(fsys, problems, "候选窗齿轮", winShell, "const COLORREF gearColor = theme.chipDigit;")

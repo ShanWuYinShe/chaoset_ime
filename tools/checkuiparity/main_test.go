@@ -45,9 +45,14 @@ func TestCheckCandidateWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取 Windows 壳源码失败：%v", err)
 	}
+	buildText, err := os.ReadFile("../../" + winBuild)
+	if err != nil {
+		t.Fatalf("读取 Windows 构建脚本失败：%v", err)
+	}
 	fsys := fstest.MapFS{
 		macPanel: &fstest.MapFile{Data: macText},
 		winShell: &fstest.MapFile{Data: winText},
+		winBuild: &fstest.MapFile{Data: buildText},
 	}
 	var problems []string
 	checkCandidateWindow(fsys, &problems)
@@ -63,6 +68,7 @@ func TestCheckCandidateWindow(t *testing.T) {
 	checkCandidateWindow(fstest.MapFS{
 		macPanel: &fstest.MapFile{Data: macText},
 		winShell: &fstest.MapFile{Data: []byte(mutated)},
+		winBuild: &fstest.MapFile{Data: buildText},
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "正文字号") {
 		t.Fatalf("改一端字号应被捕获，实际：%v", problems)

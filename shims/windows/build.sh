@@ -45,4 +45,13 @@ x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -E "DllRegiste
   echo "  导出: $line"
 done
 
+# 无障碍 UIA 必须动态加载（LoadLibrary/GetProcAddress），不能给 DLL 增加
+# uiautomationcore.dll 静态导入依赖：旧/精简系统没有该 DLL 时输入法仍要能跑。
+# 2026-10-31 加窗口级 UIA 宿主 provider 时立的约定，这里做构建期断言。
+if x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -qi 'DLL Name:.*uiautomationcore'; then
+  echo "错误：ChaosetIME.dll 静态导入了 uiautomationcore.dll（UIA 必须动态加载）" >&2
+  exit 1
+fi
+echo "  UIA 动态加载自检通过（无 uiautomationcore 静态导入）"
+
 echo "完成：build/ChaosetIME.dll（编译级验证）、build/core_test（行为级验证）"

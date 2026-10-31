@@ -1536,6 +1536,16 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、
         `git diff --check` 通过。
 
+- [x] 阶段 64：UIA 动态加载的构建期守卫（2026-10-31）
+      - **约定**：Windows 候选窗 UIA 宿主 provider 必须动态加载
+        `uiautomationcore.dll`，不能给 DLL 增加静态导入依赖（旧/精简系统没有
+        该 DLL 时输入法仍要能跑）。
+      - **实现**：`shims/windows/build.sh` 在交叉编译后用 `objdump -p` 断言
+        `ChaosetIME.dll` 的导入表里没有 `uiautomationcore.dll`；checkuiparity
+        「候选窗几何」组断言该构建期检查保留。
+      - **验证**：本机 `./shims/windows/build.sh` 通过，objdump 导入表确认无
+        `uiautomationcore`；`make vet`/checker 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
