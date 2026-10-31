@@ -525,6 +525,8 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "make package-linux", "Linux 安装包自检")
 	// 同理：日常 macos-build 必须跑真实打包链（zip/dmg），不能只 build。
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "make package-macos", "macOS 构建 + 安装包")
+	// equivalence.sh B 段用 bin/chaoset-import：macOS job 必须先 make build。
+	checkContains(fsys, &problems, "CI 覆盖", ciYML, "make build")
 	// 断言用例数守卫：防止有人删断言让回归测试静默变弱；并校验 expectedChecks
 	// 与实际 check( 数一致（加断言忘了同步会 FAIL）。
 	checkContains(fsys, &problems, "CI 覆盖", macKeyTest, "expectedChecks")

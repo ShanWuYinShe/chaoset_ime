@@ -188,6 +188,9 @@ jobs:
       #（与 Linux 安装包自检同一类问题，2026-10-31 补齐）。
       - name: macOS 构建 + 安装包（zip/dmg，含 universal 自检）
         run: |
+          # equivalence.sh 的 B 段走 import-dict.sh，它用 bin/chaoset-import；
+          # make package-macos 只构建 app 内副本，所以先 make build 产出 bin/。
+          make build
           chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
                    shims/macos/tests/visual-parity.sh
           make package-macos

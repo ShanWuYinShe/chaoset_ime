@@ -1482,7 +1482,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **实现**：macos-build 改为直接跑 `make package-macos`（与 release 同一条
         打包链）：构建 universal app + 全部随包工具 universal 自检 + zip（有
         hdiutil 时再出 dmg）；步骤内断言 zip 含主壳与 Setup 随包
-        `chaoset-import`。
+        `chaoset-import`。注意保留 `make build`：`equivalence.sh` 的 B 段走
+        `import-dict.sh`，用的是 `bin/chaoset-import`（首跑 CI 因漏掉它失败，
+        已修）。
       - **机器检查**：checkuiparity「CI 覆盖」组断言 ci.yml 保留
         `make package-macos` 与打包步骤名，防止被删。
       - **验证**：`make vet`/checker 通过；CI macos-build 实际执行打包步骤。
