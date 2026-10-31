@@ -2,6 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.2（2026-11-01）
+
+- **修复 release 产物版本号**：v0.3.1 的 macOS app 因 release 构建步骤
+  未显式注入 tag 版本，Info.plist 写成了 `0.0.0-dev`，用户无法判断是否更新。
+  release workflow 现在从 `github.ref_name` 注入 `VERSION`，并在构建后断言
+  ChaosetIME/ChaosetSetup 的 `CFBundleShortVersionString` 必须等于 tag；
+  DMG 命名/卷名也使用同一版本。
+
 ## v0.3.1（2026-11-01）
 
 - **macOS 安装器修复**：GUI 安装器现在自己写 daemon 的 LaunchAgent（指向

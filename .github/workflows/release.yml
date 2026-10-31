@@ -54,11 +54,25 @@ jobs:
           go-version-file: go.mod
 
       - name: 构建 Go 二进制与 macOS app
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
+          if [[ "$VERSION" == v* ]]; then
+            export VERSION="${VERSION#v}"
+          else
+            export VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          fi
           make build
           chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
                    shims/macos/tests/visual-parity.sh
           ./shims/macos/build.sh
+          # 版本号必须来自 tag，而不是 build.sh 的 fallback；release v0.3.1
+          # 曾因 tag 推导失败把 0.0.0-dev 写进 DMG，用户无法判断是否更新。
+          for app in ChaosetIME ChaosetSetup; do
+            got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+                  "shims/macos/build/$app.app/Contents/Info.plist")
+            [ "$got" = "$VERSION" ] || { echo "$app 版本 = $got，期望 $VERSION"; exit 1; }
+          done
           ./shims/macos/tests/equivalence.sh
 
       # 双端视觉一致性（Go 贴图端 vs macOS 原生端）需要 swiftc，只能在
@@ -81,8 +95,14 @@ jobs:
           done
 
       - name: 打包 DMG 与 ZIP
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          if [[ "$VERSION" == v* ]]; then
+            export VERSION="${VERSION#v}"
+          else
+            export VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          fi
           DMG=dist/Chaoset-${VERSION}.dmg
           mkdir -p dist
           (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
