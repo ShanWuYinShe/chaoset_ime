@@ -1626,6 +1626,17 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./engine`（含 purity/normalize 用例）、`make vet`/
         checker、`git diff --check` 通过。
 
+- [x] 阶段 72：engine 纯净守卫的规则自测（2026-11-01）
+      - **背景**：阶段 71 的 `engine/purity_test.go` 只对真实目录跑；守卫规则
+        本身没有测试，改坏了（例如误删第三方 import 检查）不会有人发现。
+      - **实现**：把规则抽成纯函数 `enginePurityProblems(name, src)`，真实目录
+        测试与合成源码变异测试共用；新增
+        `TestEnginePurityGuardCatchesViolations`——平台文件名 / `//go:build` /
+        `syscall` / `import "C"` / 第三方与项目内部 import 都必须被捕获，
+        干净文件不得误报。
+      - **验证**：`go test ./engine`（含 7 条变异用例）、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
