@@ -206,8 +206,8 @@ final class CandidatePanelView: NSView {
             var textW = ceil((p.text as NSString).size(withAttributes: [.font: textFont]).width)
             var boxW = p.padX * 2 + chipW + chipTextGap + textW + markW
             // 首项独超宽：单条候选宽于内容上限时会把面板撑破 720pt、甚至越出
-            // 屏幕（Windows 壳早已按「首项逐字截断 + …」处理）。mac 是多行折行，
-            // 只有「一条候选自己就超宽」这一种情况需要截断，对齐 Windows 策略。
+            // 屏幕（Windows 壳已按「单条超宽逐字截断 + …」处理）。mac 是多行
+            // 折行，只有「一条候选自己就超宽」这一种情况需要截断，对齐 Windows 策略。
             if rowFrames.isEmpty, boxW > maxContent {
                 let avail = maxContent - p.padX * 2 - chipW - chipTextGap - markW
                 let ellipsis = "…"

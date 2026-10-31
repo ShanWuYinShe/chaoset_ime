@@ -148,6 +148,7 @@ var layoutContracts = []numericContract{
 	{"齿轮区宽", `static let boxW: CGFloat = ([0-9.]+)`, `const int gearBoxW = pt\(([0-9.]+), dpi\);`},
 	{"面板最大宽度", `static let maxWidth: CGFloat = ([0-9.]+)`, `constexpr int kMaxWidthPt = ([0-9.]+);`},
 	{"最大行数", `static let maxRows = ([0-9]+)`, `constexpr int kMaxRows = ([0-9]+);`},
+	{"行距", `static let lineSpacing: CGFloat = ([0-9.]+)`, `const int lineSpacing = pt\(([0-9.]+), dpi\);`},
 }
 
 // 齿轮矢量参数（2026-10-28 用户拍板：两端同算法同几何同色）。

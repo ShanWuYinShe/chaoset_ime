@@ -1076,9 +1076,12 @@ private:
             int chipW = szIdx.cx + chipPadX * 2;
             int chipTextGap = (std::max)(pt(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
 
-            // 首项独自超宽：逐字截断加省略号（与 mac layoutRows 同策略；折行
-            // 只解决「多项组合超宽」，单条候选本身超宽仍必须截断）。
-            if (i == 0) {
+            // 任意单条候选自身超宽都要截断（不只首项）：折行只解决「多项组合
+            // 超宽」，单条 > maxContent 时换行也放不下，必须逐字截断加…。
+            // 与 mac layoutRows 的「rowFrames.isEmpty && boxW > maxContent」
+            // 等价——能超过 maxContent 的项必然独占一行。
+            const int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
+            if (itemW > maxContent) {
                 const int avail = (std::max)(
                     maxContent - padX * 2 - chipW - chipTextGap - markW, pt(20, dpi));
                 if (szTxt.cx > avail) {

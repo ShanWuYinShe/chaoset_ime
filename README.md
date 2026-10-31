@@ -1387,6 +1387,19 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         交叉编译 DLL）；`make vet`/checker 通过；`git diff --check` 通过。**像素级观感/
         点击仍需 Windows 真机验收**。
 
+- [x] 阶段 53：修正 Windows 多行折行的「非首项超宽」截断（2026-10-31）
+      - **问题**：阶段 52 的 Windows 折行只对**首项**做超宽截断；后续某项若
+        自身宽度 > maxContent（换行也放不下），`candidate_layout.hpp` 会把它的
+        布局宽钳到上限，但文本未截断 → 文本/键帽可能画到面板外。mac 的
+        `layoutRows` 实际对「独占一行且超宽」的任意项截断。
+      - **修复**：Windows 改为**任意单条**候选宽 > maxContent 时逐字截断加…
+        （能超上限的项必然独占一行，与 mac 语义等价）；同步修正 mac 源码注释
+        里「Windows 按首项截断」的过期表述。
+      - **机器检查**：checkuiparity 增加「行距」契约（mac lineSpacing=4 ↔
+        Windows `lineSpacing = pt(4, dpi)`）。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test + mingw）；
+        `make vet`/checker 通过；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

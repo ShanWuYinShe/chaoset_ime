@@ -70,7 +70,7 @@ Windows 布局参数在各 DPI 下的设备像素值（`MulDiv(pt,dpi,72)` 四�
 | 面板圆角 | panelRadius 8 | RoundRect / SetWindowRgn 直径 `pt(16)` | ✅（形状等价；Windows 无抗锯齿） |
 | 窗宽上限 | maxWidth 720（内容上限 638；常规窗宽 ≤714） | 内容上限 `pt(638)`；窗宽 = 内容 + pad×2 + 36 + 26（≤714pt） | ✅（2026-10-30 修正：原漏扣齿轮区与 pillMargin；mac 首项超长截断后同样 ≤714） |
 | 最小窗宽 | padding×2 + chevronBoxW + gearBoxW + 8 = 84 | `pad*2 + chevronBoxW + gearBoxW + pt(8)` = 84pt | ✅（2026-10-30 修正，原 120px@96=90pt） |
-| 最大行数 | maxRows 3 行折行（第 4 行起不绘制）；首项超宽截断加… | **3 行折行（2026-10-31 与 mac 同算法）**：`candidate_layout.hpp` 纯布局函数（macOS 单测数学），第 4 行起不绘制；首项超宽截断加… | ✅（机制/常量一致；像素级观感待 Windows 真机） |
+| 最大行数 | maxRows 3 行折行（第 4 行起不绘制）；**任意单条超宽**截断加… | **3 行折行（2026-10-31 与 mac 同算法）**：`candidate_layout.hpp` 纯布局函数（macOS 单测数学），第 4 行起不绘制；**任意单条超宽**截断加… | ✅（机制/常量一致；像素级观感待 Windows 真机） |
 | 光标下间距 | candidateGap 6 | `pt(6)` | ✅（2026-10-30 修正，原 4px@96=3pt） |
 | 页码/分隔线 | 见「折叠区几何」 | 同公式 pt 化 | ✅ |
 | 学习标记宽度 | fromUser 时 markW = ceil("*")+2 | `markW = szMark.cx + pt(2)`，文本后 +1pt 起画 | ✅（2026-10-30 Windows 新增） |
