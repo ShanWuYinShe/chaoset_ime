@@ -47,7 +47,9 @@ Page Up/Down 六个键都翻联想页；面板翻页箭头（ibus PageUp/PageDow
 **全/半角标点**（Shift+空格）：开关归壳本地持有（2026-10-29 起三端统一），
 切换不经 daemon 往返，状态经 SetHalfWidth 随标点请求告知引擎。
 
-**设置项**：「词组联想」在三端一致的**设置窗口**里配置（2026-10-29 起）：
+**设置项**：「词组联想」在三端一致的**设置窗口**里配置（2026-10-29 起）；
+学习数据统计/清空/导出暂未进 GTK 设置窗（引擎在 ibus 进程内、无 IPC，需引擎侧
+DBus 接口，后续；当前用 `chaoset-userdict` 高级兜底）：
 ibus-setup 选中 Chaoset 点「首选项」按钮（组件 XML `<setup>` 入口），或直接
 运行 `/usr/share/chaoset/chaoset-setup.py`（GTK3，与 macOS SettingsWindow /
 Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为」/ 词组联想开关 /

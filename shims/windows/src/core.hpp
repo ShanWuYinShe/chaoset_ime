@@ -81,6 +81,13 @@ std::string buildRequest(std::uint64_t id, const std::string& method,
 Comp parseComposition(const JsonValue& result);
 std::string parseCommitted(const JsonValue& result);
 
+// 用户学习数据统计（与 Go 侧 engine.UserStats 的 JSON 字段一致）。
+struct UserStats {
+    int words = 0;    // 静态词调频记录
+    int phrases = 0;  // 用户合成词组
+    int bigrams = 0;  // 前后词共现
+};
+
 // 会话：单连接内串行请求（输入法按键天然顺序）。
 // 传输失败时对应调用返回 ok=false 并断开，下次调用由传输层重连。
 class Session {
@@ -112,6 +119,14 @@ public:
     // 联想候选直接上屏：学习路径与 select 完全一致（调频/共现/词组进化）。
     bool associateSelect(const std::string& word, const std::vector<std::string>& sylls,
                          std::string* committed);
+
+    // 学习数据管理（设置窗口 GUI，2026-10-31）：普通用户不再需要命令行。
+    // 经同一 IPC 通道作用于 daemon（内存与磁盘一起生效，无覆盖竞态）。
+    bool userStats(UserStats* out);
+    bool userClear();
+    // 导出学习数据 TSV：daemon 单帧上限 1 MiB（2026-10-30 起分页），
+    // 这里按 offset/limit 循环拼接，重度用户的大数据也能完整导出。
+    bool userExportAll(bool phrasesOnly, std::string* out);
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);

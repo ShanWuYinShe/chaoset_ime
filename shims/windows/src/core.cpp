@@ -431,6 +431,54 @@ bool Session::associate(const std::vector<std::string>& sylls, Comp* out) {
     return true;
 }
 
+bool Session::userStats(UserStats* out) {
+    bool ok = false;
+    JsonValue result = call("userStats", "", &ok);
+    if (!ok) return false;
+    if (out != nullptr) {
+        auto num = [&result](const char* key) -> int {
+            const JsonValue* v = result.find(key);
+            return (v != nullptr && v->type == JsonValue::Type::Num) ? static_cast<int>(v->number) : 0;
+        };
+        out->words = num("words");
+        out->phrases = num("phrases");
+        out->bigrams = num("bigrams");
+    }
+    return true;
+}
+
+bool Session::userClear() {
+    bool ok = false;
+    call("userClear", "", &ok);
+    return ok;
+}
+
+bool Session::userExportAll(bool phrasesOnly, std::string* out) {
+    std::string acc;
+    int offset = 0;
+    const int limit = 2000;
+    for (int page = 0; page < 1000; ++page) {  // 防御：最多 1000 页（200 万行）
+        std::string params = std::string("{\"phrases_only\":") + (phrasesOnly ? "true" : "false") +
+                             ",\"offset\":" + std::to_string(offset) +
+                             ",\"limit\":" + std::to_string(limit) + "}";
+        bool ok = false;
+        JsonValue result = call("userExport", params, &ok);
+        if (!ok) return false;
+        std::string tsv;
+        if (!result.isString("tsv", &tsv)) tsv.clear();
+        acc += tsv;
+        int next = -1;
+        const JsonValue* nv = result.find("next");
+        if (nv != nullptr && nv->type == JsonValue::Type::Num) next = static_cast<int>(nv->number);
+        if (next < 0) {
+            if (out != nullptr) *out = std::move(acc);
+            return true;
+        }
+        offset = next;
+    }
+    return false;
+}
+
 bool Session::associateSelect(const std::string& word, const std::vector<std::string>& sylls,
                               std::string* committed) {
     bool ok = false;

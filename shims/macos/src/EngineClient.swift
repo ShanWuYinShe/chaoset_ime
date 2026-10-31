@@ -276,6 +276,43 @@ final class EngineClient {
         return result["committed"] as? String
     }
 
+    // MARK: - 学习数据管理（设置窗口 GUI，2026-10-31）
+    //
+    // 普通用户不该为了「清空学习数据 / 导出学习数据」去用命令行；macOS 设置
+    // 窗口直接经同一 IPC 通道管理（daemon 内存与磁盘一起生效，无覆盖竞态）。
+
+    /// 学习数据统计（调频词 / 用户词组 / 上下文共现条数）。
+    /// daemon 未启用用户词典或不可达时返回 nil。
+    func userStats() -> (words: Int, phrases: Int, bigrams: Int)? {
+        guard let r = call(method: "userStats", params: [:]) else { return nil }
+        return (r["words"] as? Int ?? 0,
+                r["phrases"] as? Int ?? 0,
+                r["bigrams"] as? Int ?? 0)
+    }
+
+    /// 清空全部学习数据（daemon 内存 + 磁盘一次生效）。成功返回 true。
+    func userClear() -> Bool {
+        call(method: "userClear", params: [:]) != nil
+    }
+
+    /// 导出学习数据 TSV。daemon 单帧上限 1 MiB（2026-10-30 起分页），
+    /// 这里按 offset/limit 循环拼接，重度用户的大数据也能完整导出。
+    func userExportAll(phrasesOnly: Bool = false) -> String? {
+        var out = ""
+        var offset = 0
+        let limit = 2000
+        for _ in 0..<1000 { // 防御：最多 1000 页（200 万行）
+            guard let r = call(method: "userExport",
+                               params: ["phrases_only": phrasesOnly, "offset": offset, "limit": limit]) else {
+                return nil
+            }
+            out += r["tsv"] as? String ?? ""
+            guard let next = r["next"] as? Int, next >= 0 else { return out }
+            offset = next
+        }
+        return out
+    }
+
     /// 选词上屏。**不重试**：该调用会写学习数据（调频/bigram/词组进化），
     /// 重试会让同一次上屏被记录两遍。
     func select(_ index: Int) -> String? {

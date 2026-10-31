@@ -277,6 +277,10 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 
 ## 快速开始（阶段 0 测试台）
 
+> 普通用户不需要命令行：联想开关、学习数据统计/清空/导出都在**设置窗口**
+> （候选栏右侧齿轮）。下面的 CLI 是开发测试台与高级/排障工具；
+> `chaoset-userdict` 仅作为无 GUI 环境/高级用户兜底。
+
 ```sh
 # 本地内嵌引擎模式
 go run ./cmd/chaoset-cli
@@ -1052,6 +1056,24 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         `TestDoublePinyinSemicolonHalfWidth`（壳侧路由 + 引擎状态联动）。
       - **文档**：README IPC 协议补 `half` 字段；ui-parity 双拼 `;` 行更新；
         mac/windows README 的「已知限制」改为「已修复」说明。
+
+- [x] 阶段 34：学习数据管理搬进 GUI（2026-10-31）
+      - **产品原则**：输入法面向普通用户，能走 GUI 的操作不走 CLI。学习数据
+        的统计/清空/导出此前只有 `chaoset-userdict` 命令行；现在 macOS 设置窗与
+        Windows 设置窗都内置「学习数据」区（统计行 + 清空 + 导出 TSV），经同一
+        IPC 通道作用于 daemon（内存与磁盘一次生效，无覆盖竞态）。
+      - **macOS**：`EngineClient` 新增 `userStats`/`userClear`/`userExportAll`
+        （分页拼接），`SettingsWindow.swift` 增加学习数据区（清空二次确认、导出用
+        NSSavePanel）；窗口 380×330pt。
+      - **Windows**：`core::Session` 新增同名方法，设置窗口用独立 `TcpTransport`
+        连 daemon（不持有 TIP 指针，UAF 防线不变），导出用 `GetSaveFileNameW`；
+        窗口 380×330pt 与 mac 对齐。
+      - **CLI 定位**：`chaoset-userdict` 保留为高级/排障/无 GUI 环境兜底，文档不再
+        作为普通用户路径；Linux 因引擎在 ibus 进程内、无 IPC，GUI 管理学习数据
+        需要引擎侧 DBus 接口（后续），当前仍用 CLI。
+      - **测试**：mac smoke 增加 `userStats`/`userExportAll` 只读检查（不调用
+        `userClear`，避免安装自检误清真实学习数据）；Windows 编译级 + core 行为
+        测试；Go 侧无协议改动。
 
 ## 验收范围确认（2026-09-23）
 

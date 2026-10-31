@@ -43,7 +43,14 @@ check(c3?.preedit == "xi'an", "预编辑 xi'an（实际 \(c3?.preedit ?? "nil")�
 check(c3?.candidates.first?.text == "西安", "xi'an 第一候选 西安（实际 \(c3?.candidates.first?.text ?? "nil")）")
 // 退格留在本次组词内（Reset 会清空输入，退格才对组词生效），故此处不 Reset
 
-// 5. 退格
+// 5. 学习数据只读接口（设置窗口「学习数据」区依赖；**不调用 userClear**，
+//    避免安装后自检误清真实用户的学习数据）
+let stats = client.userStats()
+check(stats != nil, "userStats 可读（设置窗口学习数据统计）")
+let exported = client.userExportAll()
+check(exported != nil, "userExport 可读（设置窗口导出学习数据）")
+
+// 6. 退格
 let c4 = client.backspace()
 check(c4?.input == "xi'a", "退格后输入 xi'a（实际 \(c4?.input ?? "nil")）")
 
@@ -52,7 +59,7 @@ let c5 = client.reset()
 check(c5?.input.isEmpty == true, "重置后输入为空")
 
 if failures == 0 {
-    print("PASS: Swift IPC 全链路 6 项检查通过")
+    print("PASS: Swift IPC 全链路 8 项检查通过")
     exit(0)
 }
 FileHandle.standardError.write(Data("FAIL: \(failures) 项未通过\n".utf8))

@@ -34,7 +34,7 @@ WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
 "$WINDRES" -I resources resources/chaoset.rc -O coff -o build/chaoset_rc.o
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static -o build/ChaosetIME.dll \
   src/win32.cpp src/core.cpp build/chaoset_rc.o \
-  -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32
+  -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
   echo "  图标资源已嵌入（.rsrc 段存在）"
 else

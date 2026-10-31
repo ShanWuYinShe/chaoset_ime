@@ -23,6 +23,7 @@
 #include <msctf.h>
 #include <objbase.h>
 #include <shellapi.h>  // SHQueryUserNotificationState（全屏免打扰，2026-10-31 A7）
+#include <commdlg.h>  // GetSaveFileNameW（设置窗口导出学习数据，2026-10-31）
 
 #include <algorithm>
 #include <cmath>
@@ -3537,6 +3538,11 @@ void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
 // mac 的 13/11pt）。窗口客户区 380×190pt（mac contentRect 同尺寸），控件
 // 坐标统一 pt 口径。
 //
+// 2026-10-31：新增「学习数据」区（统计 / 清空 / 导出）——普通用户不再需要
+// 命令行（`chaoset-userdict` 降级为高级/排障兜底）。设置窗口不持有 TIP 指针，
+// 数据管理直接用独立的 TcpTransport + core::Session 连 daemon，与输入法
+// 主连接互不影响（daemon 支持多连接，每个连接独立组词会话）。
+//
 // 已知差异（需 Windows 真机验证，见 docs/ui-parity.md「已知功能差异」）：
 // 设置窗口仍固定浅色（COLOR_WINDOW 背景 + 硬编码次级灰文字）。macOS 用
 // 系统语义色自动跟随深色；Win32 要让标准控件随系统深色需要 DWM 深色标题栏
@@ -3547,9 +3553,86 @@ static HFONT g_settingsFont = nullptr;      // 正文/标签 13pt
 static HFONT g_settingsFontBold = nullptr;  // 分组标题 13pt Bold
 static HFONT g_settingsFontHint = nullptr;  // 说明文字 11pt
 
+// 学习数据区：统计刷新 / 清空 / 导出。全部经 IPC 连 daemon，不依赖 TIP。
+static void SettingsRefreshStats(HWND wnd) {
+    HWND label = GetDlgItem(wnd, 105);
+    if (label == nullptr) return;
+    TcpTransport transport;
+    chaoset::Session session(transport);
+    chaoset::UserStats st;
+    if (!session.userStats(&st)) {
+        SetWindowTextW(label, L"daemon 未运行，无法读取学习数据");
+        return;
+    }
+    wchar_t buf[160];
+    wsprintfW(buf, L"调频词 %d 条 · 用户词组 %d 条 · 上下文 %d 条", st.words, st.phrases, st.bigrams);
+    SetWindowTextW(label, buf);
+}
+
+static void SettingsClearLearningData(HWND wnd) {
+    if (MessageBoxW(wnd,
+                    L"将删除全部调频词、用户词组与上下文共现记录（仅本机），操作不可恢复。\n\n确定清空学习数据？",
+                    L"清空学习数据", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+        return;
+    }
+    TcpTransport transport;
+    chaoset::Session session(transport);
+    if (!session.userClear()) {
+        MessageBoxW(wnd, L"清空失败：daemon 未运行，或未启用用户词典。", L"学习数据",
+                    MB_OK | MB_ICONERROR);
+        return;
+    }
+    SettingsRefreshStats(wnd);
+}
+
+static void SettingsExportLearningData(HWND wnd) {
+    wchar_t path[MAX_PATH] = L"chaoset-userdict.tsv";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = wnd;
+    ofn.lpstrFilter = L"TSV 文件 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"导出学习数据";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    ofn.lpstrDefExt = L"tsv";
+    if (!GetSaveFileNameW(&ofn)) return;
+    TcpTransport transport;
+    chaoset::Session session(transport);
+    std::string tsv;
+    if (!session.userExportAll(false, &tsv)) {
+        MessageBoxW(wnd, L"导出失败：daemon 未运行，或未启用用户词典。", L"学习数据",
+                    MB_OK | MB_ICONERROR);
+        return;
+    }
+    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) {
+        MessageBoxW(wnd, L"无法写入所选文件。", L"学习数据", MB_OK | MB_ICONERROR);
+        return;
+    }
+    DWORD written = 0;
+    const BOOL ok = tsv.empty() ? TRUE : WriteFile(f, tsv.data(),
+                                                  static_cast<DWORD>(tsv.size()), &written, nullptr);
+    CloseHandle(f);
+    if (!ok) {
+        MessageBoxW(wnd, L"写入文件失败。", L"学习数据", MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(wnd, L"学习数据已导出。", L"学习数据", MB_OK | MB_ICONINFORMATION);
+}
+
 static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_COMMAND:
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == 106) {
+                SettingsClearLearningData(hwnd);
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == 107) {
+                SettingsExportLearningData(hwnd);
+                return 0;
+            }
             if (LOWORD(wParam) == 101 && HIWORD(wParam) == BN_CLICKED) {
                 // 只写注册表，**不解引用 TIP**：设置窗的生命周期与 TIP 无关
                 // （TSF 随时可能 Release TIP，而窗口还开着——此前把裸
@@ -3568,7 +3651,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case WM_CTLCOLORSTATIC: {
             // 说明文字 / 底部提示用次级文本灰（macOS secondaryLabel 对应）
             const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
-            if (id == 102 || id == 103 || id == 104) {
+            if (id == 102 || id == 103 || id == 104 || id == 108) {
                 HDC dc = reinterpret_cast<HDC>(wParam);
                 SetTextColor(dc, RGB(110, 110, 115));
                 SetBkMode(dc, TRANSPARENT);
@@ -3616,8 +3699,8 @@ void ChaosetTIP::showSettingsWindow() {
     if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
-    // mac SettingsWindow contentRect 380×190pt
-    RECT fr = {0, 0, ptPx(380), ptPx(190)};
+    // mac SettingsWindow contentRect 380×330pt（2026-10-31 增加「学习数据」区）
+    RECT fr = {0, 0, ptPx(380), ptPx(330)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     MONITORINFO mi{};
@@ -3656,17 +3739,29 @@ void ChaosetTIP::showSettingsWindow() {
         return c;
     };
     // 与 macOS SettingsWindow 逐项对应：分组「输入行为」→「词组联想」开关
-    // → 说明文字 → 底部「更多设置将在后续版本提供」。
+    // → 说明文字；分组「学习数据」→ 统计行 + 清空/导出按钮 → 说明；
+    // 底部「更多设置将在后续版本提供」。
     // 坐标单位 pt：分组 (14,10,352,112)、开关 (32,36,160,24)、两条说明
-    // (32,64)/(32,86)、底部提示 (32,138)。13pt 字体行高约 17-18pt，
-    // 控件高度留 20-24pt，避免高 DPI 下文字被裁剪。
+    // (32,64)/(32,86)；学习数据分组 (14,126,352,132)、统计 (32,150,320,20)、
+    // 按钮 (32,180)/(172,180)、说明 (32,214)；底部提示 (32,264)。
+    // 13pt 字体行高约 17-18pt，控件高度留 20-24pt，避免高 DPI 下文字被裁剪。
     makeCtl(L"Button", BS_GROUPBOX, L"输入行为", 14, 10, 352, 112, 100, g_settingsFontBold);
     HWND chk = makeCtl(L"Button", BS_AUTOCHECKBOX | WS_TABSTOP, L"词组联想",
                        32, 36, 160, 24, 101, g_settingsFont);
     SendMessageW(chk, BM_SETCHECK, RegGetAssociate() ? BST_CHECKED : BST_UNCHECKED, 0);
     makeCtl(L"Static", 0, L"选词上屏后展示可续接的词组候选；", 32, 64, 320, 20, 102, g_settingsFontHint);
     makeCtl(L"Static", 0, L"关闭后不再弹出联想候选。", 32, 86, 320, 20, 103, g_settingsFontHint);
-    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 32, 138, 320, 20, 104, g_settingsFontHint);
+
+    // —— 学习数据（普通用户 GUI 入口；CLI 仅高级/排障兜底）——
+    makeCtl(L"Button", BS_GROUPBOX, L"学习数据", 14, 126, 352, 132, 109, g_settingsFontBold);
+    makeCtl(L"Static", 0, L"读取中…", 32, 150, 320, 20, 105, g_settingsFont);
+    makeCtl(L"Button", BS_PUSHBUTTON | WS_TABSTOP, L"清空学习数据…",
+            32, 180, 130, 26, 106, g_settingsFont);
+    makeCtl(L"Button", BS_PUSHBUTTON | WS_TABSTOP, L"导出学习数据…",
+            172, 180, 130, 26, 107, g_settingsFont);
+    makeCtl(L"Static", 0, L"学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。",
+            32, 214, 320, 20, 108, g_settingsFontHint);
+    makeCtl(L"Static", 0, L"更多设置将在后续版本提供", 32, 264, 320, 20, 104, g_settingsFontHint);
 
     HANDLE icoBig = LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
                                GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
@@ -3676,6 +3771,9 @@ void ChaosetTIP::showSettingsWindow() {
     if (icoSmall != nullptr) SendMessageW(wnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icoSmall));
 
     ShowWindow(wnd, SW_SHOWNORMAL);
+    // 窗口先显示再读统计：daemon 不可达时连接最多 20ms 超时+冷却，不能让
+    // 设置窗的首次出现被它拖慢（标签先显示「读取中…」，随后刷新）。
+    SettingsRefreshStats(wnd);
     SetForegroundWindow(wnd);
 }
 

@@ -524,6 +524,16 @@ rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
     （22×16 实心圆角 keycap + 挖空 C），五个图标键全部指向它，删除 hud 变体；
     `tests/equivalence.sh` 改为单 keycap 契约 + 五键一致断言，`AGENTS.md` 与本 README 同步。
 
+## 设置窗口（候选栏齿轮）
+
+候选栏右侧齿轮 → 「Chaoset 设置」窗口（三端同构）。2026-10-31 起包含：
+
+- **输入行为**：词组联想开关（即时生效）。
+- **学习数据**：调频词 / 用户词组 / 上下文统计；「清空学习数据…」（二次确认）、
+  「导出学习数据…」（NSSavePanel 保存 TSV）。数据经 `EngineClient` IPC 直接作用于
+  daemon（内存 + 磁盘一次生效）；普通用户无需命令行（`chaoset-userdict` 仅高级/
+  无 GUI 环境兜底）。
+
 ## 已知限制
 
 - 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；

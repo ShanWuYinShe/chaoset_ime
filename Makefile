@@ -222,12 +222,12 @@ package-windows:
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
-		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32
+		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
 	i686-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
-		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32
+		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
 	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
