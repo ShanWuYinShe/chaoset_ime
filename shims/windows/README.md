@@ -115,7 +115,7 @@ chaoset-cli.exe -tcp 127.0.0.1:7949
 | 双拼 mspy `;` 键（2026-10-30）：`Comp.shuangpin` 下发方案名，双拼模式把 `;` 路由到 `input` 并上屏 `committed`（`m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 | 已实现（编译级） |
 | 模式切换提示（中英/全半角切换时光标旁短暂 toast，约 1.2s 自动消失） | 已实现（编译级） |
 | 词组联想（选词后按上屏词音节查续接词组，复用候选窗展示；上限 30 条分页展示，数字连选/空格结束/字母退出/- = 翻页；associateSelect 学习路径与 select 一致） | 已实现（核心行为级） |
-| 候选栏设置入口（折叠区左侧齿轮 → 独立设置窗口「Chaoset 设置」：输入行为分组 + 词组联想开关 + **学习数据（统计/清空/导出 TSV，2026-10-31）** + **词库导入（GUI，2026-10-31）** + 说明文字，与 macOS SettingsWindow 同构；存 HKCU\Software\Chaoset）。**关闭联想后已显示的联想候选在下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除宿主进程 UAF；mac 仍即时收起） | 已实现（编译级；窗口交互待真机确认） |
+| 候选栏设置入口（折叠区左侧齿轮 → 独立设置窗口「Chaoset 设置」：输入行为分组 + 词组联想开关 + **学习数据（统计/清空/导出 TSV，2026-10-31）** + **词库导入（GUI，2026-10-31）** + 说明文字，与 macOS SettingsWindow 同构；存 HKCU\Software\Chaoset）。**关闭联想后已显示的联想候选立即收起（2026-10-31）**：设置窗 `PostMessage(HWND_BROADCAST, RegisterWindowMessageW("Chaoset.AssociateChanged"))` → 各宿主进程候选窗转发 TIP `clearAssociate`；设置窗仍不持有 TIP 指针，无宿主进程 UAF（与 mac 通知即时收起对齐） | 已实现（编译级；窗口交互待真机确认） |
 | 候选窗置顶层级：TOPMOST 保持——Windows 下拉菜单是系统模态 topmost popup（弹出时位于 Z 序最上并独占鼠标），候选窗 frame 重叠不会拦截菜单点击；与 macOS 端「popUpMenu 拦截菜单点击 → 降级 floating」的修复互为对照 | 已实现（编译级） |
 | Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
 | 快捷键零 daemon 往返（2026-10-29）：全/半角开关等 UI 开关归壳本地持有，状态随 punct 请求下发，daemon 只按状态产出文本；修饰键组合在 sink 内微秒级放行 | 已实现（编译级） |

@@ -29,7 +29,9 @@
 //     key_routing CI 首跑就栽在 `$ARCH）` 上，统一改用 `${VAR}`）；
 //  10. 词库导入安全流程不能退化：mac Setup.app 与 Windows 设置窗都必须保留
 //     「检查导入器退出码 / 旧词库备份 / 同卷原子替换」关键实现（只看产物文件
-//     存在会把部分解析失败当成功；直接 remove+move 会出现丢词库中间态）。
+//     存在会把部分解析失败当成功；直接 remove+move 会出现丢词库中间态）；
+//  11. 关闭联想的即时性不能退化：mac 设置窗 post 通知、Windows 设置窗跨进程广播
+//     （候选窗转发 TIP），Linux 仍为下次按键生效且必须在 ui-parity 记录。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -413,6 +415,12 @@ func Run(fsys fs.FS) []string {
 	// 4b. 词库导入安全流程（备份/原子替换/退出码检查）不能退化。
 	checkImportSafety(fsys, &problems)
 
+	// 4c. 关闭联想即时性：mac 通知立即收起；Windows 跨进程广播（候选窗转发
+	// TIP）立即收起；Linux 仍为下次按键生效（ui-parity 记录为已知差异）。
+	checkContains(fsys, &problems, "关闭联想即时性", macSettings, "chaosetAssociateDisabled")
+	checkContains(fsys, &problems, "关闭联想即时性", winShell,
+		"Chaoset.AssociateChanged", "HWND_BROADCAST", "clearAssociateFromSettings")
+	checkContains(fsys, &problems, "关闭联想即时性", uiParityDoc, "下一次按键")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "userdict_ctl.py")
 	checkContains(fsys, &problems, "打包安装", installSh, "userdict_ctl.py")
@@ -460,5 +468,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

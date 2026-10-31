@@ -1237,6 +1237,29 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./tools/checkuiparity` 通过（7 个测试）；`make vet` 通过；
         真实仓库 checkuiparity PASS；`git diff --check` 通过。
 
+- [x] 阶段 45：Windows 关闭联想「即时收起」对齐 mac（2026-10-31）
+      - **问题**：设置窗关闭词组联想后，Windows 已弹出的联想候选要等**下一次按键**
+        才收起（2026-10-30 为避免设置窗持有 TIP 裸指针造成 UAF 而改成不即时）；
+        mac 是设置窗 post 通知后立即收起，三端体验不一致。
+      - **方案对比**：① 设置窗持有 TIP 指针直接调（退回 UAF，不可行）；
+        ② TIP 定时轮询注册表（延迟/CPU 开销，且已收起的联想窗仍在）；
+        ③ **跨进程广播消息（采用）**：设置窗 `RegisterWindowMessageW` 注册
+        `Chaoset.AssociateChanged`，关闭时 `PostMessage(HWND_BROADCAST, …)`；
+        各宿主进程的候选窗收到后只查注册表，关闭则转发 TIP `clearAssociate`
+        立即收起。设置窗仍不持有 TIP 指针，无 UAF；消息 id 由字符串注册，
+        跨进程一致，候选窗与设置窗不在同一宿主也能送达。
+      - **实现**：win32.cpp 新增 `associateChangedMessage()`、候选窗 proc 消息处理
+        与 `CandidateWindow::onAssociateChanged()`、TIP `clearAssociateFromSettings()`；
+        设置窗复选框关闭时广播。
+      - **checkuiparity**：新增「关闭联想即时性」组——mac 设置窗必须有通知
+        `chaosetAssociateDisabled`、Windows 必须有 `Chaoset.AssociateChanged` /
+        `HWND_BROADCAST` / `clearAssociateFromSettings`、ui-parity 必须保留 Linux
+        「下一次按键」已知差异。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test 对真实 daemon 全过
+        + mingw 交叉编译 DLL）；`make vet`/`go test ./tools/checkuiparity` 通过；
+        真实仓库 checkuiparity PASS；`git diff --check` 通过。窗口交互（关开关→
+        联想窗立即消失）需 Windows 真机点击验收。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

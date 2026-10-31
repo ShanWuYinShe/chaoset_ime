@@ -639,6 +639,18 @@ void RegSetAssociate(bool on) {
     }
 }
 
+// 「联想开关变化」跨进程广播消息（2026-10-31）。
+//
+// 设置窗与候选窗可能在不同宿主进程（用户从 A 应用打开设置窗后切到 B 应用打字），
+// 且设置窗**不能**持有 ChaosetTIP*：TSF 随时可能 Release TIP，而设置窗还开着，
+// 裸指针就是宿主进程内 UAF（2026-10-30 三端一致性审计 P1-2）。
+// 因此用 RegisterWindowMessageW：同一字符串在整个会话内返回同一消息 id，
+// HWND_BROADCAST 可送达所有顶层窗口（含各宿主进程里的候选窗），候选窗再转发给
+// 同进程的 TIP 收起联想。与 macOS 设置窗 post 通知后立即收起对齐。
+UINT associateChangedMessage() {
+    static const UINT id = RegisterWindowMessageW(L"Chaoset.AssociateChanged");
+    return id;
+}
 bool isSystemDarkTheme() {
     HKEY hKey = nullptr;
     DWORD val = 1;
@@ -852,6 +864,10 @@ private:
         return false;
     }
 
+    // 设置窗关闭联想后的跨进程广播处理（见 associateChangedMessage）。
+    // 实现在文件后部（需要 ChaosetTIP 完整定义才能转发 clearAssociate）。
+    void onAssociateChanged();
+
     void ensureWindow(HINSTANCE hinst) {
         if (hwnd_ != nullptr) {
             if (IsWindow(hwnd_)) return;
@@ -916,6 +932,10 @@ private:
 
     static LRESULT CALLBACK CandidateWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         CandidateWindow* self = reinterpret_cast<CandidateWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (msg == associateChangedMessage()) {
+            if (self != nullptr) self->onAssociateChanged();
+            return 0;
+        }
         switch (msg) {
             case WM_MOUSEACTIVATE:
                 return MA_NOACTIVATE;
@@ -3477,6 +3497,9 @@ public:
     // 联想翻页入口（供候选窗箭头调用；实现见下方 flipAssociate）。
     void flipAssociateFromPanel(bool next);
 
+    // 设置窗关闭联想后立即收起（候选窗收到跨进程广播后转发；macOS 同语义）。
+    void clearAssociateFromSettings();
+
 private:
 
     void enterAssociate(const std::string& syllables) {
@@ -3568,6 +3591,17 @@ void CandidateWindow::onLButtonDown(int x, int y) {
 
 // 联想翻页的候选窗入口（public 转发，实现在 ChaosetTIP 私有区）。
 void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
+
+// 设置窗关闭联想：立即收起当前联想面板（候选窗收到跨进程广播后转发；
+// macOS 设置窗 post 通知后 Controller 也是立即收起）。
+void ChaosetTIP::clearAssociateFromSettings() { clearAssociate(); }
+
+// 候选窗收到「联想开关变化」广播：关闭时立即收起联想；只查注册表，
+// 不信任消息参数（消息 id 由字符串注册，跨进程一致）。
+void CandidateWindow::onAssociateChanged() {
+    if (RegGetAssociate()) return;
+    if (tip_ != nullptr) tip_->clearAssociateFromSettings();
+}
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
 //
@@ -4084,12 +4118,14 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 // ChaosetTIP* 存在 GWLP_USERDATA，TIP 释放后点复选框就是
                 // 宿主进程内 UAF，2026-10-30 三端一致性审计 P1-2）。
                 //
-                // 也不再即时 clearAssociate（那需要调用 TIP 的方法）：关闭
-                // 联想后，已弹出的联想候选会在**下一次按键**时自然收起
-                // （联想分支入口先退出联想），与 Linux 壳「配置下次进联想
-                // 才生效」的净效果一致，不会悬挂面板。
+                // 关闭联想时不再只能等下一次按键：用跨进程广播通知所有宿主
+                // 进程的候选窗立即收起（候选窗自己转发给同进程 TIP），与 macOS
+                // 设置窗通知即时收起对齐；设置窗仍不持有 TIP 指针，不引入 UAF。
                 g_settingsAssociate = !g_settingsAssociate;
                 RegSetAssociate(g_settingsAssociate);
+                if (!g_settingsAssociate) {
+                    PostMessageW(HWND_BROADCAST, associateChangedMessage(), 0, 0);
+                }
                 HWND chk = GetDlgItem(hwnd, 101);
                 if (chk != nullptr) InvalidateRect(chk, nullptr, TRUE);
             }
