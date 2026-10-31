@@ -1,13 +1,38 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"chaoset.ime/engine"
+	"chaoset.ime/ipc"
 )
+
+// TestRunDaemonTCPStats：daemon 模式的 endpoint 连接（TCP）能完成 stats 请求，
+// 覆盖 runDaemon 从 network/address 改为 ipc.Endpoint 后的路径。
+func TestRunDaemonTCPStats(t *testing.T) {
+	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
+	if err != nil {
+		t.Fatalf("加载词库失败: %v", err)
+	}
+	user, _, err := engine.NewUserDictLenient("")
+	if err != nil {
+		t.Fatalf("创建用户词典失败: %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听 TCP 失败: %v", err)
+	}
+	srv := ipc.NewServer(ln, dict, user)
+	go func() { _ = srv.Serve() }()
+	defer srv.Close()
+	if err := runDaemon(ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}, "stats", false, ""); err != nil {
+		t.Fatalf("runDaemon(TCP stats) 失败: %v", err)
+	}
+}
 
 // TestRunLocalStatsClearExport：本地模式的 stats/clear/export 全链路。
 func TestRunLocalStatsClearExport(t *testing.T) {

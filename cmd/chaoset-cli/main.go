@@ -1,7 +1,7 @@
 // chaoset-cli 是阶段 0 的终端测试台：在终端里模拟击键流程，
 // 验证引擎与 IPC 链路，不涉及任何图形界面。
-// 默认本地内嵌引擎；-socket 指定 Unix 套接字、-tcp 指定回环地址后经 IPC
-// 连接 chaosetd（Windows 壳同款 TCP 形态，Windows 上 CLI 只能走 -tcp）。
+// 默认本地内嵌引擎；-socket 指定 Unix 套接字、-tcp 指定回环地址、-pipe 走
+// Windows 命名管道（按当前用户 SID 自动命名）连接 chaosetd。
 package main
 
 import (
@@ -19,7 +19,8 @@ import (
 
 func main() {
 	socket := flag.String("socket", "", "连接该 Unix 套接字上的 chaosetd；与 -tcp 二选一，都为空则使用本地内嵌引擎")
-	tcpAddr := flag.String("tcp", "", "连接该 TCP 地址上的 chaosetd（如 127.0.0.1:7949，Windows 壳同款）；与 -socket 二选一")
+	tcpAddr := flag.String("tcp", "", "连接该 TCP 地址上的 chaosetd（如 127.0.0.1:7949，旧壳兼容）；与 -socket/-pipe 二选一")
+	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径，可多次传入（仅本地模式）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
@@ -32,14 +33,14 @@ func main() {
 		fmt.Println(buildinfo.Info())
 		return
 	}
-	if *socket != "" && *tcpAddr != "" {
-		log.Fatal("-socket 与 -tcp 只能二选一")
+	if (*socket != "" && *tcpAddr != "") || (*usePipe && (*socket != "" || *tcpAddr != "")) {
+		log.Fatal("-socket / -tcp / -pipe 只能三选一")
 	}
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
 
-	ctrl, closeFn, err := buildController(*socket, *tcpAddr, dicts, *userPath, *fuzzy, *trad, *sp)
+	ctrl, closeFn, err := buildController(*socket, *tcpAddr, *usePipe, dicts, *userPath, *fuzzy, *trad, *sp)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -151,15 +152,20 @@ func (f *repeatFlag) Set(v string) error {
 	return nil
 }
 
-func buildController(socket, tcpAddr string, dicts []string, userPath string, fuzzy bool, trad bool, sp string) (engine.Controller, func(), error) {
-	if socket != "" || tcpAddr != "" {
-		network, address := "unix", socket
-		if tcpAddr != "" {
-			// Windows 壳与 daemon 之间就是 TCP 回环（127.0.0.1:7949），
-			// Windows 上 CLI 没有 Unix 套接字可连，只能走这里。
-			network, address = "tcp", tcpAddr
+func buildController(socket, tcpAddr string, usePipe bool, dicts []string, userPath string, fuzzy bool, trad bool, sp string) (engine.Controller, func(), error) {
+	if socket != "" || tcpAddr != "" || usePipe {
+		ep := ipc.Endpoint{Network: "unix", Address: socket}
+		switch {
+		case usePipe:
+			name, err := ipc.DefaultPipeName()
+			if err != nil {
+				return nil, nil, err
+			}
+			ep = ipc.Endpoint{Network: "pipe", Address: name}
+		case tcpAddr != "":
+			ep = ipc.Endpoint{Network: "tcp", Address: tcpAddr}
 		}
-		c, err := ipc.Dial(network, address)
+		c, err := ipc.DialEndpoint(ep)
 		if err != nil {
 			return nil, nil, err
 		}

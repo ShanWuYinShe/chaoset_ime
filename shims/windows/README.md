@@ -86,18 +86,19 @@ chaosetd.exe -pipe -dict dict.tsv -userdict userdict.json -log chaosetd.log
 
 ## 命令行工具
 
-Windows 上 daemon 推荐 `-pipe`（命名管道）；命令行工具暂只支持 `-tcp`
-（`chaoset-cli`/`chaoset-userdict` 的管道接入待做），daemon 需同时用 `-tcp`
-启动才能连；`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑
-它确认装的是新构建**（2026-10-31 新增）：
+Windows 上 daemon 推荐 `-pipe`（命名管道）；`chaoset-cli` / `chaoset-userdict`
+也已支持 `-pipe`（2026-11-01），传输需与 daemon 一致（旧安装器仍 `-tcp` 时用
+`-tcp`）；`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑它
+确认装的是新构建**（2026-10-31 新增）：
 
 ```bat
 REM 确认当前安装/解包的二进制是不是最新提交
 chaosetd.exe -version
 chaoset-cli.exe -version
 
-REM 终端测试台连 daemon（先确保 daemon 已启动）
-chaoset-cli.exe -tcp 127.0.0.1:7949
+REM 终端测试台连 daemon（先确保 daemon 已启动；传输与 daemon 一致）
+chaoset-cli.exe -pipe
+REM 旧安装器/TCP 模式：chaoset-cli.exe -tcp 127.0.0.1:7949
 ```
 
 > 随包携带的 `chaoset-userdict.exe` 同样支持 `-tcp 127.0.0.1:7949 stats|clear|export`

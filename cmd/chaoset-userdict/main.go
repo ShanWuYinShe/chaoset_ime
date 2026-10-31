@@ -31,7 +31,8 @@ import (
 
 func main() {
 	socket := flag.String("socket", "chaoset.sock", "chaosetd 的 Unix 套接字路径；管理操作经 daemon 生效")
-	tcpAddr := flag.String("tcp", "", "经该 TCP 地址连接 chaosetd（如 127.0.0.1:7949，Windows 壳同款）；与 -socket 二选一")
+	tcpAddr := flag.String("tcp", "", "经该 TCP 地址连接 chaosetd（如 127.0.0.1:7949，旧壳兼容）；与 -socket/-pipe 二选一")
+	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
 	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
 	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
 	flag.Parse()
@@ -47,8 +48,8 @@ func main() {
 			socketSet = true
 		}
 	})
-	if socketSet && *tcpAddr != "" {
-		fmt.Fprintln(os.Stderr, "-socket 与 -tcp 只能二选一")
+	if (socketSet && *tcpAddr != "") || (*usePipe && (socketSet || *tcpAddr != "")) {
+		fmt.Fprintln(os.Stderr, "-socket / -tcp / -pipe 只能三选一")
 		os.Exit(2)
 	}
 
@@ -70,17 +71,25 @@ func main() {
 	case "stats", "clear":
 		// 无专属旗标
 	default:
-		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -userdict FILE] stats|clear|export [-phrases] [-o FILE]")
+		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -pipe | -userdict FILE] stats|clear|export [-phrases] [-o FILE]")
 		os.Exit(2)
 	}
 
 	var err error
 	if *userPath != "" {
 		err = runLocal(*userPath, cmd, phrasesOnly, out)
-	} else if *tcpAddr != "" {
-		err = runDaemon("tcp", *tcpAddr, cmd, phrasesOnly, out)
 	} else {
-		err = runDaemon("unix", *socket, cmd, phrasesOnly, out)
+		ep := ipc.Endpoint{Network: "unix", Address: *socket}
+		if *usePipe {
+			name, nameErr := ipc.DefaultPipeName()
+			if nameErr != nil {
+				log.Fatal(nameErr)
+			}
+			ep = ipc.Endpoint{Network: "pipe", Address: name}
+		} else if *tcpAddr != "" {
+			ep = ipc.Endpoint{Network: "tcp", Address: *tcpAddr}
+		}
+		err = runDaemon(ep, cmd, phrasesOnly, out)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -88,9 +97,9 @@ func main() {
 }
 
 // runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；清空无覆盖竞态）。
-// network 为 "unix"（macOS/Linux）或 "tcp"（Windows 壳同款回环）。
-func runDaemon(network, address, cmd string, phrasesOnly bool, out string) error {
-	c, err := ipc.Dial(network, address)
+// ep 为 unix/tcp/pipe 任一传输端点。
+func runDaemon(ep ipc.Endpoint, cmd string, phrasesOnly bool, out string) error {
+	c, err := ipc.DialEndpoint(ep)
 	if err != nil {
 		return fmt.Errorf("连接 daemon 失败（daemon 未运行可改用 -userdict 本地模式）: %w", err)
 	}

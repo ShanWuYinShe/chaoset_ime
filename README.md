@@ -289,8 +289,11 @@ go run ./cmd/chaoset-cli
 go run ./cmd/chaosetd &
 go run ./cmd/chaoset-cli --socket chaoset.sock
 
-# Windows 迁移期 TCP 形态（daemon 用 -tcp 起，CLI 也用 -tcp 连）
-# 命名管道：daemon 用 -pipe 起（DLL 自动按当前用户 SID 连；CLI 暂不支持）
+# Windows 命名管道（推荐；daemon/CLI 都按当前用户 SID 自动算管道名）
+go run ./cmd/chaosetd -pipe &
+go run ./cmd/chaoset-cli -pipe
+
+# Windows 迁移期 TCP 形态（旧安装器兼容）
 go run ./cmd/chaosetd -tcp 127.0.0.1:7949 &
 go run ./cmd/chaoset-cli -tcp 127.0.0.1:7949
 
@@ -680,11 +683,15 @@ bin/chaoset-userdict -userdict chaoset-userdict.json stats
 # 只导出学到的词组（三列 TSV），回流词库：
 bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
 bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
+
+# Windows 命名管道（daemon 以 -pipe 启动时）：
+# bin/chaoset-userdict -pipe stats
+# bin/chaoset-userdict -pipe export -o userdict-backup.tsv
 ```
 
-> **平台限制**：`chaoset-cli` / `chaoset-userdict` 目前只支持 Unix socket（macOS/Linux）
-> 或 `-tcp`；Windows 命名管道客户端（`-pipe`）尚未接入这两个 Go 工具。Windows 包里的
-> 同名 exe 若要连 daemon，需让 daemon 以 `-tcp` 启动；否则只能加 `-userdict` 走本地
+> **平台限制**：`chaoset-cli` / `chaoset-userdict` 支持 Unix socket（macOS/Linux）、
+> Windows 命名管道（`-pipe`）与迁移期 `-tcp`；Windows 包里的同名 exe 连接 daemon 时
+> 传输需与 daemon 一致（`-pipe` 或 `-tcp`）。daemon 未运行时只能加 `-userdict` 走本地
 > 文件模式（daemon 运行时会被其内存态覆盖，建议先停 daemon）。
 >
 > 导出经 IPC 分页传输（客户端自动拼接），学习数据再大也不会撞 1 MiB 单帧上限。
@@ -1761,6 +1768,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         core_test TCP 测试台 + 安装包）；命名管道运行时行为需 Windows 真机验收。
       - **文档**：shims/windows/README、根 README 传输形态、AGENTS IPC 条目同步。
       - **验证**：`./shims/windows/build.sh`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 82：Go 工具（chaoset-cli / chaoset-userdict）接入命名管道（2026-11-01）
+      - **chaoset-cli**：新增 `-pipe`，`-socket`/`-tcp`/`-pipe` 三选一；走
+        `ipc.DialEndpoint(Endpoint{pipe, DefaultPipeName()})`，Unix 上明确报
+        「命名管道仅 Windows 支持」。
+      - **chaoset-userdict**：新增 `-pipe`，daemon 模式改用 `ipc.Endpoint`；
+        本地文件模式不变；`-socket`/`-tcp`/`-pipe` 三选一。
+      - **测试**：CLI 新增 Unix `-pipe` 报错用例；userdict 新增真实 TCP daemon
+        stats 用例；Windows 目标交叉编译通过。
+      - **文档**：README CLI/userdict 示例与平台限制、shims/windows/README
+        命令行说明同步。
+      - **验证**：`go test ./cmd/chaoset-cli ./cmd/chaoset-userdict`、
+        `GOOS=windows go build` 两个工具、`make vet`/checker、
         `git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
