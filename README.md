@@ -1287,6 +1287,19 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **真机验收**：Windows/Linux 组词中按 Alt+Backspace 应回退一个音节并消费；
         非组词时仍由宿主删词。
 
+- [x] 阶段 47：Linux E2E 覆盖 Alt+Backspace/Alt+U 真实 ibus 路由（2026-10-31）
+      - **动机**：阶段 46 统一了三端 ⌥⌫ 语义，但 Linux 侧只在 Go 单测里验证引擎
+        行为；真实 ibus 是否把 Alt+Backspace 交给引擎（还是被 ibus/GTK 先拦截）
+        没有端到端覆盖——若被上游拦截，用户实际按不出来，单测全绿也没用。
+      - **新增**：`shims/linux/test-ci.sh` 在真实 ibus-daemon + 私有 session bus 下
+        增加 4 条断言：
+        - 组词 `nihao` 中 Alt+Backspace 被消费（回退一个音节），再按一次删空；
+        - 非组词态 Alt+Backspace 放行给宿主；
+        - Ctrl+Backspace 仍整段清空（与 Alt 区分）；
+        - Alt+U 放行给宿主（不得复用 Ctrl+U 清空分支）。
+      - **验证**：`bash -n shims/linux/test-ci.sh` 通过；真实 ibus 环境由 CI
+        linux-e2e job 执行（本机为 macOS，无 Linux/ibus 运行时）。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

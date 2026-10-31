@@ -13,6 +13,8 @@
 #   - 两实例交错打字，各自空格上屏正确
 #   - 中英切换（Shift 空按）互不牵连
 #   - 组词中 Page Down 被消费（翻页）
+#   - Alt+Backspace 按音节回退 / Ctrl+Backspace 整段清空 / Alt+U 放行
+#     （2026-10-31 三端统一后的真实 ibus 路由回归）
 #
 # 用法（Ubuntu，已装 ibus/dbus）：
 #   ./shims/linux/test-ci.sh
@@ -162,6 +164,46 @@ else
   exit 1
 fi
 press "$P2" 65307 0   # Esc 清空
+
+# ---- Alt+Backspace 按音节回退（三端统一，2026-10-31）----
+# ibus 里 Ctrl=4、Mod1(Alt)=8。组词 "nihao"（ni+hao）：两次 Alt+Backspace
+# 应各回退一个音节（第二次删空），第三次非组词态放行给宿主。
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65288 8)" = "1" ]; then
+  echo "PASS: 组词中 Alt+Backspace 被消费（回退一个音节）"
+else
+  echo "FAIL: 组词中 Alt+Backspace 未被消费" >&2
+  exit 1
+fi
+if [ "$(handled "$P2" 65288 8)" = "1" ]; then
+  echo "PASS: 再次 Alt+Backspace 消费（删空第二个音节）"
+else
+  echo "FAIL: 第二次 Alt+Backspace 未被消费" >&2
+  exit 1
+fi
+if [ "$(handled "$P2" 65288 8)" = "0" ]; then
+  echo "PASS: 非组词 Alt+Backspace 放行给宿主"
+else
+  echo "FAIL: 非组词 Alt+Backspace 仍被拦截" >&2
+  exit 1
+fi
+
+# Ctrl+Backspace 仍整段清空；Alt+U 是宿主快捷键必须放行（不得复用 Ctrl+U）。
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65288 4)" = "1" ]; then
+  echo "PASS: Ctrl+Backspace 整段清空被消费"
+else
+  echo "FAIL: Ctrl+Backspace 未被消费" >&2
+  exit 1
+fi
+for kv in 110 105; do press "$P2" "$kv" 0; done  # ni
+if [ "$(handled "$P2" 117 8)" = "0" ]; then
+  echo "PASS: Alt+U 放行给宿主"
+else
+  echo "FAIL: Alt+U 被输入法拦截" >&2
+  exit 1
+fi
+press "$P2" 65307 0   # Esc 清空（Alt+U 透传已 flush，保险）
 
 echo
 echo "全部 Linux 端到端检查通过"
