@@ -23,7 +23,8 @@
 //     13 个主题色字段名集合一致。**像素级渲染仍需真机**，但「常量被改一端」
 //     会在这里先 FAIL；
 //  8. CI 覆盖不退化：key_routing 回归测试必须存在且被 ci.yml 的 macos-build
-//     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）；
+//     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）；expectedChecks 必须与
+//     实际 check( 断言数一致（加/删断言忘了同步会先在这里 FAIL）；
 //  9. shell 脚本里 `$VAR` 不得紧跟非 ASCII 字符（macOS bash 3.2 在 UTF-8
 //     locale 下会把多字节字符并入变量名 → unbound variable；2026-10-31
 //     key_routing CI 首跑就栽在 `$ARCH）` 上，统一改用 `${VAR}`）；
@@ -376,6 +377,28 @@ func checkImportSafety(fsys fs.FS, problems *[]string) {
 	)
 }
 
+// checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数
+// 一致：加/删断言却忘了同步 expectedChecks 时，静态检查先 FAIL（运行时守卫是
+// 第二道，两道都保留）。
+func checkKeyRoutingCount(fsys fs.FS, problems *[]string) {
+	const group = "CI 覆盖"
+	text, err := readText(fsys, macKeyTest)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, macKeyTest, err))
+		return
+	}
+	expected, ok := firstFloat(text, `let expectedChecks = ([0-9]+)`)
+	if !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少可解析的 expectedChecks", group, macKeyTest))
+		return
+	}
+	callRe := regexp.MustCompile(`(?m)^check\(`)
+	calls := len(callRe.FindAllStringIndex(text, -1))
+	if int(expected) != calls {
+		*problems = append(*problems, fmt.Sprintf("%s：key_routing expectedChecks=%d 与实际 check( 断言数 %d 不一致（加/删断言需同步更新）", group, int(expected), calls))
+	}
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 func Run(fsys fs.FS) []string {
 	var problems []string
@@ -470,8 +493,10 @@ func Run(fsys fs.FS) []string {
 	// 7. CI 覆盖不退化：key_routing 按键路由回归测试必须存在且被 CI 调用。
 	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "key_routing")
-	// 断言用例数守卫：防止有人删断言让回归测试静默变弱。
+	// 断言用例数守卫：防止有人删断言让回归测试静默变弱；并校验 expectedChecks
+	// 与实际 check( 数一致（加断言忘了同步会 FAIL）。
 	checkContains(fsys, &problems, "CI 覆盖", macKeyTest, "expectedChecks")
+	checkKeyRoutingCount(fsys, &problems)
 
 	// 8. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
 	checkShellVarEscaping(fsys, &problems)

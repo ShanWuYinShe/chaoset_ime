@@ -953,8 +953,8 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         skin 补 divider/chevron 与深色 13 色期望值（加强非降低）；docs/ui-parity.md
         按代码全量重写并明确未覆盖项（Windows 无运行时视觉断言、key_routing 未接
         CI、无 checkuiparity）。平台限制与待真机项（per-monitor DPI、Windows
-        设置窗深色、多行折行、半透明/阴影、无障碍、滚轮、按键边角 3 处、Linux
-        设置窗单例）写入 docs「已知功能差异」。
+        设置窗深色、多行折行、半透明/阴影、无障碍、滚轮）写入 docs「已知功能差异」；
+        按键边角 3 处与 Linux 设置窗单例已于 2026-10-31 解决（见阶段 48/49/50）。
       - **验证**：本机 gofmt/build/go test ./.../make vet/visual-parity 46 条断言（+2 条导出提示）/
         shims/windows/build.sh（core_test 含 from_user 断言 + mingw 交叉编译）
         全过；重活交 CI。真机验收清单见 docs/ui-parity.md。
@@ -1355,6 +1355,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         断言会直接 FAIL（否则删断言 CI 仍绿，回归测试静默变弱）；checkuiparity
         「CI 覆盖」组断言该守卫存在。
       - **验证**：key_routing 22/22；`make vet` / checker 通过；`git diff --check` 通过。
+
+- [x] 阶段 51：checkuiparity 校验 key_routing expectedChecks 与实际断言数一致（2026-10-31）
+      - **问题**：上一阶段给 key_routing 加了运行时 `expectedChecks` 守卫，但若新增
+        断言后忘记同步 expectedChecks，运行时守卫会 FAIL（好事）；反过来若有人把
+        `expectedChecks` 也一起改小，静态检查无法发现。
+      - **新增**：checkuiparity「CI 覆盖」组解析 `let expectedChecks = N`，统计文件中
+        `^check(` 断言数并比对——加/删断言必须同步 expectedChecks，否则 `make vet`
+        直接红（运行时守卫是第二道）。
+      - **测试**：`TestCheckKeyRoutingCount` 正例 + 变异（expectedChecks 改大必须被捕获）。
+      - **文档**：AGENTS.md 的 Windows 视觉断言说明按事实修正（有 checkuiparity 静态
+        契约，但无运行时视觉断言）；README 阶段 30 历史条目补「按键边角/设置窗单例
+        已于 2026-10-31 解决」注记；ui-parity 说明 checkuiparity 校验计数一致。
+      - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
+        checkuiparity PASS；`git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）
 

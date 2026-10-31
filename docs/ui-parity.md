@@ -297,7 +297,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   毛玻璃/Toast/DPI 表现）仍需 Windows 真机人工验收**（本机无 Windows 运行时）；
   `tools/checkgdi` 的 ExtCreatePen 非空指针契约 + 交叉编译仍在。
 - `tests/key_routing` 是 macOS 按键路由回归测试（合成 NSEvent 驱动
-  `ChaosetController.handle`，22 项断言，且测试内断言用例数未减少）；
+  `ChaosetController.handle`，22 项断言；测试内 `expectedChecks` 守卫用例数未减少，
+  `checkuiparity` 另静态校验它与实际 `check(` 断言数一致）；
   **2026-10-31 起接入 CI**（审计 G7）：
   `shims/macos/tests/key_routing/run.sh` 负责编译测试二进制 + 起临时 daemon +
   清理，macos-build job 每次 push 执行；`tools/checkuiparity` 断言该脚本存在且

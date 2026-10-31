@@ -17,6 +17,23 @@ func TestRunOnRepo(t *testing.T) {
 	}
 }
 
+func TestCheckKeyRoutingCount(t *testing.T) {
+	valid := "let expectedChecks = 2\ncheck(\"a\", true)\ncheck(\"b\", true)\n"
+	fsys := fstest.MapFS{macKeyTest: &fstest.MapFile{Data: []byte(valid)}}
+	var problems []string
+	checkKeyRoutingCount(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("expectedChecks 与断言数一致时应通过，实际：%v", problems)
+	}
+
+	bad := strings.Replace(valid, "expectedChecks = 2", "expectedChecks = 3", 1)
+	problems = nil
+	checkKeyRoutingCount(fstest.MapFS{macKeyTest: &fstest.MapFile{Data: []byte(bad)}}, &problems)
+	if len(problems) != 1 || !strings.Contains(problems[0], "不一致") {
+		t.Fatalf("expectedChecks 与断言数不一致应被捕获，实际：%v", problems)
+	}
+}
+
 // TestCheckCandidateWindow 用真实候选窗源码验证候选窗契约，并做一次变异：
 // 改 Windows 正文字号应被「候选窗几何」捕获。
 func TestCheckCandidateWindow(t *testing.T) {
