@@ -1207,6 +1207,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         修复后 `${VAR}` 形式通过；`go test ./tools/checkuiparity` 通过；
         `make vet` 通过；真实仓库 checkuiparity PASS；`git diff --check` 通过。
 
+- [x] 阶段 43：mac 设置窗补「词库导入」入口（2026-10-31）
+      - **动机**：Windows 设置窗已有「词库」区（2026-10-31），mac 的导入入口只在
+        独立的 Setup.app 里——设置窗本身没有入口，三端 GUI 入口不对齐。
+      - **实现**：mac 设置窗新增「词库」区（窗口 380×440pt）：「导入词库…」打开
+        随包安装的 `~/Applications/Chaoset.app`（install.sh 安装位置）并传
+        `--import`；Setup.app 收到该参数后在窗口就绪后直接弹出 NSOpenPanel 导入面板
+        （合并/备份/原子替换/重启 daemon 仍是 Setup.app 原有实现，输入法壳不复制）。
+        找不到 Setup.app 时给出明确提示（未安装/开发构建回退到同级 build/）。
+      - **checkuiparity**：「词库导入入口」组增加断言——mac 设置窗必须含「导入词库」
+        与「安装与设置」、Setup.app 必须识别 `--import`（防止入口被静默移除）。
+      - **验证**：`ARCHS=arm64 ./shims/macos/build.sh` 通过（0 warning）；
+        `ChaosetSetup --status` 无界面模式正常；`make vet` / `go test
+        ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。GUI 交互（点按钮→弹导入面板）需真机点击验收。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -9,6 +9,11 @@
 // 2026-10-31：新增「学习数据」区——统计 / 清空 / 导出全部在 GUI 完成，
 // 普通用户不需要命令行（`chaoset-userdict` 降级为高级/排障兜底）。
 // 数据经 EngineClient 走同一 IPC 通道，daemon 内存与磁盘一次生效。
+//
+// 2026-10-31：新增「词库」区——「导入词库…」打开随包安装的
+// `~/Applications/Chaoset.app`（安装与设置 app）并传 `--import`，
+// 由它弹出文件选择并完成合并/备份/原子替换/重启 daemon（入口与 Windows
+// 设置窗「词库」区对齐；导入实现仍只有 Setup.app 一份，避免复制粘贴）。
 
 import AppKit
 import UniformTypeIdentifiers
@@ -90,10 +95,52 @@ extension Notification.Name {
     }
 }
 
+/// 「词库」区的按钮动作：打开随包安装的 Chaoset.app（安装与设置）并请求它
+/// 直接弹出导入面板（`--import`）。导入实现只在 Setup.app 里有一份，输入法
+/// 壳不复制粘贴合并/备份/原子替换逻辑（避免两套实现漂移）。
+@objc final class DictionaryImportTarget: NSObject {
+    @objc func openDictionaryImport(_ sender: NSButton) {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        var candidates = [
+            home + "/Applications/Chaoset.app",
+            home + "/Applications/ChaosetSetup.app",
+            "/Applications/Chaoset.app",
+        ]
+        // 开发构建：与本 app 同级的 build/ChaosetSetup.app。
+        candidates.append(Bundle.main.bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("ChaosetSetup.app").path)
+        guard let path = candidates.first(where: { fm.fileExists(atPath: $0) }) else {
+            let alert = NSAlert()
+            alert.messageText = "导入词库"
+            alert.informativeText = "未找到「Chaoset 安装与设置」。请从安装包重新安装，或直接打开「Chaoset」应用导入词库。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.arguments = ["--import"]
+        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path),
+                                           configuration: config) { _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "导入词库"
+                alert.informativeText = "无法打开「Chaoset 安装与设置」：\(error.localizedDescription)"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "好")
+                alert.runModal()
+            }
+        }
+    }
+}
+
 enum SettingsWindowController {
     private static var window: NSWindow?
     private static let switchTarget = AssociateSwitchTarget()
     private static let learningTarget = LearningDataTarget()
+    private static let dictImportTarget = DictionaryImportTarget()
     /// 设置窗口独立使用一个 EngineClient（与输入法主流程的实例互不影响；
     /// 同一 daemon 支持多连接，每个连接有独立组词会话）。
     static let engine = EngineClient()
@@ -174,6 +221,23 @@ enum SettingsWindowController {
         dataHint.preferredMaxLayoutWidth = 320
         content.addArrangedSubview(dataHint)
 
+        // —— 分组标题：词库（入口与 Windows 设置窗「词库」区对齐）——
+        let dictGroup = NSTextField(labelWithString: "词库")
+        dictGroup.font = .boldSystemFont(ofSize: 13)
+        dictGroup.textColor = .secondaryLabelColor
+        content.addArrangedSubview(dictGroup)
+
+        let importBtn = NSButton(title: "导入词库…", target: dictImportTarget,
+                                 action: #selector(DictionaryImportTarget.openDictionaryImport(_:)))
+        content.addArrangedSubview(importBtn)
+
+        let dictHint = NSTextField(wrappingLabelWithString:
+            "打开「Chaoset 安装与设置」导入 Rime dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。")
+        dictHint.font = .systemFont(ofSize: 11)
+        dictHint.textColor = .secondaryLabelColor
+        dictHint.preferredMaxLayoutWidth = 320
+        content.addArrangedSubview(dictHint)
+
         // 底部提示：更多设置后续版本提供
         let more = NSTextField(labelWithString: "更多设置将在后续版本提供")
         more.font = .systemFont(ofSize: 11)
@@ -181,7 +245,7 @@ enum SettingsWindowController {
         content.addArrangedSubview(more)
 
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 330),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 440),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)

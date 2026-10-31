@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 //
 // 启动方式：
 //   直接双击 = 图形界面
+//   ChaosetSetup --import = 图形界面并在窗口就绪后直接弹导入面板
+//     （输入法设置窗「导入词库…」按钮用，省一次点击）
 //   ChaosetSetup --selftest <supportDir> [词库文件...]  = 无界面自检（会话内验证用）
 //
 // 本 app 随包携带 ChaosetIME.app / chaosetd / chaoset-import / dict_common.tsv，
@@ -467,6 +469,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         refresh()
+
+        // 输入法设置窗的「导入词库…」按钮以 `--import` 拉起本 app 时，
+        // 窗口就绪后直接弹出文件选择面板（省一次点击）；正常双击启动不带该参数。
+        if CommandLine.arguments.contains("--import") {
+            DispatchQueue.main.async { [weak self] in self?.doImport() }
+        }
     }
 
     func append(_ s: String) {

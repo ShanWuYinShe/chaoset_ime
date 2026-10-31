@@ -373,6 +373,10 @@ func Run(fsys fs.FS) []string {
 	// 4. 词库导入入口：mac Setup.app + Windows 设置窗有 GUI；Linux 仅 CLI 且
 	//    ui-parity 必须明确记录（避免文档悄悄变成「已支持」）。
 	checkContains(fsys, &problems, "词库导入入口", macSetup, "导入词库", "chaoset-import")
+	// mac 输入法设置窗也有「导入词库…」入口（打开 Setup.app 并传 --import），
+	// 与 Windows 设置窗「词库」区对齐；实现仍只有 Setup.app 一份。
+	checkContains(fsys, &problems, "词库导入入口", macSettings, "导入词库", "安装与设置")
+	checkContains(fsys, &problems, "词库导入入口", macSetup, "--import")
 	checkContains(fsys, &problems, "词库导入入口", winShell, "导入词库", "chaoset-import.exe")
 	checkContains(fsys, &problems, "词库导入入口", uiParityDoc, "Linux 目前仅 CLI")
 	checkExcludes(fsys, &problems, "词库导入入口", linuxSetup, "导入词库")

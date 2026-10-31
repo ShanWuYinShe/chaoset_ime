@@ -536,6 +536,10 @@ rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
   「导出学习数据…」（NSSavePanel 保存 TSV）。数据经 `EngineClient` IPC 直接作用于
   daemon（内存 + 磁盘一次生效）；普通用户无需命令行（`chaoset-userdict` 仅高级/
   无 GUI 环境兜底）。
+- **词库**：「导入词库…」打开随包安装的 `~/Applications/Chaoset.app`（安装与设置）
+  并传 `--import`，由它直接弹文件选择面板（Rime dict.yaml / CC-CEDICT txt / TSV，
+  可多选），完成合并 → 备份 → 原子替换 → 重启 daemon。导入实现只有 Setup.app 一份，
+  输入法壳不复制逻辑；入口与 Windows 设置窗「词库」区对齐（2026-10-31）。
 
 ## 已知限制
 
