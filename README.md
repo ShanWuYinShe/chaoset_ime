@@ -1671,6 +1671,15 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 76：daemon 优雅退出落盘 + 单实例拒绝的端到端测试（2026-11-01）
+      - **测试**：`cmd/chaosetd/run_test.go` 增加——
+        ① 优雅退出后学习数据必须落盘（上屏「你好」→ cancel → 重载 userdict，
+        Score > 0）；② 同套接字第二个 daemon 必须被单实例锁拒绝，不能 unlink
+        运行中实例的套接字；顺带把启动/停止收敛为 `startDaemon`/`stop` 辅助，
+        三个生命周期测试共用，减少重复。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
