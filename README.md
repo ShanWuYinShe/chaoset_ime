@@ -1500,6 +1500,22 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./tools/checkuiparity`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 61：Linux 鼠标点选候选（CandidateClicked）（2026-10-31）
+      - **问题**：ibus 面板点击候选会调用引擎标准方法 `CandidateClicked`，
+        但 Linux 引擎此前没实现——点击候选无反应（mac/Windows 原生候选窗
+        都支持点选）。
+      - **实现**：抽出 `selectCandidate(idx)` 与数字键共用（联想中选联想词并
+        继续联想；组词中渐进上屏、剩余回灌；越界忽略且不改会话），新增
+        `CandidateClicked(index, button, state)` D-Bus 方法（全程持锁）。
+      - **测试**：4 个行为单测（点选上屏/渐进点选/越界保持组词/联想连选）；
+        linux-e2e 直接 `dbus-send` 调用 CandidateClicked 并捕获 CommitText，
+        断言点选上屏「你好」。
+      - **机器检查**：checkuiparity 新增「候选点选」组（mac mouseDown /
+        Windows WM_LBUTTONDOWN / Linux CandidateClicked / 文档矩阵行）。
+      - **文档**：ui-parity 按键矩阵新增「鼠标点选候选」行；README 阶段 61。
+      - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
+        `git diff --check` 通过；linux-e2e 由 CI 真实验证。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

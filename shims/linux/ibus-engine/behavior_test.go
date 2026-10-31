@@ -1680,3 +1680,86 @@ func TestSemicolonStillPunctWithoutDoublePinyin(t *testing.T) {
 		t.Fatalf("组词中 ';' 应上屏首选+「；」，实际 %q", got)
 	}
 }
+
+// TestCandidateClickedSelectsCandidate：ibus 面板鼠标点选候选（标准方法
+// CandidateClicked）与数字键同语义——点第 1 项渐进上屏。2026-10-31 补齐：
+// 此前 Linux 引擎没有该回调，面板点候选无反应（mac/Windows 均支持点选）。
+func TestCandidateClickedSelectsCandidate(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	comp := e.sess.Compose()
+	if len(comp.Candidates) == 0 {
+		t.Fatal("前置失败：nihao 应有候选")
+	}
+	want := comp.Candidates[0].Text
+	if gerr := e.CandidateClicked(0, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if got := fe.lastCommitText(); got != want {
+		t.Fatalf("点选第 1 项应上屏 %q，实际 %q", want, got)
+	}
+	if got := e.sess.Compose().Input; got != "" {
+		t.Fatalf("整词点选后组词应清空，实际 %q", got)
+	}
+}
+
+// TestCandidateClickedProgressive：点选只覆盖前缀的候选（如「你」= ni）时，
+// 应渐进上屏并把剩余拼音留在组词里（与数字键一致），不能整串落盘。
+func TestCandidateClickedProgressive(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "nihao")
+	comp := e.sess.Compose()
+	idx := -1
+	for i, c := range comp.Candidates {
+		if c.Syllables == "ni" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Skip("该词库下 nihao 没有仅覆盖 ni 的候选，用例前提不成立")
+	}
+	if gerr := e.CandidateClicked(uint32(idx), 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if e.confirmedPreedit == "" {
+		t.Fatal("渐进点选后应有已确认段")
+	}
+	if got := e.sess.Compose().Input; got == "" {
+		t.Fatal("渐进点选后剩余拼音应回灌组词")
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("渐进点选不应中途 CommitText，实际 %d 次", got)
+	}
+}
+
+// TestCandidateClickedOutOfRangeKeepsComposition：面板/引擎页码不同步时
+// 越界点击必须忽略，且不能把用户正在打的组词清掉。
+func TestCandidateClickedOutOfRangeKeepsComposition(t *testing.T) {
+	e, fe := newTestEngine(t)
+	typeKeys(e, "ni")
+	before := e.sess.Compose().Input
+	if gerr := e.CandidateClicked(99, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if got := e.sess.Compose().Input; got != before {
+		t.Fatalf("越界点选不应改变组词：%q → %q", before, got)
+	}
+	if got := fe.count("CommitText"); got != 0 {
+		t.Fatalf("越界点选不应上屏，实际 CommitText %d 次", got)
+	}
+}
+
+// TestCandidateClickedAssociateContinues：联想中点击联想词应上屏并继续
+// 联想（与数字键连选同语义）。
+func TestCandidateClickedAssociateContinues(t *testing.T) {
+	e, fe := newTestEngine(t)
+	e.assoc = []engine.Candidate{{Text: "好", Syllables: "hao"}}
+	e.assocPage = 0
+	if gerr := e.CandidateClicked(0, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if got := fe.lastCommitText(); got != "好" {
+		t.Fatalf("点击联想词应上屏「好」，实际 %q", got)
+	}
+}

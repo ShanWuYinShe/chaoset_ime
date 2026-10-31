@@ -296,5 +296,27 @@ else
 fi
 press "$P1" 65307 0  # Esc 清空
 
+# ---- 鼠标点选候选（CandidateClicked，2026-10-31）----
+# ibus 面板点击候选会调用引擎标准方法 CandidateClicked；此前 Linux 没有该
+# 回调，点击无反应（mac/Windows 均支持点选）。这里直接调用该方法并捕获
+# CommitText 信号，断言点选真的上屏。
+MON2="$WORK/click-monitor.log"
+dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON2" 2>&1 &
+MON2_PID=$!
+for kv in 110 105 104 97 111; do press "$P1" "$kv" 0; done  # nihao
+dbus-send --session --print-reply --dest="$UN" "$P1" \
+  org.freedesktop.IBus.Engine.CandidateClicked uint32:0 uint32:1 uint32:0 >/dev/null 2>&1
+sleep 0.5
+kill "$MON2_PID" 2>/dev/null || true
+wait "$MON2_PID" 2>/dev/null || true
+if grep -q "CommitText" "$MON2" && grep -q "你好" "$MON2"; then
+  echo "PASS: 鼠标点选候选上屏「你好」（CandidateClicked）"
+else
+  echo "FAIL: CandidateClicked 未上屏（monitor 日志：）" >&2
+  cat "$MON2" >&2
+  exit 1
+fi
+press "$P1" 65307 0  # Esc 保险
+
 echo
 echo "全部 Linux 端到端检查通过"

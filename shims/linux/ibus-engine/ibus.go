@@ -404,6 +404,67 @@ func (f *ibusFactory) DestroyEngine(path string) *godbus.Error {
 // Shift 空按读写的 enMode、Ctrl+Backspace 早退分支读写的 sess 此前都在锁外，
 // 与加锁的 PageUp 等构成数据竞争——测试此前没并发调用本方法的用例，
 // go test -race 一直没发现（2026-10-26 审查实测 ProcessKeyEvent 覆盖 0%）。
+// selectCandidate 选中候选表第 idx 项（页内序号，0 起）：联想中选联想词并
+// 继续联想；组词中渐进上屏（SelectPrefix），剩余拼音回灌。返回是否消费
+// （越界/失败 false，且不改变会话状态）。数字键与鼠标点选共用同一实现，
+// 防止两套选词语义漂移。
+func (e *ibusEngine) selectCandidate(idx int) bool {
+	if e.sess == nil {
+		return false
+	}
+	if len(e.assoc) > 0 {
+		// 候选表展示的是当前页切片：idx 是页内序号，换算全局。
+		global := e.assocPage*engine.PageSize() + idx
+		if idx < 0 || global >= len(e.assoc) {
+			return false
+		}
+		pick := e.assoc[global]
+		sylls := strings.Split(pick.Syllables, "'")
+		word, err := e.sess.AssociateSelect(pick.Text, sylls)
+		if err != nil {
+			return false
+		}
+		e.commit(word)
+		e.enterAssociate(sylls)
+		return true
+	}
+	comp := e.sess.Compose()
+	if idx < 0 || idx >= len(comp.Candidates) {
+		return false
+	}
+	// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词。
+	// 单预编辑模型（见 confirmedPreedit 字段注释）：确认段并入预编辑，
+	// 不再中途 CommitText——部分程序对「预编辑激活期间收到提交」处理
+	// 有缺陷，会把刚上屏的段丢掉（用户实测选「今」丢字）。
+	rest, committed, err := e.sess.SelectPrefix(idx)
+	if err != nil {
+		return false
+	}
+	e.confirmedPreedit += committed
+	if rest.Input != "" {
+		// 剩余拼音回灌：预编辑（含确认段）刷新，候选表更新为剩余组词
+		e.refresh(rest)
+		return true
+	}
+	// 剩余耗尽：整串一次落盘（与整句上屏同收尾），进入联想
+	e.commit(e.confirmedPreedit)
+	e.enterAssociateForPrev(e.sess.PrevWord())
+	return true
+}
+
+// CandidateClicked 是 org.freedesktop.IBus.Engine 的标准方法：ibus 面板在
+// 鼠标点击候选时调用（2026-10-31 补齐——此前 Linux 没有引擎回调，点候选
+// 无反应；mac/Windows 原生自绘候选窗均支持点选）。语义与数字键完全一致
+// （selectCandidate）：联想中点击同样连选，组词中渐进上屏。
+func (e *ibusEngine) CandidateClicked(index uint32, button uint32, state uint32) *godbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_ = button
+	_ = state
+	e.selectCandidate(int(index))
+	return nil
+}
+
 func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godbus.Error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -543,19 +604,12 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 			e.flipAssociate(keyval == keysymPageDown)
 			return true, nil
 		case isDigit:
-			// 全局序号 = 当前页 × 每页条数 + 页内序号（候选表展示的是切片）
-			idx := e.assocPage*engine.PageSize() + int(keyval-'1')
+			idx := int(keyval - '1')
 			if keyval >= keysymKP1 {
-				idx = e.assocPage*engine.PageSize() + int(keyval-keysymKP1)
+				idx = int(keyval - keysymKP1)
 			}
-			if idx < len(e.assoc) {
-				pick := e.assoc[idx]
-				sylls := strings.Split(pick.Syllables, "'")
-				if word, err := e.sess.AssociateSelect(pick.Text, sylls); err == nil {
-					e.commit(word)
-					e.enterAssociate(sylls)
-					return true, nil
-				}
+			if e.selectCandidate(idx) {
+				return true, nil
 			}
 			e.exitAssociate()
 			return false, nil
@@ -641,28 +695,7 @@ func (e *ibusEngine) ProcessKeyEvent(keyval, keycode, state uint32) (bool, *godb
 		if keyval >= keysymKP1 {
 			idx = int(keyval - keysymKP1)
 		}
-		comp := e.sess.Compose()
-		if idx >= len(comp.Candidates) {
-			return false, nil
-		}
-		// 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词。
-		// 单预编辑模型（见 confirmedPreedit 字段注释）：确认段并入预编辑，
-		// 不再中途 CommitText——部分程序对「预编辑激活期间收到提交」处理
-		// 有缺陷，会把刚上屏的段丢掉（用户实测选「今」丢字）。
-		rest, committed, err := e.sess.SelectPrefix(idx)
-		if err != nil {
-			return false, nil
-		}
-		e.confirmedPreedit += committed
-		if rest.Input != "" {
-			// 剩余拼音回灌：预编辑（含确认段）刷新，候选表更新为剩余组词
-			e.refresh(rest)
-			return true, nil
-		}
-		// 剩余耗尽：整串一次落盘（与整句上屏同收尾），进入联想
-		e.commit(e.confirmedPreedit)
-		e.enterAssociateForPrev(e.sess.PrevWord())
-		return true, nil
+		return e.selectCandidate(idx), nil
 
 	case keyval == keysymReturn:
 		// 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键。

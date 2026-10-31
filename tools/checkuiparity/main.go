@@ -541,10 +541,17 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "CI 覆盖", macKeyTest, "expectedChecks")
 	checkKeyRoutingCount(fsys, &problems)
 
-	// 8. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
+	// 8. 鼠标点选候选：mac/Windows 自绘点选 + Linux ibus CandidateClicked 回引擎。
+	// 此前 Linux 没有 CandidateClicked，面板点候选无反应（2026-10-31 补齐）。
+	checkContains(fsys, &problems, "候选点选", macPanel, "mouseDown")
+	checkContains(fsys, &problems, "候选点选", winShell, "WM_LBUTTONDOWN")
+	checkContains(fsys, &problems, "候选点选", linuxEngine, "CandidateClicked")
+	checkContains(fsys, &problems, "候选点选", uiParityDoc, "鼠标点选候选")
+
+	// 9. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
 	checkShellVarEscaping(fsys, &problems)
 
-	// 9. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
+	// 10. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍")
@@ -571,5 +578,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }
