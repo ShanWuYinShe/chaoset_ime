@@ -155,7 +155,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 关闭联想即时性 | 立即收起联想窗（设置窗 post 通知） | **立即收起联想窗（2026-10-31）**：设置窗 `PostMessage(HWND_BROADCAST, RegisterWindowMessageW("Chaoset.AssociateChanged"))` → 各宿主进程候选窗转发 TIP `clearAssociate`；设置窗仍不持有 TIP 指针，无宿主进程 UAF | Linux 仍为下一次按键生效（只写 config.json，已知差异）；mac/Windows 均立即收起 |
 | 双拼 mspy `;` 键 | 支持（2026-10-30） | 支持（2026-10-30） | 支持（2026-10-30） | 引擎 `Composition.shuangpin` 下发方案名，三端壳把双拼模式下的 `;` 路由到 `input`；会话级单测遍历全部音节锁可达性。**标点宽度瞬态已修（2026-10-31）**：`input` 新增可选 `half` 字段，三端壳每次按键下发全/半角状态，引擎先同步再处理 |
 | Windows TSF 两阶段 | — | Shift 空按中英切换原写在 OnKeyDown/OnKeyUp；按 TSF 两阶段模型（OnTestKeyDown 返回 FALSE 的键不再调 OnKeyDown）可能永远收不到修饰键 | **2026-10-31 已把跟踪移到 OnTestKeyDown/OnTestKeyUp**（Test 阶段对每个按键都会调用），「非 Shift 键取消空按窗口」同步移到 Test 阶段；Ctrl/Alt/Win 按下与释放同样取消空按窗口（与 mac/Linux 对齐，2026-10-31）；`tsf.log` 诊断保留（`modifier in OnTestKeyDown/OnTestKeyUp/OnKeyDown/OnKeyUp`、`shift toggle`）。**仍需 Windows 真机确认**（若某宿主连 OnTestKeyUp 都不调，需改 GetKeyState 轮询） |
-| 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | 无 WM_GETOBJECT/UIA/MSAA（待做） | docs 旧版已列 TODO，仍未实现，需 Windows 真机 |
+| 无障碍 | VoiceOver 虚拟子元素（AXPress 上屏） | **基础 UIA 宿主 provider（2026-10-31，窗口级）**：处理 `WM_GETOBJECT` 动态加载 `uiautomationcore.dll`，向屏幕阅读器暴露候选窗名称/控件类型/位置；**逐条候选子项与上屏动作未实现** | 窗口级能力为编译级实现，需 Windows 真机 + Narrator 验收；候选子项（IRawElementProviderFragment/Invoke）待后续 |
 | 滚轮翻页 | 未实现 | **不可行**：`WM_MOUSEWHEEL` 只发给焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，与用户「游戏不干扰鼠标」硬要求冲突 | 三端一致缺失；mac 技术上可做，但为保持三端一致暂不做（2026-10-31 复核）。ibus 面板由上游决定 |
 | Windows per-monitor DPI | 系统自动 | **已实现（2026-10-31）**：`dpiForPoint` 动态加载 shcore!GetDpiForMonitor，按锚点/窗口所在显示器取 DPI；候选窗、Toast、设置窗三处都处理 `WM_DPICHANGED` 重排 | 候选窗按光标所在显示器布局，Toast 按提示位置，设置窗按打开时所在显示器；仍**需真机验收混合 DPI 多屏**（本机无 Windows 运行时） |
 | Linux 学习标记 | — | — | 平台机制不适用（见上） |
@@ -317,6 +317,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧
   不得引入引擎 DBus（engine 包纯净约束）、词库导入入口（三端 GUI；Linux 用户词库由
   ibus 引擎 `-imported-dict` 自动加载，linux-e2e 断言导入词真的出现在候选）、
+  Windows 无障碍基础能力（候选窗 `WM_GETOBJECT` + UIA 宿主 provider）、
   **词库导入安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷
   原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、

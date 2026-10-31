@@ -265,6 +265,9 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, "候选窗几何", winShell, "candidate_layout.hpp",
 		"wrapRows(boxes, maxContent, gap, contentH, kMaxRows)",
 		"const int lineSpacing = pt(4, dpi)")
+	// 无障碍基础能力不能退化：候选窗必须处理 WM_GETOBJECT 并动态加载 UIA。
+	checkContains(fsys, problems, "候选窗几何", winShell,
+		"WM_GETOBJECT", "UiaRootObjectId", "uiautomationcore.dll")
 	checkNumericContracts(fsys, problems, "候选窗齿轮", gearContracts)
 	checkContains(fsys, problems, "候选窗齿轮", macPanel, "color: theme.chipDigit")
 	checkContains(fsys, problems, "候选窗齿轮", winShell, "const COLORREF gearColor = theme.chipDigit;")

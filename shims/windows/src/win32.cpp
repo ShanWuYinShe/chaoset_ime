@@ -26,6 +26,8 @@
 #include <commdlg.h>  // GetSaveFileNameW（设置窗口导出学习数据，2026-10-31）
 #include <shlobj.h>   // SHGetFolderPathW（设置窗口导入词库定位 %LOCALAPPDATA%，2026-10-31）
 #include <cderr.h>    // FNERR_BUFFERTOOSMALL（导入词库多选缓冲区不足）
+#include <uiautomationcore.h>     // UIA 类型（无障碍宿主 provider，2026-10-31）
+#include <uiautomationcoreapi.h>  // UiaHostProviderFromHwnd / UiaReturnRawElementProvider
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +42,29 @@
 #include "core.hpp"
 
 static HINSTANCE g_hInst = nullptr;
+
+// 无障碍（2026-10-31，基础能力）：候选窗处理 WM_GETOBJECT，向屏幕阅读器返回
+// **UIA 宿主 provider**（窗口级：名称/控件类型/位置）。逐条候选的 UIA 子项
+// 需要自定义 IRawElementProviderSimple/Fragment，留待 Windows 真机验收后再做。
+//
+// 动态加载 uiautomationcore.dll：不给 DLL 增加静态导入依赖（精简/旧系统没有
+// 该 DLL 时输入法仍可正常使用；只有屏幕阅读器查询时才走这里）。
+using UiaHostProviderFromHwndFn = HRESULT(WINAPI*)(HWND, IRawElementProviderSimple**);
+using UiaReturnRawElementProviderFn = LRESULT(WINAPI*)(HWND, WPARAM, LPARAM, IRawElementProviderSimple*);
+static UiaHostProviderFromHwndFn g_uiaHostProviderFromHwnd = nullptr;
+static UiaReturnRawElementProviderFn g_uiaReturnRawElementProvider = nullptr;
+
+static void ensureUiaLoaded() {
+    static bool tried = false;
+    if (tried) return;
+    tried = true;
+    HMODULE mod = LoadLibraryW(L"uiautomationcore.dll");
+    if (mod == nullptr) return;
+    g_uiaHostProviderFromHwnd = reinterpret_cast<UiaHostProviderFromHwndFn>(
+        GetProcAddress(mod, "UiaHostProviderFromHwnd"));
+    g_uiaReturnRawElementProvider = reinterpret_cast<UiaReturnRawElementProviderFn>(
+        GetProcAddress(mod, "UiaReturnRawElementProvider"));
+}
 
 namespace {
 
@@ -920,7 +945,7 @@ private:
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             cls.c_str(),
-            L"ChaosetCandidate",
+            L"Chaoset 候选",
             WS_POPUP,
             0, 0, 0, 0,
             owner, nullptr, hinst, nullptr
@@ -939,6 +964,22 @@ private:
             return 0;
         }
         switch (msg) {
+            case WM_GETOBJECT:
+                // 屏幕阅读器（Narrator/NVDA）查询窗口无障碍对象：返回 UIA 宿主
+                // provider（窗口级）。只处理根对象 id；其它对象交给 DefWindowProc。
+                if (static_cast<LONG>(lParam) == UiaRootObjectId) {
+                    ensureUiaLoaded();
+                    IRawElementProviderSimple* provider = nullptr;
+                    if (g_uiaHostProviderFromHwnd != nullptr &&
+                        g_uiaReturnRawElementProvider != nullptr &&
+                        SUCCEEDED(g_uiaHostProviderFromHwnd(hwnd, &provider)) &&
+                        provider != nullptr) {
+                        LRESULT result = g_uiaReturnRawElementProvider(hwnd, wParam, lParam, provider);
+                        provider->Release();
+                        return result;
+                    }
+                }
+                break;
             case WM_MOUSEACTIVATE:
                 return MA_NOACTIVATE;
             case WM_ERASEBKGND:

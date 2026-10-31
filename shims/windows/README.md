@@ -272,8 +272,10 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   `modifier in OnTestKeyUp` + `shift toggle`；若仍只有 TestKeyDown 而无
   toggle，说明该宿主连 OnTestKeyUp 都不调（罕见），需改 GetKeyState 轮询。
   这条必须真机验证。
-- **无障碍**：未实现 WM_GETOBJECT/UIA/MSAA（macOS 有 VoiceOver 子元素），
-  待 Windows 真机阶段补。
+- **无障碍（2026-10-31，基础能力）**：候选窗处理 `WM_GETOBJECT`，动态加载
+  `uiautomationcore.dll` 并返回 **UIA 宿主 provider（窗口级）**，屏幕阅读器可
+  识别候选窗名称/控件类型/位置；**逐条候选子项与上屏动作未实现**（macOS 有
+  VoiceOver 子元素），需 Windows 真机 + Narrator 验收。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
 - **TCP 回环没有 Unix socket 权限等价物（2026-10-31 记录）**：mac/Linux 的

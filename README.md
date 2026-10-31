@@ -1448,6 +1448,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、`git diff
         --check` 通过。
 
+- [x] 阶段 57：Windows 候选窗基础 UIA 无障碍（窗口级）（2026-10-31，编译级待真机）
+      - **背景**：docs 长期记录 Windows「无 WM_GETOBJECT/UIA/MSAA（待做）」；
+        macOS 已有 VoiceOver 虚拟子元素。本轮先补**窗口级**基础能力，不做逐条
+        候选子项（需要自定义 Fragment/Invoke provider，风险高且无真机可验）。
+      - **实现**：候选窗处理 `WM_GETOBJECT`（`UiaRootObjectId`），动态加载
+        `uiautomationcore.dll` 的 `UiaHostProviderFromHwnd` +
+        `UiaReturnRawElementProvider`，返回 UIA 宿主 provider；窗口标题改为
+        「Chaoset 候选」。动态加载避免静态导入依赖（旧/精简系统无该 DLL 时
+        输入法照常工作）。
+      - **机器检查**：checkuiparity 断言 win32.cpp 保留 `WM_GETOBJECT` /
+        `UiaRootObjectId` / `uiautomationcore.dll`，防止能力被误删。
+      - **文档**：ui-parity 无障碍行、windows README 更新；明确「候选子项未实现」。
+      - **验证**：`./shims/windows/build.sh` 通过（mingw 编译 + core_test）；
+        `make vet`/checker 通过。**需 Windows 真机 + Narrator 验收**。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
