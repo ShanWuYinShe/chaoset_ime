@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"chaoset.ime/engine"
 	"chaoset.ime/internal/buildinfo"
@@ -150,10 +151,37 @@ func printStats(st engine.UserStats) {
 	fmt.Printf("词 %d 条 / 词组 %d 条 / 上下文 %d 条\n", st.Words, st.Phrases, st.Bigrams)
 }
 
+// writeOut 把导出内容写到 out（空则打印到标准输出）。文件写入走同目录
+// 临时文件 + rename：导出失败/进程被杀不会把用户已有的导出文件截成半截
+// （与 chaoset-import 的原子写语义一致）。
 func writeOut(out, content string) error {
 	if out == "" {
 		fmt.Print(content)
 		return nil
 	}
-	return os.WriteFile(out, []byte(content), 0o644)
+	dir := filepath.Dir(out)
+	tmp, err := os.CreateTemp(dir, ".chaoset-userdict-*.tmp")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpName := tmp.Name()
+	removeTmp := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		removeTmp()
+		return fmt.Errorf("写出导出文件失败: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		removeTmp()
+		return fmt.Errorf("关闭临时文件失败: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		removeTmp()
+		return fmt.Errorf("设置导出文件权限失败: %w", err)
+	}
+	if err := os.Rename(tmpName, out); err != nil {
+		removeTmp()
+		return fmt.Errorf("替换导出文件失败（旧文件保持不变）: %w", err)
+	}
+	return nil
 }

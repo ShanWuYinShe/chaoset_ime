@@ -1648,6 +1648,17 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./cmd/chaoset-import`、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 74：chaoset-userdict 导出原子写 + CLI 测试（2026-11-01）
+      - **问题**：`chaoset-userdict export -o` 用 `os.WriteFile` 直接覆盖；导出
+        失败/进程被杀会把已有导出文件截成半截（与 chaoset-import 同类问题）。
+      - **修复**：`writeOut` 改为同目录 `os.CreateTemp` → `Chmod(0644)` →
+        `os.Rename`；失败时删除临时文件、旧文件保持不变。
+      - **测试**：新增 `cmd/chaoset-userdict/main_test.go`——本地模式
+        stats/clear/export 全链路；覆盖已有导出文件整体替换；目标不可替换时
+        报错且不残留临时文件。
+      - **验证**：`go test ./cmd/chaoset-userdict`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
