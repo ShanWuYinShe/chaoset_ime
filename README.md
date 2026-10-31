@@ -1637,6 +1637,17 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./engine`（含 7 条变异用例）、`make vet`/checker、
         `git diff --check` 通过。
 
+- [x] 阶段 73：chaoset-import 原子写 + CLI 行为测试（2026-11-01）
+      - **问题**：`chaoset-import` 直接 `os.Create(outPath)` 写词库；写一半失败/
+        进程被杀会把用户词库变成半截文件。壳侧导入流程虽然自己做了临时文件+
+        原子替换，但直接调用 CLI 的用户没有这层保护。
+      - **修复**：改为同目录 `os.CreateTemp` 写完整 TSV → `os.Chmod(0644)` →
+        `os.Rename` 原子替换；任何一步失败都删除临时文件、旧词库保持原样。
+      - **测试**：新增 `cmd/chaoset-import/main_test.go`——默认合并取较大词频、
+        `-replace` 覆盖、输入缺失时旧输出不变、输出目录自动创建。
+      - **验证**：`go test ./cmd/chaoset-import`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
