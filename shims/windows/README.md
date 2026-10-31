@@ -1,7 +1,7 @@
 # Windows 平台壳（TSF）
 
-形态：**TSF COM DLL 薄壳（C++）+ TCP 回环连 chaosetd**（同 macOS 壳架构：
-引擎与候选逻辑全在 daemon，DLL 只做按键转发 + 预编辑合成 + 上屏）。
+形态：**TSF COM DLL 薄壳（C++）+ 命名管道连 chaosetd（TCP 回环作迁移期回退）**
+（同 macOS 壳架构：引擎与候选逻辑全在 daemon，DLL 只做按键转发 + 预编辑合成 + 上屏）。
 
 ## 目录
 
@@ -9,7 +9,8 @@
 src/core.hpp|cpp   可移植核心：协议帧（4 字节大端长度 + JSON）、极小 JSON 解析、
                    会话控制。零 OS 依赖——在 macOS 上对着真实 daemon 做行为测试。
 src/win32.cpp      Windows 胶水：COM TIP（ITfTextInputProcessor + ITfKeyEventSink）、
-                   预编辑合成（ITfContextComposition）、TCP 回环传输（winsock2）。
+                   预编辑合成（ITfContextComposition）、命名管道传输（优先，
+                   TCP 回环作迁移期回退）。
 tests/core_test.cpp 核心层行为测试（原生编译，非交叉）。
 build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉编译 + 导出检查。
 ```
@@ -24,9 +25,10 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 - **CI 构建（2026-10-31 新增）**：`ci.yml` 的 `windows-build` job 每次 push/PR
   都跑 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 编译安装脚本 +
   ZIP 内容自检；不再只在打 tag 的 release 流程里编译 C++/NSIS。
-- **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环，
-  即 Windows 壳的实际传输形态）跑通 17 项：协议帧、JSON（转义/中文/截断）、
-  组词/预编辑/选词上屏/歧义切分/退格/重置、业务错误后连接复用。
+- **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环测试台）
+  跑通 17 项：协议帧、JSON（转义/中文/截断）、组词/预编辑/选词上屏/歧义切分/
+  退格/重置、业务错误后连接复用；DLL 实际传输优先命名管道（2026-11-01 新增，
+  TCP 回退），命名管道运行时行为需 Windows 真机验收。
 - **Win32 胶水层：双架构全面支持与原生候选窗**——同时编译出 64 位 `ChaosetIME.dll` 与 32 位 `ChaosetIME32.dll`，
   规范导出 `DllRegisterServer/DllUnregisterServer/DllUninstallServer/DllGetClassObject/DllCanUnloadNow`，
   内置原生双缓冲高 DPI 浮动候选窗（光标精准跟随、屏幕边缘防溢出、首选高亮与翻页指示器），
@@ -71,7 +73,10 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 
 # Windows 机器上（管理员）：
 regsvr32 ChaosetIME.dll
-chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log chaosetd.log
+# 推荐：命名管道（DLL 自动按当前用户 SID 计算管道名）
+chaosetd.exe -pipe -dict dict.tsv -userdict userdict.json -log chaosetd.log
+# 旧安装器/迁移期仍可用 TCP 回环（DLL 管道失败会自动回退）
+# chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log chaosetd.log
 # 系统设置 → 时间和语言 → 语言和区域 → 添加输入法 ChaosetIME
 # 卸载：regsvr32 /u ChaosetIME.dll
 ```
@@ -81,9 +86,10 @@ chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log cha
 
 ## 命令行工具
 
-Windows 上 daemon 走 TCP 回环（127.0.0.1:7949），命令行工具必须用 `-tcp`
-（Unix 套接字形态不存在）；`-version` 打印构建信息里的提交号/构建时间，
-**真机排障第一步先跑它确认装的是新构建**（2026-10-31 新增）：
+Windows 上 daemon 推荐 `-pipe`（命名管道）；命令行工具暂只支持 `-tcp`
+（`chaoset-cli`/`chaoset-userdict` 的管道接入待做），daemon 需同时用 `-tcp`
+启动才能连；`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑
+它确认装的是新构建**（2026-10-31 新增）：
 
 ```bat
 REM 确认当前安装/解包的二进制是不是最新提交
@@ -276,13 +282,15 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   `uiautomationcore.dll` 并返回 **UIA 宿主 provider（窗口级）**，屏幕阅读器可
   识别候选窗名称/控件类型/位置；**逐条候选子项与上屏动作未实现**（macOS 有
   VoiceOver 子元素），需 Windows 真机 + Narrator 验收。
-- 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
-  留待 Windows 环境验证后切换。
-- **TCP 回环没有 Unix socket 权限等价物（2026-10-31 记录）**：mac/Linux 的
-  daemon 套接字已 `chmod 0600`（同机其它用户不可连）；Windows 用
-  `127.0.0.1:7949`，本机任何用户进程都能连接 daemon 收发组词/上屏数据
-  （Windows 没有 socket 文件权限模型）。后续方案：命名管道 + 安全描述符，
-  需真机验证后再切换。
+- 传输：**命名管道优先**（2026-11-01 新增）——管道名 `\\.\pipe\chaoset-<当前
+  用户SID>`，ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES（开始菜单等
+  AppContainer 宿主可连，其他本地用户不可连）；管道连接失败自动回退 TCP 回环
+  （旧安装器仍 `-tcp`，升级期不中断）。安装器切换到 `-pipe` 需 Windows 真机
+  验收后做。
+- **TCP 回环没有 Unix socket 权限等价物**：mac/Linux 的 daemon 套接字已
+  `chmod 0600`；Windows 若回退到 `127.0.0.1:7949`，本机任何用户进程都能连接
+  daemon 收发组词/上屏数据。命名管道实现后默认路径已消除该问题，回退仅作
+  迁移期兜底。
 - 双拼 `;` 的标点宽度瞬态**已修复（2026-10-31）**：`input` 请求新增可选 `half`
   字段，壳每次按键下发全/半角状态，引擎先同步再处理——刚切全/半角后单按 `;`
   不再按旧宽度出标点。

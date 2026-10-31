@@ -289,7 +289,8 @@ go run ./cmd/chaoset-cli
 go run ./cmd/chaosetd &
 go run ./cmd/chaoset-cli --socket chaoset.sock
 
-# Windows 壳同款 TCP 形态（daemon 用 -tcp 起，CLI 也用 -tcp 连；Windows 上只能这样）
+# Windows 迁移期 TCP 形态（daemon 用 -tcp 起，CLI 也用 -tcp 连）
+# 命名管道：daemon 用 -pipe 起（DLL 自动按当前用户 SID 连；CLI 暂不支持）
 go run ./cmd/chaosetd -tcp 127.0.0.1:7949 &
 go run ./cmd/chaoset-cli -tcp 127.0.0.1:7949
 
@@ -582,7 +583,7 @@ TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 |---|---|---|
 | Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
-| Windows | TSF COM DLL（C++ 薄壳），TCP 回环连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道优先（TCP 回环作迁移期回退）连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；命名管道运行时、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
 
 ### 渐进上屏的跨程序兼容模型（2026-10-30）
 
@@ -616,8 +617,9 @@ insertText」有缺陷；Windows 部分宿主对合成结束/重建的选区记�
 与平台无关）。
 
 Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
-行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输走 TCP 回环
-（替代早期命名管道方案）；自绘候选窗与 UWP/AppContainer 场景待真机。
+行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输优先命名管道
+（2026-11-01 新增，无端口、ACL 限当前用户），管道不可用时回退 TCP 回环
+（旧安装器仍 `-tcp`，升级期不中断）；自绘候选窗与 UWP/AppContainer 场景待真机。
 逐项状态见 shims/windows/README。
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
@@ -680,9 +682,10 @@ bin/chaoset-userdict -socket chaoset.sock export -phrases -o learned.tsv
 bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 ```
 
-> **平台限制**：`chaoset-cli` / `chaoset-userdict` 目前只支持 Unix socket（macOS/Linux）。
-> Windows 包里的同名 exe 连不上走 TCP 回环的 daemon，只能加 `-userdict` 走本地文件模式
-> （daemon 运行时会被其内存态覆盖，建议先停 daemon）。
+> **平台限制**：`chaoset-cli` / `chaoset-userdict` 目前只支持 Unix socket（macOS/Linux）
+> 或 `-tcp`；Windows 命名管道客户端（`-pipe`）尚未接入这两个 Go 工具。Windows 包里的
+> 同名 exe 若要连 daemon，需让 daemon 以 `-tcp` 启动；否则只能加 `-userdict` 走本地
+> 文件模式（daemon 运行时会被其内存态覆盖，建议先停 daemon）。
 >
 > 导出经 IPC 分页传输（客户端自动拼接），学习数据再大也不会撞 1 MiB 单帧上限。
 
@@ -1743,6 +1746,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         仍待做，当前保留 TCP 兼容）。
       - **验证**：`go build ./...`、`go test ./cmd/chaosetd ./ipc`、
         `GOOS=windows go build ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 81：Windows C++ 壳命名管道 client（TCP 回退，编译级）（2026-11-01）
+      - **C++ 壳**：新增 `PipeTransport`——`CreateFileW` 打开
+        `\\.\pipe\chaoset-<当前用户SID>`，overlapped `ReadFile`/`WriteFile` +
+        200ms 超时（与旧 TCP 壳同量级），连接失败 2s 冷却并自动回退 `TcpTransport`；
+        `ChaosetTIP` 成员改为 `PipeTransport`。
+      - **兼容策略**：安装器暂不改（仍 `-tcp`），DLL 管道失败自动回退 TCP；
+        daemon 可用 `-pipe` 手动验证命名管道，真机通过后再切安装器。
+      - **设置窗**：学习数据管理原本直接 `TcpTransport`，一并改为 `PipeTransport`
+        （管道优先/TCP 回退），避免 daemon 切 `-pipe` 后设置窗连不上。
+      - **测试/构建**：`./shims/windows/build.sh` 通过（mingw 交叉编译 + 原生
+        core_test TCP 测试台 + 安装包）；命名管道运行时行为需 Windows 真机验收。
+      - **文档**：shims/windows/README、根 README 传输形态、AGENTS IPC 条目同步。
+      - **验证**：`./shims/windows/build.sh`、`make vet`/checker、
         `git diff --check` 通过。
 
 ## 验收范围确认（2026-09-23）

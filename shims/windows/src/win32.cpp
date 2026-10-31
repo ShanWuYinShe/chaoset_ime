@@ -2,7 +2,8 @@
 //
 // 职责：COM TIP 注册与激活、按键拦截（ITfKeyEventSink + ITfKeystrokeMgr）、
 // 预编辑合成（ITfContextComposition）、候选上屏；引擎逻辑全部经
-// core::Session 走 TCP 回环（127.0.0.1，默认 7949）与 chaosetd 通信。
+// core::Session 与 chaosetd 通信：优先 Windows 命名管道（无端口、ACL 限当前
+// 用户），旧安装器仍用 TCP 回环时自动回退（迁移期兼容）。
 // daemon 不可达时所有按键原样透传（降级策略，见 README）。
 //
 // 验证等级：mingw-w64 编译级 + 核心层行为级（macOS 上对真实 daemon，
@@ -25,6 +26,7 @@
 #include <shellapi.h>  // SHQueryUserNotificationState（全屏免打扰，2026-10-31 A7）
 #include <commdlg.h>  // GetSaveFileNameW（设置窗口导出学习数据，2026-10-31）
 #include <shlobj.h>   // SHGetFolderPathW（设置窗口导入词库定位 %LOCALAPPDATA%，2026-10-31）
+#include <sddl.h>     // ConvertSidToStringSidW（命名管道名按当前用户 SID）
 #include <cderr.h>    // FNERR_BUFFERTOOSMALL（导入词库多选缓冲区不足）
 #include <uiautomationcore.h>     // UIA 类型（无障碍宿主 provider，2026-10-31）
 #include <uiautomationcoreapi.h>  // UiaHostProviderFromHwnd / UiaReturnRawElementProvider
@@ -1771,6 +1773,155 @@ private:
     int port_ = 7949;
 };
 
+
+// ---- 传输：Windows 命名管道（优先）→ TCP 回环（迁移期回退） ----
+//
+// 命名管道无端口、ACL 限当前用户 + AppContainer 包；daemon 用 `-pipe` 启动。
+// 旧安装器仍以 `-tcp` 启动 daemon 时，管道连接失败会自动回退 TCP，保证升级
+// 期可用；真机验证通过后再把安装器切到 `-pipe`。
+class PipeTransport : public chaoset::Transport {
+public:
+    PipeTransport() : pipeName_(currentUserPipeName()) {}
+    ~PipeTransport() override { closeConn(); }
+
+    bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
+
+    bool ensureConnected() {
+        if (pipe_ != INVALID_HANDLE_VALUE) return true;
+        DWORD now = GetTickCount();
+        if (now - lastFail_ < 2000) return fallback_.ensureConnected();
+        if (pipeName_.empty()) {
+            lastFail_ = now;
+            return fallback_.ensureConnected();
+        }
+        HANDLE h = INVALID_HANDLE_VALUE;
+        // daemon 可能尚未创建管道实例：最多等 3×20ms，绝不在 UI 线程长等。
+        for (int i = 0; i < 3; ++i) {
+            h = ::CreateFileW(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE,
+                              0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+            if (h != INVALID_HANDLE_VALUE) break;
+            if (GetLastError() != ERROR_PIPE_BUSY) break;
+            if (!::WaitNamedPipeW(pipeName_.c_str(), 20)) break;
+        }
+        if (h == INVALID_HANDLE_VALUE) {
+            lastFail_ = now;
+            // 每进程只记一次：区分「daemon 未起」与「管道 ACL 拒绝」。
+            static volatile LONG pipeFailLogged = 0;
+            if (InterlockedCompareExchange(&pipeFailLogged, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log",
+                           "pipe connect failed err=%lu appcontainer=%d fallback=tcp\n",
+                           GetLastError(), isAppContainer() ? 1 : 0);
+            }
+            return fallback_.ensureConnected();
+        }
+        pipe_ = h;
+        return true;
+    }
+
+    bool writeAll(const std::uint8_t* data, std::size_t len) override {
+        if (pipe_ != INVALID_HANDLE_VALUE) return pipeIo(true, data, len);
+        return fallback_.writeAll(data, len);
+    }
+
+    bool readAll(std::uint8_t* buf, std::size_t len) override {
+        if (pipe_ != INVALID_HANDLE_VALUE) return pipeIo(false, buf, len);
+        return fallback_.readAll(buf, len);
+    }
+
+    void closeConn() override {
+        if (pipe_ != INVALID_HANDLE_VALUE) {
+            ::CloseHandle(pipe_);
+            pipe_ = INVALID_HANDLE_VALUE;
+        }
+        fallback_.closeConn();
+        lastFail_ = 0;
+    }
+
+private:
+    // 当前用户命名管道名：\\.\pipe\chaoset-<SID>，与 Go daemon 的
+    // ipc.DefaultPipeName() 同规则（SID 而非用户名，多用户/非 ASCII 安全）。
+    static std::wstring currentUserPipeName() {
+        HANDLE token = nullptr;
+        if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) return L"";
+        DWORD len = 0;
+        ::GetTokenInformation(token, TokenUser, nullptr, 0, &len);
+        if (len == 0) {
+            ::CloseHandle(token);
+            return L"";
+        }
+        std::vector<BYTE> buf(len);
+        if (!::GetTokenInformation(token, TokenUser, buf.data(), len, &len)) {
+            ::CloseHandle(token);
+            return L"";
+        }
+        auto* user = reinterpret_cast<TOKEN_USER*>(buf.data());
+        LPWSTR sid = nullptr;
+        if (!::ConvertSidToStringSidW(user->User.Sid, &sid)) {
+            ::CloseHandle(token);
+            return L"";
+        }
+        std::wstring name = L"\\\\.\\pipe\\chaoset-";
+        name += sid;
+        ::LocalFree(sid);
+        ::CloseHandle(token);
+        return name;
+    }
+
+    // 同步读写 + 200ms 超时：与 TCP 壳的 SO_RCVTIMEO/SO_SNDTIMEO 同量级，
+    // daemon 半死时不会永久阻塞宿主 UI 线程。
+    bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len) {
+        std::size_t off = 0;
+        while (off < len) {
+            DWORD chunk = static_cast<DWORD>(
+                std::min<std::size_t>(len - off, 1u << 20));
+            OVERLAPPED ov{};
+            ov.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (ov.hEvent == nullptr) {
+                failConn();
+                return false;
+            }
+            DWORD done = 0;
+            BOOL ok = isWrite
+                          ? ::WriteFile(pipe_, data + off, chunk, &done, &ov)
+                          : ::ReadFile(pipe_, const_cast<std::uint8_t*>(data) + off,
+                                       chunk, &done, &ov);
+            if (!ok) {
+                DWORD err = ::GetLastError();
+                if (err == ERROR_IO_PENDING) {
+                    DWORD wait = ::WaitForSingleObject(ov.hEvent, 200);
+                    if (wait == WAIT_OBJECT_0) {
+                        ok = ::GetOverlappedResult(pipe_, &ov, &done, FALSE);
+                    } else {
+                        ::CancelIoEx(pipe_, &ov);
+                        ::WaitForSingleObject(ov.hEvent, INFINITE);
+                        ok = FALSE;
+                    }
+                }
+            }
+            ::CloseHandle(ov.hEvent);
+            if (!ok || done == 0) {
+                failConn();
+                return false;
+            }
+            off += done;
+        }
+        return true;
+    }
+
+    void failConn() {
+        if (pipe_ != INVALID_HANDLE_VALUE) {
+            ::CloseHandle(pipe_);
+            pipe_ = INVALID_HANDLE_VALUE;
+        }
+        lastFail_ = GetTickCount();
+    }
+
+    HANDLE pipe_ = INVALID_HANDLE_VALUE;
+    DWORD lastFail_ = 0;
+    std::wstring pipeName_;
+    TcpTransport fallback_;
+};
+
 // ---- 同步编辑会话：TSF 规定文本操作必须经 RequestEditSession ----
 
 class EditSession : public ITfEditSession {
@@ -2089,7 +2240,7 @@ public:
             mgr->Release();
         }
         // 非阻塞预热连接（< 0.1ms；AppContainer 未获回环豁免时是即时拒绝，
-        // 同样不阻塞，见 TcpTransport::ensureConnected 注释）
+        // 同样不阻塞，见 PipeTransport/TcpTransport::ensureConnected 注释）
         transport_.ensureConnected();
         return S_OK;
     }
@@ -2565,8 +2716,8 @@ private:
             const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter && !shiftActive()) ||
                                   keyPunctChar(vk, shiftActive()) != nullptr;
             if (!relevant) return false;
-            if (!const_cast<TcpTransport&>(transport_).isConnected() &&
-                !const_cast<TcpTransport&>(transport_).ensureConnected()) {
+            if (!const_cast<PipeTransport&>(transport_).isConnected() &&
+                !const_cast<PipeTransport&>(transport_).ensureConnected()) {
                 return false;
             }
         }
@@ -3526,7 +3677,7 @@ private:
     int caretLineHeight_ = 20;
     bool caretFound_ = false;
 
-    TcpTransport transport_;
+    PipeTransport transport_;
     chaoset::Session session_{transport_};
     chaoset::Comp comp_;
     // 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改，与 macOS 壳
@@ -3726,7 +3877,7 @@ void CandidateWindow::onAssociateChanged() {
 //
 // 2026-10-31：新增「学习数据」区（统计 / 清空 / 导出）——普通用户不再需要
 // 命令行（`chaoset-userdict` 降级为高级/排障兜底）。设置窗口不持有 TIP 指针，
-// 数据管理直接用独立的 TcpTransport + core::Session 连 daemon，与输入法
+// 数据管理直接用独立的 PipeTransport（命名管道优先/TCP 回退）+ core::Session 连 daemon，与输入法
 // 主连接互不影响（daemon 支持多连接，每个连接独立组词会话）。
 //
 // 2026-10-31 视觉对齐（编译级，需 Windows 真机验收）：
@@ -3929,7 +4080,7 @@ static void settingsDrawCheckbox(const DRAWITEMSTRUCT* dis) {
 static void SettingsRefreshStats(HWND wnd) {
     HWND label = GetDlgItem(wnd, 105);
     if (label == nullptr) return;
-    TcpTransport transport;
+    PipeTransport transport;
     chaoset::Session session(transport);
     chaoset::UserStats st;
     if (!session.userStats(&st)) {
@@ -3947,7 +4098,7 @@ static void SettingsClearLearningData(HWND wnd) {
                     L"清空学习数据", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
         return;
     }
-    TcpTransport transport;
+    PipeTransport transport;
     chaoset::Session session(transport);
     if (!session.userClear()) {
         MessageBoxW(wnd, L"清空失败：daemon 未运行，或未启用用户词典。", L"学习数据",
@@ -3969,7 +4120,7 @@ static void SettingsExportLearningData(HWND wnd) {
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     ofn.lpstrDefExt = L"tsv";
     if (!GetSaveFileNameW(&ofn)) return;
-    TcpTransport transport;
+    PipeTransport transport;
     chaoset::Session session(transport);
     std::string tsv;
     if (!session.userExportAll(false, &tsv)) {
