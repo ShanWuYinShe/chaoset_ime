@@ -118,7 +118,7 @@ cd shims/macos
 ### 本地只跑轻量项，重活交给 CI
 
 提交前本地只需 `gofmt -l $(git ls-files '*.go')` 与 `go build ./...`（秒级）。
-其余由 5 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build。
+其余由 6 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build / windows-build（windows-build 于 2026-10-31 起进 CI）。
 
 ### 踩坑：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
 
