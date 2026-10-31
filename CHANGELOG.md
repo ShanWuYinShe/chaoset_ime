@@ -1,0 +1,1180 @@
+# 更新日志
+
+本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
+
+## v0.3.0（2026-11-01）
+
+- **Linux 设置窗迁原生 GTK3 C，彻底移除 Python/PyGObject**：删除 5 个 `.py`；
+  Makefile/deb/tar/Arch/`install.sh`/component XML/CI/release/checkuiparity
+  全部改到 `chaoset-setup` 二进制与 `setup_ctl.c`；依赖改为 `libgtk-3`/`gtk3`。
+- **Windows/Go 工具命名管道**：`chaosetd -pipe`、C++ 壳命名管道优先/TCP 回退、
+  `chaoset-cli`/`chaoset-userdict -pipe`；安装器切换与真机验收仍待 Windows 环境。
+- **`internal/appdirs` 统一路径**：daemon/tools/Linux shim 共用 socket、用户词典、
+  配置路径；Linux socket 优先 `$XDG_RUNTIME_DIR`。
+- **Linux CI 无头启动冒烟**：Xvfb 下验证 GTK 初始化/窗口构建；设置窗 C 单测覆盖
+  配置往返与保留未知键。
+- 发布资产：Linux tar.gz/deb/Arch、macOS zip/dmg、Windows zip/Setup.exe。
+
+## 历史路线图与验收结论
+
+- [x] 阶段 0：引擎 + 终端测试台 + IPC 骨架
+- [x] 阶段 1：macOS IMK 壳（编译 + IPC 运行时验证通过；真机启用见
+      shims/macos/README。**bundle 有效时无需注销重登**，装好并 `TISRegisterInputSource`
+      后即可在系统设置里添加——早期「必须注销重登」的结论已更正）
+- [x] 阶段 2：用户词典 + 自动调频增强（时间衰减、bigram、词组进化）
+- [x] 阶段 3：热词导入管道（Rime dict.yaml 解析、chaoset-import 合并）
+- [x] 阶段 4 主体：三端壳全部实现 + 统一候选窗
+      - Windows TSF 壳：已实现——核心层行为级验证（真实 daemon TCP 17 项）、
+        DLL mingw 交叉编译级验证；真机联调（COM 注册/按键/渲染）待 Windows 环境
+      - Linux ibus 壳：已实现——Go 引擎（godbus），容器内端到端验证通过
+        （组件注册/激活/按键序列处理/CommitText 中文上屏信号）；
+        真机桌面闭环待 Linux 桌面环境
+      - 统一候选窗：已实现——daemon 侧渲染（renderer + candidateImage，
+        样例人工目检通过）+ macOS 壳贴图面板（编译级验证，回退 IMKCandidates）；
+        布局与皮肤统一由 daemon 的 `renderer.Skin` 决定：默认横排候选栏 + 圆角 +
+        系统浅/深色配色，壳只按 `candidateImage` 的 `dark`/`scale` 传参（见阶段 20）；
+        Windows 壳贴图待真机环境。（**v0.2.0 起 macOS 改为壳内原生自绘候选窗**，
+        见阶段 24；**2026-10-27 起贴图渲染链路整体删除**——macOS/Windows 壳为
+        原生自绘、Linux 用 ibus 原生面板，视觉参数保留在 `skin/` 包，见阶段 27）
+- [x] 阶段 5：中文标点——引擎侧统一映射（Session.Punct + IPC punct），
+      CLI 与三端壳转发接入
+- [x] 阶段 6：候选翻页——引擎内分页（Composition.page/page_count，
+      每页 6 个，2026-10-25 由 9 调整：数字键 1-6 全在标准指位内且候选行
+      不易换行）+ IPC nextPage/prevPage，CLI 与三端壳（- / =）接入
+- [x] 阶段 7：候选可视化收尾——渲染器页码指示（竖排布局并进预编辑行；
+      横排布局改为末尾一项 `‹1/5›` 的淡色文字，因为横排不再绘制预编辑行）；
+      ibus 壳 UpdateLookupTable 候选表上报（容器内端到端验证，数字键选择不再盲选）
+- [x] 阶段 8：中英切换——Shift 空按切换，英文模式全透传；ibus 壳
+      容器内端到端验证（含切回恢复），Windows 编译级，macOS 修饰键
+      事件路由待真机验证
+- [x] 阶段 9：标点循环（句号/逗号同键连按全角⇄半角，引擎侧）+
+      ibus Page Up/Down 键盘翻页（容器内端到端验证）
+- [x] 阶段 10：模糊音——声母/韵母等价展开查询（zh/z、ch/c、sh/s、
+      n/l、an/ang、en/eng、in/ing），默认关闭 -fuzzy 开启
+- [x] 阶段 11：全角/半角标点——Shift+空格切换，半角下标点原样输出
+      （引擎侧，组词合并行为不变）；ibus 容器验证路径同上
+- [x] 阶段 12：简繁转换——零错误单字映射（歧义字保留原形），
+      候选与上屏整体转繁体，默认关闭 -traditional 开启
+- [x] 阶段 13：双拼——Rime algebra 忠实转写管线 + 全音节反向键码表
+      （完整性测试兜底），流式两键解码；方案 zrm（自然码）与 mspy
+      （微软），默认关闭 -shuangpin 开启；小鹤后于阶段 18 落地
+- [x] 阶段 19：中国风视觉（**已被阶段 20 取代**）——当时应用图标取中国印章语汇、
+      候选窗默认皮肤取中国传统色（宣纸底 #F7F2E7、朱红外框 + 米金细内框、浓墨候选、
+      淡墨预编辑、朱红首选高亮 + 「朱批」竖记、石青学习标记）。**当前默认皮肤是系统风格的
+      横排候选栏**（见阶段 20）。宣纸/朱红观感**不再是任何内置默认**；该观感的
+      绘制代码已随 renderer 包删除（2026-10-27，见阶段 27），如需恢复参考 git 历史；
+      输入源图标也已由「印章」改为与系统输入法一致的扁平 keycap。
+- [x] 阶段 14：CC-CEDICT 开源词库直连导入（约 12 万词条，自动识别
+      格式、声调数字/u: 记法归一、非汉字过滤、合成词频让用户词库优先）
+- [x] 阶段 15：规模化验证与基准固化——10 万级词库加载 42ms、组词
+      0.36ms/键、前缀扫描 0.34ms/键（Apple M1 基准入库）；真实 120k
+      词库 daemon 全链路实测通过
+- [x] 阶段 16：简繁转换升级——内嵌 OpenCC 官方数据（STCharacters
+      4,029 单字 + STPhrases 49,270 词级，Apache-2.0），词级最长匹配
+      消歧（头发→頭髮、出发→出發、公里→公里），惰性解析
+- [x] 阶段 17：ibus 引擎多实例——工厂按 InputContext 创建独立实例
+      （独立会话/中英模式/Shift 跟踪），容器内端到端验证状态分离
+      （两实例交错打字各自上屏 你好 / 好）
+- [x] 阶段 18：小鹤双拼（flypy）——依 Rime double_pinyin_flypy
+      schema 键位接入三方案体系，已知键位 25 项抽查全过
+- [x] 阶段 23：错拼容忍（手滑修正）
+      - 相邻颠倒（zhogn）、多敲（zhonng / niihao）、漏敲（zhonguo / jisuanjii）
+        这些手滑输入，旧版要么给碎片假词要么无候选。现在做「单次编辑」修正后
+        重查，24 个典型场景中 13 个修复为正确首选；两次以上编辑不做（那时已不是
+        手滑而是不会打）。
+      - **绝不污染正常输入**：手误与合法混拼在字形上高度同形（nihap vs chifanl），
+        因此触发条件收紧为「连简拼路径都排不出来」，且纠错候选的词频必须达到
+        常规单词级候选的 2 倍才提升到首位。实测直接放开会让混拼首选率从 34.32%
+        掉到 20.75%。正常输入各项指标零回归，性能零额外开销（22.0µs/键）。
+      - 已知漏判：nihap 能被切成 ni|ha|p 因而不修正——与合法写法 ni'ha'p 同形，
+        强行纠错会误伤所有混拼。
+- [x] 阶段 24：原生候选窗 + 键帽序号 + 纠错/联想排序修复（v0.2.0）
+      - **macOS 候选窗切原生（AppKit 自绘）**：替代 daemon PNG 贴图——消除
+        跨进程像素管线（渲染+PNG+base64+JSON+socket ≈5ms/帧 @Retina），
+        深浅色用 NSColor 动态色自动跟随，补齐贴图方案两大缺口：鼠标点选
+        候选（原 ignoresMouseEvents=true 无法点选）与 VoiceOver 读取（原
+        无任何无障碍标注）。Windows/Linux 壳当时继续贴图；candidateImage 与
+        renderer 已于 2026-10-27 删除（macOS/Windows 原生自绘、Linux 用 ibus
+        面板；视觉参数迁至 skin/ 包）。
+      - **序号键帽视觉**：候选序号收进 keycap（浅色白底黑边深黑数字、
+        深色 #5A5A5E 底亮边白字、首选蓝胶囊内半透白键帽），数字字号 80%；
+        修复深色键帽配色随 WithDarkMode 漏拷失效（改反射同步全部配色字段）。
+      - **空格选词**：改 keyCode 49 判定并前置（部分客户端 characters 对
+        空格失灵导致漏选词、空格漏进文档）；组词中空格一律消费——有候选
+        选首选，无候选顶屏原始拼音。
+      - **纠错与联想排序**：zhengchagn 等相邻颠倒错拼现在纠错出「正常」
+        （新增中间孤立声母形态触发 + 领跑分母只采信全消耗精确词）；
+        xianzai 的用户词典联想词（现在时间）不再压过全消耗精确词「现在」
+        （音节超段仲裁）。基线对比见「错拼修正」与 .workwork/verify/scan
+        （full 零回归、tail1 +1.30、mixed -1.16 为中间声母形态改由高频
+        纠错词领跑的预期代价）。
+      - **渲染性能**：None 滤波快速 PNG 编码（-63%~-67%，产物更小）+
+        圆角遮罩缓存；候选帧 @Retina 6ms → 3ms（贴图端收益，Win/Linux
+        与 macOS 回退路径受益）。
+      - **排序金标准**：段数匹配三态中的「全消耗优先」位于调频之前——
+        单音节输入 hao 首选恢复为「好」、多段输入 yicha/sxj/ld 首选恢复
+        为等长词组（遗产/数学家/领导），学习词组与单字不再越位；
+        五场景首选率较起点全部提升（full 80.82/tail1 48.56/tail2 32.12/
+        initials 20.55/mixed 39.11）。
+      - [x] 阶段 26：QWERTY 物理键邻近纠错 + 拼音习惯与粘键容错（v0.2.2）
+      - **QWERTY 物理键邻近手误建模**：建立 26 键标准错行错位布局物理邻键映射，手指按偏替换优先占满纠错名额；跨键区远端替换扣除惩罚分，防止远端巧合高频词反客为主（如 yishrng 纠错「以上」不再压过「一声/医生」）。
+      - **末位声母手滑纠错**：引入 tailSuspicious 判定与 typoLen >= len(input) 防截断护栏，解决 nihap 出「你哈珀」痛点直接命中「你好」，同时零误伤 zhongg（中国）、chifanl（吃饭了）、shangxiaj（上下级）。
+      - **拼音省写与撮口呼习惯归一**：uei->ui（dueibuqi->对不起、shueijiao->睡觉）、iou->iu（niourou->牛肉）、uen->un（chuentian->春天）、j/q/x/y+v->u（jvece->决策、xvesheng->学生）、xion/jion/qion 漏 g 补齐。
+      - **连击粘键消除（Stutter Reduction）**：连续重复字母手误折叠（niihaoo->nihao、zhoonng->zhong）。
+- [x] 阶段 25：联想机制 + 部分消耗降级 + 用户词典净化 + 排序金标准（v0.2.1）
+      - **联想机制（v0.2.1）**：选词上屏后拼音区清空，候选窗继续展示
+        以该词开头的续接词组，数字键 1-6 直接连选上屏（学习路径与普通
+        选词一致）；字母键回到正常组词、Esc/切中英/标点立即收起联想窗。
+        联想候选按词频降序 + Bigram 上下文加成（常打的联想词排前）。
+      - **部分消耗降级（v0.2.1）**：打满多段的输入，只消耗部分段数的
+        单字/短词（rankExact/rankInitialExact）排到全消耗词组之后——
+        yicha 首选从「依」变为 2 音节词组、sxj 首选从「事」变为简拼
+        词组；纠错与续接/回退层级不适用此键（各有独立门槛）。
+      - **用户词典净化**：words 中 278 条不在静态词典的碎片假词清理
+        （旧排序 bug 让碎片组合置顶、用户被迫选词形成调频污染的存量）。
+- [x] 阶段 22：输入预测与拼音匹配强化
+      - **末音节续接预测**：打字时每个音节都必然经过「打了一半」的状态
+        （zhonggu / beijin / daxu / quanmia），旧版这些输入只能给出巧合碎词
+        （中古 / 被进 / 大需 / 全米啊），目标词完全不可达。现在把末段当作待补全
+        音节查词典续接，实测末音节残缺命中率 43.84% → **98.63%**、首选率
+        13.49% → **43.42%**，而全拼完整输入首选率保持 80.68%（改动前 80.75%）。
+        排序不靠特判：完整解析与续接解析同层竞争，由「词频 − 30×补全字符数」
+        决出（详见「输入预测（末音节续接）」）。
+      - **ü 输入别名**：用户敲 lue / nue 现在能打出「略 / 虐」（旧版只能出
+        「路鄂 / 怒鄂」），音节表仍以 v 记写，别名只在输入侧归一。
+      - **用户词库查询键 bug**：`QueryTokensExact` / `QueryTokens` 解析用户记录
+        时用 `\t` 拆 `词\x00音节` 键，拆分恒失败导致整个循环 continue——
+        被调频过的单字/词在简拼与整句路径里永远查不到（只有词组生效）。
+        修复后简拼 `dw` 能按调频优先出「单位」。
+      - **整句 DP 分数归一化**：用户调频分（次数×500）此前被当作静态词频再乘
+        音节数放大，高频学过的单字会霸榜、把完整词挤成碎字拼接（`wmd` 出
+        「我没的」而不是「我们的」）。现在用户词条以固定基础分参与规划，
+        真实权重仍由上下文加成计算。
+- [x] 阶段 21：输入体验修复（用户真机反馈）
+      - **末段打错仍能出候选**：此前多打一个对不上的字母就整串「无候选」
+        （nihaox / womenx / zhongguoo 全空，观感是输入法坏了）。现在按匹配层级
+        排序：完全匹配 > 末段续接 > 偏长前缀 > **回退到已完整的前缀**，
+        所以 nihaox 仍能打出「你好」。同时加了 Trie 根保护——无法切分的
+        乱码（zzz）曾因 `Query([])` 从根节点返回整本词库，现在正确报无候选。
+      - **退格不再删掉已上屏内容**：壳侧退格改为「有组词才消费、无组词放行」，
+        且 `setMarkedText` 的 selectionRange 从「全选」改为「光标在末尾」、
+        组词结束时用 `insertText("")` 收掉 inline session。此前无条件吞掉退格键，
+        既删不动文档里的字，又可能在收尾时连带替换掉相邻已上屏文本。
+      - **输入源图标与系统一致**：改为 16×16+32×32 双帧、**ExtraSamples=2
+        （非预乘 alpha）**、RGB 恒 0、单字符「C」字形，并用 8× 超采样后降采样
+        生成（16px 直接画字体笔画会断裂）。此前用 CGImageDestination 写多帧
+        得到 ExtraSamples=1，系统按模板渲染时 alpha 计算不同，表现为颜色/明暗
+        与 ABC、简体拼音不一致、hover 也不跟随；字形用「Cs」两字符则让图标
+        看起来比系统图标更胖更小。
+- [x] 阶段 20：可用性修复（本轮 5 项）
+      - **内置常用词库**：默认词库由 `data/dict_seed.tsv` 换成 `data/dict_common.tsv`，
+        解决「jingchang 打不出经常」与生僻字淹没常用字的问题；新增 `cmd/chaoset-dictgen`
+        可从 jieba 词频表 + 词语拼音表再生成（规则见「内置词库与再生成」）。
+      - **候选排序**：优先级依次为 ① 用户数据加权（调频 / 上下文共现）
+        ② 音节数与输入完全一致 ③ 得分 ④ 词长 ⑤ 字典序。② 排在 ③ 之前是有意的：
+        单音节输入 `jing` 先出单字「经」而不是词频更高的「经济」——打满几个音节就
+        优先给同等长度的词，长词退到后面；而用户选过的词（①）始终压过 ②③。
+      - **候选窗改系统风格**：横排候选栏 + 圆角 + 系统浅/深色皮肤（`Skin.Horizontal` /
+        `MaxWidth` / `CornerRadius`、`renderer.DefaultSkinFor(dark)`）；
+        `candidateImage` 新增可选 `dark`/`scale` 参数支持深色与 Retina；
+        横排模式不再绘制预编辑行（预编辑由壳的 marked text 承担）。
+      - **macOS 壳**：候选窗改为跟随光标定位（不再贴鼠标，下方空间不足时翻到上方），
+        输入源图标改为对齐系统规格的 16×16 + 32×32 双帧 TIFF，显示名统一为 `Chaoset`。
+      - **仓库卫生**：`.gitignore` 忽略 `.DS_Store`；`go.mod` 把
+        `github.com/godbus/dbus/v5` 归正为直接依赖（`shims/linux/ibus-engine` 直接 import）。
+- [x] 阶段 27：删除 daemon 贴图渲染链路（2026-10-27）
+      - **为什么删**：macOS 壳自阶段 24 起 AppKit 原生自绘、Windows 壳 GDI 自绘、
+        Linux 壳用 ibus 原生面板——`renderer` 包（约 1900 行含测试）与
+        `candidateImage` IPC 在三端壳中均无调用方，daemon 每次启动还在探测
+        CJK 字体并打印「candidateImage 渲染已启用」，纯属死代码与误导性日志。
+      - **删了什么**：`renderer/` 整目录、IPC `candidateImage` 方法与服务端
+        `WithSkin`、客户端 `CandidateImage` 方法族、daemon 的 `-font`/`-fontsize`
+        参数、macOS `EngineClient.candidateImage`（Swift 侧同样零调用）。
+      - **留了什么**：视觉参数（几何 + 浅/深配色）迁至新包 `skin/`
+        （`DefaultSkinFor(dark)`，去掉只服务渲染的 `FontPath`/`Horizontal` 字段），
+        作为**设计基准**继续服务 `tools/render_metrics.go` 与
+        `tests/visual-parity.sh`（2026-10-30 起：Go↔macOS 布局 5 项 + macOS
+        参考常量 + 浅/深各 13 色逐项断言；**不覆盖 Windows**，Windows 无运行时
+        视觉断言——见阶段 29 与 docs/ui-parity.md）。
+        后续若做「构建期由 skin 包生成 Swift 常量」（单一真源），生成源即此包。
+
+- [x] 阶段 28：整句输入习惯 + 整词贪婪防护（2026-10-30）
+      - **背景（用户需求）**：①核查三端 UI 一致性；②核查「多字拼音没有合适
+        整体候选时可逐段选择」这条链路是否完备；③逐段选择的过程要进入用户
+        输入习惯学习，后续完整输入时更符合用户想打的词组；④**不能整词贪婪
+        匹配**——学过 今天星期一 之后，打 今 不能直接给候选 天星期一，否则用户
+        只想打 今天 时会被整词候选/联想尾巴挤掉（原话「不能直接就匹配整个词」）。
+      - **现状探针（HEAD b4785e6，改动前实测）**：逐段选择引擎侧已完备
+        （SelectPrefix 只消耗候选音节前缀、剩余回灌；三端键盘/空格已接），
+        每段也已进学习（Words+Bigram，同串复用被顶前）；但 5 音节以上的组合
+        **学不到**（maxLearnSylls=4 只约束 Phrases 表），而「整句候选一键上屏」
+        会把任意长整句写进**不带分段**的 Words 表 → 之后打 jin 出现整句候选
+        （#59，页 10）、上屏「今」的联想首条直接是**天星期一**（score 500，
+        第 2 条才是「天」70）；该尾巴还能被再次上屏学习（AssociateSelect），
+        之后 tian 下「天星期一」#40 反超「天气」#46——学习污染循环成立。
+      - **本次修复（engine）**：Words/Phrases 学习记录携带**分段**（`Segs`，
+        旧数据无分段时按主词典「分段数最少」DP 推断，见下方边界加固 ②）；
+        整句学习（`BumpWordWithSegs`）
+        只在**完整输入**时作为整句候选参与调频加权，**不参与部分输入的前缀
+        候选**；联想剥前缀只允许在用户确认过的分段边界发生（今天→星期一 ✓、
+        今→天星期一 ✗）；逐段选择整串耗尽时把整句固化成带分段的整句习惯
+        （≤12 音节，超过视为误触不学）；「一键整句上屏」按逐段确认的等价路径
+        再学一遍分段词与共现，两种上屏路径学习数据一致；顺带修复撇号输入
+        （jin'tian'…）下渐进失效（比较忽略 '，剩余串不以 ' 开头），
+        `engine.Controller`/IPC Client 补齐 SelectPrefix，CLI 数字键走渐进
+        上屏（本地测试台可验证渐进链路）。
+      - **边界加固（复检发现的两个边界 bug，同日修）**：① 渐进段累积
+        （seqSegs）此前只在 Reset/Select/AssociateSelect 清理，退格到空或标点
+        丢弃残缺输入后重新组词，会把上一轮已上屏段拼成伪整句（实测「今天」→
+        退格到空→打 wo 选「我」→学出「今天我 segs=[今天 我]」）；现在
+        Input/Backspace/BackspaceWord/Punct 在组词被清空时一律作废未完成分段。
+        ② 旧数据分段推断此前用「最长词贪心」，会被词典长词带偏（无 Segs 的
+        「天星期一」被切成 [天星,期,一]，联想上屏「天」后丢失「星期一」、错误
+        分段词「天星」污染候选），改为「分段数最少」DP 后恢复 [天,星期一]。
+      - **双向回归**：engine/sequence_learn_test.go —— 正向（完整输入出带
+        FromUser 的整句、今天→星期一/天气 续接保留、旧数据分段推断生效、
+        撇号输入可渐进）；反向（jin/jintian 不出现整句候选、今 的联想没有
+        天星期一/天天气、只想输入今天时 今天 仍 #1、退格清空后不拼伪整句、
+        旧数据尾巴学到的分段必须正确）。
+      - **兼容性/边界口径（有意为之）**：① 末音节残缺或多打尾字母
+        （jintianxingqiy、jintianxingqiyix）仍给整句候选——这是续接预测形态，
+        选择时只消耗已覆盖音节、剩余字母保留（与渐进上屏一致），不属于
+        「部分输入整词匹配」；② 旧数据里「不在词典的多字词」一律按整句式处理
+        （带推断分段），不再作为部分输入的前缀候选——完整输入与分段边界续接
+        不受影响，是本次安全规范的兼容性权衡。
+      - **五场景基线**：改动前后 full/tail1/tail2/initials/mixed 对比见提交
+        说明与 `.workwork/verify/delta-2026-10-30.md`（gitignore，扫描口径见
+        pinyin-quality-tuning skill）。
+
+- [x] 阶段 29：三端 UI 一致性审计与整改（2026-10-30）
+      - **审计（只读）**：对照 36 项三端 UI 行为/参数，发现 **17 项不一致**
+        （12 项一致、4 项已文档化平台差异、3 项需真机），核心问题：①Windows
+        候选窗单位口径混用——字号按 pt（1.0×）、间距/键帽/圆角/最大宽按 px@96
+        （0.75×），同一面板两套换算基准；②Linux 设置窗口关「词组联想」不生效
+        （引擎只在启动时读一次 config）；③学习标记 `*` 只有 macOS 渲染，
+        Windows IPC 结构根本没解析 `from_user`；④Windows 鼠标点选仍走非渐进
+        `select`（长串下整串清空）；⑤联想态 Shift+空格实际三端都是「选第一个
+        联想词」，与文档/注释冲突；⑥机器检查名不副实（visual-parity 只比 5 个
+        标量、Swift 色值从未参与、equivalence 却宣称「布局与色值两段一致」）。
+      - **整改**：Windows 候选窗布局全部统一 pt 口径（`pt(v)=MulDiv(v,dpi,72)`）
+        并修正 maxContent 漏扣 gear+pill（窗宽 ≤714pt<720）、minW 84pt；Windows
+        学习标记全链路补 `from_user`（core.hpp/core.cpp/win32.cpp 解析 + 绘制，
+        几何/色值与 mac 一致）；Linux 联想开关改为每次进联想前重读 config.json
+        （与 mac/Win 每次选词前重读同语义，保存即生效）+ 3 个测试；Windows 鼠标
+        点选改走 selectPrefix 渐进上屏；小键盘数字选词、联想态 Shift+PageUp/Down
+        对齐；P1 视觉细节（深色派生色 alpha 有效值、页码居中、分隔线口径、单页
+        箭头置灰、Toast 位置/点击穿透、设置窗字号几何）一并修正。
+      - **机器检查**：visual-parity.sh 断言 5 → 46 条（另有 2 条「导出成功」提示；新增 macOS 参考常量 C 段 +
+        真正消费 divider、浅/深各 13 色 Go↔Swift D 段；负向验证可 FAIL）；
+        skin 补 divider/chevron 与深色 13 色期望值（加强非降低）；docs/ui-parity.md
+        按代码全量重写并明确未覆盖项（Windows 无运行时视觉断言、key_routing 未接
+        CI、无 checkuiparity）。平台限制与待真机项（per-monitor DPI、Windows
+        设置窗深色、多行折行、半透明/阴影、无障碍、滚轮）写入 docs「已知功能差异」；
+        按键边角 3 处与 Linux 设置窗单例已于 2026-10-31 解决（见阶段 48/49/50）。
+      - **验证**：本机 gofmt/build/go test ./.../make vet/visual-parity 46 条断言（+2 条导出提示）/
+        shims/windows/build.sh（core_test 含 from_user 断言 + mingw 交叉编译）
+        全过；重活交 CI。真机验收清单见 docs/ui-parity.md。
+
+- [x] 阶段 30：审计后 P1 修复批次（2026-10-30）
+      - **触发**：阶段 29 之后的三端 UI 一致性复审 + 引擎功能完整性审计（4 路只读审计，
+        共 P0=0 / P1=15 / P2 若干）。除 Windows TSF 两阶段语义（需 Windows 真机
+        确认，已记入已知限制）外，P1 清单全部修复：
+      - **双拼 `;` 键（mspy ing）全链路打通**：引擎 `Session.Input` 双拼模式接受 `;`
+        （dpPending 参与 pair 解码；否则按标点语义处理），`Composition` 新增 `shuangpin`
+        字段供壳识别，三端壳在双拼模式把 `;` 路由到 `input` 并上屏 `Committed`。
+      - **渐进上屏丢字**：`SelectPrefix` 前缀消费改按 `canonicalSyllable`/模糊等价逐音节
+        匹配（`xveshengwomen` 选「学生」不再清空剩余 `women`）；并补 alias/fuzzy 双向回归。
+      - **单一预编辑模型收尾统一**：Linux 的 Ctrl+Backspace/Ctrl+U、Shift 中英切换、
+        退格删空、空格无候选四条路径补齐「取消/落盘确认段」；Windows 的 Alt/Win 透传、
+        Shift 切换、空格无候选、翻页失败同样改为落盘；mac 本就正确。
+      - **Windows 壳**：设置窗不再保存裸 TIP 指针（消除 UAF）；描边线宽改 pt 口径；
+        `Comp` 解析 `shuangpin` 并支持双拼 `;`。
+      - **macOS 壳**：首项超长候选按字符截断加「…」，面板内容宽恒 ≤638pt、窗宽 ≤714pt，
+        不再越出屏幕（与 Windows 策略对齐）。
+      - **IPC/持久化**：`userExport` 分页（>1MiB 学习数据可导出）；用户词典写盘串行化 +
+        唯一临时文件（消除 clear 被旧快照覆盖/写坏的竞态）；Linux ibus 引擎启用延迟落盘
+        （不再每次选词全量重写）；daemon 关停先停 ticker 再落盘。
+      - **Linux 打包**：Arch 二进制包补装 `chaoset-setup.py`（ibus-setup「首选项」不再失效），
+        release 冒烟对 deb/tar.gz/Arch 三个包都断言该文件存在。
+      - **文档**：本轮同步修正 README/AGENTS/docs/ui-parity 与各端 README 的过期宣称
+        （词库规模/再生成命令 `-extra`/`.Pinyin`/release workflow/IPC 方法表/Linux page_size 等）。
+      - **未修（明确记录）**：Windows TSF 两阶段下 Shift 跟踪可达性（需真机确认，见
+        `shims/windows/README.md`「已知限制」）；双拼 `;` 的标点宽度 1 键瞬态
+        （记入各端 README）。Option/Alt+Backspace 三端语义已于 2026-10-31 统一为
+        按音节回退（见阶段 46）。
+
+- [x] 阶段 31：Windows 真机首轮验证 + 审计 A 批收尾（2026-10-30/31）
+      - **触发**：v0.2.17 发布后用户 Windows 11 真机反馈「开始菜单/搜索框候选窗
+        不显示」。真机定位到两层根因：候选窗 owner 恒为 nullptr（无主 topmost
+        窗口被沉浸式 z 序 band 压住）+ 安装器硬编码进程名漏杀 SearchApp.exe
+        （旧 DLL 一直活着），另有 UILess 类别声明与实现矛盾。修复后真机确认恢复。
+      - **本轮 follow-up（审计 A 批）**：候选窗 owner 生命周期回收（owner 连带
+        销毁时清句柄 + 归还 DLL 防卸载计数，此前会永久泄漏计数）、ModeToast 补
+        owner/防卸载计数、便携 ZIP 升级路径清理旧 UILess 类别并按模块杀宿主
+        （此前只有 NSIS 安装器做了）、NSIS 改用 Sysnative 64 位 PowerShell 枚举
+        64 位进程模块、全屏免打扰（D3D 全屏/演示模式抑制候选窗，注册表可关）、
+        Shift 跟踪一次性诊断日志、CI 新增 windows-build job（日常提交即编译
+        Windows C++/NSIS，不再等到打 tag）。
+      - **验证**：本机 gofmt/build/go test ./.../make vet/shims/windows/build.sh
+        （core_test + mingw 交叉编译）全过；CI 新增 job 随推送验证。
+      - **未修（明确记录）**：Windows TSF 两阶段 Shift 跟踪仍待真机确认（已加
+        tsf.log 诊断，见 shims/windows/README.md）；无边框全屏不触发全屏抑制；
+        游戏内 WASD 被组词是 IME 固有行为（游戏前切英文模式）。
+
+- [x] 阶段 32：遗留 P2 批次（2026-10-31）
+      - **Windows 中英切换（P1 级风险）**：Shift 空按跟踪从 `OnKeyDown/OnKeyUp`
+        移到 `OnTestKeyDown/OnTestKeyUp`——TSF 两阶段模型下，Test 阶段返回 FALSE
+        的按键不会再进 Key 阶段，原实现可能永远收不到修饰键（中英切换失效）。
+        「非 Shift 键取消空按窗口」同步移到 Test 阶段（Shift+方向键不再误切换）。
+        诊断日志保留，真机按一次 Shift 即可确认。
+      - **Windows 主题切换重绘**：`WM_SETTINGCHANGE`/`WM_THEMECHANGED` 立即失效
+        重绘候选窗与模式提示条，不再保持旧配色直到下次输入。
+      - **命令行工具**：`chaoset-cli`/`chaoset-userdict` 新增 `-tcp`（Windows 壳
+        同款回环形态，Windows 上 CLI 从此可连 daemon）；四个工具新增 `-version`
+        （读 Go 构建信息里的 VCS 提交号，无需打包注入，真机排障先确认新构建）。
+      - **安全/健壮性**：Unix 套接字权限显式 0600（同机其它用户不能再连 daemon
+        旁听键盘输入）；IPC 单连接 panic 隔离（一个畸形请求不再带走整个 daemon）。
+      - **macOS**：LaunchAgent 的 daemon 参数补 `-log`（launchd 下日志落
+        `~/Library/Application Support/chaoset/chaosetd.log`，此前日志丢失）。
+      - **仓库卫生**：`.gitignore` 补 `*.sock.lock` 与 `userdict.json.corrupt-*`。
+      - **三端一致性复核补记（2026-10-31）**：① Shift 空按的取消条件已对齐——
+        mac（flagsChanged 清 shiftArmed）/Linux（任何非 Shift 事件清 sinceShift）
+        都会在 Ctrl/Alt/Win 按下或释放时取消空按窗口，Windows 此前漏了这一步
+        （Shift→Ctrl→松 Shift 会误切换中英），本轮补齐并用 Linux 单测锁语义；
+        ② Windows TCP 回环没有 Unix socket 权限等价物（mac/Linux 已 0600，
+        同机其它用户不可连；Windows 本机任意用户进程仍可连 daemon），命名管道
+        + ACL 是后续方案；③ `-version` 覆盖四个 Go 工具（daemon/cli/userdict/
+        import），shell 层版本仍看包信息（mac Info.plist / Windows DLL 暂无
+        VERSIONINFO 资源）；④ Linux 进程内引擎不经过 daemon 的 IPC panic 隔离
+        （引擎 panic 会重启 ibus 引擎进程，会话状态丢失；mac/Windows 走 daemon
+        的隔离路径）；⑤ 随包工具集——Linux 包含 daemon/cli/import/userdict/
+        engine，Windows 包含 daemon/cli/import/userdict（2026-10-31 补 userdict，
+        与 Linux 对齐；`-tcp` 可直接用），mac 包含 daemon/import（GUI 内嵌，
+        CLI 工具仍从源码构建）。
+      - **未做（明确记录）**：滚轮翻页在 Windows 不可行（`WM_MOUSEWHEEL` 只发给
+        焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，
+        与用户「游戏不干扰鼠标」的硬要求冲突）；无障碍 UIA、per-monitor DPI、
+        设置窗深色、多行折行仍记录在 docs/ui-parity 与各端 README；
+        Option/Alt+Backspace 三端语义已于 2026-10-31 统一（见阶段 46）。
+
+- [x] 阶段 33：双拼 `;` 标点宽度瞬态修复 + Windows 工具集对齐（2026-10-31）
+      - **双拼 `;` 半角瞬态（三端一致性问题）**：全/半角开关归壳本地持有，此前
+        壳只在 punct 请求里下发 `half`；双拼模式 `;` 经 input 路径处理
+        （dpPending==0 时按 Punct 语义上屏），引擎用的是上一次 punct 留下的旧
+        状态 → 刚切全/半角后单按 `;` 可能按旧宽度出标点。现在 `input` 新增可选
+        `half` 字段，三端壳每次按键下发全/半角状态（引擎 `InputWithHalfWidth`
+        先同步再处理）；旧壳省略字段时保持会话内旧状态（协议向后兼容）。
+      - **Windows 工具集对齐**：`chaoset-userdict.exe` 随 Windows zip 发布（此前
+        只有 Linux 包带该工具，Windows 用户需源码构建才能用 `-tcp` 管理用户
+        词典）；release 包内容自检同步断言该文件存在。
+      - **测试**：engine 新增 `TestDoublePinyinSemicolonHalfWidth`；IPC 新增
+        `TestServerInputHalfWidth`（含旧客户端省略 half 的兼容路径）；Linux 新增
+        `TestDoublePinyinSemicolonHalfWidth`（壳侧路由 + 引擎状态联动）。
+      - **文档**：README IPC 协议补 `half` 字段；ui-parity 双拼 `;` 行更新；
+        mac/windows README 的「已知限制」改为「已修复」说明。
+
+- [x] 阶段 34：学习数据管理搬进 GUI（2026-10-31）
+      - **产品原则**：输入法面向普通用户，能走 GUI 的操作不走 CLI。学习数据
+        的统计/清空/导出此前只有 `chaoset-userdict` 命令行；现在 macOS 设置窗与
+        Windows 设置窗都内置「学习数据」区（统计行 + 清空 + 导出 TSV），经同一
+        IPC 通道作用于 daemon（内存与磁盘一次生效，无覆盖竞态）。
+      - **macOS**：`EngineClient` 新增 `userStats`/`userClear`/`userExportAll`
+        （分页拼接），`SettingsWindow.swift` 增加学习数据区（清空二次确认、导出用
+        NSSavePanel）；窗口 380×330pt。
+      - **Windows**：`core::Session` 新增同名方法，设置窗口用独立 `TcpTransport`
+        连 daemon（不持有 TIP 指针，UAF 防线不变），导出用 `GetSaveFileNameW`；
+        窗口 380×330pt 与 mac 对齐。
+      - **CLI 定位**：`chaoset-userdict` 保留为高级/排障/无 GUI 环境兜底，文档不再
+        作为普通用户路径；Linux 因引擎在 ibus 进程内、无 IPC，GUI 管理学习数据
+        需要引擎侧 DBus 接口（后续），当前仍用 CLI。
+      - **测试**：mac smoke 增加 `userStats`/`userExportAll` 只读检查（不调用
+        `userClear`，避免安装自检误清真实学习数据）；Windows 编译级 + core 行为
+        测试；Go 侧无协议改动。
+
+- [x] 阶段 35：Windows 设置窗深色 + per-monitor DPI（2026-10-31，编译级待真机）
+      - **设置窗深色跟随系统**：DWM 深色标题栏（动态加载 dwmapi，Win10 1903+
+        属性 20、1809 回退 19）+ 自绘背景/文字/复选框/按钮；`WM_SETTINGCHANGE`/
+        `WM_THEMECHANGED` 即时重绘。分组标题从 BS_GROUPBOX 改为加粗 Static（与
+        mac 的 bold label 同构，避免 GroupBox 在深色下留下浅色边框）；复选框/
+        按钮改 BS_OWNERDRAW 自绘（标准按钮不随系统深色自动重绘）。
+      - **per-monitor DPI**：新增 `dpiForPoint`（动态加载 shcore!GetDpiForMonitor，
+        旧系统回退主屏）与三处 `WM_DPICHANGED` 处理——候选窗按光标锚点所在显示器
+        布局并缓存 `layoutDpi_` 供绘制复用；Toast 按提示位置取 DPI；设置窗按打开
+        时所在显示器布局并在跨屏时重排控件/窗口尺寸。
+      - **验证**：Windows 壳 `build.sh` 编译 + `core_test` 通过（无警告）；macOS/
+        Linux 无代码改动。真机验收点：深浅色切换即时重绘、副屏/混合 DPI 打开
+        设置窗与候选窗、跨屏拖动设置窗。
+
+- [x] 阶段 36：Windows 词库导入搬进 GUI（2026-10-31，编译级待真机）
+      - **产品原则延续**：普通用户不再需要 `chaoset-import` 命令行。Windows 设置窗
+        新增「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ 调
+        随包 `chaoset-import.exe` 与 `%LOCALAPPDATA%\Chaoset\dict.tsv` 合并 → 旧词库
+        备份为 `dict.tsv.bak.<时间戳>` → 同卷 staging + `MoveFileEx` 原子替换 →
+        读安装器 `ChaosetDaemon` Run 项命令行重启 daemon，新词库立即生效。
+      - **安全边界**：导入器退出码非 0 / 无产物 / 备份或替换失败都中止并提示；
+        不会出现「旧词库已删、新词库没到位」的中间态。仅作用于安装器管理的默认
+        词库路径（自定义 `-dict` 部署需手工替换，已写入 windows README）。
+      - **与 macOS 对齐**：mac Setup.app 自 2026-10-26 起已有同语义 GUI 导入（种子+
+        现用+所选 → 备份 → 原子替换）；Windows 现在等价。Linux 当时仍只有 CLI
+        `chaoset-import`（GTK 设置窗导入已于阶段 54 补齐，2026-10-31）。
+      - **验证**：Windows 壳 `build.sh` 编译 + `core_test` 通过；`make package-windows`
+        通过（zip 内含 chaoset-import.exe，导入器路径与 DLL 同目录）；真机验收点：
+        多选文件、取消对话框、错误词库文件（非法音节应失败且不改词库）、成功后
+        daemon 重启与备份文件生成。
+
+- [x] 阶段 37：Linux 学习数据管理搬进 GTK 设置窗（2026-10-31，engine 零改动）
+      - **架构红线**：engine 包保持绝对纯净（只做拼音匹配，无任何平台相关代码）。
+        本阶段**没有**给引擎/ibus 壳加 DBus 或管理接口；GTK 设置窗改为调用随包
+        `chaoset-userdict` 的**本地文件模式**（`-userdict FILE` stats/clear/export，
+        与 daemon 模式共用同一份 `engine.UserDict` 逻辑）完成学习数据管理。
+      - **GTK 设置窗**：新增「学习数据」区（统计行、清空二次确认、导出 TSV），
+        与 macOS/Windows 设置窗同构；`userdict_ctl.py` 与设置窗同目录安装。
+      - **清空的安全编排**：引擎内存态会在延迟落盘（≤2s）时把旧数据写回文件，
+        所以清空前必须确认没有 `chaoset-engine` 进程存活——流程为 `ibus exit`
+        → SIGTERM 全部引擎并等待退出（超时 SIGKILL）→ 清空文件 → `ibus restart`
+        （失败再试 `ibus start`）；任何一步失败都中止且提示，绝不带着存活引擎清空。
+        清空会短暂重启输入法，确认框已提示。
+      - **测试**：`test_userdict_ctl.py` 11 项单测（依赖注入，无 GTK/ibus/引擎）覆盖
+        编排顺序与失败边界；本机用真实 `chaoset-userdict` 对临时 userdict 验证
+        stats/export/clear 全链路；CI linux-e2e 增加该单测步骤。
+      - **打包**：deb/tar.gz/Arch 三个包都安装 `userdict_ctl.py`，发布冒烟断言其
+        存在（缺了设置窗 import 失败、整个窗口打不开）。
+
+- [x] 阶段 38：Linux 设置窗单例 + hicolor 小尺寸图标（2026-10-31）
+      - **设置窗单例**：`chaoset-setup.py` 从裸 `Gtk.main()` 改为
+        `Gtk.Application`（application_id `org.chaoset.Setup`）——重复点
+        ibus-setup「首选项」只会激活并前置已打开的窗口，不再开多个 GTK 窗口；
+        与 macOS/Windows 设置窗单例语义对齐（ui-parity 的已知差异移除）。
+      - **hicolor 小尺寸图标**：补齐 16x16/22x22/24x24/32x32/64x64 PNG
+        （由 256px 母图 LANCZOS 缩放，视觉一致），托盘/任务栏/小图标列表不再
+        只依赖 scalable 回退；deb/tar.gz/Arch 三个包均随 hicolor 目录安装，
+        发布冒烟增加 16x16 图标存在性断言。
+      - **验证**：`python3 -m py_compile` 通过；图标尺寸/alpha 用 Pillow 校验；
+        `make package-linux` 通过且 tar 内含新尺寸；`make vet`/gofmt/go build
+        通过；GTK 窗口单例行为需 Linux 桌面真机验收（重复点「首选项」应前置
+        已有窗口而不是开新窗）。
+
+- [x] 阶段 39：三端 UI 一致性静态检查器 checkuiparity（2026-10-31）
+      - **背景**：设置窗是三套独立实现（AppKit / Win32 GDI / GTK3），共享的
+        只有「应该一致」的文案与功能契约；此前靠人肉检查，改一端忘另一端
+        （2026-10-28 齿轮漏同步 Windows 的教训）。
+      - **新增 `tools/checkuiparity`**（Go，跨平台编译；`make vet` / CI lint 执行，
+        审计 G6 落地）：六组静态契约——① 设置窗共享文案三端逐字一致（标题/输入
+        行为/词组联想/学习数据/清空/导出/本机说明/底部提示）；② 三端设置窗单例
+        实现存在（mac 静态 window / Windows g_settingsWnd / Linux Gtk.Application）；
+        ③ 学习数据 GUI 三端存在，且 Linux 侧**不得**引入引擎 DBus/IBus 管理接口
+        （engine 包纯净约束）；④ 词库导入入口（mac Setup.app + Windows 设置窗
+        GUI；Linux 当时仅 CLI（阶段 54 已补齐）；⑤ 打包安装一致性
+        （userdict_ctl.py 被 Makefile/install.sh/Arch/release 冒烟引用、hicolor
+        小图标齐全、CI py_compile/单测步骤存在）；⑥ ui-parity 关键差异行保留。
+      - **测试**：`tools/checkuiparity/main_test.go` 覆盖规则助手 + 在真实仓库上
+        跑全量契约（删改任一约定文案/文件会先让 `go test ./...` 失败）。
+      - **验证**：`make vet` 通过（新增 check-uiparity 目标）；`go test
+        ./tools/checkuiparity` 通过；真实仓库检查 PASS。
+
+- [x] 阶段 40：checkuiparity 扩展到候选窗静态几何/配色字段（2026-10-31）
+      - **补机器检查盲区**：上一阶段 checkuiparity 只覆盖设置窗与打包；本阶段
+        增加「候选窗（mac `CandidatePanel.swift` ↔ Windows `win32.cpp`）」静态契约：
+        - 布局 pt 常量 12 项（正文字号/序号字号/padding/首项左内边距/候选内边距/
+          候选间距/键帽横纵内边距/首选胶囊外扩/翻页区宽/齿轮区宽/面板最大宽度）；
+        - 派生值：`textH = ceil(fontSize*1.4)` 与 Windows `pt(21)` 一致；
+          `kMaxContentPt` 内联表达式按 mac 常量重建后去空白比对；
+        - 齿轮矢量参数 6 项（圆环半径 3.4pt/线宽 1.8pt、8 齿内 4.6pt/外 7.2pt/
+          线宽 2pt、chipDigit 颜色绑定）；分割线高度 `55/100` 公式；
+        - 13 个主题色字段名集合两端一致（任一新增/删除会 FAIL）。
+      - **边界**：这是静态常量/字段检查，不替代真机像素级验收（抗锯齿、真实
+        阴影、毛玻璃、Toast、DPI 观感仍需 Windows 真机）；文档已按此修正，
+        不再说「Windows 候选窗没有任何机器断言」。
+      - **测试**：`TestCheckCandidateWindow` 用真实两端源码跑契约 + 变异测试
+        （把 Windows 正文字号 15 改成 16 必须被捕获）。
+      - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
+        `checkuiparity` PASS；`git diff --check` 通过。
+
+- [x] 阶段 41：key_routing 回归测试接入 CI + 两处 Swift 警告清理（2026-10-31）
+      - **key_routing 接入 CI（审计 G7）**：`shims/macos/tests/key_routing/main.swift`
+        是合成 NSEvent 驱动 `ChaosetController.handle` 的按键路由回归（keyUp 放行/
+        字母组词/快捷键放行/Shift 空按中英切换/Shift+字母不误切；2026-10-31 增
+        Option+Backspace 3 条后共 11 项），此前未接入 Makefile/CI（死测试）。新增
+        `tests/key_routing/run.sh`：编译测试二进制 → 起临时 daemon（临时 socket/
+        userdict，结束 kill+wait 后清理）→ 跑断言；CI macos-build job 每次 push
+        执行。本机实测 8/8（当时）/ 11/11（阶段 46 后）通过。
+      - **checkuiparity 防退化**：新增「CI 覆盖」检查——run.sh 必须存在且
+        ci.yml 必须调用 key_routing，防止以后又被摘掉变回死测试。
+      - **顺带清理本次编译暴露的两处 Swift 警告**：
+        - `ChaosetController.swift` 中 `return true` 后不可达的
+          `return passThrough(client)`（删除，无行为变化）；
+        - `SettingsWindow.swift` 的 `allowedFileTypes`（macOS 12 已废弃）改为
+          `allowedContentTypes = [UTType(filenameExtension: "tsv")]`。
+      - **验证**：`./shims/macos/build.sh` 通过（无警告）；key_routing 8/8 通过；
+        `go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库 checkuiparity
+        PASS；`git diff --check` 通过。
+
+- [x] 阶段 42：修复 key_routing CI 首跑失败（bash 3.2 + UTF-8 locale 坑）（2026-10-31）
+      - **现象**：key_routing 接入 CI 后首次运行，macos-build 在
+        `./shims/macos/tests/key_routing/run.sh: line 31: ARCH�: unbound variable`
+        处失败。根因：macOS 自带 bash 3.2 在 UTF-8 locale 下把 `$ARCH）` 里的
+        全角括号字节并入变量名（本地默认 C locale 不复现，CI 是 UTF-8 locale）。
+      - **修复**：shims 下全部「`$VAR` 紧跟非 ASCII 字符」的写法改为 `${VAR}`
+        （共 9 处：test-ci.sh/build.sh/install.sh/verify.sh/key_routing run.sh）；
+        行为不变，仅消除 bash 3.2 解析歧义。
+      - **防退化**：`tools/checkuiparity` 新增「shell 变量转义」组，扫描
+        `shims/**/*.sh` 中 `$VAR` 紧跟非 ASCII 的行并 FAIL（附文件:行号与修法）；
+        新增 `TestCheckShellVarEscaping` 覆盖正反例。
+      - **验证**：本地用 `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` 复现原错误；
+        修复后 `${VAR}` 形式通过；`go test ./tools/checkuiparity` 通过；
+        `make vet` 通过；真实仓库 checkuiparity PASS；`git diff --check` 通过。
+
+- [x] 阶段 43：mac 设置窗补「词库导入」入口（2026-10-31）
+      - **动机**：Windows 设置窗已有「词库」区（2026-10-31），mac 的导入入口只在
+        独立的 Setup.app 里——设置窗本身没有入口，三端 GUI 入口不对齐。
+      - **实现**：mac 设置窗新增「词库」区（窗口 380×440pt）：「导入词库…」打开
+        随包安装的 `~/Applications/Chaoset.app`（install.sh 安装位置）并传
+        `--import`；Setup.app 收到该参数后在窗口就绪后直接弹出 NSOpenPanel 导入面板
+        （合并/备份/原子替换/重启 daemon 仍是 Setup.app 原有实现，输入法壳不复制）。
+        找不到 Setup.app 时给出明确提示（未安装/开发构建回退到同级 build/）。
+      - **checkuiparity**：「词库导入入口」组增加断言——mac 设置窗必须含「导入词库」
+        与「安装与设置」、Setup.app 必须识别 `--import`（防止入口被静默移除）。
+      - **验证**：`ARCHS=arm64 ./shims/macos/build.sh` 通过（0 warning）；
+        `ChaosetSetup --status` 无界面模式正常；`make vet` / `go test
+        ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。GUI 交互（点按钮→弹导入面板）需真机点击验收。
+
+- [x] 阶段 44：checkuiparity 补「词库导入安全流程」静态断言（2026-10-31）
+      - **动机**：词库导入是高风险操作——只看产物文件存在会把「部分解析失败」
+        当成功；remove+move 会制造「旧词库已删、新词库没到位」的丢词库中间态。
+        这些安全点都是历史审查修出来的（2026-10-26 mac / 2026-10-31 Windows），
+        但没有机器检查，重构时容易被删。
+      - **新增 checkuiparity「词库导入安全」组**：
+        - mac Setup.app 必须保留 `r2.status == 0`（导入器退出码检查）、`.bak.`
+          （旧词库备份）、`replaceItemAt`（同卷原子替换）；
+        - Windows 设置窗必须保留 `code != 0`、`.bak.`、`MoveFileExW(` +
+          `MOVEFILE_REPLACE_EXISTING`（staging 原子替换）、`import.log`（失败可排查）；
+        - 新增 `TestCheckImportSafety`：真实两端源码跑契约 + 变异测试（去掉
+          Windows 原子替换标志必须被捕获）。
+      - **验证**：`go test ./tools/checkuiparity` 通过（7 个测试）；`make vet` 通过；
+        真实仓库 checkuiparity PASS；`git diff --check` 通过。
+
+- [x] 阶段 45：Windows 关闭联想「即时收起」对齐 mac（2026-10-31）
+      - **问题**：设置窗关闭词组联想后，Windows 已弹出的联想候选要等**下一次按键**
+        才收起（2026-10-30 为避免设置窗持有 TIP 裸指针造成 UAF 而改成不即时）；
+        mac 是设置窗 post 通知后立即收起，三端体验不一致。
+      - **方案对比**：① 设置窗持有 TIP 指针直接调（退回 UAF，不可行）；
+        ② TIP 定时轮询注册表（延迟/CPU 开销，且已收起的联想窗仍在）；
+        ③ **跨进程广播消息（采用）**：设置窗 `RegisterWindowMessageW` 注册
+        `Chaoset.AssociateChanged`，关闭时 `PostMessage(HWND_BROADCAST, …)`；
+        各宿主进程的候选窗收到后只查注册表，关闭则转发 TIP `clearAssociate`
+        立即收起。设置窗仍不持有 TIP 指针，无 UAF；消息 id 由字符串注册，
+        跨进程一致，候选窗与设置窗不在同一宿主也能送达。
+      - **实现**：win32.cpp 新增 `associateChangedMessage()`、候选窗 proc 消息处理
+        与 `CandidateWindow::onAssociateChanged()`、TIP `clearAssociateFromSettings()`；
+        设置窗复选框关闭时广播。
+      - **checkuiparity**：新增「关闭联想即时性」组——mac 设置窗必须有通知
+        `chaosetAssociateDisabled`、Windows 必须有 `Chaoset.AssociateChanged` /
+        `HWND_BROADCAST` / `clearAssociateFromSettings`、ui-parity 必须保留 Linux
+        「下一次按键」已知差异。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test 对真实 daemon 全过
+        + mingw 交叉编译 DLL）；`make vet`/`go test ./tools/checkuiparity` 通过；
+        真实仓库 checkuiparity PASS；`git diff --check` 通过。窗口交互（关开关→
+        联想窗立即消失）需 Windows 真机点击验收。
+
+- [x] 阶段 46：Option/Alt+Backspace 三端统一为「按音节回退」（2026-10-31）
+      - **背景**：docs/ui-parity「按键边角差异」记录三端语义不同——mac 按音节
+        回退（`engine.backspaceWord`）、Windows 放行给宿主删词、Linux 视为整段
+        清空（Mod1 与 Ctrl 同分支）。同一快捷键三种行为，用户无法形成肌肉记忆。
+      - **决策**：统一为 mac 语义「按音节回退」——中文输入法里 ⌥⌫ 的通行含义
+        是删一个音节（而非删宿主文档的一个词或清空整条拼音）；非组词态仍放行
+        给宿主（此时没有拼音可退，让宿主按系统语义删词）。
+      - **Windows**：core 层新增 `Session::backspaceWord()`（IPC `backspaceWord`）；
+        `wouldHandle` 对 Alt+Backspace 在组词中预告吞键、非组词放行；
+        `OnKeyDown` 在通用 Alt 透传前处理：组词中回退一个音节、剩余拼音删空时
+        已确认段立即落盘收尾（与普通 Backspace 同路径）。
+      - **Linux**：ibus 引擎把 Ctrl 与 Mod1 分支拆开——Ctrl+Backspace 仍整段清空、
+        Ctrl+U 仅 Ctrl；Alt+Backspace 在组词中调 `sess.BackspaceWord()` 按音节
+        回退，非组词放行；Alt+U 不再复用 Ctrl+U 清空分支（mac/Windows 都放行）。
+      - **macOS**：行为原本正确，key_routing 回归测试新增 3 条断言（⌥⌫ 消费、
+        回退到 ni、不再含 hao），防止未来退化。
+      - **checkuiparity**：新增「退格键语义」组——三端壳都必须调用
+        `backspaceWord`/`BackspaceWord`，ui-parity 必须保留「按音节回退」。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过（新增 2 个用例）；
+        `./shims/windows/build.sh` 通过（原生 core_test 含 backspaceWord 用例 +
+        mingw 交叉编译）；mac key_routing **11/11 通过**；`make vet` /
+        `go test ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。
+      - **真机验收**：Windows/Linux 组词中按 Alt+Backspace 应回退一个音节并消费；
+        非组词时仍由宿主删词。
+
+- [x] 阶段 47：Linux E2E 覆盖 Alt+Backspace/Alt+U 真实 ibus 路由（2026-10-31）
+      - **动机**：阶段 46 统一了三端 ⌥⌫ 语义，但 Linux 侧只在 Go 单测里验证引擎
+        行为；真实 ibus 是否把 Alt+Backspace 交给引擎（还是被 ibus/GTK 先拦截）
+        没有端到端覆盖——若被上游拦截，用户实际按不出来，单测全绿也没用。
+      - **新增**：`shims/linux/test-ci.sh` 在真实 ibus-daemon + 私有 session bus 下
+        增加 4 条断言：
+        - 组词 `nihao` 中 Alt+Backspace 被消费（回退一个音节），再按一次删空；
+        - 非组词态 Alt+Backspace 放行给宿主；
+        - Ctrl+Backspace 仍整段清空（与 Alt 区分）；
+        - Alt+U 放行给宿主（不得复用 Ctrl+U 清空分支）。
+      - **验证**：`bash -n shims/linux/test-ci.sh` 通过；真实 ibus 环境由 CI
+        linux-e2e job 执行（本机为 macOS，无 Linux/ibus 运行时）。
+
+- [x] 阶段 48：三端修饰键映射统一（Command↔Win/Super、Control↔Ctrl、Option↔Alt）（2026-10-31）
+      - **用户要求**：Windows/Linux 的 Ctrl 对应 macOS Control、Alt 对应 Option、
+        Win/Super 对应 Command，要保持用户习惯在不同平台间的对应关系。
+      - **审计发现的不一致**：
+        - mac 组词中 Cmd/Ctrl/Shift+Delete 都「全部删除」，但 Windows Win+Backspace、
+          Linux Super+Backspace 仍放行；
+        - mac 把 ForwardDelete 当 Backspace 删拼音，Windows/Linux 的 Delete 在组词中
+          清空组词后放行（宿主删文档字符）；
+        - mac Option+Delete 按音节回退，Windows/Linux Alt+Delete 放行；
+        - mac Shift+Option+Backspace 因 Shift 优先而全部删除，Windows/Linux 只按
+          Alt 分支回退一个音节（优先级不同）。
+      - **统一规则（三端实现一致）**：组词中 Backspace/Delete——无修饰逐字符回退；
+        Option/Alt 按音节回退（`backspaceWord`）；Command(Win/Super)/Control(Ctrl)/Shift
+        全部删除；组合键按 mac 优先级 Command/Ctrl/Shift > Option。非组词态一律放行。
+      - **实现**：Windows 新增 `kVkDelete`，`wouldHandle`/`handleKey` 统一按修饰键映射；
+        Linux 新增 `keysymDelete`，拆分 Ctrl/Mod1/Mod4 分支并按 Shift 优先级；mac 行为
+        原本正确，补充 8 条 key_routing 断言（现 19/19）。
+      - **机器检查**：checkuiparity 新增「修饰键映射」组（三端修饰键标识 + ui-parity
+        映射表），「退格键语义」组增加 `kVkDelete`/`keysymDelete`。
+      - **文档**：ui-parity 新增「修饰键映射」节与组词退格/清空矩阵，移除
+        「组词态 ForwardDelete」差异行；三端 README 同步。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过（新增 Delete/修饰键矩阵 7 例）；
+        `./shims/windows/build.sh` 通过（原生 core_test + mingw）；mac key_routing 19/19；
+        `make vet`/`go test ./tools/checkuiparity` 通过；真实仓库 checkuiparity PASS；
+        `git diff --check` 通过。**Win/Super 组合可能被系统外壳先拦截，需 Windows/Linux
+        真机确认实际可达性。**
+
+- [x] 阶段 49：非退格键修饰键一致性收尾（2026-10-31）
+      - **审计发现**：
+        - Windows 用虚拟键判定 `Ctrl+U`，`Ctrl+Shift+U` 也被当整行清空；
+          mac 按字符判定、Linux 按 keysym 判定都放行 → 三端不一致；
+        - Windows 组词中 `Shift+PageUp/PageDown` 因「翻页键不带 Shift」被放行，
+          而 mac（keyCode）/Linux（keysym）无论 Shift 都翻页；
+        - mac 联想态按 Ctrl/Alt/Super/Delete 等键时只清组词、联想窗残留到下一次
+          输入；Windows/Linux 都是先收起联想再透传（mac 联想态 Backspace 还会
+          透传误删文档，其联想分支里的 Backspace 处理是死代码）。
+      - **修复**：Windows `Ctrl+U` 要求不带 Shift、PageUp/PageDown 不看 Shift；
+        mac 联想态统一「先收起联想再透传」（Backspace 消费、Delete/其它键透传），
+        并删除死代码分支。
+      - **测试**：mac key_routing 增 3 条（联想态 Backspace、Shift+PageUp、
+        Ctrl+Shift+U），现 22/22；Linux behavior_test 增 `TestNonDeleteModifierParity`；
+        Linux E2E 增 Shift+PageUp / Ctrl+Shift+U 真实 ibus 断言。
+      - **文档**：ui-parity 组词翻页行补 Shift 语义，删除「按键边角差异」节（已无
+        已知未统一项）；mac README 计数更新。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过；`./shims/windows/build.sh`
+        通过；mac key_routing 22/22；`make vet`/checker 通过；`git diff --check` 通过。
+
+- [x] 阶段 50：文档计数同步 + key_routing 断言用例数守卫（2026-10-31）
+      - **过期计数**：ui-parity 的 key_routing「11 项断言」实际已 22 项；
+        AGENTS.md 的 checkuiparity「11 组」已随新增检查增长——改为不写死数字
+        （以 `make check-uiparity` 输出为准），避免每次加检查都要改说明。
+      - **测试守卫**：key_routing 末尾断言 `pass == expectedChecks(22)`，删掉一条
+        断言会直接 FAIL（否则删断言 CI 仍绿，回归测试静默变弱）；checkuiparity
+        「CI 覆盖」组断言该守卫存在。
+      - **验证**：key_routing 22/22；`make vet` / checker 通过；`git diff --check` 通过。
+
+- [x] 阶段 51：checkuiparity 校验 key_routing expectedChecks 与实际断言数一致（2026-10-31）
+      - **问题**：上一阶段给 key_routing 加了运行时 `expectedChecks` 守卫，但若新增
+        断言后忘记同步 expectedChecks，运行时守卫会 FAIL（好事）；反过来若有人把
+        `expectedChecks` 也一起改小，静态检查无法发现。
+      - **新增**：checkuiparity「CI 覆盖」组解析 `let expectedChecks = N`，统计文件中
+        `^check(` 断言数并比对——加/删断言必须同步 expectedChecks，否则 `make vet`
+        直接红（运行时守卫是第二道）。
+      - **测试**：`TestCheckKeyRoutingCount` 正例 + 变异（expectedChecks 改大必须被捕获）。
+      - **文档**：AGENTS.md 的 Windows 视觉断言说明按事实修正（有 checkuiparity 静态
+        契约，但无运行时视觉断言）；README 阶段 30 历史条目补「按键边角/设置窗单例
+        已于 2026-10-31 解决」注记；ui-parity 说明 checkuiparity 校验计数一致。
+      - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
+        checkuiparity PASS；`git diff --check` 通过。
+
+- [x] 阶段 52：Windows 候选窗 3 行折行（与 macOS 同算法）（2026-10-31）
+      - **背景**：docs/ui-parity 长期记录「mac 3 行折行 / Windows 单行布局」的已知
+        差异；Windows 单行在 6 个长候选时只能截断/丢弃，信息展示弱于 mac。
+      - **实现**：把折行布局抽成纯函数 `shims/windows/src/candidate_layout.hpp`
+        （无 Win32 依赖，与 mac `layoutRows` 同算法：按内容宽 638pt 折行、最多 3 行、
+        行内 gap、行高 textH+4pt lineSpacing、首项超宽才截断），win32.cpp 逐项测量后
+        调用它回填 rect；面板宽/高按行数计算，折叠区（齿轮/翻页/页码）仍垂直居中。
+      - **测试**：`tests/core_test.cpp` 增加布局数学单测（折行数、行宽、maxRows 截断、
+        单条超宽钳制）——在 macOS 上原生跑，不依赖 Windows。
+      - **机器检查**：checkuiparity 增加「最大行数」契约（mac `maxRows=3` ↔ Windows
+        `kMaxRows=3`），并断言 win32.cpp 使用 `candidate_layout.hpp`。
+      - **文档**：ui-parity 布局表/已知差异更新（多行折行差异移除）；windows README
+        删除「单行布局」限制。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test 含布局单测 + mingw
+        交叉编译 DLL）；`make vet`/checker 通过；`git diff --check` 通过。**像素级观感/
+        点击仍需 Windows 真机验收**。
+
+- [x] 阶段 53：修正 Windows 多行折行的「非首项超宽」截断（2026-10-31）
+      - **问题**：阶段 52 的 Windows 折行只对**首项**做超宽截断；后续某项若
+        自身宽度 > maxContent（换行也放不下），`candidate_layout.hpp` 会把它的
+        布局宽钳到上限，但文本未截断 → 文本/键帽可能画到面板外。mac 的
+        `layoutRows` 实际对「独占一行且超宽」的任意项截断。
+      - **修复**：Windows 改为**任意单条**候选宽 > maxContent 时逐字截断加…
+        （能超上限的项必然独占一行，与 mac 语义等价）；同步修正 mac 源码注释
+        里「Windows 按首项截断」的过期表述。
+      - **机器检查**：checkuiparity 增加「行距」契约（mac lineSpacing=4 ↔
+        Windows `lineSpacing = pt(4, dpi)`）。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test + mingw）；
+        `make vet`/checker 通过；`git diff --check` 通过。
+
+- [x] 阶段 54：Linux 设置窗补「词库导入」GUI（三端入口对齐）（2026-10-31）
+      - **背景**：Linux 词库导入此前只有 CLI `chaoset-import`，设置窗没有入口；
+        而系统词库 `/usr/share/chaoset/dict.tsv` 需要 root 才能改。
+      - **实现**：
+        - 引擎侧：ibus 引擎新增可选 `-imported-dict`（默认
+          `$XDG_DATA_HOME/chaoset/dict.tsv`，文件不存在则忽略），启动时与系统
+          词库一起宽松加载——**engine 包零改动**，只是壳多传一个词库路径。
+        - 设置窗：GTK 新增「词库」区「导入词库…」（文件多选，Rime yaml /
+          CC-CEDICT txt / TSV）；`dictimport_ctl.py` 调随包 `chaoset-import`
+          合并到用户词库（临时文件 + 备份 + `os.replace` 原子替换），成功后
+          复用 `userdict_ctl.restart_engines()` 重启 ibus 引擎让新词生效。
+        - 打包/CI：`dictimport_ctl.py` 随 deb/tar.gz/Arch 安装到
+          `/usr/share/chaoset/`（release 冒烟断言）；CI py_compile + 两个单测文件
+          （`unittest discover`）。
+        - checkuiparity：「词库导入入口」组改为三端 GUI 断言（Linux 设置窗/
+          dictimport_ctl/ibus `-imported-dict`），移除「Linux 仅 CLI」；打包安装组
+          增加 dictimport_ctl.py 引用检查。
+      - **测试**：`test_dictimport_ctl.py` 7 例（参数拼接/已有词库底表/备份/原子
+        替换/失败保留旧词库/重启失败提示）；`imported_dict_test.go` 验证可选文件
+        存在才追加；linux-e2e 真实 ibus 环境启动引擎并断言「用户导入词库已加载」。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过；py_compile + unittest
+        discover 通过；`make vet`/checker 通过；`git diff --check` 通过。GUI 交互
+        （点按钮→选文件→重启生效）需 Linux 桌面/ibus 真机验收。
+
+- [x] 阶段 55：Linux 导入词库的端到端候选断言 + 路径一致性守卫（2026-10-31）
+      - **E2E**：linux-e2e 原来只断言引擎日志出现「用户导入词库: 路径」，
+        不能证明词条真的可用。现在捕获引擎 `UpdateLookupTable` 信号，打
+        `ceshici`（测试词 ce shi ci），断言候选列表出现「测试词」。
+      - **路径一致性**：checkuiparity 断言 Go 引擎与 `dictimport_ctl.py` 的默认
+        路径都拼 `chaoset/dict.tsv`（XDG_DATA_HOME 口径），防止两端漂移导致
+        设置窗写入的文件引擎找不到。
+      - **测试**：Go 增加 `TestDefaultImportedDictPath`（XDG_DATA_HOME）；Python
+        增加空 XDG 回退 `~/.local/share` 用例。
+      - **验证**：go test ./shims/linux/ibus-engine、Python 21 例、make vet/checker、
+        git diff --check 通过；linux-e2e 由 CI 真实验证。
+
+- [x] 阶段 56：清理过期文档 + 锁死 Windows 多行折行接入（2026-10-31）
+      - **过期文档**：README 阶段 36/39 仍写「Linux 仍只有 CLI / 导入待后续」——
+        阶段 54 已补齐 Linux GUI 导入。历史条目改为「当时仍只有 CLI（已于阶段 54
+        补齐）」，并加阶段 56 记录。
+      - **checkuiparity**：「文档对照」组新增 README 断言——必须保留阶段 54 的
+        Linux 词库导入条目，且不得再出现过期现状（如「Linux 仍只有 CLI」/
+        「导入待后续」）；「候选窗几何」组新增 Windows 必须实际调用
+        `wrapRows(..., kMaxRows)` 且使用 `lineSpacing = pt(4, dpi)`，防止只留下
+        常量/头文件而退回单行布局。
+      - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、`git diff
+        --check` 通过。
+
+- [x] 阶段 57：Windows 候选窗基础 UIA 无障碍（窗口级）（2026-10-31，编译级待真机）
+      - **背景**：docs 长期记录 Windows「无 WM_GETOBJECT/UIA/MSAA（待做）」；
+        macOS 已有 VoiceOver 虚拟子元素。本轮先补**窗口级**基础能力，不做逐条
+        候选子项（需要自定义 Fragment/Invoke provider，风险高且无真机可验）。
+      - **实现**：候选窗处理 `WM_GETOBJECT`（`UiaRootObjectId`），动态加载
+        `uiautomationcore.dll` 的 `UiaHostProviderFromHwnd` +
+        `UiaReturnRawElementProvider`，返回 UIA 宿主 provider；窗口标题改为
+        「Chaoset 候选」。动态加载避免静态导入依赖（旧/精简系统无该 DLL 时
+        输入法照常工作）。
+      - **机器检查**：checkuiparity 断言 win32.cpp 保留 `WM_GETOBJECT` /
+        `UiaRootObjectId` / `uiautomationcore.dll`，防止能力被误删。
+      - **文档**：ui-parity 无障碍行、windows README 更新；明确「候选子项未实现」。
+      - **验证**：`./shims/windows/build.sh` 通过（mingw 编译 + core_test）；
+        `make vet`/checker 通过。**需 Windows 真机 + Narrator 验收**。
+
+- [x] 阶段 58：Linux 安装包自检进日常 CI（2026-10-31）
+      - **问题**：安装包冒烟只在 release.yml 打 tag 时跑；日常改动若漏装
+        设置窗模块（如阶段 54 新加的 `dictimport_ctl.py`），要到发版才暴露。
+      - **实现**：linux-e2e job 新增「Linux 安装包自检」步骤——`make
+        package-linux` 后断言 tar.gz 内 `setup/chaoset-setup.py`、
+        `setup/userdict_ctl.py`、`setup/dictimport_ctl.py`、`data/dict.tsv` 都在；
+        若生成了 deb，再用 `dpkg-deb -c` 断言 `dictimport_ctl.py`。
+      - **机器检查**：checkuiparity「CI 覆盖」组断言 ci.yml 保留
+        `make package-linux` 与「Linux 安装包自检」，防止步骤被删。
+      - **验证**：本机 `make package-linux` 通过并人工核对 tar 内容；
+        `make vet`/checker 通过；CI linux-e2e 实际执行该步骤。
+
+- [x] 阶段 59：macOS 安装包自检进日常 CI（2026-10-31）
+      - **问题**：macos-build 此前只跑 `build.sh` + universal 检查；打包脚本
+        `make package-macos`（zip/dmg、Setup.app 资源清单）只在 release 打 tag
+        时验证，日常改动可能悄悄漏装随包工具。
+      - **实现**：macos-build 改为直接跑 `make package-macos`（与 release 同一条
+        打包链）：构建 universal app + 全部随包工具 universal 自检 + zip（有
+        hdiutil 时再出 dmg）；步骤内断言 zip 含主壳与 Setup 随包
+        `chaoset-import`。注意保留 `make build`：`equivalence.sh` 的 B 段走
+        `import-dict.sh`，用的是 `bin/chaoset-import`（首跑 CI 因漏掉它失败，
+        已修）。
+      - **机器检查**：checkuiparity「CI 覆盖」组断言 ci.yml 保留
+        `make package-macos` 与打包步骤名，防止被删。
+      - **验证**：`make vet`/checker 通过；CI macos-build 实际执行打包步骤。
+
+- [x] 阶段 60：Linux 词库导入安全流程纳入 checkuiparity（2026-10-31）
+      - **背景**：checkuiparity「词库导入安全」此前只锁 mac Setup.app 与 Windows
+        设置窗（退出码检查/备份/原子替换/日志）；阶段 54 新增的 Linux
+        `dictimport_ctl.py` 没有对应静态契约，重构时可能悄悄退回「直接覆盖」。
+      - **实现**：安全组新增 Linux 断言——`r.returncode != 0`、`shutil.copy2`
+        备份、`tmp = target + ".tmp"` 临时文件、`os.replace` 原子替换；
+        新增 `TestCheckImportSafety` 变异测试（Linux 侧去掉 os.replace 必须被捕获）。
+      - **文档**：ui-parity 机器检查说明改为三端；README 阶段 60。
+      - **验证**：`go test ./tools/checkuiparity`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 61：Linux 鼠标点选候选（CandidateClicked）（2026-10-31）
+      - **问题**：ibus 面板点击候选会调用引擎标准方法 `CandidateClicked`，
+        但 Linux 引擎此前没实现——点击候选无反应（mac/Windows 原生候选窗
+        都支持点选）。
+      - **实现**：抽出 `selectCandidate(idx)` 与数字键共用（联想中选联想词并
+        继续联想；组词中渐进上屏、剩余回灌；越界忽略且不改会话），新增
+        `CandidateClicked(index, button, state)` D-Bus 方法（全程持锁）。
+      - **测试**：4 个行为单测（点选上屏/渐进点选/越界保持组词/联想连选）；
+        linux-e2e 直接 `dbus-send` 调用 CandidateClicked 并捕获 CommitText，
+        断言点选上屏「你好」。
+      - **机器检查**：checkuiparity 新增「候选点选」组（mac mouseDown /
+        Windows WM_LBUTTONDOWN / Linux CandidateClicked / 文档矩阵行）。
+      - **文档**：ui-parity 按键矩阵新增「鼠标点选候选」行；README 阶段 61。
+      - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
+        `git diff --check` 通过；linux-e2e 由 CI 真实验证。
+
+- [x] 阶段 62：Linux 设置窗耗时操作改后台线程（2026-10-31）
+      - **问题**：清空学习数据要 `ibus exit`/重启（~2s），导入大词库可能数秒；
+        此前同步跑在 GTK 主线程，设置窗口点按钮后「假死」无响应。
+      - **实现**：新增 `run_async(work, done)`——工作线程只跑 subprocess/文件 IO，
+        完成后经 `GLib.idle_add` 回主线程恢复窗口敏感度并显示结果；清空/导出/
+        导入三处接入。GTK 非线程安全，工作线程绝不碰控件。
+      - **机器检查**：checkuiparity「学习数据 GUI」组断言 linuxSetup 保留
+        `GLib.idle_add` / `threading.Thread`。
+      - **文档**：Linux README、README 阶段 62。
+      - **验证**：`py_compile`、Python 单测、`make vet`/checker、`git diff --check`
+        通过；GUI 线程行为需桌面环境真机点验。
+
+- [x] 阶段 63：候选点选 E2E 与滚轮差异文档守卫（2026-10-31）
+      - **候选点选**：checkuiparity「候选点选」组新增断言——linux-e2e 必须保留
+        `CandidateClicked` + `CommitText` 的真实调用（防止 E2E 用例被删只剩单测）。
+      - **文档对照**：ui-parity 关键行新增「鼠标点选候选」「滚轮翻页」；机器检查
+        说明补候选点选三端回调与 linux-e2e 断言、滚轮三端一致缺失。
+      - **验证**：`make vet`/checker、`go test ./tools/checkuiparity`、
+        `git diff --check` 通过。
+
+- [x] 阶段 64：UIA 动态加载的构建期守卫（2026-10-31）
+      - **约定**：Windows 候选窗 UIA 宿主 provider 必须动态加载
+        `uiautomationcore.dll`，不能给 DLL 增加静态导入依赖（旧/精简系统没有
+        该 DLL 时输入法仍要能跑）。
+      - **实现**：`shims/windows/build.sh` 在交叉编译后用 `objdump -p` 断言
+        `ChaosetIME.dll` 的导入表里没有 `uiautomationcore.dll`；checkuiparity
+        「候选窗几何」组断言该构建期检查保留。
+      - **验证**：本机 `./shims/windows/build.sh` 通过，objdump 导入表确认无
+        `uiautomationcore`；`make vet`/checker 通过。
+
+- [x] 阶段 65：候选点选的分页语义测试（2026-10-31）
+      - **背景**：ibus 面板 LookupTable 只展示当前页，`CandidateClicked(index)`
+        是页内序号；`CandidateClicked` 首版只测了第 1 页，翻页后点选是否按
+        「当前页切片」换算没有回归。
+      - **测试**：新增 2 例——组词第 2 页点选第 1 项应上屏第 2 页首条；联想
+        第 2 页点选第 1 项应上屏全局第 7 条（assocPage*PageSize + index）。
+      - **验证**：`go test ./shims/linux/ibus-engine -run TestCandidateClicked`
+        6 例全过。
+
+- [x] 阶段 66：第 2 页鼠标点选的 linux-e2e 覆盖（2026-10-31）
+      - **背景**：CandidateClicked 的页内序号语义由单测覆盖，但 linux-e2e 只
+        验证了第 1 页；翻页后 D-Bus 调用是否仍正常没有端到端保障。
+      - **实现**：test-ci.sh 新增一段——组词 `ni` → PageDown → 调用
+        CandidateClicked(0)，捕获 CommitText 断言上屏成功（具体页内映射由
+        behavior_test 的 PageTwo 用例锁定）。
+      - **验证**：`bash -n shims/linux/test-ci.sh`、`make vet`/checker、
+        `git diff --check` 通过；linux-e2e 由 CI 真实验证。
+
+- [x] 阶段 67：联想中越界点选收起联想（与数字键一致）（2026-10-31）
+      - **问题**：数字键越界时联想分支会 `exitAssociate()` 收起联想；
+        `CandidateClicked` 越界只忽略，联想窗会挂着（面板/引擎页码不同步时
+        留下不可操作的状态）。
+      - **修复**：`CandidateClicked` 在 `selectCandidate` 返回 false 且当前在
+        联想中时调用 `exitAssociate()`；普通组词越界仍保持原样（不清用户拼音）。
+      - **测试**：新增 `TestCandidateClickedAssociateOutOfRangeExits`；ui-parity
+        鼠标点选行同步语义描述；README 阶段 67。
+      - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 68：引擎 API 契约测试补齐 + NormalizePinyin 数字调号修复（2026-10-31）
+      - **背景**：引擎覆盖率审计（`go test -cover ./engine`，90.4%）发现若干
+        公共 API 0% 覆盖：`NormalizePinyin`、`PrevWord`、`PageSize`、
+        `FindSentenceCandidates`、`QueryPhrasesPrefix`、`queryVariants`。
+      - **修复**：`NormalizePinyin` 文档声称支持「去音调数字后缀」，但实现只
+        `TrimRight` 掉**末尾**数字——`ni3hao3` 这类连写带调号整串归一化失败。
+        改为删掉 token 内所有 `1-5`（拼音编码里数字只可能是调号），再走
+        `IsSyllable`/`segmentRunon` 判定；空格分隔的 `ni3 hao3` 行为不变。
+      - **测试**：新增 `engine/api_contract_test.go` 6 组契约（音调/数字后缀/ü/
+        连写切分/非法输入、PrevWord、PageSize、FindSentenceCandidates 包装、
+        QueryPhrasesPrefix、queryVariants 模糊展开）。
+      - **验证**：`go test ./engine ./cmd/chaoset-dictgen` 通过；`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 69：IPC 客户端便捷方法与 Server Option 契约测试（2026-10-31）
+      - **背景**：`go test -cover ./ipc`（73.7%）审计发现 `Client.Backspace` /
+        `Reset` / `NextPage` / `PrevPage` 四个便捷方法 0% 覆盖；
+        `Server.WithFuzzy` / `WithTraditional` 两个 daemon 选项也 0%。
+      - **测试**：新增 `ipc/client_nav_test.go`——
+        ① 真实 Unix socket 往返覆盖四个导航/编辑方法（含翻页边界与 Reset）；
+        ② `WithTraditional(true)` 下 `guo` 首选必须是「國」；
+        ③ `WithFuzzy(true)` 下 `zongguo` 必须出「中国」。
+        顺带记录 macOS Unix socket 路径 104 字节上限：测试用 `os.MkdirTemp`
+        短路径而不是含长测试名的 `t.TempDir()`。
+      - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 70：IPC Client 补联想便捷方法 + server 联想分支覆盖（2026-10-31）
+      - **背景**：daemon 协议支持 `associate` / `associateSelect`（mac/Windows
+        壳直接走 `call`），但 Go `ipc.Client` 没有对应便捷方法，协议 API
+        不对称；server dispatch 的联想分支此前也 0% 覆盖。
+      - **实现**：`Client.Associate(sylls)` 返回续接候选、
+        `Client.AssociateSelect(word, sylls)` 返回上屏文本（与 engine.Session
+        同名方法同语义）。
+      - **测试**：新增 `ipc/associate_test.go`——上屏「你」后联想应有续接候选，
+        再 `AssociateSelect` 上屏首条并与候选文本一致；顺带覆盖 server
+        dispatch 的 associate/associateSelect 分支。
+      - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 71：engine 平台中立性机器守卫 + 归一化代码整理（2026-11-01）
+      - **用户要求**：engine 永远保持纯净，不携带任何平台相关内容；架构/可读性
+        优先，不做屎山。
+      - **守卫**：新增 `engine/purity_test.go`——解析 engine 目录全部 .go：
+        ① 只允许标准库 import（第三方路径首段带 `.` 一律拒绝，含项目内部包）；
+        ② 禁止 `import "C"` / `syscall` / `unsafe` / `os/exec` / `net` /
+        `runtime/cgo` 等平台/外部能力；③ 禁止任何 `//go:build` 构建标签与
+        `*_windows.go` / `*_linux.go` / `*_darwin.go` 等平台文件。
+      - **整理**：把 `normalizePinyin` 里内联的调号数字清理提取为
+        `stripToneDigits`（命名表达意图，注释说明为什么全删而非 TrimRight）。
+      - **验证**：`go test ./engine`（含 purity/normalize 用例）、`make vet`/
+        checker、`git diff --check` 通过。
+
+- [x] 阶段 72：engine 纯净守卫的规则自测（2026-11-01）
+      - **背景**：阶段 71 的 `engine/purity_test.go` 只对真实目录跑；守卫规则
+        本身没有测试，改坏了（例如误删第三方 import 检查）不会有人发现。
+      - **实现**：把规则抽成纯函数 `enginePurityProblems(name, src)`，真实目录
+        测试与合成源码变异测试共用；新增
+        `TestEnginePurityGuardCatchesViolations`——平台文件名 / `//go:build` /
+        `syscall` / `import "C"` / 第三方与项目内部 import 都必须被捕获，
+        干净文件不得误报。
+      - **验证**：`go test ./engine`（含 7 条变异用例）、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 73：chaoset-import 原子写 + CLI 行为测试（2026-11-01）
+      - **问题**：`chaoset-import` 直接 `os.Create(outPath)` 写词库；写一半失败/
+        进程被杀会把用户词库变成半截文件。壳侧导入流程虽然自己做了临时文件+
+        原子替换，但直接调用 CLI 的用户没有这层保护。
+      - **修复**：改为同目录 `os.CreateTemp` 写完整 TSV → `os.Chmod(0644)` →
+        `os.Rename` 原子替换；任何一步失败都删除临时文件、旧词库保持原样。
+      - **测试**：新增 `cmd/chaoset-import/main_test.go`——默认合并取较大词频、
+        `-replace` 覆盖、输入缺失时旧输出不变、输出目录自动创建。
+      - **验证**：`go test ./cmd/chaoset-import`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 74：chaoset-userdict 导出原子写 + CLI 测试（2026-11-01）
+      - **问题**：`chaoset-userdict export -o` 用 `os.WriteFile` 直接覆盖；导出
+        失败/进程被杀会把已有导出文件截成半截（与 chaoset-import 同类问题）。
+      - **修复**：`writeOut` 改为同目录 `os.CreateTemp` → `Chmod(0644)` →
+        `os.Rename`；失败时删除临时文件、旧文件保持不变。
+      - **测试**：新增 `cmd/chaoset-userdict/main_test.go`——本地模式
+        stats/clear/export 全链路；覆盖已有导出文件整体替换；目标不可替换时
+        报错且不残留临时文件。
+      - **验证**：`go test ./cmd/chaoset-userdict`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 75：daemon 生命周期可测试化（runWithContext）+ 启停测试（2026-11-01）
+      - **问题**：`chaosetd.run()` 内部直接 `signal.NotifyContext`，测试无法驱动
+        完整启停（不能向测试进程自己发 SIGTERM），daemon 主流程覆盖率仅 12.8%。
+      - **重构**：`run` 只负责把 SIGINT/SIGTERM 转成 context，再调
+        `runWithContext(ctx, ...)`；生命周期（加载词库/用户词典、单实例锁、监听、
+        serve、取消后停 flush ticker → Save → 清套接字）全部在后者，职责更清晰。
+      - **测试**：新增 `cmd/chaosetd/run_test.go`——完整启动 → Ping/Input →
+        cancel → 优雅退出 → 套接字清理；以及词库不存在/为空、非法 TCP 端口的
+        启动期错误。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 76：daemon 优雅退出落盘 + 单实例拒绝的端到端测试（2026-11-01）
+      - **测试**：`cmd/chaosetd/run_test.go` 增加——
+        ① 优雅退出后学习数据必须落盘（上屏「你好」→ cancel → 重载 userdict，
+        Score > 0）；② 同套接字第二个 daemon 必须被单实例锁拒绝，不能 unlink
+        运行中实例的套接字；顺带把启动/停止收敛为 `startDaemon`/`stop` 辅助，
+        三个生命周期测试共用，减少重复。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 77：工具收口——chaoset-import 支持 seed/backup，Linux 壳改为只调用工具（2026-11-01）
+      - **用户要求**：shims 只负责平台相关 + UI，工具类逻辑用 Go 实现，不要在
+        shims 混入工具实现；每个模块单一职责。
+      - **工具**：`chaoset-import` 新增 `-seed`（种子词库先并入底表）与 `-backup`
+        （写目标前备份 `<target>.bak.<时间戳>`，备份失败则中止）；合并/备份/原子
+        替换全部在 Go 工具内，壳不再自己 copy/rename。
+      - **Linux**：`dictimport_ctl.py` 删除临时文件、`shutil.copy2`、`os.replace`
+        逻辑，只保留路径/调用/重启 ibus；测试同步改为断言 `-o target -backup`
+        参数与失败时旧词库不变。
+      - **守卫**：checkuiparity「词库导入安全」组改为断言 Linux 调用 Go 工具
+        `-backup`、且不得再出现 `os.replace`/`shutil.copy2`/temp；同时断言 Go
+        工具保留 `seed`/`backup`/`backupFile`/`os.Rename`。
+      - **文档**：AGENTS 职责边界、ui-parity 词库导入行与机器检查说明同步。
+      - **验证**：`go test ./cmd/chaoset-import`、Python 单测、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 78：mac/Windows 词库导入收口到 Go 工具（2026-11-01）
+      - **mac Setup.app**：删除临时目录/base/merged/`.bak.`/`replaceItemAt` 逻辑，
+        改为 `chaoset-import -o dict.tsv -seed 种子 -backup 所选文件...`，只检查
+        退出码并重启 daemon。
+      - **Windows 设置窗**：删除 `dict.tsv.import`/staging/`CopyFileW`/
+        `MoveFileExW` 备份替换，改为 `chaoset-import -o dict.tsv -backup 所选文件`；
+        只检查退出码 + `import.log`。
+      - **守卫**：checkuiparity「词库导入安全」组改为断言三端壳都调用 Go 工具
+        （mac `-seed`/`-backup`，Windows/Linux `-backup`）、检查退出码，且 mac 不得
+        再出现 `replaceItemAt`、Windows 不得再出现 `MoveFileExW`/
+        `MOVEFILE_REPLACE_EXISTING`；Go 工具保留 seed/backup/backupFile/
+        `os.Rename` 断言。
+      - **文档**：AGENTS 迁移进度、ui-parity 词库导入行/机器检查同步。
+      - **验证**：`./shims/macos/build.sh`、`./shims/windows/build.sh`（mingw 编译级）
+        通过；`go test ./tools/checkuiparity`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 79：IPC Endpoint 抽象 + Windows 命名管道传输实现（2026-11-01）
+      - **用户方案**：shims 只做平台/UI，工具用 Go；IPC 不用固定 TCP 端口，
+        macOS/Linux 用 Unix socket，Windows 用命名管道。
+      - **Endpoint**：新增 `ipc.Endpoint{Network,Address}` 与 `ipc.Listen`/
+        `ipc.DialEndpoint`；协议帧不变，`Dial` 保留兼容。Network 支持 `unix`/
+        `pipe`/`tcp`（tcp 仅旧壳/测试过渡）。
+      - **命名管道**：`ipc/pipe_windows.go`（go-winio）——管道名
+        `\\.\pipe\chaoset-<当前用户SID>`，ACL `当前用户 + SYSTEM +
+        ALL APPLICATION PACKAGES`（开始菜单/搜索框 AppContainer 需要）；
+        `DefaultPipeName()` 供 daemon/壳按同一规则计算，无端口/发现文件。
+      - **测试**：`ipc/endpoint_test.go` Unix socket 完整协议往返 + 未知传输报错；
+        `GOOS=windows go test -c ./ipc` 与 Windows 目标二进制交叉编译通过。
+      - **依赖**：新增 `github.com/Microsoft/go-winio v0.6.4`（仅 Windows 文件引用）。
+      - **验证**：`go test ./ipc`、`go build ./...`、`go vet ./...`、
+        `make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 80：daemon 接入 Endpoint（-pipe + Unix socket 权限收口）（2026-11-01）
+      - **daemon**：`runWithContext` 改为接收 `ipc.Endpoint`；新增 `-pipe`（按当前
+        用户 SID 自动生成命名管道名）与 `-tcp` 互斥；Unix socket 单实例锁/残留
+        清理只在 unix 端点做，TCP/命名管道由系统命名空间互斥。
+      - **权限**：Unix socket chmod 0600 从 daemon 的 `listenUnix` 移入
+        `ipc.Listen`（传输层负责自己的安全属性），原权限测试改为
+        `TestEndpointUnixRestrictsPermission`。
+      - **测试**：`TestResolveEndpoint`（默认 unix / -tcp / -pipe 与 -tcp 互斥）；
+        生命周期测试全部改用 `ipc.Endpoint`；`go test ./cmd/chaosetd` 通过。
+      - **文档**：README 架构图/传输形态、AGENTS IPC 条目同步（Windows 壳迁移
+        仍待做，当前保留 TCP 兼容）。
+      - **验证**：`go build ./...`、`go test ./cmd/chaosetd ./ipc`、
+        `GOOS=windows go build ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 81：Windows C++ 壳命名管道 client（TCP 回退，编译级）（2026-11-01）
+      - **C++ 壳**：新增 `PipeTransport`——`CreateFileW` 打开
+        `\\.\pipe\chaoset-<当前用户SID>`，overlapped `ReadFile`/`WriteFile` +
+        200ms 超时（与旧 TCP 壳同量级），连接失败 2s 冷却并自动回退 `TcpTransport`；
+        `ChaosetTIP` 成员改为 `PipeTransport`。
+      - **兼容策略**：安装器暂不改（仍 `-tcp`），DLL 管道失败自动回退 TCP；
+        daemon 可用 `-pipe` 手动验证命名管道，真机通过后再切安装器。
+      - **设置窗**：学习数据管理原本直接 `TcpTransport`，一并改为 `PipeTransport`
+        （管道优先/TCP 回退），避免 daemon 切 `-pipe` 后设置窗连不上。
+      - **测试/构建**：`./shims/windows/build.sh` 通过（mingw 交叉编译 + 原生
+        core_test TCP 测试台 + 安装包）；命名管道运行时行为需 Windows 真机验收。
+      - **文档**：shims/windows/README、根 README 传输形态、AGENTS IPC 条目同步。
+      - **验证**：`./shims/windows/build.sh`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 82：Go 工具（chaoset-cli / chaoset-userdict）接入命名管道（2026-11-01）
+      - **chaoset-cli**：新增 `-pipe`，`-socket`/`-tcp`/`-pipe` 三选一；走
+        `ipc.DialEndpoint(Endpoint{pipe, DefaultPipeName()})`，Unix 上明确报
+        「命名管道仅 Windows 支持」。
+      - **chaoset-userdict**：新增 `-pipe`，daemon 模式改用 `ipc.Endpoint`；
+        本地文件模式不变；`-socket`/`-tcp`/`-pipe` 三选一。
+      - **测试**：CLI 新增 Unix `-pipe` 报错用例；userdict 新增真实 TCP daemon
+        stats 用例；Windows 目标交叉编译通过。
+      - **文档**：README CLI/userdict 示例与平台限制、shims/windows/README
+        命令行说明同步。
+      - **验证**：`go test ./cmd/chaoset-cli ./cmd/chaoset-userdict`、
+        `GOOS=windows go build` 两个工具、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 83：internal/appdirs 统一用户目录/socket 默认路径（2026-11-01）
+      - **新增 `internal/appdirs`**：`DataDir`（macOS Application Support /
+        Linux XDG / Windows LOCALAPPDATA）、`SocketPath`（Linux 优先
+        `$XDG_RUNTIME_DIR`）、`UserDictPath`/`ImportedDictPath`；另提供
+        `LinuxDataDir` 等固定 XDG 口径，供只在 Linux 运行的 ibus 引擎在 macOS
+        单测里也按 Linux 断言。
+      - **接入**：`chaosetd`/`chaoset-userdict` 的 `-socket` 默认值改为按平台生成；
+        daemon 启动时自动创建 socket 父目录（0700）；Linux ibus 引擎的用户词典/
+        导入词库路径改用 appdirs。
+      - **测试**：`internal/appdirs`（macOS/Linux 路径、Linux 固定 XDG、aux 路径）；
+        daemon/userdict/engine 测试通过；checkuiparity 的路径一致性断言改为
+        `appdirs.LinuxImportedDictPath`。
+      - **文档**：README「默认路径」表、AGENTS 用户目录约定、阶段 83。
+      - **验证**：`go test ./internal/appdirs ./cmd/chaosetd ./cmd/chaoset-userdict
+        ./shims/linux/ibus-engine`、`make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 84：daemon 用户词典默认路径按平台生成（2026-11-01）
+      - **问题**：socket 已按平台生成，但 `chaosetd -userdict` 默认仍是 cwd 下的
+        `chaoset-userdict.json`，默认启动时学习数据会散落在不同工作目录。
+      - **实现**：`-userdict` 默认值改为空；用 `flag.Visit` 区分「没传」与
+        「显式传空串」——没传走 `appdirs.UserDictPath()`，显式空串仍表示不落盘。
+      - **测试**：`TestResolveUserDictPath`（默认平台路径 / 显式空串 / 显式路径）。
+      - **文档**：README 默认路径表加「默认用户词典」列、阶段 84。
+      - **验证**：`go test ./cmd/chaosetd`、`make vet`/checker、
+        `git diff --check` 通过。
+
+- [x] 阶段 85：工具路径 API（-print-paths）；设置窗边界澄清（2026-11-01）
+      - **用户澄清**：设置窗属于 shims 平台 UI（macOS Swift / Windows C++ /
+        Linux Python GTK），**不搬进 Go**；Go 只承载工具逻辑。
+      - **保留**：`chaoset-userdict -print-paths` 输出平台路径 JSON
+        （appdirs 单一来源，供壳/脚本调用）。
+      - **移除**：上一轮误加的 `internal/setupctl`（无消费者，且把 shim 业务
+        放进了 Go internal 包，违背边界）。
+      - **验证**：`go test ./cmd/chaoset-userdict`、`go build/vet ./...`、
+        `make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 86：Linux shim 路径改问 Go 工具（-print-paths）（2026-11-01）
+      - **背景**：Linux 设置窗的 `userdict_ctl.py` / `dictimport_ctl.py` 仍各自拼
+        XDG 路径，是 `internal/appdirs` 之外的第二份规则。
+      - **实现**：Python 侧 `tool_paths()` 调 `chaoset-userdict -print-paths` 取
+        `userdict`/`imported_dict`；工具不可用（源码树未构建）时回退 XDG，设置窗
+        仍可用。设置窗仍是 shim，不搬 Go。
+      - **守卫/测试**：Python 单测新增 tool_paths/优先 Go 工具/回退；checkuiparity
+        路径一致性组断言 Python 调 `-print-paths`、Go 引擎走
+        `appdirs.LinuxImportedDictPath`。
+      - **验证**：Python 单测（15+9 例）、`go test ./cmd/chaoset-userdict`、
+        `make vet`/checker、`git diff --check` 通过。
+
+- [x] 阶段 87：Linux 设置窗迁原生 GTK3 C，彻底移除 Python（2026-11-01）
+      - **用户要求**：Linux shims 用原生实现，不额外引入 Python；macOS Swift /
+        Windows C++ 都是原生，Linux 不应是 Python。
+      - **本轮**：新增 `shims/linux/setup/chaoset-setup.c` + `setup_ctl.c/h`：
+        GTK3 设置窗（输入行为/学习数据/词库导入）与编排逻辑全部 C；只调用
+        Go 工具（chaoset-userdict / chaoset-import）和 ibus，不实现词库合并/
+        用户词典读写；`chaoset-userdict -print-paths` 新增 `config` 字段，
+        `appdirs.LinuxConfigPath` 与 ibus 引擎共用同一配置路径。
+      - **打包切换**：Makefile/deb/Arch/tar/install.sh/component XML/CI/release/
+        checkuiparity 全部切到 `chaoset-setup` 二进制 / `setup_ctl.c` /
+        `test_setup_ctl.c`；删除 5 个 Python 文件（设置窗、控制模块、两个单测）。
+      - **依赖**：deb/tar/Arch 由 `python3-gi` 改为 `libgtk-3`/`gtk3`；CI 安装
+        `libgtk-3-dev` 并编译 C、跑 `test_setup_ctl` 无 GTK 单测。
+      - **验证**：Ubuntu/Alpine 容器内 GTK3 编译 + C 单测通过；
+        `go test ./...`、`make vet`/checker、shell 语法检查通过。
+
+- [x] 阶段 88：原生设置窗无头启动冒烟 + Linux 测试脚本去 Python（2026-11-01）
+      - **CI**：linux-e2e 用 Xvfb 启动 `chaoset-setup` 3 秒，GTK 初始化/窗口
+        构建/配置读取在真实显示后端跑一遍；超时杀掉（124）视为正常常驻。
+      - **测试脚本**：`shims/linux/test.sh` 不再用 Python 启动引擎，改为 shell
+        `nohup ... &`；shim 与测试脚本均无 Python 依赖。
+      - **文档**：修正 `shims/linux/README` 的配置保存语义（C 实现只更新
+        associate、保留其它键，不再整文件覆盖）。
+      - **验证**：`bash -n shims/linux/test.sh`、checkworkflows、checkuiparity
+        通过。
+
+## 验收范围确认（2026-09-23）
+
+经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
+环境、TIS 注册、系统安装、哈希比对均已完成）后确认：以下三项联调收尾
+**移出本轮验收范围**，其余任务全部完成并验收。
+
+| # | 移出项 | 硬门控条件 | 恢复方式 |
+|---|---|---|---|
+| 1 | macOS 打字闭环验证 | 需人工在系统设置添加 ChaosetIME 并实际打字（已实测 `AXIsProcessTrusted=false`，按键模拟被系统策略禁止，无法脚本化） | 按 shims/macos/README 打字验证 |
+| 2 | Windows TSF 真机联调 | 需 Windows 环境（COM 注册/按键/渲染） | 已于 2026-10-30/31 在 Windows 11 真机完成首轮验证（开始菜单/搜索候选窗、安装器升级、注册表类别）；游戏/全屏、UWP/多会话、无障碍、per-monitor DPI 仍待验，按 shims/windows/README |
+| 3 | Linux 桌面闭环 + 候选窗贴图接入 | 需 Linux 桌面环境（DBus 层端到端已在容器验证） | 按 shims/linux/README |
+
+各项的具体实现位置、部署命令、诊断工具均已在对应 README 与脚本中就位，
+条件满足后无需额外准备即可继续。
+

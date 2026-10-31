@@ -91,6 +91,7 @@ const (
 	ciYML           = ".github/workflows/ci.yml"
 	uiParityDoc     = "docs/ui-parity.md"
 	readmeDoc       = "README.md"
+	changelogDoc    = "CHANGELOG.md"
 )
 
 // checkContains 断言文件包含全部子串；每个缺失项记一条问题。
@@ -576,9 +577,9 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
-	// README 阶段记录不能留下「Linux 仍只有 CLI」这类已过期的现状描述；
-	// 阶段 36/39 是历史条目，必须带「阶段 54 已补齐」的解决标注。
-	checkContains(fsys, &problems, "文档对照", readmeDoc, "阶段 54",
+	// 历史阶段记录已移入 CHANGELOG（README 只保留当前文档）；历史条目
+	// 不能留下「Linux 仍只有 CLI」这类已过期的现状描述，必须带「阶段 54 已补齐」。
+	checkContains(fsys, &problems, "文档对照", changelogDoc, "阶段 54",
 		"Linux 设置窗补「词库导入」GUI")
 	checkExcludes(fsys, &problems, "文档对照", readmeDoc,
 		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
