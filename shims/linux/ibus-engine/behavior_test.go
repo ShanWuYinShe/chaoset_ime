@@ -308,6 +308,24 @@ func TestShiftReleaseNotConsumed(t *testing.T) {
 	}
 }
 
+// TestShiftEmptyPressCancelledByModifier：Shift 按住期间按过其它修饰键，
+// 松开 Shift 不得切换中英（三端同语义，2026-10-31 复核）。
+//
+// macOS 在 flagsChanged 里清 shiftArmed；Windows 在 OnTestKeyDown/OnTestKeyUp
+// 对非 Shift 修饰键置 sinceShift_；Linux 的 shiftTracker 在任何非 Shift 按键
+// 事件置 sinceShift。此前 Windows 漏了这一步，Shift→Ctrl→松 Shift 会误切换，
+// 这里把 Linux 侧语义锁住，防止以后回退。
+func TestShiftEmptyPressCancelledByModifier(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.ProcessKeyEvent(keysymShiftLeft, 50, 0)      // Shift 按下
+	e.ProcessKeyEvent(0xFFE3, 37, 0)               // Control_L 按下
+	e.ProcessKeyEvent(0xFFE3, 37, ibusReleaseMask) // Control_L 释放
+	e.ProcessKeyEvent(keysymShiftLeft, 50, ibusReleaseMask)
+	if e.enMode {
+		t.Fatal("Shift 期间按过 Ctrl，不应切换中英")
+	}
+}
+
 // TestSpaceCommitsRawWithoutCandidates：残缺组词按空格——顶屏原始拼音并
 // 消费空格。此前直接放行：裸空格进文档、看不见的活组词继续挂着（与
 // 回车分支行为分裂，macOS 2026-10-25 实机反馈的同族问题）。

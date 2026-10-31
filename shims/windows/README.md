@@ -253,7 +253,9 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   的按键不会再调 `OnKeyDown`，修饰键可能永远进不了跟踪函数（中英切换失效）。
   现移到 `OnTestKeyDown`/`OnTestKeyUp`（Test 阶段对每个按键都会调用），
   「非 Shift 键取消空按窗口」也移入 Test 阶段——顺带修掉 Shift+方向键等
-  未组词按键松 Shift 时误切换中英的问题。诊断日志保留（见「排障日志」）：
+  未组词按键松 Shift 时误切换中英的问题；Ctrl/Alt/Win 的按下与释放同样
+  取消空按窗口（2026-10-31 三端复核补齐，此前 Shift→Ctrl→松 Shift 会误切换）。
+  诊断日志保留（见「排障日志」）：
   真机按一次 Shift，正常应看到 `modifier in OnTestKeyDown` +
   `modifier in OnTestKeyUp` + `shift toggle`；若仍只有 TestKeyDown 而无
   toggle，说明该宿主连 OnTestKeyUp 都不调（罕见），需改 GetKeyState 轮询。
@@ -262,6 +264,11 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   待 Windows 真机阶段补。
 - 传输用 TCP 回环（stdlib 可监听，协议不变）；命名管道（会话隔离更干净）
   留待 Windows 环境验证后切换。
+- **TCP 回环没有 Unix socket 权限等价物（2026-10-31 记录）**：mac/Linux 的
+  daemon 套接字已 `chmod 0600`（同机其它用户不可连）；Windows 用
+  `127.0.0.1:7949`，本机任何用户进程都能连接 daemon 收发组词/上屏数据
+  （Windows 没有 socket 文件权限模型）。后续方案：命名管道 + 安全描述符，
+  需真机验证后再切换。
 - 双拼 `;` 的标点宽度瞬态：全/半角开关归壳本地持有，引擎 session 的半角状态在
   下一次 punct 请求时才更新；双拼模式下单独按 `;`（无暂存首键）时若刚切过
   全/半角，可能按上一次的宽度出标点（1 键瞬态，2026-10-30 记录；修复需给

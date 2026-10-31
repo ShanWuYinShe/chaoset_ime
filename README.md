@@ -1014,6 +1014,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **macOS**：LaunchAgent 的 daemon 参数补 `-log`（launchd 下日志落
         `~/Library/Application Support/chaoset/chaosetd.log`，此前日志丢失）。
       - **仓库卫生**：`.gitignore` 补 `*.sock.lock` 与 `userdict.json.corrupt-*`。
+      - **三端一致性复核补记（2026-10-31）**：① Shift 空按的取消条件已对齐——
+        mac（flagsChanged 清 shiftArmed）/Linux（任何非 Shift 事件清 sinceShift）
+        都会在 Ctrl/Alt/Win 按下或释放时取消空按窗口，Windows 此前漏了这一步
+        （Shift→Ctrl→松 Shift 会误切换中英），本轮补齐并用 Linux 单测锁语义；
+        ② Windows TCP 回环没有 Unix socket 权限等价物（mac/Linux 已 0600，
+        同机其它用户不可连；Windows 本机任意用户进程仍可连 daemon），命名管道
+        + ACL 是后续方案；③ `-version` 覆盖四个 Go 工具（daemon/cli/userdict/
+        import），shell 层版本仍看包信息（mac Info.plist / Windows DLL 暂无
+        VERSIONINFO 资源）；④ Linux 进程内引擎不经过 daemon 的 IPC panic 隔离
+        （引擎 panic 会重启 ibus 引擎进程，会话状态丢失；mac/Windows 走 daemon
+        的隔离路径）；⑤ 随包工具集不同——Linux 包含 daemon/cli/import/userdict/
+        engine，Windows 包含 daemon/cli/import，mac 包含 daemon/import（GUI
+        内嵌）。因此 `-tcp` 在 Windows 上随包可直接用的是 `chaoset-cli.exe`，
+        `chaoset-userdict.exe` 需源码构建；工具集补齐待后续打包批次。
       - **未做（明确记录）**：滚轮翻页在 Windows 不可行（`WM_MOUSEWHEEL` 只发给
         焦点窗口，候选窗 `WS_EX_NOACTIVATE` 永不获得焦点；要接收需全局鼠标钩子，
         与用户「游戏不干扰鼠标」的硬要求冲突）；无障碍 UIA、per-monitor DPI、

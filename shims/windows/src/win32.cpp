@@ -2036,9 +2036,15 @@ public:
                            static_cast<unsigned long>(wParam));
             }
             // 只有 Shift 参与「空按切换中英」；Ctrl/Alt/Win 等其它修饰键
-            // 只放行，绝不能进 onShiftEvent（否则松 Ctrl 会被误判成 Shift 空按）。
+            // 不能进 onShiftEvent（否则松 Ctrl 会被误判成 Shift 空按），但
+            // 它们属于「Shift 按住期间按过其它键」——必须关闭空按窗口。
+            // mac（flagsChanged 清 shiftArmed）/Linux（任何非 Shift 事件清
+            // sinceShift）都是这个语义；此前 Windows 漏了这一步，
+            // Shift→Ctrl→松 Shift 会误切换中英（2026-10-31 三端复核发现）。
             if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
                 onShiftEvent(false, pic);
+            } else {
+                sinceShift_ = true;
             }
             *pfEaten = FALSE;  // 修饰键始终放行
             return S_OK;
@@ -2118,15 +2124,23 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
-        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+        if (isModifierKey(wParam)) {
             static volatile LONG loggedTestUpModifier = 0;
             if (InterlockedCompareExchange(&loggedTestUpModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnTestKeyUp vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
-            // 与 OnTestKeyDown 对称：Key 阶段收不到修饰键时，这里也收不到；
-            // 跟踪必须放在 Test 阶段（见 OnTestKeyDown 注释）。
-            onShiftEvent(true, pic);
+            if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+                // 与 OnTestKeyDown 对称：Key 阶段收不到修饰键时，这里也收不到；
+                // 跟踪必须放在 Test 阶段（见 OnTestKeyDown 注释）。
+                onShiftEvent(true, pic);
+            } else {
+                // 其它修饰键的释放同样关闭空按窗口：mac 在 flagsChanged（按下
+                // 与释放都触发）清 shiftArmed，Linux 在任何非 Shift 事件清
+                // sinceShift。典型场景：Ctrl 先按住 → 按 Shift → 松 Ctrl →
+                // 松 Shift，Windows 此前会误切换中英。
+                sinceShift_ = true;
+            }
         }
         *pfEaten = FALSE;  // KeyUp 一律不消费，保证宿主应用状态机完整，绝不导致宿主丢键或键盘卡死
         return S_OK;
