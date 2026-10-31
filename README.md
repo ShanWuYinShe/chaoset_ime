@@ -1546,6 +1546,15 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：本机 `./shims/windows/build.sh` 通过，objdump 导入表确认无
         `uiautomationcore`；`make vet`/checker 通过。
 
+- [x] 阶段 65：候选点选的分页语义测试（2026-10-31）
+      - **背景**：ibus 面板 LookupTable 只展示当前页，`CandidateClicked(index)`
+        是页内序号；`CandidateClicked` 首版只测了第 1 页，翻页后点选是否按
+        「当前页切片」换算没有回归。
+      - **测试**：新增 2 例——组词第 2 页点选第 1 项应上屏第 2 页首条；联想
+        第 2 页点选第 1 项应上屏全局第 7 条（assocPage*PageSize + index）。
+      - **验证**：`go test ./shims/linux/ibus-engine -run TestCandidateClicked`
+        6 例全过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

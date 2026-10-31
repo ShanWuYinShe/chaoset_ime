@@ -1763,3 +1763,53 @@ func TestCandidateClickedAssociateContinues(t *testing.T) {
 		t.Fatalf("点击联想词应上屏「好」，实际 %q", got)
 	}
 }
+
+// TestCandidateClickedPageTwo：面板点选的是**当前页切片**的页内序号。
+// 翻到第 2 页后点击第 1 项，必须选中第 2 页首条（而不是全局第 1 条）——
+// ibus 面板 LookupTable 只展示当前页，CandidateClicked(index) 是页内序号。
+func TestCandidateClickedPageTwo(t *testing.T) {
+	var src strings.Builder
+	for i := 1; i <= 8; i++ {
+		fmt.Fprintf(&src, "词%d\tni\t%d\n", i, 90-i)
+	}
+	d, err := engine.ParseDict(strings.NewReader(src.String()))
+	if err != nil {
+		t.Fatalf("构造词库失败: %v", err)
+	}
+	fe := &fakeEmitter{}
+	e := &ibusEngine{conn: fe, dict: d, user: nil, sess: engine.NewSession(d, nil), assocOn: true}
+	typeKeys(e, "ni")
+	if len(e.sess.Compose().Candidates) != engine.PageSize() {
+		t.Fatalf("前置失败：第 1 页应有 %d 条候选", engine.PageSize())
+	}
+	_, _ = e.ProcessKeyEvent(keysymPageDown, 0, 0)
+	page2 := e.sess.Compose().Candidates
+	if len(page2) == 0 {
+		t.Fatal("前置失败：应有第 2 页候选")
+	}
+	want := page2[0].Text
+	if gerr := e.CandidateClicked(0, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if got := fe.lastCommitText(); got != want {
+		t.Fatalf("第 2 页点选第 1 项应上屏 %q，实际 %q", want, got)
+	}
+}
+
+// TestCandidateClickedAssociatePageTwo：联想翻页后点选同样按页内序号换算
+// 全局项（assocPage*PageSize + index），不能选回第 1 页的词。
+func TestCandidateClickedAssociatePageTwo(t *testing.T) {
+	e, fe := newTestEngine(t)
+	for i := 0; i < 12; i++ {
+		e.assoc = append(e.assoc, engine.Candidate{
+			Text: fmt.Sprintf("联想%d", i), Syllables: "lian xiang"})
+	}
+	e.assocPage = 1
+	want := e.assoc[engine.PageSize()].Text
+	if gerr := e.CandidateClicked(0, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if got := fe.lastCommitText(); got != want {
+		t.Fatalf("联想第 2 页点选第 1 项应上屏 %q，实际 %q", want, got)
+	}
+}
