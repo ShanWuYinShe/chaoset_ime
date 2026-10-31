@@ -22,7 +22,19 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
 
 WORK=$(mktemp -d)
-trap 'kill ${ENGINE_PID:-} 2>/dev/null || true; rm -rf "$WORK"' EXIT
+# 清理：引擎收到 TERM 后还会同步落盘 userdict.json（延迟落盘），必须 wait 到
+# 进程真正退出再删临时目录；否则删除与落盘并发会让 rm -rf 报
+# "Directory not empty"（2026-10-31 CI linux-e2e 偶发失败的真实原因）。
+# 删除本身再加短暂重试兜底（文件系统延迟释放）。
+cleanup() {
+  kill "${ENGINE_PID:-}" 2>/dev/null || true
+  wait "${ENGINE_PID:-}" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    rm -rf "$WORK" 2>/dev/null && break
+    sleep 0.2
+  done
+}
+trap cleanup EXIT
 
 echo "==> 构建 Linux 引擎（amd64）"
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
