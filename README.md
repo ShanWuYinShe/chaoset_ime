@@ -1370,6 +1370,23 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库
         checkuiparity PASS；`git diff --check` 通过。
 
+- [x] 阶段 52：Windows 候选窗 3 行折行（与 macOS 同算法）（2026-10-31）
+      - **背景**：docs/ui-parity 长期记录「mac 3 行折行 / Windows 单行布局」的已知
+        差异；Windows 单行在 6 个长候选时只能截断/丢弃，信息展示弱于 mac。
+      - **实现**：把折行布局抽成纯函数 `shims/windows/src/candidate_layout.hpp`
+        （无 Win32 依赖，与 mac `layoutRows` 同算法：按内容宽 638pt 折行、最多 3 行、
+        行内 gap、行高 textH+4pt lineSpacing、首项超宽才截断），win32.cpp 逐项测量后
+        调用它回填 rect；面板宽/高按行数计算，折叠区（齿轮/翻页/页码）仍垂直居中。
+      - **测试**：`tests/core_test.cpp` 增加布局数学单测（折行数、行宽、maxRows 截断、
+        单条超宽钳制）——在 macOS 上原生跑，不依赖 Windows。
+      - **机器检查**：checkuiparity 增加「最大行数」契约（mac `maxRows=3` ↔ Windows
+        `kMaxRows=3`），并断言 win32.cpp 使用 `candidate_layout.hpp`。
+      - **文档**：ui-parity 布局表/已知差异更新（多行折行差异移除）；windows README
+        删除「单行布局」限制。
+      - **验证**：`./shims/windows/build.sh` 通过（原生 core_test 含布局单测 + mingw
+        交叉编译 DLL）；`make vet`/checker 通过；`git diff --check` 通过。**像素级观感/
+        点击仍需 Windows 真机验收**。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

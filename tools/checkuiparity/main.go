@@ -18,10 +18,10 @@
 //  6. ui-parity 文档保留关键差异行（学习数据管理/词库导入/设置窗单例/
 //     Windows per-monitor DPI/双拼 mspy 等）；
 //  7. 候选窗几何/配色字段静态对齐：mac CandidatePanel.swift ↔ Windows
-//     win32.cpp 的布局 pt 常量（字号/padding/gap/键帽/齿轮区/最大宽度）、
+//     win32.cpp 的布局 pt 常量（字号/padding/gap/键帽/齿轮区/最大宽度/最大行数）、
 //     齿轮矢量参数（圆环半径/线宽、8 齿内/外半径、线宽、颜色绑定）、
-//     13 个主题色字段名集合一致。**像素级渲染仍需真机**，但「常量被改一端」
-//     会在这里先 FAIL；
+//     13 个主题色字段名集合一致，Windows 必须使用多行折行布局函数
+//     candidate_layout.hpp。**像素级渲染仍需真机**，但「常量被改一端」会先 FAIL；
 //  8. CI 覆盖不退化：key_routing 回归测试必须存在且被 ci.yml 的 macos-build
 //     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）；expectedChecks 必须与
 //     实际 check( 断言数一致（加/删断言忘了同步会先在这里 FAIL）；
@@ -147,6 +147,7 @@ var layoutContracts = []numericContract{
 	{"翻页区宽", `static let chevronBoxW: CGFloat = ([0-9.]+)`, `const int chevronBoxW = pt\(([0-9.]+), dpi\);`},
 	{"齿轮区宽", `static let boxW: CGFloat = ([0-9.]+)`, `const int gearBoxW = pt\(([0-9.]+), dpi\);`},
 	{"面板最大宽度", `static let maxWidth: CGFloat = ([0-9.]+)`, `constexpr int kMaxWidthPt = ([0-9.]+);`},
+	{"最大行数", `static let maxRows = ([0-9]+)`, `constexpr int kMaxRows = ([0-9]+);`},
 }
 
 // 齿轮矢量参数（2026-10-28 用户拍板：两端同算法同几何同色）。
@@ -254,6 +255,9 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 			*problems = append(*problems, fmt.Sprintf("候选窗几何：Windows 内容上限公式与 mac 常量不一致（期望 %s）", expect))
 		}
 	}
+	// 多行折行：Windows 2026-10-31 起与 mac 同算法（纯布局函数可在 macOS 单测），
+	// 断言头文件被 win32.cpp 引用，防止退回单行布局。
+	checkContains(fsys, problems, "候选窗几何", winShell, "candidate_layout.hpp")
 	checkNumericContracts(fsys, problems, "候选窗齿轮", gearContracts)
 	checkContains(fsys, problems, "候选窗齿轮", macPanel, "color: theme.chipDigit")
 	checkContains(fsys, problems, "候选窗齿轮", winShell, "const COLORREF gearColor = theme.chipDigit;")

@@ -2,6 +2,7 @@
 // 用真实的 chaosetd（TCP 回环）驱动 core.cpp 的全部协议与会话逻辑，
 // 另含 JSON 解析单元断言。全过打印 PASS，任一失败非零退出。
 // 用法：core_test <host:port>
+#include "candidate_layout.hpp"
 #include "core.hpp"
 
 #include <arpa/inet.h>
@@ -173,6 +174,32 @@ int main(int argc, char** argv) {
           "JSON: 转义与 \\u 中文");
     jsonParse("{\"broken\":", &ok);
     check(!ok, "JSON: 截断输入报错");
+
+    // ---- 候选窗多行折行布局数学（纯函数，与 macOS layoutRows 同算法）----
+    {
+        using chaoset::layout::Box;
+        // 每项宽 = padX*2 + chipW + chipTextGap + textW + markW = 5*2+20+10+40 = 80
+        std::vector<Box> boxes(4, Box{5, 20, 10, 40, 0});
+        auto r = chaoset::layout::wrapRows(boxes, 100, 10, 20, 3);
+        check(r.rows.size() == 3, "折行：4 项/内容宽 100 → 3 行");
+        check(r.rows[0].items.size() == 1 && r.rows[0].width == 80,
+              "折行：首行 1 项、行宽 80");
+        int laid = 0;
+        for (const auto& row : r.rows) laid += static_cast<int>(row.items.size());
+        check(laid == 3, "折行：maxRows=3 时第 4 项不布局（与 mac 一致）");
+
+        // 窄项可同行：40 + gap10 + 40 = 90 <= 100
+        std::vector<Box> small(4, Box{0, 0, 0, 40, 0});
+        auto r2 = chaoset::layout::wrapRows(small, 100, 10, 20, 3);
+        check(r2.rows.size() == 2 && r2.rows[0].items.size() == 2 &&
+                  r2.rows[0].width == 90,
+              "折行：40+10+40=90 两项同行");
+
+        // 单条超宽防御：宽 200 钳到内容上限 100
+        auto r3 = chaoset::layout::wrapRows({Box{0, 0, 0, 200, 0}}, 100, 10, 20, 3);
+        check(r3.rows.size() == 1 && r3.rows[0].width == 100,
+              "折行：单条超宽钳到内容上限");
+    }
 
     // ---- 与真实 daemon 的会话流程 ----
     TcpTransport transport(argv[1]);

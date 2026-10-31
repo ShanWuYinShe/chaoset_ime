@@ -260,8 +260,6 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   `dpiForPoint(targetPos_)`（动态加载 shcore!GetDpiForMonitor）按锚点所在显示器
   布局，`onPaint` 复用缓存的 `layoutDpi_`；`WM_DPICHANGED` 重新布局+重绘。
   Toast 同改（按提示位置取 DPI）。混合 DPI 多屏仍需真机验证。
-- **候选窗为单行布局**（macOS 为 3 行折行）：首项超宽逐字截断加…，后续候选
-  放不下时不排列（数字键仍可选）。折行需重排布局，待需求。
 - **中英切换已改到 TSF Test 阶段（2026-10-31，待真机确认）**：Shift 空按跟踪
   原写在 `OnKeyDown`/`OnKeyUp`；按 TSF 两阶段模型，`OnTestKeyDown` 返回 `FALSE`
   的按键不会再调 `OnKeyDown`，修饰键可能永远进不了跟踪函数（中英切换失效）。

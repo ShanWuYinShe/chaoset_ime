@@ -21,7 +21,9 @@
   （px@96，物理只有 0.75 倍）——同一面板两套基准，Windows 上「字一样大、留白
   和键帽小 25%」，最大宽只有 macOS 的 75%，候选更容易被丢弃/截断。2026-10-30
   已全部改为 pt，与 macOS 1:1（`win32.cpp` 的 `pt()` 注释含逐 DPI 像素表）。
-  Windows 的多行/单行等布局机制差异见「已知功能差异」。
+  Windows 候选窗 2026-10-31 起与 mac 同为 **3 行折行**（纯布局函数
+  `shims/windows/src/candidate_layout.hpp`，在 macOS core_test 上单测数学）；
+  像素级观感/点击仍需 Windows 真机验收。
 - **描边线宽**：两端统一 1pt——Windows 面板/键帽/分隔线/Toast 边框从固定 1 设备
   像素改为 `max(1, MulDiv(1, dpi, 72))`（2026-10-30 修复：此前 125%/150% 缩放下
   比 mac 细 33%–40%）。
@@ -68,7 +70,7 @@ Windows 布局参数在各 DPI 下的设备像素值（`MulDiv(pt,dpi,72)` 四�
 | 面板圆角 | panelRadius 8 | RoundRect / SetWindowRgn 直径 `pt(16)` | ✅（形状等价；Windows 无抗锯齿） |
 | 窗宽上限 | maxWidth 720（内容上限 638；常规窗宽 ≤714） | 内容上限 `pt(638)`；窗宽 = 内容 + pad×2 + 36 + 26（≤714pt） | ✅（2026-10-30 修正：原漏扣齿轮区与 pillMargin；mac 首项超长截断后同样 ≤714） |
 | 最小窗宽 | padding×2 + chevronBoxW + gearBoxW + 8 = 84 | `pad*2 + chevronBoxW + gearBoxW + pt(8)` = 84pt | ✅（2026-10-30 修正，原 120px@96=90pt） |
-| 最大行数 | maxRows 3 行折行（第 4 行起不绘制）；首项超宽截断加… | 单行 + 首项超宽省略号（后续项放不下不排列） | ❌ 折行机制不同（已知差异）；首项截断策略两端已一致（2026-10-30 mac 补齐） |
+| 最大行数 | maxRows 3 行折行（第 4 行起不绘制）；首项超宽截断加… | **3 行折行（2026-10-31 与 mac 同算法）**：`candidate_layout.hpp` 纯布局函数（macOS 单测数学），第 4 行起不绘制；首项超宽截断加… | ✅（机制/常量一致；像素级观感待 Windows 真机） |
 | 光标下间距 | candidateGap 6 | `pt(6)` | ✅（2026-10-30 修正，原 4px@96=3pt） |
 | 页码/分隔线 | 见「折叠区几何」 | 同公式 pt 化 | ✅ |
 | 学习标记宽度 | fromUser 时 markW = ceil("*")+2 | `markW = szMark.cx + pt(2)`，文本后 +1pt 起画 | ✅（2026-10-30 Windows 新增） |
@@ -141,7 +143,6 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 
 | 差异 | macOS | Windows | 说明/后续条件 |
 |---|---|---|---|
-| 多行折行 | maxRows 3 行折行；第 4 行起不绘制（数字键仍可能选中）；**首项超宽按字符截断加…**（2026-10-30 新增） | 单行布局；首项超宽逐字截断加…，后续放不下的项不排列（数字键仍可能选中） | 两端都存在「看不见但能选」的边角；Windows 折行需重排布局，待需求。首项截断策略两端已一致；数字键越界会收起联想/放行，不会静默选不可见项 |
 | 面板半透明/阴影 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1pt 描边（pt 化）+ CS_DROPSHADOW + SetWindowRgn 圆角（无抗锯齿） | GDI 限制；用户可见差异是「Windows 无毛玻璃/真实阴影、圆角有锯齿」 |
 | 窗口层级 | .floating(3)（不遮蔽菜单栏） | WS_EX_TOPMOST + **owner=宿主窗口**（2026-10-30 实机修复） | Windows 下拉菜单是系统模态 topmost popup，候选窗不会拦菜单点击；mac 因 popUpMenu 会压菜单栏而降级。owner 让 owned 候选窗恒在宿主之上，可跨 Windows 11 开始菜单/搜索的沉浸式 z 序 band（此前无主 topmost 被压住导致完全看不到）；ModeToast 同策略（2026-10-31） |
 | 全屏免打扰 | 无（AppKit 无对应机制） | D3D 全屏/演示模式下抑制候选窗（2026-10-31 实现）；`HKCU\Software\Chaoset\FullscreenSuppress` DWORD 缺省 1，可设 0 关闭 | 只抑制候选窗显示，不改按键/组词；无边框全屏返回 QUNS_ACCEPTS_NOTIFICATIONS 不触发（边界已记 windows README）；全屏浏览器/视频可能命中 D3D 全屏状态，可用注册表关闭 |
@@ -319,7 +320,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、
   打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/
-  派生值/齿轮矢量参数/13 个主题色字段名集合、key_routing 已接入 CI 且断言用例数
+  派生值/最大行数（Windows 必须用 `candidate_layout.hpp` 多行折行）/齿轮矢量参数/
+  13 个主题色字段名集合、key_routing 已接入 CI 且断言用例数
   未减少、shims 下 `$VAR` 不紧跟非 ASCII（bash 3.2 UTF-8 locale 坑）、本表关键差异
   行存在。**候选窗像素级渲染（抗锯齿/阴影/毛玻璃/Toast/DPI 观感）仍需 Windows
   真机**，本表 + Code Review 仍是那部分的防线。

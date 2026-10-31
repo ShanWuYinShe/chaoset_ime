@@ -36,6 +36,7 @@
 #include <string>
 #include <vector>
 
+#include "candidate_layout.hpp"
 #include "core.hpp"
 
 static HINSTANCE g_hInst = nullptr;
@@ -1024,22 +1025,26 @@ private:
         int idxH = tmIdx.tmHeight;
         int chipH = idxH + chipPadY * 2;
         int contentH = (std::max)(textH, chipH);
-        int winH = pad * 2 + contentH;
-        int contentTop = pad;
-
+        // 多行折行布局（2026-10-31 与 macOS CandidatePanel.layoutRows 对齐）：
+        // 逐项测量 → candidate_layout.hpp 纯布局函数折行 → 回填各 rect。
+        // 折行上限 3 行（mac Layout.maxRows）；第 3 行之后的候选不参与布局
+        //（与 mac 一致：数字键仍可能选中不可见项，文档记录为已知边角）。
         items_.clear();
-        int curX = pad;
 
         // 面板最大内容宽度：与 macOS CandidatePanel.layoutRows 的公式逐项对齐
         // （2026-10-30 审计 A11）：窗宽上限 720pt，扣内边距*2、翻页区 36pt、
         // 齿轮区 26pt、首选胶囊外扩 pillMargin*2、2pt 安全余量，得 638pt。
-        // 此前只扣 pad 与 chevronBoxW，漏扣 gearBoxW 与 pillMargin，极限窗宽
-        // 可到 ~746px > 720 声明（首选胶囊/齿轮叠字）。
         constexpr int kMaxWidthPt = 720;
         constexpr int kMaxContentPt = kMaxWidthPt - 7 * 2 - 36 - 26 - 2 * 2 - 2;  // 638pt
+        constexpr int kMaxRows = 3;  // mac Layout.maxRows
         const int maxContent = pt(kMaxContentPt, dpi);
+        const int lineSpacing = pt(4, dpi);  // mac Layout.lineSpacing
         const wchar_t* kEllipsis = L"…";
 
+        std::vector<chaoset::layout::Box> boxes;
+        std::vector<ItemPos> measured;
+        boxes.reserve(comp_.candidates.size());
+        measured.reserve(comp_.candidates.size());
         for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
             ItemPos item;
             item.index = static_cast<int>(i);
@@ -1070,10 +1075,10 @@ private:
 
             int chipW = szIdx.cx + chipPadX * 2;
             int chipTextGap = (std::max)(pt(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
-            int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
 
-            if (items_.empty()) {
-                // 首项独超宽：逐字截断加省略号（保证内容不超出 maxContent）
+            // 首项独自超宽：逐字截断加省略号（与 mac layoutRows 同策略；折行
+            // 只解决「多项组合超宽」，单条候选本身超宽仍必须截断）。
+            if (i == 0) {
                 const int avail = (std::max)(
                     maxContent - padX * 2 - chipW - chipTextGap - markW, pt(20, dpi));
                 if (szTxt.cx > avail) {
@@ -1087,47 +1092,73 @@ private:
                     }
                     item.textStr += kEllipsis;
                     GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
-                    itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
                 }
-            } else if (curX - pad + itemW > maxContent) {
-                // 后续项放不下：停止排列（候选仍在列表中，数字键可选）
-                break;
             }
 
-            item.itemRect.left = curX;
-            item.itemRect.top = contentTop;
-            item.itemRect.right = curX + itemW;
-            item.itemRect.bottom = contentTop + contentH;
+            chaoset::layout::Box box;
+            box.padX = padX;
+            box.chipW = chipW;
+            box.chipTextGap = chipTextGap;
+            box.textW = szTxt.cx;
+            box.markW = markW;
+            boxes.push_back(box);
+            measured.push_back(std::move(item));
+        }
 
-            if (item.isFirst) {
-                item.pillRect.left = curX - pillMargin;
-                item.pillRect.top = contentTop - pillMargin;
-                item.pillRect.right = curX + itemW + pillMargin;
-                item.pillRect.bottom = contentTop + contentH + pillMargin;
+        const auto rowsLayout = chaoset::layout::wrapRows(boxes, maxContent, gap, contentH, kMaxRows);
+        int rowCount = static_cast<int>(rowsLayout.rows.size());
+        if (rowCount == 0) rowCount = 1;  // 无候选时保留一行高度（同 mac minHeight）
+        const int rowH = contentH + lineSpacing;
+        int contentW = 0;
+        for (const auto& row : rowsLayout.rows) contentW = (std::max)(contentW, row.width);
+        int winH = pad * 2 + rowCount * rowH - lineSpacing;
+        winH = (std::max)(winH, pt(20, dpi));
+
+        std::size_t flat = 0;
+        for (int r = 0; r < static_cast<int>(rowsLayout.rows.size()); ++r) {
+            const auto& row = rowsLayout.rows[static_cast<std::size_t>(r)];
+            const int rowTop = pad + r * rowH;
+            for (const auto& boxRect : row.items) {
+                if (flat >= measured.size() || flat >= boxes.size()) break;
+                ItemPos item = std::move(measured[flat]);
+                const chaoset::layout::Box& box = boxes[flat];
+                const int x = pad + boxRect.x;
+                ++flat;
+
+                item.itemRect.left = x;
+                item.itemRect.top = rowTop;
+                item.itemRect.right = x + boxRect.w;
+                item.itemRect.bottom = rowTop + contentH;
+
+                if (item.isFirst) {
+                    item.pillRect.left = x - pillMargin;
+                    item.pillRect.top = rowTop - pillMargin;
+                    item.pillRect.right = x + boxRect.w + pillMargin;
+                    item.pillRect.bottom = rowTop + contentH + pillMargin;
+                }
+
+                const int chipLeft = x + box.padX;
+                const int chipTop = rowTop + (contentH - chipH) / 2;
+                item.chipRect.left = chipLeft;
+                item.chipRect.top = chipTop;
+                item.chipRect.right = chipLeft + box.chipW;
+                item.chipRect.bottom = chipTop + chipH;
+
+                const int textLeft = item.chipRect.right + box.chipTextGap;
+                const int textTop = rowTop + (contentH - tmText.tmHeight) / 2;
+                item.textRect.left = textLeft;
+                item.textRect.top = textTop;
+                item.textRect.right = textLeft + box.textW;
+                item.textRect.bottom = textTop + tmText.tmHeight;
+
+                item.markW = box.markW;  // onPaint 画学习标记用（0 = 未加权）
+                items_.push_back(std::move(item));
             }
-
-            int chipLeft = curX + padX;
-            int chipTop = contentTop + (contentH - chipH) / 2;
-            item.chipRect.left = chipLeft;
-            item.chipRect.top = chipTop;
-            item.chipRect.right = chipLeft + chipW;
-            item.chipRect.bottom = chipTop + chipH;
-
-            int textLeft = item.chipRect.right + chipTextGap;
-            int textTop = contentTop + (contentH - tmText.tmHeight) / 2;
-            item.textRect.left = textLeft;
-            item.textRect.top = textTop;
-            item.textRect.right = textLeft + szTxt.cx;
-            item.textRect.bottom = textTop + tmText.tmHeight;
-
-            item.markW = markW;  // onPaint 画学习标记用（0 = 未加权）
-            items_.push_back(item);
-            curX += itemW + gap;
         }
 
         // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧齿轮，
         // 点击打开设置窗口（词组联想开关）。宽度与 mac SettingsGear.boxW=26pt 一致。
-        int totalW = (curX > pad ? curX - gap : curX) + pad + chevronBoxW + gearBoxW;
+        int totalW = pad * 2 + contentW + chevronBoxW + gearBoxW;
         // 最小窗宽与 mac contentSize 的 minW 同公式：
         // padding*2 + chevronBoxW + gearBoxW + 8pt（2026-10-30 审计 R10：此前
         // Windows 用 120px@96=90pt，比 mac 的 84pt 宽，不一致）。
