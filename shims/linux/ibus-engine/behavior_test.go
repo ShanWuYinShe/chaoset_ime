@@ -806,6 +806,23 @@ func TestDeleteAndModifierMapping(t *testing.T) {
 	}
 }
 
+// TestNonDeleteModifierParity：非退格键的修饰键一致性（2026-10-31 三端收尾）：
+// Shift+PageUp 组词中仍翻页；Ctrl+Shift+U 是宿主快捷键必须放行（mac/Linux
+// 一致；Windows 此前用虚拟键判定会把 Shift+U 也清空，已修）。
+func TestNonDeleteModifierParity(t *testing.T) {
+	e, _ := newTestEngine(t)
+	typeKeys(e, "nihao")
+	if handled, _ := e.ProcessKeyEvent(keysymPageUp, 0, ibusShiftMask); !handled {
+		t.Fatal("Shift+PageUp 组词中应翻页并消费")
+	}
+	if got := e.sess.Compose().Input; got != "nihao" {
+		t.Fatalf("Shift+PageUp 不应改动组词，实际 %q", got)
+	}
+	if handled, _ := e.ProcessKeyEvent(uint32('U'), 0, ibusCtrlMask|ibusShiftMask); handled {
+		t.Fatal("Ctrl+Shift+U 应放行给应用")
+	}
+}
+
 // TestPageKeyClearsCompositionWithoutCandidates：残缺组词按 PgUp/PgDn——
 // 先清空组词再放行（对齐 macOS/Windows 壳；此前静默吞键）。
 func TestPageKeyClearsCompositionWithoutCandidates(t *testing.T) {

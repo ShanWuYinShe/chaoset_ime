@@ -1327,6 +1327,26 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         `git diff --check` 通过。**Win/Super 组合可能被系统外壳先拦截，需 Windows/Linux
         真机确认实际可达性。**
 
+- [x] 阶段 49：非退格键修饰键一致性收尾（2026-10-31）
+      - **审计发现**：
+        - Windows 用虚拟键判定 `Ctrl+U`，`Ctrl+Shift+U` 也被当整行清空；
+          mac 按字符判定、Linux 按 keysym 判定都放行 → 三端不一致；
+        - Windows 组词中 `Shift+PageUp/PageDown` 因「翻页键不带 Shift」被放行，
+          而 mac（keyCode）/Linux（keysym）无论 Shift 都翻页；
+        - mac 联想态按 Ctrl/Alt/Super/Delete 等键时只清组词、联想窗残留到下一次
+          输入；Windows/Linux 都是先收起联想再透传（mac 联想态 Backspace 还会
+          透传误删文档，其联想分支里的 Backspace 处理是死代码）。
+      - **修复**：Windows `Ctrl+U` 要求不带 Shift、PageUp/PageDown 不看 Shift；
+        mac 联想态统一「先收起联想再透传」（Backspace 消费、Delete/其它键透传），
+        并删除死代码分支。
+      - **测试**：mac key_routing 增 3 条（联想态 Backspace、Shift+PageUp、
+        Ctrl+Shift+U），现 22/22；Linux behavior_test 增 `TestNonDeleteModifierParity`；
+        Linux E2E 增 Shift+PageUp / Ctrl+Shift+U 真实 ibus 断言。
+      - **文档**：ui-parity 组词翻页行补 Shift 语义，删除「按键边角差异」节（已无
+        已知未统一项）；mac README 计数更新。
+      - **验证**：`go test ./shims/linux/ibus-engine` 通过；`./shims/windows/build.sh`
+        通过；mac key_routing 22/22；`make vet`/checker 通过；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

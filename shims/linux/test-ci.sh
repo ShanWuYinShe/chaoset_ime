@@ -239,6 +239,26 @@ else
   exit 1
 fi
 press "$P2" 65307 0
+
+# ---- 非退格键修饰键一致性（2026-10-31 三端收尾）----
+# Shift+PageUp 组词中仍翻页（PageUp=65365, Shift=1）；Ctrl+Shift+U 是宿主快捷键
+#（U=85, Ctrl|Shift=5）必须放行。
+for kv in 110 105 104 97 111; do press "$P2" "$kv" 0; done  # nihao
+if [ "$(handled "$P2" 65365 1)" = "1" ]; then
+  echo "PASS: Shift+PageUp 组词中翻页被消费"
+else
+  echo "FAIL: Shift+PageUp 未被消费" >&2
+  exit 1
+fi
+press "$P2" 65307 0
+for kv in 110 105; do press "$P2" "$kv" 0; done  # ni
+if [ "$(handled "$P2" 85 5)" = "0" ]; then
+  echo "PASS: Ctrl+Shift+U 放行给宿主"
+else
+  echo "FAIL: Ctrl+Shift+U 被输入法拦截" >&2
+  exit 1
+fi
+press "$P2" 65307 0
 if [ "$(handled "$P2" 65535 0)" = "0" ]; then
   echo "PASS: 非组词 Delete 放行给宿主"
 else

@@ -131,5 +131,35 @@ let r12 = c.handle(ev("", 117, [.option]), client: m) // Option+ForwardDelete
 check("Option+Delete 按音节回退（消费）", r12 == true, "ret=\(r12)")
 check("Option+Delete 回退到 ni", m.marked.contains("ni") && !m.marked.contains("hao"), "marked=\(m.marked)")
 
+// 联想态 Backspace：三端统一为「收起联想并消费」（2026-10-31）。
+// 用 zhongguo → 中国 进入联想（词典有「中国共产党」等续接词）。
+func typeZhongguo() {
+    _ = c.handle(ev("", 53), client: m) // Esc 清空
+    for (ch, code) in [("z", 6), ("h", 4), ("o", 31), ("n", 45), ("g", 5),
+                        ("g", 5), ("u", 32), ("o", 31)] {
+        _ = c.handle(ev(ch, UInt16(code)), client: m)
+    }
+}
+typeZhongguo()
+_ = c.handle(ev("", 49), client: m) // 空格选首选（中国），进入联想
+let r13 = c.handle(ev("", 51), client: m) // 联想态 Backspace
+check("联想态 Backspace 收起联想并消费", r13 == true, "ret=\(r13)")
+
+// Shift+PageUp 组词中不翻页（放行给宿主滚动）；PageUp/PageDown 无论 Shift
+// 都翻页只适用于联想态（三端一致，2026-10-31）。
+typeNihao()
+let r14 = c.handle(ev("", 116, [.shift]), client: m)
+check("Shift+PageUp 组词中放行", r14 == false, "ret=\(r14)")
+
+// Ctrl+Shift+U 是宿主快捷键：mac 按 rawChars "U" 不匹配 Ctrl+U，放行。
+typeNihao()
+let shiftU = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                              modifierFlags: [.control, .shift], timestamp: 0,
+                              windowNumber: 0, context: nil, characters: "U",
+                              charactersIgnoringModifiers: "U", isARepeat: false,
+                              keyCode: 32)!
+let r15 = c.handle(shiftU, client: m)
+check("Ctrl+Shift+U 放行（不清空组词）", r15 == false, "ret=\(r15)")
+
 print("\n结果: pass=\(pass) fail=\(fail)")
 exit(fail == 0 ? 0 : 1)

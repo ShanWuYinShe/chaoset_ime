@@ -138,6 +138,14 @@ final class ChaosetController: IMKInputController {
 
         if isDeleteKey {
             if !isComposing {
+                // 联想态：与 Windows/Linux 对齐——Backspace 收起联想并消费
+                //（透传会误删刚上屏的文字）；ForwardDelete 收起联想后透传。
+                if associateCandidates != nil {
+                    exitAssociate()
+                    let isBackspace = event.keyCode == 51 ||
+                        rawChars == "\u{7F}" || rawChars == "\u{08}"
+                    return isBackspace
+                }
                 current = nil
                 refresh(client)
                 return false // 无组词：放行给宿主应用正常删除已有文本
@@ -194,8 +202,11 @@ final class ChaosetController: IMKInputController {
             return true
         }
 
-        // 带 Command/Control/Option 的系统快捷键（如 Cmd+C/Cmd+V）一律放行
+        // 带 Command/Control/Option 的系统快捷键（如 Cmd+C/Cmd+V）一律放行。
+        // 联想态先收起联想再透传（与 Windows/Linux 壳对齐；此前 mac 面板会
+        // 残留到下一次输入，2026-10-31 三端一致性收尾）。
         if mods.contains(.command) || mods.contains(.control) || mods.contains(.option) {
+            if associateCandidates != nil { exitAssociate() }
             return passThrough(client)
         }
 
@@ -233,12 +244,6 @@ final class ChaosetController: IMKInputController {
                 // 上屏失败（daemon 不可达/越界）时也不能把裸空格漏进文档。
                 // Windows/Linux 壳在此场景都是 return true（2026-10-29
                 // 三端一致性审查：此前 macOS 走 passThrough，文档多个空格）。
-                return true
-            } else if event.keyCode == 51 {
-                // 删除键：收起联想并**消费**——透传会误删刚上屏的文字
-                //（联想模式下用户连按删除的本意是回退编辑，误删文档字
-                // 代价高；2026-10-28 用户反馈）
-                exitAssociate()
                 return true
             } else if firstScalar >= 49, firstScalar <= 57,
                       let list = associateCandidates {
@@ -279,6 +284,10 @@ final class ChaosetController: IMKInputController {
                     event.keyCode == 121
                 associateFlip(next: next, client: client)
                 return true
+            } else {
+                // 其余按键（方向键/Tab/F 键等）：与 Windows/Linux 对齐，先收起
+                // 联想再落到下方正常流程/透传（此前面板会残留到下一次输入）。
+                exitAssociate()
             }
         }
 

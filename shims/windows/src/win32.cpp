@@ -2449,7 +2449,9 @@ private:
         // handleKey 里按「Command/Ctrl/Shift → 全部删除；Alt → 按音节回退；
         // 无修饰 → 逐字符回退」处理。非组词态一律放行给宿主。
         if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) return true;
-        if (ctrl) return isComposing() && vk == 'U';
+        // Ctrl+U 整行清空；Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），
+        // 所以这里必须要求不带 Shift。
+        if (ctrl) return isComposing() && vk == 'U' && !shiftActive();
         if (alt || win) return false;
 
         // 联想模式：数字（有对应项）/空格（选第一个）/回车/Esc/Backspace
@@ -2496,11 +2498,13 @@ private:
 
         // Shift+字母（大写英文，含 CapsLock）：放行给宿主，不进组词
         if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return !shiftActive();
-        // 翻页键不带 Shift（Shift 变体 _ + { } 与 mac 一致放行原字符）
-        const bool isPageKey = !shiftActive() &&
-                               (vk == kVkOemMinus || vk == kVkOemPlus ||
-                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
-                                vk == kVkPrior || vk == kVkNext);
+        // 翻页键：- / = / [ / ] 不带 Shift（Shift 变体 _ + { } 是字符，
+        // 与 mac 字符级判定一致放行）；PageUp/PageDown 无论 Shift 都翻页
+        //（mac keyCode/Linux keysym 都不看 Shift，2026-10-31 三端对齐）。
+        const bool isPageKey =
+            (vk == kVkPrior || vk == kVkNext) ||
+            (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus ||
+                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
         if (isPageKey && isComposing()) return hasCandidates();
         // 双拼模式下 ';' 是引擎的组词/解码键（见 handleKey 的 DP 路由），
         // 同样要在这里预告吞键——TSF 两阶段模型里 OnTestKeyDown 预告 FALSE
@@ -2650,8 +2654,9 @@ private:
 
         // Ctrl 组合键：
         if (ctrl) {
-            // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）
-            if (vk == 'U' && isComposing()) {
+            // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）；
+            // Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），不在此列。
+            if (vk == 'U' && isComposing() && !shiftActive()) {
                 resetSession();
                 endComposition();
                 comp_ = chaoset::Comp();
@@ -2714,12 +2719,12 @@ private:
         }
 
         // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费；
-        // 空组词放行原键/出标点）。翻页键不带 Shift：Shift 变体 _ + { }
-        // 不是翻页也不是标点，落到末尾清组词放行（对齐 mac 的字符级判定）。
-        const bool isPageKey = !shiftActive() &&
-                               (vk == kVkOemMinus || vk == kVkOemPlus ||
-                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets ||
-                                vk == kVkPrior || vk == kVkNext);
+        // 空组词放行原键/出标点）。- / = / [ / ] 的 Shift 变体是字符不翻页；
+        // PageUp/PageDown 无论 Shift 都翻页（对齐 mac/Linux）。
+        const bool isPageKey =
+            (vk == kVkPrior || vk == kVkNext) ||
+            (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus ||
+                                vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
         if (isPageKey && isComposing() && hasCandidates()) {
             bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
             comp_ = isPrev ? session_.prevPage() : session_.nextPage();
