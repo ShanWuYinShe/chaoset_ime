@@ -66,6 +66,18 @@ func stripYAMLHeader(content string) string {
 	return ""
 }
 
+// stripToneDigits 删除拼音编码里的调号数字（1-5）。数字在拼音编码里只可能
+// 是声调标记；空格分隔的 `ni3 hao3` 与连写 `ni3hao3` 都要支持（2026-10-31
+// 修复：此前只 TrimRight 末尾数字，连写带调号整串归一化失败）。
+func stripToneDigits(tok string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '1' && r <= '5' {
+			return -1
+		}
+		return r
+	}, tok)
+}
+
 // normalizePinyin 把一行拼音编码归一化为音节切片：
 // 全小写、去音调符号（ü 系→v）、去音调数字后缀。
 // 任一音节非法则返回 nil（调用方跳过该行）。
@@ -76,16 +88,7 @@ func normalizePinyin(code string) []string {
 	for _, tok := range tokens {
 		tok = strings.ToLower(tok)
 		tok = toneReplacer.Replace(tok)
-		// 去音调数字后缀：此前只 TrimRight 掉**末尾**数字，`ni3hao3` 这类
-		// 连写带调号会整串归一化失败（文档声称支持数字后缀，实际只支持
-		// 空格分隔的 `ni3 hao3`）。数字在拼音编码里只可能是调号，直接全删；
-		// 删完再交给 IsSyllable/segmentRunon 判定合法性。
-		tok = strings.Map(func(r rune) rune {
-			if r >= '1' && r <= '5' {
-				return -1
-			}
-			return r
-		}, tok)
+		tok = stripToneDigits(tok)
 		if alt, ok := specialSylls[tok]; ok {
 			tok = alt
 		}

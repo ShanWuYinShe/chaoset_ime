@@ -1613,6 +1613,19 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         dispatch 的 associate/associateSelect 分支。
       - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
 
+- [x] 阶段 71：engine 平台中立性机器守卫 + 归一化代码整理（2026-11-01）
+      - **用户要求**：engine 永远保持纯净，不携带任何平台相关内容；架构/可读性
+        优先，不做屎山。
+      - **守卫**：新增 `engine/purity_test.go`——解析 engine 目录全部 .go：
+        ① 只允许标准库 import（第三方路径首段带 `.` 一律拒绝，含项目内部包）；
+        ② 禁止 `import "C"` / `syscall` / `unsafe` / `os/exec` / `net` /
+        `runtime/cgo` 等平台/外部能力；③ 禁止任何 `//go:build` 构建标签与
+        `*_windows.go` / `*_linux.go` / `*_darwin.go` 等平台文件。
+      - **整理**：把 `normalizePinyin` 里内联的调号数字清理提取为
+        `stripToneDigits`（命名表达意图，注释说明为什么全删而非 TrimRight）。
+      - **验证**：`go test ./engine`（含 purity/normalize 用例）、`make vet`/
+        checker、`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
