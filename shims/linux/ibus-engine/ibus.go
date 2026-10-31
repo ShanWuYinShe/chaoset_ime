@@ -461,7 +461,11 @@ func (e *ibusEngine) CandidateClicked(index uint32, button uint32, state uint32)
 	defer e.mu.Unlock()
 	_ = button
 	_ = state
-	e.selectCandidate(int(index))
+	// 越界点击与数字键越界同语义：联想中收起联想（面板/引擎页码不同步时
+	// 不留下挂着的联想窗），普通组词则保持原样（用户正在打的拼音不清）。
+	if !e.selectCandidate(int(index)) && len(e.assoc) > 0 {
+		e.exitAssociate()
+	}
 	return nil
 }
 

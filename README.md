@@ -1564,6 +1564,17 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **验证**：`bash -n shims/linux/test-ci.sh`、`make vet`/checker、
         `git diff --check` 通过；linux-e2e 由 CI 真实验证。
 
+- [x] 阶段 67：联想中越界点选收起联想（与数字键一致）（2026-10-31）
+      - **问题**：数字键越界时联想分支会 `exitAssociate()` 收起联想；
+        `CandidateClicked` 越界只忽略，联想窗会挂着（面板/引擎页码不同步时
+        留下不可操作的状态）。
+      - **修复**：`CandidateClicked` 在 `selectCandidate` 返回 false 且当前在
+        联想中时调用 `exitAssociate()`；普通组词越界仍保持原样（不清用户拼音）。
+      - **测试**：新增 `TestCandidateClickedAssociateOutOfRangeExits`；ui-parity
+        鼠标点选行同步语义描述；README 阶段 67。
+      - **验证**：`go test ./shims/linux/ibus-engine`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

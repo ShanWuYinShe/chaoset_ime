@@ -1796,6 +1796,20 @@ func TestCandidateClickedPageTwo(t *testing.T) {
 	}
 }
 
+// TestCandidateClickedAssociateOutOfRangeExits：联想中越界点选应收起联想
+// （与数字键越界同语义：面板/引擎页码不同步时不留挂着的联想窗）。
+func TestCandidateClickedAssociateOutOfRangeExits(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.assoc = []engine.Candidate{{Text: "好", Syllables: "hao"}}
+	e.assocPage = 0
+	if gerr := e.CandidateClicked(99, 1, 0); gerr != nil {
+		t.Fatalf("CandidateClicked 出错: %v", gerr)
+	}
+	if len(e.assoc) != 0 {
+		t.Fatalf("联想越界点选应收起联想，实际仍有 %d 条", len(e.assoc))
+	}
+}
+
 // TestCandidateClickedAssociatePageTwo：联想翻页后点选同样按页内序号换算
 // 全局项（assocPage*PageSize + index），不能选回第 1 页的词。
 func TestCandidateClickedAssociatePageTwo(t *testing.T) {
