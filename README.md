@@ -1489,6 +1489,17 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         `make package-macos` 与打包步骤名，防止被删。
       - **验证**：`make vet`/checker 通过；CI macos-build 实际执行打包步骤。
 
+- [x] 阶段 60：Linux 词库导入安全流程纳入 checkuiparity（2026-10-31）
+      - **背景**：checkuiparity「词库导入安全」此前只锁 mac Setup.app 与 Windows
+        设置窗（退出码检查/备份/原子替换/日志）；阶段 54 新增的 Linux
+        `dictimport_ctl.py` 没有对应静态契约，重构时可能悄悄退回「直接覆盖」。
+      - **实现**：安全组新增 Linux 断言——`r.returncode != 0`、`shutil.copy2`
+        备份、`tmp = target + ".tmp"` 临时文件、`os.replace` 原子替换；
+        新增 `TestCheckImportSafety` 变异测试（Linux 侧去掉 os.replace 必须被捕获）。
+      - **文档**：ui-parity 机器检查说明改为三端；README 阶段 60。
+      - **验证**：`go test ./tools/checkuiparity`、`make vet`/checker、
+        `git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

@@ -320,8 +320,9 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   Windows 无障碍基础能力（候选窗 `WM_GETOBJECT` + UIA 宿主 provider）、
   CI 安装包自检（日常 linux-e2e 构建 tar.gz/deb 并断言设置窗模块随包；
   macos-build 直接跑 `make package-macos` 产出 zip/dmg）、
-  **词库导入安全流程**（mac/Windows 都必须保留导入器退出码检查/旧词库备份/同卷
-  原子替换/失败日志）、**关闭联想的即时性**（mac 通知/Windows 广播/Linux 下次按键
+  **词库导入安全流程**（mac/Windows/Linux 三端都必须保留导入器退出码检查/旧词库
+  备份/原子替换/失败日志；Linux 用临时文件 + os.replace）、**关闭联想的即时性**
+  （mac 通知/Windows 广播/Linux 下次按键
   且文档记录）、**退格与修饰键映射**（三端 `backspaceWord`/Delete 常量/修饰键标识）、
   打包安装一致性（userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/
   派生值/最大行数（Windows 必须用 `candidate_layout.hpp` 多行折行）/齿轮矢量参数/

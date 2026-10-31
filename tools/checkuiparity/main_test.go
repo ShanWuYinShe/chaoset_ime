@@ -100,9 +100,14 @@ func TestCheckImportSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取 Windows 壳源码失败：%v", err)
 	}
+	linuxText, err := os.ReadFile("../../" + linuxDictImport)
+	if err != nil {
+		t.Fatalf("读取 Linux 导入模块失败：%v", err)
+	}
 	fsys := fstest.MapFS{
-		macSetup: &fstest.MapFile{Data: macText},
-		winShell: &fstest.MapFile{Data: winText},
+		macSetup:        &fstest.MapFile{Data: macText},
+		winShell:        &fstest.MapFile{Data: winText},
+		linuxDictImport: &fstest.MapFile{Data: linuxText},
 	}
 	var problems []string
 	checkImportSafety(fsys, &problems)
@@ -121,6 +126,21 @@ func TestCheckImportSafety(t *testing.T) {
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "MOVEFILE_REPLACE_EXISTING") {
 		t.Fatalf("去掉原子替换标志应被捕获，实际：%v", problems)
+	}
+
+	// 替换所有出现（注释里也有 os.replace；只换第一处会让真实调用残留）。
+	linuxMutated := strings.ReplaceAll(string(linuxText), "os.replace", "shutil.move")
+	if linuxMutated == string(linuxText) {
+		t.Fatal("变异未生效：Linux 导入模块里找不到 os.replace")
+	}
+	problems = nil
+	checkImportSafety(fstest.MapFS{
+		macSetup:        &fstest.MapFile{Data: macText},
+		winShell:        &fstest.MapFile{Data: winText},
+		linuxDictImport: &fstest.MapFile{Data: []byte(linuxMutated)},
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "os.replace") {
+		t.Fatalf("Linux 去掉 os.replace 应被捕获，实际：%v", problems)
 	}
 }
 

@@ -389,6 +389,15 @@ func checkImportSafety(fsys fs.FS, problems *[]string) {
 		"MOVEFILE_REPLACE_EXISTING",
 		"import.log",
 	)
+	// Linux 设置窗（2026-10-31）：退出码检查 + 备份 + 临时文件/os.replace 原子
+	// 替换（导入失败旧词库保持原样）。
+	checkContains(fsys, problems, group, linuxDictImport,
+		"r.returncode != 0",
+		"shutil.copy2",
+		".bak.",
+		"os.replace",
+		`tmp = target + ".tmp"`,
+	)
 }
 
 // checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数
