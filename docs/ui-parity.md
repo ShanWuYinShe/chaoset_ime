@@ -150,7 +150,7 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 | 设置窗视觉 | 380×330pt（2026-10-31 加学习数据区）、NSSwitch、13/11pt、跟随系统深浅 | 380×390pt（2026-10-31 加词库区）、13/11pt、**跟随系统深浅**（DWM 深色标题栏 + 自绘背景/文字/复选框/按钮）、per-monitor DPI | Windows 深色/DPI 为编译级实现，**需真机验收**；mac/Linux 跟随系统 |
 | 学习数据管理 | 设置窗「学习数据」区：统计 / 清空（二次确认）/ 导出 TSV（2026-10-31） | 同左（2026-10-31；设置窗独立 TcpTransport 连 daemon，不持有 TIP 指针） | 同左（2026-10-31；GTK 设置窗调用随包 `chaoset-userdict` 本地文件模式，清空时编排 `ibus exit` → 停引擎 → 清空 → `ibus restart`；**engine 包零改动**，无 DBus/平台代码进入引擎） |
 | 词库导入 | Setup.app GUI：种子+现用+所选 → 备份 → 原子替换（2026-10-26） | 设置窗「词库」区：选择 Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ `chaoset-import` 合并 → 备份 → 同卷原子替换 → 重启 daemon（2026-10-31） | Linux 目前仅 CLI `chaoset-import`（GTK 设置窗导入待后续） |
-| 设置窗单例 | 有 | 有 | Linux 每次点「首选项」可开多个 GTK 窗口（无单例），已知差异；Linux 设置保存**已即时生效**（2026-10-30） |
+| 设置窗单例 | 有 | 有 | 有（2026-10-31：`Gtk.Application` application_id `org.chaoset.Setup` 唯一实例，重复点「首选项」激活并前置已有窗口）；Linux 设置保存**已即时生效**（2026-10-30） |
 | 关闭联想即时性 | 立即收起联想窗 | **下一次按键/刷新时收起**（2026-10-30 改为不即时：设置窗不再持有 TIP 裸指针，消除 UAF） | Linux 同为下次按键生效（只写 config.json）；mac 走通知立即收起 |
 | 双拼 mspy `;` 键 | 支持（2026-10-30） | 支持（2026-10-30） | 支持（2026-10-30） | 引擎 `Composition.shuangpin` 下发方案名，三端壳把双拼模式下的 `;` 路由到 `input`；会话级单测遍历全部音节锁可达性。**标点宽度瞬态已修（2026-10-31）**：`input` 新增可选 `half` 字段，三端壳每次按键下发全/半角状态，引擎先同步再处理 |
 | Windows TSF 两阶段 | — | Shift 空按中英切换原写在 OnKeyDown/OnKeyUp；按 TSF 两阶段模型（OnTestKeyDown 返回 FALSE 的键不再调 OnKeyDown）可能永远收不到修饰键 | **2026-10-31 已把跟踪移到 OnTestKeyDown/OnTestKeyUp**（Test 阶段对每个按键都会调用），「非 Shift 键取消空按窗口」同步移到 Test 阶段；Ctrl/Alt/Win 按下与释放同样取消空按窗口（与 mac/Linux 对齐，2026-10-31）；`tsf.log` 诊断保留（`modifier in OnTestKeyDown/OnTestKeyUp/OnKeyDown/OnKeyUp`、`shift toggle`）。**仍需 Windows 真机确认**（若某宿主连 OnTestKeyUp 都不调，需改 GetKeyState 轮询） |
@@ -164,6 +164,10 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第八轮（2026-10-31，`feat/linux-setup-singleton-icons`）：Linux 设置窗单例
+（`Gtk.Application` 唯一实例，重复点「首选项」前置已有窗口）+ hicolor 补齐
+16/22/24/32/64 小尺寸图标。
 
 第七轮（2026-10-31，`feat/linux-gui-userdict`）：Linux 学习数据管理进 GTK 设置窗
 （调用 `chaoset-userdict` 本地文件模式；清空编排 `ibus exit`→停引擎→清空→

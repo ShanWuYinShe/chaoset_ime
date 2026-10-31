@@ -123,10 +123,15 @@ underline），但只能改候选文本本身、没有独立装饰层，因此�
 ## 图标与设置界面
 
 - **引擎与应用图标**：component XML 的 `<engine>` 声明 `<icon>chaoset</icon>`，
-  对应 `icons/hicolor/{48x48,128x128,256x256,scalable}/apps/chaoset.{png,svg}`。
+  对应 `icons/hicolor/{16x16,22x22,24x24,32x32,48x48,64x64,128x128,256x256,scalable}/apps/chaoset.{png,svg}`
+  （2026-10-31 补齐 16/22/24/32/64 小尺寸 PNG，托盘/任务栏/小图标列表不再只依赖
+  scalable 回退；全部由 256px 母图 LANCZOS 缩放，视觉与既有尺寸一致）。
   全套图标统一为跨端新品牌标识：极光电光蓝渐变底板 + 纯白与霓虹青「Cs」双字母标志 + 拼音声调符号（¯），在桌面环境与应用列表均保持高辨识度与现代质感。
 - **设置入口**：`<engine>` 的 `<setup>` 指向 `/usr/share/chaoset/chaoset-setup.py`，
   ibus-setup 据此显示「首选项」按钮，点开即三端同构的设置窗口（GTK3）。
+- **设置窗单例（2026-10-31）**：脚本改用 `Gtk.Application`（application_id
+  `org.chaoset.Setup`）注册唯一实例——重复点「首选项」只会激活并前置已打开的
+  窗口，不再开出多个 GTK 窗口（与 macOS/Windows 设置窗单例语义对齐）。
   系统不会自动生成配置项，设置项由该脚本读写 config.json。
   **安装包必须带这个脚本**：deb 与 tar.gz 本来就有；Arch 二进制包此前漏装
   （点「首选项」无反应），2026-10-30 已补，release 冒烟对三个包都断言该文件存在。

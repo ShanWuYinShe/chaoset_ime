@@ -1124,6 +1124,20 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
       - **打包**：deb/tar.gz/Arch 三个包都安装 `userdict_ctl.py`，发布冒烟断言其
         存在（缺了设置窗 import 失败、整个窗口打不开）。
 
+- [x] 阶段 38：Linux 设置窗单例 + hicolor 小尺寸图标（2026-10-31）
+      - **设置窗单例**：`chaoset-setup.py` 从裸 `Gtk.main()` 改为
+        `Gtk.Application`（application_id `org.chaoset.Setup`）——重复点
+        ibus-setup「首选项」只会激活并前置已打开的窗口，不再开多个 GTK 窗口；
+        与 macOS/Windows 设置窗单例语义对齐（ui-parity 的已知差异移除）。
+      - **hicolor 小尺寸图标**：补齐 16x16/22x22/24x24/32x32/64x64 PNG
+        （由 256px 母图 LANCZOS 缩放，视觉一致），托盘/任务栏/小图标列表不再
+        只依赖 scalable 回退；deb/tar.gz/Arch 三个包均随 hicolor 目录安装，
+        发布冒烟增加 16x16 图标存在性断言。
+      - **验证**：`python3 -m py_compile` 通过；图标尺寸/alpha 用 Pillow 校验；
+        `make package-linux` 通过且 tar 内含新尺寸；`make vet`/gofmt/go build
+        通过；GTK 窗口单例行为需 Linux 桌面真机验收（重复点「首选项」应前置
+        已有窗口而不是开新窗）。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

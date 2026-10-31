@@ -9,6 +9,10 @@
 #   分组「学习数据」（统计 / 清空 / 导出 TSV，2026-10-31 起）；
 #   说明文字；底部「更多设置将在后续版本提供」。
 #
+# 单例：用 Gtk.Application（application_id=org.chaoset.Setup）注册唯一实例。
+# ibus-setup 多次点「首选项」时，第二次调用只会激活并前置已打开的窗口，
+# 不再开多个窗口（2026-10-31 起与 macOS/Windows 设置窗单例语义对齐）。
+#
 # 配置文件：$XDG_CONFIG_HOME/chaoset/config.json（缺省 ~/.config/chaoset/），
 # 键 "associate"：缺省（未写）开启，显式 false 关闭——与 ibus-engine
 # config.go 的 *bool nil=开启语义一致。保存即生效：引擎在每次进入联想前
@@ -62,133 +66,149 @@ def save_config(cfg):
     os.replace(tmp, CONFIG_PATH)  # 原子替换，避免引擎读到半截 JSON
 
 
+class ChaosetSetupApp(Gtk.Application):
+    """Gtk.Application 单例：重复启动只会激活已打开窗口。"""
+
+    def __init__(self):
+        super().__init__(application_id="org.chaoset.Setup")
+
+    def do_activate(self):
+        win = self.get_active_window()
+        if win is not None:
+            win.present()
+            return
+        self.build_window().present()
+
+    def build_window(self):
+        cfg = load_config()
+        associate = cfg.get("associate")
+        enabled = True if associate is None else bool(associate)
+
+        win = Gtk.ApplicationWindow(application=self, title="Chaoset 设置")
+        win.set_resizable(False)
+        win.set_border_width(24)
+        win.set_position(Gtk.WindowPosition.CENTER)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        win.add(box)
+
+        group = Gtk.Label(xalign=0)
+        group.set_markup("<b>输入行为</b>")
+        box.pack_start(group, False, False, 0)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row_label = Gtk.Label(label="词组联想", xalign=0)
+        sw = Gtk.Switch(active=enabled)
+        row.pack_start(row_label, False, False, 0)
+        row.pack_end(sw, False, False, 0)
+        box.pack_start(row, False, False, 0)
+
+        hint = Gtk.Label(xalign=0)
+        hint.set_line_wrap(True)
+        hint.set_max_width_chars(40)
+        hint.get_style_context().add_class("dim-label")
+        hint.set_text("选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。")
+        box.pack_start(hint, False, False, 0)
+
+        # —— 学习数据（普通用户 GUI 入口；CLI 仅高级/无 GUI 环境兜底）——
+        data_group = Gtk.Label(xalign=0)
+        data_group.set_markup("<b>学习数据</b>")
+        box.pack_start(data_group, False, False, 0)
+
+        stats_label = Gtk.Label(xalign=0)
+        stats_label.set_line_wrap(True)
+        stats_label.set_max_width_chars(40)
+        stats_label.set_text("读取中…")
+        box.pack_start(stats_label, False, False, 0)
+
+        data_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        clear_btn = Gtk.Button(label="清空学习数据…")
+        export_btn = Gtk.Button(label="导出学习数据…")
+        data_row.pack_start(clear_btn, False, False, 0)
+        data_row.pack_start(export_btn, False, False, 0)
+        box.pack_start(data_row, False, False, 0)
+
+        data_hint = Gtk.Label(xalign=0)
+        data_hint.set_line_wrap(True)
+        data_hint.set_max_width_chars(40)
+        data_hint.get_style_context().add_class("dim-label")
+        data_hint.set_text("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。")
+        box.pack_start(data_hint, False, False, 0)
+
+        more = Gtk.Label(xalign=0)
+        more.get_style_context().add_class("dim-label")
+        more.set_text("更多设置将在后续版本提供")
+        box.pack_start(more, False, False, 0)
+
+        def on_toggled(switch, _data=None):
+            cfg["associate"] = bool(switch.get_active())
+            save_config(cfg)
+
+        sw.connect("state-set", on_toggled)
+
+        def show_message(kind, text):
+            # 用纯文本（不 set_markup）：错误信息里可能含 < > 等字符，
+            # 交给 Pango 解析会吞内容或报错。
+            dlg = Gtk.MessageDialog(transient_for=win, modal=True, message_type=kind,
+                                    buttons=Gtk.ButtonsType.OK, text=text)
+            dlg.run()
+            dlg.destroy()
+
+        def refresh_stats():
+            ok, text = userdict_ctl.stats()
+            stats_label.set_text(text if ok else "无法读取学习数据：%s" % text)
+
+        def on_clear(_btn):
+            dlg = Gtk.MessageDialog(transient_for=win, modal=True,
+                                    message_type=Gtk.MessageType.WARNING,
+                                    buttons=Gtk.ButtonsType.OK_CANCEL,
+                                    text="清空学习数据？")
+            dlg.format_secondary_text(
+                "将删除全部调频词、用户词组与上下文共现记录（仅本机），操作不可恢复。\n"
+                "输入法正在运行时，需要先重启 ibus（期间输入法短暂不可用）。")
+            resp = dlg.run()
+            dlg.destroy()
+            if resp != Gtk.ResponseType.OK:
+                return
+            win.set_sensitive(False)
+            try:
+                ok, text = userdict_ctl.clear_learning_data()
+            finally:
+                win.set_sensitive(True)
+            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+            refresh_stats()
+
+        def on_export(_btn):
+            chooser = Gtk.FileChooserDialog(
+                title="导出学习数据", transient_for=win,
+                action=Gtk.FileChooserAction.SAVE,
+                buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                         Gtk.STOCK_SAVE, Gtk.ResponseType.OK))
+            chooser.set_do_overwrite_confirmation(True)
+            chooser.set_current_name("chaoset-userdict.tsv")
+            filt = Gtk.FileFilter()
+            filt.set_name("TSV 文件 (*.tsv)")
+            filt.add_pattern("*.tsv")
+            chooser.add_filter(filt)
+            resp = chooser.run()
+            path = chooser.get_filename()
+            chooser.destroy()
+            if resp != Gtk.ResponseType.OK or not path:
+                return
+            ok, text = userdict_ctl.export(path)
+            show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
+
+        clear_btn.connect("clicked", on_clear)
+        export_btn.connect("clicked", on_export)
+
+        win.show_all()
+        refresh_stats()  # 窗口显示后再读，避免读取慢拖慢打开
+        return win
+
+
 def main():
-    cfg = load_config()
-    associate = cfg.get("associate")
-    enabled = True if associate is None else bool(associate)
-
-    win = Gtk.Window(title="Chaoset 设置")
-    win.set_resizable(False)
-    win.set_border_width(24)
-    win.set_position(Gtk.WindowPosition.CENTER)
-    win.connect("destroy", Gtk.main_quit)
-
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-    win.add(box)
-
-    group = Gtk.Label(xalign=0)
-    group.set_markup("<b>输入行为</b>")
-    box.pack_start(group, False, False, 0)
-
-    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    row_label = Gtk.Label(label="词组联想", xalign=0)
-    sw = Gtk.Switch(active=enabled)
-    row.pack_start(row_label, False, False, 0)
-    row.pack_end(sw, False, False, 0)
-    box.pack_start(row, False, False, 0)
-
-    hint = Gtk.Label(xalign=0)
-    hint.set_line_wrap(True)
-    hint.set_max_width_chars(40)
-    hint.get_style_context().add_class("dim-label")
-    hint.set_text("选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。")
-    box.pack_start(hint, False, False, 0)
-
-    # —— 学习数据（普通用户 GUI 入口；CLI 仅高级/无 GUI 环境兜底）——
-    data_group = Gtk.Label(xalign=0)
-    data_group.set_markup("<b>学习数据</b>")
-    box.pack_start(data_group, False, False, 0)
-
-    stats_label = Gtk.Label(xalign=0)
-    stats_label.set_line_wrap(True)
-    stats_label.set_max_width_chars(40)
-    stats_label.set_text("读取中…")
-    box.pack_start(stats_label, False, False, 0)
-
-    data_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    clear_btn = Gtk.Button(label="清空学习数据…")
-    export_btn = Gtk.Button(label="导出学习数据…")
-    data_row.pack_start(clear_btn, False, False, 0)
-    data_row.pack_start(export_btn, False, False, 0)
-    box.pack_start(data_row, False, False, 0)
-
-    data_hint = Gtk.Label(xalign=0)
-    data_hint.set_line_wrap(True)
-    data_hint.set_max_width_chars(40)
-    data_hint.get_style_context().add_class("dim-label")
-    data_hint.set_text("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。")
-    box.pack_start(data_hint, False, False, 0)
-
-    more = Gtk.Label(xalign=0)
-    more.get_style_context().add_class("dim-label")
-    more.set_text("更多设置将在后续版本提供")
-    box.pack_start(more, False, False, 0)
-
-    def on_toggled(switch, _data=None):
-        cfg["associate"] = bool(switch.get_active())
-        save_config(cfg)
-
-    sw.connect("state-set", on_toggled)
-
-    def show_message(kind, text):
-        # 用纯文本（不 set_markup）：错误信息里可能含 < > 等字符，
-        # 交给 Pango 解析会吞内容或报错。
-        dlg = Gtk.MessageDialog(transient_for=win, modal=True, message_type=kind,
-                                buttons=Gtk.ButtonsType.OK, text=text)
-        dlg.run()
-        dlg.destroy()
-
-    def refresh_stats():
-        ok, text = userdict_ctl.stats()
-        stats_label.set_text(text if ok else "无法读取学习数据：%s" % text)
-
-    def on_clear(_btn):
-        dlg = Gtk.MessageDialog(transient_for=win, modal=True,
-                                message_type=Gtk.MessageType.WARNING,
-                                buttons=Gtk.ButtonsType.OK_CANCEL,
-                                text="清空学习数据？")
-        dlg.format_secondary_text(
-            "将删除全部调频词、用户词组与上下文共现记录（仅本机），操作不可恢复。\n"
-            "输入法正在运行时，需要先重启 ibus（期间输入法短暂不可用）。")
-        resp = dlg.run()
-        dlg.destroy()
-        if resp != Gtk.ResponseType.OK:
-            return
-        win.set_sensitive(False)
-        try:
-            ok, text = userdict_ctl.clear_learning_data()
-        finally:
-            win.set_sensitive(True)
-        show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
-        refresh_stats()
-
-    def on_export(_btn):
-        chooser = Gtk.FileChooserDialog(
-            title="导出学习数据", transient_for=win,
-            action=Gtk.FileChooserAction.SAVE,
-            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                     Gtk.STOCK_SAVE, Gtk.ResponseType.OK))
-        chooser.set_do_overwrite_confirmation(True)
-        chooser.set_current_name("chaoset-userdict.tsv")
-        filt = Gtk.FileFilter()
-        filt.set_name("TSV 文件 (*.tsv)")
-        filt.add_pattern("*.tsv")
-        chooser.add_filter(filt)
-        resp = chooser.run()
-        path = chooser.get_filename()
-        chooser.destroy()
-        if resp != Gtk.ResponseType.OK or not path:
-            return
-        ok, text = userdict_ctl.export(path)
-        show_message(Gtk.MessageType.INFO if ok else Gtk.MessageType.ERROR, text)
-
-    clear_btn.connect("clicked", on_clear)
-    export_btn.connect("clicked", on_export)
-
-    win.show_all()
-    refresh_stats()  # 窗口显示后再读，避免读取慢拖慢打开
-    Gtk.main()
+    return ChaosetSetupApp().run(sys.argv)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
