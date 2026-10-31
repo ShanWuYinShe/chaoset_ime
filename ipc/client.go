@@ -250,3 +250,26 @@ func (c *Client) SelectPrefix(index int) (engine.Composition, string, error) {
 	err := c.call("selectPrefix", map[string]int{"index": index}, &comp)
 	return comp, comp.Committed, err
 }
+
+// Associate 查询上屏词的续接候选（联想）：daemon 端协议方法 associate，
+// 与 macOS EngineClient / Windows core 的联想查询同语义。
+func (c *Client) Associate(sylls []string) ([]engine.Candidate, error) {
+	var comp engine.Composition
+	if err := c.call("associate", map[string]any{"sylls": sylls}, &comp); err != nil {
+		return nil, err
+	}
+	return comp.Candidates, nil
+}
+
+// AssociateSelect 直接上屏联想候选：daemon 端协议方法 associateSelect，
+// 学习路径与普通 select 一致。
+func (c *Client) AssociateSelect(word string, sylls []string) (string, error) {
+	var out struct {
+		Committed string `json:"committed"`
+	}
+	if err := c.call("associateSelect", map[string]any{
+		"word": word, "sylls": sylls}, &out); err != nil {
+		return "", err
+	}
+	return out.Committed, nil
+}

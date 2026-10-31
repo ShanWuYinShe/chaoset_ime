@@ -1601,6 +1601,18 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         短路径而不是含长测试名的 `t.TempDir()`。
       - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
 
+- [x] 阶段 70：IPC Client 补联想便捷方法 + server 联想分支覆盖（2026-10-31）
+      - **背景**：daemon 协议支持 `associate` / `associateSelect`（mac/Windows
+        壳直接走 `call`），但 Go `ipc.Client` 没有对应便捷方法，协议 API
+        不对称；server dispatch 的联想分支此前也 0% 覆盖。
+      - **实现**：`Client.Associate(sylls)` 返回续接候选、
+        `Client.AssociateSelect(word, sylls)` 返回上屏文本（与 engine.Session
+        同名方法同语义）。
+      - **测试**：新增 `ipc/associate_test.go`——上屏「你」后联想应有续接候选，
+        再 `AssociateSelect` 上屏首条并与候选文本一致；顺带覆盖 server
+        dispatch 的 associate/associateSelect 分支。
+      - **验证**：`go test ./ipc`、`make vet`/checker、`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus
