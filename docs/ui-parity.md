@@ -288,15 +288,21 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `behavior_test.go`
   覆盖（2026-10-30 新增已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由
   engine 的会话级测试覆盖（遍历全部音节逐键喂 `Session.Input`）。
+- **shell 变量转义（2026-10-31）**：macOS 自带 bash 3.2 在 UTF-8 locale 下会把
+  `$VAR）` 的多字节字符并入变量名，运行时报 `ARCH�: unbound variable`——
+  CI 首跑 key_routing 就栽在这里。shims 下所有「`$VAR` 紧跟非 ASCII」已改为
+  `${VAR}`，并由 `tools/checkuiparity`「shell 变量转义」组静态拦截。
 - IPC 侧 2026-10-30 新增 `userExport` 分页测试（含 >1MiB 场景）。
-- **设置窗文案/单例/学习数据 GUI/词库导入/打包安装 + 候选窗静态几何/配色字段**
-  已由 `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；
-  审计 G6 落地）：设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI
-  三端存在且 Linux 侧不得引入引擎 DBus（engine 包纯净约束）、词库导入入口
-  （Linux CLI 例外有文档记录）、打包安装一致性（userdict_ctl.py/hicolor/setup
-  脚本/CI 步骤）、候选窗布局 pt 常量/派生值/齿轮矢量参数/13 个主题色字段名
-  集合、本表关键差异行存在。**候选窗像素级渲染（抗锯齿/阴影/毛玻璃/Toast/
-  DPI 观感）仍需 Windows 真机**，本表 + Code Review 仍是那部分的防线。
+- **设置窗文案/单例/学习数据 GUI/词库导入/打包安装 + 候选窗静态几何/配色字段
+  + CI 覆盖 + shell 变量转义** 已由 `tools/checkuiparity` 静态检查（`make vet` /
+  CI lint，2026-10-31 起；审计 G6 落地）：设置窗共享文案三端逐字一致、三端单例
+  实现存在、学习数据 GUI 三端存在且 Linux 侧不得引入引擎 DBus（engine 包纯净
+  约束）、词库导入入口（Linux CLI 例外有文档记录）、打包安装一致性
+  （userdict_ctl.py/hicolor/setup 脚本/CI 步骤）、候选窗布局 pt 常量/派生值/齿轮
+  矢量参数/13 个主题色字段名集合、key_routing 已接入 CI、shims 下 `$VAR` 不紧跟
+  非 ASCII（bash 3.2 UTF-8 locale 坑）、本表关键差异行存在。**候选窗像素级渲染
+  （抗锯齿/阴影/毛玻璃/Toast/DPI 观感）仍需 Windows 真机**，本表 + Code Review
+  仍是那部分的防线。
 
 ## 性能与资源基线（2026-10-29，Apple M1，负载 5.35）
 

@@ -1192,6 +1192,21 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
         `go test ./tools/checkuiparity` 通过；`make vet` 通过；真实仓库 checkuiparity
         PASS；`git diff --check` 通过。
 
+- [x] 阶段 42：修复 key_routing CI 首跑失败（bash 3.2 + UTF-8 locale 坑）（2026-10-31）
+      - **现象**：key_routing 接入 CI 后首次运行，macos-build 在
+        `./shims/macos/tests/key_routing/run.sh: line 31: ARCH�: unbound variable`
+        处失败。根因：macOS 自带 bash 3.2 在 UTF-8 locale 下把 `$ARCH）` 里的
+        全角括号字节并入变量名（本地默认 C locale 不复现，CI 是 UTF-8 locale）。
+      - **修复**：shims 下全部「`$VAR` 紧跟非 ASCII 字符」的写法改为 `${VAR}`
+        （共 9 处：test-ci.sh/build.sh/install.sh/verify.sh/key_routing run.sh）；
+        行为不变，仅消除 bash 3.2 解析歧义。
+      - **防退化**：`tools/checkuiparity` 新增「shell 变量转义」组，扫描
+        `shims/**/*.sh` 中 `$VAR` 紧跟非 ASCII 的行并 FAIL（附文件:行号与修法）；
+        新增 `TestCheckShellVarEscaping` 覆盖正反例。
+      - **验证**：本地用 `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` 复现原错误；
+        修复后 `${VAR}` 形式通过；`go test ./tools/checkuiparity` 通过；
+        `make vet` 通过；真实仓库 checkuiparity PASS；`git diff --check` 通过。
+
 ## 验收范围确认（2026-09-23）
 
 经会话内穷尽全部可脚本化手段（mingw-w64 交叉工具链、Docker 容器 ibus

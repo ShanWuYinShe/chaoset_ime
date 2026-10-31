@@ -60,7 +60,7 @@ if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
   cat "$WORK/engine.log" >&2
   exit 1
 fi
-echo "PASS: 引擎存活（pid=$ENGINE_PID）"
+echo "PASS: 引擎存活（pid=${ENGINE_PID}）"
 
 # 词库必须真的加载成功（2026-10-25 发行缺陷正是「引擎要的路径没词库、
 # 启动即退出」，这里显式断言）
@@ -96,7 +96,7 @@ P1=$(dbus-send --session --print-reply --dest="$UN" $FP $CREAT string:"chaoset" 
 P2=$(dbus-send --session --print-reply --dest="$UN" $FP $CREAT string:"chaoset" 2>/dev/null \
      | grep -o "/org/freedesktop/IBus/Engine/chaoset/[0-9]*" | head -1)
 if [ -z "$P1" ] || [ -z "$P2" ] || [ "$P1" = "$P2" ]; then
-  echo "FAIL: 多实例创建失败（P1=$P1 P2=$P2）" >&2
+  echo "FAIL: 多实例创建失败（P1=${P1} P2=${P2}）" >&2
   exit 1
 fi
 echo "PASS: 多实例 $P1 / $P2"

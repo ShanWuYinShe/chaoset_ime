@@ -28,7 +28,7 @@ case "$ARCH" in
 esac
 
 mkdir -p "$BUILD/modulecache"
-echo "==> 编译 key_routing（$ARCH）"
+echo "==> 编译 key_routing（${ARCH}）"
 swiftc -O -module-cache-path "$BUILD/modulecache" -target "$TARGET" \
   -framework InputMethodKit -framework AppKit \
   tests/key_routing/main.swift src/ChaosetController.swift src/EngineClient.swift \

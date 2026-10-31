@@ -30,7 +30,7 @@ if [ -d "$IM" ]; then
   ok "$IM"
   plutil -p "$IM/Contents/Info.plist" 2>/dev/null | grep -E '"TISInputSourceID"|"CFBundleIdentifier"' | sed 's/^/   /'
 else
-  fail "未装入 $IM（先运行 ./install.sh）"
+  fail "未装入 ${IM}（先运行 ./install.sh）"
 fi
 
 # ── 2) TIS 收录 ─────────────────────────────────────────────────
@@ -81,7 +81,7 @@ printf '== 3) daemon 套接字 ==\n'
 if [ -S "$SOCK" ]; then
   ok "$SOCK"
 else
-  fail "未发现 $SOCK（daemon 未运行；./install.sh 会部署并启动）"
+  fail "未发现 ${SOCK}（daemon 未运行；./install.sh 会部署并启动）"
 fi
 
 # ── 3b) LaunchAgent 自启（daemon 崩了能否自动拉起）──────────────

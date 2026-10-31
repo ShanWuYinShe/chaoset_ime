@@ -19,7 +19,7 @@ mkdir -p "$IM" 2>/dev/null || true
 # 沙盒/受限进程里会静默失败，表现就是「装完了但系统设置里的条目/图标还是旧的」。
 # 因此先探测写权限，受限时直接给出明确指引，避免制造「看似成功」的假象。
 if ! ( : > "$IM/.chaoset-write-test" ) 2>/dev/null; then
-  echo "✗ 当前进程无权写入 $IM。"
+  echo "✗ 当前进程无权写入 ${IM}。"
   echo "  请在普通终端里直接运行：./shims/macos/install.sh"
   echo "  （沙盒/受限进程无法安装输入法，也无法可靠刷新 TIS 缓存与系统设置。）"
   exit 1
@@ -185,9 +185,9 @@ if [ -x build/chaosetd ]; then
         echo "   旧词库已备份"
       fi
       cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
-      echo "   已部署内置常用词库（$reason）"
+      echo "   已部署内置常用词库（${reason}）"
     else
-      echo "   词库保持不变（$reason）"
+      echo "   词库保持不变（${reason}）"
     fi
   fi
   # 安装（或修正）daemon 的 LaunchAgent：KeepAlive 保证 daemon 被 kill /
@@ -260,7 +260,7 @@ PLIST
     sleep 0.2
   done
   if [ "$ready" = yes ]; then
-    echo "已部署 daemon 并确认 IPC 就绪（LaunchAgent: $LA_LABEL）"
+    echo "已部署 daemon 并确认 IPC 就绪（LaunchAgent: ${LA_LABEL}）"
   else
     echo "⚠ daemon 已部署但 IPC 未就绪（10 秒内未响应）。排查："
     echo "   launchctl print $LA_DOMAIN/$LA_LABEL | head -30"

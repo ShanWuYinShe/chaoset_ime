@@ -69,7 +69,7 @@ go_universal() {
   fi
 }
 
-echo "[1/5] 编译 Go daemon（架构: $ARCHS）..."
+echo "[1/5] 编译 Go daemon（架构: ${ARCHS}）..."
 go_universal "$ROOT/shims/macos/build/chaosetd" ./cmd/chaosetd
 
 echo "[2/5] 编译 Swift 输入法壳与验证工具..."

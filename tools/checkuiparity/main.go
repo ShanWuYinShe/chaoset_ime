@@ -23,7 +23,10 @@
 //     13 个主题色字段名集合一致。**像素级渲染仍需真机**，但「常量被改一端」
 //     会在这里先 FAIL；
 //  8. CI 覆盖不退化：key_routing 回归测试必须存在且被 ci.yml 的 macos-build
-//     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）。
+//     调用（审计 G7：它曾长期是未接入 CI 的「死测试」）；
+//  9. shell 脚本里 `$VAR` 不得紧跟非 ASCII 字符（macOS bash 3.2 在 UTF-8
+//     locale 下会把多字节字符并入变量名 → unbound variable；2026-10-31
+//     key_routing CI 首跑就栽在 `$ARCH）` 上，统一改用 `${VAR}`）。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -302,6 +305,38 @@ func structFields(text, structRe, fieldRe string) []string {
 	return fields
 }
 
+// shellVarCJKRe 匹配「$VAR 紧跟非 ASCII 字符」。
+var shellVarCJKRe = regexp.MustCompile(`\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]`)
+
+// checkShellVarEscaping 扫描 shims 下所有 .sh：macOS 自带 bash 3.2 在 UTF-8
+// locale 下会把 `$ARCH）` 的多字节字符并入变量名，运行时报 `ARCH�: unbound
+// variable`（2026-10-31 key_routing CI 首跑的真实故障）。统一要求 `${VAR}`。
+func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
+	const group = "shell 变量转义"
+	err := fs.WalkDir(fsys, "shims", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".sh") {
+			return nil
+		}
+		data, rerr := fs.ReadFile(fsys, path)
+		if rerr != nil {
+			*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, path, rerr))
+			return nil
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if shellVarCJKRe.MatchString(line) {
+				*problems = append(*problems, fmt.Sprintf("%s：%s:%d 中 shell 变量紧跟非 ASCII 字符（bash 3.2 + UTF-8 locale 会并入变量名 → unbound variable；请改用 ${VAR}）", group, path, i+1))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：遍历 shims 失败：%v", group, err))
+	}
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 func Run(fsys fs.FS) []string {
 	var problems []string
@@ -365,7 +400,10 @@ func Run(fsys fs.FS) []string {
 	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, &problems, "CI 覆盖", ciYML, "key_routing")
 
-	// 8. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
+	// 8. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
+	checkShellVarEscaping(fsys, &problems)
+
+	// 9. ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）。
 	checkContains(fsys, &problems, "文档对照", uiParityDoc,
 		"学习数据管理", "词库导入", "设置窗单例", "Windows per-monitor DPI",
 		"双拼 mspy", "无障碍")
@@ -386,5 +424,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/CI 覆盖/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

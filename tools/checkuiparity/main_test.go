@@ -52,6 +52,26 @@ func TestCheckCandidateWindow(t *testing.T) {
 	}
 }
 
+func TestCheckShellVarEscaping(t *testing.T) {
+	bad := fstest.MapFS{
+		"shims/a.sh": &fstest.MapFile{Data: []byte("echo \"（$ARCH）\"\n")},
+	}
+	var problems []string
+	checkShellVarEscaping(bad, &problems)
+	if len(problems) != 1 || !strings.Contains(problems[0], "a.sh:1") {
+		t.Fatalf("应捕获 $VAR 紧跟非 ASCII，实际：%v", problems)
+	}
+
+	good := fstest.MapFS{
+		"shims/a.sh": &fstest.MapFile{Data: []byte("echo \"（${ARCH}）\"\n")},
+	}
+	problems = nil
+	checkShellVarEscaping(good, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("${VAR} 形式应通过，实际：%v", problems)
+	}
+}
+
 func TestCheckContains(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.txt": &fstest.MapFile{Data: []byte("hello 学习数据")},
