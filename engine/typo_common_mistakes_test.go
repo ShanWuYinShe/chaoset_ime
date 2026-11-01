@@ -129,3 +129,64 @@ func TestCommonMistakeSegmentsInDict(t *testing.T) {
 	}
 	_ = strings.TrimSpace
 }
+
+// TestCommonMistakeSoftBigrams：反序形态在拼音音节里不出现、但可能与合法混拼
+// 同形的韵母级组合（ao/oa、ua/au、ue/eu、ve/ev）：在纠错路径里作为最高优先级
+// 修正，但不强制触发、不无条件提升；正常输入首选不变。
+func TestCommonMistakeSoftBigrams(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	cases := []struct{ input, want string }{
+		{"hoa", "好"}, // ao 打反
+		{"doa", "大"},
+		{"hau", "化"}, // ua 打反（hua 的首选是「化」）
+		{"xeu", "学"}, // ue 打反
+		{"lev", "略"}, // ve 打反（v 记 ü：lve）
+	}
+	for _, c := range cases {
+		s.Reset()
+		comp, err := s.Input(c.input)
+		if err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		if len(comp.Candidates) == 0 {
+			t.Errorf("%s: 应有候选（期望「%s」）", c.input, c.want)
+			continue
+		}
+		if got := comp.Candidates[0].Text; got != c.want {
+			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
+		}
+	}
+	// 正常输入（含相同韵母的正确拼写）首选不能被软纠错改变。
+	normal := []struct{ input, want string }{
+		{"hao", "好"}, {"hua", "化"}, {"xue", "学"}, {"lve", "略"}, {"que", "却"},
+	}
+	for _, c := range normal {
+		s.Reset()
+		comp, err := s.Input(c.input)
+		if err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		if got := comp.Candidates[0].Text; got != c.want {
+			t.Errorf("%s: 第一候选 = %q, 期望「%s」（正常输入不应被软纠错影响）", c.input, got, c.want)
+		}
+	}
+}
+
+// TestCommonMistakeFixesContainsSoftPairs：软纠错组合也必须进入修正串列表。
+func TestCommonMistakeFixesContainsSoftPairs(t *testing.T) {
+	for input, want := range map[string]string{
+		"hoa": "hao", "hau": "hua", "xeu": "xue", "lev": "lve",
+	} {
+		fixes := commonMistakeFixes(input)
+		found := false
+		for _, f := range fixes {
+			if f == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("commonMistakeFixes(%q) 应包含 %q，实际 %v", input, want, fixes)
+		}
+	}
+}

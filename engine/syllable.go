@@ -148,27 +148,38 @@ func canonicalSyllable(s string) string {
 	return s
 }
 
-// commonMistakePairs 是「手滑把双字母组合打反」的常见形态：左侧组合在普通话
-// 拼音里几乎不会出现，右侧才是正常拼写，属于最高置信度的输入手误。
+// 反序双字母手误分两档：
 //
-//	gn → ng（dign → ding：ng 韵尾打反，用户 2026-11-01 反馈的高频错误）
-//	hz → zh（hzong → zhong）
-//	hc → ch（hci → chi）
-//	hs → sh（hsuo → shuo）
+//  1. forcedMistakePairs：反序后在拼音里几乎不可能出现、也不属于合法混拼形态的
+//     组合（gn/hz/hc/hs）——遇到即判定手误，强制进入纠错路径，归位修正无条件
+//     提升到精确层。
+//  2. softMistakePairs：反序形态在拼音音节里不出现，但可能与「合法混拼」同形
+//     （ao/oa、ua/au、ue/eu、ve/ev）——只在纠错路径里作为最高优先级修正，
+//     不强制触发、也不无条件提升。
 //
-// 只列「反序后在拼音里不合法 / 极罕见」的组合。ai/ia、ui/iu、ou/uo、ei/ie
-// 这类两侧都是合法拼音的相邻互换不在此列——它们和正常输入同形，强行纠错会
-// 误伤混拼/正常候选（历史实测：放宽判据会让 mixed 首选率大幅下降）。
-var commonMistakePairs = [][2]string{
-	{"gn", "ng"},
+// 由音节表可以推导出所有「正序出现、反序从不出现」的双字母组合；其中大部分
+// （如 ab/ba、id/di）反序形态本身可能是合法混拼（a + b 声母组合），不能安全
+// 自动纠错，故只保留语音单位级的 zh/ch/sh/ng 与韵母级 ao/ua/ue/ve。
+var forcedMistakePairs = [][2]string{
+	{"gn", "ng"}, // ng 韵尾打反：dign → ding
 	{"hz", "zh"},
 	{"hc", "ch"},
 	{"hs", "sh"},
+	{"ev", "ve"}, // ü 韵母（lve/nve 打反）；v 不是合法声母/音节，ev 不可能是混拼
 }
 
-// hasCommonMistakeCluster 报告输入是否含有上述「反序双字母」组合。
+var softMistakePairs = [][2]string{
+	{"oa", "ao"}, // hao → hoa
+	{"au", "ua"}, // hua → hau
+	{"eu", "ue"}, // xue → xeu
+}
+
+// mistakePairsAll 是两档合并后的完整修正表（生成修正串时用）。
+var mistakePairsAll = append(append([][2]string(nil), forcedMistakePairs...), softMistakePairs...)
+
+// hasCommonMistakeCluster 报告输入是否含有「强制归位」的反序组合。
 func hasCommonMistakeCluster(s string) bool {
-	for _, p := range commonMistakePairs {
+	for _, p := range forcedMistakePairs {
 		if strings.Contains(s, p[0]) {
 			return true
 		}
@@ -188,7 +199,7 @@ func commonMistakeFixes(input string) []string {
 		seen[s] = true
 		out = append(out, s)
 	}
-	for _, p := range commonMistakePairs {
+	for _, p := range mistakePairsAll {
 		from, to := p[0], p[1]
 		for i := 0; i+1 < len(input); i++ {
 			if input[i:i+2] != from {
@@ -198,7 +209,7 @@ func commonMistakeFixes(input string) []string {
 		}
 	}
 	all := input
-	for _, p := range commonMistakePairs {
+	for _, p := range mistakePairsAll {
 		all = strings.ReplaceAll(all, p[0], p[1])
 	}
 	add(all)
