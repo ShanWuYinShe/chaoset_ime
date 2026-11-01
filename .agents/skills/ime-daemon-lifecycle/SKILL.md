@@ -23,7 +23,7 @@ description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）�
   `<key>ProcessType</key><string>Interactive</string>`；手工补 key 后
   `launchctl bootout gui/$(id -u) <plist>` + `launchctl bootstrap gui/$(id -u) <plist>`
   让新调度生效。
-- 实测（2026-11-02，M1，8 核 `yes` 满载，600 次 IPC 采样）：
+- 实测（8 核 `yes` 满载、600 次 IPC 采样）：
   未声明 ProcessType 时 p50 13ms / p99 452ms / max 775ms / 27 次 >250ms；
   声明 Interactive 后 p50 4ms / p99 17ms / max 31ms / 零超时；空闲 p99 ~7ms 不变。
 
@@ -139,7 +139,7 @@ cd shims/macos
 提交前本地只需 `gofmt -l $(git ls-files '*.go')` 与 `go build ./...`（秒级）。
 其余由 6 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build / windows-build。
 
-### 踩坑：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
+### 陷阱：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
 
 `ci.yml` 里配了 `concurrency: group: ci-${{ github.ref }}, cancel-in-progress: true`。
 连续 push 时**上一个运行会被标记 cancelled**——看到 Linux E2E 报
@@ -151,7 +151,7 @@ gh run list --limit 3                                   # 是否同一分支连�
 gh run view <旧id> --json conclusion --jq .conclusion    # cancelled = 被取消，非失败
 ```
 
-### 踩坑：macOS runner 排队
+### 限制：macOS runner 排队
 
 GitHub 会提示 "Due to capacity constraints, jobs targeting macOS arm64 runners
 may experience longer queue times"。macos-build 排队几分钟是正常现象，
