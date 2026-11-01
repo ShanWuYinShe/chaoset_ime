@@ -170,3 +170,26 @@ func TestShortPinyinSingleCharBackfillIgnoresUserBoost(t *testing.T) {
 		t.Fatalf("学习「失陪」后仍应补首音节单字「适」（弱整词判定只看词典词频，候选数 %d）", len(all))
 	}
 }
+
+// TestShortPinyinSingleCharTailIsPureSingles：弱整词补全后，列表最末一段必须
+// 是纯单字（组合候选 是配/是培… 不得再出现在单字块之后）。
+func TestShortPinyinSingleCharTailIsPureSingles(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "shipei"))
+	tailSingles := 0
+	for i := len(all) - 1; i >= 0; i-- {
+		if len([]rune(all[i].Text)) != 1 {
+			break
+		}
+		tailSingles++
+	}
+	if tailSingles < 50 {
+		start := len(all) - 3
+		if start < 0 {
+			start = 0
+		}
+		t.Fatalf("shipei 列表末尾连续单字只有 %d 个，期望单字块收尾（候选数 %d，尾部: %+v）",
+			tailSingles, len(all), firstTexts(all[start:], 3))
+	}
+}

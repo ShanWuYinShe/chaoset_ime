@@ -1276,9 +1276,10 @@ func (s *Session) compose() Composition {
 		// 不能改变任何原有候选的先后（用户此前的硬要求）。
 		rankComposition = rankBackoff + 64
 		// rankSingleBackfill 是「弱整词匹配」时补的首音节同音字全量层级：
-		// 排在所有常规候选（含逐级回退碎片）之后、组合候选之前，只作为逐字
-		// 挑选的兜底，不参与用户历史优先排序，也不改变原有候选先后。
-		rankSingleBackfill = rankBackoff + 16
+		// 排在**组合候选之后**、列表最末（纯单字收尾），只作为逐字挑选的兜底，
+		// 不参与用户历史优先排序，也不改变原有候选先后。用户要求（2026-11-02）：
+		// 单字块之后不能再出现词组（此前组合候选 是配/是培 落在单字块之后）。
+		rankSingleBackfill = rankComposition + 16
 	)
 
 	minPatternLen := 0
@@ -1878,7 +1879,8 @@ func (s *Session) compose() Composition {
 	// 常用词（长江 48、你好 52、北京 69、世界 73）保持短列表。判定只看词典
 	// 词频（maxFullWordFreq），不采信候选 Score——用户学习加权会把「失陪」
 	// 抬到 500+，学过之后就会永久看不到首音节单字。
-	// 追加候选排在所有常规候选之后（rankSingleBackfill），不改变原有首选。
+	// 追加候选排在组合候选之后、列表最末（rankSingleBackfill = rankComposition+16），
+	// 让「逐字挑选」的单字块收尾，单字块之后不再出现词组。
 	if !typoSuspicious && !midSuspicious && !tailSuspicious && len(tokenPatterns) > 0 {
 		clean := tokenPatterns[0]
 		cleanExact := len(clean) >= 2 && len(clean) <= 3
