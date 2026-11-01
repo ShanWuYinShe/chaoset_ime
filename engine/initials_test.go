@@ -248,40 +248,43 @@ func TestInitialsUserLearning(t *testing.T) {
 	}
 }
 
-// 用户高频学过的单字不得把简拼候选挤成碎片：wmd 里可以出现用户学过的
-// 「我/没/的」单字候选（用户词库是合法来源），但不得拼成「我没的」这类
-// 造词，也不得把「完整消耗简拼序列」的词典词挤出首选。
+// 用户高频学过的单字不得把简拼候选挤成碎片：jsj 里可以出现用户学过的
+// 「计/算/机」单字候选（用户词库是合法来源），但不得拼成「计算鸡」这类造词，
+// 也不得把「完整消耗三段简拼」的词典词「计算机」挤出首选。
 func TestInitialsUserDictSinglesDoNotFragment(t *testing.T) {
-	udPath := filepath.Join(t.TempDir(), "user_wmd.json")
+	udPath := filepath.Join(t.TempDir(), "user_jsj.json")
 	d := mustCommonDict(t)
 	u := mustUserDict(t, udPath)
 
-	// 模拟用户日常高频输入过单个汉字「我」、「没」、「的」
+	// 模拟用户日常高频输入过单个汉字「计」「算」「机」
 	for i := 0; i < 5; i++ {
-		_ = u.BumpWord("我", []string{"wo"})
-		_ = u.BumpWord("没", []string{"mei"})
-		_ = u.BumpWord("的", []string{"de"})
+		_ = u.BumpWord("计", []string{"ji"})
+		_ = u.BumpWord("算", []string{"suan"})
+		_ = u.BumpWord("机", []string{"ji"})
 	}
 
 	s := NewSession(d, u)
-	comp, err := s.Input("wmd")
+	comp, err := s.Input("jsj")
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if len(comp.Candidates) == 0 {
-		t.Fatalf("wmd 应出候选，实际无候选")
+		t.Fatalf("jsj 应出候选，实际无候选")
 	}
 	all := allCandidates(s, comp)
-	assertAllCandidatesInDict(t, d, "wmd", all)
+	assertAllCandidatesInDict(t, d, "jsj", all)
 	// ① 不允许把学习过的单字拼成复合候选（造词禁令对用户数据同样生效）
 	for _, cand := range all {
-		if cand.Text == "我没的" || cand.Text == "我们的" {
-			t.Fatalf("wmd 候选不应包含拼合造词 %q: %+v", cand.Text, all[:min(6, len(all))])
+		if cand.Text == "计算鸡" || cand.Text == "计机算" || cand.Text == "算计机" {
+			t.Fatalf("jsj 候选不应包含拼合造词 %q: %+v", cand.Text, all[:min(6, len(all))])
 		}
 	}
 	// ② 首选必须是完整消耗三段简拼（3 音节）的词典词，而不是单字碎片
+	if all[0].Text != "计算机" {
+		t.Fatalf("jsj 首选应为「计算机」，实际 %+v（全部候选: %+v）", all[0], all[:min(6, len(all))])
+	}
 	if got := strings.Count(all[0].Syllables, "'") + 1; got != 3 {
-		t.Fatalf("wmd 首选应完整消耗 3 段简拼，实际首选 %+v（全部候选: %+v）", all[0], all[:min(6, len(all))])
+		t.Fatalf("jsj 首选应完整消耗 3 段简拼，实际首选 %+v", all[0])
 	}
 }
 

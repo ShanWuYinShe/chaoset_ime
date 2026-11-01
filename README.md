@@ -60,11 +60,14 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 
 - OpenCC 简繁词典（Apache-2.0，内嵌于 `engine/dp_data/`，见其 README）；
 - 可选导入的 CC-CEDICT 词库（CC-BY-SA 4.0，仓库不分发，由用户自行下载后合并）；
-- 内置常用词库 `data/dict_common.tsv`：由 [jieba](https://github.com/fxsjy/jieba)
-  的词频表 `dict.txt`（**MIT**）与
-  [phrase-pinyin-data](https://github.com/mozillazg/phrase-pinyin-data) 的
-  `large_pinyin.txt`（**MIT**）生成，是本仓库的**生成产物**而非拷贝的词库文件，
-  再生成方式见「内置词库与再生成」。分发该文件时须保留上述两个上游的 MIT 署名；
+- 内置常用词库 `data/dict_common.tsv`：由 `cmd/chaoset-dictgen` 按「常用性门槛」
+  流水线生成——词表来自《现代汉语常用词表》+ HSK 3.0 + 高频用法 + 现代热词补充表，
+  词频来自 [wordfreq](https://github.com/rspeer/wordfreq) 中文词频（**数据 CC BY-SA 4.0**）
+  与 [THUOCL](https://github.com/THUNLP/THUOCL)（MIT），拼音来自
+  [phrase-pinyin-data](https://github.com/mozillazg/phrase-pinyin-data) /
+  [pinyin-data](https://github.com/mozillazg/pinyin-data)（均 MIT）。它是本仓库的
+  **生成产物**而非拷贝的词库文件，再生成方式见「内置词库与再生成」。
+  **代码 MIT，生成的词库数据 CC BY-SA 4.0**（署名见 `data/NOTICE.md`）；
 - `engine/double_pinyin.go` 的双拼键位按 Rime schema 的 speller algebra 规则
   **转写生成**（表由本项目正向生成并做完整性测试，不是拷贝实现）。
 
@@ -96,11 +99,14 @@ cmd/
   chaosetd/          守护进程二进制（-dict 可多次叠加）
   chaoset-cli/       终端测试台（本地内嵌引擎或连接 daemon）
   chaoset-import/    热词导入工具（合并输出 TSV）
-  chaoset-dictgen/   内置词库生成工具（jieba 词频表 + 词语拼音表 → TSV）
+  chaoset-dictgen/   内置词库生成工具（常用性门槛词表 + wordfreq/HanLP 词频 → TSV）
   chaoset-userdict/  用户词典管理工具（统计/清空/导出，IPC 或本地文件）
 data/
   dict_common.tsv    内置常用词库（cmd/chaoset-dictgen 生成产物，勿手工编辑）
+  dict_extra.tsv     手工补充词表（口语高频词/常用组合）
+  dict_hot.tsv       手工补充词表（现代/热词，随版本更新）
   dict_seed.tsv      种子词库（演示/回归用的小词库，词 \t 拼音 \t 词频）
+  NOTICE.md          词库数据许可与署名说明（数据 CC BY-SA 4.0，代码 MIT）
 shims/
   macos/             InputMethodKit 薄壳（Swift，已实现，见其 README；候选窗为壳内原生自绘）
   windows/           TSF COM 薄壳（已实现，核心层行为级 + DLL 编译级验证）
@@ -408,7 +414,7 @@ TSV，每行三列（`#` 开头为注释）：
 上限之所以是 99 而不是「越大越好」，是因为静态词频只是**基础分**：用户学习权重
 按次累加（`engine.UserBoostPerCount = 500`，上下文共现
 `BigramBonusPerCount = 250`），**一次上屏就远超整个 1–99 区间**。
-所以把 jieba 词频对数压缩进 1–99 完全够用，且不妨碍「越用越顺手」：选过的词
+所以把上游词频压缩进 1–99 完全够用，且不妨碍「越用越顺手」：选过的词
 靠 500×次数×时间衰减排到前面。反过来说，把词库词频写成几百上千既没有收益，
 还会让调频效果被静态分淹没。
 
@@ -417,83 +423,144 @@ TSV，每行三列（`#` 开头为注释）：
 仓库自带 `data/dict_common.tsv`（内置常用词库），是 daemon 与测试台的默认词库；
 `data/dict_seed.tsv` 退化为演示/回归用的小词库（数百条，跑测试与容器验证时够用）。
 
-当前这份的实测规模：**145,262 条 / 3.0 MB**，词频区间 **1–99**。按词长分布：
-1 字 13,834、2 字 72,677、3 字 21,600、4 字 36,049、5 字 774、6 字 328。
+当前这份的实测规模：**67,268 条 / 1.3 MB**，词频区间 **1–99**。按词长分布：
+1 字 10,916、2 字 42,744、3 字 7,310、4 字 6,150、5 字 120、6 字 28。
+质量基线（固定词表口径见 `.agents/skills/pinyin-quality-tuning` 与
+`.workwork/eval/`）：规范常用词覆盖 **100%**、规范精度 **94.5%**；通用规范汉字表
+8105 单字全覆盖；98 个现代/热词探针 **98/98** 覆盖。固定词表扫描（649 常用词 +
+200 单字）：全拼首选 **94.7%**、末音节残缺 **70.6%**、简拼 **26.9%**、混拼 **66.5%**、
+单字 **66.5%**（旧 jieba 库同口径 92.8% / 64.6% / 22.7% / 60.0% / 66.5%）。
 
-词频来源：**多字词用 jieba**（对词组频率可靠），**单字用 Jun Da 现代汉语字频
-与 jieba 融合**（jieba 的单字词频是分词口径，生僻人名用字虚高——灏 2196 > 豪
-1182 这类倒挂会让生僻字抢占候选前排，详见 `cmd/chaoset-dictgen` 的
-`parseCharFrequency` 注释）。另有口语助词小幅补偿（吗/呢/吧 等在书面语料里
-被低估，否则「在吗」这类口语组合合成不出来）。
+**词表（常用性门槛）**：
 
-该文件**由工具生成，禁止手工编辑**。生成源是四个上游数据文件（均 **MIT** 或
-Apache-2.0，不随仓库分发）：
+- 《现代汉语常用词表》（约 5.3 万词）+ HSK 3.0 词表；
+- 所选词频源的高频用法 top 20,000——必须被 phrase-pinyin-data / THUOCL / HanLP
+  词典交叉验证为「真词」，否则 wordfreq 等语料词表里的分词噪声（这是/这我/一给）
+  会被挡在词库外；
+- `data/dict_hot.tsv`（现代/热词）+ `data/dict_extra.tsv`（口语补充）里的所有词；
+- 以上词表与 phrase-pinyin-data 求交后，**不在 phrase 表里的词不再整词丢弃**：
+  生成器按「词内已知词组拼音 → HanLP 拼音词典 → 大词表字读音统计 → pinyin-data
+  首读音」逐级补拼音，并输出人工校对清单（`-review-out`）。
 
-- jieba 词频表 `dict.txt`（每行「词 词频 词性」，**多字词**词频）：
-  <https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt>
-- Jun Da 现代汉语字频表 `hanzi_db.csv`（**单字**字频排名，修 jieba 单字虚高）：
-  <https://github.com/ruddfawcett/hanziDB.csv>
-- Rime essay 语料 `essay.txt`（可选 `-corpus`，字频表缺省时的回退校正）：
-  <https://github.com/rime/essay>
-- phrase-pinyin-data 的 `large_pinyin.txt`（每行「词: pīn yīn」，词语拼音）：
+**单字**：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名；
+多音字每个读音一条，词频按「该读音在 large_pinyin 词条拼音里的占比」折算
+（`-readingfloor` 下限 0.3，由固定词表扫描定型），口语助词（吗/呢/吧）小幅补偿。
+这样「率」的 lǜ/shuài/lüè 三读不再同分：输入 lue 时「略」排在「率」前。
+
+**词频**（统一压缩到 1–99，静态词频只是基础分，见「词库格式」）：
+
+| 模式 | flag | 词频源 | 许可 |
+|---|---|---|---|
+| 方案 A（默认） | `-freq wf` | wordfreq 中文词频为主 + THUOCL 领域兜底 + 词长先验兜底 | 代码 Apache-2.0；**数据 CC BY-SA 4.0** |
+| 方案 B（后备） | `-freq hanlp` | HanLP CoreNatureDictionary（full+mini 取 max）+ THUOCL | 全 Apache-2.0/MIT |
+
+方案 A 的归一化：zipf → `(zipf-1)/6.5` → 按 `-freqgamma`（默认 **1.15**，由固定
+词表扫描定型：1.0/1.15/1.3 三档中 1.15 在 full/tail1 上最优且简拼不退化）拉开高频
+差距 → 映射 1..99。手工词表权重按 `ln(w)/ln(1e6)` 压缩到常用词中高区间
+（4000≈60 分），与主词频源取较大值。
+
+**许可（重要）**：
+
+- **代码 MIT**（根 `LICENSE`）；生成的 `data/dict_common.tsv` **数据**按
+  **CC BY-SA 4.0** 分发，署名 wordfreq（Luminoso）、THUOCL、开放词表等上游，
+  详见 `data/NOTICE.md`。修改词库再分发时须继续以 CC BY-SA 4.0 提供数据部分。
+- 单字字频源 **Jun Da**：原作者声明仅限研究/教学，商业使用需书面许可——发布前
+  应替换为 Unihan `kHanyuPinlu`/`kFrequency`（Unicode License）或取得授权。
+- phrase-pinyin-data 的 large_pinyin 由汉典 zdic + CC-CEDICT（CC BY-SA 4.0）等
+  来源合并，再分发需保留来源说明。
+
+生成源文件（不随仓库分发；下载地址）：
+
+- 《现代汉语常用词表》副本（词表门槛，正式发布请确认授权来源）：
+  <https://github.com/liangqi/chinese-frequency-word-list>
+- HSK 3.0 词表（MIT）：<https://github.com/elkmovie/hsk30>
+- 通用规范汉字表 8105（一级/二级/三级字表）：
+  <https://github.com/shengdoushi/common-standard-chinese-characters-table>
+- wordfreq 中文词频（方案 A；导出格式「词<tab>zipf」）：
+  <https://github.com/rspeer/wordfreq>
+- HanLP CoreNatureDictionary + 拼音词典（方案 B / 高频词校验 / 补拼音，Apache-2.0）：
+  <https://github.com/hankcs/HanLP/tree/1.x/data/dictionary>
+- THUOCL 领域词表（MIT）：<https://github.com/THUNLP/THUOCL>
+- phrase-pinyin-data `large_pinyin.txt`（MIT）：
   <https://raw.githubusercontent.com/mozillazg/phrase-pinyin-data/master/large_pinyin.txt>
-- pinyin-data 的 `pinyin.txt`（单字读音，`U+4E00: yī,yí,yì  # 一` 格式，补多音字）：
+- pinyin-data `pinyin.txt`（MIT）：
   <https://raw.githubusercontent.com/mozillazg/pinyin-data/master/pinyin.txt>
+- Jun Da 现代汉语字频 `hanzi_db.csv`：<https://github.com/ruddfawcett/hanziDB.csv>
+  （许可风险见上）
 
-再生成（在仓库根目录）：
+再生成（在仓库根目录；方案 A 为主交付）：
 
-```sh
-go run ./cmd/chaoset-dictgen -jieba dict.txt \
-  -charfreq hanzi_db.csv -corpus essay.txt \
-  -pinyin large_pinyin.txt -single pinyin.txt \
-  -extra data/dict_extra.tsv -o data/dict_common.tsv
-```
+    go run ./cmd/chaoset-dictgen -freq wf \
+      -norm changyongcibiao.txt -hsk hsk30_words.txt \
+      -wordfreq wordfreq_zh.tsv -thucl THUOCL_data \
+      -hanlp CoreNatureDictionary.txt -hanlpmini CoreNatureDictionary.mini.txt \
+      -pinyin large_pinyin.txt -single pinyin.txt \
+      -charfreq hanzi_db.csv -hanlppinyin hanlp_pinyin.txt \
+      -gsc1 level-1.txt -gsc2 level-2.txt -gsc3 level-3.txt \
+      -extra data/dict_extra.tsv -hot data/dict_hot.tsv \
+      -review-out .workwork/pinyin_review.tsv \
+      -o data/dict_common.tsv
 
-七个 flag：
+方案 B 把 `-freq wf ... -wordfreq ...` 换成 `-freq hanlp`（`-hanlp/-hanlpmini`
+同时作为词频源）即可，其余参数相同。
+
+flag 说明：
 
 | flag | 作用 | 必填 |
 |---|---|---|
-| `-jieba` | 词频表（多字词词频） | 是 |
-| `-pinyin` | 词语拼音表 | 是 |
+| `-freq` | 词频源：`wf`（wordfreq，数据 CC BY-SA）或 `hanlp`（Apache-2.0） | 否（默认 wf） |
+| `-norm` | 《现代汉语常用词表》TSV（首列词） | 是 |
+| `-hsk` | HSK 3.0 词表（「编号 词」或每行一个词） | 是 |
+| `-wordfreq` | wordfreq 中文词频 TSV（`-freq wf` 必填） | 否 |
+| `-hanlp` / `-hanlpmini` | HanLP 词典（`-freq hanlp` 必填；wf 模式用作高频词交叉验证） | 否 |
+| `-thucl` | THUOCL 目录（领域词频兜底） | 否 |
+| `-pinyin` | phrase-pinyin-data large_pinyin.txt | 是 |
+| `-single` | pinyin-data pinyin.txt（单字读音） | 是 |
+| `-charfreq` | Jun Da 字频表（单字词频排名） | 是 |
+| `-hanlppinyin` | HanLP 拼音词典（补多音字/个别字读音） | 否 |
+| `-gsc1/-gsc2/-gsc3` | 通用规范汉字表 一级/二级/三级字表 | `-gsc1` 必填 |
+| `-extra` | 手工口语补充词表 `data/dict_extra.tsv` | 是 |
+| `-hot` | 现代/热词补充词表 `data/dict_hot.tsv` | 是 |
+| `-review-out` | 补拼音人工校对清单输出路径 | 否 |
+| `-highfreqtop` | 高频用法取前 N 词（默认 20000） | 否 |
+| `-highfreqconf` | 高频词只用字读音统计补拼音时的最低置信度（默认 0.9） | 否 |
+| `-freqgamma` | 词频归一化幂次（默认 1.15，由固定词表扫描定型） | 否 |
+| `-readingfloor` | 单字多音字按读音占比折算的系数下限（默认 0.3，由固定词表扫描定型） | 否 |
 | `-o` | 输出 TSV | 是 |
-| `-single` | 单字拼音表（补多音字） | 否 |
-| `-charfreq` | 单字字频表（修正 jieba 单字虚高） | 否 |
-| `-corpus` | 真实语料词频（字频表缺省时的回退校正） | 否 |
-| `-extra` | 手工补充词表（现代词/口语高频词，见 `data/dict_extra.tsv`） | 否 |
 
-生成过程约 0.8 秒（含读源文件）。`-single` 的作用是补多音字：词语拼音表
-里没有的单字，靠它拿到读音；**不传时这些单字会被跳过**（不会瞎猜拼音）。
+生成过程约 2 秒；同一输入重复运行逐字节一致（`TestGenIdempotent` 兜底）。
+`-review-out` 输出的补拼音校对清单只包含不在 phrase-pinyin-data 的词，重点复核
+`confidence < 0.9` 与含多音字的行。
 
 生成规则（实现见 `cmd/chaoset-dictgen`）：
 
-- 只收纯 CJK 汉字词条——基本区 U+4E00–9FFF、扩展 A U+3400–4DBF、兼容表意区
-  U+F900–FAFF 与「〇」U+3007，长度 1–6 字；
-- 拼音经 `engine.NormalizePinyin` 归一化（去声调、ü→v、`u:`→v，连写自动切分），
-  该函数内部**逐音节**做 `IsSyllable` 校验，任一首节非法即返回 nil、整条丢弃
-  （与热词导入走同一套规则，不把脏数据塞进词库）；
-- **拼音音节数必须等于字数**，不等就丢弃（避免「西安」配成单音节这类错配）；
-- **多字词**：jieba 原始词频按对数压缩映射到 1–99（单调、可复现）；
-- **单字**：Jun Da 字频排名与 jieba 词频融合折算（几何平均，另给口语助词
-  小幅补偿），jieba 里生僻人名用字的虚高分被语料排名压回；
-- 输出按词排序，**同一输入重复运行逐字节一致**（幂等，由 `TestGenIdempotent` 兜底）。
+- 只收纯 CJK 汉字词条——基本区、扩展 A、兼容表意区与「〇」，长度 1–6 字；
+- 拼音经 `engine.NormalizePinyin` 归一化并逐音节 `IsSyllable` 校验，音节数必须
+  等于字数，否则丢弃（防止错位拼音进词库）；
+- 高频用法词必须通过词表交叉验证（phrase-pinyin-data / THUOCL / HanLP），
+  wordfreq 的分词噪声（这是/这我/一给）不会入库；
+- 繁体变体剔除**只对高频用法来源生效**：`engine.ToSimplified` 是 OpenCC 简→繁表
+  的反向映射，对「像/象」这类简繁同形字会误判（好像→好象），规范词表/HSK/
+  手工词表不做该过滤，避免误删常用词；
+- 输出按词频降序、同频按词、再按音节排序，确定性可复现。
 
-文件头注释同样记录了来源 URL、许可与再生成命令；换了上游数据请重新生成而不是手改。
+### 手工补充词表 `data/dict_extra.tsv` 与 `data/dict_hot.tsv`
 
-### 手工补充词表 `data/dict_extra.tsv`
+这两个是词库链路里**允许手工编辑**的词表（格式：词 / 拼音 / 权重，一行一条）：
 
-这是整个词库链路里**唯一允许手工编辑**的词表（格式与输出一致：词 / 拼音 / 原始
-词频，一行一条），经 `-extra` 合并进生成结果。用途是补上游词频表的空白：
+- `data/dict_extra.tsv`：口语高频词与常用组合（真好/来不及/对不起/很多/坐着 等），
+  补词表与拼音链路漏收的词；
+- `data/dict_hot.tsv`：**现代/热词**（智能家居/健康码/微信支付/大模型/内卷 等），
+  **随 app 版本内置更新**；每次发版前复核一次（新增热词、下架过时词）。
 
-- **现代数字生活词**——jieba 语料较老，微信/扫码/表情包/抖音/卡顿/断网等
-  大面积缺失（2026-10-30 审计：92 个现代高频词缺 28 个）；
-- **口语高频拼合词**——jieba 未收录的组合（真好/来不及/对不起），不补录时
-  组句路径会被碎片过滤误杀，表现为「打不出这个词」；
-- **提升已有词条词频**——与主源重复时取较大词频（因此可以纠正被压得过低的
-  常用词，如支付宝/朋友圈）。
+权重是「估算原始词频」量级，生成器按 `ln(w)/ln(1e6)`
+压缩到常用词中高区间（4000≈60 分、1000≈50 分、100≈35 分）；与主词表重复时取
+较大词频，不需要从词表删除重复词。改完必须重新生成 `data/dict_common.tsv` 并
+提交两者，生成产物仍禁止手改；`engine/data_contract_test.go` 会在 CI 断言
+「手工词条格式合法 + 已合并进内置词库」。
 
-维护规则：只收「确实常用、且上游词频表没有或明显偏低」的词；词频参考
-锚点（手机 4789→62 分、电脑 3427→59 分）。改完必须重新生成
-`data/dict_common.tsv` 并提交两者，生成产物仍禁止手改。
+维护规则：只收「确实常用、且上游词表/词频源没有或明显偏低」的词；拼音必须逐条
+核对（生成器会用 `engine.IsSyllable` + 音节数==字数强校验，非法即让生成失败）。
 
 ### 词库校验：构建期严格，运行期健壮
 
@@ -501,7 +568,7 @@ go run ./cmd/chaoset-dictgen -jieba dict.txt \
 
 | 阶段 | 对象 | 策略 | 保证方式 |
 |---|---|---|---|
-| 构建期 | 内置词库（生成产物 + extra 补充表） | **严格**：一行脏数据即失败 | `cmd/chaoset-dictgen` 生成时强校验；`engine/data_contract_test.go` 在 CI 严格解析 `data/dict_common.tsv` 与 `data/dict_extra.tsv`（规模、音节数==字数、词频区间、extra 必须已合并） |
+| 构建期 | 内置词库（生成产物 + extra 补充表） | **严格**：一行脏数据即失败 | `cmd/chaoset-dictgen` 生成时强校验；`engine/data_contract_test.go` 在 CI 严格解析 `data/dict_common.tsv` 与 `data/dict_extra.tsv`/`data/dict_hot.tsv`（规模、音节数==字数、词频区间、手工词表必须已合并） |
 | 运行期 | 用户自备的第三方词库（`-dict`） | **健壮**：跳过坏行并汇总警告 | `engine.LoadDictFilesLenient`：坏行跳过、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20；daemon 把汇总写日志 |
 
 为什么这样分：内置词库是**我们的**产物，脏数据必须在构建期暴露，不能靠运行时
@@ -573,11 +640,11 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 
 | 基准函数 | 测的是什么 | 结果（Apple M1 / go1.27.3） |
 |---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 145,262 条真实词库建索引（daemon 启动时跑一次） | ~109ms（历史记录值） |
+| `BenchmarkLoadCommonDict` | 解析 67,268 条真实词库建索引（daemon 启动时跑一次） | ~100ms；堆 22MB（旧 14.5 万条库 ~320ms / 56MB） |
 | `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | ~25–31µs/键（2026-10-30 复测） |
 
-词库自身规模：**145,262 条 / 3.0 MB**（3,180,344 字节），词频区间 1–92；按词长分布为
-1 字 13,834、2 字 72,677、3 字 21,600、4 字 36,049、5 字 774、6 字 328。
+词库自身规模：**67,268 条 / 1.3 MB**，词频区间 1–99；按词长分布为
+1 字 10,916、2 字 42,744、3 字 7,310、4 字 6,150、5 字 120、6 字 28。
 即换用真实词库后 daemon 冷启动多花约 0.1 秒，而逐键组词仍在**数十微秒级**（本机复测约 25–31µs，负载下偏高），
 对打字延迟没有可感知影响。
 
@@ -827,9 +894,13 @@ make race     # 并发竞争检测（提交前建议）
 
 | 测试 | 守什么 |
 |---|---|
-| `TestGenFiltersNonCJK` | 非汉字词条被过滤 |
-| `TestGenNormalizesPinyin` | 带声调 / ü / `u:` 的拼音被归一化成无声调音节 |
-| `TestGenFreqScaling` | 词频对数压缩单调、落在 1..99 |
+| `TestGenBuildsCommonDictWithPinyinGapFilled` | 常用性门槛词表 + 补拼音链路（phrase/词内词组/字读音统计）都能出词，不整词丢弃 |
+| `TestGenWritesPinyinReviewList` | 补拼音人工校对清单内容和来源标记正确 |
+| `TestGenSingleCharsFromGSC` | 单字只收通用规范汉字表内字，多音字降权 |
+| `TestGenFreqMappingAndFallback` | 词频映射单调、落在 1..99，无词频词用长度先验 |
+| `TestGenManualWeightWinsWhenHigher` | 手工词表权重优先于主词频源 |
+| `TestGenHanLPMode` / `TestGenWFHeaderLicense` | 方案 B 可用、两种模式文件头许可声明正确 |
+| `TestGenIdempotent` | 同一输入重复生成逐字节一致 |
 | `TestGenDropsWordWithoutPinyin` | 查不到拼音的词整条丢弃（不猜读音） |
 | `TestGenDropsSyllableCountMismatch` | 音节数与字数不符的整条丢弃 |
 | `TestGenIdempotent` | 同一输入跑两次输出逐字节一致 |

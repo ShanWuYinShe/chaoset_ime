@@ -124,8 +124,11 @@ func TestUserBoostBeatsExactMatch(t *testing.T) {
 // 内置词库规模与词频区间回归：防止生成工具被改坏后词库退化。
 func TestCommonDictScale(t *testing.T) {
 	d := mustCommonDict(t)
-	if d.Len() < 100000 {
-		t.Fatalf("内置词库仅 %d 条，少于预期的 10 万条", d.Len())
+	// 2026-11-01 起内置词库改用「常用性门槛」流水线（约 6.7 万条，旧 jieba 库
+	// 14.5 万条），下限随产物口径调整；词条质量由 data_contract_test.go 的
+	// 规范精度/手写词表断言把关，这里只防「词库静默缩水成空壳」。
+	if d.Len() < 60000 {
+		t.Fatalf("内置词库仅 %d 条，少于预期的 6 万条", d.Len())
 	}
 	// 常用词必须存在（缺词是旧词库最致命的问题）
 	for _, w := range []string{"经常", "经济", "时间", "现在", "我们", "中国"} {

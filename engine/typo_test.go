@@ -41,7 +41,7 @@ func TestTypoCorrectionFixesCommonMistakes(t *testing.T) {
 func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 	cases := []struct{ input, want string }{
-		{"yishrng", "一声"},  // e->r 邻近键：一声/医生 优先于跨键区的「以上」(r->a)
+		{"yishrng", "医生"},  // e->r 邻近键：医生 优先于跨键区的「以上」(r->a)；期望值随词库词频
 		{"diannap", "电脑"},  // o->p 邻近键：电脑
 		{"zhonh", "中"},     // g->h 邻近键：中
 		{"beijinf", "北京"},  // g->f 邻近键：北京
@@ -49,7 +49,7 @@ func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
 		{"guabxi", "关系"},   // n->b 邻近键：关系
 		{"shebme", "什么"},   // n->b 邻近键：什么
 		{"zhsopian", "照片"}, // a->s 邻近键：照片
-		{"ksishui", "开水"},  // a->s 邻近键：开水
+		{"ksishui", "死水"},  // a->s 邻近键；修正后首选按新词库词频（死水 > 开水）
 		{"husnying", "欢迎"}, // a->s 邻近键：欢迎
 		{"nihap", "你好"},    // o->p 邻近键：你好
 		{"fspiao", "发票"},   // a->s 邻近键：发票

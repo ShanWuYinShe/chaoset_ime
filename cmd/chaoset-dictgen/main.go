@@ -1,23 +1,27 @@
 // chaoset-dictgen 从开放数据生成内置常用词库（data/dict_common.tsv）。
 //
-// 数据来源（均为 MIT 许可，生成结果需保留署名，见输出文件头）：
-//   - 词频：jieba 词频表 dict.txt（https://github.com/fxsjy/jieba）
-//   - 词语拼音：phrase-pinyin-data large_pinyin.txt
-//     （https://github.com/mozillazg/phrase-pinyin-data）
-//   - 单字拼音：pinyin-data pinyin.txt（同上仓库，多音字取第一个读音）
+// 词表（「常用性门槛」流水线，2026-11-01 词库源调研后重构）：
 //
-// 用法：
+//	《现代汉语常用词表》 ∪ HSK 3.0 词表 ∪ 所选词频源的高频用法 top N
+//	∪ data/dict_hot.tsv（现代/热词，随版本维护） ∪ data/dict_extra.tsv（口语补充）
+//	∩ phrase-pinyin-data 拼音链路。
+//	词表里不在 phrase-pinyin-data 的词**不再整词丢弃**：按
+//	「词内已知词组拼音 → HanLP 拼音词典 → 大词表字读音统计 → pinyin-data 首读音」
+//	逐级补拼音，并把补出来的词输出到人工校对清单（-review-out）。
 //
-//	chaoset-dictgen -jieba dict.txt -pinyin large_pinyin.txt \
-//	    -single pinyin.txt -o data/dict_common.tsv
+// 词频（两种可选，等最终数据许可决策后二选一）：
 //
-// 生成规则：
-//   - 只收纯 CJK 汉字的词（基本区/扩展 A/兼容区/〇），长度 1..6；
-//   - 拼音经 engine.NormalizePinyin 归一化并逐音节校验，非法音节整词丢弃
-//     （与词库导入同一套规则，防止脏数据进词库）；
-//   - 词频按 ln(f)/ln(max) 对数压缩到 1..99：静态词频只是基础分，
-//     用户学习权重（每次上屏 500）远高于整个区间，压缩不损失调频效果；
-//   - 输出按「词频降序、同频按词排序」，同一输入重复运行逐字节一致。
+//	-freq wf    wordfreq zh 词频（代码 Apache-2.0；**数据 CC BY-SA 4.0**，需署名）
+//	-freq hanlp HanLP CoreNatureDictionary 词频（Apache-2.0，full+mini 取 max）
+//	词频统一压缩到 1..99；数据只有 1..99 是有意为之：用户调频一次上屏就 +500，
+//	静态词频只是基础分（见 README「内置词库与再生成」）。
+//
+// 单字：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名。
+//
+//	Jun Da 字表原作者声明仅限研究/教学、商业使用需书面许可（见 README 许可风险）；
+//	换用 Unihan kHanyuPinlu/kFrequency 后可平滑替换 -charfreq 格式。
+//
+// 输出：确定性排序（词频降序、同频按词、再按音节），同一输入重复运行逐字节一致。
 package main
 
 import (
@@ -29,6 +33,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,13 +41,49 @@ import (
 	"chaoset.ime/engine"
 )
 
-// maxWordLen 是内置词库收录的最长词长（字符数）。再长的词组输入成本高、
-// 命中率低，且会把词库撑大。
-const maxWordLen = 6
+const (
+	maxWordLen = 6
+	// manualFreqScale 是手工词表权重的「同量纲参考上限」：手工词表里的权重
+	// 按 ln(w)/ln(1e6) 压缩到 1..99，使人工补录词落在常用词中高区间
+	// （微信/支付宝约 55-60 分），不会盖过 的/是/我们 这种核心高频词。
+	manualFreqScale = 1e6
+	// oralParticleBoost：口语助词/语气词在书面语字频里被低估的定向补偿。
+	oralParticleBoost = 8
+	// zipfMin/zipfSpan：wordfreq zipf 值约 1..8，映射到 0..1 归一化区间。
+	zipfMin  = 1.0
+	zipfSpan = 6.5
+)
 
-// stCharactersPath 是 OpenCC 简→繁单字表路径（相对仓库根目录）。
-// 变量而非常量：测试工作目录是包目录，需要覆盖。
-var stCharactersPath = "engine/dp_data/STCharacters.txt"
+// options 是生成流程的全部输入。
+type options struct {
+	freqMode string
+
+	normPath     string
+	hskPath      string
+	wordfreqPath string
+	hanlpPath    string
+	hanlpMini    string
+	thuclDir     string
+
+	pinyinPath      string
+	singlePath      string
+	charfreqPath    string
+	hanlpPinyinPath string
+
+	gsc1 string
+	gsc2 string
+	gsc3 string
+
+	extraPath string
+	hotPath   string
+	reviewOut string
+	outPath   string
+
+	highfreqTop  int
+	highfreqConf float64
+	readingFloor float64
+	freqGamma    float64
+}
 
 // entry 是待写入的一条词库记录。
 type entry struct {
@@ -51,255 +92,707 @@ type entry struct {
 	freq  int
 }
 
+// manualRow 是手工补充词表（dict_extra / dict_hot）的一行。
+type manualRow struct {
+	word   string
+	sylls  []string
+	weight int
+}
+
+// pinyinMethod 记录一个多字词的拼音来源，用于人工校对清单。
+type pinyinMethod string
+
+const (
+	methodPhrase   pinyinMethod = "phrase"
+	methodManual   pinyinMethod = "manual"
+	methodSegment  pinyinMethod = "segment"
+	methodHanLP    pinyinMethod = "hanlp"
+	methodCharStat pinyinMethod = "charstat"
+	methodFirst    pinyinMethod = "first"
+)
+
 func main() {
-	jiebaPath := flag.String("jieba", "", "jieba 词频表 dict.txt 路径（必填）")
-	pinyinPath := flag.String("pinyin", "", "phrase-pinyin-data large_pinyin.txt 路径（必填）")
-	singlePath := flag.String("single", "", "pinyin-data pinyin.txt 路径（单字拼音；缺省时跳过无词组拼音的单字）")
-	extraPath := flag.String("extra", "", "补充词表 TSV 路径（词\t拼音\t词频 1..99；补录词频表漏收的常用词组，如真好/难得）")
-	corpusPath := flag.String("corpus", "", "真实语料词频表路径（行格式：词	次数；用于校正 jieba 中"+
-		"「不成词语素」的虚高词频，如 灏 2196 / 岃 1849 本应排在 豪/仁 之后。缺省不校正）")
-	charFreqPath := flag.String("charfreq", "", "单字字频表 CSV 路径（Jun Da 现代汉语字频，"+
-		"列含 frequency_rank,character；**单字词频以此为准**，替代 jieba 分词词典里"+
-		"不可靠的单字词频。缺省时退回 jieba 单字词频）")
-	out := flag.String("o", "", "输出 TSV 路径（必填）")
+	var o options
+	flag.StringVar(&o.freqMode, "freq", "wf", "词频源模式：wf（wordfreq，数据 CC BY-SA 4.0）或 hanlp（Apache-2.0）")
+	flag.StringVar(&o.normPath, "norm", "", "《现代汉语常用词表》TSV 路径（每行 词\\t拼音\\t排名；至少首列为词）")
+	flag.StringVar(&o.hskPath, "hsk", "", "HSK 3.0 词表路径（每行 编号 词，或每行一个词）")
+	flag.StringVar(&o.wordfreqPath, "wordfreq", "", "wordfreq 中文词频 TSV（词\\t zipf 值；-freq wf 必填）")
+	flag.StringVar(&o.hanlpPath, "hanlp", "", "HanLP CoreNatureDictionary.txt（-freq hanlp 必填）")
+	flag.StringVar(&o.hanlpMini, "hanlpmini", "", "HanLP CoreNatureDictionary.mini.txt（可选，与 full 取 max）")
+	flag.StringVar(&o.thuclDir, "thucl", "", "THUOCL 领域词表目录（可选；主词频源没有的词用它兜底）")
+	flag.StringVar(&o.pinyinPath, "pinyin", "", "phrase-pinyin-data large_pinyin.txt（必填）")
+	flag.StringVar(&o.singlePath, "single", "", "pinyin-data pinyin.txt（必填）")
+	flag.StringVar(&o.charfreqPath, "charfreq", "", "Jun Da 现代汉语字频 CSV（必填）")
+	flag.StringVar(&o.hanlpPinyinPath, "hanlppinyin", "", "HanLP 拼音词典 pinyin.txt（可选，补拼音/校对用）")
+	flag.StringVar(&o.gsc1, "gsc1", "", "通用规范汉字表一级字表 3500（必填）")
+	flag.StringVar(&o.gsc2, "gsc2", "", "通用规范汉字表二级字表 3000（可选，建议提供）")
+	flag.StringVar(&o.gsc3, "gsc3", "", "通用规范汉字表三级字表 1605（可选，建议提供）")
+	flag.StringVar(&o.extraPath, "extra", "", "手工口语补充词表 data/dict_extra.tsv（必填）")
+	flag.StringVar(&o.hotPath, "hot", "", "现代/热词补充词表 data/dict_hot.tsv（必填）")
+	flag.StringVar(&o.reviewOut, "review-out", "", "补拼音人工校对清单输出路径（可选）")
+	flag.StringVar(&o.outPath, "o", "", "输出 TSV 路径（必填）")
+	flag.IntVar(&o.highfreqTop, "highfreqtop", 20000, "词频源里按词频取前 N 个词进入词表（高频用法）")
+	flag.Float64Var(&o.highfreqConf, "highfreqconf", 0.9, "高频用法词只用字读音统计补拼音时的最低置信度（低于此值不收录）")
+	flag.Float64Var(&o.freqGamma, "freqgamma", 1.15, "词频归一化后的幂次（>1 拉开高频差距；默认 1.15 由固定词表扫描定型，见 README）")
+	flag.Float64Var(&o.readingFloor, "readingfloor", 0.3, "单字多音字读音占比折算的系数下限（share=1 时仍为满词频；0.3 由固定词表扫描定型，极罕见读音保留 30% 基础词频）")
 	flag.Parse()
-	if *jiebaPath == "" || *pinyinPath == "" || *out == "" {
+	if err := validateOptions(o); err != nil {
+		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(*jiebaPath, *pinyinPath, *singlePath, *extraPath, *corpusPath, *charFreqPath, *out); err != nil {
+	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, charFreqPath, outPath string) error {
-	rawFreqs, err := parseJieba(jiebaPath)
+func validateOptions(o options) error {
+	if o.outPath == "" {
+		return fmt.Errorf("-o 必填")
+	}
+	if o.freqMode != "wf" && o.freqMode != "hanlp" {
+		return fmt.Errorf("-freq 只支持 wf 或 hanlp，实际 %q", o.freqMode)
+	}
+	if o.pinyinPath == "" || o.singlePath == "" || o.charfreqPath == "" {
+		return fmt.Errorf("-pinyin / -single / -charfreq 必填")
+	}
+	if o.normPath == "" || o.hskPath == "" {
+		return fmt.Errorf("-norm / -hsk 必填（常用性门槛词表）")
+	}
+	if o.extraPath == "" || o.hotPath == "" {
+		return fmt.Errorf("-extra / -hot 必填（手工补充词表）")
+	}
+	if o.gsc1 == "" {
+		return fmt.Errorf("-gsc1 必填（通用规范汉字表一级字表）")
+	}
+	if o.freqMode == "wf" && o.wordfreqPath == "" {
+		return fmt.Errorf("-freq wf 需要 -wordfreq")
+	}
+	if o.freqMode == "hanlp" && o.hanlpPath == "" {
+		return fmt.Errorf("-freq hanlp 需要 -hanlp")
+	}
+	if o.freqGamma <= 0 {
+		return fmt.Errorf("-freqgamma 必须为正数")
+	}
+	if o.highfreqTop < 0 {
+		return fmt.Errorf("-highfreqtop 不能为负")
+	}
+	if o.highfreqConf < 0 || o.highfreqConf > 1 {
+		return fmt.Errorf("-highfreqconf 必须在 0..1 之间")
+	}
+	if o.readingFloor < 0 || o.readingFloor > 1 {
+		return fmt.Errorf("-readingfloor 必须在 0..1 之间")
+	}
+	return nil
+}
+
+func run(o options) error {
+	phrase, charStats, err := parsePhrasePinyin(o.pinyinPath)
 	if err != nil {
 		return err
 	}
-	// 真实语料（可选）：用于把「语料零记录」的单字压到最低档，修正 jieba
-	// 分词词典里生僻字虚高的词频（详见 corpusAdjustedFreq 注释）。
-	// 注：启用 -charfreq 后单字走字频表，corpus 只影响多字词（影响很小）。
-	var corpus map[string]int
-	if corpusPath != "" {
-		corpus, err = parseCorpusFreq(corpusPath)
-		if err != nil {
-			return err
-		}
-	}
-	// jieba 单字最大词频：融合时用于归一化 jieba 分量。
-	maxSingleFreq := 1
-	for _, wf := range rawFreqs {
-		if len([]rune(wf.word)) == 1 && wf.freq > maxSingleFreq {
-			maxSingleFreq = wf.freq
-		}
-	}
-	// 单字字频（Jun Da）：为 nil 时退回 jieba 单字词频。
-	var charRank map[rune]int
-	if charFreqPath != "" {
-		charRank, err = parseCharFrequency(charFreqPath)
-		if err != nil {
-			return err
-		}
-		log.Printf("字频表已加载：%d 个字", len(charRank))
-	}
-	phrasePinyin, err := parsePhrasePinyin(pinyinPath)
+	log.Printf("词语拼音表：%d 个词", len(phrase))
+
+	single, err := parseSinglePinyin(o.singlePath)
 	if err != nil {
 		return err
 	}
-	singlePinyin := map[rune][]string{}
-	if singlePath != "" {
-		singlePinyin, err = parseSinglePinyin(singlePath)
+	charRank, rankTotal, err := parseCharFrequency(o.charfreqPath)
+	if err != nil {
+		return err
+	}
+	log.Printf("单字读音：%d 个字；字频表：%d 个字", len(single), len(charRank))
+
+	gscChars, err := parseGSCChars(o.gsc1, o.gsc2, o.gsc3)
+	if err != nil {
+		return err
+	}
+	log.Printf("通用规范汉字表：%d 个字", len(gscChars))
+
+	var (
+		mainFreq map[string]float64
+		mainMax  float64
+		highfreq []string
+	)
+	switch o.freqMode {
+	case "wf":
+		wf, maxZipf, err := parseWordfreq(o.wordfreqPath)
 		if err != nil {
 			return err
 		}
-	}
-
-	// 词频压缩基准：取输入里的最大词频，保证最高频词映射到 99。
-	maxFreq := 0
-	for _, wf := range rawFreqs {
-		if wf.freq > maxFreq {
-			maxFreq = wf.freq
+		mainFreq = make(map[string]float64, len(wf))
+		for w, z := range wf {
+			mainFreq[w] = z
 		}
-	}
-	if maxFreq <= 0 {
-		return fmt.Errorf("词频表 %s 没有有效词频", jiebaPath)
-	}
-
-	// 补充词表（-extra）：词频表漏收的常用词组（如「真好」——口语高频
-	// 组合，jieba 词频表未收录，导致组句时「真+好」双单字拼合候选被
-	// 碎片过滤误杀）。格式与输出一致：词\t拼音(空格分隔)\t词频(原始计数)。
-	// 与 jieba 源按 (词,拼音) 去重：补充条目优先（同名保留较大词频）。
-	type extraEntry struct {
-		word  string
-		sylls []string
-		freq  int
-	}
-	var extras []extraEntry
-	if extraPath != "" {
-		data, err := os.ReadFile(extraPath)
+		mainMax = maxZipf
+		highfreq = topWordsByFreq(mainFreq, o.highfreqTop)
+		log.Printf("词频源 wordfreq：%d 个词，高频用法取前 %d", len(wf), len(highfreq))
+	case "hanlp":
+		han, maxFreq, err := parseHanLPFreq(o.hanlpPath, o.hanlpMini)
 		if err != nil {
-			return fmt.Errorf("打开补充词表 %s 失败: %w", extraPath, err)
+			return err
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
+		mainFreq = make(map[string]float64, len(han))
+		for w, f := range han {
+			mainFreq[w] = float64(f)
+		}
+		mainMax = float64(maxFreq)
+		highfreq = topWordsByFreq(mainFreq, o.highfreqTop)
+		log.Printf("词频源 HanLP：%d 个词，高频用法取前 %d", len(han), len(highfreq))
+	}
+
+	// 词表真实性校验集合：高频用法词必须能在这里找到才算「真词」。
+	// - hanlp 模式：HanLP 词典本身就是词频源，全部词天然可信；
+	// - wf 模式：wordfreq 的 top 词表里混有大量分词噪声（这是/这我/一给 等），
+	//   必须用 -hanlp/-hanlpmini（Apache-2.0 词表）交叉验证；
+	// - THUOCL（词表）与 phrase-pinyin-data 在 filterKnownWords 里一并做校验。
+	validDict := make(map[string]bool, 160000)
+	if o.freqMode == "hanlp" {
+		for w := range mainFreq {
+			validDict[w] = true
+		}
+	}
+	if o.freqMode == "wf" && o.hanlpPath != "" {
+		han, _, verr := parseHanLPFreq(o.hanlpPath, o.hanlpMini)
+		if verr != nil {
+			return verr
+		}
+		for w := range han {
+			validDict[w] = true
+		}
+		log.Printf("高频用词校验词典（HanLP）：%d 个词", len(validDict))
+	}
+
+	var thuocl map[string]int
+	var thuoclMax int
+	if o.thuclDir != "" {
+		thuocl, thuoclMax, err = parseTHUOCL(o.thuclDir)
+		if err != nil {
+			return err
+		}
+		log.Printf("THUOCL：%d 个词", len(thuocl))
+	}
+
+	// 高频用法词表只保留「被词表源证明是词」的条目：wordfreq 的 top 词表里混有
+	// 分词噪声（如「一给」「上还」），直接入库会造出并不存在的词。用
+	// phrase-pinyin-data 与 THUOCL（两者都是词表）做真实性交叉验证。
+	highfreq = filterKnownWords(highfreq, phrase, thuocl, validDict)
+	log.Printf("高频用法词表（词表交叉验证后）：%d 个", len(highfreq))
+
+	var hanlpPinyin map[string][]string
+	if o.hanlpPinyinPath != "" {
+		hanlpPinyin, err = parseHanLPPinyin(o.hanlpPinyinPath)
+		if err != nil {
+			return err
+		}
+		log.Printf("HanLP 拼音词典：%d 个词", len(hanlpPinyin))
+	}
+
+	hot, err := parseManualTable(o.hotPath)
+	if err != nil {
+		return err
+	}
+	extra, err := parseManualTable(o.extraPath)
+	if err != nil {
+		return err
+	}
+	log.Printf("手工补充词表：hot %d 条 / extra %d 条", len(hot), len(extra))
+	manualAll := append(append([]manualRow(nil), hot...), extra...)
+
+	normWords, err := parseWordListColumn(o.normPath)
+	if err != nil {
+		return err
+	}
+	hskWords, err := parseHSKWordList(o.hskPath)
+	if err != nil {
+		return err
+	}
+	allowed := make(map[string]string, len(normWords)+len(hskWords)+len(highfreq))
+	for _, w := range normWords {
+		allowed[w] = "norm"
+	}
+	for _, w := range hskWords {
+		allowed[w] = "hsk"
+	}
+	for _, w := range highfreq {
+		if _, ok := allowed[w]; !ok {
+			allowed[w] = "highfreq"
+		}
+	}
+	for _, r := range manualAll {
+		allowed[r.word] = "manual"
+	}
+
+	simplifiedExists := make(map[string]bool, len(phrase))
+	for w := range phrase {
+		if cjkWordOK(w) {
+			simplifiedExists[engine.ToSimplified(w)] = true
+		}
+	}
+
+	manualPhrase := make(map[string][]string, len(manualAll))
+	for _, r := range manualAll {
+		manualPhrase[r.word] = r.sylls
+	}
+	resolver := &pinyinResolver{
+		phrase:      phrase,
+		manual:      manualPhrase,
+		charStats:   charStats,
+		hanlpPinyin: hanlpPinyin,
+		single:      single,
+	}
+
+	multiWords := make([]string, 0, len(allowed))
+	for w := range allowed {
+		multiWords = append(multiWords, w)
+	}
+	sort.Strings(multiWords)
+
+	entries := make([]entry, 0, len(multiWords)+len(gscChars))
+	methodCount := map[pinyinMethod]int{}
+	skipped := 0
+	lowConfFiltered := 0
+	var reviewItems []reviewItem
+	for _, word := range multiWords {
+		runes := []rune(word)
+		if len(runes) < 2 || !cjkWordOK(word) {
+			continue
+		}
+		origin := allowed[word]
+		// 繁体变体剔除只对「高频用法」来源生效：规范常用词/HSK/手工词表本身
+		// 都是简体词，且 engine.ToSimplified 是 OpenCC 简→繁表的反向映射，对
+		// 「像/象」这类简繁同形字会误判（实测 好像→好象，导致常用词被误删）。
+		if origin == "highfreq" {
+			if sw := engine.ToSimplified(word); sw != word && simplifiedExists[sw] {
 				continue
 			}
-			parts := strings.Split(line, "\t")
-			if len(parts) != 3 {
-				return fmt.Errorf("补充词表 %s 格式非法（应为 词\t拼音\t词频）: %q", extraPath, line)
-			}
-			freq := 0
-			fmt.Sscanf(parts[2], "%d", &freq)
-			if freq <= 0 {
-				return fmt.Errorf("补充词表 %s 词频非法: %q", extraPath, line)
-			}
-			extras = append(extras, extraEntry{
-				word:  parts[0],
-				sylls: strings.Fields(parts[1]),
-				freq:  freq,
+		}
+		res := resolver.resolve(word)
+		if res.sylls == nil {
+			skipped++
+			continue
+		}
+		// 高频用法词表里的词若只能靠字读音统计拼、且多音字置信度低，很可能是
+		// 分词噪声（如「一给」）——不收录以免造词；规范常用词/HSK/手工词表里的
+		// 词不受此限制（它们本身就是常用词，必须可达）。
+		if origin == "highfreq" && res.method == methodCharStat && res.conf < o.highfreqConf {
+			lowConfFiltered++
+			continue
+		}
+		if res.method != methodPhrase && res.method != methodManual {
+			reviewItems = append(reviewItems, reviewItem{
+				word: word, sylls: res.sylls, method: res.method,
+				confidence: res.conf, alternatives: res.alts,
 			})
 		}
-	}
-	// extra 词频参与 maxFreq 压缩基准（与主源同一量纲——extra 用原始计数）
-	for _, e := range extras {
-		if e.freq > maxFreq {
-			maxFreq = e.freq
-		}
-	}
-
-	// 繁体剔除的判定集合：主源 + extra 补充词都纳入（extra 是简体手工
-	// 词条，正常不会引入繁体，但集合覆盖它们保持判定一致）
-	simplifiedExists := make(map[string]bool, len(rawFreqs)+len(extras))
-	for _, wf := range rawFreqs {
-		if cjkWordOK(wf.word) {
-			simplifiedExists[engine.ToSimplified(wf.word)] = true
-		}
-	}
-	for _, e := range extras {
-		simplifiedExists[engine.ToSimplified(e.word)] = true
-	}
-
-	entries := make([]entry, 0, len(rawFreqs))
-	skipped := 0
-	tradSkipped := 0
-	for _, wf := range rawFreqs {
-		word, freq := wf.word, wf.freq
-		if !cjkWordOK(word) {
-			skipped++
-			continue
-		}
-		if sw := engine.ToSimplified(word); sw != word {
-			if simplifiedExists[sw] {
-				tradSkipped++
+		methodCount[res.method]++
+		freq, ok := freqOf(word, o, mainFreq, mainMax, thuocl, thuoclMax)
+		if !ok {
+			freq = fallbackFreq(len(runes))
+			if freq == 0 {
+				skipped++
 				continue
 			}
 		}
-		readings := pinyinOf(word, phrasePinyin, singlePinyin)
-		if readings == nil {
-			skipped++
+		entries = append(entries, entry{word: word, sylls: res.sylls, freq: freq})
+	}
+
+	singleEntries := 0
+	chars := make([]rune, 0, len(gscChars))
+	for ch := range gscChars {
+		chars = append(chars, ch)
+	}
+	sort.Slice(chars, func(i, j int) bool { return chars[i] < chars[j] })
+	for _, ch := range chars {
+		readings := single[ch]
+		if len(readings) == 0 && hanlpPinyin != nil {
+			// pinyin-data 对个别字（如「嗯」的 ń/ň 变体）没有能归一化成合法音节的
+			// 读音，退回 HanLP 拼音词典；再没有就只能跳过，避免造非法音节。
+			readings = hanlpPinyin[string(ch)]
+		}
+		if len(readings) == 0 {
 			continue
 		}
-		// 多音字：每个读音各生成一条词条（同词不同拼音是合法数据，
-		// 由 (词,拼音) 唯一性保证不重复）。
-		// 单字：改用 Jun Da 字频排名折算，绕开 jieba 分词词典里不可靠的
-		// 单字词频（详见 parseCharFrequency 注释）。多字词仍用 jieba。
-		adjFreq := freq
-		if charRank != nil && len([]rune(word)) == 1 {
-			rank, ok := charRank[[]rune(word)[0]]
-			if !ok {
-				rank = 1 << 20 // 字频表未收录 = 极生僻
+		base := charRankToFreq(charRank[ch], rankTotal)
+		if isOralParticle(ch) {
+			base += oralParticleBoost
+			if base > 99 {
+				base = 99
 			}
-			adjFreq = fuseCharFreqRune([]rune(word)[0], freq, rank, maxSingleFreq)
-		} else {
-			adjFreq = corpusAdjustedFreq(word, freq, corpus)
 		}
-		// 多音字：首个读音是拼音表给的主读音（最常用），其余为次读音。
-		// 所有读音共享同一词频会让次读音与主读音同分，进而造假候选——
-		// 例：『没』有 me/mei/mo 三个读音，若都记 79 分，「怎没」就会被
-		// 当成合法的 ze'me 词条（2026-10-29 实测 zenme 的第 2 位从「怎嚜」
-		// 变成「怎没(17)」）。次读音按 1/4 降权：仍可打出（查 zang→藏、
-		// jiao→觉 这类主读音之外的常用字不受影响，它们本就是该字的主读音），
-		// 但不会抢占常见词的候选位。
-		// 单字走字频表时 adjFreq 已是 1..99 量纲，不能再过 scaleFreq
-		//（那是对 jieba 原始计数做的对数压缩，二次压缩会把上限压到 30 出头）。
-		fromCharTable := charRank != nil && len([]rune(word)) == 1
-		for i, sylls := range readings {
-			f := adjFreq
-			if i > 0 {
-				// 次读音降权不能太狠，否则常用字的次读音打不出来：此前取 1/4 时
-				// 长(chang)=12、重(chong)=11、都(du)=13，被同拼音下 30-90 个候选
-				// 挤出首页（实测 6/11 常用多音字缺失）。改为 1/2 且下限 20：
-				// 保证落在可见候选区，仍低于主读音，不会让「怎没」这类次读音
-				// 组合顶掉真词。
-				f = (adjFreq + 1) / 2
-				// 下限 40：融合字频后常用字主读音多在 60-90，次读音取半后约 30-45，
-				// 但窄拼音（chang/chong/du/huan）有 30-90 个候选，低于 40 排不进前 6。
-				// 40 是实测能覆盖 11/11 常用多音字的最低值。
-				if f < 40 {
-					f = 40
-				}
-				if f > adjFreq {
-					f = adjFreq
-				}
+		// 多音字按「该读音在词条拼音里出现的比例」折算词频，而不是简单把次读音
+		// 减半：单字总字频高不代表每个读音都常用。例：率 有三个读音
+		// （lv/shuai/lve），只按字频会让 lve 与「略」同分抢首位；按读音占比
+		// 折算后 lve 读音自然降低（数据来自 large_pinyin 词条的字↔音节对齐）。
+		counts := charStats[ch]
+		total := 0
+		for _, n := range counts {
+			total += n
+		}
+		seen := make(map[string]bool, len(readings))
+		for i, syl := range readings {
+			if seen[syl] {
+				continue
 			}
-			freqOut := f
-			if !fromCharTable {
-				freqOut = scaleFreq(f, maxFreq)
+			seen[syl] = true
+			share := 1.0
+			if total > 0 {
+				share = float64(counts[syl]) / float64(total)
+			} else if i > 0 {
+				share = 0
 			}
-			entries = append(entries, entry{word: word, sylls: sylls, freq: freqOut})
+			fr := int(math.Round(float64(base) * (o.readingFloor + (1-o.readingFloor)*share)))
+			if fr < 1 {
+				fr = 1
+			}
+			if fr > base {
+				fr = base
+			}
+			entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
+			singleEntries++
 		}
 	}
 
-	// 补充词条追加（-extra 手工维护表）：同样过 CJK 与音节合法性检查
-	//（非法音节必须拦截——AGENTS 红线），非法条目计入 skipped 不阻断。
-	// 补充词的音节由维护者手写（不查拼音表），逐音节 IsSyllable 校验。
-	// 与主源 (词,拼音) 重复的条目跳过（避免输出 TSV 出现重复行）。
-	mainSource := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		mainSource[e.word+"\x00"+strings.Join(e.sylls, " ")] = true
+	manualAdded := 0
+	index := make(map[string]int, len(entries))
+	for i := range entries {
+		index[entries[i].word+"\x00"+strings.Join(entries[i].sylls, " ")] = i
 	}
-	for _, e := range extras {
-		if !cjkWordOK(e.word) {
-			skipped++
-			continue
-		}
-		bad := false
-		for _, syl := range e.sylls {
-			if !engine.IsSyllable(syl) {
-				bad = true
-				break
+	for _, r := range manualAll {
+		fr := manualFreq(r.weight)
+		key := r.word + "\x00" + strings.Join(r.sylls, " ")
+		if i, ok := index[key]; ok {
+			if fr > entries[i].freq {
+				entries[i].freq = fr
 			}
-		}
-		if bad {
-			skipped++
 			continue
 		}
-		if mainSource[e.word+"\x00"+strings.Join(e.sylls, " ")] {
-			// 主源已有该词条：**取较大词频**而非跳过。
-			// 2026-10-29 修复：此前直接 skipped++，extra 想提升已有词条词频时
-			// 静默无效——支付宝/朋友圈在 jieba 里原始词频只有 3（压缩后 9 分），
-			// extra 补录也进不去。extra 是手工维护的权威补充，语义就是
-			// 「这个词很重要，至少该有这个分」。scaleFreq 单调，比较压缩值
-			// 等价于比较原始计数。
-			extraFreq := scaleFreq(e.freq, maxFreq)
-			for i := range entries {
-				if entries[i].word == e.word && strings.Join(entries[i].sylls, " ") == strings.Join(e.sylls, " ") {
-					if extraFreq > entries[i].freq {
-						entries[i].freq = extraFreq
-					}
-					break
-				}
-			}
-			skipped++
-			continue
-		}
-		entries = append(entries, entry{word: e.word, sylls: e.sylls, freq: scaleFreq(e.freq, maxFreq)})
+		entries = append(entries, entry{word: r.word, sylls: r.sylls, freq: fr})
+		index[key] = len(entries) - 1
+		manualAdded++
 	}
 
-	// 确定性排序：词频降序、同频按词、再按音节（同词多音的稳定次序）
+	if o.reviewOut != "" {
+		if err := writeReview(o.reviewOut, reviewItems, o.freqMode); err != nil {
+			return err
+		}
+	}
+
+	sortEntries(entries)
+	if err := writeTSV(o.outPath, entries, o); err != nil {
+		return err
+	}
+
+	multi := len(entries) - singleEntries
+	fmt.Printf("模式=%s 写入 %s：%d 条（多字词 %d / 单字 %d；手工补充追加 %d；无法补拼音丢弃 %d；"+
+		"低置信高频词过滤 %d；拼音来源 phrase=%d manual=%d segment=%d hanlp=%d charstat=%d first=%d；"+
+		"人工校对清单 %d 条）\n",
+		o.freqMode, o.outPath, len(entries), multi, singleEntries, manualAdded, skipped, lowConfFiltered,
+		methodCount[methodPhrase], methodCount[methodManual], methodCount[methodSegment],
+		methodCount[methodHanLP], methodCount[methodCharStat], methodCount[methodFirst], len(reviewItems))
+
+	return nil
+}
+
+// resolveResult 是一次多字词拼音解析结果。
+type resolveResult struct {
+	sylls  []string
+	method pinyinMethod
+	conf   float64
+	alts   string
+}
+
+// reviewItem 是人工校对清单的一行。
+type reviewItem struct {
+	word         string
+	sylls        []string
+	method       pinyinMethod
+	confidence   float64
+	alternatives string
+}
+
+// pinyinResolver 补拼音链路：词表拼音 → 词内已知词组 → HanLP 拼音词典 →
+// 大词表字读音统计 → pinyin-data 首读音。
+type pinyinResolver struct {
+	phrase      map[string][]string
+	manual      map[string][]string
+	charStats   map[rune]map[string]int
+	hanlpPinyin map[string][]string
+	single      map[rune][]string
+}
+
+func (r *pinyinResolver) resolve(word string) resolveResult {
+	// 手工补充词表的拼音是人工核对过的，优先级最高：它同时是 data_contract_test
+	// 里「手工词条必须按原拼音合并进内置词库」断言的前提（phrase 表对个别词
+	// 可能给出不同读音，会让手工词条对不上）。
+	if r.manual != nil {
+		if sylls, ok := r.manual[word]; ok && len(sylls) == len([]rune(word)) {
+			return resolveResult{sylls: sylls, method: methodManual, conf: 1.0}
+		}
+	}
+	if sylls, ok := r.phrase[word]; ok && len(sylls) == len([]rune(word)) {
+		return resolveResult{sylls: sylls, method: methodPhrase, conf: 1.0}
+	}
+	if segSylls := r.segment(word); segSylls != nil {
+		return resolveResult{sylls: segSylls, method: methodSegment, conf: 1.0}
+	}
+	if r.hanlpPinyin != nil {
+		if sylls, ok := r.hanlpPinyin[word]; ok && len(sylls) == len([]rune(word)) {
+			return resolveResult{sylls: sylls, method: methodHanLP, conf: 1.0}
+		}
+	}
+	sylls, conf, alts, ok := r.composeFromCharStats(word)
+	if ok {
+		return resolveResult{sylls: sylls, method: methodCharStat, conf: conf, alts: alts}
+	}
+	sylls, ok = r.firstReadings(word)
+	if ok {
+		return resolveResult{sylls: sylls, method: methodFirst}
+	}
+	return resolveResult{}
+}
+
+// segment 用 phrase 中的多字词做「最少分段」DP 切分；无解返回 nil。
+func (r *pinyinResolver) segment(word string) []string {
+	runes := []rune(word)
+	n := len(runes)
+	if n < 2 {
+		return nil
+	}
+	const inf = 1 << 30
+	best := make([]int, n+1)
+	choice := make([]int, n+1)
+	for i := range best {
+		best[i] = inf
+	}
+	best[n] = 0
+	for i := n - 1; i >= 0; i-- {
+		for l := maxWordLen; l >= 2; l-- {
+			if i+l > n {
+				continue
+			}
+			seg := string(runes[i : i+l])
+			sylls, ok := r.phrase[seg]
+			if !ok || len(sylls) != l {
+				continue
+			}
+			if best[i+l] == inf {
+				continue
+			}
+			if 1+best[i+l] < best[i] {
+				best[i] = 1 + best[i+l]
+				choice[i] = l
+			}
+		}
+	}
+	if best[0] == inf {
+		return nil
+	}
+	var out []string
+	for i := 0; i < n; {
+		l := choice[i]
+		out = append(out, r.phrase[string(runes[i:i+l])]...)
+		i += l
+	}
+	return out
+}
+
+// composeFromCharStats 用词条内每个字在大词表里最常见的读音合成拼音。
+func (r *pinyinResolver) composeFromCharStats(word string) ([]string, float64, string, bool) {
+	runes := []rune(word)
+	out := make([]string, 0, len(runes))
+	minConf := 1.0
+	var alts []string
+	for _, ch := range runes {
+		stats := r.charStats[ch]
+		if len(stats) == 0 {
+			readings := r.single[ch]
+			if len(readings) == 0 {
+				return nil, 0, "", false
+			}
+			out = append(out, readings[0])
+			minConf = 0
+			continue
+		}
+		total := 0
+		for _, n := range stats {
+			total += n
+		}
+		bestSyl, bestN := "", -1
+		for syl, n := range stats {
+			if n > bestN || (n == bestN && syl < bestSyl) {
+				bestSyl, bestN = syl, n
+			}
+		}
+		conf := float64(bestN) / float64(total)
+		if conf < minConf {
+			minConf = conf
+		}
+		out = append(out, bestSyl)
+		if len(stats) > 1 {
+			var cand []string
+			for syl, n := range stats {
+				cand = append(cand, fmt.Sprintf("%s(%d)", syl, n))
+			}
+			sort.Strings(cand)
+			alts = append(alts, string(ch)+":"+strings.Join(cand, "/"))
+		}
+	}
+	return out, minConf, strings.Join(alts, "; "), true
+}
+
+// firstReadings 用 pinyin-data 首读音兜底。
+func (r *pinyinResolver) firstReadings(word string) ([]string, bool) {
+	runes := []rune(word)
+	out := make([]string, 0, len(runes))
+	for _, ch := range runes {
+		readings := r.single[ch]
+		if len(readings) == 0 {
+			return nil, false
+		}
+		out = append(out, readings[0])
+	}
+	return out, true
+}
+
+// freqOf 计算一个多字词的 1..99 词频：主词频源 → THUOCL 兜底 → 长度先验。
+func freqOf(word string, o options, mainFreq map[string]float64, mainMax float64, thuocl map[string]int, thuoclMax int) (int, bool) {
+	var norm float64
+	has := false
+	if f, ok := mainFreq[word]; ok && f > 0 {
+		switch o.freqMode {
+		case "wf":
+			norm = (f - zipfMin) / zipfSpan
+		case "hanlp":
+			if mainMax > 1 {
+				norm = math.Log1p(f) / math.Log1p(mainMax)
+			} else {
+				norm = 1
+			}
+		}
+		has = true
+	}
+	if norm < 0 {
+		norm = 0
+	}
+	if norm > 1 {
+		norm = 1
+	}
+	norm = math.Pow(norm, o.freqGamma)
+	freq := 1
+	if has {
+		freq = 1 + int(math.Round(98*norm))
+	} else if thuocl != nil {
+		if df, ok := thuocl[word]; ok && df > 0 && thuoclMax > 1 {
+			tn := math.Log1p(float64(df)) / math.Log1p(float64(thuoclMax))
+			freq = 1 + int(math.Round(98*math.Pow(tn, o.freqGamma)))
+			has = true
+		}
+	}
+	if !has {
+		return 0, false
+	}
+	if freq < 1 {
+		freq = 1
+	}
+	if freq > 99 {
+		freq = 99
+	}
+	return freq, true
+}
+
+// fallbackFreq 无任何词频来源的词按词长给兜底分。
+func fallbackFreq(n int) int {
+	switch n {
+	case 2:
+		return 26
+	case 3:
+		return 14
+	case 4:
+		return 9
+	case 5:
+		return 6
+	case 6:
+		return 4
+	}
+	return 0
+}
+
+// manualFreq 手工词表权重 → 1..99（ln(w)/ln(1e6)，见 manualFreqScale 注释）。
+func manualFreq(weight int) int {
+	if weight <= 0 {
+		return 1
+	}
+	f := 1 + int(math.Round(98*math.Log(float64(weight))/math.Log(manualFreqScale)))
+	if f < 1 {
+		f = 1
+	}
+	if f > 99 {
+		f = 99
+	}
+	return f
+}
+
+// filterKnownWords 只保留被词表源证明是词的条目：phrase-pinyin-data /
+// THUOCL / validDict（HanLP 词典）任意一处收录即视为真词。目的是把 wordfreq
+// top 词表里的分词噪声（这是/这我/一给 等）挡在词库外。
+func filterKnownWords(words []string, phrase map[string][]string, thuocl map[string]int, validDict map[string]bool) []string {
+	if len(words) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		if _, ok := phrase[w]; ok {
+			out = append(out, w)
+			continue
+		}
+		if thuocl != nil {
+			if _, ok := thuocl[w]; ok {
+				out = append(out, w)
+				continue
+			}
+		}
+		if validDict != nil && validDict[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func topWordsByFreq(freq map[string]float64, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	type wf struct {
+		word string
+		val  float64
+	}
+	all := make([]wf, 0, len(freq))
+	for w, f := range freq {
+		runes := []rune(w)
+		if len(runes) < 2 || !cjkWordOK(w) {
+			continue
+		}
+		all = append(all, wf{word: w, val: f})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].val != all[j].val {
+			return all[i].val > all[j].val
+		}
+		return all[i].word < all[j].word
+	})
+	if len(all) > n {
+		all = all[:n]
+	}
+	out := make([]string, len(all))
+	for i := range all {
+		out[i] = all[i].word
+	}
+	return out
+}
+
+func sortEntries(entries []entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
 		if a.freq != b.freq {
@@ -310,69 +803,62 @@ func run(jiebaPath, pinyinPath, singlePath, extraPath, corpusPath, charFreqPath,
 		}
 		return strings.Join(a.sylls, " ") < strings.Join(b.sylls, " ")
 	})
+}
 
-	if err := writeTSV(outPath, entries); err != nil {
-		return err
+// charRankToFreq 把字频排名映射为 1..99（排名 1 得 99，末尾得 1）。
+func charRankToFreq(rank, total int) int {
+	if rank <= 0 {
+		return 1
 	}
-	fmt.Printf("已写入 %s（%d 条，跳过 %d 条：非汉字/无拼音/非法音节，其中繁体变体 %d 条）\n", outPath, len(entries), skipped, tradSkipped)
-	return nil
+	if rank <= 1 {
+		return 99
+	}
+	if total < 2 {
+		total = 2
+	}
+	if rank >= total {
+		return 1
+	}
+	t := math.Log(float64(rank)) / math.Log(float64(total))
+	return int(math.Round(99 - t*98))
 }
 
-// wordFreq 是 jieba 词频表的一行。
-type wordFreq struct {
-	word string
-	freq int
+const oralParticleChars = "吗呢吧啊嘛呀哦嗯咯呗喽"
+
+func isOralParticle(r rune) bool {
+	return strings.ContainsRune(oralParticleChars, r)
 }
 
-// parseJieba 解析 jieba dict.txt：每行「词 词频 [词性...]」，空格分隔。
-// 词频非数字或缺失的行跳过（jieba 表里有少量纯符号行）。
-func parseJieba(path string) ([]wordFreq, error) {
+func cjkWordOK(word string) bool {
+	runes := []rune(word)
+	if len(runes) == 0 || len(runes) > maxWordLen {
+		return false
+	}
+	for _, r := range runes {
+		switch {
+		case r >= 0x3400 && r <= 0x4DBF:
+		case r >= 0x4E00 && r <= 0x9FFF:
+		case r >= 0xF900 && r <= 0xFAFF:
+		case r == 0x3007:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ---------- 输入文件解析 ----------
+
+// parsePhrasePinyin 解析 large_pinyin.txt（词: pīn yīn）：返回
+// 词→归一化音节（同词多行取最后一行，与旧生成器一致）与大词表字读音统计。
+func parsePhrasePinyin(path string) (map[string][]string, map[rune]map[string]int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("打开词频表 %s 失败: %w", path, err)
+		return nil, nil, fmt.Errorf("打开词语拼音表 %s 失败: %w", path, err)
 	}
 	defer f.Close()
-	var out []wordFreq
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 2 {
-			continue
-		}
-		freq := 0
-		for _, r := range fields[1] {
-			if r < '0' || r > '9' {
-				freq = -1
-				break
-			}
-			freq = freq*10 + int(r-'0')
-		}
-		if freq <= 0 {
-			continue
-		}
-		out = append(out, wordFreq{word: fields[0], freq: freq})
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("读取词频表 %s 失败: %w", path, err)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("词频表 %s 没有可用条目", path)
-	}
-	return out, nil
-}
-
-// parsePhrasePinyin 解析 large_pinyin.txt：每行「词: pīn yīn」。
-// 拼音原样保留（含声调符号），归一化交给 engine.NormalizePinyin。
-func parsePhrasePinyin(path string) (map[string]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("打开词语拼音表 %s 失败: %w", path, err)
-	}
-	defer f.Close()
-	out := make(map[string]string, 400000)
+	phrase := make(map[string][]string, 420000)
+	charStats := make(map[rune]map[string]int, 12000)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -380,27 +866,54 @@ func parsePhrasePinyin(path string) (map[string]string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		word, pinyin, ok := strings.Cut(line, ": ")
-		if !ok || word == "" || pinyin == "" {
+		word, py, ok := strings.Cut(line, ": ")
+		if !ok || word == "" || py == "" {
 			continue
 		}
-		out[word] = pinyin
+		if i := strings.IndexByte(py, '#'); i >= 0 {
+			py = py[:i]
+		}
+		sylls := engine.NormalizePinyin(py)
+		if len(sylls) != len([]rune(word)) {
+			continue
+		}
+		valid := true
+		for _, s := range sylls {
+			if !engine.IsSyllable(s) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			continue
+		}
+		phrase[word] = sylls
+		for i, ch := range []rune(word) {
+			m := charStats[ch]
+			if m == nil {
+				m = map[string]int{}
+				charStats[ch] = m
+			}
+			m[sylls[i]]++
+		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("读取词语拼音表 %s 失败: %w", path, err)
+		return nil, nil, fmt.Errorf("读取词语拼音表 %s 失败: %w", path, err)
 	}
-	return out, nil
+	if len(phrase) == 0 {
+		return nil, nil, fmt.Errorf("词语拼音表 %s 没有可用条目", path)
+	}
+	return phrase, charStats, nil
 }
 
 // parseSinglePinyin 解析 pinyin-data pinyin.txt：每行「U+XXXX: pīn,yīn  # 字」。
-// 多音字保留全部读音（按出现顺序），供单字多音词条使用。
 func parseSinglePinyin(path string) (map[rune][]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("打开单字拼音表 %s 失败: %w", path, err)
 	}
 	defer f.Close()
-	out := make(map[rune][]string, 21000)
+	out := make(map[rune][]string, 22000)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -412,40 +925,26 @@ func parseSinglePinyin(path string) (map[rune][]string, error) {
 		if !ok || !strings.HasPrefix(code, "U+") {
 			continue
 		}
-		// 去掉行尾注释
 		if i := strings.IndexByte(rest, '#'); i >= 0 {
 			rest = rest[:i]
 		}
-		rest = strings.TrimSpace(rest)
-		if rest == "" {
-			continue
-		}
-		cp := 0
-		for _, c := range code[2:] {
-			var v int
-			switch {
-			case c >= '0' && c <= '9':
-				v = int(c - '0')
-			case c >= 'A' && c <= 'F':
-				v = int(c-'A') + 10
-			case c >= 'a' && c <= 'f':
-				v = int(c-'a') + 10
-			default:
-				cp = -1
-			}
-			if cp < 0 {
-				break
-			}
-			cp = cp*16 + v
-		}
-		if cp < 0 || cp > 0x10FFFF {
+		cp, perr := strconv.ParseInt(code[2:], 16, 32)
+		if perr != nil || cp <= 0 || cp > 0x10FFFF {
 			continue
 		}
 		var readings []string
-		for _, r := range strings.Split(rest, ",") {
-			if r = strings.TrimSpace(r); r != "" {
-				readings = append(readings, r)
+		seen := map[string]bool{}
+		for _, raw := range strings.Split(rest, ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
 			}
+			sylls := engine.NormalizePinyin(raw)
+			if len(sylls) != 1 || !engine.IsSyllable(sylls[0]) || seen[sylls[0]] {
+				continue
+			}
+			seen[sylls[0]] = true
+			readings = append(readings, sylls[0])
 		}
 		if len(readings) > 0 {
 			out[rune(cp)] = readings
@@ -457,208 +956,11 @@ func parseSinglePinyin(path string) (map[rune][]string, error) {
 	return out, nil
 }
 
-// pinyinOf 返回词的全部音节序列：优先词组拼音表，单字回退单字拼音表。
-//
-// **多音字必须返回每一个读音**（每个读音一条词条）。2026-10-29 修复：此前
-// 这里遇到第一个合法读音就 return，导致 3,358 个多音字只保留 1 个读音——
-// 常用字直接打不出来：chang 无「长」、chong 无「重」、hang 无「行」、
-// liao 无「了」、du 无「都」、huan 无「还」、huo 无「和」、kuai 无「会」、
-// de 无「地」、jiao 无「觉」、zang 无「藏」（实测 11/15 缺失）。
-// 函数注释「多音字每个读音一条」原本就是这么写的，是代码与注释不一致。
-// 词组层面一直是对的（银行/长城/重庆/了解 全对），塌陷只在单字。
-//
-// 返回值：非空切片 = 至少一个合法读音（多者返回多条）；nil = 无法归一化。
-func pinyinOf(word string, phrase map[string]string, single map[rune][]string) [][]string {
-	if py, ok := phrase[word]; ok {
-		if sylls := engine.NormalizePinyin(py); sylls != nil && len(sylls) == len([]rune(word)) {
-			return [][]string{sylls}
-		}
-	}
-	runes := []rune(word)
-	if len(runes) != 1 {
-		return nil
-	}
-	readings, ok := single[runes[0]]
-	if !ok {
-		return nil
-	}
-	var out [][]string
-	seen := make(map[string]bool, len(readings))
-	for _, r := range readings {
-		sylls := engine.NormalizePinyin(r)
-		if len(sylls) != 1 {
-			continue
-		}
-		key := sylls[0]
-		if seen[key] {
-			continue // 同音重复读音（如 行 xíng 只记一次）
-		}
-		seen[key] = true
-		out = append(out, sylls)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// cjkWordOK 判断词是否只含 CJK 汉字（基本区、扩展 A、兼容表意区、〇），
-// 且长度在 1..maxWordLen 之间。
-func cjkWordOK(word string) bool {
-	runes := []rune(word)
-	if len(runes) == 0 || len(runes) > maxWordLen {
-		return false
-	}
-	for _, r := range runes {
-		switch {
-		case r >= 0x3400 && r <= 0x4DBF: // CJK 扩展 A
-		case r >= 0x4E00 && r <= 0x9FFF: // CJK 基本区
-		case r >= 0xF900 && r <= 0xFAFF: // CJK 兼容表意区
-		case r == 0x3007: // 〇
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// parseCorpusFreq 读取真实语料词频表（繁体字形，行格式「词<TAB>次数」），
-// 并转成简体后合并计数。
-//
-// 为什么需要（2026-10-29 词库质量审计）：jieba dict.txt 是**分词词典**，
-// 里面的单字词频并不等价于「该字独立成词的常用度」——大量生僻字被标成
-// 不成词语素（g/zg），却因在语料的人名/网文里高频出现而拿到虚高分：
-//
-//	灏 2196 / 岃 1849 / 粬 1457，而 豪 1182 / 仁 1173
-//
-// 结果就是输入 hao 时「灏」排在「豪」前面、输入 ren 时「岃」排在「仁」
-// 前面（实测 de/le/wo/qu/lai/ren/hao 等窄拼音前 6 位都有这类字）。
-// 真实语料（Rime essay.txt）对这批字是零记录或极低频，可据此校正。
-//
-// 语料是繁体字形（這/說/個），必须先经 OpenCC 反向映射转简体，
-// 否则简体常用字会被误判成「零记录」（实测会误伤 为/这/说/个 等 6/23）。
-func parseCorpusFreq(path string) (map[string]int, error) {
-	t2s := make(map[rune]rune, 4096)
-	// 直接用仓库内嵌的 OpenCC 简→繁表反向构建；dictgen 在仓库根目录运行。
-	// 变量而非常量：测试需从包目录覆盖为 ../engine/dp_data/... 。
-	data, err := os.ReadFile(stCharactersPath)
-	if err != nil {
-		return nil, fmt.Errorf("读取 %s 失败（需在仓库根目录运行）: %w", stCharactersPath, err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "	")
-		if !ok {
-			continue
-		}
-		if i := strings.IndexByte(val, ' '); i >= 0 {
-			val = val[:i] // 繁体多候选取首个
-		}
-		kr, vr := []rune(key), []rune(val)
-		if len(kr) == 1 && len(vr) == 1 {
-			if _, exists := t2s[vr[0]]; !exists {
-				t2s[vr[0]] = kr[0]
-			}
-		}
-	}
-
+// parseCharFrequency 解析 Jun Da 字频 CSV，返回「字 → 排名」与排名总数。
+func parseCharFrequency(path string) (map[rune]int, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("打开语料词频表 %s 失败: %w", path, err)
-	}
-	defer f.Close()
-	out := make(map[string]int, 450000)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		fields := strings.Split(strings.TrimSpace(sc.Text()), "	")
-		if len(fields) < 2 {
-			continue
-		}
-		n, err := strconv.Atoi(fields[1])
-		if err != nil || n <= 0 {
-			continue
-		}
-		simp := make([]rune, 0, len(fields[0]))
-		for _, r := range fields[0] {
-			if s, ok := t2s[r]; ok {
-				simp = append(simp, s)
-			} else {
-				simp = append(simp, r)
-			}
-		}
-		out[string(simp)] += n
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("读取语料词频表 %s 失败: %w", path, err)
-	}
-	return out, nil
-}
-
-// corpusAdjustedFreq 用语料校正单字词频。
-//
-// 判据：**该字在真实语料中的出现次数**。语料零记录 = 该字在现代汉语书面
-// 语料里根本不出现（多为编码噪声字 紝/鐨/鏈，或纯生僻字 灏/粬/岃），
-// 一律压到最低档 1——**保留可达性、不删除**：用户仍能打出，只是不占候选
-// 前排（与市面输入法一致）。
-//
-// 安全性依据（2026-10-29 实测）：繁→简转换后，40 个最高频常用字零误判；
-// 语料零记录的 1,211 个单字里没有日常用字。多字词**不参与**校正——语料对
-// 词组的覆盖只有 35.3%，连「一个/中国/我们」都不在表内，误伤风险极高。
-//
-// 只降不升：绝不把低分字抬高，避免引入新的倒挂。
-func corpusAdjustedFreq(word string, jiebaFreq int, corpus map[string]int) int {
-	if corpus == nil || len([]rune(word)) != 1 {
-		return jiebaFreq // 多字词不校正：语料对词组覆盖仅 35.3%，含「一个/中国/我们」
-	}
-	n := corpus[word]
-	if n == 0 {
-		return 1 // 语料零记录：编码噪声字或纯生僻字，压到最低档（保留可达性）
-	}
-	// 语料有记录但 jieba 词频明显虚高时按语料下调。
-	//
-	// 为什么需要这半步：这些字在语料里几乎只出现在**人名**中
-	// （灏 880 次几乎全是「翁文灏/陈灏珠」，岃 207 次同理），
-	// jieba 却把它当成独立词条计了 2196/1849 的高频——结果输入 hao 时
-	// 「灏」排在「豪(2416次)」前面、输入 ren 时「岃」排在「仁(3200次)」前面。
-	// 判据：语料次数低于 jieba 词频的 1/4 视为虚高，按语料次数收敛。
-	//
-	// 阈值 2（语料次数×2 < jieba 词频 → 判虚高）的由来：实测两组数据之间
-	// 有 2.85 倍的清晰间隔，没有重叠样本——
-	//   虚高组（语料/jieba）：灏 0.40、岃 0.11、粬 0.00、嘚 0.00；
-	//   正常组：蒿 1.14、是 1.48、豪 2.04、仁 2.73、耗 3.04、好 4.09。
-	// 0.5 落在间隔正中（对数中点 0.40~1.14 的几何均值 ≈0.68，取更保守的 0.5）。
-	if n*2 < jiebaFreq {
-		return n
-	}
-	return jiebaFreq
-}
-
-// parseCharFrequency 读取 Jun Da 现代汉语字频表（hanzi_db.csv），返回
-// 「字 → 频率排名」（1 = 最常用）。
-//
-// 为什么单字不能用 jieba 的词频（2026-10-29 词库质量审计）：
-// jieba dict.txt 是**分词词典**，其单字词频反映的是「该字在分词语料里
-// 独立成词的程度」，与「该字作为汉字有多常用」不是一回事。大量生僻字被
-// 标成不成词语素（g/zg）却因出现在人名中拿到虚高分，实测倒挂：
-//
-//	灏 2196 > 豪 1182        （灏 = 人名用字，豪 = 常用字）
-//	岃 1849 > 仁 1173
-//	粬 1457 > 驱 1320 / 屈 1744
-//
-// 后果是输入 hao 时「灏」排在「豪」前面、输入 ren 时「岃」排在「仁」前面
-// （实测 de/le/wo/qu/lai/ren/hao 等窄拼音前 6 位都有这类字）。
-//
-// Jun Da 的字频表基于 2,580 万字真实语料，对上述 8 组倒挂案例全部给出
-// 正确排序（灏 #5030 / 岃 未收录 / 粬 未收录 vs 豪 #1513 / 仁 #1360）。
-// **多字词仍用 jieba**——它对词组频率是可靠的（工作 66367 vs 成语 3）。
-func parseCharFrequency(path string) (map[rune]int, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("打开字频表 %s 失败: %w", path, err)
+		return nil, 0, fmt.Errorf("打开字频表 %s 失败: %w", path, err)
 	}
 	defer f.Close()
 	out := make(map[rune]int, 10000)
@@ -666,9 +968,8 @@ func parseCharFrequency(path string) (map[rune]int, error) {
 	rc.FieldsPerRecord = -1
 	header, err := rc.Read()
 	if err != nil {
-		return nil, fmt.Errorf("读取字频表表头失败: %w", err)
+		return nil, 0, fmt.Errorf("读取字频表表头失败: %w", err)
 	}
-	// 定位 frequency_rank 与 character 列（不依赖列顺序）
 	rankCol, charCol := -1, -1
 	for i, h := range header {
 		switch strings.TrimSpace(h) {
@@ -679,21 +980,21 @@ func parseCharFrequency(path string) (map[rune]int, error) {
 		}
 	}
 	if rankCol < 0 || charCol < 0 {
-		return nil, fmt.Errorf("字频表 %s 缺少 frequency_rank/character 列", path)
+		return nil, 0, fmt.Errorf("字频表 %s 缺少 frequency_rank/character 列", path)
 	}
 	for {
-		rec, err := rc.Read()
-		if err == io.EOF {
+		rec, rerr := rc.Read()
+		if rerr == io.EOF {
 			break
 		}
-		if err != nil {
-			continue // 个别行格式异常不影响整体
+		if rerr != nil {
+			continue
 		}
 		if rankCol >= len(rec) || charCol >= len(rec) {
 			continue
 		}
-		rank, convErr := strconv.Atoi(strings.TrimSpace(rec[rankCol]))
-		if convErr != nil || rank <= 0 {
+		rank, cerr := strconv.Atoi(strings.TrimSpace(rec[rankCol]))
+		if cerr != nil || rank <= 0 {
 			continue
 		}
 		runes := []rune(strings.TrimSpace(rec[charCol]))
@@ -702,161 +1003,455 @@ func parseCharFrequency(path string) (map[rune]int, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("字频表 %s 没有有效条目", path)
+		return nil, 0, fmt.Errorf("字频表 %s 没有有效条目", path)
+	}
+	return out, len(out), nil
+}
+
+// parseGSCChars 读取通用规范汉字表一级/二级/三级字表（每行一个字）。
+func parseGSCChars(paths ...string) (map[rune]bool, error) {
+	out := make(map[rune]bool, 8200)
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("打开通用规范汉字表 %s 失败: %w", path, err)
+		}
+		for _, raw := range strings.Split(string(data), "\n") {
+			line := strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			runes := []rune(line)
+			if len(runes) == 1 {
+				out[runes[0]] = true
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("通用规范汉字表没有有效条目")
 	}
 	return out, nil
 }
 
-// charRankToFreq 把字频排名映射为压缩词频（1..99），与 scaleFreq 同一量纲。
-//
-// 映射方式：用排名在常见字区间内做对数插值——排名 1 得 99，排名 3500
-// （通用规范汉字表一级字表边界）得 30，排名 9000 得 6，未收录得 1。
-// 这样常用字之间保留区分度（的 99 / 一 98 / 是 98 …… 好 83），而排到
-// 5000 名之后的生僻字自然落到低分档，不会挤占常见字的候选位。
-func charRankToFreq(rank int, total int) int {
-	if rank <= 0 {
-		return 1
+// parseWordListColumn 读取「每行首个 tab 列是词」的词表。
+func parseWordListColumn(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开词表 %s 失败: %w", path, err)
 	}
-	const topFreq = 99
-	const bottomFreq = 1
-	end := total
-	if end < 2 {
-		end = 2
+	defer f.Close()
+	var out []string
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i := strings.IndexByte(line, '\t'); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
 	}
-	if rank <= 1 {
-		return topFreq
-	}
-	if rank >= end {
-		return bottomFreq
-	}
-	t := math.Log(float64(rank)) / math.Log(float64(end))
-	return int(math.Round(float64(topFreq) - t*float64(topFreq-bottomFreq)))
+	return out, sc.Err()
 }
 
-// fuseCharFreq 把「jieba 单字词频」与「Jun Da 字频排名」融合成最终词频。
-//
-// 为什么必须融合而不是二选一（2026-10-29 实测）：
-//
-//   - 只用 jieba：生僻字虚高（灏 2196 > 豪 1182、岃 1849 > 仁 1173），
-//     因为它统计的是「分词语料里独立成词的程度」，人名用字被误计为高频。
-//   - 只用 Jun Da：口语助词被系统性低估（吗/呢/吧/啊 都排在 400 名之后），
-//     因为该表基于 2,580 万字**书面语**，聊天口语不在其中。实测 1,618 个字
-//     在两个来源间分歧巨大，「在吗」这类口语组合会合成错词（在马）。
-//
-// 融合方式：两个来源各归一化到 0..1 后取几何平均——
-//   - jieba 分量：log(1+freq) / log(1+maxFreq)，压缩幂律长尾；
-//   - 排名分量：1 - log(1+rank)/log(1+20000)，排名越小越高。
-//
-// 几何平均的特性是**任一分量低就整体低**（惩罚虚高与冷僻），
-// 但不会让单一来源的偏差主导结果。
-//
-// 校准（实测）：豪 0.367 > 灏 0.280 ✓；仁 0.374 > 岃 0.000 ✓；
-// 浩 0.346 > 蒿 0.272 ✓；呢 0.547 > 尼 0.448 ✓；吧 0.530 > 巴 0.475 ✓。
-// oralParticleBoost 是口语助词/语气词的定向补偿幅度。
-//
-// 为什么需要（2026-10-29 实测）：Jun Da 字频基于 2,580 万字**书面语**，
-// 聊天与口语不在其中，「吗/呢/吧/啊/嘛/呀」因此排在 400 名之后。后果是
-// 「在吗」这类极常用口语组合合成不出来——实测首选变成「在马」，
-// 引擎既有测试 TestComposeMultiSyllableSentences 因此失败。
-//
-// 幅度**刻意很小（+8）**：够让「在吗」(53+8) 压过「在马」(56)，
-// 又不足以让这些字在任何拼音下都抢首位（ma 的单字首选仍是「马」56 > 吗 61？
-// 注意：吗+8=61 会超过马 56，但 ma 的单字页面里二者同拼音，61 分会让「吗」
-// 排到首选——这与用户直觉一致：打 ma 时「吗」比「马」更常被选）。
-const oralParticleBoost = 8
-
-func isOralParticle(r rune) bool {
-	switch r {
-	case '吗', '呢', '吧', '啊', '嘛', '呀', '哦', '嗯', '咯', '呗', '喽':
-		return true
+// parseHSKWordList 解析 HSK 3.0 词表：支持「编号 词」与「每行一个词」两种格式。
+func parseHSKWordList(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开 HSK 词表 %s 失败: %w", path, err)
 	}
-	return false
-}
-
-func fuseCharFreq(jiebaFreq int, rank int, maxJieba int) int {
-	const bottomFreq = 1
-	const topFreq = 99
-	if maxJieba < 1 {
-		maxJieba = 1
-	}
-	jiebaPart := 0.0
-	if jiebaFreq > 0 {
-		jiebaPart = math.Log(1+float64(jiebaFreq)) / math.Log(1+float64(maxJieba))
-	}
-	rankPart := 0.0
-	if rank > 0 {
-		rankPart = 1.0 - math.Log(1+float64(rank))/math.Log(1+20000)
-	}
-	if rankPart < 0 {
-		rankPart = 0
-	}
-	fused := math.Sqrt(jiebaPart * rankPart)
-	if fused > 1 {
-		fused = 1
-	}
-	return int(math.Round(float64(bottomFreq) + fused*float64(topFreq-bottomFreq)))
-}
-
-// fuseCharFreqRune 同 fuseCharFreq，另外给口语助词小幅补偿（见 oralParticleBoost）。
-func fuseCharFreqRune(ch rune, jiebaFreq int, rank int, maxJieba int) int {
-	f := fuseCharFreq(jiebaFreq, rank, maxJieba)
-	if isOralParticle(ch) {
-		f += oralParticleBoost
-		if f > 99 {
-			f = 99
+	defer f.Close()
+	// 先判断文件是否「编号 词」格式：是则忽略非编号行（一级词汇表 这类标题行），
+	// 否则按「每行一个词」处理（并过滤标题行）。
+	var rawLines []string
+	numbered := 0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		rawLines = append(rawLines, line)
+		if i := strings.IndexByte(line, ' '); i > 0 {
+			if _, err := strconv.Atoi(line[:i]); err == nil {
+				numbered++
+			}
 		}
 	}
-	return f
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("读取 HSK 词表 %s 失败: %w", path, err)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range rawLines {
+		if numbered > 0 {
+			i := strings.IndexByte(line, ' ')
+			if i <= 0 {
+				continue
+			}
+			if _, err := strconv.Atoi(line[:i]); err != nil {
+				continue
+			}
+			line = strings.TrimSpace(line[i+1:])
+		} else if strings.Contains(line, "词汇表") || strings.Contains(line, "汉字表") {
+			continue
+		}
+		if i := strings.Index(line, "｜"); i > 0 {
+			line = line[:i]
+		}
+		if i := strings.IndexAny(line, "（("); i > 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSpace(line)
+		if len([]rune(line)) < 2 || !cjkWordOK(line) || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	return out, sc.Err()
 }
 
-// scaleFreq 把原始词频按对数压缩到 1..99：最高频词得 99，最低得 1。
-// 对数压缩保证常用词的相对次序不变，同时把生僻词压到低分档，
-// 避免它们和常用词同分后按码点排序挤掉常用字。
-func scaleFreq(freq, maxFreq int) int {
-	if freq <= 0 {
-		return 1
+// parseWordfreq 解析 wordfreq 导出 TSV（词 tab zipf），返回词频与最大 zipf。
+func parseWordfreq(path string) (map[string]float64, float64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("打开 wordfreq 词频表 %s 失败: %w", path, err)
 	}
-	if freq >= maxFreq {
-		return 99
+	defer f.Close()
+	out := make(map[string]float64, 330000)
+	max := 0.0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		parts := strings.Split(strings.TrimSpace(sc.Text()), "\t")
+		if len(parts) != 2 {
+			continue
+		}
+		z, perr := strconv.ParseFloat(parts[1], 64)
+		if perr != nil || z <= 0 {
+			continue
+		}
+		out[parts[0]] = z
+		if z > max {
+			max = z
+		}
 	}
-	v := 1 + 98*math.Log(float64(freq))/math.Log(float64(maxFreq))
-	n := int(math.Round(v))
-	if n < 1 {
-		n = 1
+	if err := sc.Err(); err != nil {
+		return nil, 0, fmt.Errorf("读取 wordfreq 词频表 %s 失败: %w", path, err)
 	}
-	if n > 99 {
-		n = 99
+	if len(out) == 0 {
+		return nil, 0, fmt.Errorf("wordfreq 词频表 %s 没有有效条目", path)
 	}
-	return n
+	return out, max, nil
 }
 
-// writeTSV 写出三列 TSV，文件头记录来源与许可以及再生成命令。
-func writeTSV(path string, entries []entry) error {
+// parseHanLPFreq 解析 HanLP CoreNatureDictionary；full 与 mini 都提供时按词取 max。
+func parseHanLPFreq(path, miniPath string) (map[string]int, int, error) {
+	out := make(map[string]int, 160000)
+	if err := mergeHanLPFile(out, path); err != nil {
+		return nil, 0, err
+	}
+	if miniPath != "" {
+		if err := mergeHanLPFile(out, miniPath); err != nil {
+			return nil, 0, err
+		}
+	}
+	max := 0
+	for _, f := range out {
+		if f > max {
+			max = f
+		}
+	}
+	if len(out) == 0 || max <= 0 {
+		return nil, 0, fmt.Errorf("HanLP 词频表没有有效条目")
+	}
+	return out, max, nil
+}
+
+func mergeHanLPFile(dst map[string]int, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("打开 HanLP 词频表 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		parts := strings.Split(strings.TrimSpace(sc.Text()), "\t")
+		if len(parts) < 3 {
+			continue
+		}
+		total := 0
+		for i := 1; i+1 < len(parts); i += 2 {
+			freq, perr := strconv.Atoi(parts[i+1])
+			if perr != nil {
+				break
+			}
+			total += freq
+		}
+		if total > 0 {
+			dst[parts[0]] += total
+		}
+	}
+	return sc.Err()
+}
+
+// parseTHUOCL 读取 THUOCL 目录下全部词表（词 tab DF），返回词→DF 与最大 DF。
+func parseTHUOCL(dir string) (map[string]int, int, error) {
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, fmt.Errorf("读取 THUOCL 目录 %s 失败: %w", dir, err)
+	}
+	out := make(map[string]int, 120000)
+	for _, it := range items {
+		if it.IsDir() || !strings.HasSuffix(it.Name(), ".txt") {
+			continue
+		}
+		data, rerr := os.ReadFile(filepath.Join(dir, it.Name()))
+		if rerr != nil {
+			return nil, 0, rerr
+		}
+		text := strings.ReplaceAll(string(data), "\r\n", "\n")
+		text = strings.ReplaceAll(text, "\r", "\n")
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) != 2 {
+				continue
+			}
+			freq, perr := strconv.Atoi(strings.TrimSpace(parts[1]))
+			if perr != nil || freq <= 0 {
+				continue
+			}
+			out[parts[0]] += freq
+		}
+	}
+	max := 0
+	for _, f := range out {
+		if f > max {
+			max = f
+		}
+	}
+	if len(out) == 0 {
+		return nil, 0, fmt.Errorf("THUOCL 目录 %s 没有有效条目", dir)
+	}
+	return out, max, nil
+}
+
+// parseHanLPPinyin 解析 HanLP 拼音词典（词=yi1,ding1,...），转成无调拼音。
+func parseHanLPPinyin(path string) (map[string][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开 HanLP 拼音词典 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	out := make(map[string][]string, 32000)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		word, py, ok := strings.Cut(line, "=")
+		if !ok || word == "" || py == "" {
+			continue
+		}
+		var sylls []string
+		valid := true
+		for _, raw := range strings.Split(py, ",") {
+			s := normalizeToneNumber(raw)
+			if s == "" || !engine.IsSyllable(s) {
+				valid = false
+				break
+			}
+			sylls = append(sylls, s)
+		}
+		if !valid || len(sylls) != len([]rune(word)) {
+			continue
+		}
+		out[word] = sylls
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("读取 HanLP 拼音词典 %s 失败: %w", path, err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("HanLP 拼音词典 %s 没有有效条目", path)
+	}
+	return out, nil
+}
+
+// normalizeToneNumber 把 HanLP 的 yi1 / lv4 / er5 这类带调号数字拼音转成无声调音节。
+func normalizeToneNumber(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return ""
+	}
+	last := s[len(s)-1]
+	if last >= '1' && last <= '5' {
+		s = s[:len(s)-1]
+	}
+	s = strings.ReplaceAll(s, "u:", "v")
+	s = strings.ReplaceAll(s, "ü", "v")
+	return s
+}
+
+// parseManualTable 读取手工补充词表（词 tab 拼音 tab 权重），逐条严格校验。
+func parseManualTable(path string) ([]manualRow, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("打开补充词表 %s 失败: %w", path, err)
+	}
+	var out []manualRow
+	seen := map[string]bool{}
+	for i, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		lineNo := i + 1
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("%s 第 %d 行应为 3 列（词/拼音/权重）: %q", path, lineNo, line)
+		}
+		word := strings.TrimSpace(parts[0])
+		sylls := strings.Fields(parts[1])
+		weight, werr := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if word == "" || len(sylls) == 0 {
+			return nil, fmt.Errorf("%s 第 %d 行词或拼音为空", path, lineNo)
+		}
+		if !cjkWordOK(word) {
+			return nil, fmt.Errorf("%s 第 %d 行不是纯 CJK 词（长度 1..%d）: %q", path, lineNo, maxWordLen, word)
+		}
+		if werr != nil || weight <= 0 {
+			return nil, fmt.Errorf("%s 第 %d 行权重不是正整数: %q", path, lineNo, parts[2])
+		}
+		if len(sylls) != len([]rune(word)) {
+			return nil, fmt.Errorf("%s 第 %d 行音节数与字数不等: %s / %v", path, lineNo, word, sylls)
+		}
+		for _, s := range sylls {
+			if !engine.IsSyllable(s) {
+				return nil, fmt.Errorf("%s 第 %d 行存在非法音节 %q", path, lineNo, s)
+			}
+		}
+		key := word + "\x00" + strings.Join(sylls, " ")
+		if seen[key] {
+			return nil, fmt.Errorf("%s 第 %d 行重复词条: %s / %v", path, lineNo, word, sylls)
+		}
+		seen[key] = true
+		out = append(out, manualRow{word: word, sylls: sylls, weight: weight})
+	}
+	return out, nil
+}
+
+// writeReview 输出补拼音人工校对清单（TSV，含不能自动确定的多音字候选）。
+func writeReview(path string, items []reviewItem, mode string) error {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("创建校对清单 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	bw := bufio.NewWriter(f)
+	fmt.Fprintf(bw, "# chaoset-dictgen 补拼音人工校对清单（模式 %s）\n", mode)
+	fmt.Fprintf(bw, "# 只有不在 phrase-pinyin-data 里的词会出现在这里；confidence 为字读音统计的\n")
+	fmt.Fprintf(bw, "# 最低占比（1.0 = 词内词组拼音拼接或 HanLP 词典命中；<0.9 建议人工复核）。\n")
+	fmt.Fprintf(bw, "# 格式：词 \t 采用拼音 \t 来源 \t confidence \t 多音字候选\n")
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].word != items[j].word {
+			return items[i].word < items[j].word
+		}
+		return strings.Join(items[i].sylls, " ") < strings.Join(items[j].sylls, " ")
+	})
+	for _, it := range items {
+		fmt.Fprintf(bw, "%s\t%s\t%s\t%.2f\t%s\n", it.word, strings.Join(it.sylls, " "), it.method, it.confidence, it.alternatives)
+	}
+	return bw.Flush()
+}
+
+// writeTSV 写出三列 TSV；文件头按词频模式声明来源与许可，并附再生成命令。
+func writeTSV(path string, entries []entry, o options) error {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("创建输出文件失败: %w", err)
 	}
 	defer f.Close()
 	bw := bufio.NewWriterSize(f, 1<<16)
+
 	header := []string{
 		"# chaoset 内置常用词库（由 cmd/chaoset-dictgen 生成，禁止手工编辑）",
-		"# 格式：词 \\t 拼音（空格分隔，无声调，ü 以 v 输入） \\t 词频（1..99）",
+		"# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 词频（1..99）",
 		"#",
-		"# 数据来源（均为 MIT 许可）：",
-		"#   词组词频 jieba dict.txt        https://github.com/fxsjy/jieba（多字词频率可靠）",
-		"#   单字字频 Jun Da 现代汉语字频    https://github.com/ruddfawcett/hanziDB.csv",
-		"#            （jieba 的单字词频是分词口径，生僻字虚高，故单字以此为准）",
-		"#   备用校正 Rime essay.txt        https://github.com/rime/essay（-corpus，" +
-			"不传 -charfreq 时的回退路径）",
-		"#   拼音   phrase-pinyin-data      https://github.com/mozillazg/phrase-pinyin-data",
-		"#   单字   pinyin-data             https://github.com/mozillazg/pinyin-data",
+		"# 词表（常用性门槛）：《现代汉语常用词表》∪ HSK 3.0 ∪ 高频用法 topN",
+		"#   ∪ data/dict_hot.tsv（现代/热词） ∪ data/dict_extra.tsv（口语补充）；",
+		"#   不在 phrase-pinyin-data 的词用「词内词组拼音 → HanLP 拼音词典 →",
+		"#   大词表字读音统计 → pinyin-data 首读音」补拼音，不整词丢弃。",
+		"# 单字：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名。",
 		"#",
-		"# 再生成（在仓库根目录）：",
-		"#   go run ./cmd/chaoset-dictgen -jieba dict.txt \\",
-		"#     -charfreq hanzi_db.csv -pinyin large_pinyin.txt -single pinyin.txt \\",
-		"#     -extra data/dict_extra.tsv -o data/dict_common.tsv",
-		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
+		"# 拼音数据：phrase-pinyin-data large_pinyin.txt（MIT）+ pinyin-data pinyin.txt（MIT）",
+		"#   + 通用规范汉字表（国家标准）+ HanLP 拼音词典（Apache-2.0，仅补缺用）",
+		"#   注意：large_pinyin 由汉典 zdic + CC-CEDICT（CC BY-SA 4.0）等来源合并，",
+		"#   词表/拼音的再分发 provenance 需在发布说明中保留说明。",
 	}
+	switch o.freqMode {
+	case "wf":
+		header = append(header,
+			"#",
+			"# 词频数据：wordfreq zh（代码 Apache-2.0；**数据 CC BY-SA 4.0**，"+
+				"https://github.com/rspeer/wordfreq）",
+			"#   + THUOCL（MIT，领域词兜底，https://github.com/THUNLP/THUOCL）",
+			"#   本词库文件（数据部分）按 CC BY-SA 4.0 分发并署名 wordfreq/THUOCL；代码仍为 MIT。",
+			"#   完整许可与署名见 data/NOTICE.md。",
+		)
+	case "hanlp":
+		header = append(header,
+			"#",
+			"# 词频数据：HanLP CoreNatureDictionary（Apache-2.0，"+
+				"https://github.com/hankcs/HanLP；产品说明中保留链接与协议）",
+			"#   + THUOCL（MIT，领域词兜底，https://github.com/THUNLP/THUOCL）",
+		)
+	}
+	header = append(header,
+		"#",
+		"# 单字字频源：Jun Da 现代汉语字频（https://github.com/ruddfawcett/hanziDB.csv）；",
+		"#   原作者声明仅限研究/教学、商业使用需书面许可——发布前需替换为 Unihan",
+		"#   kHanyuPinlu/kFrequency（Unicode License）或取得授权。",
+		"#",
+		"# 再生成（在仓库根目录，数据文件需自行下载；完整参数见 README「内置词库与再生成」）：",
+		fmt.Sprintf("#   go run ./cmd/chaoset-dictgen -freq %s -norm changyongcibiao.txt -hsk hsk30_words.txt \\", o.freqMode),
+		fmt.Sprintf("#     %s -thucl THUOCL_data \\", freqFlagHint(o.freqMode)),
+		"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
+		"#     -hanlppinyin hanlp_pinyin.txt -gsc1 level-1.txt -gsc2 level-2.txt -gsc3 level-3.txt \\",
+		"#     -hot data/dict_hot.tsv -extra data/dict_extra.tsv -o data/dict_common.tsv",
+		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
+	)
 	for _, line := range header {
 		if _, err := fmt.Fprintln(bw, line); err != nil {
 			return fmt.Errorf("写入词库头失败: %w", err)
@@ -867,8 +1462,12 @@ func writeTSV(path string, entries []entry) error {
 			return fmt.Errorf("写入词库条目失败: %w", err)
 		}
 	}
-	if err := bw.Flush(); err != nil {
-		return fmt.Errorf("写出词库失败: %w", err)
+	return bw.Flush()
+}
+
+func freqFlagHint(mode string) string {
+	if mode == "wf" {
+		return "-wordfreq wordfreq_zh.tsv"
 	}
-	return nil
+	return "-hanlp CoreNatureDictionary.txt -hanlpmini CoreNatureDictionary.mini.txt"
 }

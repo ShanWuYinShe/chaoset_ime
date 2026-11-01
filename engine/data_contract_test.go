@@ -24,15 +24,18 @@ func TestBuiltinDictStrictlyValid(t *testing.T) {
 		t.Fatalf("内置词库必须能被严格解析（脏数据应在生成阶段拦截）: %v", err)
 	}
 
-	// 规模断言：防止生成工具改坏导致词库静默缩水
-	const minEntries = 140000
+	// 规模断言：防止生成工具改坏导致词库静默缩水。
+	// 2026-11-01 词库改用「常用性门槛」流水线后，规模从旧 jieba 库的 14.5 万条
+	// 降到约 6.8 万条（词表只保留规范常用词 + 高频用法 + 热词，单字改收
+	// 通用规范汉字表 8105），因此下限同步调整；上限不卡死，允许后续扩充。
+	const minEntries = 60000
 	if d.Len() < minEntries {
 		t.Fatalf("内置词库词条数异常偏少: %d（期望 ≥%d）", d.Len(), minEntries)
 	}
 
 	// 逐条断言生成器的不变量。这些约束由 cmd/chaoset-dictgen 保证，
 	// 在这里兜底：任何一条被破坏都说明生成链路出了问题。
-	var badSyll, badFreq, multi int
+	var badSyll, badFreq, multi, single int
 	var syllExamples, freqExamples []string
 	for _, e := range d.Entries() {
 		if len(e.Syllables) != len([]rune(e.Word)) {
@@ -49,6 +52,8 @@ func TestBuiltinDictStrictlyValid(t *testing.T) {
 		}
 		if len(e.Syllables) > 1 {
 			multi++
+		} else {
+			single++
 		}
 	}
 	if badSyll > 0 {
@@ -57,28 +62,50 @@ func TestBuiltinDictStrictlyValid(t *testing.T) {
 	if badFreq > 0 {
 		t.Fatalf("%d 条词条词频超出 1..99，例: %v", badFreq, freqExamples)
 	}
-	if multi*10 < d.Len()*9 {
-		t.Fatalf("多字词比例异常: %d/%d（期望 ≥90%%）", multi, d.Len())
+	if multi*100 < d.Len()*80 {
+		t.Fatalf("多字词比例异常: %d/%d（期望 ≥80%%：单字表来自通用规范汉字表 8105，约 0.9 万条）", multi, d.Len())
+	}
+	if single < 8000 {
+		t.Fatalf("单字条目异常偏少: %d（期望 ≥8000，通用规范汉字表 8105 应基本全覆盖）", single)
+	}
+
+	// 常用词守门：防止词表门槛/词频源被改坏导致高频常用词静默丢失。
+	wordSet := make(map[string]bool, d.Len())
+	for _, e := range d.Entries() {
+		wordSet[e.Word] = true
+	}
+	for _, w := range []string{"的", "我们", "你好", "数据", "微信"} {
+		if !wordSet[w] {
+			t.Errorf("内置词库缺少常用词 %q（词表门槛或拼音链路被改坏）", w)
+		}
 	}
 }
 
-// data/dict_extra.tsv 是整个词库链路里**唯一允许手工编辑**的词表。
+// data/dict_extra.tsv / data/dict_hot.tsv 是词库链路里**允许手工编辑**的词表。
 // 手改最容易引入脏数据，且最容易忘记重新生成产物——两件事都在 CI 断言：
-//  1. 每一行格式合法（3 列、词与拼音非空、音节数==字数、音节合法、词频正）；
+//  1. 每一行格式合法（3 列、词与拼音非空、音节数==字数、音节合法、权重正）；
 //  2. 每个词条都已合并进内置词库（否则用户看到的词库不含新词）。
 func TestDictExtraValidAndMerged(t *testing.T) {
-	extraPath := filepath.Join("..", "data", "dict_extra.tsv")
-	data, err := os.ReadFile(extraPath)
+	checkSupplementTable(t, filepath.Join("..", "data", "dict_extra.tsv"), "dict_extra")
+}
+
+func TestDictHotValidAndMerged(t *testing.T) {
+	checkSupplementTable(t, filepath.Join("..", "data", "dict_hot.tsv"), "dict_hot")
+}
+
+func checkSupplementTable(t *testing.T, path, name string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("读取补充词表失败: %v", err)
+		t.Fatalf("读取 %s 词表失败: %v", name, err)
 	}
 
-	type extraRow struct {
-		word  string
-		sylls []string
-		freq  int
+	type row struct {
+		word   string
+		sylls  []string
+		weight int
 	}
-	var rows []extraRow
+	var rows []row
 	for i, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -87,41 +114,41 @@ func TestDictExtraValidAndMerged(t *testing.T) {
 		lineNo := i + 1
 		parts := strings.Split(line, "\t")
 		if len(parts) != 3 {
-			t.Fatalf("%s 第 %d 行应为 3 列（词/拼音/词频），实际 %d 列: %q",
-				extraPath, lineNo, len(parts), line)
+			t.Fatalf("%s 第 %d 行应为 3 列（词/拼音/权重），实际 %d 列: %q",
+				name, lineNo, len(parts), line)
 		}
 		word := strings.TrimSpace(parts[0])
 		sylls := strings.Fields(parts[1])
-		freq, cerr := strconv.Atoi(strings.TrimSpace(parts[2]))
+		weight, cerr := strconv.Atoi(strings.TrimSpace(parts[2]))
 		if word == "" || len(sylls) == 0 {
-			t.Fatalf("%s 第 %d 行词或拼音为空", extraPath, lineNo)
+			t.Fatalf("%s 第 %d 行词或拼音为空", name, lineNo)
 		}
-		if cerr != nil || freq <= 0 {
-			t.Fatalf("%s 第 %d 行词频不是正整数: %q", extraPath, lineNo, parts[2])
+		if cerr != nil || weight <= 0 {
+			t.Fatalf("%s 第 %d 行权重不是正整数: %q", name, lineNo, parts[2])
 		}
 		if len(sylls) != len([]rune(word)) {
-			t.Fatalf("%s 第 %d 行音节数与字数不等: %s / %v", extraPath, lineNo, word, sylls)
+			t.Fatalf("%s 第 %d 行音节数与字数不等: %s / %v", name, lineNo, word, sylls)
 		}
 		for _, s := range sylls {
 			if !IsSyllable(s) {
-				t.Fatalf("%s 第 %d 行存在非法音节 %q", extraPath, lineNo, s)
+				t.Fatalf("%s 第 %d 行存在非法音节 %q", name, lineNo, s)
 			}
 		}
-		rows = append(rows, extraRow{word: word, sylls: sylls, freq: freq})
+		rows = append(rows, row{word: word, sylls: sylls, weight: weight})
 	}
 	if len(rows) == 0 {
-		t.Fatal("补充词表为空（至少应保留历史维护的词条）")
+		t.Fatalf("%s 词表为空（至少应保留历史维护的词条）", name)
 	}
 
-	// 一致性：每条都必须已在生成产物里——防止「改了 extra 忘记重新生成」。
+	// 一致性：每条都必须已在生成产物里——防止「改了词表忘记重新生成」。
 	common, err := LoadDictFiles([]string{filepath.Join("..", "data", "dict_common.tsv")})
 	if err != nil {
 		t.Fatalf("加载内置词库失败: %v", err)
 	}
 	for _, r := range rows {
 		if !common.Contains(r.word, r.sylls) {
-			t.Errorf("补充词条 %q（%s）未合并进 dict_common.tsv —— 改完 extra 必须重新运行 cmd/chaoset-dictgen 并提交生成产物",
-				r.word, strings.Join(r.sylls, " "))
+			t.Errorf("%s 词条 %q（%s）未合并进 dict_common.tsv —— 改完 %s 必须重新运行 cmd/chaoset-dictgen 并提交生成产物",
+				name, r.word, strings.Join(r.sylls, " "), name)
 		}
 	}
 }

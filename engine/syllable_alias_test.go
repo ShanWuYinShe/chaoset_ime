@@ -72,7 +72,7 @@ func TestSyllableAliasesPhoneticAndKeyboardConvention(t *testing.T) {
 		// iou -> iu 省写习惯
 		{"niourou", "牛肉"},
 		{"jiouyue", "九月"},
-		{"xiouli", "秀丽"},
+		{"xiouli", "修理"}, // xiou→xiu 别名生效即可；首选词随词库词频变化（新词库 修理 > 秀丽）
 		// uen -> un 省写习惯
 		{"chuentian", "春天"},
 		{"zhuenbei", "准备"},

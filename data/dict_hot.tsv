@@ -1,0 +1,143 @@
+# chaoset 现代/热词补充词表（由 cmd/chaoset-dictgen -hot 合并进内置词库，手工维护）
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+# 用途：随 app 版本内置的「现代/热词」清单。这些词在词频语料与字/词典里覆盖很差
+# （2026-11-01 调研：98 个现代词探针里 22 个在所有候选词表都不存在），只能人工
+# 维护并逐个核对拼音。维护规则：
+#   1) 只收「现代中文语境里真实常用、但上游词表/词频源缺失或低覆盖」的词；
+#   2) 拼音必须逐条人工核对（生成器会用 engine.IsSyllable + 音节数==字数强校验，
+#      非法音节/音节数不符直接让生成失败）；
+#   3) 权重是「估算原始词频」量级，与 dict_extra.tsv 同口径：生成器按
+#      ln(权重)/ln(1e6) 压缩到 1..99（4000≈60 分、1000≈50 分、100≈35 分），
+#      用来让这些词落在常用词中高区间，不盖过 的/是/我们 这类核心高频词；
+#   4) 每次发版前复核一次（新增热词/过时词下架），改完重跑 cmd/chaoset-dictgen。
+# 与其他来源的关系：与 dict_extra.tsv 合并（同 词+拼音 取较大词频）；与主词表
+# 重复的词由生成器取较大词频，不需要从本表删除。
+#
+# ---- 2026-11-01 首次建立：调研 98 词探针中「所有候选源都缺」的 22 个 ----
+智能家居	zhi neng jia ju	1200
+新能源汽车	xin neng yuan qi che	1500
+自动驾驶	zi dong jia shi	1200
+移动支付	yi dong zhi fu	1500
+在线教育	zai xian jiao yu	1200
+居家办公	ju jia ban gong	800
+远程办公	yuan cheng ban gong	800
+项目经理	xiang mu jing li	1000
+大模型	da mo xing	1500
+开放平台	kai fang ping tai	1000
+用户体验	yong hu ti yan	1200
+知识付费	zhi shi fu fei	800
+粉丝经济	fen si jing ji	700
+带货主播	dai huo zhu bo	900
+手机支付	shou ji zhi fu	1000
+扫一扫	sao yi sao	1200
+健康码	jian kang ma	3000
+行程码	xing cheng ma	2000
+微信支付	wei xin zhi fu	3000
+拼多多	pin duo duo	2000
+饿了么	e le me	1500
+苹果手机	ping guo shou ji	1500
+#
+# ---- 现代生活/科技高频词（上游词表普遍缺失）----
+共享单车	gong xiang dan che	1000
+国潮	guo chao	800
+移动互联网	yi dong hu lian wang	900
+视频通话	shi pin tong hua	900
+刷脸支付	shua lian zhi fu	600
+智能音箱	zhi neng yin xiang	600
+智能客服	zhi neng ke fu	600
+智慧城市	zhi hui cheng shi	700
+数字经济	shu zi jing ji	900
+网络直播	wang luo zhi bo	800
+在线会议	zai xian hui yi	800
+网络文学	wang luo wen xue	600
+直播平台	zhi bo ping tai	900
+短视频平台	duan shi pin ping tai	800
+社交平台	she jiao ping tai	800
+社区团购	she qu tuan gou	700
+直播电商	zhi bo dian shang	800
+跨境电商	kua jing dian shang	800
+新零售	xin ling shou	700
+灵活就业	ling huo jiu ye	600
+在线学习	zai xian xue xi	700
+互联网医院	hu lian wang yi yuan	600
+即时零售	ji shi ling shou	500
+数字化转型	shu zi hua zhuan xing	700
+无障碍	wu zhang ai	500
+碳中和	tan zhong he	900
+新能源	xin neng yuan	900
+芯片	xin pian	800
+半导体	ban dao ti	800
+传感器	chuan gan qi	600
+无人机	wu ren ji	700
+机器人	ji qi ren	800
+电动车	dian dong che	800
+充电桩	chong dian zhuang	600
+蓝牙	lan ya	700
+智能手机	zhi neng shou ji	900
+平板电脑	ping ban dian nao	700
+云盘	yun pan	600
+浏览器	liu lan qi	700
+视频会议	shi pin hui yi	800
+电子书	dian zi shu	600
+有声书	you sheng shu	500
+网络游戏	wang luo you xi	600
+电子竞技	dian zi jing ji	700
+#
+# ---- 网络/社交流行语（近两年高频，词频语料更新滞后）----
+电竞	dian jing	800
+饭圈	fan quan	600
+追星	zhui xing	600
+应援	ying yuan	500
+打榜	da bang	500
+拔草	ba cao	500
+种草	zhong cao	600
+探店	tan dian	500
+测评	ce ping	600
+攻略	gong lve	500
+安利	an li	500
+出圈	chu quan	600
+破防	po fang	600
+副业	fu ye	600
+预制菜	yu zhi cai	600
+直播带货	zhi bo dai huo	900
+自媒体	zi mei ti	900
+网红	wang hong	900
+内卷	nei juan	800
+躺平	tang ping	800
+社畜	she chu	600
+打工人	da gong ren	700
+带货	dai huo	800
+二次元	er ci yuan	700
+网盘	wang pan	700
+电商	dian shang	800
+双十一	shuang shi yi	900
+优惠券	you hui quan	700
+拼单	pin dan	500
+团购	tuan gou	700
+线上	xian shang	700
+线下	xian xia	700
+#
+# ---- 品牌/平台（词表与语料都可能缺，输入高频）----
+特斯拉	te si la	900
+蔚来	wei lai	500
+华为	hua wei	1200
+小米	xiao mi	1200
+
+# ---- 2026-11-01 补充：平台/科技类现代词（词表与词频源都缺）----
+云计算	yun ji suan	900
+区块链	qu kuai lian	1000
+网约车	wang yue che	800
+盲盒	mang he	600
+元宇宙	yuan yu zhou	800
+虚拟现实	xu ni xian shi	700
+机器学习	ji qi xue xi	900
+深度学习	shen du xue xi	800
+语音识别	yu yin shi bie	700
+人脸识别	ren lian shi bie	700
+操作系统	cao zuo xi tong	800
+程序员	cheng xu yuan	900
+产品经理	chan pin jing li	900
+小红书	xiao hong shu	1500
+滴滴	di di	1500
+
