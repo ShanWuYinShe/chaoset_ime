@@ -1423,6 +1423,10 @@ func (s *Session) compose() Composition {
 	mistakeInput := hasCommonMistakeCluster(s.input)
 	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
 	inputSegs := 0
+	// maxInputSegs 是所有合法切分里最多的段数：tuan 既能切成 tuan（1 段）
+	// 也能切成 tu'an（2 段），两种解析优先级相同——判「超段」必须按最多段数，
+	// 否则 tu'an 的词（图案）会被当成超段，永远排在 tuan 的单字后面。
+	maxInputSegs := 0
 	inputHasInitials := false
 	if len(tokenPatterns) > 0 {
 		inputSegs = len(tokenPatterns[0])
@@ -1430,6 +1434,11 @@ func (s *Session) compose() Composition {
 			if !tok.IsExact {
 				inputHasInitials = true
 				break
+			}
+		}
+		for _, pat := range tokenPatterns {
+			if len(pat) > maxInputSegs {
+				maxInputSegs = len(pat)
 			}
 		}
 	}
@@ -2020,9 +2029,17 @@ func (s *Session) compose() Composition {
 		// 错误地压到默认短词后面。这类输入由 rankInitialExact <
 		// rankInitialPrefix 保证「先完整匹配、后偏长词」，用户词再由下面的
 		// FromUser 键优先。超段仲裁只对全拼输入（token 全是完整音节）生效。
-		if inputSegs > 0 && !inputHasInitials {
-			aOver := strings.Count(a.Syllables, "'")+1 > inputSegs
-			bOver := strings.Count(b.Syllables, "'")+1 > inputSegs
+		//
+		// 全拼的歧义切分要按**所有合法切分的最大段数**判断用户词：tuan 可以
+		// 切成 tuan 或 tu'an，两种解析优先级相同；用户学过 tu'an 的词（图案）
+		// 不能因为首选切分是 1 段就被当成超段、压到 tuan 的单字（团）后面。
+		// 非用户候选仍按首选切分判超段（nve 的「女儿」不能压过 nve 的「虐」），
+		// 保持默认词频的既有排序不变。
+		if maxInputSegs > 0 && !inputHasInitials {
+			aN := strings.Count(a.Syllables, "'") + 1
+			bN := strings.Count(b.Syllables, "'") + 1
+			aOver := aN > maxInputSegs || (!a.FromUser && aN > inputSegs)
+			bOver := bN > maxInputSegs || (!b.FromUser && bN > inputSegs)
 			if aOver != bOver {
 				return !aOver
 			}

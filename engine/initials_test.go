@@ -511,3 +511,32 @@ func TestUserWordPriorityStillGuardsFullPinyinOverSegment(t *testing.T) {
 			firstTexts(allCandidates(s, comp), 6))
 	}
 }
+
+// TestUserWordPriorityForAmbiguousSegmentation：tuan 可切成 tuan 或 tu'an，
+// 两种解析优先级相同；用户学过 tu'an 的「图案」后应排在 tuan 的「团」之前
+// （用户输入 > 默认字频）。
+func TestUserWordPriorityForAmbiguousSegmentation(t *testing.T) {
+	d := mustCommonDict(t)
+
+	s := NewSession(d, nil)
+	allDefault := allCandidates(s, mustComp(s, "tuan"))
+	hasTuAn := false
+	for _, c := range allDefault {
+		if c.Text == "图案" {
+			hasTuAn = true
+		}
+	}
+	if !hasTuAn {
+		t.Fatalf("未学习时 tuan 候选里也应有 tu'an 的「图案」: %+v", firstTexts(allDefault, 6))
+	}
+
+	u := mustUserDict(t, filepath.Join(t.TempDir(), "user.json"))
+	if err := u.BumpWord("图案", []string{"tu", "an"}); err != nil {
+		t.Fatalf("学习「图案」失败: %v", err)
+	}
+	s2 := NewSession(d, u)
+	comp2 := mustComp(s2, "tuan")
+	if len(comp2.Candidates) == 0 || comp2.Candidates[0].Text != "图案" {
+		t.Fatalf("学过「图案」后 tuan 首选应为「图案」，实际: %+v", firstTexts(allCandidates(s2, comp2), 6))
+	}
+}
