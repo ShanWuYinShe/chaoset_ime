@@ -475,3 +475,39 @@ func TestShortInitialsAlwaysSingleFallback(t *testing.T) {
 		t.Fatalf("zg 首段单字全量兜底未生效（单字=%d，期望 >=120）", singles)
 	}
 }
+
+// TestUserWordPriorityForInitials：简拼输入下用户学过的词优先于默认词频。
+// ysfa 的默认切分是 y's'fa（3 段），学过 4 音节的「原生方案」若按「音节数
+// > token 数」判超段，会被压到默认短词后面；简拼的 token 数不是音节数，
+// 不能这样判——用户输入（学过的词）必须排在默认字频词之前。
+func TestUserWordPriorityForInitials(t *testing.T) {
+	udPath := filepath.Join(t.TempDir(), "user.json")
+	d := mustCommonDict(t)
+	u := mustUserDict(t, udPath)
+	if err := u.BumpWord("原生方案", []string{"yuan", "sheng", "fang", "an"}); err != nil {
+		t.Fatalf("学习「原生方案」失败: %v", err)
+	}
+	s := NewSession(d, u)
+	comp := mustComp(s, "ysfa")
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "原生方案" {
+		t.Fatalf("ysfa 首选应是学过的「原生方案」（用户输入 > 默认字频），实际: %+v",
+			firstTexts(allCandidates(s, comp), 6))
+	}
+}
+
+// TestUserWordPriorityStillGuardsFullPinyinOverSegment：全拼输入的超段仲裁
+// 不能被「用户词优先」破坏——学过「好家伙」后输入 hao，「好」仍是首选。
+func TestUserWordPriorityStillGuardsFullPinyinOverSegment(t *testing.T) {
+	udPath := filepath.Join(t.TempDir(), "user.json")
+	d := mustCommonDict(t)
+	u := mustUserDict(t, udPath)
+	if err := u.BumpWord("好家伙", []string{"hao", "jia", "huo"}); err != nil {
+		t.Fatalf("学习「好家伙」失败: %v", err)
+	}
+	s := NewSession(d, u)
+	comp := mustComp(s, "hao")
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "好" {
+		t.Fatalf("全拼 hao 的首选应仍是「好」（超段仲裁），实际: %+v",
+			firstTexts(allCandidates(s, comp), 6))
+	}
+}

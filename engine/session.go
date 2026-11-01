@@ -1423,8 +1423,15 @@ func (s *Session) compose() Composition {
 	mistakeInput := hasCommonMistakeCluster(s.input)
 	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
 	inputSegs := 0
+	inputHasInitials := false
 	if len(tokenPatterns) > 0 {
 		inputSegs = len(tokenPatterns[0])
+		for _, tok := range tokenPatterns[0] {
+			if !tok.IsExact {
+				inputHasInitials = true
+				break
+			}
+		}
 	}
 	typoAdded := make(map[string]bool)
 	typoPhraseAdded := make(map[string]bool)
@@ -1989,8 +1996,9 @@ func (s *Session) compose() Composition {
 	}
 
 	// 排序键（从高到低）：① 常规匹配层优先于逐级回退层；② 输入完全消耗的
-	// 候选优先于超段候选（音节超段仲裁）；③ 用户数据加权候选优先；
-	// ④ 匹配层级（rank）；⑤ 综合得分、词长、字典序。
+	// 候选优先于超段候选（音节超段仲裁，仅对全拼输入生效）；③ 用户数据
+	// 加权候选优先（用户输入 > 默认字频）；④ 匹配层级（rank）；
+	// ⑤ 综合得分、词长、字典序。
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i].cand, items[j].cand
 		aRank, bRank := items[i].rank, items[j].rank
@@ -2007,7 +2015,12 @@ func (s *Session) compose() Composition {
 		// 「好家伙」占据、单字「好」退到第 5 位。准确匹配用户输入是硬约束，
 		// 调频只在「同为全消耗」的候选之间决定先后；联想延伸交由上屏后的
 		// 联想区域展示（见 associate）。
-		if inputSegs > 0 {
+		// 简拼/混拼的 token 数不是音节数（每个声母可展开成整个音节），
+		// 用「候选音节数 > token 数」判超段会把学过的长词（ysfa → 原生方案）
+		// 错误地压到默认短词后面。这类输入由 rankInitialExact <
+		// rankInitialPrefix 保证「先完整匹配、后偏长词」，用户词再由下面的
+		// FromUser 键优先。超段仲裁只对全拼输入（token 全是完整音节）生效。
+		if inputSegs > 0 && !inputHasInitials {
 			aOver := strings.Count(a.Syllables, "'")+1 > inputSegs
 			bOver := strings.Count(b.Syllables, "'")+1 > inputSegs
 			if aOver != bOver {
