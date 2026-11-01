@@ -108,7 +108,7 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 
 ```bash
 cd shims/macos
-./verify.sh                    # 退出码 0=通过（反例：旧实现恒返回 0，不能只看退出码）
+./verify.sh                    # 退出码 0=通过
 ./tests/equivalence.sh         # A 同源 / B 导入等价 / C 判定等价 / D 图标 / E 渲染尺寸 / F 双端视觉
 ./build/tis dedupe             # TIS 重复实例合并
 ```
@@ -118,7 +118,7 @@ cd shims/macos
 ### 本地只跑轻量项，重活交给 CI
 
 提交前本地只需 `gofmt -l $(git ls-files '*.go')` 与 `go build ./...`（秒级）。
-其余由 6 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build / windows-build（windows-build 于 2026-10-31 起进 CI）。
+其余由 6 个并行 job 覆盖：lint / test / race / linux-e2e / macos-build / windows-build。
 
 ### 踩坑：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
 
@@ -144,5 +144,5 @@ may experience longer queue times"。macos-build 排队几分钟是正常现象�
 操作；而 GitHub runner 本身就是一次性 VM，再套 docker 要多花 1-3 分钟拉镜像、
 装 ibus。`test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
 
-**在本机用 docker 预演这套 E2E 会很慢**（2026-10-26 实测：apt 装 ibus 在容器里
-花了 10 分钟仍未完成），不值得——直接推 CI 跑，实测 38 秒出结果。
+**在本机用 docker 预演这套 E2E 会很慢**（验证：apt 装 ibus 在容器里
+10 分钟仍未完成），不值得——直接推 CI 跑（约 38 秒出结果）。
