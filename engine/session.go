@@ -22,9 +22,9 @@ type Candidate struct {
 	// Candidate 结构体大小保持 72 字节不变——候选切片在排序里反复交换复制，
 	// 一个标记字段不能让它变大（否则每次组词都多付一份内存带宽）。
 	typoFix bool
-	// Segments 仅「整句式」候选携带：用户确认过的分段词文本（DP 整句候选
-	// 来自其切分词序列，学习记录候选来自 Words 的 Segs）。壳不需要它；
-	// 引擎用它把「一键整句上屏」按逐段确认的等价路径学习。
+	// Segments 仅「整句式」候选携带：用户确认过的分段词文本（来自学习记录
+	// Words 的 Segs）。壳不需要它；引擎用它把「整句候选上屏」按逐段确认的
+	// 等价路径学习。
 	Segments []string `json:"segments,omitempty"`
 }
 
@@ -1211,8 +1211,8 @@ func (s *Session) compose() Composition {
 			if r < items[prev].rank {
 				items[prev].rank = r
 			}
-			// 同一词条可能先由词典/DP 路径加入（无分段）、后由学习记录
-			// 加入（有分段）：补全分段，保证上屏学习走整句式路径。
+			// 同一词条可能先由词典路径加入（无分段）、后由学习记录加入
+			// （有分段）：补全分段，保证上屏学习走整句式路径。
 			if len(items[prev].cand.Segments) == 0 && len(segs) > 0 {
 				items[prev].cand.Segments = segs
 			}
@@ -1241,11 +1241,14 @@ func (s *Session) compose() Composition {
 	//
 	// rankContinuationLead 是兜底：输入压根无法切成干净音节时（quanmia 只能切成
 	// quan'mi'a），同层候选全是「全米啊」这类碎片假词，必须由续接领跑。
+	//
+	// 候选只来自「已存在的词」：词典词条 / 用户词库 / 学习记录（含用户
+	// 确认过的整句分段记录）。引擎不做多词 DP 拼合造词——nihaoma 不生成
+	// 「你号码」、womende 不生成「我们的」（2026-11-01 用户要求：词库里
+	// 没有的复合词宁可让用户逐段/逐字挑选，也不要引擎自己拼出来）。
 	const (
 		rankExact            = iota // 全拼单词完全匹配（如 jingchang -> 经常，ba -> 把）
-		rankSentence                // 全拼多词 DP 拼接复合候选（如 womende -> 我们的）
 		rankInitialExact            // 简拼/混拼单词完全匹配（如 zg -> 中国，bj -> 北京，jsj -> 计算机，rmb -> 人民币，zhongg -> 中国）
-		rankInitialSentence         // 简拼/混拼多词 DP 拼接复合候选（如 wmd/womd -> 我们的）
 		rankContinuation            // 末段残缺续接（zhonggu → 中国，daxu → 大学）
 		rankInitialPrefix           // 简拼偏长词（如 zg -> 中国人民，中关村）
 		rankPrefix                  // 全拼偏长词续接（如 jing -> 经济）
@@ -1388,9 +1391,9 @@ func (s *Session) compose() Composition {
 	// （enumerateAllTokens 按最长音节优先产出）即可代表该修正串，不再枚举
 	// 所有歧义切分。这样每个修正串只做一次线性遍历 + 一次词典查询。
 	// typoSuspicious 同时决定两件事：① 是否生成纠错候选；② 常规路径是否
-	// 做昂贵的 DP 整句与 prefix 收集——碎片输入的这些产物（zhogn 的
-	// 「中欧国内」「中欧个」）最终都会被纠错候选压掉，却花费数毫秒
-	// （实测 zhogn 单键 6ms 里常规路径占九成），是打错字瞬间卡顿的来源。
+	// 做昂贵的 prefix 收集——碎片输入的这些产物（zhogn 的「中欧个」）最终
+	// 都会被纠错候选压掉，却花费数毫秒（实测 zhogn 单键 6ms 里常规路径占
+	// 九成），是打错字瞬间卡顿的来源。
 	typoSuspicious := misspelledFromPatterns(s.input, tokenPatterns)
 	// 中间孤立声母形态：最优切分里「非末位」出现单字母声母碎片
 	// （zhengchagn → zheng'cha'g'n，g 夹在两个完整音节之间）。可能是相邻
@@ -1514,30 +1517,6 @@ func (s *Session) compose() Composition {
 					}
 					addCandidate(e, e.Freq+boost, boost > 0, rankExact)
 				}
-				// 整句合成（DP）仅在最少音节数（即未将拼音过度碎片化）的切分路径上执行，
-				// 避免生成如「看以西啊」(4音节) 压过「看一下」(3音节)、「地安娜哦上」(5音节) 压过「电脑上」(3音节)
-				if !typoSuspicious && len(qp) == minPatternLen && len(qp) >= 2 {
-					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
-						if len(sc.Words) > 1 {
-							boost := 0
-							fromUser := false
-							if s.user != nil {
-								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
-								if boost > 0 {
-									fromUser = true
-								}
-							}
-							e := &Entry{
-								Word:      sc.Text,
-								Syllables: sc.Syllables,
-								Freq:      sc.Score,
-								Segs:      append([]string(nil), sc.Words...),
-							}
-							addCandidate(e, sc.Score+boost, fromUser, rankSentence)
-						}
-					}
-				}
-
 				for _, e := range prefixes {
 					boost := 0
 					if s.user != nil {
@@ -1553,28 +1532,6 @@ func (s *Session) compose() Composition {
 						boost = s.user.Score(e.Word, e.Syllables, s.prev)
 					}
 					addCandidate(e, e.Freq+boost, boost > 0, rankInitialExact)
-				}
-				if !typoSuspicious && len(qp) == minPatternLen && len(qp) >= 2 {
-					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, qp, 6) {
-						if len(sc.Words) > 1 {
-							avgScore := sc.Score / len(sc.Words)
-							boost := 0
-							fromUser := false
-							if s.user != nil {
-								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
-								if boost > 0 {
-									fromUser = true
-								}
-							}
-							e := &Entry{
-								Word:      sc.Text,
-								Syllables: sc.Syllables,
-								Freq:      avgScore,
-								Segs:      append([]string(nil), sc.Words...),
-							}
-							addCandidate(e, avgScore+boost, fromUser, rankInitialSentence)
-						}
-					}
 				}
 				for _, e := range prefixes {
 					boost := 0
@@ -1670,28 +1627,6 @@ func (s *Session) compose() Composition {
 						boost = s.user.Score(e.Word, e.Syllables, s.prev)
 					}
 					addCandidate(e, e.Freq+boost, boost > 0, r)
-				}
-				if drop == 1 && len(shorter) >= 2 && len(qp) == minPatternLen {
-					for _, sc := range FindSentenceCandidatesTokens(s.dict, s.user, shorter, 4) {
-						if len(sc.Words) > 1 {
-							r := rankBackoff + drop + 1
-							boost := 0
-							fromUser := false
-							if s.user != nil {
-								boost = s.user.Score(sc.Text, sc.Syllables, s.prev)
-								if boost > 0 {
-									fromUser = true
-								}
-							}
-							e := &Entry{
-								Word:      sc.Text,
-								Syllables: sc.Syllables,
-								Freq:      sc.Score,
-								Segs:      append([]string(nil), sc.Words...),
-							}
-							addCandidate(e, sc.Score+boost, fromUser, r)
-						}
-					}
 				}
 				if s.user != nil {
 					uExacts := s.user.QueryTokensExact(shorter, 5)
@@ -1802,10 +1737,9 @@ func (s *Session) compose() Composition {
 		}
 	}
 
-	//   ④ 简拼低频单字 vs 高频整句权衡：当简拼命中极低频词（Freq<20，如 wmd 命中「无目的」）
-	//      而复合句得分极高（Score>=100，如「我们的」），优先展示高频整句；
-	//   ⑤ 整句候选音节数仲裁：对于字符数相同的整句候选，音节数较少（音节更长、未碎片化）的优先（如「看一下」优于「看以西啊」）；
-	//   ⑥ 综合得分、词长、字典序。
+	// 排序键（从高到低）：① 常规匹配层优先于逐级回退层；② 输入完全消耗的
+	// 候选优先于超段候选（音节超段仲裁）；③ 用户数据加权候选优先；
+	// ④ 匹配层级（rank）；⑤ 综合得分、词长、字典序。
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i].cand, items[j].cand
 		aRank, bRank := items[i].rank, items[j].rank
@@ -1833,20 +1767,7 @@ func (s *Session) compose() Composition {
 			return a.FromUser
 		}
 		if aRank != bRank {
-			if aRank == rankInitialExact && bRank == rankInitialSentence && a.Score < 20 && b.Score >= 100 {
-				return false
-			}
-			if bRank == rankInitialExact && aRank == rankInitialSentence && b.Score < 20 && a.Score >= 100 {
-				return true
-			}
 			return aRank < bRank
-		}
-		if aRank == rankSentence && bRank == rankSentence && len([]rune(a.Text)) == len([]rune(b.Text)) {
-			aCount := strings.Count(a.Syllables, "'")
-			bCount := strings.Count(b.Syllables, "'")
-			if aCount != bCount {
-				return aCount < bCount
-			}
 		}
 		if a.Score != b.Score {
 			return a.Score > b.Score

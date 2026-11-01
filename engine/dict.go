@@ -253,7 +253,7 @@ func (d *Dictionary) walkTokens(tokens []Token) []*dictNode {
 }
 
 // QueryTokensExact 返回音节数恰好等于 len(tokens) 的完全匹配词条（按词频降序，最多 maxResults 条）。
-// 不遍历子树，专供整句规划（DP）与逐级回退等高频路径极速调用。
+// 不遍历子树，专供逐级回退 / 末段续接 / 用户词库查询等高频路径极速调用。
 func (d *Dictionary) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 	if maxResults <= 0 {
 		maxResults = 50

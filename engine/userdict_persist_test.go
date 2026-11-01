@@ -29,7 +29,8 @@ func TestSelectCommitsEvenWhenPersistenceFails(t *testing.T) {
 	u.SetDeferred(false) // 立即落盘模式，确保失败路径被触发
 
 	s := NewSession(d, u)
-	mustInput(t, s, "danwei")
+	// evoDict 里没有「单位」：打单音节 dan 选「单」，验证落盘失败时学习仍生效。
+	mustInput(t, s, "dan")
 
 	// 让落盘必然失败：把目录改成只读（macOS/Linux 上普通用户无法在其中建临时文件）
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -48,7 +49,7 @@ func TestSelectCommitsEvenWhenPersistenceFails(t *testing.T) {
 		t.Fatalf("上屏后组词状态应清空，实际 input=%q", s.Compose().Input)
 	}
 	// 学习数据在内存里应已生效（即使没落盘成功）
-	if got := u.Score(text, []string{"dan", "wei"}, ""); got == 0 {
+	if got := u.Score(text, []string{"dan"}, ""); got == 0 {
 		t.Fatalf("学习数据应在内存中生效，Score 得到 0")
 	}
 }

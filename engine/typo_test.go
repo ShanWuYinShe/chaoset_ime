@@ -86,7 +86,7 @@ func TestTypoCorrectionDoesNotDisturbNormalInputs(t *testing.T) {
 		// 混拼（完整音节 + 末段声母）
 		{"zhongg", "中国"},
 		{"chifanl", "吃饭"},
-		{"womd", "我们的"},
+		{"womd", "我们"}, // 半截末段走回退：最长已有词前缀「我们」；「我们的」不是词典词
 		// 正常全拼
 		{"nihao", "你好"},
 		{"jingchang", "经常"},

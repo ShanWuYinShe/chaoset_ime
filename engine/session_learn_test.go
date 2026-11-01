@@ -242,7 +242,8 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 	}
 	s := NewSession(d, user)
 
-	// 用户上屏「不行」多次（调频），再上屏「不行的话」作为一条整句词条
+	// 用户上屏「不行」多次（调频），再逐段渐进上屏「不行」+「的话」
+	// （2026-11-01 起没有 DP 整句候选，逐段选择是学习整句短语的唯一路径）
 	for i := 0; i < 3; i++ {
 		s.Input("buxing")
 		if _, err := s.Select(0); err != nil {
@@ -250,8 +251,15 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 		}
 	}
 	s.Input("buxingdehua")
-	if _, err := s.Select(0); err != nil {
-		t.Fatalf("Select 整句失败: %v", err)
+	idx := findCandidate(t, s, "不行")
+	if _, _, err := s.SelectPrefix(idx); err != nil {
+		t.Fatalf("渐进选「不行」失败: %v", err)
+	}
+	if _, _, err := s.SelectPrefix(findCandidate(t, s, "的话")); err != nil {
+		t.Fatalf("渐进选「的话」失败: %v", err)
+	}
+	if got := s.Compose().Input; got != "" {
+		t.Fatalf("逐段拼完后组词应为空，实际 %q", got)
 	}
 
 	// 新会话（模拟跨应用/重启）：上屏「不行」→ 联想应含「不行的话」

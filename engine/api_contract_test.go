@@ -56,22 +56,6 @@ func TestPageSizeContract(t *testing.T) {
 	}
 }
 
-// TestFindSentenceCandidatesWrapper：公共包装与 Tokens 版本行为一致。
-func TestFindSentenceCandidatesWrapper(t *testing.T) {
-	d := mustCommonDict(t)
-	cands := FindSentenceCandidates(d, nil, []string{"wo", "men", "de"}, 6)
-	found := false
-	for _, c := range cands {
-		if c.Text == "我们的" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("FindSentenceCandidates(wo'men'de) 应含「我们的」，实际 %+v", cands)
-	}
-}
-
 // TestQueryPhrasesPrefixContract：用户合成词组按音节前缀查询（联想用）。
 func TestQueryPhrasesPrefixContract(t *testing.T) {
 	u := mustUserDict(t, "")

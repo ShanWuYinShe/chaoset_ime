@@ -75,9 +75,12 @@ func TestContinuationKeepsCommonInputs(t *testing.T) {
 		{"ba", "把"},
 		{"jing", "经"},
 		{"xian", "现"}, // 2026-10-29 词库换用 Jun Da 字频 + jieba 融合：现(#70) 比 先(#188) 常用
-		{"chifanle", "吃饭了"},
-		{"kanyixia", "看一下"},
-		{"diannaoshang", "电脑上"},
+		// 多音节输入没有整词词条时首选是「最长已有词前缀」，续接逻辑不得插队
+		// （「吃饭了/看一下/电脑上」这类复合词自 2026-11-01 起不再由引擎拼合，
+		// 用户逐段上屏即可；见 sentence_test.go 的造词禁令回归）。
+		{"chifanle", "吃饭"},
+		{"kanyixia", "看"},
+		{"diannaoshang", "电脑"},
 	}
 	for _, c := range cases {
 		s.Reset()

@@ -32,7 +32,7 @@ func bumpN(t *testing.T, n int, f func() error) {
 
 // 回归测试：QueryTokensExact 必须能查到 BumpWord 记录的调频词。
 // 历史缺陷：查询侧用 "\t" 拆分 userKey 生成的 "词\x00音节" 键，
-// 拆分恒失败导致整个循环体 continue，简拼与整句 DP 路径永远看不到用户调频词。
+// 拆分恒失败导致整个循环体 continue，简拼/混拼路径永远看不到用户调频词。
 func TestUserDictQueryTokensExactFindsBumpedWord(t *testing.T) {
 	u, _ := newQueryTestUserDict(t)
 	bumpN(t, 3, func() error { return u.BumpWord("中国", []string{"zhong", "guo"}) })

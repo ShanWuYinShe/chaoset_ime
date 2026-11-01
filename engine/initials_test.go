@@ -2,6 +2,7 @@ package engine
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,7 +72,9 @@ func TestMixedPinyin(t *testing.T) {
 	}{
 		{"zhongg", "中国"},
 		{"beij", "北京"},
-		{"womd", "我们的"},
+		// 混拼末段是完整音节时，最长已有词前缀「我们」领跑；「我们的」不在
+		// 词典里，自 2026-11-01 起不再由引擎拼合（见 sentence_test.go）。
+		{"womd", "我们"},
 	}
 
 	for _, c := range cases {
@@ -88,29 +91,31 @@ func TestMixedPinyin(t *testing.T) {
 		}
 	}
 
-	// chifanl 混拼中应同时包含已完成的「吃饭」与续接的「吃饭了」
+	// chifanl 混拼：已完整的「吃饭」可达；但「吃饭了」不在词典里，
+	// 不属于「已存在的词」，不得由引擎拼合出来（2026-11-01 用户要求）。
 	s.Reset()
-	comp, err := s.Input("chifanl")
+	compChifan, err := s.Input("chifanl")
 	if err != nil {
 		t.Fatalf("Input chifanl 失败: %v", err)
 	}
-	hasChifan, hasChifanle := false, false
-	for _, cand := range comp.Candidates {
-		if cand.Text == "吃饭" {
-			hasChifan = true
-		}
-		if cand.Text == "吃饭了" {
-			hasChifanle = true
-		}
+	all := allCandidates(s, compChifan)
+	if !hasCandidate(all, "吃饭") {
+		t.Fatalf("chifanl 候选应包含已完整的「吃饭」，实际候选: %+v", all[:min(6, len(all))])
 	}
-	if !hasChifan || !hasChifanle {
-		t.Fatalf("chifanl 候选应同时包含「吃饭」与「吃饭了」，实际候选: %+v", comp.Candidates)
+	for _, cand := range all {
+		if cand.Text == "吃饭了" {
+			t.Fatalf("chifanl 候选不应包含拼合造词「吃饭了」: %+v", all[:min(6, len(all))])
+		}
 	}
 }
 
-// 测试简拼通过动态规划生成复合整句（如 wmd -> 我们的）。
-func TestInitialsSentenceComposition(t *testing.T) {
-	s := NewSession(mustCommonDict(t), nil)
+// 简拼不再用动态规划拼复合整句（2026-11-01 用户要求）：
+// wmd 的候选全部来自词典，首选是能完整匹配简拼序列的词典词「无目地」
+// （词频 9，属真实词条）；「我们的」不在词典里，不得出现。
+// 用户真正常打的「我们」通过逐级回退可达，选中后剩余 d 继续组词。
+func TestInitialsNoComposedSentence(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
 
 	comp, err := s.Input("wmd")
 	if err != nil {
@@ -119,8 +124,25 @@ func TestInitialsSentenceComposition(t *testing.T) {
 	if len(comp.Candidates) == 0 {
 		t.Fatalf("wmd 应出候选，实际无候选")
 	}
-	if comp.Candidates[0].Text != "我们的" {
-		t.Fatalf("wmd 第一候选 = %q, 期望「我们的」（候选列表: %+v）", comp.Candidates[0].Text, comp.Candidates)
+	// 正向：已有词「我们」可达。简拼形态无法逐音节消费（w/m/d 与 wo'men
+	// 逐字对不上），SelectPrefix 按既有回退语义整串上屏、组词清空。
+	idx := findCandidate(t, s, "我们")
+	rest, committed, err := s.SelectPrefix(idx)
+	if err != nil || committed != "我们" {
+		t.Fatalf("渐进选「我们」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "" || len(rest.Candidates) != 0 {
+		t.Fatalf("简拼选「我们」应整串上屏，剩余组词应为空，实际 %+v", rest)
+	}
+
+	// 反向：全部候选必须能在词典找到出处，且不得出现「我们的」这类造词。
+	s.Reset()
+	all := allCandidates(s, mustComp(s, "wmd"))
+	assertAllCandidatesInDict(t, d, "wmd", all)
+	for _, cand := range all {
+		if cand.Text == "我们的" {
+			t.Fatalf("wmd 候选不应包含拼合造词「我们的」: %+v", all[:min(6, len(all))])
+		}
 	}
 }
 
@@ -226,8 +248,10 @@ func TestInitialsUserLearning(t *testing.T) {
 	}
 }
 
-// 测试用户词库中单字频繁使用时，简拼复合句依然优先输出高频多字词组（如 wmd 优先输出「我们的」，而非碎字「我没的」）。
-func TestInitialsUserDictSingleCharSuppression(t *testing.T) {
+// 用户高频学过的单字不得把简拼候选挤成碎片：wmd 里可以出现用户学过的
+// 「我/没/的」单字候选（用户词库是合法来源），但不得拼成「我没的」这类
+// 造词，也不得把「完整消耗简拼序列」的词典词挤出首选。
+func TestInitialsUserDictSinglesDoNotFragment(t *testing.T) {
 	udPath := filepath.Join(t.TempDir(), "user_wmd.json")
 	d := mustCommonDict(t)
 	u := mustUserDict(t, udPath)
@@ -247,9 +271,17 @@ func TestInitialsUserDictSingleCharSuppression(t *testing.T) {
 	if len(comp.Candidates) == 0 {
 		t.Fatalf("wmd 应出候选，实际无候选")
 	}
-	if comp.Candidates[0].Text != "我们的" {
-		t.Fatalf("存在高频单字学习记录时，wmd 第一候选仍应为「我们的」，实际得到 %q (候选列表: %+v)",
-			comp.Candidates[0].Text, comp.Candidates)
+	all := allCandidates(s, comp)
+	assertAllCandidatesInDict(t, d, "wmd", all)
+	// ① 不允许把学习过的单字拼成复合候选（造词禁令对用户数据同样生效）
+	for _, cand := range all {
+		if cand.Text == "我没的" || cand.Text == "我们的" {
+			t.Fatalf("wmd 候选不应包含拼合造词 %q: %+v", cand.Text, all[:min(6, len(all))])
+		}
+	}
+	// ② 首选必须是完整消耗三段简拼（3 音节）的词典词，而不是单字碎片
+	if got := strings.Count(all[0].Syllables, "'") + 1; got != 3 {
+		t.Fatalf("wmd 首选应完整消耗 3 段简拼，实际首选 %+v（全部候选: %+v）", all[0], all[:min(6, len(all))])
 	}
 }
 

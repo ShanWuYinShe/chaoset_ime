@@ -92,7 +92,9 @@ func TestProgressiveSequenceLearned(t *testing.T) {
 	d := mustSeqDict(t)
 	s := NewSession(d, mustUserDict(t, path))
 
-	// 输入条件：整句 DP 候选「今天星期一」与回退前缀「今天」都能选。
+	// 输入条件：整串没有整词候选（词库里只有 今天/星期一/今），用户按回退
+	// 前缀「今天」渐进上屏，再选剩余串首选「星期一」——这是 2026-11-01 移除
+	// DP 拼合造词后拼出整句的唯一路径（不存在「一键整句」候选）。
 	s.Input("jintianxingqiyi")
 	idx := findCandidate(t, s, "今天")
 	comp, committed, err := s.SelectPrefix(idx)
@@ -151,35 +153,50 @@ func TestProgressiveSequenceLearned(t *testing.T) {
 	}
 }
 
-// TestOneShotSentenceLearnsSegments 覆盖：一次选中整句候选（干货路径）
-// 按逐段确认的等价路径学习——整句带分段、分段词各自调频。
-func TestOneShotSentenceLearnsSegments(t *testing.T) {
+// TestWholeSentenceSelectionLearnsSegments 覆盖：用户选中**已学过的整句候选**
+// 时按逐段确认的等价路径学习——整句记录保留分段、分段词各自调频。
+//
+// 2026-11-01 起引擎不再用 DP 拼合整句，整句候选只来自学习记录（或旧数据）。
+// 这里用 BumpWordWithSegs 预置一条带分段的整句记录（等价于用户此前逐段
+// 输入固化下来的习惯），验证再次一键选中它时的学习语义。
+func TestWholeSentenceSelectionLearnsSegments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "user.json")
 	d := mustSeqDict(t)
-	s := NewSession(d, mustUserDict(t, path))
+	u := mustUserDict(t, path)
+	wholeSylls := []string{"jin", "tian", "xing", "qi", "yi"}
+	if err := u.BumpWordWithSegs("今天星期一", wholeSylls, []string{"今天", "星期一"}); err != nil {
+		t.Fatalf("预置整句学习记录失败: %v", err)
+	}
+	s := NewSession(d, u)
 
 	s.Input("jintianxingqiyi")
 	comp := s.Compose()
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天星期一" {
 		t.Fatalf("整句候选应为首页第一条，实际 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
 	}
+	if !comp.Candidates[0].FromUser {
+		t.Errorf("整句候选应带 FromUser 标记")
+	}
 	if got := comp.Candidates[0].Segments; len(got) != 2 || got[0] != "今天" || got[1] != "星期一" {
 		t.Fatalf("整句候选应携带分段 [今天 星期一]，实际 %#v", got)
 	}
-	if _, _, err := s.SelectPrefix(0); err != nil {
-		t.Fatalf("SelectPrefix 失败: %v", err)
+	if _, err := s.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
 	}
 
-	u := mustUserDict(t, path)
-	rec := u.file.Words[userKey("今天星期一", []string{"jin", "tian", "xing", "qi", "yi"})]
+	u2 := mustUserDict(t, path)
+	rec := u2.file.Words[userKey("今天星期一", wholeSylls)]
 	if rec == nil || len(rec.Segs) != 2 {
-		t.Fatalf("整句一键上屏应写入带分段的整句记录，实际 %+v", rec)
+		t.Fatalf("整句一键上屏应保留带分段的整句记录，实际 %+v", rec)
+	}
+	if rec.Count != 2 {
+		t.Fatalf("整句记录使用次数应为 2（预置 1 + 本次上屏 1），实际 %d", rec.Count)
 	}
 	for _, seg := range []struct {
 		word  string
 		sylls []string
 	}{{"今天", []string{"jin", "tian"}}, {"星期一", []string{"xing", "qi", "yi"}}} {
-		if got := u.file.Words[userKey(seg.word, seg.sylls)]; got == nil || got.Count != 1 {
+		if got := u2.file.Words[userKey(seg.word, seg.sylls)]; got == nil || got.Count != 1 {
 			t.Fatalf("整句一键上屏应等价学习分段词 %q，实际 %+v", seg.word, got)
 		}
 	}
@@ -321,19 +338,33 @@ func TestSelectPrefixResetsPage(t *testing.T) {
 	if _, err := s.Input("jintianxingqiyi"); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
-	idx := findCandidate(t, s, "今天") // 内部翻页，停在第 2 页
-	if s.Compose().Page == 0 {
-		t.Fatalf("前置失败：「今天」应在第 2 页及以后（实际首页即命中），无法验证翻页重置")
+	// 长输入的首音节单字兜底有多页：翻到第 2 页再选，才能真正验证「回第 1 页」。
+	comp := s.Compose()
+	if comp.PageCount < 2 {
+		t.Fatalf("前置失败：jintianxingqiyi 候选应多于 1 页，实际 pageCount=%d", comp.PageCount)
 	}
-	rest, committed, err := s.SelectPrefix(idx)
-	if err != nil || committed != "今天" {
-		t.Fatalf("SelectPrefix 失败: committed=%q err=%v", committed, err)
+	for s.Compose().Page < 1 {
+		if _, err := s.NextPage(); err != nil {
+			t.Fatalf("NextPage 失败: %v", err)
+		}
+	}
+	pageTwo := s.Compose()
+	if len(pageTwo.Candidates) == 0 {
+		t.Fatalf("第 2 页应至少 1 条候选")
+	}
+	want := pageTwo.Candidates[0].Text
+	rest, committed, err := s.SelectPrefix(0)
+	if err != nil || committed != want {
+		t.Fatalf("SelectPrefix 失败: committed=%q（期望 %q）err=%v", committed, want, err)
 	}
 	if rest.Page != 0 {
 		t.Fatalf("渐进上屏后剩余组词应回到第一页，实际 page=%d", rest.Page)
 	}
-	if rest.Candidates[0].Text != "星期一" {
-		t.Fatalf("剩余首页首选应为「星期一」，实际 %+v", rest.Candidates[:min(3, len(rest.Candidates))])
+	if rest.Input == "" {
+		t.Fatalf("第 2 页选单字后应仍有剩余输入（正在验证回第 1 页），实际整串被消费")
+	}
+	if len(rest.Candidates) == 0 {
+		t.Fatalf("剩余组词应回到第一页并有候选，实际无候选")
 	}
 }
 

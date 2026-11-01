@@ -274,13 +274,14 @@ func TestCommonDictInitialsRecall(t *testing.T) {
 func TestCommonDictLongPinyinFirstSyllableFullRecall(t *testing.T) {
 	d := mustCommonDict(t)
 	cases := []struct {
-		input    string
-		firstSyl string
-		word     string
+		input     string
+		firstSyl  string
+		word      string
+		wantFirst string // 首选：最长已有词前缀；没有前缀词组时才是首音节单字
 	}{
-		{"changjiangdadao", "chang", "长"},         // 4 音节
-		{"woaichangcheng", "wo", "我"},             // 4 音节（wo 共 31 个同音字）
-		{"changjiangdadaodexingqi", "chang", "长"}, // 7 音节
+		{"changjiangdadao", "chang", "长", "长江"},         // 4 音节
+		{"woaichangcheng", "wo", "我", "我"},              // 4 音节（wo 共 31 个同音字；无前缀词组）
+		{"changjiangdadaodexingqi", "chang", "长", "长江"}, // 7 音节
 	}
 	for _, c := range cases {
 		wantSingles := len(d.QueryTokensExact([]Token{{Text: c.firstSyl, IsExact: true}}, 500))
@@ -310,10 +311,17 @@ func TestCommonDictLongPinyinFirstSyllableFullRecall(t *testing.T) {
 		if !found {
 			t.Errorf("%s: 候选里必须有「%s」（用户反馈场景）", c.input, c.word)
 		}
-		// 反向：首音节单字只是逐字挑选的兜底，不得压过「输入完全消耗」的
-		// 整词/整句候选（2026-10-25 用户反馈：部分消费单字不得占首选）。
-		if len(all) > 0 && !strings.Contains(all[0].Syllables, "'") {
-			t.Errorf("%s: 首选不应是只消耗首音节的单字，实际 %q", c.input, all[0].Text)
+		// 反向：首音节单字只是逐字挑选的兜底。「最长已有词前缀」存在时它
+		// 必须领跑；整串没有任何前缀词组时才轮到首音节单字（用户 2026-11-01
+		// 明确要求：没有词组就回到拆成单字逐个匹配）。
+		// 2026-11-01 移除 DP 拼合造词后，「部分消费单字不得占首选」只在有前缀
+		// 词时成立——woaichangcheng 没有多音节前缀词，首选就是「我」。
+		if len(all) == 0 {
+			t.Errorf("%s: 应有候选", c.input)
+			continue
+		}
+		if got := all[0].Text; got != c.wantFirst {
+			t.Errorf("%s: 首选 = %q, 期望 %q（候选: %+v）", c.input, got, c.wantFirst, all[:min(6, len(all))])
 		}
 	}
 }
