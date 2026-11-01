@@ -213,6 +213,7 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 	</array>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
+	<key>ProcessType</key><string>Interactive</string>
 </dict>
 </plist>
 ```
@@ -220,6 +221,12 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 ```sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 ```
+
+**QoS（高负载打字卡顿）**：LaunchAgent 不声明 `ProcessType` 时默认按 Background
+调度，系统高负载下 daemon 的 IPC 会被 CPU 节流，表现为打字卡顿/偶发丢首字母。
+必须保留 `ProcessType=Interactive`（`install.sh` 会写入并用 `grep` 断言，删除即回归）。
+8 核满载实测：声明前 IPC p99 452ms、最大 775ms、27 次 >250ms 超时；声明后
+p99 17–20ms、最大 31–57ms、0 次超时；空闲 p99 约 7ms 不变。
 
 `-log` 让 launchd 下的 daemon 日志落到
 `~/Library/Application Support/chaoset/chaosetd.log`（2026-10-31 补；此前

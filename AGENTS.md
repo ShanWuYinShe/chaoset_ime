@@ -82,7 +82,7 @@ go build ./...                    # 秒级
 
 改动 `engine/` 里任何「输入串 → 候选列表」的逻辑（切分、匹配层级、排序打分、
 续接预测）前，**必须先量化基线再改**，流程与打分陷阱见项目技能
-`.agents/skills/pinyin-quality-tuning/SKILL.md`。三条硬约束：
+`.agents/skills/pinyin-quality-tuning/SKILL.md`。以下硬约束：
 
 - 排序改动必须给出**前后对比数据**（命中率/首选率），不得以「看起来更合理」为由提交；
 - 回归测试必须**双向**：既证明新能力生效，也证明不反噬既有行为
@@ -95,6 +95,19 @@ go build ./...                    # 秒级
   得给出「天星期一」。改动学习/联想/候选生成逻辑后必须保留
   `engine/sequence_learn_test.go` 的双向回归（完整输入学到的整句可用 +
   部分输入不反噬「今天」）。
+- **当前候选/排序硬约束**（改 `engine/` 排序/候选生成必须同时满足）：
+  - 候选只来自真实词条；组合候选只在 `rankComposition`，单字兜底只在
+    `rankSingleBackfill`（列表最末纯单字收尾）；错拼输入不追加单字兜底
+    （保持纠错固定第 3 位）。
+  - 排序键顺序：常规层/回退层 → 超段仲裁（**仅全拼**；用户词按
+    `maxInputSegs`、非用户按首选切分 `inputSegs`；简拼/混拼不判超段）→
+    用户输入 > 默认字频（`FromUser`）→ `rank` → Score/词长/字典序。
+  - 单音节输入 vs 多字词组仍按超段仲裁：`hao` 的「好」不能被学过的「好家伙」
+    挤掉；歧义切分（`tuan`/`tu'an`）下用户学过的词（图案）可排在默认单字
+    （团）前。
+  - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
+    `engine/common_dict_test.go`、`engine/typo_test.go`、
+    `engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。
 
 ## 约束
 

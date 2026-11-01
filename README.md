@@ -112,9 +112,9 @@ data/
   dict_seed.tsv      种子词库（演示/回归用的小词库，词 \t 拼音 \t 词频）
   NOTICE.md          词库数据许可与署名说明（数据 CC BY-SA 4.0，代码 MIT）
 shims/
-  macos/             InputMethodKit 薄壳（Swift，已实现，见其 README；候选窗为壳内原生自绘）
-  windows/           TSF COM 薄壳（已实现，核心层行为级 + DLL 编译级验证）
-  linux/             ibus engine 胶水（已实现，见其 README）
+  macos/             InputMethodKit 薄壳（Swift；候选窗为壳内 AppKit 原生自绘，见其 README）
+  windows/           TSF COM 薄壳（C++；命名管道优先、TCP 回退；壳内 GDI 自绘候选窗）
+  linux/             原生 C++/libibus 薄壳（Unix socket 连 daemon；候选窗为 ibus 原生面板）
 ```
 
 ## 越用越顺手：四层自学习
@@ -195,10 +195,11 @@ shims/
   之后不再出现词组），不改变首选与原有排序。错拼输入除外：纠错候选是主路径，
   单字兜底不参与「纠错固定第 3 位」的排序。
 
-排序按「最长已有词前缀 → 更短前缀 → 首音节单字」：
-`zhonghuarenmingongheguo` 首选「中华」，选掉后剩余串再给「人民」、最后
-「共和国」；`woxiangqubeijingdaxue` 没有前缀词组，逐字给「我/想/去」，
-剩余 `beijingdaxue` 再整词出「北京大学」。
+「最长已有词前缀 → 更短前缀 → 首音节单字」描述的是**逐级回退的匹配顺序**
+（长输入优先出最长前缀词），不是最终排序的全序；完整排序键见下方「引擎候选
+规则速览」。例：`zhonghuarenmingongheguo` 首选「中华」，选掉后剩余串再给
+「人民」、最后「共和国」；`woxiangqubeijingdaxue` 没有前缀词组，逐字给
+「我/想/去」，剩余 `beijingdaxue` 再整词出「北京大学」。
 
 「去掉拼合」不等于「去掉 DP 匹配」：词库里**真实存在**的词条（以及用户学过的
 整句记录）仍会用「输入连写 == 词条标准拼音连写」的 DP/字典树匹配兜底
@@ -224,42 +225,62 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 `engine/typo_test.go`（既有纠错首选不变）、`engine/user_history_test.go`
 （用户历史优先）。
 
-同口径扫描（**旧 jieba 词库**，2026-11-01 词库替换前；新词库指标见「内置词库与
-再生成」）：移除造词后各场景 top1/top3 **持平或上升**（拼合假词原本占着候选前排）：
-
-| 场景 | top1 前 → 后 | top3 前 → 后 | 命中率 前 → 后 |
-|---|---|---|---|
-| `full` | 79.68% → 79.75% | 97.39% → 97.39% | 100% → 100% |
-| `tail1` | 48.80% → 49.01% | 76.18% → 76.39% | 99.38% → 99.38% |
-| `tail2` | 23.61% → **28.14%** | 38.85% → **45.16%** | 82.98% → 82.84% |
-| `initials` | 15.99% → 15.92% | 22.58% → 22.58% | 89.91% → 89.91% |
-| `mixed` | 33.77% → 33.91% | 55.80% → 56.07% | 98.01% → 98.01% |
-
-热路径同时变快（少了一次逐键多词 DP 搜索）：`BenchmarkComposeCommonDict`
-约 25µs/键 → 12µs/键（Apple M1，同机紧邻 A/B 测量）。
+移除拼合造词后，固定口径扫描的 top1/top3 持平或上升（历史对比数据见
+`CHANGELOG.md` v0.3.7；当前词库的基线见下方「实测数据」）。热路径为微秒级
+（少了一次逐键多词 DP 搜索），基准见 `engine/scale_bench_test.go` 的
+`BenchmarkComposeCommonDict`。
 
 ### 引擎候选规则速览（当前）
 
-- **候选来源**：词典 / 用户词库 / 学习记录中的真实词条；首屏不含任何多词
-  拼接产物，组合候选只出现在列表末尾（`rankComposition`）。
-- **匹配层级**：`rankExact`（全拼整词）→ `rankInitialExact`（简拼/混拼）→
-  `rankContinuation`（末音节续接）→ `rankInitialPrefix`/`rankPrefix`（前缀词）
-  → `rankBackoff+drop`（逐级回退前缀）→ `rankComposition`（已有词组合）。
+- **候选来源**：词典 / 用户词库 / 学习记录中的真实词条；不做多词拼合造词。
+  首屏不含组合产物，组合候选只在列表末尾（`rankComposition`）。
+- **生成管线**（从按键到候选列表）：
+  1. 输入切分：全拼 / 简拼 / 混拼 / 歧义多路径（`tokenizeChunk`、
+     `enumerateAllTokens`），模糊音开启时展开变体；
+  2. 连写 DP：`QueryJoinedPinyin` 按「输入连写 == 词条拼音连写」匹配真实长词；
+  3. 常规查询：词典 + 用户词库的精确匹配、前缀词、末段续接
+     （`QueryContinuation`，得分 = 词频 + 用户加权 − `continuationPenalty` ×
+     补全字符数）、逐级回退前缀（每次丢弃末尾一段，最多 6 段）；
+  4. 组合候选：只由已有词段组成，`rankComposition` 层；
+  5. 单字兜底：任何多段非错拼输入，在列表末尾追加首段全量单字
+     （≤`singleSyllableExactLimit`=120，词典 + 用户词库），`rankSingleBackfill` 层；
+  6. 错拼修正：单次编辑 / 连击粘键折叠 / QWERTY 邻键 / 反序归位，命中词按
+     「纠错词频 ≥ 常规候选词频 × `typoPromoteRatio`」提升；
+  7. 排序 → 纠错固定第 3 位 → 分页（每页 `pageSize`=6）。
+- **匹配层级**（数字越小越靠前）：`rankExact`（全拼整词）→
+  `rankInitialExact`（简拼/混拼整词）→ `rankContinuation`（末段续接）→
+  `rankInitialPrefix`（简拼偏长词）→ `rankPrefix`（全拼偏长词）→
+  `rankBackoff+drop`（逐级回退）→ `rankContinuationLead`（无法干净切分时的
+  续接兜底）→ `rankTypoFix`（纠错初始层）→ `rankComposition`（已有词组合）→
+  `rankSingleBackfill`（首段全量单字）。
+- **排序键**（从高到低，改动排序必须保持）：
+  1. 常规层优先于逐级回退层（`rank < rankBackoff`）；
+  2. **超段仲裁（仅全拼输入）**：候选音节数多于输入合法切分的最大段数
+     （`maxInputSegs`）时排后。`tuan` 可切成 `tuan` 或 `tu'an`（最大 2 段），
+     用户学过的「图案」不会被当成超段，排在「团」之前；非用户候选仍按首选切分
+     （`inputSegs`）严格判超段（`nve` 的「女儿」不会压过「虐」）。简拼/混拼的
+     token 数不是音节数，**不做**超段仲裁；
+  3. **用户输入 > 默认字频**：`FromUser` 候选优先（学过的词 / 单字 / 整句记录
+     压过静态词频；与词库冲突时用户历史优先）；
+  4. 匹配层级（rank）；
+  5. 综合得分（词频 + 用户加权 − 续接代价）、词长、字典序。
+  单音节输入 vs 多字词组仍由超段仲裁守门：`hao` 只有 1 段，学过的「好家伙」
+  （3 音节）不会挤掉「好」。
 - **连写 DP 匹配**：`QueryJoinedPinyin` 只为「词库里真实存在的整词」兜底，
   不依赖音节切分枚举上限，也不会造词（西安交通大学这类长词不再漏）。
 - **错拼修正**：单次编辑修正出的词典整词 + （相邻互换/删除类）修正串的分词
   组合；仅当该输入没有任何整词级纠错命中时，组合候选才提升到精确层（最多 8 个）。
   反序双字母（gn/hz/hc/hs/ev 强制；ao/ua/ue 软纠错）走最高置信度归位路径；
-  高置信度纠错候选固定排在候选列表第 3 位起。
-- **用户历史优先**：上屏过的词 / 单字 / 整句记录优先于静态词频；与词库冲突时
-  用户历史优先（`engine/user_history_test.go`）。
+  高置信度纠错候选固定排在候选列表第 3 位起；错拼输入不追加单字兜底。
 - **学习数据删除**：IPC `userDelete` / `chaoset-userdict delete`；候选窗右键
   「删除该词」只删本机学习记录，不动内置/导入词库。
 - **词库**：内置 67k 条常用性门槛词库（方案 A，数据 CC BY-SA 4.0，见
   `data/NOTICE.md`）；手工补充表 `data/dict_extra.tsv`（口语）与
   `data/dict_hot.tsv`（现代/热词，随版本更新）。
 - **回归测试**：候选来源总闸门 `engine/sentence_test.go`、错拼/组合
-  `engine/typo_dp_test.go`、用户历史 `engine/user_history_test.go`、连写匹配
+  `engine/typo_dp_test.go` / `engine/typo_test.go`、用户历史
+  `engine/user_history_test.go`、单字兜底 `engine/short_pinyin_single_test.go` /
+  `engine/initials_test.go`、歧义切分 `engine/initials_test.go`、连写匹配
   `engine/dp_match_test.go`、词库契约 `engine/data_contract_test.go`。
 
 ### ü 的两种写法
@@ -270,22 +291,23 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 
 ### 实测数据（可复现）
 
-```sh
-# 扫描器只读仓库：加载 data/dict_common.tsv，按固定口径统计
-go run ./.workwork/verify/scan    # 该脚本在 .workwork/（gitignore），口径见其文件头注释
-```
+口径固定（扫描器源码在 `.workwork/verify/scan`，`.workwork/` 已 gitignore；
+每次改动前后都用同一份脚本与同一口径）：
 
-词条池 36,496 条（2–4 音节、词频 ≥30、词长 == 音节数），按 step=25 采样 1,460 条：
+- 词条池：`data/dict_common.tsv` 中 2–4 音节、词频 ≥30、词长 == 音节数
+  （当前 26,766 条）；
+- 确定性采样：按 (词, 拼音) 排序后每 25 条取 1 条（当前 1,071 条）；
+- 翻页取全部候选，命中判定同时匹配词与音节序列（`Text` + `Syllables`）。
 
-| 指标 | 改动前 | 改动后 |
-|---|---|---|
-| 末音节残缺**命中率**（去掉最后 1 个字母） | 43.84% | **98.63%** |
-| 末音节残缺**首选率** | 13.49% | **43.42%** |
-| 末音节残缺前 9 位命中率 | 31.92% | **85.41%** |
-| 末音节残缺命中率（去掉最后 2 个字母） | 55.82% | **80.82%** |
-| 全拼完整输入首选率 | 80.75% | 80.68% |
-| 简拼首选率 / 命中率 | 17.53% / 42.67% | 17.53% / 42.67% |
-| 混拼命中率 | 95.27% | **96.44%** |
+当前基线（v0.3.9）：
+
+| 场景 | top1 | top3 | miss | rankAvg |
+|---|---|---|---|---|
+| `full` | 80.02% | 97.67% | 0 | 1.3 |
+| `tail1` | 47.38% | 77.20% | 2 | 2.9 |
+| `tail2` | 30.17% | 57.12% | 6 | 4.2 |
+| `initials` | 9.99% | 17.46% | 73 | 32.9 |
+| `mixed` | 30.16% | 57.70% | 10 | 4.4 |
 
 关键取舍：`continuationPenalty` 取值经过扫描（20 / 25 / 30 / 35 / 40 全跑过），
 30 是唯一同时保住完整输入首选率（不降）与残缺输入首选率的点；
@@ -803,7 +825,7 @@ Windows daemon 支持命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 | 平台 | 壳 | 状态 |
 |---|---|---|
 | Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 已实现（容器内端到端验证；真机桌面闭环待环境） |
-| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
+| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用；Shift 空按中英切换、LaunchAgent `ProcessType=Interactive` 高负载 QoS 均已真机验证） |
 | Windows | TSF COM DLL（C++ 薄壳），命名管道优先（TCP 回环作迁移期回退）连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；命名管道运行时、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
 
 ### 渐进上屏的跨程序兼容模型（2026-10-30）
