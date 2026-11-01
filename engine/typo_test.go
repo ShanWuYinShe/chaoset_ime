@@ -30,9 +30,7 @@ func TestTypoCorrectionFixesCommonMistakes(t *testing.T) {
 			t.Errorf("%s: 应有候选（期望打出「%s」）", c.input, c.want)
 			continue
 		}
-		if got := comp.Candidates[0].Text; got != c.want {
-			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
-		}
+		assertTypoCorrectionPosition(t, comp, c.input, c.want)
 	}
 }
 
@@ -64,9 +62,7 @@ func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
 			t.Errorf("%s: 应有候选（期望「%s」）", c.input, c.want)
 			continue
 		}
-		if got := comp.Candidates[0].Text; got != c.want {
-			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
-		}
+		assertTypoCorrectionPosition(t, comp, c.input, c.want)
 	}
 }
 
@@ -186,4 +182,35 @@ func TestSelectPrefixKeepsLegitMixedPartialConsumption(t *testing.T) {
 				c.input, c.want, rest.Input, c.wantRest)
 		}
 	}
+}
+
+// assertTypoCorrectionPosition 校验错拼纠错候选的固定位置（2026-11-02 用户要求）：
+// 有足够正常候选时固定在第 3 位；若输入只有纠错候选（没有正常匹配）或候选总数
+// 不足 3 个，则允许从第 1 位开始（没有可填充的正常候选）。
+func assertTypoCorrectionPosition(t *testing.T, comp Composition, input, want string) {
+	t.Helper()
+	idx := -1
+	for i, c := range comp.Candidates {
+		if c.Text == want {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("%s: 候选里没有纠错结果「%s」: %+v", input, want, comp.Candidates)
+	}
+	if idx == 2 {
+		return // 固定第 3 位
+	}
+	allTypo := len(comp.Candidates) > 0
+	for _, c := range comp.Candidates {
+		if !c.typoFix {
+			allTypo = false
+			break
+		}
+	}
+	if idx == 0 && (len(comp.Candidates) < 3 || allTypo) {
+		return // 没有足够的正常候选填充前两位
+	}
+	t.Fatalf("%s: 纠错结果「%s」应固定在第 3 位，实际第 %d 位（候选: %+v）", input, want, idx+1, comp.Candidates)
 }

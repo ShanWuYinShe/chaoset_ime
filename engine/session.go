@@ -1990,6 +1990,33 @@ func (s *Session) compose() Composition {
 		return a.Text < b.Text
 	})
 
+	// 错拼修正候选固定排在第 3 位起（2026-11-02 用户要求）：纠错是「猜测」，
+	// 位置固定后用户可以直接按 3 选中，不必每次找。只搬「已提升到精确层」的
+	// 高置信度纠错（rank < rankBackoff）——tailSuspicious 等低置信度纠错仍留在
+	// 列表末尾，不干扰正常输入；没有纠错候选时列表保持正常排序不变。
+	const typoCandidateFixedPosition = 3
+	if len(items) > 0 {
+		var normalItems, fixedItems []candItem
+		for _, it := range items {
+			if it.cand.typoFix && it.rank < rankBackoff {
+				fixedItems = append(fixedItems, it)
+				continue
+			}
+			normalItems = append(normalItems, it)
+		}
+		if len(fixedItems) > 0 {
+			insertAt := typoCandidateFixedPosition - 1
+			if insertAt > len(normalItems) {
+				insertAt = len(normalItems)
+			}
+			reordered := make([]candItem, 0, len(items))
+			reordered = append(reordered, normalItems[:insertAt]...)
+			reordered = append(reordered, fixedItems...)
+			reordered = append(reordered, normalItems[insertAt:]...)
+			items = reordered
+		}
+	}
+
 	merged := make([]Candidate, len(items))
 	for i, it := range items {
 		merged[i] = it.cand

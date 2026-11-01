@@ -76,6 +76,9 @@ git stash pop                                 # 恢复改动
     提升（可能与合法混拼同形）。
   两侧都合法的相邻互换（ai/ia、ui/iu、ou/uo、ei/ie、an/na、en/ne、in/ni、un/nu）
   不要强行纠错。回归：`engine/typo_common_mistakes_test.go`。
+- **高置信度纠错候选固定第 3 位起**（2026-11-02 用户要求）：排序后把 `typoFix`
+  且已提升到精确层的纠错整体插到第 3 位；低置信度纠错仍在末尾；无纠错时按正常
+  排序。改动候选排序必须保留该位置契约（`assertTypoCorrectionPosition`）。
 - 任何改动都必须保持「真实词条优先」：组合候选不得进入首屏（`pageSize` 内）。
 
 若将来重新评估任何拼合逻辑，先记住当时的坑：`UserDict.Score` 返回

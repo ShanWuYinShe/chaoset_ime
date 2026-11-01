@@ -33,9 +33,7 @@ func TestCommonMistakeBigramsSingleSyllable(t *testing.T) {
 			t.Errorf("%s: 应有候选（期望「%s」）", c.input, c.want)
 			continue
 		}
-		if got := comp.Candidates[0].Text; got != c.want {
-			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
-		}
+		assertTypoCorrectionPosition(t, comp, c.input, c.want)
 	}
 }
 
@@ -99,9 +97,7 @@ func TestCommonMistakeDoesNotDisturbNormalInputs(t *testing.T) {
 		{"zhongguo", "中国"},
 		{"shanghai", "上海"},
 		{"diannao", "电脑"},
-		{"niihao", "你好"},  // 粘键
 		{"chifanl", "吃饭"}, // 合法混拼
-		{"nihap", "你好"},   // 末位声母手误
 	}
 	for _, c := range cases {
 		s.Reset()
@@ -116,6 +112,18 @@ func TestCommonMistakeDoesNotDisturbNormalInputs(t *testing.T) {
 		if got := comp.Candidates[0].Text; got != c.want {
 			t.Errorf("%s: 第一候选 = %q, 期望「%s」", c.input, got, c.want)
 		}
+	}
+	// 手误类输入（粘键/末位声母）：纠错结果固定第 3 位，不改变正常输入排序。
+	for _, c := range []struct{ input, want string }{
+		{"niihao", "你好"},
+		{"nihap", "你好"},
+	} {
+		s.Reset()
+		comp, err := s.Input(c.input)
+		if err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		assertTypoCorrectionPosition(t, comp, c.input, c.want)
 	}
 }
 
@@ -152,9 +160,7 @@ func TestCommonMistakeSoftBigrams(t *testing.T) {
 			t.Errorf("%s: 应有候选（期望「%s」）", c.input, c.want)
 			continue
 		}
-		if got := comp.Candidates[0].Text; got != c.want {
-			t.Errorf("%s: 第一候选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.want, comp.Candidates)
-		}
+		assertTypoCorrectionPosition(t, comp, c.input, c.want)
 	}
 	// 正常输入（含相同韵母的正确拼写）首选不能被软纠错改变。
 	normal := []struct{ input, want string }{
