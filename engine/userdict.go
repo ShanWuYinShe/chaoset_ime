@@ -398,6 +398,59 @@ func (u *UserDict) phraseScore(rec *phraseRecord) int {
 	return int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
 }
 
+// QueryJoinedPinyin 按「拼音连写 == input」匹配用户学习记录（调频词、词组进化、
+// 带分段整句）。与 Dictionary.QueryJoinedPinyin 同口径：只匹配已存在的用户词条，
+// 不组合；用于兜住音节切分枚举上限导致的用户词漏匹配（用户要求词库里有的词
+// 仍要能用 DP 匹配到）。
+func (u *UserDict) QueryJoinedPinyin(input string, maxResults int) []*Entry {
+	if input == "" {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	var out []*Entry
+	seen := make(map[string]bool, 8)
+	add := func(word string, sylls []string, freq int, segs []string) {
+		if len(sylls) == 0 || seen[word] || strings.Join(sylls, "") != input {
+			return
+		}
+		seen[word] = true
+		out = append(out, &Entry{
+			Word:      word,
+			Syllables: sylls,
+			Freq:      freq,
+			Segs:      append([]string(nil), segs...),
+		})
+	}
+	for key, rec := range u.file.Words {
+		word, sylls, valid := parseUserKey(key)
+		if !valid {
+			continue
+		}
+		freq := int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
+		add(word, sylls, freq, rec.Segs)
+	}
+	for _, rec := range u.file.Phrases {
+		add(rec.Word, strings.Fields(rec.Sylls), u.phraseScore(rec), rec.Segs)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Freq != out[j].Freq {
+			return out[i].Freq > out[j].Freq
+		}
+		return out[i].Word < out[j].Word
+	})
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
+}
+
 // QueryPhrases 返回匹配「音节序列（+末尾残缺音节前缀）」的用户合成词组。
 // 词组规模在数千以内时线性扫描足够；量级上来后再建音节索引。
 func (u *UserDict) QueryPhrases(syllables []string, frag string) []*Entry {

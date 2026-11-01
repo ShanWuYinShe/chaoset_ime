@@ -189,6 +189,68 @@ func (d *Dictionary) QueryExact(syllables []string) []*Entry {
 	return out
 }
 
+// QueryJoinedPinyin 按「词条标准拼音连写 == input」做 DP/字典树遍历，返回
+// 连写后恰好等于 input 的全部已存在词条（只匹配，不组合、不猜测）。
+//
+// 为什么需要它：常规候选走「音节切分枚举 → Token 查询」，枚举受
+// maxSegmentations/maxPathsPerChunk 上限约束；长输入可能漏掉某些合法切分，
+// 导致词库里真实存在的长词（如 西安交通大学 xi'an'jiao'tong'da'xue，输入
+// xianjiaotongdaxue）打不出来。本方法直接以输入字符为轴遍历 Trie：在当前位置
+// 尝试 1..maxSyllableLength 个字符作为一个完整音节（只走真实存在的音节边），
+// 走完整串即命中对应词条。复杂度 O(len(input)×maxSyllableLength×分支)，与词库
+// 规模无关；且因为只沿已存在的词条边前进，不可能产出词库外的候选。
+//
+// input 应为去掉分隔符（'）后的连写拼音；非标准拼写（简拼、错拼）不匹配。
+// 这是「DP 匹配已有词条」的唯一用途：用户 2026-11-01 澄清，去掉的是把词库
+// 片段拼成不存在复合词的「造词」，词库里有的词仍要能匹配出来。
+func (d *Dictionary) QueryJoinedPinyin(input string, maxResults int) []*Entry {
+	if input == "" || d.root == nil {
+		return nil
+	}
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	var out []*Entry
+	seen := make(map[int]bool, 8)
+	var dfs func(node *dictNode, pos int)
+	dfs = func(node *dictNode, pos int) {
+		if pos == len(input) {
+			for _, id := range node.ids {
+				if !seen[id] {
+					seen[id] = true
+					out = append(out, d.entries[id])
+				}
+			}
+			return
+		}
+		if node.children == nil {
+			return
+		}
+		for l := 1; l <= maxSyllableLength && pos+l <= len(input); l++ {
+			if child := node.children[input[pos:pos+l]]; child != nil {
+				dfs(child, pos+l)
+			}
+		}
+	}
+	dfs(d.root, 0)
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Freq != out[j].Freq {
+			return out[i].Freq > out[j].Freq
+		}
+		if len(out[i].Word) != len(out[j].Word) {
+			return len(out[i].Word) < len(out[j].Word)
+		}
+		return out[i].Word < out[j].Word
+	})
+	if len(out) > maxResults {
+		out = out[:maxResults]
+	}
+	return out
+}
+
 // Token 表示音节约束（用于全拼、简拼与混拼匹配）：
 // IsExact=true 时必须完全匹配 Text 音节（如 "zhong"）；
 // IsExact=false 时匹配以此为前缀的音节（如 "z" 匹配 z/zh 开头，"b" 匹配 b 开头）。

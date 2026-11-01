@@ -1468,6 +1468,31 @@ func (s *Session) compose() Composition {
 		}
 	}
 
+	// DP/连写匹配：按「输入 == 词条标准拼音连写」直接匹配已存在的词条。
+	// 常规候选依赖音节切分枚举（有上限），长输入可能漏掉词库里真实存在的长词；
+	// 这一步不依赖切分枚举，只沿词库里已有的词条边走，因此既不会造词，也不会
+	// 漏掉词库里有的词（用户 2026-11-01 澄清：去掉的是「拼合造词」，词库里有的
+	// 词组仍要用 DP 匹配；单字由首音节层始终提供，不受影响）。
+	//
+	// 仅对**没有分隔符**的连续输入生效：输入里出现 ' 时用户已显式划分音节
+	// （如 b'a 是简拼 b + 全拼 a），把分隔符去掉按连写匹配会把 b'a 误当成
+	// 全拼 ba（把/八 压过 保安/备案）。有分隔符时交给常规切分路径即可。
+	if !typoSuspicious && !strings.ContainsRune(s.input, '\'') {
+		joined := s.input
+		for _, e := range s.dict.QueryJoinedPinyin(joined, 20) {
+			boost := 0
+			if s.user != nil {
+				boost = s.user.Score(e.Word, e.Syllables, s.prev)
+			}
+			addCandidate(e, e.Freq+boost, boost > 0, rankExact)
+		}
+		if s.user != nil {
+			for _, e := range s.user.QueryJoinedPinyin(joined, 10) {
+				addCandidate(e, e.Freq, true, rankExact)
+			}
+		}
+	}
+
 	for _, pat := range tokenPatterns {
 		for _, qp := range expandTokenVariants(pat, s.fuzzy) {
 			hasInitials := false
