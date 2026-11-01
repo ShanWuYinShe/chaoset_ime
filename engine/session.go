@@ -13,6 +13,15 @@ type Candidate struct {
 	Syllables string `json:"syllables"`
 	Score     int    `json:"score"`
 	FromUser  bool   `json:"from_user,omitempty"` // 是否被用户数据（调频/词组/上下文）加权
+	// typoFix 标记该候选来自「错拼修正」：compose 用 typoCorrections 对**整串**
+	// 输入做单次编辑修正后查询得到。它只服务 SelectPrefix 的消费语义——修正
+	// 覆盖的是整串输入，选中这类候选时修正没覆盖到的碎片不能当剩余拼音回灌
+	// （lianxiagn 选「联想」残留 xiagn，2026-11-01 用户反馈）。
+	// 未导出且不进 JSON：三端壳按序号选择、不需要也不应感知该字段。
+	// 位置刻意紧挨 FromUser（Segments 之前）：两个 bool 共用对齐 padding，
+	// Candidate 结构体大小保持 72 字节不变——候选切片在排序里反复交换复制，
+	// 一个标记字段不能让它变大（否则每次组词都多付一份内存带宽）。
+	typoFix bool
 	// Segments 仅「整句式」候选携带：用户确认过的分段词文本（DP 整句候选
 	// 来自其切分词序列，学习记录候选来自 Words 的 Segs）。壳不需要它；
 	// 引擎用它把「一键整句上屏」按逐段确认的等价路径学习。
@@ -539,6 +548,17 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 	rest, matched := consumeInputPrefix(s.input, sylls, s.fuzzy)
 	if matched == 0 {
 		rest = "" // 一个音节都对不上（整句/简拼展开形态差异）：回退全清
+	} else if cand.typoFix {
+		// 错拼修正候选把**整串**输入解释成了候选音节（lianxiagn → lian'xiang）：
+		// 标准拼写与用户敲的串逐音节消费只能对上前面一部分（lian），剩下的
+		// xiagn / jisuanjii 的尾字母 i 都是被修正掉/多敲的碎片、不是待继续组词
+		// 的拼音——原样回灌会弹一堆无关候选（用户截图：选「联想」后剩 xiagn
+		// 又出 想/向/现/相…）。
+		//
+		// 标记只打在**纯错拼来源**的候选上（见 compose 里的取消标记段）：常规
+		// 切分路径也能命中的候选不算，合法混拼的部分消费（chifanl 选「吃饭」
+		// 剩 l、xveshengwomen 选「学生」剩 women、zhongg 选「中国」剩 g）语义不变。
+		rest = ""
 	}
 
 	s.learnSelection(committed, sylls, cand.Segments)
@@ -953,6 +973,18 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 	return out
 }
 
+// singleSyllableExactLimit 是「单个完整音节」的精确匹配上限：同音字全量
+// 召回（单音节输入、>=4 音节长输入回退到首音节、以及 >7 token 长输入显式补
+// 的首音节查询，三处必须同一口径；2~3 音节的回退刻意保持 top10 不放开，
+// 理由见 compose 里回退段的注释）。
+//
+// 取 120 的依据（2026-10-28 实测）：同音字最多的音节（shi/yi/ji…）在 100 个
+// 上下，top20 裁剪会让「示」这类排 33 位的常用字整体不可达；放开到 120 后
+// 单音节首选与衍生词组数量均无回归（见 TestCommonDictSingleSyllableFullRecall）。
+// 只对**单音节**放开是刻意的：多音节全拼的 exact 上限是 20（歧义切分路径 ×
+// exact 条数是乘法放大，放开会让热路径从 24.6µs 涨到 246µs，见下方注释）。
+const singleSyllableExactLimit = 120
+
 // typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
 // 单次编辑能生成的串数上限约 3n + 26(n+1) + 25n（n = 输入长度），十来个
@@ -1150,7 +1182,9 @@ func (s *Session) compose() Composition {
 	seen := make(map[string]int)
 	seenShorter := make(map[string]bool)
 
-	addCandidate := func(e *Entry, score int, fromUser bool, r int) {
+	// 返回候选在 items 里的下标：错拼路径据此给候选打 typoFix 标记
+	// （同一词条可能先由错拼路径加入、后由常规路径去重合并，标记跟着下标走）。
+	addCandidate := func(e *Entry, score int, fromUser bool, r int) int {
 		word := e.Word
 		if s.traditional {
 			word = ToTraditional(word) // 候选显示与上屏均为繁体
@@ -1182,7 +1216,7 @@ func (s *Session) compose() Composition {
 			if len(items[prev].cand.Segments) == 0 && len(segs) > 0 {
 				items[prev].cand.Segments = segs
 			}
-			return
+			return prev
 		}
 		seen[key] = len(items)
 		items = append(items, candItem{
@@ -1195,6 +1229,7 @@ func (s *Session) compose() Composition {
 			},
 			rank: r,
 		})
+		return len(items) - 1
 	}
 
 	// 匹配层级（数字越小越靠前）。
@@ -1408,7 +1443,7 @@ func (s *Session) compose() Composition {
 				if score < 1 {
 					score = 1
 				}
-				addCandidate(e, score, boost > 0, rankTypoFix)
+				items[addCandidate(e, score, boost > 0, rankTypoFix)].cand.typoFix = true
 			}
 			if s.user != nil {
 				uExacts, _ := s.user.QueryTokens(qp, 4)
@@ -1424,7 +1459,7 @@ func (s *Session) compose() Composition {
 					if score < 1 {
 						score = 1
 					}
-					addCandidate(e, score, true, rankTypoFix)
+					items[addCandidate(e, score, true, rankTypoFix)].cand.typoFix = true
 				}
 			}
 		}
@@ -1463,9 +1498,9 @@ func (s *Session) compose() Composition {
 				// 并进一步拖慢热路径（实测 32.9µs → 71µs），故两类上限独立。
 				exactLimit, prefixLimit := 20, 20
 				if len(qp) == 1 && qp[0].IsExact {
-					exactLimit = 120
+					exactLimit = singleSyllableExactLimit
 				} else if hasInitials {
-					exactLimit = 120
+					exactLimit = singleSyllableExactLimit
 				}
 				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
 			}
@@ -1579,7 +1614,7 @@ func (s *Session) compose() Composition {
 			// 逐级回退前缀：多音节输入叠加更短的前缀匹配（如输入 womende 时也出「我们」；
 			// 打 nihaox 时，因已完整的「你好」之后是残缺声母，将「你好」置顶推出）
 			limit := len(qp) - 1
-			if limit > 6 {
+			if limit > 6 { // 上限 6：更深的回退由下方「长输入首音节兜底」单独补
 				limit = 6
 			}
 			for drop := 1; !typoSuspicious && drop <= limit; drop++ {
@@ -1597,7 +1632,25 @@ func (s *Session) compose() Composition {
 						break
 					}
 				}
-				sExacts := s.dict.QueryTokensExact(shorter, 10)
+				// 回退到单个**完整音节**（首音节）且输入是长拼音（>=4 音节）时，对齐
+				// 单音节输入的召回口径：同音字全量进入候选池，逐字挑选（SelectPrefix）
+				// 才选得到 top10 之外的常用字。
+				//
+				// 2~3 音节刻意保持 top10（2026-11-01 Lead 复核）：2 音节是最高频输入
+				// 形态，全量放开会让每次组词的候选从 ~20 条膨胀到 ~80-150 条
+				// （实测 shijie 43→151 = 26 页），翻页观感与候选池排序成本都变差。
+				// 且「长」chang（词频 40）在 chang 同音字里排第 6，本就落在 top10 内
+				// 可达；用户打不出「长」的真实主因是安装词库过期（旧内置词库只有
+				// 长 zhang，安装器升级缺陷另行修复）。4 音节及以上才是「整词/整句
+				// 候选都不符合、需要逐字挑选」的输入形态，反向锁定见
+				// TestCommonDictShortPinyinKeepsTop10。
+				// 单字母简拼段（IsExact=false）不放开：它按声母跨多个音节匹配，候选量
+				// 爆炸且与 SelectPrefix 的按音节消费对不上。
+				exactLimit := 10
+				if len(shorter) == 1 && shorter[0].IsExact && len(qp) >= 4 {
+					exactLimit = singleSyllableExactLimit
+				}
+				sExacts := s.dict.QueryTokensExact(shorter, exactLimit)
 				for _, e := range sExacts {
 					r := rankBackoff + drop
 					if allExactShorter && drop == 1 && len(exacts) == 0 {
@@ -1660,12 +1713,49 @@ func (s *Session) compose() Composition {
 					}
 				}
 			}
+			// >7 个 token 的长输入：drop 上限 6 让回退永远到不了首音节（8 音节输入
+			// 最多回退到前 2 个音节），逐字挑选时首音节单字候选整体不可达。显式补
+			// 一次首音节查询，与单音节输入对齐 120 的同音字召回口径；排在所有常规
+			// 回退层之后（rankBackoff+limit+1），不改变原有层级顺序。
+			// 只看完整音节（IsExact）：单字母简拼段跨多个音节，与 SelectPrefix 的
+			// 按音节消费对不上，补进来也选不了，只会稀释候选。
+			if !typoSuspicious && len(qp)-1 > limit && qp[0].IsExact {
+				first := qp[:1]
+				sKey := tokensKey(first)
+				if !seenShorter[sKey] {
+					seenShorter[sKey] = true
+					r := rankBackoff + limit + 1
+					for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
+						boost := 0
+						if s.user != nil {
+							boost = s.user.Score(e.Word, e.Syllables, s.prev)
+						}
+						addCandidate(e, e.Freq+boost, boost > 0, r)
+					}
+					if s.user != nil {
+						for _, e := range s.user.QueryTokensExact(first, 5) {
+							addCandidate(e, e.Freq, true, r)
+						}
+					}
+				}
+			}
 		}
 	}
 
 	if len(typoAdded) > 0 {
 		typoKey := func(c Candidate) string {
 			return userKey(c.Text, strings.Split(c.Syllables, "'"))
+		}
+		// 只有**纯错拼来源**的候选才保留整串消费标记。常规切分路径也命中的
+		// 候选（chifanl 的「吃饭」rankInitialPrefix、zhongg 的「中国」rankInitialExact、
+		// nihaox 的「你好」rankExact）说明输入本身就能按音节消费到该词——
+		// 渐进上屏必须保持既有语义，只消费其音节前缀（chifanl 选「吃饭」剩 l）。
+		// rank 在常规路径命中去重时会降到 < rankTypoFix（addCandidate 只降不升），
+		// 所以「rank 仍是 rankTypoFix」= 只有错拼路径找到过它。
+		for i := range items {
+			if items[i].cand.typoFix && items[i].rank != rankTypoFix {
+				items[i].cand.typoFix = false
+			}
 		}
 		bestTypoFreq := 0
 		for i := range items {

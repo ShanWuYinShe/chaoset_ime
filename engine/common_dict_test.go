@@ -262,3 +262,159 @@ func TestCommonDictInitialsRecall(t *testing.T) {
 		t.Fatalf("nihao 第一候选 = %q, 期望「你好」", got)
 	}
 }
+
+// TestCommonDictLongPinyinFirstSyllableFullRecall：>=4 音节的长拼音，逐级
+// 回退到首音节时同音字必须全量可达（与单音节输入的 singleSyllableExactLimit
+// 口径一致）。2026-11-01 用户反馈：输入较长的拼音、整词/整句候选都不符合
+// 要求时想逐字挑选（SelectPrefix），但逐级回退只取 top10，首音节同音字
+// 整体被截断。
+//
+// 只对 >=4 音节放开是刻意的：2~3 音节是最高频输入形态，全量放开会让候选
+// 数量翻数倍（热路径 + 翻页观感双输），见 TestCommonDictShortPinyinKeepsTop10。
+func TestCommonDictLongPinyinFirstSyllableFullRecall(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct {
+		input    string
+		firstSyl string
+		word     string
+	}{
+		{"changjiangdadao", "chang", "长"},         // 4 音节
+		{"woaichangcheng", "wo", "我"},             // 4 音节（wo 共 31 个同音字）
+		{"changjiangdadaodexingqi", "chang", "长"}, // 7 音节
+	}
+	for _, c := range cases {
+		wantSingles := len(d.QueryTokensExact([]Token{{Text: c.firstSyl, IsExact: true}}, 500))
+		if wantSingles < 20 {
+			t.Fatalf("词典 %s 同音字仅 %d 个，词库生成疑似异常", c.firstSyl, wantSingles)
+		}
+		if wantSingles > singleSyllableExactLimit {
+			wantSingles = singleSyllableExactLimit
+		}
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, c.input))
+		got := 0
+		found := false
+		for _, cand := range all {
+			if cand.Syllables != c.firstSyl {
+				continue
+			}
+			got++
+			if cand.Text == c.word {
+				found = true
+			}
+		}
+		if got != wantSingles {
+			t.Errorf("%s: 首音节 %s 单字召回 %d，期望全量 %d（>=4 音节未放开）",
+				c.input, c.firstSyl, got, wantSingles)
+		}
+		if !found {
+			t.Errorf("%s: 候选里必须有「%s」（用户反馈场景）", c.input, c.word)
+		}
+		// 反向：首音节单字只是逐字挑选的兜底，不得压过「输入完全消耗」的
+		// 整词/整句候选（2026-10-25 用户反馈：部分消费单字不得占首选）。
+		if len(all) > 0 && !strings.Contains(all[0].Syllables, "'") {
+			t.Errorf("%s: 首选不应是只消耗首音节的单字，实际 %q", c.input, all[0].Text)
+		}
+	}
+}
+
+// TestCommonDictShortPinyinKeepsTop10 反向锁定 2~3 音节保持 top10（2026-11-01
+// Lead 复核）：全量放开会让 jingchang/nihao/shijie 等最高频输入的候选从
+// ~20 条膨胀到 ~80-150 条（shijie 43→151 = 26 页），热路径与翻页观感双输。
+func TestCommonDictShortPinyinKeepsTop10(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct {
+		input    string
+		firstSyl string
+		word     string
+	}{
+		{"changjiang", "chang", "长"}, // 2 音节：「长」chang 本就在 top10 内可达
+		{"jisuanji", "ji", "计"},      // 3 音节
+	}
+	const backoffTop10 = 10
+	for _, c := range cases {
+		dictSingles := len(d.QueryTokensExact([]Token{{Text: c.firstSyl, IsExact: true}}, 500))
+		if dictSingles <= backoffTop10 {
+			t.Fatalf("词典 %s 同音字仅 %d 个，无法验证 top10 截断", c.firstSyl, dictSingles)
+		}
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, c.input))
+		got := 0
+		found := false
+		for _, cand := range all {
+			if cand.Syllables != c.firstSyl {
+				continue
+			}
+			got++
+			if cand.Text == c.word {
+				found = true
+			}
+		}
+		if got != backoffTop10 {
+			t.Errorf("%s: 首音节单字召回 %d，期望保持 top10（2~3 音节不放开全量）", c.input, got)
+		}
+		if !found {
+			t.Errorf("%s: 候选里应有「%s」（top10 内可达）", c.input, c.word)
+		}
+	}
+}
+
+// TestCommonDictLongPinyinFirstSyllableReachable：>7 个 token 的长输入，
+// 逐级回退的 drop 上限（6）让它永远回退不到首音节——修复前 8 音节输入
+// 首音节单字数量为 0，逐字挑选完全不可用（2026-11-01 用户反馈）。
+// compose 现在显式补一次首音节查询，要求同音字全量可达且能渐进上屏。
+func TestCommonDictLongPinyinFirstSyllableReachable(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct {
+		input    string
+		firstSyl string
+		word     string
+		wantRest string
+	}{
+		{"changjiangdadaodexingqi", "chang", "长", "jiangdadaodexingqi"},     // 8 token
+		{"zhonghuarenmingongheguode", "zhong", "中", "huarenmingongheguode"}, // 8 token
+		{"womenyiqichanggemingba", "wo", "我", "menyiqichanggemingba"},       // 8 token
+	}
+	for _, c := range cases {
+		wantSingles := len(d.QueryTokensExact([]Token{{Text: c.firstSyl, IsExact: true}}, 500))
+		if wantSingles < 10 {
+			t.Fatalf("词典 %s 同音字仅 %d 个，词库生成疑似异常", c.firstSyl, wantSingles)
+		}
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, c.input))
+		got, pos := 0, -1
+		for i, cand := range all {
+			if cand.Syllables != c.firstSyl {
+				continue
+			}
+			got++
+			if cand.Text == c.word {
+				pos = i
+			}
+		}
+		if got != wantSingles {
+			t.Errorf("%s: 首音节 %s 单字召回 %d，期望全量 %d（长输入首音节兜底未生效）",
+				c.input, c.firstSyl, got, wantSingles)
+		}
+		if pos < 0 {
+			t.Errorf("%s: 候选里找不到「%s」", c.input, c.word)
+			continue
+		}
+		if pos == 0 {
+			t.Errorf("%s: 「%s」不应是首选（只有整句/整词候选都不存在时才轮到逐字挑选）", c.input, c.word)
+		}
+		// 逐字挑选路径必须可用：选首音节单字只消费首音节，剩余输入继续组词
+		s2 := NewSession(d, nil)
+		if _, err := s2.Input(c.input); err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		idx := findCandidate(t, s2, c.word)
+		rest, committed, err := s2.SelectPrefix(idx)
+		if err != nil || committed != c.word {
+			t.Fatalf("%s: 渐进选「%s」失败: committed=%q err=%v", c.input, c.word, committed, err)
+		}
+		if rest.Input != c.wantRest {
+			t.Errorf("%s: 选「%s」后剩余输入 = %q, 期望 %q", c.input, c.word, rest.Input, c.wantRest)
+		}
+	}
+}

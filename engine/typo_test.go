@@ -120,3 +120,70 @@ func TestMisspelledPrefilterBoundary(t *testing.T) {
 		}
 	}
 }
+
+// TestTypoCorrectionPrefixConsumesWholeInput：错拼修正候选的**渐进上屏**
+// 必须消费整串输入（2026-11-01 用户反馈）。
+//
+// 复现：输入 lianxiagn，首选候选是错拼修正命中的「联想」（lian'xiang）。
+// 修复前 SelectPrefix 按候选标准音节逐段消费只吃掉 lian，剩余 xiagn 回灌
+// 继续组词，候选变成 想/向/现/相…（用户截图一致）。错拼修正覆盖的是**整串**
+// 输入，选中它时任何残余拼音都是被修正掉的碎片，不能当剩余组词输入。
+func TestTypoCorrectionPrefixConsumesWholeInput(t *testing.T) {
+	cases := []struct{ input, want string }{
+		{"lianxiagn", "联想"},  // 用户复现场景（相邻颠倒）
+		{"zhonguo", "中国"},    // 漏敲（插入）
+		{"niihao", "你好"},     // 多敲（删除）
+		{"jisuanjii", "计算机"}, // 末尾多敲：标准拼写恰好能对上输入前缀，残余是尾巴 i
+		{"beijinf", "北京"},    // 邻近键敲错
+		{"womrn", "我们"},      // 邻近键敲错
+	}
+	d := mustCommonDict(t)
+	for _, c := range cases {
+		s := NewSession(d, nil)
+		if _, err := s.Input(c.input); err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		idx := findCandidate(t, s, c.want)
+		rest, committed, err := s.SelectPrefix(idx)
+		if err != nil || committed != c.want {
+			t.Fatalf("%s: 渐进选「%s」失败: committed=%q err=%v", c.input, c.want, committed, err)
+		}
+		if rest.Input != "" || rest.Preedit != "" {
+			t.Errorf("%s: 错拼修正候选应消费整串输入，实际剩余 Input=%q Preedit=%q（碎片回灌会弹无关候选）",
+				c.input, rest.Input, rest.Preedit)
+		}
+	}
+}
+
+// TestSelectPrefixKeepsLegitMixedPartialConsumption 反向锁定：常规切分路径
+// 也能命中的候选**不是**纯错拼来源，渐进上屏必须保持既有部分消费语义——
+// 剩余输入是下一个待打音节/声母，不能当错拼碎片吞掉。
+//
+// 典型：chifanl = 吃饭 + l（合法混拼，用户接着打「了」），zhongg = 中国 +
+// g（guo 的声母），nihaox = 你好 + x。若把「同时被错拼路径命中」的候选一并
+// 整串消费，这些合法输入会丢字（2026-11-01 修复时实测的边界）。
+func TestSelectPrefixKeepsLegitMixedPartialConsumption(t *testing.T) {
+	cases := []struct{ input, want, wantRest string }{
+		{"chifanl", "吃饭", "l"},
+		{"zhongg", "中国", "g"},
+		{"nihaox", "你好", "x"},
+		{"xveshengwomen", "学生", "women"}, // 省写/别名形态（既有回归）
+		{"jintianwochile", "今天", "wochile"},
+	}
+	d := mustCommonDict(t)
+	for _, c := range cases {
+		s := NewSession(d, nil)
+		if _, err := s.Input(c.input); err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		idx := findCandidate(t, s, c.want)
+		rest, committed, err := s.SelectPrefix(idx)
+		if err != nil || committed != c.want {
+			t.Fatalf("%s: 渐进选「%s」失败: committed=%q err=%v", c.input, c.want, committed, err)
+		}
+		if rest.Input != c.wantRest {
+			t.Errorf("%s: 选「%s」后剩余输入 = %q, 期望 %q（合法部分消费语义被整串消费破坏）",
+				c.input, c.want, rest.Input, c.wantRest)
+		}
+	}
+}
