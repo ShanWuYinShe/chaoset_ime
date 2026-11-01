@@ -53,7 +53,9 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
 
 - 安装包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
-- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击**安装器** → 选择「打开」→ 确认打开即可。
+- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书）。Gatekeeper 只拦截带 `com.apple.quarantine` 的文件：
+  浏览器下载 zip 后解压的 app 会带隔离标记，首次打开可能提示，右键**安装器** →「打开」即可；
+  用 `install-online.sh`（`curl` 下载并清除隔离标记）安装则不会出现该提示。
   > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
 - 安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon；不会在 LaunchAgent 未就绪时再手动启动第二个 `chaosetd`（否则活动监视器会出现两个进程）。
 

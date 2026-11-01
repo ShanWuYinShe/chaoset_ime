@@ -16,7 +16,9 @@
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
 > **macOS 首次打开被 Gatekeeper 拦截（无需开发者账号）**：
-> 截图里的提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开解压目录里的
+> 只有**浏览器下载的 zip** 才会带 `com.apple.quarantine` 隔离标记，解压出的 app 首次打开才可能提示
+> 「无法验证开发者」；用下面一行 `curl` 安装（脚本下载后显式清除隔离标记）不会被拦截。
+> 若已被拦截：提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开解压目录里的
 > **「Chaoset 安装与设置」**（`ChaosetSetup.app`）。若安装器也被拦截，在 Finder 中右键安装器 →「打开」，
 > 或到「系统设置 → 隐私与安全性 → 安全性」点「仍要打开」。
 >
