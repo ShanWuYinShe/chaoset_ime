@@ -272,7 +272,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 | 失焦 / 透传键 / 切换输入法 | — | 已确认段先落盘再切换/透传（用户确认过的字不丢；纯拼音维持「清空」旧语义） |
 | 清空组词 | Ctrl+Backspace / Ctrl+U / Esc（Cmd(Win/Super)/Shift+Backspace/Delete 亦为整段清空） | 取消**整条组词**（含未落盘的已确认段）并消费按键 |
 | 删到行首 | Ctrl+Backspace | 同清空（三端对齐） |
-| 中英切换 | Shift 空按 | 提示「英文模式」/「中文模式」；**已确认段先落盘**（三端 2026-10-30 统一：此前 Linux 泄漏、Windows 丢弃）；Shift 释放事件仍放行给宿主（不吞修饰键状态机） |
+| 中英切换 | Shift 空按 | 提示「英文模式」/「中文模式」；**已确认段先落盘**（三端 2026-10-30 统一：此前 Linux 泄漏、Windows 丢弃）；Shift 释放事件仍放行给宿主（不吞修饰键状态机）。macOS 壳必须在 recognizedEvents 里声明 keyDown + flagsChanged（2026-11-02 修复：此前未声明，IMK 只投递 keyDown，真机 Shift 空按永远收不到；合成 NSEvent 直驱 handle 的单测覆盖不到投递层） |
 | 双拼 `;` 键 | `;`（mspy 方案） | 双拼模式（`-shuangpin mspy`）下作为 `ing` 韵母键送组词（如 `m`+`;` = ming），不上屏标点；非双拼模式仍输出中文「；」；Shift+`;` 始终是「：」。2026-10-30 三端打通 |
 | 全半角 | **组词态** Shift+空格 | 提示「半角标点」/「全角标点」，开关归壳本地持有；联想态不触发（见上） |
 

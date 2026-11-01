@@ -91,6 +91,13 @@ check("预编辑含 n", m.marked.contains("n"), "marked=\(m.marked)")
 check("Cmd+S 放行（快捷键不被吞）", c.handle(ev("s", 1, [.command]), client: m) == false)
 check("Ctrl+A 放行", c.handle(ev("a", 0, [.control]), client: m) == false)
 
+// IMK 只投递 recognizedEvents 声明过的事件类型；缺 flagsChanged 时 Shift 空按
+// 在真机永远收不到（合成事件直驱 handle 的测试覆盖不到投递层）。
+let recognized = NSEvent.EventTypeMask(rawValue: UInt64(c.recognizedEvents(nil)))
+check("recognizedEvents 声明 keyDown + flagsChanged（否则 Shift 空按真机无效）",
+      recognized.contains(NSEvent.EventTypeMask.keyDown) && recognized.contains(NSEvent.EventTypeMask.flagsChanged),
+      "mask=\(recognized.rawValue)")
+
 _ = c.handle(ev("", 56, [.shift]), client: m)              // Shift 按下
 _ = c.handle(ev("", 56, [], .flagsChanged), client: m)     // Shift 松开（空按）
 let r5 = c.handle(ev("a", 0), client: m)
@@ -215,7 +222,7 @@ check("正常客户端：删空后再次退格放行给宿主", rJinNormal4 == f
 
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 29
+let expectedChecks = 30
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

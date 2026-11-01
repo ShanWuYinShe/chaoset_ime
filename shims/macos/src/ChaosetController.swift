@@ -67,6 +67,17 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 按键处理
 
+    /// 声明本输入控制器要接收的事件类型。
+    ///
+    /// IMK 只投递 recognizedEvents 里声明过的事件；默认实现只包含 keyDown，
+    /// flagsChanged 不会被投递——Shift 空按切换中英因此永远收不到事件，
+    /// 真机上表现为「Shift 切不了中英」（2026-11-02 用户反馈；合成 NSEvent
+    /// 直驱 handle 的单测覆盖不到投递层，所以此前测试全绿但真机无效）。
+    /// 参照 Rime/Squirrel：mask = keyDown + flagsChanged。
+    override func recognizedEvents(_ sender: Any!) -> Int {
+        return Int(NSEvent.EventTypeMask([.keyDown, .flagsChanged]).rawValue)
+    }
+
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         let client = sender as? any IMKTextInput
 
