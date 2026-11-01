@@ -1408,8 +1408,14 @@ func (s *Session) compose() Composition {
 		inputSegs = len(tokenPatterns[0])
 	}
 	typoAdded := make(map[string]bool)
+	typoPhraseAdded := make(map[string]bool)
 	typoIsNear := make(map[string]bool)
 	typoLen := make(map[string]int)
+	typoPhraseQueries := 0
+	// typoWordFound 记录本次错拼修正是否命中过「整词级」结果（词典/用户词库
+	// 里存在的完整词）。有整词级结果时，组合候选不得抢到精确层——否则
+	// guabxi 的「古巴+西」会压掉真正纠错出来的「关系」。
+	typoWordFound := false
 	if typoSuspicious || midSuspicious || tailSuspicious {
 		fixes := typoCorrections(s.input, typoMaxCorrections)
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
@@ -1419,6 +1425,10 @@ func (s *Session) compose() Composition {
 		if len(fixes) > typoMaxQueries {
 			fixes = fixes[:typoMaxQueries]
 		}
+		// 修正优先级加权：typoCorrections 已按「相邻互换 → 删除 → 粘键 → 邻键
+		// 替换 → 插入」排好序，人工手误里越靠前的修正越可信。组合 DP 候选没有
+		// 语言模型，用这个顺序做先验，避免「删除 g 得到的 chanshuru」压过
+		// 「ng 互换得到的 changshuru」这类真正的意图。
 		for _, fix := range fixes {
 			patterns := enumerateAllTokens(strings.Split(fix.text, "'"))
 			if len(patterns) == 0 {
@@ -1447,6 +1457,7 @@ func (s *Session) compose() Composition {
 					score = 1
 				}
 				items[addCandidate(e, score, boost > 0, rankTypoFix)].cand.typoFix = true
+				typoWordFound = true
 			}
 			if s.user != nil {
 				uExacts, _ := s.user.QueryTokens(qp, 4)
@@ -1463,8 +1474,67 @@ func (s *Session) compose() Composition {
 						score = 1
 					}
 					items[addCandidate(e, score, true, rankTypoFix)].cand.typoFix = true
+					typoWordFound = true
 				}
 			}
+
+			// 纠错后的「按已有词切分」DP：修正串在词库里没有单条整词时（如
+			// changshuru 没有「长输入」词条，但「长」+「输入」都存在），把修正后
+			// 的音节切成已有词序列，给出词组候选（图中 = 图+中 同理）。
+			// 只在这个错拼路径里组合；正常输入仍不拼合造词。查询条数有上限。
+			//
+			// 先以最低层级加入；只有在**没有任何整词级纠错命中**时，循环结束
+			// 后才提升到精确层（见下方「纠错组合候选的提升」）。这样组合候选
+			// 不会靠奖励分把「关系/发票/你好/我们」这些真正的纠错结果挤掉。
+			// tailSuspicious（合法混拼的末位声母，如 chifanl / nihap）不生成；
+			// 替换/插入类修正也不生成（单词语义已能覆盖，组合只会带来噪声）。
+			phraseBonus, phraseOK := typoFixPhraseBonus(s.input, fix.text)
+			if !tailSuspicious && phraseOK && typoPhraseQueries < typoMaxPhraseQueries {
+				typoPhraseQueries++
+				fixBonus := phraseBonus
+				for _, e := range s.typoPhraseEntries(qp, 6) {
+					key := userKey(e.Word, e.Syllables)
+					if typoAdded[key] {
+						continue
+					}
+					typoAdded[key] = true
+					typoPhraseAdded[key] = true
+					typoIsNear[key] = fix.isNear
+					typoLen[key] = len(fix.text)
+					score := e.Freq - penalty + fixBonus
+					if score < 1 {
+						score = 1
+					}
+					items[addCandidate(e, score, false, rankTypoFix)].cand.typoFix = true
+				}
+			}
+		}
+	}
+
+	// 纠错组合候选的提升：只有该输入没有任何「整词级」纠错命中时才提到精确层
+	// （长输入 / 图中 这类词库里没有整词条的场景）；只要纠错已找到词库里的
+	// 完整词（关系/发票/你好），组合候选就留在低层，避免拼接结果压过正确纠错。
+	// 提升的名额按得分取前 typoPhrasePromoteMax 个：组合没有语言模型，候选
+	// 之间只能靠词频×修正类型置信度排序，宁少勿滥（其余仍可从后页选到）。
+	if len(typoPhraseAdded) > 0 && !typoWordFound {
+		var idx []int
+		for i := range items {
+			if !items[i].cand.typoFix {
+				continue
+			}
+			candKey := userKey(items[i].cand.Text, strings.Split(items[i].cand.Syllables, "'"))
+			if typoPhraseAdded[candKey] {
+				idx = append(idx, i)
+			}
+		}
+		sort.SliceStable(idx, func(a, b int) bool {
+			return items[idx[a]].cand.Score > items[idx[b]].cand.Score
+		})
+		if len(idx) > typoPhrasePromoteMax {
+			idx = idx[:typoPhrasePromoteMax]
+		}
+		for _, i := range idx {
+			items[i].rank = rankExact
 		}
 	}
 
@@ -1713,13 +1783,22 @@ func (s *Session) compose() Composition {
 		// rank 在常规路径命中去重时会降到 < rankTypoFix（addCandidate 只降不升），
 		// 所以「rank 仍是 rankTypoFix」= 只有错拼路径找到过它。
 		for i := range items {
-			if items[i].cand.typoFix && items[i].rank != rankTypoFix {
-				items[i].cand.typoFix = false
+			if !items[i].cand.typoFix || items[i].rank == rankTypoFix {
+				continue
 			}
+			// 纠错组合 DP 的候选直接以 rankExact 加入（见上），不是常规路径
+			// 命中的整词——它的「整串消费」语义必须保留，不能在这里被取消。
+			if typoPhraseAdded[typoKey(items[i].cand)] {
+				continue
+			}
+			items[i].cand.typoFix = false
 		}
 		bestTypoFreq := 0
 		for i := range items {
 			k := typoKey(items[i].cand)
+			if typoPhraseAdded[k] {
+				continue
+			}
 			if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) && items[i].cand.Score > bestTypoFreq {
 				bestTypoFreq = items[i].cand.Score
 			}
@@ -1755,6 +1834,9 @@ func (s *Session) compose() Composition {
 		if bestTypoFreq > 0 && (!hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
 			for i := range items {
 				k := typoKey(items[i].cand)
+				if typoPhraseAdded[k] {
+					continue // 组合候选只由上方「无整词命中」的规则提升
+				}
 				if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) {
 					items[i].rank = rankExact
 				}

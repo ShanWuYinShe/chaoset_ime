@@ -23,10 +23,34 @@ func assertAllCandidatesInDict(t *testing.T, d *Dictionary, input string, all []
 	t.Helper()
 	for _, c := range all {
 		sylls := strings.Split(c.Syllables, "'")
-		if !d.Contains(c.Text, sylls) {
-			t.Errorf("%s: 候选 %q（%s）不在词典中——引擎不得拼合造词", input, c.Text, c.Syllables)
+		if d.Contains(c.Text, sylls) {
+			continue
+		}
+		// 错拼修正的组合候选（2026-11-01 用户要求）：只允许「已有词的序列」，
+		// 每个分段都必须在词典里真实存在——引擎仍然不造词，只是把修正后的
+		// 音节按已有词切开。正常（非错拼）输入不允许出现这类候选。
+		if c.typoFix && len(c.Segments) >= 2 && allSegmentsInDict(d, c.Segments) {
+			continue
+		}
+		t.Errorf("%s: 候选 %q（%s）不在词典中——引擎不得拼合造词", input, c.Text, c.Syllables)
+	}
+}
+
+// allSegmentsInDict 报告每个分段是否都能在词典里找到（任一读音即可）。
+func allSegmentsInDict(d *Dictionary, segs []string) bool {
+	for _, seg := range segs {
+		found := false
+		for _, e := range d.Entries() {
+			if e.Word == seg {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
+	return true
 }
 
 // TestComposeCandidatesOnlyFromDict：常见长输入与短输入的**全部**候选都必须在
