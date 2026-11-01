@@ -69,9 +69,14 @@ go_universal() {
   fi
 }
 
-echo "[1/5] 编译 Go daemon（架构: ${ARCHS}）..."
+echo "[1/5] 编译 Go daemon 与导入工具（架构: ${ARCHS}）..."
 go_universal "$ROOT/shims/macos/build/chaosetd" ./cmd/chaosetd
-
+# chaoset-import 必须随输入法 app 一起安装：设置窗打开安装器导入词库时，
+# 导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到用户目录。
+go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
+# 先给 build 产物做 ad-hoc 签名，再拷进 app；这样“build/ 与 app 内资源逐字节
+# 相同”的等价性测试仍有意义（app 签名只签主程序，不再改嵌套资源）。
+codesign --force -s - build/chaosetd build/chaoset-import
 echo "[2/5] 编译 Swift 输入法壳与验证工具..."
 APP=build/ChaosetIME.app
 rm -rf "$APP"
@@ -264,6 +269,13 @@ done
 plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings
 
 plutil -lint "$APP/Contents/Info.plist"
+
+# 输入法的运行组件全部装进 ChaosetIME.app 自身：daemon、导入工具、种子词库。
+# 此前 daemon 被单独拷到 Application Support，导致 app 版本与 daemon 版本
+# 可能漂移，也给用户留下“输入法为什么散落好几处”的困惑。
+cp build/chaosetd build/chaoset-import ../../data/dict_common.tsv \
+   "$APP/Contents/Resources/"
+chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import"
 codesign --force -s - "$APP"
 
 echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."
@@ -273,14 +285,11 @@ SETUP=build/ChaosetSetup.app
 rm -rf "$SETUP"
 mkdir -p "$SETUP/Contents/MacOS" "$SETUP/Contents/Resources/zh-Hans.lproj"
 swift_universal "$SETUP/Contents/MacOS/ChaosetSetup" AppKit Carbon UniformTypeIdentifiers -- setup/main.swift
-# 必须走 go_universal：chaoset-import 会被拷进 Setup.app 供用户点「导入词库」，
-# 裸 go build 只出开发机架构（Apple Silicon 上就是 arm64），Intel Mac 用户
-# 点导入会直接 "Bad CPU type in executable"（2026-10-26 审查发现；
-# Makefile 的架构自检只查两个 app 的主二进制，漏掉了这个工具）。
-go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
+# Setup.app 只负责安装/导入/状态；输入法运行组件与种子词库全部在
+# ChaosetIME.embedded 里，不再在 Setup.app 顶层重复一份 daemon/导入工具。
 cp -R "$APP" "$SETUP/Contents/Resources/ChaosetIME.embedded"
-cp build/chaosetd build/chaoset-import build/tis build/smoke \
-  ../../data/dict_common.tsv "$SETUP/Contents/Resources/"
+# 验证工具仍随安装器携带，供 --verify / 状态自检使用（不是输入法运行时组件）。
+cp build/tis build/smoke "$SETUP/Contents/Resources/"
 cp build/Resources/ChaosetIME.icns "$SETUP/Contents/Resources/"
 cat > "$SETUP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -324,4 +333,4 @@ printf 'APPL????' > "$SETUP/Contents/PkgInfo"
 plutil -lint "$SETUP/Contents/Info.plist" "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
 codesign --force -s - "$SETUP"
 
-echo "已生成 $(pwd)/$APP (daemon: build/chaosetd) 与 $(pwd)/$SETUP"
+echo "已生成 $(pwd)/${APP}（自带 daemon/导入工具/种子词库）与 $(pwd)/${SETUP}"

@@ -73,6 +73,8 @@ const (
 	macEngine       = "shims/macos/src/EngineClient.swift"
 	macSetup        = "shims/macos/setup/main.swift"
 	macKeyTest      = "shims/macos/tests/key_routing/main.swift"
+	macBuild        = "shims/macos/build.sh"
+	macInstall      = "shims/macos/install.sh"
 	winShell        = "shims/windows/src/win32.cpp"
 	winBuild        = "shims/windows/build.sh"
 	winCoreHpp      = "shims/windows/src/core.hpp"
@@ -536,6 +538,13 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "打包安装", linuxComp, "chaoset-setup")
 	checkContains(fsys, &problems, "打包安装", ciYML,
 		"build.sh", "test_setup_ctl")
+	// macOS：运行组件必须随 ChaosetIME.app 安装，且安装器/CLI 都从 app 内启动 daemon。
+	checkContains(fsys, &problems, "打包安装", macBuild,
+		"$APP/Contents/Resources/", "dict_common.tsv")
+	checkContains(fsys, &problems, "打包安装", macSetup,
+		"installedResource(\"chaosetd\")", "embeddedResource(\"chaoset-import\")", "installSetupApp")
+	checkContains(fsys, &problems, "打包安装", macInstall,
+		"$IM/ChaosetIME.app/Contents/Resources/chaosetd")
 	checkExists(fsys, &problems, "打包安装", linuxTest)
 	checkExists(fsys, &problems, "打包安装", linuxCtl)
 	for _, size := range []string{"16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256"} {

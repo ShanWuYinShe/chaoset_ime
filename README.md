@@ -688,6 +688,10 @@ daemon / 工具 / Linux ibus 引擎共用 `internal/appdirs` 的路径约定（2
 
 壳/脚本需要同一套路径时调用 `chaoset-userdict -print-paths`（JSON：`data`/`userdict`/`imported_dict`/`socket`），不要各自拼路径。
 
+macOS 的运行组件随输入法 app 安装：`~/Library/Input Methods/ChaosetIME.app/Contents/Resources/`
+内含 `chaosetd`、`chaoset-import`、`dict_common.tsv`；Application Support 只放用户数据、
+当前词库、socket 与日志，不再单独放 daemon 副本。
+
 ## 用户词典管理
 
 ```sh

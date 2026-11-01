@@ -7,6 +7,7 @@
 ## 架构要点
 
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。该约束由 `engine/purity_test.go` 机器守卫：只允许标准库 import、禁止 `//go:build` 构建标签 / CGO / 平台文件（`*_windows.go` 等），违反即 `go test ./...` 红。
+- **macOS 安装布局（2026-11-01 用户要求）**：运行组件随 `ChaosetIME.app` 安装，daemon/导入工具/种子词库位于 `Contents/Resources/`；LaunchAgent 指向 app 内 daemon；`~/Library/Application Support/chaoset` 只放用户数据/词库/socket/日志。禁止再把 daemon 单独拷到 Application Support。
 - **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI（设置窗也是 shim：macOS Swift / Windows C++ / Linux 原生 GTK3 C，**不要把设置窗搬进 Go**）；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`。当前迁移进度：三端词库导入均已委托 `chaoset-import -o ... -seed ... -backup`（阶段 77–78）；IPC 传输层已落地 `Endpoint` + daemon `-pipe` + Windows C++ 壳（命名管道优先、TCP 回退，阶段 79–81），安装器切换待真机验收。
 - **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB），传输通过 `ipc.Endpoint` 抽象（`unix`/`pipe`/`tcp`）。macOS/Linux 用 Unix socket；Windows 命名管道已落地：daemon `-pipe` + C++ 壳优先命名管道（失败回退 TCP），ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES；安装器切换 `-pipe` 与 TCP 7949 移除待真机验收；Linux ibus 引擎进程内直调 `engine`，无 IPC 往返（daemon 仍可用于终端测试台）。
 - **候选窗为纯数据 IPC + mac/Windows 原生自绘、Linux ibus 面板（2026-10-27 起）**：daemon 只返回 Composition/Candidate 纯数据（`input`/`select` 等不变）。macOS 用 AppKit（`shims/macos/src/CandidatePanel.swift`：键帽序号、首选蓝胶囊、学习标记 `*`，浅/深两套静态 sRGB 按 appearance 选择，支持鼠标点选与 VoiceOver）；Windows 用 GDI（`win32.cpp`，同样绘制学习标记 `*`）；Linux **不重绘候选窗**，用 ibus 原生 LookupTable/Preedit 呈现（学习标记不适用理由记在 `shims/linux/README.md`）。**daemon 贴图渲染链路已删**（`renderer/` 包与 `candidateImage` IPC，2026-10-27；勿在文档或壳里引用）。

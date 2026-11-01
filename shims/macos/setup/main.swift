@@ -12,8 +12,10 @@ import UniformTypeIdentifiers
 //     （输入法设置窗「导入词库…」按钮用，省一次点击）
 //   ChaosetSetup --selftest <supportDir> [词库文件...]  = 无界面自检（会话内验证用）
 //
-// 本 app 随包携带 ChaosetIME.app / chaosetd / chaoset-import / dict_common.tsv，
-// 全部操作都在自身进程内完成，不依赖仓库路径与终端。
+// 本 app 随包携带完整的 ChaosetIME.app（daemon / 导入工具 / 种子词库都在其
+// Contents/Resources 内）；安装时只把这一个 app 装入 ~/Library/Input Methods，
+// 不把运行组件散落到 Application Support。安装器自身也会装到 ~/Applications，
+// 供输入法设置窗的「导入词库」入口调用。
 
 let imeTargetBundleName = "ChaosetIME.app"
 let imeResourceBundleName = "ChaosetIME.embedded"
@@ -27,6 +29,15 @@ func appVersion() -> String {
 }
 func inputMethodsDir() -> String { NSHomeDirectory() + "/Library/Input Methods" }
 func imeAppPath() -> String { inputMethodsDir() + "/" + imeTargetBundleName }
+func embeddedAppPath() -> String { res(imeResourceBundleName) }
+/// 安装器随包的输入法 app 内资源（未安装时用于导入/自检）。
+func embeddedResource(_ name: String) -> String {
+    embeddedAppPath() + "/Contents/Resources/" + name
+}
+/// 已安装输入法 app 内资源（运行时 daemon 从这里启动）。
+func installedResource(_ name: String) -> String {
+    imeAppPath() + "/Contents/Resources/" + name
+}
 func socketPath() -> String { supportDir() + "/chaoset.sock" }
 func stamp() -> String {
     let f = DateFormatter()
@@ -204,7 +215,7 @@ func installDaemonLaunchAgent(support: String) -> String {
     do {
         try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                               withIntermediateDirectories: true)
-        let daemon = xmlEscaped(support + "/chaosetd")
+        let daemon = xmlEscaped(installedResource("chaosetd"))
         let socket = xmlEscaped(support + "/chaoset.sock")
         let dict = xmlEscaped(support + "/dict.tsv")
         let userdict = xmlEscaped(support + "/userdict.json")
@@ -239,7 +250,7 @@ func installDaemonLaunchAgent(support: String) -> String {
 
 func restartDaemon(support: String) -> String {
     var out = ""
-    let daemon = support + "/chaosetd"
+    let daemon = installedResource("chaosetd")
     let dict = support + "/dict.tsv"
     guard FileManager.default.isExecutableFile(atPath: daemon) else {
         return "daemon 未部署，未启动（缺少 \(daemon)）\n"
@@ -259,7 +270,7 @@ func restartDaemon(support: String) -> String {
         out += "已通过 LaunchAgent 重启 daemon 并确认 IPC 就绪\n"
         return out
     }
-    // launchd 拉起失败时兜底：从**Application Support 副本**直接启动，
+    // launchd 拉起失败时兜底：从**已安装 app 内的 daemon** 直接启动，
     // 绝不从 DMG 运行（否则 DMG 无法推出，且重启后无进程）。
     let p = Process()
     p.executableURL = URL(fileURLWithPath: daemon)
@@ -270,11 +281,33 @@ func restartDaemon(support: String) -> String {
     p.standardError = FileHandle.nullDevice
     do { try p.run() } catch { return out + "daemon 启动失败：\(error)\n" }
     if waitDaemonReady(support: support) {
-        out += "LaunchAgent 未生效，已用 Application Support 副本启动 daemon\n"
+        out += "LaunchAgent 未生效，已用已安装 app 内的 daemon 启动\n"
     } else {
         out += "⚠ daemon 启动后 8 秒内 IPC 仍未就绪\n"
     }
     return out
+}
+
+/// 把安装器自己装到 ~/Applications/Chaoset.app，供输入法设置窗「导入词库」
+/// 与后续更新入口使用；不把安装器留在 DMG 里（DMG 会被用户弹出）。
+func installSetupApp() -> String {
+    let fm = FileManager.default
+    let src = URL(fileURLWithPath: Bundle.main.bundlePath).resolvingSymlinksInPath().path
+    let apps = NSHomeDirectory() + "/Applications"
+    let dest = apps + "/Chaoset.app"
+    let destStd = (dest as NSString).standardizingPath
+    if src == destStd { return "" }
+    do {
+        try fm.createDirectory(atPath: apps, withIntermediateDirectories: true)
+        try? fm.removeItem(atPath: dest)
+        try fm.copyItem(atPath: src, toPath: dest)
+        let alias = apps + "/ChaosetSetup.app"
+        try? fm.removeItem(atPath: alias)
+        try? fm.createSymbolicLink(atPath: alias, withDestinationPath: "Chaoset.app")
+        return "已安装图形界面工具：\(dest)\n"
+    } catch {
+        return "⚠ 安装图形界面工具失败：\(error)\n"
+    }
 }
 
 // ---- 安装 / 更新输入法 ----
@@ -286,7 +319,11 @@ func installIME() -> String {
     try? fm.createDirectory(atPath: inputMethodsDir(), withIntermediateDirectories: true)
     let dst = imeAppPath()
     if fm.fileExists(atPath: dst) {
-        let bak = dst + ".bak." + stamp()
+        // 旧版 app 备份必须移出 Input Methods：残留 .app 会被 LaunchServices/TIS
+        // 当成第二个输入法索引，系统设置里出现重复条目。
+        let backupDir = supportDir() + "/backups"
+        try? fm.createDirectory(atPath: backupDir, withIntermediateDirectories: true)
+        let bak = backupDir + "/ChaosetIME-" + stamp()
         try? fm.moveItem(atPath: dst, toPath: bak)
         if fm.fileExists(atPath: bak) { out += "旧版本已备份：\(bak)\n" }
     }
@@ -303,20 +340,22 @@ func installIME() -> String {
 
     let support = supportDir()
     try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
-    let daemonDst = support + "/chaosetd"
-    if fm.fileExists(atPath: res("chaosetd")) {
-        try? fm.removeItem(atPath: daemonDst + ".prev")
-        if fm.fileExists(atPath: daemonDst) { try? fm.copyItem(atPath: daemonDst, toPath: daemonDst + ".prev") }
-        try? fm.removeItem(atPath: daemonDst)
-        try? fm.copyItem(atPath: res("chaosetd"), toPath: daemonDst)
-        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: daemonDst)
-        out += "已部署 daemon\n"
-    }
-    if !fm.fileExists(atPath: support + "/dict.tsv"), fm.fileExists(atPath: res("dict_common.tsv")) {
-        try? fm.copyItem(atPath: res("dict_common.tsv"), toPath: support + "/dict.tsv")
+    // 运行组件已随 ChaosetIME.app 安装；Application Support 只放用户数据。
+    let seed = embeddedResource("dict_common.tsv")
+    if !fm.fileExists(atPath: support + "/dict.tsv"), fm.fileExists(atPath: seed) {
+        try? fm.copyItem(atPath: seed, toPath: support + "/dict.tsv")
         out += "已写入种子词库（可用「导入词库…」换成自己的）\n"
     }
     out += restartDaemon(support: support)
+
+    // 迁移旧版布局：此前 daemon 单独放在 Application Support。新版从 app
+    // 内部运行，旧副本删除，避免版本漂移和“输入法散落多处”。
+    for legacy in [support + "/chaosetd", support + "/chaosetd.prev"] {
+        if fm.fileExists(atPath: legacy) {
+            try? fm.removeItem(atPath: legacy)
+        }
+    }
+    out += installSetupApp()
 
     disableLegacyModes()
     if let s = findSource() {
@@ -369,6 +408,13 @@ func verifyText() -> String {
     } else {
         fails += 1
         out += "FAIL 1) 输入法未装入或 Info.plist 缺输入源键\n"
+    }
+    if fm.isExecutableFile(atPath: installedResource("chaosetd")),
+       fm.isExecutableFile(atPath: installedResource("chaoset-import")) {
+        out += "PASS 1b) daemon/导入工具随输入法 app 安装（无需散落 Application Support）\n"
+    } else {
+        fails += 1
+        out += "FAIL 1b) 输入法 app 内缺少 daemon/chaoset-import 副本\n"
     }
 
     // 2) TIS 收录：内嵌 API 与随包 tis list 两条实现，结论必须一致
@@ -430,6 +476,9 @@ func statusText() -> String {
         out += "已安装输入法版本：\(installed)\n"
     }
     out += fm.fileExists(atPath: imeAppPath()) ? "✓ 输入法已装入\n" : "✗ 输入法尚未装入（点「安装 / 更新」）\n"
+    out += fm.isExecutableFile(atPath: installedResource("chaosetd"))
+        ? "✓ 输入法 app 自带 daemon 与导入工具\n"
+        : "✗ 输入法 app 内缺少 daemon（请重新安装）\n"
     if let s = findSource() {
         out += "✓ 系统已收录：\(sourceProp(s, kTISPropertyInputSourceID))\n"
         out += "    已启用：\(sourceFlag(s, kTISPropertyInputSourceIsEnabled) ? "是" : "否")；可选中：\(sourceFlag(s, kTISPropertyInputSourceIsSelectCapable) ? "是" : "否")\n"
@@ -564,7 +613,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         busy = true
         append("\n=== 导入词库 ===\n")
         let r = importDictionaries(files: panel.urls.map { $0.path }, support: supportDir(),
-                                   importer: res("chaoset-import"), seed: res("dict_common.tsv"))
+                                   importer: embeddedResource("chaoset-import"),
+                                   seed: embeddedResource("dict_common.tsv"))
         append(r + "\n")
         refresh()
         busy = false
@@ -597,7 +647,8 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--selftest" {
     let files = Array(CommandLine.arguments.dropFirst(3))
     // 自检模式不碰用户的 daemon，只验证"合并 → 备份 → 原子替换"这条链路
     print(importDictionaries(files: files, support: support,
-                             importer: res("chaoset-import"), seed: res("dict_common.tsv"),
+                             importer: embeddedResource("chaoset-import"),
+                             seed: embeddedResource("dict_common.tsv"),
                              restart: false))
     exit(0)
 }

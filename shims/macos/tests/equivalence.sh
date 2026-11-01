@@ -15,8 +15,9 @@ cd "$(dirname "$0")/.."
 
 SETUP_APP=build/ChaosetSetup.app
 SETUP_BIN="$SETUP_APP/Contents/MacOS/ChaosetSetup"
-RES="$SETUP_APP/Contents/Resources"
+SETUP_RES="$SETUP_APP/Contents/Resources"
 APP=build/ChaosetIME.app
+APP_RES="$APP/Contents/Resources"
 fails=0
 note() { printf '%s\n' "$*"; }
 fail() { fails=$((fails + 1)); printf 'FAIL %s\n' "$*"; }
@@ -25,10 +26,20 @@ ok() { printf 'ok   %s\n' "$*"; }
 [ -d "$SETUP_APP" ] || { echo "缺 ${SETUP_APP}，先跑 build.sh"; exit 2; }
 
 note "== A. 同源检查：GUI 随包工具与构建产物的 CLI 版本逐字节相同 =="
-for b in tis smoke chaoset-import chaosetd; do
-  if cmp -s "$RES/$b" "build/$b"; then ok "A.$b 与 CLI 同源"; else fail "A.$b 与 CLI 版本不同源"; fi
+for b in tis smoke; do
+  if cmp -s "$SETUP_RES/$b" "build/$b"; then ok "A.$b 与 CLI 同源"; else fail "A.$b 与 CLI 版本不同源"; fi
 done
-if cmp -s "$RES/ChaosetIME.embedded/Contents/MacOS/ChaosetIME" build/ChaosetIME.app/Contents/MacOS/ChaosetIME; then
+for b in chaoset-import chaosetd; do
+  if cmp -s "$APP_RES/$b" "build/$b"; then ok "A.$b 与 CLI 同源（app 内置）"; else fail "A.$b 与 CLI 版本不同源"; fi
+done
+for b in chaosetd chaoset-import dict_common.tsv; do
+  if cmp -s "$SETUP_RES/ChaosetIME.embedded/Contents/Resources/$b" "$APP_RES/$b"; then
+    ok "A.embedded-$b 与安装 app 同源"
+  else
+    fail "A.embedded-$b 与安装 app 不同"
+  fi
+done
+if cmp -s "$SETUP_RES/ChaosetIME.embedded/Contents/MacOS/ChaosetIME" build/ChaosetIME.app/Contents/MacOS/ChaosetIME; then
   ok "A.ChaosetIME 主程序与 CLI 构建同源"
 else
   fail "A.ChaosetIME 主程序不同源"

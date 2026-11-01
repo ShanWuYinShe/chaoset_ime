@@ -3,6 +3,15 @@
 InputMethodKit 薄壳：只做「按键转发 + 文本上屏 + 候选窗展示」，全部组词逻辑
 在 chaosetd。daemon 未运行时所有按键原样透传，不会影响宿主应用输入。
 
+## 安装布局（2026-11-01）
+
+安装后只有一个输入法 app：`~/Library/Input Methods/ChaosetIME.app`。
+`Contents/Resources/` 内自带 `chaosetd`、`chaoset-import`、`dict_common.tsv`，
+LaunchAgent 直接指向 app 内的 daemon；`~/Library/Application Support/chaoset`
+只放用户数据（userdict.json）、当前词库（dict.tsv）、socket 与日志。
+不再把 daemon 单独复制到 Application Support。安装器（ChaosetSetup.app）
+同时把自己装到 `~/Applications/Chaoset.app`，供设置窗「导入词库」入口调用。
+
 ## 按键
 
 | 按键 | 行为 |
@@ -41,18 +50,19 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 ### 从源码
 
 ```sh
-./build.sh          # 产出 build/ChaosetIME.app、build/chaosetd 与验证工具 build/tis、build/smoke
+./build.sh          # 产出 build/ChaosetIME.app（自带 daemon/chaoset-import/种子词库）、
+                    # build/ChaosetSetup.app 与验证工具 build/tis、build/smoke
                     # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
                     # 默认构建 universal（ARCHS="arm64 x86_64"）；
                     # 本地快速迭代可只出单架构：ARCHS=arm64 ./build.sh
 
-# 1. 一键安装：输入法 app（移除旧版→拷入→lsregister→TIS 登记）
-#    + daemon 与种子词库 + 输入法进程常驻 LaunchAgent
-#    （daemon/输入法已在跑的话会重新拉起新版）
+# 1. 一键安装：把一个自包含的 ChaosetIME.app（移除旧版→拷入→lsregister→TIS 登记）
+#    装入 ~/Library/Input Methods；daemon/导入工具/种子词库都在 app 内，
+#    LaunchAgent 指向 app 内 daemon；用户数据仍在 Application Support。
 ./install.sh
 
-# 2. 若没有配 LaunchAgent，手动前台启动 daemon 先试通
-"$HOME/Library/Application Support/chaoset/chaosetd" \
+# 2. 若没有配 LaunchAgent，手动前台启动 app 内 daemon 先试通
+"$HOME/Library/Input Methods/ChaosetIME.app/Contents/Resources/chaosetd" \
   -socket "$HOME/Library/Application Support/chaoset/chaoset.sock" \
   -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
   -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
@@ -163,7 +173,7 @@ System Settings「添加输入法」列表、菜单栏（系统栏）、快捷�
 	<key>Label</key><string>ime.chaoset.daemon</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/you/Library/Application Support/chaoset/chaosetd</string>
+		<string>/Users/you/Library/Input Methods/ChaosetIME.app/Contents/Resources/chaosetd</string>
 		<string>-socket</string>
 		<string>/Users/you/Library/Application Support/chaoset/chaoset.sock</string>
 		<string>-dict</string>
@@ -186,7 +196,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 `-log` 让 launchd 下的 daemon 日志落到
 `~/Library/Application Support/chaoset/chaosetd.log`（2026-10-31 补；此前
 launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」等信息看不到）。
-真机排障先跑 `chaosetd -version` 确认构建，再对照该日志。
+真机排障先跑 app 内 `.../Contents/Resources/chaosetd -version` 确认构建，再对照该日志。
 
 ## 卸载
 
@@ -194,6 +204,7 @@ launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」�
 launchctl bootout gui/$(id -u)/ime.chaoset.daemon
 rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 rm -rf ~/Library/Input\ Methods/ChaosetIME.app
+rm -rf ~/Applications/Chaoset.app ~/Applications/ChaosetSetup.app
 # 旧版可能残留（已弃用，装新版时 install.sh 会自动清理）：
 launchctl bootout gui/$(id -u)/ime.chaoset.inputmethod 2>/dev/null || true
 rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist

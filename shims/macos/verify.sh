@@ -28,7 +28,12 @@ ok()   { printf '   OK: %s\n' "$*"; }
 printf '== 1) 输入法装入 ==\n'
 if [ -d "$IM" ]; then
   ok "$IM"
-  plutil -p "$IM/Contents/Info.plist" 2>/dev/null | grep -E '"TISInputSourceID"|"CFBundleIdentifier"' | sed 's/^/   /'
+  plutil -p "$IM/Contents/Info.plist" 2>/dev/null | grep -E '"CFBundleShortVersionString"|"TISInputSourceID"|"CFBundleIdentifier"' | sed 's/^/   /'
+  if [ -x "$IM/Contents/Resources/chaosetd" ] && [ -x "$IM/Contents/Resources/chaoset-import" ]; then
+    ok "daemon/导入工具随 app 安装（Application Support 只放用户数据）"
+  else
+    fail "app 内缺少 daemon/chaoset-import（旧版散装布局，请重新安装）"
+  fi
 else
   fail "未装入 ${IM}（先运行 ./install.sh）"
 fi

@@ -146,21 +146,19 @@ else
   echo "（未找到 build/tis，跳过显式注册；拷入该目录通常已足够）"
 fi
 
-# 2) 部署 daemon 与种子词库（壳靠它出候选；已存在则备份旧版并热替换）
+# 2) 确认 app 内置 daemon 与种子词库（运行组件随 ChaosetIME.app 安装，
+#    Application Support 只放用户数据/词库/socket）
 SUPPORT="$HOME/Library/Application Support/chaoset"
-if [ -x build/chaosetd ]; then
+DAEMON="$IM/ChaosetIME.app/Contents/Resources/chaosetd"
+if [ -x "$DAEMON" ]; then
   mkdir -p "$SUPPORT"
-  if [ -f "$SUPPORT/chaosetd" ]; then
-    cp "$SUPPORT/chaosetd" "$SUPPORT/chaosetd.prev"
-  fi
-  cp build/chaosetd "$SUPPORT/chaosetd"
-  chmod 755 "$SUPPORT/chaosetd"
-  # 词库部署：内置常用词库（data/dict_common.tsv，约 14 万条）是默认词库。
+  # 词库部署：app 内置 dict_common.tsv（约 14 万条）是默认词库。
   # 已存在的旧词库不能盲目覆盖（用户可能导入过自己的词库），但 2026-10 之前的
   # 早期安装会留下只含 Rime terra 单字表的旧 dict.tsv（约 7 万条、缺「经常」等
   # 常用二字词，表现为「输入 jingchang 无候选」）——这类明显退化的词库要自动升级。
   # 判据（可验证、不猜）：旧词库缺「经常」条目，且条目数不到内置词库的一半。
-  BUILTIN_DICT=../../data/dict_common.tsv
+  BUILTIN_DICT="$IM/ChaosetIME.app/Contents/Resources/dict_common.tsv"
+  [ -f "$BUILTIN_DICT" ] || BUILTIN_DICT=../../data/dict_common.tsv
   if [ -f "$BUILTIN_DICT" ]; then
     need_upgrade=no
     reason=""
@@ -207,7 +205,7 @@ if [ -x build/chaosetd ]; then
 	<key>Label</key><string>ime.chaoset.daemon</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>$SUPPORT/chaosetd</string>
+		<string>$DAEMON</string>
 		<string>-socket</string>
 		<string>$SUPPORT/chaoset.sock</string>
 		<string>-dict</string>
@@ -260,15 +258,17 @@ PLIST
     sleep 0.2
   done
   if [ "$ready" = yes ]; then
-    echo "已部署 daemon 并确认 IPC 就绪（LaunchAgent: ${LA_LABEL}）"
+    echo "已确认 app 内置 daemon 的 IPC 就绪（LaunchAgent: ${LA_LABEL}）"
   else
     echo "⚠ daemon 已部署但 IPC 未就绪（10 秒内未响应）。排查："
     echo "   launchctl print $LA_DOMAIN/$LA_LABEL | head -30"
     echo "   日志：log stream --predicate 'process == \"chaosetd\"' --last 1m"
-    echo "   手动启动：$SUPPORT/chaosetd -socket $SUPPORT/chaoset.sock -dict $SUPPORT/dict.tsv -userdict $SUPPORT/userdict.json"
+    echo "   手动启动：$DAEMON -socket $SUPPORT/chaoset.sock -dict $SUPPORT/dict.tsv -userdict $SUPPORT/userdict.json"
   fi
+  # 迁移旧版布局：daemon 曾单放在 Application Support；新版只从 app 内运行。
+  rm -f "$SUPPORT/chaosetd" "$SUPPORT/chaosetd.prev"
 else
-  echo "（未找到 build/chaosetd，跳过 daemon 部署）"
+  echo "（ChaosetIME.app 内缺少 daemon，跳过 daemon 部署；请重新构建）"
 fi
 
 # 3) 清理旧版 LaunchAgent（已弃用：系统 IMK 框架会自动拉起输入法进程，

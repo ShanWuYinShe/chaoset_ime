@@ -2,6 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.3（2026-11-01）
+
+- **macOS 输入法改为自包含 app 安装（用户要求）**：`ChaosetIME.app/Contents/Resources/`
+  内置 `chaosetd`、`chaoset-import`、`dict_common.tsv`，LaunchAgent 指向 app 内
+  daemon；`~/Library/Application Support/chaoset` 只保留用户数据/当前词库/socket/日志。
+  安装器不再把 daemon 单独拷到 Application Support，并把自己装到
+  `~/Applications/Chaoset.app`。新增 app 资源、签名、等价性与 universal 自检。
+
 ## v0.3.2（2026-11-01）
 
 - **修复 release 产物版本号**：v0.3.1 的 macOS app 因 release 构建步骤

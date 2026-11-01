@@ -228,11 +228,20 @@ jobs:
           chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
                    shims/macos/tests/visual-parity.sh
           make package-macos
+          for f in chaosetd chaoset-import dict_common.tsv; do
+            test -e "shims/macos/build/ChaosetIME.app/Contents/Resources/$f" \
+              || { echo "输入法 app 缺少 $f"; exit 1; }
+          done
+          codesign --verify --deep --strict shims/macos/build/ChaosetIME.app
           test -f dist/chaoset-macos.zip || { echo "缺少 dist/chaoset-macos.zip"; exit 1; }
           unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetIME.app/Contents/MacOS/ChaosetIME' \
             || { echo "zip 缺少主壳"; exit 1; }
-          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetSetup.app/Contents/Resources/chaoset-import' \
-            || { echo "zip 缺少 Setup 随包 chaoset-import"; exit 1; }
+          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetIME.app/Contents/Resources/chaosetd' \
+            || { echo "zip 缺少 app 内置 daemon"; exit 1; }
+          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetIME.app/Contents/Resources/chaoset-import' \
+            || { echo "zip 缺少 app 内置 chaoset-import"; exit 1; }
+          unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetSetup.app/Contents/Resources/ChaosetIME.embedded/Contents/Resources/dict_common.tsv' \
+            || { echo "zip 缺少安装器内 embedded 种子词库"; exit 1; }
           ls dist/Chaoset-*.dmg >/dev/null 2>&1 && echo "DMG 已生成" || echo "（无 hdiutil，跳过 DMG）"
 
       # 顺带断言所有随包工具都是 universal：chaoset-import 曾因裸 go build 只出
@@ -240,7 +249,9 @@ jobs:
       - name: 随包工具 universal 自检
         run: |
           for b in shims/macos/build/chaosetd shims/macos/build/tis \
-                   shims/macos/build/smoke shims/macos/build/chaoset-import; do
+                   shims/macos/build/smoke shims/macos/build/chaoset-import \
+                   shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetd \
+                   shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-import; do
             lipo -info "$b" | grep -q 'x86_64 arm64\|arm64 x86_64' \
               || { echo "非 universal: $b"; lipo -info "$b"; exit 1; }
           done
