@@ -2,6 +2,45 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.9（2026-11-02）
+
+- **macOS Shift 切换中英文真机生效**（用户反馈：只能用拼音后回车输入英文）：
+  IMK 只投递 `recognizedEvents` 声明过的事件类型，默认只声明 `.keyDown`，
+  `flagsChanged`（Shift 空按）到不了输入法。`ChaosetController` 覆盖
+  `recognizedEvents` 加入 `.keyDown, .flagsChanged`；`key_routing` 测试补断言，
+  真机用 CGEvent 投递 Shift + 字母验证中英切换正常。
+- **macOS 高负载打字卡顿 / 偶发丢首字母修复**（用户反馈：系统负载高时打字卡顿、
+  丢拼音第一个字母）：LaunchAgent 未声明 `ProcessType` 时默认按 Background 调度，
+  CPU 争抢下 IPC 被严重节流。`install.sh` 写入 `ProcessType=Interactive` 并加
+  机器断言。8 核满载实测：p99 452ms → 17–20ms、最大 775ms → 31–57ms、
+  >250ms 超时 27 次 → 0；空闲 p99 约 7ms 不变。
+- **声母/半截拼音渐进消费**（用户反馈：`kkdz` 选「看看」后 `d'z` 被整串吞掉）：
+  `consumeInputPrefix` 支持声母（k→kan）与半截前缀（gu→guo、zho→zhong、g→guo），
+  选词只消耗候选覆盖的音节；完整音节不匹配时不退回声母（zheng≠zen 不被拆）。
+  `kkdz` 选「看看」剩 `d'z` 继续出候选；`zhongg` 选「中国」的 g 属于 guo 一并消耗。
+- **长串纯声母不再误判错拼、单字始终可兜底**：纯声母切分（含撇号分隔
+  `k'k'd'z` 与长简拼）不再判错拼；`v` 作为声母参与切分（`zxcv` 不再 0 候选）。
+  任何多段输入都在列表末尾追加首段全量单字（≤120，来自词典/用户词库），
+  整词/组合候选仍在前面、单字块收尾；错拼输入除外（保持纠错固定第 3 位）。
+  2~3 音节、强整词、两段简拼同样适用；词库没有的词可逐字拼出并学习。
+- **用户输入 > 默认字频**：简拼/混拼下不再用「候选音节数 > token 数」误判超段
+  （token 数不是音节数），学过的词优先于默认高频词（`ysfa` → 原生方案从 143
+  位进首屏）；歧义切分（`tuan` = `tuan`/`tu'an`）按所有合法切分的最大段数判断，
+  学过「图案」后 `tuan` 首选图案、排到「团」之前；`hao`/「好家伙」这类
+  单音节输入 vs 多字词组仍保持「好」优先，非用户候选的超段排序不变。
+- **发布包不再提供 DMG**（用户不会申请 Apple 开发者账号）：`Makefile` /
+  `release.yml` / `ci.yml` 移除 DMG 构建与上传，只保留 `chaoset-macos.zip`；
+  `checkuiparity` 断言同步；README / AGENTS / 安装器注释改为 ZIP 安装。
+  历史 Release 中的 DMG 资产已删除。
+- **macOS 安装推荐终端一行命令**：`install-online.sh` 用 `curl` 下载 zip、
+  清除 `com.apple.quarantine` 后启动安装器，不需要开发者账号 / `sudo`，不会被
+  Gatekeeper 拦截；README 与 macOS README 以一行命令为推荐方式，zip 作为
+  离线/手动备选；澄清 Gatekeeper 只拦截带 quarantine 的文件。
+- **测试与质量**：新增/更新声母消费、单字兜底、用户词优先、歧义切分、Shift
+  按键路由等回归；`go test ./...` 全绿。固定口径扫描（1071 采样）full / tail1 /
+  tail2 / mixed 持平，initials top3 17.27% → 17.46%、rankAvg 34.1 → 32.9；
+  组词耗时约 514µs → 559µs/输入（daemon IPC 约 4ms，无感）。
+
 ## v0.3.8（2026-11-01）
 
 - **常见反序双字母手误强制归位**（用户反馈：经常把 `ding` 打成 `dign`，要求把
