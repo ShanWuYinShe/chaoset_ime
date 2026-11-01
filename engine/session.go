@@ -1260,6 +1260,12 @@ func (s *Session) compose() Composition {
 		// 手误（zhogn）与合法混拼（yiwys），必须靠「纠错命中词的词频远高于
 		// 常规候选」这个词典事实才能安全提升。
 		rankTypoFix
+		// rankComposition 是正常输入的「已有词组合」候选（changshuru → 长+输入、
+		// tuzhong → 图+中；2026-11-01 用户确认放开）。只允许词库已有词的序列。
+		// 放在所有真实词条与逐级回退碎片之后（rankBackoff+64 保证大于任意
+		// rankBackoff+drop），只作为列表末尾的额外选项：组合没有语言模型，
+		// 不能改变任何原有候选的先后（用户此前的硬要求）。
+		rankComposition = rankBackoff + 64
 	)
 
 	minPatternLen := 0
@@ -1492,7 +1498,7 @@ func (s *Session) compose() Composition {
 			if !tailSuspicious && phraseOK && typoPhraseQueries < typoMaxPhraseQueries {
 				typoPhraseQueries++
 				fixBonus := phraseBonus
-				for _, e := range s.typoPhraseEntries(qp, 6) {
+				for _, e := range s.composedPhraseEntries(qp, 6) {
 					key := userKey(e.Word, e.Syllables)
 					if typoAdded[key] {
 						continue
@@ -1768,6 +1774,31 @@ func (s *Session) compose() Composition {
 						}
 					}
 				}
+			}
+		}
+	}
+
+	// 正常输入的「已有词组合」候选（2026-11-01 用户确认放开）：正确拼写的
+	// 多音节输入如果整串在词库里没有单条词条、但能切成已有词的序列
+	// （changshuru → 长+输入、tuzhong → 图+中），也作为候选给出。
+	// 约束：只允许词典/用户词库中真实存在的词段（不造词）；放在 rankComposition
+	// 层（真实词条之后、逐级回退碎片之前），不会挤掉正常首选；最多 4 条。
+	if !typoSuspicious && !midSuspicious && !tailSuspicious && len(tokenPatterns) > 0 {
+		clean := tokenPatterns[0]
+		cleanExact := len(clean) >= 2
+		for _, tok := range clean {
+			if !tok.IsExact {
+				cleanExact = false
+				break
+			}
+		}
+		if cleanExact {
+			for _, e := range s.composedPhraseEntries(clean, 4) {
+				boost := 0
+				if s.user != nil {
+					boost = s.user.Score(e.Word, e.Syllables, s.prev)
+				}
+				addCandidate(e, e.Freq+boost, boost > 0, rankComposition)
 			}
 		}
 	}

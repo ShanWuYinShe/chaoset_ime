@@ -107,30 +107,64 @@ func TestTypoPhraseDPSelectionConsumesWholeInput(t *testing.T) {
 	}
 }
 
-// TestTypoPhraseDPDisabledForCorrectInput：正常输入仍不允许拼合造词
-// （用户此前明确要求：词库里没有的复合词不要猜）。纠错 DP 只在错拼路径生效。
-func TestTypoPhraseDPDisabledForCorrectInput(t *testing.T) {
-	d := mustJoinedDict(t,
-		"我们\two men\t85",
-		"的\tde\t90",
-		"你好\tni hao\t80",
-		"吗\tma\t50",
-		"长\tchang\t40",
-		"输入\tshu ru\t54",
-		"图\ttu\t51",
-		"中\tzhong\t81",
-	)
-	for _, tc := range []struct{ input, banned string }{
-		{"womende", "我们的"},
-		{"nihaoma", "你好吗"},
-		{"changshuru", "长输入"}, // 正确拼写：不纠错、不拼合
-		{"tuzhong", "图中"},
-	} {
+// TestCorrectInputCompositionsStayLowPriority：正常（未打错）输入也会给出
+// 「已有词组合」候选（2026-11-01 用户确认放开），但只能出现在列表末尾——
+// 真实词条必须保持首选，组合不得挤进首屏；组合每一段都必须是词库已有词。
+func TestCorrectInputCompositionsStayLowPriority(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct {
+		input    string
+		composed []string
+	}{
+		{"womende", []string{"我们的"}},
+		{"nihaoma", []string{"你好吗"}},
+		{"changshuru", []string{"长输入"}},
+		{"tuzhong", []string{"图中"}},
+	}
+	for _, tc := range cases {
 		all := collectAllCandidates(t, NewSession(d, nil), tc.input)
-		for _, c := range all {
-			if c.Text == tc.banned {
-				t.Fatalf("%s: 正常输入不得拼出「%s」（这是错拼修正路径才允许的组合）", tc.input, tc.banned)
+		if len(all) == 0 {
+			t.Fatalf("%s: 应有候选", tc.input)
+		}
+		for _, word := range tc.composed {
+			for i, c := range all {
+				if c.Text != word {
+					continue
+				}
+				if i < pageSize {
+					t.Fatalf("%s: 组合候选 %q 出现在首屏第 %d 位——真实词条必须优先", tc.input, word, i+1)
+				}
+				if len(c.Segments) < 2 || !allSegmentsInDict(d, c.Segments) {
+					t.Fatalf("%s: 组合候选 %q 的分段 %v 不全是词库已有词", tc.input, word, c.Segments)
+				}
 			}
+		}
+	}
+}
+
+// TestCorrectInputCompositionsExist：用户确认「正确拼写也允许组合候选」后，
+// 这些组合必须真的出现在候选里（只在列表末尾），防止后续重构时被整体删掉。
+func TestCorrectInputCompositionsExist(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct{ input, word string }{
+		{"womende", "我们的"},
+		{"changshuru", "长输入"},
+		{"tuzhong", "图中"},
+	}
+	for _, tc := range cases {
+		all := collectAllCandidates(t, NewSession(d, nil), tc.input)
+		found := false
+		for _, c := range all {
+			if c.Text != tc.word {
+				continue
+			}
+			found = true
+			if len(c.Segments) < 2 || !allSegmentsInDict(d, c.Segments) {
+				t.Fatalf("%s: 组合候选 %q 的分段 %v 不全是词库已有词", tc.input, tc.word, c.Segments)
+			}
+		}
+		if !found {
+			t.Fatalf("%s: 正确输入应给出已有词组合候选「%s」（用户确认放开）", tc.input, tc.word)
 		}
 	}
 }

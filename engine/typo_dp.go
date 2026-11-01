@@ -5,22 +5,20 @@ import (
 	"strings"
 )
 
-// 错拼修正后的「按已有词切分」DP（2026-11-01 用户要求）：
+// 「按已有词切分」的分词 DP（2026-11-01 用户要求；错拼修正与正常输入共用）：
 //
 //	用户输入长拼音时经常打错其中一两个字母（chagnshuru → changshuru，
-//	tuzhogng → tuzhong）。旧逻辑只对修正后的整串做一次「词典整词」查询：
-//	词库里没有「长输入」「图中」这种整词词条时（长+输入、图+中 都存在），
-//	修正结果就完全出不来。
+//	tuzhogng → tuzhong）；正确拼写时也可能整串在词库里没有单条词条，但能
+//	切成已有词（changshuru → 长输入、tuzhong → 图中）。旧逻辑只对整串做一次
+//	「词典整词」查询，词库里没有「长输入」「图中」这种整词词条时完全出不来。
 //
-// 这里对修正串正常切分后的音节序列做 DP，把整串切成「已存在的词」序列，
-// 拼出的词组作为错拼修正候选（rankTypoFix + typoFix 标记，选中即整串消费）。
+// 这里对音节序列做 DP，把整串切成「已存在的词」序列：
+//   - 错拼修正路径：作为纠错组合候选（typoFix 标记，选中即整串消费，见 compose）；
+//   - 正常输入路径：作为低层组合候选（rankComposition，排在真实词条之后）。
 //
-// 边界（与用户此前的「不拼合造词」规则不冲突）：
-//   - 只在**错拼修正路径**里调用（typoSuspicious / midSuspicious / tailSuspicious），
-//     正常输入仍然不会把多个词拼成词组候选；
-//   - 每一段都必须能在词典或用户词库里精确查到，不引入词库不存在的词；
-//   - 整词本身在词库中存在的组合（如「你好」= 你+好 恰好是词条）直接跳过，
-//     避免把整词候选加上分段、改变学习语义。
+// 硬边界：每一段都必须在词典或用户词库里真实存在，不造词；整词本身存在的
+// 组合（如「你好」= 你+好 恰好是词条）直接跳过，避免把整词候选加上分段、
+// 改变学习语义。回归测试见 engine/typo_dp_test.go 与 composition_rules_test.go。
 const (
 	// typoDPWordBonus 是多字词每多一个音节的奖励：鼓励把长段当作一个已有的
 	// 多字词（输入…），而不是拆成更碎的组合。取值刻意小于「一个普通词的词频
@@ -112,9 +110,10 @@ func typoFixPhraseBonus(src, fixed string) (bonus int, ok bool) {
 	return 0, false
 }
 
-// typoPhraseEntries 把（已修正的）完整音节序列切成已有词序列，返回词组候选。
-// tokens 必须是纯完整音节（typoCorrections 产出的修正串都满足）。
-func (s *Session) typoPhraseEntries(tokens []Token, maxResults int) []*Entry {
+// composedPhraseEntries 把完整音节序列切成已有词序列，返回组合候选。
+// tokens 必须是纯完整音节（typoCorrections 产出的修正串、正确输入的首条
+// 切分都满足）。错拼路径与正常输入路径共用。
+func (s *Session) composedPhraseEntries(tokens []Token, maxResults int) []*Entry {
 	n := len(tokens)
 	if n < 2 || n > typoDPMaxSyllables || s.dict == nil {
 		return nil

@@ -26,10 +26,11 @@ func assertAllCandidatesInDict(t *testing.T, d *Dictionary, input string, all []
 		if d.Contains(c.Text, sylls) {
 			continue
 		}
-		// 错拼修正的组合候选（2026-11-01 用户要求）：只允许「已有词的序列」，
-		// 每个分段都必须在词典里真实存在——引擎仍然不造词，只是把修正后的
-		// 音节按已有词切开。正常（非错拼）输入不允许出现这类候选。
-		if c.typoFix && len(c.Segments) >= 2 && allSegmentsInDict(d, c.Segments) {
+		// 组合候选（2026-11-01 用户确认放开）：只允许「已有词的序列」，每个
+		// 分段都必须在词典里真实存在——引擎仍然不造词，只是把音节按已有词
+		// 切开；这类候选只出现在列表末尾（rankComposition），不得改变真实
+		// 词条的先后顺序（见 composition_rules_test.go）。
+		if len(c.Segments) >= 2 && allSegmentsInDict(d, c.Segments) {
 			continue
 		}
 		t.Errorf("%s: 候选 %q（%s）不在词典中——引擎不得拼合造词", input, c.Text, c.Syllables)
@@ -84,24 +85,25 @@ func TestComposeCandidatesOnlyFromDict(t *testing.T) {
 	}
 }
 
-// TestNoComposedSentenceCandidates：命名锁定用户反馈的具体造词不再出现。
-// 同时断言首选是「最长已有词前缀」——多音节长输入命中前缀词时由它领跑，
-// 词库里没有前缀词组时退回首音节单字（woxiangqubeijingdaxue 的「我」）。
-func TestNoComposedSentenceCandidates(t *testing.T) {
+// TestComposedCandidatesStayLowPriority：组合候选（已有词序列）2026-11-01 经
+// 用户确认放开，但必须只出现在列表末尾：真实词条（含逐级回退得到的
+// 我们/电脑/中华）必须保持首选，组合候选不得挤进首屏。
+// 同时锁定：组合候选只能由词典中真实存在的词组成（不造词）。
+func TestComposedCandidatesStayLowPriority(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
 	cases := []struct {
 		input     string
-		wantFirst string // 期望首选（最长已有词前缀；无前缀词时为首音节单字）
-		banned    []string
+		wantFirst string   // 期望首选（最长已有词前缀；无前缀词时为首音节单字）
+		composed  []string // 可能以组合候选形式出现在列表末尾的词
 	}{
-		{"nihaoma", "你好", []string{"你号码", "你好吗", "你好马", "尼号码"}},
+		{"nihaoma", "你好", []string{"你号码", "你好吗", "你好马"}},
 		{"womende", "我们", []string{"我们的", "我们得", "我们德"}},
-		{"chifanle", "吃饭", []string{"吃饭了", "吃饭乐", "吃饭勒"}},
-		{"kanyixia", "看", []string{"看一下", "看以下", "喊一下"}},
-		{"diannaoshang", "电脑", []string{"电脑上", "电脑商", "电脑伤"}},
-		{"zhonghuarenmingongheguo", "中华", []string{"中华人民共和国", "中华人民共和", "种花人民共和国"}},
-		{"woxiangqubeijingdaxue", "我", []string{"我相去北京大学", "我相去北京大", "握相去北京大学"}},
+		{"chifanle", "吃饭", []string{"吃饭了", "吃饭乐"}},
+		{"kanyixia", "看", []string{"看一下", "看以下"}},
+		{"diannaoshang", "电脑", []string{"电脑上", "电脑商"}},
+		{"zhonghuarenmingongheguo", "中华", []string{"中华人民共和国", "中华人民公和国"}},
+		{"woxiangqubeijingdaxue", "我", []string{"我相去北京大学", "我相去背景大学"}},
 	}
 	for _, c := range cases {
 		s.Reset()
@@ -114,12 +116,20 @@ func TestNoComposedSentenceCandidates(t *testing.T) {
 			t.Fatalf("%s: 应有候选", c.input)
 		}
 		if got := all[0].Text; got != c.wantFirst {
-			t.Errorf("%s: 首选 = %q, 期望「%s」（候选: %+v）", c.input, got, c.wantFirst, all[:min(6, len(all))])
+			t.Errorf("%s: 首选 = %q, 期望真实词条「%s」；组合候选不得抢首屏（候选: %+v）",
+				c.input, got, c.wantFirst, all[:min(6, len(all))])
 		}
-		for _, banned := range c.banned {
-			for _, cand := range all {
-				if cand.Text == banned {
-					t.Errorf("%s: 候选不应包含拼接造词 %q（候选: %+v）", c.input, banned, all[:min(6, len(all))])
+		pageSize := 6
+		for _, word := range c.composed {
+			for i, cand := range all {
+				if cand.Text != word {
+					continue
+				}
+				if i < pageSize {
+					t.Errorf("%s: 组合候选 %q 出现在首屏第 %d 位，必须排在真实词条之后", c.input, word, i+1)
+				}
+				if len(cand.Segments) < 2 || !allSegmentsInDict(d, cand.Segments) {
+					t.Errorf("%s: 组合候选 %q 的分段 %v 不全是词典中已有的词", c.input, word, cand.Segments)
 				}
 			}
 		}
