@@ -4,34 +4,36 @@
 
 ## ⚡ 极简新手安装指南（零门槛·傻瓜式一键使用）
 
-> **致普通用户**：输入法面向的是广大日常电脑用户，不应该要求您懂命令行。
-> 每台电脑**只下载下面「推荐安装包」这一列**，按步骤做一次即可；`.zip` /
-> `.tar.gz` 是给开发者或绿色便携用户的高级选项，普通用户不用管。
+> **致普通用户**：输入法面向的是广大日常电脑用户。Windows/Linux 直接双击安装包即可；
+> **macOS 推荐用「终端一行命令」安装**（见下方，macOS 自带 bash，不需要开发者账号、
+> 不需要 `sudo`，也不会被 Gatekeeper 拦截）。`.zip` / `.tar.gz` 是开发者或绿色便携的
+> 高级选项。
 
-| 操作系统 | 推荐安装包（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
+| 操作系统 | 推荐安装方式（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
 | :--- | :--- | :--- | :--- |
 | **Windows** (10 / 11) | [`ChaosetSetup.exe`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 → UAC 点「是」→ 一直「下一步」。**若 SmartScreen 提示未知发布者：点「更多信息」→「仍要运行」**（仅首次；免费签名证书尚未配置） | `Win + 空格` |
-| **macOS** (15+) | [`chaoset-macos.zip`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 解压 ZIP → 双击「Chaoset 安装与设置」→「一键安装」。**若提示无法验证开发者：右键安装器 →「打开」→ 再点「打开」**（仅首次） | `Ctrl + 空格` 或 `Fn / 🌐` |
+| **macOS** (15+) | **终端一行命令**（见下方） | 打开「终端」→ 粘贴一行命令 → 安装器自动打开 →「一键安装」。不需要开发者账号 / `sudo`，不会被 Gatekeeper 拦截 | `Ctrl + 空格` 或 `Fn / 🌐` |
 | **Linux (Ubuntu / Debian / Mint)** | [`chaoset_amd64.deb`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 `.deb` → 应用中心点「安装」；装完后在系统「键盘 → 输入源」添加 **Chaoset Pinyin**（列表暂时没有就注销重登一次） | `Super + 空格` 或 `Ctrl + 空格` |
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
-> **macOS 首次打开被 Gatekeeper 拦截（无需开发者账号）**：
-> 只有**浏览器下载的 zip** 才会带 `com.apple.quarantine` 隔离标记，解压出的 app 首次打开才可能提示
-> 「无法验证开发者」；用下面一行 `curl` 安装（脚本下载后显式清除隔离标记）不会被拦截。
-> 若已被拦截：提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开解压目录里的
-> **「Chaoset 安装与设置」**（`ChaosetSetup.app`）。若安装器也被拦截，在 Finder 中右键安装器 →「打开」，
-> 或到「系统设置 → 隐私与安全性 → 安全性」点「仍要打开」。
->
-> 如果不想处理任何拦截提示，可在「终端」粘贴下面一行（脚本用 `curl` 下载 release 包、
-> 清除隔离标记后启动安装器；不需要 Apple 开发者账号，也不需要 `sudo`）：
+> **macOS 推荐安装（终端一行命令，无需开发者账号）**：打开「终端」（聚焦搜索 `Terminal` /「终端」），粘贴并回车：
 >
 > ```bash
 > /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
 > ```
 >
+> 脚本会下载最新 `chaoset-macos.zip`、解包并清除 `com.apple.quarantine`，把「Chaoset 安装与设置」
+> 装到 `~/Applications` 后自动打开；在窗口里点「一键安装 / 更新」即可。全程不需要 `sudo`，
+> 也不会出现「Apple 无法验证开发者」提示。
+>
+> **离线/手动方式**：从 Release 下载 `chaoset-macos.zip` 解压后双击 `ChaosetSetup.app`。
+> 浏览器下载的 zip 会带隔离标记，首次打开若被拦截：右键安装器 →「打开」（仅首次），
+> 或到「系统设置 → 隐私与安全性 → 安全性」点「仍要打开」。提示针对的是 `ChaosetIME.app`
+> （输入法本体）而不是安装器，请先运行解压目录里的 `ChaosetSetup.app`。
+>
 > **卸载**：macOS 打开「Chaoset 安装与设置」→「卸载」；Windows 在「设置 → 应用」卸载；Linux 用系统软件中心或包管理器卸载。
 >
-> 📦 **高级选项**：`chaoset-windows-x64.zip` / `chaoset-macos.zip` / `chaoset-linux-x86_64.tar.gz` 是绿色或排障用的高级包，需要管理员权限或命令行；普通用户不要下载。AUR/源码用户见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)。
+> 📦 **高级选项**：`chaoset-windows-x64.zip` / `chaoset-linux-x86_64.tar.gz` 是绿色或排障用的高级包，需要管理员权限或命令行；`chaoset-macos.zip` 是 macOS 的离线/手动备选（推荐用上面一行命令）。AUR/源码用户见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)。
 
 ---
 
@@ -778,9 +780,9 @@ Windows daemon 支持命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 
 推 `v*` tag 时，Release workflow（`.github/workflows/release.yml`）会自动三端打包并创建 Release：
 
-| 平台 | 推荐（普通用户） | 高级/备用（不要选） |
+| 平台 | 推荐（普通用户） | 高级/备用（一般不需要） |
 |---|---|---|
-| macOS | `chaoset-macos.zip` | — |
+| macOS | 终端一行命令（`install-online.sh`，见上） | `chaoset-macos.zip`（离线/手动） |
 | Windows | `ChaosetSetup.exe` | `chaoset-windows-x64.zip`（需管理员 + install.bat） |
 | Linux Debian/Ubuntu | `chaoset_amd64.deb` | `chaoset-linux-x86_64.tar.gz`（需 sudo 脚本） |
 | Linux Arch | `chaoset-ime-x86_64.pkg.tar.zst` | 同左，无脚本包 |

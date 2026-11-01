@@ -43,7 +43,24 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ## 构建与安装
 
-### 用发布包（推荐）
+### 推荐：终端一行命令安装（无需开发者账号）
+
+在「终端」粘贴并回车：
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
+```
+
+脚本会从 GitHub Release 下载 `chaoset-macos.zip`，用 `ditto` 解包并移除 `com.apple.quarantine`，
+把安装器装到 `~/Applications/ChaosetSetup.app` 后自动打开；在窗口里点「一键安装 / 更新」即可。
+不需要 Apple 开发者账号、不需要 `sudo`，也不会出现「Apple 无法验证」提示。
+也可以先下载 `shims/macos/install-online.sh` 人工检查，或指定本地包：
+
+```bash
+CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.sh
+```
+
+### 手动安装（离线/备选）
 
 > 发布包为 `chaoset-macos.zip`（不提供 DMG）；设置窗底部和「Chaoset 安装与设置」状态页都会显示版本，升级后可先核对版本再排障。
 
@@ -53,28 +70,10 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
 
 - 安装包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
-- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书）。Gatekeeper 只拦截带 `com.apple.quarantine` 的文件：
-  浏览器下载 zip 后解压的 app 会带隔离标记，首次打开可能提示，右键**安装器** →「打开」即可；
-  用 `install-online.sh`（`curl` 下载并清除隔离标记）安装则不会出现该提示。
+- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书）。浏览器下载 zip 后解压的 app 会带 `com.apple.quarantine`，
+  首次打开可能提示「无法验证开发者」，右键**安装器** →「打开」即可；推荐用上面一行命令安装（不会带隔离标记）。
   > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
 - 安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon；不会在 LaunchAgent 未就绪时再手动启动第二个 `chaosetd`（否则活动监视器会出现两个进程）。
-
-### 方式 B：终端免隔离安装（无开发者账号）
-
-如果右键「打开」仍被新版 macOS 拦截，可在「终端」执行：
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
-```
-
-脚本会从 GitHub Release 下载 `chaoset-macos.zip`，用 `ditto` 解包并移除 `com.apple.quarantine`，
-把安装器装到 `~/Applications/ChaosetSetup.app` 后自动打开；之后照常点「一键安装 / 更新」。
-不需要 Apple 开发者账号、不需要 `sudo`，也不会出现「Apple 无法验证」提示。
-也可以先下载 `shims/macos/install-online.sh` 人工检查，或指定本地包：
-
-```bash
-CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.sh
-```
 
 ### 从源码
 
