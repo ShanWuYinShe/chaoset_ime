@@ -8,6 +8,25 @@ description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）�
 两类高频现象根因相通：后台出现多个 chaosetd；切换到这个输入法后首字母丢失、打不出字。
 按下面的顺序查最快。
 
+## 零、系统高负载时打字卡顿 / 偶发丢拼音
+
+**先查 daemon 的 QoS，不要先怀疑引擎或语言性能。**
+
+- 现象：系统忙（编译/渲染/多任务满载）时按键明显延迟、候选窗慢半拍，
+  偶发首字母丢失或整段拼音被清掉；空闲时一切正常。
+- 根因：macOS LaunchAgent 未声明 `ProcessType` 时按 **Background** 调度，
+  系统高负载下 CPU 被节流；输入法 daemon 的 IPC 往返 p99 会从 ~7ms 恶化到
+  数百毫秒，超过壳侧 250ms 收发超时后按键被 passThrough/丢组词。
+- 检查：`plutil -p ~/Library/LaunchAgents/ime.chaoset.daemon.plist | grep ProcessType`
+  必须看到 `"ProcessType" => "Interactive"`。
+- 修复：`shims/macos/install.sh` 生成 plist 时已带
+  `<key>ProcessType</key><string>Interactive</string>`；手工补 key 后
+  `launchctl bootout gui/$(id -u) <plist>` + `launchctl bootstrap gui/$(id -u) <plist>`
+  让新调度生效。
+- 实测（2026-11-02，M1，8 核 `yes` 满载，600 次 IPC 采样）：
+  未声明 ProcessType 时 p50 13ms / p99 452ms / max 775ms / 27 次 >250ms；
+  声明 Interactive 后 p50 4ms / p99 17ms / max 31ms / 零超时；空闲 p99 ~7ms 不变。
+
 ## 一、「打不出字 / 首字母丢失」的排查顺序
 
 **不要一上来怀疑壳的按键逻辑**，先确认 IPC 通道是否真的通。

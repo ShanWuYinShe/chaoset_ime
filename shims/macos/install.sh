@@ -203,7 +203,14 @@ if [ -x "$DAEMON" ]; then
     fi
   fi
   # 安装（或修正）daemon 的 LaunchAgent：KeepAlive 保证 daemon 被 kill /
-  # 崩溃 / 重启电脑后自动拉起。
+  # 崩溃 / 重启电脑后自动拉起；ProcessType=Interactive 保证系统高负载时
+  # daemon 不被后台 QoS 节流。
+  #
+  # 2026-11-02 实测（M1，8 核 yes 满载）：LaunchAgent 不写 ProcessType 时
+  # 默认按 Background 调度，按键 IPC 往返 p99 从空闲 ~7ms 恶化到 452ms、
+  # max 775ms（600 次采样 27 次 >250ms 壳超时），表现为高负载打字卡顿/丢
+  # 拼音；补上 ProcessType=Interactive 后同负载 p99 17ms、max 31ms、零超时。
+  # 输入法属于用户交互进程，必须显式声明 Interactive。
   #
   # 2026-10-26 修复：此前 install.sh **从不写这个 plist**，只在一个「已经
   # 存在」的分支里 kickstart。全新机器上（或旧 plist 被清理后）装完输入法
@@ -231,10 +238,17 @@ if [ -x "$DAEMON" ]; then
 	</array>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
+	<key>ProcessType</key><string>Interactive</string>
 </dict>
 </plist>
 PLIST
   plutil -lint "$DAEMON_LA" >/dev/null || { echo "✗ LaunchAgent plist 校验失败：$DAEMON_LA"; exit 1; }
+  # 高负载下 daemon 不被后台 QoS 节流（2026-11-02 实测：缺该 key 时负载下
+  # 按键 IPC p99 452ms，补上后 17ms）；缺失直接报错，防止回归。
+  grep -q '<key>ProcessType</key><string>Interactive</string>' "$DAEMON_LA" || {
+    echo "✗ LaunchAgent 缺少 ProcessType=Interactive（高负载下 daemon 会被节流）" >&2
+    exit 1
+  }
 
   # 卸载旧定义 → 加载新定义。
   #
