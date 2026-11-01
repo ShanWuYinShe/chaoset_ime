@@ -185,6 +185,23 @@ func (c *Client) UserClear() error {
 	return c.call("userClear", nil, nil)
 }
 
+// UserDelete 按词删除学习数据（候选窗右键「删除该词」/ chaoset-userdict
+// delete）：删 Words 调频记录与 Phrases 用户词组，返回是否真的删到了东西。
+// **不重试**：写类操作，重试可能与并发写入交错、也不应把「未找到」当失败。
+func (c *Client) UserDelete(word string, sylls []string) (bool, error) {
+	params := map[string]any{"word": word}
+	if len(sylls) > 0 {
+		params["sylls"] = sylls
+	}
+	var out struct {
+		Deleted bool `json:"deleted"`
+	}
+	if err := c.call("userDelete", params, &out); err != nil {
+		return false, err
+	}
+	return out.Deleted, nil
+}
+
 // userExportPageLimit 是分页导出的单页行数上限。
 //
 // 2000 行的典型行宽（词/拼音/次数/时间，约 50–150 字节）远小于 1 MiB 帧

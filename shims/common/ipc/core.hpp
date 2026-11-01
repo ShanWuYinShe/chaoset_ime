@@ -126,6 +126,12 @@ public:
     // 经同一 IPC 通道作用于 daemon（内存与磁盘一起生效，无覆盖竞态）。
     bool userStats(UserStats* out);
     bool userClear();
+    // 按词删除学习数据（候选窗右键「删除该词」/ chaoset-userdict delete）：
+    // word + 音节序列 → daemon 的 engine.UserDict.DeleteWord。返回 false 表示
+    // 通信失败；*deleted 表示 daemon 侧是否真的删到了记录（幂等，重复删除为
+    // false 但不是错误）。写类操作，调用方不得重试。
+    bool userDelete(const std::string& word, const std::vector<std::string>& sylls,
+                    bool* deleted);
     // 导出学习数据 TSV：daemon 单帧上限 1 MiB（2026-10-30 起分页），
     // 这里按 offset/limit 循环拼接，重度用户的大数据也能完整导出。
     bool userExportAll(bool phrasesOnly, std::string* out);

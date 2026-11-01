@@ -1,6 +1,6 @@
-// chaoset-userdict 管理用户词典：查看统计、清空学习数据、导出 TSV。
+// chaoset-userdict 管理用户词典：查看统计、按词删除/清空学习数据、导出 TSV。
 //
-// 默认经 IPC 作用于运行中的 chaosetd——清空同时生效于 daemon 内存与
+// 默认经 IPC 作用于运行中的 chaosetd——删除/清空同时生效于 daemon 内存与
 // 磁盘，不存在覆盖竞态；-userdict 指定文件则直接本地操作（daemon
 // 须停止，否则学习数据会在下次 bump 时被 daemon 内存态覆盖）。
 //
@@ -8,9 +8,18 @@
 //
 //	chaoset-userdict [-socket PATH] stats
 //	chaoset-userdict [-socket PATH] clear
+//	chaoset-userdict [-socket PATH] delete 词 [音节...]
 //	chaoset-userdict [-socket PATH] export [-phrases] [-o FILE]
-//	chaoset-userdict [-tcp ADDR] stats|clear|export ...（Windows 壳的 TCP 形态）
-//	chaoset-userdict -userdict FILE stats|clear|export ...
+//	chaoset-userdict [-tcp ADDR] stats|clear|delete|export ...（Windows 壳的 TCP 形态）
+//	chaoset-userdict -userdict FILE stats|clear|delete|export ...
+//
+// delete 删除一个词的学习记录（Words 调频 + 由它进化的 Phrases 词组；
+// 上下文共现 bigram 保留，语义见 engine.DeleteWord 注释）。音节可省略
+// （按词文本删全部读音/分词），也可写 space 或 ' 分隔的音节串：
+//
+//	chaoset-userdict delete 今天
+//	chaoset-userdict delete 今天 "jin tian"
+//	chaoset-userdict delete 今天 jin'tian
 //
 // export 的 -phrases 只导出用户词组（词\t拼音\t次数 三列），
 // 可直接作为 chaoset-import 的输入词库回流。
@@ -24,6 +33,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"chaoset.ime/engine"
 	"chaoset.ime/internal/appdirs"
@@ -66,29 +76,38 @@ func main() {
 
 	// Go 的 flag 包遇到子命令即停止，export 专属旗标用 FlagSet 二次解析
 	cmd := ""
-	if args := flag.Args(); len(args) > 0 {
-		cmd = args[0]
+	if rest := flag.Args(); len(rest) > 0 {
+		cmd = rest[0]
 	}
-	phrasesOnly := false
-	out := ""
+	args := cmdArgs{}
 	switch cmd {
 	case "export":
 		fs := flag.NewFlagSet("export", flag.ExitOnError)
-		fs.BoolVar(&phrasesOnly, "phrases", false, "只导出用户词组（三列 TSV，可直接作为 chaoset-import 输入）")
-		fs.StringVar(&out, "o", "", "输出文件路径（空则打印到标准输出）")
+		fs.BoolVar(&args.phrasesOnly, "phrases", false, "只导出用户词组（三列 TSV，可直接作为 chaoset-import 输入）")
+		fs.StringVar(&args.out, "o", "", "输出文件路径（空则打印到标准输出）")
 		if err := fs.Parse(flag.Args()[1:]); err != nil {
 			os.Exit(2)
 		}
+	case "delete":
+		// delete 词 [音节...]：音节可省略（按词文本删全部读音/分词），也可
+		// 写 space 或 ' 分隔的音节串（多个位置参数会被拼起来统一拆分）。
+		rest := flag.Args()[1:]
+		if len(rest) == 0 || rest[0] == "" {
+			fmt.Fprintln(os.Stderr, "用法: chaoset-userdict ... delete 词 [音节...]")
+			os.Exit(2)
+		}
+		args.word = rest[0]
+		args.sylls = splitSyllables(strings.Join(rest[1:], " "))
 	case "stats", "clear":
 		// 无专属旗标
 	default:
-		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -pipe | -userdict FILE] stats|clear|export [-phrases] [-o FILE]")
+		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -pipe | -userdict FILE] stats|clear|delete 词 [音节...]|export [-phrases] [-o FILE]")
 		os.Exit(2)
 	}
 
 	var err error
 	if *userPath != "" {
-		err = runLocal(*userPath, cmd, phrasesOnly, out)
+		err = runLocal(*userPath, cmd, args)
 	} else {
 		ep := ipc.Endpoint{Network: "unix", Address: *socket}
 		if *usePipe {
@@ -106,7 +125,7 @@ func main() {
 			}
 			ep.Address = socketPath
 		}
-		err = runDaemon(ep, cmd, phrasesOnly, out)
+		err = runDaemon(ep, cmd, args)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -135,9 +154,24 @@ func pathsJSON() (string, error) {
 	return string(data), nil
 }
 
-// runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；清空无覆盖竞态）。
+// cmdArgs 汇总子命令的可选参数：export 用 phrasesOnly/out，delete 用
+// word/sylls（音节序列；空表示按词文本删除该词全部记录）。集中成一个
+// 结构体，避免每加一个子命令就往 runDaemon/runLocal 上加参数。
+type cmdArgs struct {
+	phrasesOnly bool
+	out         string
+	word        string
+	sylls       []string
+}
+
+// splitSyllables 把 space 或 ' 分隔的音节串拆成数组（"jin tian" / "jin'tian"）。
+func splitSyllables(s string) []string {
+	return strings.Fields(strings.ReplaceAll(s, "'", " "))
+}
+
+// runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；删除/清空无覆盖竞态）。
 // ep 为 unix/tcp/pipe 任一传输端点。
-func runDaemon(ep ipc.Endpoint, cmd string, phrasesOnly bool, out string) error {
+func runDaemon(ep ipc.Endpoint, cmd string, args cmdArgs) error {
 	c, err := ipc.DialEndpoint(ep)
 	if err != nil {
 		return fmt.Errorf("连接 daemon 失败（daemon 未运行可改用 -userdict 本地模式）: %w", err)
@@ -160,18 +194,24 @@ func runDaemon(ep ipc.Endpoint, cmd string, phrasesOnly bool, out string) error 
 			return err
 		}
 		fmt.Printf("已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", before.Words, before.Phrases, before.Bigrams)
-	case "export":
-		tsv, err := c.UserExport(phrasesOnly)
+	case "delete":
+		deleted, err := c.UserDelete(args.word, args.sylls)
 		if err != nil {
 			return err
 		}
-		return writeOut(out, tsv)
+		printDeleteResult(args.word, deleted)
+	case "export":
+		tsv, err := c.UserExport(args.phrasesOnly)
+		if err != nil {
+			return err
+		}
+		return writeOut(args.out, tsv)
 	}
 	return nil
 }
 
 // runLocal 直接操作用户词典文件（daemon 须停止）。
-func runLocal(path, cmd string, phrasesOnly bool, out string) error {
+func runLocal(path, cmd string, args cmdArgs) error {
 	u, err := engine.NewUserDict(path)
 	if err != nil {
 		return err
@@ -185,14 +225,29 @@ func runLocal(path, cmd string, phrasesOnly bool, out string) error {
 			return err
 		}
 		fmt.Printf("已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", before.Words, before.Phrases, before.Bigrams)
-	case "export":
-		var buf bytes.Buffer
-		if err := u.ExportTSV(&buf, phrasesOnly); err != nil {
+	case "delete":
+		deleted, err := u.DeleteWord(args.word, args.sylls)
+		if err != nil {
 			return err
 		}
-		return writeOut(out, buf.String())
+		printDeleteResult(args.word, deleted)
+	case "export":
+		var buf bytes.Buffer
+		if err := u.ExportTSV(&buf, args.phrasesOnly); err != nil {
+			return err
+		}
+		return writeOut(args.out, buf.String())
 	}
 	return nil
+}
+
+// printDeleteResult 统一 delete 子命令的输出（daemon / 本地两种模式一致）。
+func printDeleteResult(word string, deleted bool) {
+	if deleted {
+		fmt.Printf("已删除「%s」的学习记录\n", word)
+		return
+	}
+	fmt.Printf("未找到「%s」的学习记录（可能未学习过或已删除）\n", word)
 }
 
 func printStats(st engine.UserStats) {

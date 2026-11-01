@@ -35,6 +35,9 @@ final class ChaosetController: IMKInputController {
     // 联想模式：选词上屏后候选窗继续展示续接词组（非 nil 即联想中）；
     // 用户开始输入新字母或结束会话时清空，回到正常拼音匹配。
     private var associateCandidates: [Candidate]?
+    // 联想来源音节：右键删除联想候选后按同一来源重新查询续接词组，
+    // 保证删除刷新不改变联想链（不清空、不跳到其它词）。
+    private var associateSylls: [String] = []
     private var candidateWindow: IMKCandidates?
 
     // 中英模式：英文模式下按键全部放行（组词/选词/标点映射不介入）。
@@ -586,6 +589,70 @@ final class ChaosetController: IMKInputController {
         enterAssociate(sylls: cur.candidates[index].syllables.split(separator: "'").map(String.init), client: client)
     }
 
+    // MARK: - 候选窗右键删除学习记录
+
+    /// 右键「删除该词」：按候选的「词 + 音节」删除 daemon 学习数据。
+    ///
+    /// 约束：
+    ///   - 只删学习记录，不上屏、不改文档、不结束组词（右键事件走 NSView 的
+    ///     上下文菜单通道，不进 mouseDown/onSelect 路径，面板也不抢焦点）；
+    ///   - 写类 IPC 不重试（重试会把「已删除」变成「未找到」，写请求不应重放）；
+    ///   - 删除成功后用当前剩余拼音重新组词刷新候选（daemon 不缓存候选列表）。
+    private func deleteCandidate(index: Int, client: (any IMKTextInput)?) {
+        guard let cur = current, index >= 0, index < cur.candidates.count else { return }
+        let pick = cur.candidates[index]
+        let sylls = pick.syllables.split(separator: "'").map(String.init)
+        guard let deleted = engine.userDelete(word: pick.text, syllables: sylls) else {
+            showToast("删除失败：daemon 不可达", client: client)
+            return
+        }
+        guard deleted else {
+            showToast("未找到该词的学习记录", client: client)
+            return
+        }
+        recompose(client)
+        showToast("已删除该词", client: client)
+    }
+
+    /// 删除学习记录后重新组词：daemon 不缓存候选列表，reset 后重放当前剩余
+    /// 拼音即可拿到最新候选。已确认段 confirmedText 是壳侧状态，刷新不影响它。
+    private func recompose(_ client: (any IMKTextInput)?) {
+        guard let cur = current else {
+            refresh(client)
+            return
+        }
+        let raw = cur.input
+        _ = engine.reset()
+        if raw.isEmpty {
+            current = nil
+        } else {
+            current = engine.input(raw, halfWidth: halfWidth)
+        }
+        refresh(client)
+    }
+
+    /// 联想态右键删除：删除学习记录后按当前联想来源音节重新查询续接词组；
+    /// 删空则收起联想面板（不把别的词硬塞给用户）。
+    private func deleteAssociateCandidate(_ pick: Candidate, client: (any IMKTextInput)?) {
+        let sylls = pick.syllables.split(separator: "'").map(String.init)
+        guard let deleted = engine.userDelete(word: pick.text, syllables: sylls) else {
+            showToast("删除失败：daemon 不可达", client: client)
+            return
+        }
+        guard deleted else {
+            showToast("未找到该词的学习记录", client: client)
+            return
+        }
+        let source = associateSylls
+        associateCandidates = nil
+        associatePage = 0
+        if !source.isEmpty, let comp = engine.associate(sylls: source), !comp.candidates.isEmpty {
+            associateCandidates = comp.candidates
+        }
+        refresh(client)
+        showToast("已删除该词", client: client)
+    }
+
     // MARK: - 联想模式
 
     /// 联想每页条数（与引擎 pageSize 一致，数字键 1-6 指位）。
@@ -598,12 +665,14 @@ final class ChaosetController: IMKInputController {
         guard AssociateSetting.enabled else { return }
         guard let comp = engine.associate(sylls: sylls), !comp.candidates.isEmpty else { return }
         associateCandidates = comp.candidates
+        associateSylls = sylls
         associatePage = 0
         refresh(client)
     }
 
     private func exitAssociate() {
         associateCandidates = nil
+        associateSylls = []
         associatePage = 0
         Self.hideCandidatePanel()
     }
@@ -651,6 +720,12 @@ final class ChaosetController: IMKInputController {
         }
         CandidatePanelController.onSettings = { [weak self] in
             self?.showSettingsMenu()
+        }
+        // 右键「删除该词」：删联想候选的学习记录后按同一联想源音节重新查询
+        // （只改学习数据，不上屏、不动文档、不结束联想；见 deleteAssociateCandidate）。
+        CandidatePanelController.onDelete = { [weak self] index in
+            guard let self, index < slice.count else { return }
+            self.deleteAssociateCandidate(slice[index], client: self.client())
         }
         return CandidatePanelController.show(
             candidates: items,
@@ -770,6 +845,12 @@ final class ChaosetController: IMKInputController {
         // 候选栏齿轮 → 设置菜单（微信输入法交互参考）
         CandidatePanelController.onSettings = { [weak self] in
             self?.showSettingsMenu()
+        }
+        // 右键「删除该词」：按候选「词 + 音节」删学习记录后重新组词
+        // （只改学习数据，不上屏、不动文档、不结束组词；见 deleteCandidate）。
+        CandidatePanelController.onDelete = { [weak self] index in
+            guard let self, let client = self.client() else { return }
+            self.deleteCandidate(index: index, client: client)
         }
         return CandidatePanelController.show(
             candidates: items,

@@ -833,6 +833,9 @@ public:
     }
 
     void onLButtonDown(int x, int y);
+    // 右键候选行：弹出上下文菜单「删除该词」（先记录命中项，菜单返回后
+    // 由 TIP 删除学习记录并刷新候选；详见文件后部定义与 docs/ui-parity.md）。
+    void onRButtonUp(int x, int y);
 
 private:
     struct ItemPos {
@@ -999,6 +1002,14 @@ private:
             case WM_LBUTTONDOWN:
                 if (self != nullptr) {
                     self->onLButtonDown(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
+                    return 0;
+                }
+                break;
+            case WM_RBUTTONUP:
+                // 右键候选行 → 弹出「删除该词」菜单（macOS CandidatePanel 的
+                // menu(for:) 同语义）。右键只走菜单，不触发左键点选/上屏。
+                if (self != nullptr) {
+                    self->onRButtonUp(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
                     return 0;
                 }
                 break;
@@ -2539,6 +2550,80 @@ public:
         }
     }
 
+    // 候选窗右键「删除该词」：按候选的「词 + 音节」删除本机学习数据
+    // （daemon 的 Words 调频 + Phrases 词组；bigram 上下文共现保留，见
+    // engine.UserDict.DeleteWord 注释）。约束与 macOS 壳一致：
+    //   - 只删学习记录：不上屏、不改文档、不结束组词；
+    //   - 写类 IPC 不重试（重试会把「已删除」变成「未找到」，也不应重放写请求）；
+    //   - 删除成功后刷新候选：组词态 reset + 重放当前剩余拼音（daemon 不缓存
+    //     候选列表）；联想态按同一联想来源音节重新查询，删空则收起面板。
+    void deleteCandidateByIndex(int index) {
+        g_lastOp = kOpCandidateClick;
+        if (!assoc_.candidates.empty()) {
+            const int global = assocPage_ * kPageSize + index;
+            if (index < 0 || global >= static_cast<int>(assoc_.candidates.size())) return;
+            const chaoset::Candidate pick = assoc_.candidates[global];
+            bool deleted = false;
+            if (!session_.userDelete(pick.text, splitSyllables(pick.syllables), &deleted)) {
+                showModeToast(L"删除失败：daemon 不可达");
+                return;
+            }
+            if (!deleted) {
+                showModeToast(L"未找到该词的学习记录");
+                return;
+            }
+            const std::string src = assocSylls_;
+            assoc_ = chaoset::Comp();
+            assocPage_ = 0;
+            std::vector<std::string> sylls = splitSyllables(src);
+            chaoset::Comp refreshed;
+            if (!sylls.empty() && session_.associate(sylls, &refreshed) &&
+                !refreshed.candidates.empty()) {
+                syncDpScheme(refreshed);
+                assoc_ = std::move(refreshed);
+                assocPage_ = 0;
+                showAssociatePage();
+            } else {
+                candidateWnd_.hide();
+            }
+            showModeToast(L"已删除该词");
+            return;
+        }
+        if (!hasCandidates()) return;
+        if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) return;
+        const chaoset::Candidate pick = comp_.candidates[index];
+        bool deleted = false;
+        if (!session_.userDelete(pick.text, splitSyllables(pick.syllables), &deleted)) {
+            showModeToast(L"删除失败：daemon 不可达");
+            return;
+        }
+        if (!deleted) {
+            showModeToast(L"未找到该词的学习记录");
+            return;
+        }
+        // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
+        ContextRef ctx(focusContext());
+        const std::string raw = comp_.input;
+        resetSession();
+        if (raw.empty()) {
+            comp_ = chaoset::Comp();
+            render(ctx.get());
+        } else {
+            chaoset::Comp rest = session_.input(raw, halfWidth_);
+            if (!rest.ok) {
+                // 极端故障（daemon 半死）：已确认段先落盘，避免合成悬空丢字。
+                comp_ = chaoset::Comp();
+                flushOrCancel(ctx.get());
+                showModeToast(L"删除后刷新候选失败");
+                return;
+            }
+            syncDpScheme(rest);
+            comp_ = std::move(rest);
+            render(ctx.get());
+        }
+        showModeToast(L"已删除该词");
+    }
+
     void flipPage(bool next) {
         if (!hasCandidates() || comp_.pageCount <= 1) return;
         g_lastOp = kOpCandidateClick;
@@ -3710,6 +3795,9 @@ private:
     // 上屏词音节查续接词组继续展示，数字键可直接连选。
     chaoset::Comp assoc_;
     int assocPage_ = 0; // 联想当前页（0 起，本地分页每页 6 条）
+    // 联想来源音节（撇号分隔）：右键删除联想候选后按同一来源重新查询续接
+    // 词组，保证删除刷新不改变联想链（与 macOS associateSylls 同语义）。
+    std::string assocSylls_;
     ITfComposition* composition_ = nullptr;
     ITfComposition* endTarget_ = nullptr;  // endComposition 编辑会话内的目标
     std::string committed_;
@@ -3768,12 +3856,14 @@ private:
     void enterAssociate(const std::string& syllables) {
         if (!RegGetAssociate()) return; // 设置关闭词组联想
         assoc_ = chaoset::Comp();
+        assocSylls_.clear();
         std::vector<std::string> sylls = splitSyllables(syllables);
         if (sylls.empty()) return;
         chaoset::Comp assoc;
         if (!session_.associate(sylls, &assoc) || assoc.candidates.empty()) return;
         syncDpScheme(assoc);
         assoc_ = std::move(assoc);
+        assocSylls_ = syllables;
         assocPage_ = 0;
         showAssociatePage();
     }
@@ -3814,6 +3904,7 @@ private:
     void clearAssociate() {
         if (assoc_.candidates.empty()) return;
         assoc_ = chaoset::Comp();
+        assocSylls_.clear();
         assocPage_ = 0;
         candidateWnd_.hide();
     }
@@ -3850,6 +3941,35 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             }
         }
     }
+}
+
+void CandidateWindow::onRButtonUp(int x, int y) {
+    if (tip_ == nullptr) return;
+    POINT pt{ x, y };
+    const int index = [&]() {
+        for (const auto& it : items_) {
+            if (PtInRect(&it.itemRect, pt)) return it.index;
+        }
+        return -1;
+    }();
+    if (index < 0) return;
+    POINT screen{ pt.x, pt.y };
+    ClientToScreen(hwnd_, &screen);
+    HMENU menu = CreatePopupMenu();
+    if (menu == nullptr) return;
+    AppendMenuW(menu, MF_STRING, 1, L"删除该词");
+    // MSDN KB135788：TrackPopupMenu 前 SetForegroundWindow，否则点菜单外
+    // 菜单不消失。候选窗是 WS_EX_NOACTIVATE（不抢焦点），SetForegroundWindow
+    // 可能被系统忽略，返回后补发 WM_NULL 让菜单循环正常退出。
+    SetForegroundWindow(hwnd_);
+    const UINT cmd = TrackPopupMenu(
+        menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
+        screen.x, screen.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    PostMessageW(hwnd_, WM_NULL, 0, 0);
+    // TPM_RETURNCMD：命令在返回后同步执行；候选在菜单跟踪期间不刷新，
+    // index 仍是当前页切片内的序号（与 onLButtonDown 的点击语义一致）。
+    if (cmd == 1) tip_->deleteCandidateByIndex(index);
 }
 
 // 联想翻页的候选窗入口（public 转发，实现在 ChaosetTIP 私有区）。

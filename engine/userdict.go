@@ -74,7 +74,7 @@ type userFile struct {
 // path 为空串时仅驻留内存。
 //
 // 多连接并发安全：daemon 的所有连接共享同一 UserDict，读（Score/
-// QueryPhrases/Stats/Export）与写（Bump*/Clear/Save）经 mu 互斥。
+// QueryPhrases/Stats/Export）与写（Bump*/DeleteWord/Clear/Save）经 mu 互斥。
 type UserDict struct {
 	mu   sync.RWMutex
 	path string
@@ -895,6 +895,88 @@ func (u *UserDict) Stats() UserStats {
 		Phrases: len(u.file.Phrases),
 		Bigrams: len(u.file.Bigrams),
 	}
+}
+
+// DeleteWord 删除一个词在学习数据里的记录：Words（静态词调频）与
+// Phrases（由它进化出的用户词组）。返回是否真的删到了记录——重复删除、
+// 或该词从未学习过时返回 (false, nil)，不视为错误。
+//
+// 匹配规则：
+//   - 给了 syllables 时先按「词 + 音节」精确键删除（右键删除走这条）；
+//   - 精确键没命中则按**词文本**兜底删除同词的其它读音/分词记录：候选窗
+//     右键语义是「把这个词从学习数据里删掉」，只删到精确键会让同词的不同
+//     读音记录残留，下次输入仍然被加权（CLI 不带音节时直接走这条）；
+//   - 什么都不匹配时返回 false。
+//
+// 线程安全与落盘：与 Bump* 共用 mu / dirty / writes 代数机制——延迟落盘
+// 模式（daemon）只标脏，由后台 ticker 统一 FlushIfDirty；立即落盘模式
+// （CLI 本地文件、测试）当场原子写盘。写盘失败时内存删除已经生效，记录
+// 保持 dirty 交给后续 flush 重试，同时把错误返回给调用方。
+//
+// Bigrams（前后词共现）刻意保留：它是「前词→后词」的成对统计而不是单词
+// 自身的学习记录，删单侧会扭曲其它词的上下文加成；保留最多让该词在特定
+// 前文后仍有 ≤2×BigramBonusPerCount 的上下文加分，且下次使用会重新学习。
+func (u *UserDict) DeleteWord(word string, syllables []string) (bool, error) {
+	if word == "" {
+		return false, fmt.Errorf("待删除的词不能为空")
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	deleted := false
+	if len(syllables) > 0 {
+		key := userKey(word, syllables)
+		if _, ok := u.file.Words[key]; ok {
+			delete(u.file.Words, key)
+			deleted = true
+		}
+		if _, ok := u.file.Phrases[key]; ok {
+			delete(u.file.Phrases, key)
+			deleted = true
+		}
+	}
+	if !deleted {
+		// 按词文本兜底：遍历时不改 map，先收集键再删除（Go 允许 delete
+		// during range，但先收集更直观，也避免未来清理逻辑扩展成多表删除
+		// 时踩到「边遍历边写」的边界）。
+		var wordKeys []string
+		for key := range u.file.Words {
+			if w, _, ok := parseUserKey(key); ok && w == word {
+				wordKeys = append(wordKeys, key)
+			}
+		}
+		for _, key := range wordKeys {
+			delete(u.file.Words, key)
+			deleted = true
+		}
+		var phraseKeys []string
+		for key, rec := range u.file.Phrases {
+			if rec.Word == word {
+				phraseKeys = append(phraseKeys, key)
+			}
+		}
+		for _, key := range phraseKeys {
+			delete(u.file.Phrases, key)
+			deleted = true
+		}
+	}
+	if !deleted {
+		return false, nil
+	}
+
+	// 与 Bump*/Clear 同一套变更计数：递增 writes 让并发中的旧快照在
+	// writeState 的代数守卫里被丢弃，避免删除结果被 FlushIfDirty 的旧
+	// 数据覆盖（与 Clear 的 2026-10-30 审计 P1 修复同源）。
+	u.dirty = true
+	u.writes++
+	if u.path == "" || u.deferred {
+		return true, nil
+	}
+	if err := u.saveLocked(); err != nil {
+		// 内存态已删除，保持 dirty 让后续 flush 重试；错误如实返回。
+		return true, err
+	}
+	return true, nil
 }
 
 // Clear 清空全部学习记录（调频/词组/上下文）并立即落盘。

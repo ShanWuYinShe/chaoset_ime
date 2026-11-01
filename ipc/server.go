@@ -267,6 +267,38 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]bool{"cleared": true}, nil
+	case "userDelete":
+		// 按词删除学习数据（候选窗右键「删除该词」/ chaoset-userdict delete）：
+		// 只从共享 UserDict 删记录，不触碰任何连接的组词会话——壳拿到 deleted
+		// 后自行重新组词刷新候选（daemon 不缓存候选列表，重算即最新）。
+		if s.user == nil {
+			return nil, fmt.Errorf("未启用用户词典")
+		}
+		var p struct {
+			Word string `json:"word"`
+			// Syllables 是 ' 或空格分隔的音节串（macOS 壳/CLI 用）；
+			// Sylls 是结构化数组（Windows core::Session 用），二者取其一。
+			Syllables string   `json:"syllables"`
+			Sylls     []string `json:"sylls"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				return nil, fmt.Errorf("解析 userDelete 参数失败: %w", err)
+			}
+		}
+		word := strings.TrimSpace(p.Word)
+		if word == "" {
+			return nil, fmt.Errorf("userDelete 缺少 word 参数")
+		}
+		sylls := p.Sylls
+		if len(sylls) == 0 && strings.TrimSpace(p.Syllables) != "" {
+			sylls = strings.Fields(strings.ReplaceAll(p.Syllables, "'", " "))
+		}
+		deleted, err := s.user.DeleteWord(word, sylls)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"deleted": deleted}, nil
 	case "userExport":
 		if s.user == nil {
 			return nil, fmt.Errorf("未启用用户词典")

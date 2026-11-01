@@ -295,6 +295,19 @@ final class EngineClient {
         call(method: "userClear", params: [:]) != nil
     }
 
+    /// 按「词 + 音节」删除一条学习记录（候选窗右键「删除该词」）。
+    /// 返回值三态：nil = daemon 不可达/业务错误；false = 该词没有学习记录；
+    /// true = 已删除（daemon 内存与磁盘一起生效）。
+    /// **不重试**：写类操作，重试会把「已删除」变成「未找到」，且写请求不应重放。
+    func userDelete(word: String, syllables: [String]) -> Bool? {
+        // syllables 用 ' 连接，与登录候选 Candidate.syllables 的展示格式一致；
+        // daemon 侧同时接受 ' 与空格分隔（见 ipc server 的 userDelete 分支）。
+        guard let r = call(method: "userDelete",
+                           params: ["word": word, "syllables": syllables.joined(separator: "'")],
+                           retryOnFailure: false) else { return nil }
+        return r["deleted"] as? Bool
+    }
+
     /// 导出学习数据 TSV。daemon 单帧上限 1 MiB（2026-10-30 起分页），
     /// 这里按 offset/limit 循环拼接，重度用户的大数据也能完整导出。
     func userExportAll(phrasesOnly: Bool = false) -> String? {

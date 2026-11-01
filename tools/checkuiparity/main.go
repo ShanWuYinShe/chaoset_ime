@@ -37,7 +37,11 @@
 //     Linux 都必须走引擎 `backspaceWord`，不能退回「放行/整段清空」旧行为；
 //  13. 修饰键映射（2026-10-31 用户要求）：macOS Command↔Windows Win↔Linux Super、
 //     Control↔Ctrl、Option↔Alt；组词中 Backspace/Delete 按该映射统一语义，
-//     ui-parity 必须保留映射表。
+//     ui-parity 必须保留映射表；
+//  14. 候选窗右键「删除该词」（2026-11-01）：macOS NSMenu / Windows TrackPopupMenu
+//     / Go UserDict.DeleteWord + IPC userDelete + CLI delete 各层入口必须在位，
+//     三端 toast 文案逐字一致；Linux ibus 面板不适用并记录替代入口；
+//     ui-parity 必须保留「学习数据按词删除」语义与入口。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -71,6 +75,7 @@ const (
 	macPanel        = "shims/macos/src/CandidatePanel.swift"
 	macSettings     = "shims/macos/src/SettingsWindow.swift"
 	macEngine       = "shims/macos/src/EngineClient.swift"
+	macController   = "shims/macos/src/ChaosetController.swift"
 	macSetup        = "shims/macos/setup/main.swift"
 	macKeyTest      = "shims/macos/tests/key_routing/main.swift"
 	macBuild        = "shims/macos/build.sh"
@@ -78,8 +83,10 @@ const (
 	winShell        = "shims/windows/src/win32.cpp"
 	winBuild        = "shims/windows/build.sh"
 	winCoreHpp      = "shims/common/ipc/core.hpp"
+	winCoreCpp      = "shims/common/ipc/core.cpp"
 	linuxEngine     = "shims/linux/engine/main.cpp"
 	linuxEngineMain = "shims/linux/engine/daemon.cpp"
+	linuxReadme     = "shims/linux/README.md"
 	linuxSetup      = "shims/linux/setup/chaoset-setup.c"
 	linuxCtl        = "shims/linux/setup/setup_ctl.c"
 	linuxDictImport = "shims/linux/setup/setup_ctl.c"
@@ -87,6 +94,10 @@ const (
 	linuxTest       = "shims/linux/setup/test_setup_ctl.c"
 	linuxComp       = "shims/linux/component/chaoset.xml"
 	chaosetImport   = "cmd/chaoset-import/main.go"
+	ipcServer       = "ipc/server.go"
+	ipcClient       = "ipc/client.go"
+	userdictGo      = "engine/userdict.go"
+	userdictCLI     = "cmd/chaoset-userdict/main.go"
 	makefile        = "Makefile"
 	installSh       = "shims/linux/install.sh"
 	archScript      = "shims/linux/arch/package.sh"
@@ -418,6 +429,48 @@ func checkImportSafety(fsys fs.FS, problems *[]string) {
 	)
 }
 
+// checkCandidateDelete 候选窗右键「删除该词」三端/全链路静态契约（2026-11-01）。
+//
+// 为什么静态锁：删除是「写学习数据」的 UI 入口，漏接线不会编译失败——mac
+// 忘记设 onDelete 闭包、Windows 忘记映射 WM_RBUTTONUP、daemon 忘记分发
+// userDelete、CLI 没接 delete 子命令，都会「看起来有菜单但点了没反应」。
+// 这里把各层入口关键字与三端文案锁定，改一端漏同步先 FAIL；实机点击/焦点
+// 行为（菜单不抢焦点、右键不上屏）仍需人工验收。
+func checkCandidateDelete(fsys fs.FS, problems *[]string) {
+	const group = "候选右键删除"
+	// macOS：候选面板右键菜单 + 控制器接线 + EngineClient 写调用。
+	checkContains(fsys, problems, group, macPanel,
+		"var onDelete", "menu(for event: NSEvent)", "删除该词")
+	checkContains(fsys, problems, group, macController,
+		"onDelete", "deleteCandidate", "deleteAssociateCandidate", "userDelete",
+		"recompose", "associateSylls", "已删除该词")
+	checkContains(fsys, problems, group, macEngine, "func userDelete", "retryOnFailure: false")
+	// Windows：候选窗右键消息 + TrackPopupMenu + TIP 删除/刷新 + core 封装。
+	checkContains(fsys, problems, group, winShell,
+		"WM_RBUTTONUP", "TrackPopupMenu", "删除该词",
+		"deleteCandidateByIndex", "userDelete", "assocSylls_")
+	checkContains(fsys, problems, group, winCoreHpp, "userDelete")
+	checkContains(fsys, problems, group, winCoreCpp, "userDelete")
+	// Go：引擎删除 API + IPC 分发/客户端 + CLI 子命令（daemon 与本地文件两模式）。
+	checkContains(fsys, problems, group, userdictGo,
+		"func (u *UserDict) DeleteWord", "u.file.Phrases")
+	checkContains(fsys, problems, group, ipcServer, "case \"userDelete\":", "DeleteWord")
+	checkContains(fsys, problems, group, ipcClient, "func (c *Client) UserDelete")
+	checkContains(fsys, problems, group, userdictCLI,
+		"case \"delete\":", "DeleteWord", "UserDelete", "已删除「%s」的学习记录")
+	// 三端文案逐字一致：菜单文案在两端壳内，状态提示在 mac/Windows 壳内。
+	for _, text := range []string{"已删除该词", "未找到该词的学习记录", "删除失败：daemon 不可达"} {
+		checkContains(fsys, problems, group, macController, text)
+		checkContains(fsys, problems, group, winShell, text)
+	}
+	// Linux：ibus 面板不适用，必须记录理由与替代入口，禁止假装已支持。
+	checkContains(fsys, problems, group, linuxReadme,
+		"右键删除", "不适用", "chaoset-userdict delete")
+	// 文档：语义/入口/文案必须有对照，防止文档悄悄变成「三端都支持」。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"学习数据按词删除", "右键删除", "删除该词", "chaoset-userdict delete")
+}
+
 // checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数
 // 一致：加/删断言却忘了同步 expectedChecks 时，静态检查先 FAIL（运行时守卫是
 // 第二道，两道都保留）。
@@ -597,6 +650,9 @@ func Run(fsys fs.FS) []string {
 	// linux-e2e 必须真实验证 CandidateClicked（不只是单测）：防止 E2E 用例被删。
 	checkContains(fsys, &problems, "候选点选", linuxE2E, "CandidateClicked", "CommitText")
 
+	// 8b. 候选窗右键「删除该词」：各层入口与文案一致（2026-11-01）。
+	checkCandidateDelete(fsys, &problems)
+
 	// 9. shell 变量转义（macOS bash 3.2 + UTF-8 locale 的 unbound variable 坑）。
 	checkShellVarEscaping(fsys, &problems)
 
@@ -627,5 +683,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

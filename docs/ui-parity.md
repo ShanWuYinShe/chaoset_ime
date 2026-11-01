@@ -12,6 +12,11 @@
 > UAF、Windows 描边线宽 pt 化、mac 超长候选截断、三端「已确认段」收尾路径统一、
 > 双拼 mspy `;` 键全链路、Arch 包设置脚本、userExport 分页、Linux 延迟落盘；
 > visual-parity C 段补 lineSpacing/maxWidth/cornerRadius 三项期望值（共 49 条断言）。
+>
+> 2026-11-01（worktree `candidate-delete`）：候选窗新增右键「删除该词」
+> （macOS/Windows 自绘候选窗；Linux ibus 面板不适用，理由与替代入口见
+> `shims/linux/README.md`）。删除只作用于学习数据（Words/Phrases），上下文
+> 共现 bigram 保留；语义、入口与三端文案见「学习数据按词删除」一节。
 
 ## 单位口径（2026-10-30 统一为 pt）
 
@@ -139,6 +144,31 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
   不变（2026-10-30 修正表述）。理由记录在 `shims/linux/README.md`；学习加权本身
   照常影响排序。
 
+## 学习数据按词删除（2026-11-01）
+
+候选窗右键候选行 →「删除该词」：用于修正偶尔误选/误学造成的错误学习记录。
+链路：engine `UserDict.DeleteWord(word, syllables)` ← IPC `userDelete`
+（参数 word + syllables/sylls）← macOS `EngineClient.userDelete` /
+Windows `core::Session::userDelete` / CLI `chaoset-userdict delete`。
+
+- **删除内容**：Words 静态词调频记录（含整句式 Segs 记录）与 Phrases 用户
+  进化词组（含其 Count/LastUsed 统计）。给了音节时先按「词 + 音节」精确键删，
+  精确键不存在则按词文本兜底删同词的其它读音/分词记录（右键语义是「删掉这个
+  词」；CLI 可省略音节直接按词文本删）。
+- **保留内容**：Bigrams 上下文共现刻意保留——它是「前词→后词」的成对统计而不是
+  单词自身的学习记录，删单侧会扭曲其它词的上下文加成。因此删除后该词在特定
+  前文下仍可能有 ≤2×BigramBonusPerCount 的上下文加分，下次使用会重新学习。
+  重复删除返回 deleted=false（幂等，不视为错误）。
+- **线程与落盘**：与 Bump*/Clear 共用同一把锁、同一 dirty/writes 代数与异步落盘
+  机制——daemon（延迟落盘）只标脏，由 2 秒 ticker 原子写盘；本地 CLI 立即模式
+  当场原子写盘。删除失败不会破坏其它学习记录。
+- **入口**：macOS/Windows 候选窗右键「删除该词」（删除成功后按当前拼音/联想
+  来源刷新候选，不上屏、不抢焦点、不结束组词；无学习记录时 toast 说明）；
+  CLI `chaoset-userdict delete 词 [音节...]`；Linux ibus 面板不适用（无自定义
+  右键菜单），替代入口为该 CLI 或设置窗「清空学习数据」。
+- **文案（mac/Windows 逐字一致）**：菜单「删除该词」；成功「已删除该词」；
+  无记录「未找到该词的学习记录」；daemon 不可达「删除失败：daemon 不可达」。
+
 ## 已知功能差异（有意/平台限制，非遗漏）
 
 | 差异 | macOS | Windows | 说明/后续条件 |
@@ -165,6 +195,10 @@ alpha，Windows 把**有效色**预混合成不透明常量（公式
 标记缺失、Windows 鼠标点选非渐进、Windows 页码偏左/分隔线过长/单页箭头不置灰、
 Windows Toast 位置低一行/点击穿透缺失、Windows 小键盘数字选词、Windows 联想态
 Shift+PageUp/Down 不翻页、Linux 设置项不即时生效、文档中与实际不符的 ✅。
+
+第九轮（2026-11-01，`feature/candidate-delete`）：候选窗右键「删除该词」——
+engine `UserDict.DeleteWord` + IPC `userDelete` + CLI `chaoset-userdict delete`
++ macOS NSMenu / Windows TrackPopupMenu；Linux ibus 面板不适用并记录替代入口。
 
 第八轮（2026-10-31，`feat/linux-setup-singleton-icons`）：Linux 设置窗单例
 （`Gtk.Application` 唯一实例，重复点「首选项」前置已有窗口）+ hicolor 补齐
@@ -232,6 +266,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 | 选词 | 空格 / 数字 1-9（含小键盘） | 空格选首选并渐进上屏；数字选本页第 N 项，越界则收起联想/放行该键。**已确认段并入预编辑（以已转换形态显示），整条组词结束才一次落盘**——2026-10-30 起三端统一为「单一预编辑/合成」模型，修复部分程序渐进选段丢字（详见 README「渐进上屏的跨程序兼容模型」）。**空格在「有已确认段 + 剩余拼音无候选」时 = 确认段 + 原始拼音一次上屏**（三端 2026-10-30 统一，此前 Linux/Windows 丢确认段） |
 | 联想选词 | 空格 / 数字 1-9（含小键盘） / Shift+空格 | 空格与 **Shift+空格都选当前页第一个联想词**并继续联想（Shift 不切全半角，三端实测一致）；数字越界收起联想并放行 |
 | 鼠标点选候选 | 点击候选窗/ibus 候选表 | mac/Windows 原生自绘候选窗点选；**Linux ibus 面板点击经标准方法 `CandidateClicked` 回引擎（2026-10-31 补齐）**，语义与数字键完全一致（渐进上屏/联想连选；越界点击在联想中收起联想、普通组词保持原样） |
+| 右键删除学习记录 | 右键候选行 →「删除该词」 | mac（NSMenu）/Windows（TrackPopupMenu）自绘候选窗支持：只删学习数据、不上屏、不抢焦点、不结束组词，删除成功后刷新候选；**Linux ibus 面板不适用**（LookupTable 无自定义右键菜单/上下文菜单回调），替代入口 `chaoset-userdict delete 词 [音节...]`，理由与语义见「学习数据按词删除」与 `shims/linux/README.md` |
 | 组词回车 | Return | 已确认段按确认文本 + 剩余按原始拼音一次上屏（与系统拼音一致：已转换部分保留转换结果） |
 | 组词退格 | Backspace/Delete（逐字符）；Cmd(Win/Super)/Ctrl/Shift+Backspace/Delete 全部删除；Option/Alt+Backspace/Delete 按音节回退 | 普通 Backspace/Delete 只回退剩余拼音，剩余删空时已确认段立即落盘收尾；全部删除会取消整条组词（含未落盘确认段）并消费。**修饰键映射见「修饰键映射」节（2026-10-31 三端统一）**。组词结束清标记区以客户端 `markedRange()` 校验 + 分级兜底（空 `insertText` → `setMarkedText("")` → 按真实 markedRange 替换），兼容忽略空插入的客户端（2026-11-01 修复「退格到最后一个拼音字母要按两次」） |
 | 失焦 / 透传键 / 切换输入法 | — | 已确认段先落盘再切换/透传（用户确认过的字不丢；纯拼音维持「清空」旧语义） |
@@ -307,6 +342,13 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `shims/linux/test-ci.sh`
   覆盖（真实 dbus/ibus 下的组词、上屏、多实例隔离、修饰键矩阵）。双拼可达性由
   engine 的会话级测试覆盖（遍历全部音节逐键喂 `Session.Input`）。
+- **候选窗右键删除（2026-11-01）**：`tools/checkuiparity` 静态断言三端入口与
+  文案一致（mac `menu(for:)`/`onDelete`/`userDelete`、Windows `WM_RBUTTONUP`/
+  `TrackPopupMenu`/`deleteCandidateByIndex`、core `userDelete`、Go
+  `UserDict.DeleteWord`/IPC/CLI delete、Linux README 记录不适用+替代入口、
+  本表保留「学习数据按词删除」与四组文案），改一端漏同步会 FAIL。
+  **macOS 右键菜单与 Windows TrackPopupMenu 的实机点击/焦点行为仍需人工验收**
+  （CI 只覆盖 swiftc 编译、mingw 交叉编译与静态契约）。
 - **shell 变量转义（2026-10-31）**：macOS 自带 bash 3.2 在 UTF-8 locale 下会把
   `$VAR）` 的多字节字符并入变量名，运行时报 `ARCH�: unbound variable`——
   CI 首跑 key_routing 就栽在这里。shims 下所有「`$VAR` 紧跟非 ASCII」已改为

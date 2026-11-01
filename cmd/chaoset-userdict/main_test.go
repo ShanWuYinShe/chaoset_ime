@@ -51,7 +51,7 @@ func TestRunDaemonTCPStats(t *testing.T) {
 	srv := ipc.NewServer(ln, dict, user)
 	go func() { _ = srv.Serve() }()
 	defer srv.Close()
-	if err := runDaemon(ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}, "stats", false, ""); err != nil {
+	if err := runDaemon(ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}, "stats", cmdArgs{}); err != nil {
 		t.Fatalf("runDaemon(TCP stats) 失败: %v", err)
 	}
 }
@@ -71,11 +71,11 @@ func TestRunLocalStatsClearExport(t *testing.T) {
 		t.Fatalf("Save 失败: %v", err)
 	}
 
-	if err := runLocal(path, "stats", false, ""); err != nil {
+	if err := runLocal(path, "stats", cmdArgs{}); err != nil {
 		t.Fatalf("stats 失败: %v", err)
 	}
 	out := filepath.Join(dir, "export.tsv")
-	if err := runLocal(path, "export", false, out); err != nil {
+	if err := runLocal(path, "export", cmdArgs{out: out}); err != nil {
 		t.Fatalf("export 失败: %v", err)
 	}
 	data, err := os.ReadFile(out)
@@ -86,7 +86,7 @@ func TestRunLocalStatsClearExport(t *testing.T) {
 		t.Fatalf("导出内容应含「你好」，实际 %q", data)
 	}
 
-	if err := runLocal(path, "clear", false, ""); err != nil {
+	if err := runLocal(path, "clear", cmdArgs{}); err != nil {
 		t.Fatalf("clear 失败: %v", err)
 	}
 	u2, err := engine.NewUserDict(path)
@@ -95,6 +95,106 @@ func TestRunLocalStatsClearExport(t *testing.T) {
 	}
 	if st := u2.Stats(); st.Words != 0 || st.Phrases != 0 || st.Bigrams != 0 {
 		t.Fatalf("clear 后统计应全 0，实际 %+v", st)
+	}
+}
+
+// TestSplitSyllables：delete 子命令的音节参数接受 space / ' 两种分隔。
+func TestSplitSyllables(t *testing.T) {
+	cases := map[string]string{
+		"":             "",
+		"jin tian":     "jin tian",
+		"jin'tian":     "jin tian",
+		" jin  'tian ": "jin tian",
+	}
+	for in, want := range cases {
+		got := strings.Join(splitSyllables(in), " ")
+		if got != want {
+			t.Errorf("splitSyllables(%q) = %q, 期望 %q", in, got, want)
+		}
+	}
+}
+
+// TestRunLocalDelete：本地模式 delete 词 + 音节 → 记录消失、重载后仍是删除态；
+// 重复删除不报错（幂等，输出「未找到」）；省略音节时按词文本删全部读音记录。
+func TestRunLocalDelete(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "user.json")
+	u, err := engine.NewUserDict(path)
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	if err := u.BumpWord("今天", []string{"jin", "tian"}); err != nil {
+		t.Fatalf("BumpWord 失败: %v", err)
+	}
+	if err := u.BumpPhrase("今天天气", []string{"jin", "tian", "tian", "qi"}); err != nil {
+		t.Fatalf("BumpPhrase 失败: %v", err)
+	}
+	// 另一个词的学习记录不得被误删。
+	if err := u.BumpWord("你好", []string{"ni", "hao"}); err != nil {
+		t.Fatalf("BumpWord 失败: %v", err)
+	}
+	if err := u.Save(); err != nil {
+		t.Fatalf("Save 失败: %v", err)
+	}
+
+	if err := runLocal(path, "delete", cmdArgs{word: "今天", sylls: splitSyllables("jin tian")}); err != nil {
+		t.Fatalf("delete 失败: %v", err)
+	}
+	if err := runLocal(path, "delete", cmdArgs{word: "今天"}); err != nil {
+		t.Fatalf("重复 delete 不应报错: %v", err)
+	}
+	// 省略音节：按词文本删（今天天气 不在本次删除范围内，仍存在）
+	if err := runLocal(path, "delete", cmdArgs{word: "今天天气"}); err != nil {
+		t.Fatalf("delete(省略音节) 失败: %v", err)
+	}
+
+	reloaded, err := engine.NewUserDict(path)
+	if err != nil {
+		t.Fatalf("重载用户词典失败: %v", err)
+	}
+	if got := reloaded.Score("今天", []string{"jin", "tian"}, ""); got != 0 {
+		t.Fatalf("重载后「今天」仍有调频分 %d（删除未落盘？）", got)
+	}
+	if got := reloaded.PhraseCount("今天天气", []string{"jin", "tian", "tian", "qi"}); got != 0 {
+		t.Fatalf("重载后「今天天气」词组计数 %d，期望 0", got)
+	}
+	if got := reloaded.Score("你好", []string{"ni", "hao"}, ""); got == 0 {
+		t.Fatal("删除「今天」不应影响「你好」的学习记录")
+	}
+}
+
+// TestRunDaemonDelete：daemon 模式 delete 经 IPC 作用于共享 UserDict，
+// 立即生效于 daemon 内存态（无需等待落盘）。
+func TestRunDaemonDelete(t *testing.T) {
+	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
+	if err != nil {
+		t.Fatalf("加载词库失败: %v", err)
+	}
+	user, _, err := engine.NewUserDictLenient("")
+	if err != nil {
+		t.Fatalf("创建用户词典失败: %v", err)
+	}
+	if err := user.BumpWord("今天", []string{"jin", "tian"}); err != nil {
+		t.Fatalf("BumpWord 失败: %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听 TCP 失败: %v", err)
+	}
+	srv := ipc.NewServer(ln, dict, user)
+	go func() { _ = srv.Serve() }()
+	defer srv.Close()
+	ep := ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}
+
+	if err := runDaemon(ep, "delete", cmdArgs{word: "今天", sylls: splitSyllables("jin tian")}); err != nil {
+		t.Fatalf("runDaemon(delete) 失败: %v", err)
+	}
+	if got := user.Score("今天", []string{"jin", "tian"}, ""); got != 0 {
+		t.Fatalf("daemon 内存态删除后仍有调频分 %d", got)
+	}
+	// 再删一次：不存在的词 → deleted=false，命令本身仍成功（幂等）。
+	if err := runDaemon(ep, "delete", cmdArgs{word: "今天"}); err != nil {
+		t.Fatalf("重复 runDaemon(delete) 不应报错: %v", err)
 	}
 }
 

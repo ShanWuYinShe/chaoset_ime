@@ -460,6 +460,23 @@ bool Session::userClear() {
     return ok;
 }
 
+bool Session::userDelete(const std::string& word, const std::vector<std::string>& sylls,
+                         bool* deleted) {
+    bool ok = false;
+    // 与 Go 侧 ipc server 的 userDelete 参数一致：word + sylls 数组。
+    // sylls 为空表示按词文本删除该词全部读音/分词记录（CLI 省略音节时）。
+    JsonValue result = call("userDelete",
+                            "{\"word\":\"" + jsonEscape(word) + "\",\"sylls\":" +
+                                syllsJson(sylls) + "}",
+                            &ok);
+    if (!ok) return false;
+    if (deleted != nullptr) {
+        const JsonValue* v = result.find("deleted");
+        *deleted = (v != nullptr && v->type == JsonValue::Type::Bool) ? v->boolean : false;
+    }
+    return true;
+}
+
 bool Session::userExportAll(bool phrasesOnly, std::string* out) {
     std::string acc;
     int offset = 0;

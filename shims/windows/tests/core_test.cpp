@@ -342,6 +342,29 @@ int main(int argc, char** argv) {
         }
     }
 
+    // userDelete（2026-11-01，候选窗右键「删除该词」的 IPC 层）：
+    // 上屏产生学习记录 → 删除返回 deleted=true → 重复删除 deleted=false
+    // （幂等，不报错）→ 连接仍可用。
+    {
+        session.reset();
+        Comp u = session.input("nihao");
+        bool learned = false;
+        if (u.ok && !u.candidates.empty() && u.candidates[0].text == "你好") {
+            std::string committed;
+            learned = session.select(0, &committed) && committed == "你好";
+        }
+        check(learned, "userDelete 前置：上屏「你好」产生学习记录");
+        bool deleted = false;
+        check(session.userDelete("你好", {"ni", "hao"}, &deleted) && deleted,
+              "userDelete 删除已学习词 deleted=true");
+        bool repeated = true;
+        check(session.userDelete("你好", {"ni", "hao"}, &repeated) && !repeated,
+              "userDelete 重复删除 deleted=false（幂等）");
+        Comp after = session.input("nihao");
+        check(after.ok && !after.candidates.empty(), "userDelete 后连接仍可用");
+        session.reset();
+    }
+
     if (failures == 0) {
         std::printf("PASS: core 全部检查通过\n");
         return 0;

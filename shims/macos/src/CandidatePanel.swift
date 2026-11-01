@@ -94,6 +94,8 @@ final class CandidatePanelView: NSView {
     var onPageUp: (() -> Void)?
     /// 点击设置齿轮。
     var onSettings: (() -> Void)?
+    /// 右键候选「删除该词」回调：index 与 onSelect 同约定（当前页切片内序号）。
+    var onDelete: ((Int) -> Void)?
 
     // 排版参数（pt），与 skin/skin.go 的 Skin 字段保持一致
     // internal（非 private）：tools/panel_metrics.swift 需要读取这些常量，
@@ -498,6 +500,37 @@ final class CandidatePanelView: NSView {
         }
     }
 
+    // MARK: 右键删除学习记录
+
+    // 右键走 AppKit 的上下文菜单通道：默认 rightMouseDown 只调用 menu(for:)
+    // 并弹出返回的菜单，**不会**触发 mouseDown/onSelect——右键绝不上屏；
+    // 菜单弹出也不改变面板的 key 状态（nonactivatingPanel + acceptsFirstMouse），
+    // 不抢宿主应用焦点。命中区用 draw 时记录的 hitAreas（负 index 是翻页/齿轮
+    // 等控制区，右键不提供删除菜单）。
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = hitAreas.first(where: { $0.rect.contains(point) && $0.index >= 0 })
+        else { return nil }
+        let menu = NSMenu(title: "")
+        // 菜单项始终可用：该候选是否有学习记录由 daemon 判定，壳拿到
+        // deleted=false 后 toast 说明（不静默失败）。
+        menu.autoenablesItems = false
+        let item = NSMenuItem(
+            title: "删除该词",
+            action: #selector(deleteCandidateMenuItem(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = hit.index
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func deleteCandidateMenuItem(_ sender: NSMenuItem) {
+        guard let index = sender.representedObject as? Int else { return }
+        onDelete?(index)
+    }
+
     // MARK: 无障碍（贴图方案无法提供，本次回归）
 
     // 系统外观切换（浅色 ⇄ 深色）时重绘。面板在 draw 里读 effectiveAppearance
@@ -533,6 +566,8 @@ enum CandidatePanelController {
     static var onPageUp: (() -> Void)?
     /// 候选栏齿轮点击（打开设置菜单）。
     static var onSettings: (() -> Void)?
+    /// 右键候选「删除该词」回调，与 onSelect 同约定。
+    static var onDelete: ((Int) -> Void)?
 
     /// 显示候选窗。originProvider 在内容尺寸确定后被调用，返回面板左上角
     /// 屏幕坐标（Controller 用它把候选窗钉在光标下方）。
@@ -548,6 +583,7 @@ enum CandidatePanelController {
         v.onPageDown = { onPageDown?() }
         v.onPageUp = { onPageUp?() }
         v.onSettings = { onSettings?() }
+        v.onDelete = { onDelete?($0) }
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
@@ -561,6 +597,7 @@ enum CandidatePanelController {
         onPageDown = nil
         onPageUp = nil
         onSettings = nil
+        onDelete = nil
     }
 
     private static func ensurePanel() -> NSPanel {
