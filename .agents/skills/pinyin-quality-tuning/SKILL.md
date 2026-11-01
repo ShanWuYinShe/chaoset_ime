@@ -78,13 +78,15 @@ git stash pop                                 # 恢复改动
 - **高置信度纠错候选固定第 3 位起**：排序后把 `typoFix`
   且已提升到精确层的纠错整体插到第 3 位；低置信度纠错仍在末尾；无纠错时按正常
   排序。改动候选排序必须保留该位置契约（`assertTypoCorrectionPosition`）。
-- **2~3 音节弱整词的单字可达性**：回退本身仍只取首音节 top10（避免常用词翻页
-  膨胀）；但整词候选最高词频 < 40（失陪 30、配音 39）时，列表末尾追加首音节
-  同音字全量（`rankSingleBackfill` = `rankComposition+16`，列表最末纯单字收尾，
-  单字块之后不得再出现词组），保证 `SelectPrefix` 逐字挑选能选到 top10
-  之外的字（shipei → 适 + 配）。强整词（长江/你好/北京/世界）不追加；弱整词
-  判定只看**词典**词频，不采信用户学习加权（学过「失陪」不能抑制补全）。回归：
-  `engine/short_pinyin_single_test.go`。
+- **任何多段输入都可逐字挑选（单字兜底）**：回退本身仍只取首段 top10（避免
+  候选池/翻页膨胀）；但任何多段输入（全拼/混拼/简拼，含 `shipei`、`kkdz`、
+  `zg`）都在列表末尾追加首段全量单字（`rankSingleBackfill` =
+  `rankComposition+16`，列表最末纯单字收尾，单字块之后不得再出现词组），
+  保证 `SelectPrefix` 能选到 top10 之外的字（shipei → 适 + 配）。上限
+  `singleSyllableExactLimit`=120；单段输入本身已是全量单字，不重复追加。
+  错拼输入（`typoSuspicious`）不追加：纠错候选才是主路径，追加会破坏
+  「纠错固定第 3 位」。回归：`engine/short_pinyin_single_test.go`、
+  `engine/initials_test.go`、`engine/common_dict_test.go`。
 - 任何改动都必须保持「真实词条优先」：组合候选不得进入首屏（`pageSize` 内）。
 
 若将来重新评估任何拼合逻辑，注意这个坑：`UserDict.Score` 返回

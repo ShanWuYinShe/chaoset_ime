@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// 2~3 音节全拼的「弱整词」单字补全（2026-11-02 用户反馈：shipei 想打「适配」，
-// 词库里没有该词，2 音节回退只给首音节 top10，翻页也找不到「适」）。
-// 规则：整词候选最高词频 < 40 时，列表末尾补首音节同音字全量（120 口径）；
-// 有常用整词时保持短列表。
+// 单字兜底：任何多段输入都在列表末尾补首段全量单字（120 口径），
+// 让用户任何时候都能逐字挑选（shipei 想打「适配」这类词库没有的词）。
+// 整词/组合候选仍在前面，单字块收尾。
 
 func TestShortPinyinSingleCharBackfill(t *testing.T) {
 	d := mustCommonDict(t)
@@ -39,7 +38,7 @@ func TestShortPinyinSingleCharBackfill(t *testing.T) {
 		}
 	}
 	if singles < dictSingles {
-		t.Errorf("首音节单字召回 %d，应达到词典全量 %d（shipei 弱整词场景）", singles, dictSingles)
+		t.Errorf("首音节单字召回 %d，应达到词典全量 %d（单字兜底）", singles, dictSingles)
 	}
 }
 
@@ -93,9 +92,9 @@ func TestShortPinyinSingleCharBackfillProgressiveSelection(t *testing.T) {
 	t.Fatalf("shipei 候选里找不到「适」")
 }
 
-// TestStrongWordKeepsShortPinyinList：有常用整词候选时不追加全量单字，
-// 保持原有短列表（避免每次组词翻十几页）。
-func TestStrongWordKeepsShortPinyinList(t *testing.T) {
+// TestStrongWordKeepsTopWithSingleFallback：有常用整词候选时首选仍是整词，
+// 但列表末尾同样追加首音节全量单字（任何时候都能逐字挑选）。
+func TestStrongWordKeepsTopWithSingleFallback(t *testing.T) {
 	d := mustCommonDict(t)
 	cases := []struct {
 		input string
@@ -106,7 +105,6 @@ func TestStrongWordKeepsShortPinyinList(t *testing.T) {
 		{"changjiang", "长江"}, // 48
 		{"jisuanji", "计算机"},  // 54
 	}
-	const backoffTop10 = 10
 	for _, c := range cases {
 		s := NewSession(d, nil)
 		all := allCandidates(s, mustComp(s, c.input))
@@ -123,8 +121,13 @@ func TestStrongWordKeepsShortPinyinList(t *testing.T) {
 				singles++
 			}
 		}
-		if singles != backoffTop10 {
-			t.Errorf("%s: 首音节单字 %d，强整词场景应保持 top10 不追加全量", c.input, singles)
+		want := len(d.QueryTokensExact([]Token{{Text: firstSyl, IsExact: true}}, 500))
+		if want > singleSyllableExactLimit {
+			want = singleSyllableExactLimit
+		}
+		if singles < want {
+			t.Errorf("%s: 首音节单字 %d，应至少达到 %d（单字兜底始终可用，上限 %d）",
+				c.input, singles, want, singleSyllableExactLimit)
 		}
 	}
 }
@@ -146,8 +149,8 @@ func indexByte(s string, b byte) int {
 	return -1
 }
 
-// TestShortPinyinSingleCharBackfillIgnoresUserBoost：弱整词判定只看词典词频，
-// 用户学过「失陪」不能永久抑制首音节单字补全（用户仍可能想打「适配」）。
+// TestShortPinyinSingleCharBackfillIgnoresUserBoost：单字兜底不受用户学习加权
+// 影响，学过「失陪」后仍能选到首音节单字（用户仍可能想打「适配」）。
 func TestShortPinyinSingleCharBackfillIgnoresUserBoost(t *testing.T) {
 	d := mustCommonDict(t)
 	user, err := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
@@ -167,11 +170,11 @@ func TestShortPinyinSingleCharBackfillIgnoresUserBoost(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("学习「失陪」后仍应补首音节单字「适」（弱整词判定只看词典词频，候选数 %d）", len(all))
+		t.Fatalf("学习「失陪」后仍应补首音节单字「适」（单字兜底不受学习加权影响，候选数 %d）", len(all))
 	}
 }
 
-// TestShortPinyinSingleCharTailIsPureSingles：弱整词补全后，列表最末一段必须
+// TestShortPinyinSingleCharTailIsPureSingles：单字兜底补全后，列表最末一段必须
 // 是纯单字（组合候选 是配/是培… 不得再出现在单字块之后）。
 func TestShortPinyinSingleCharTailIsPureSingles(t *testing.T) {
 	d := mustCommonDict(t)

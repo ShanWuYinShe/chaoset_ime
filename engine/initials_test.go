@@ -457,9 +457,9 @@ func TestInitialsNoWordStillInputtable(t *testing.T) {
 	}
 }
 
-// TestShortInitialsNoFullBackfill：两段简拼不追加首段全量单字（避免页面爆炸），
-// 只保留常规回退的少量单字。
-func TestShortInitialsNoFullBackfill(t *testing.T) {
+// TestShortInitialsAlwaysSingleFallback：两段简拼同样追加首段全量单字，
+// 任何时候都能逐字挑选（不再只给 top10）。
+func TestShortInitialsAlwaysSingleFallback(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 	comp, err := s.Input("zg")
 	if err != nil {
@@ -471,7 +471,7 @@ func TestShortInitialsNoFullBackfill(t *testing.T) {
 			singles++
 		}
 	}
-	if singles >= 80 {
-		t.Fatalf("zg 单字=%d，两段简拼不应追加首段全量单字", singles)
+	if singles < 120 {
+		t.Fatalf("zg 首段单字全量兜底未生效（单字=%d，期望 >=120）", singles)
 	}
 }

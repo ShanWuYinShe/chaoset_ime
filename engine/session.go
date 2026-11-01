@@ -978,8 +978,8 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 
 // singleSyllableExactLimit 是「单个完整音节」的精确匹配上限：同音字全量
 // 召回（单音节输入、>=4 音节长输入回退到首音节、>7 token 长输入显式补的首
-// 音节查询、以及 2~3 音节弱整词时的列表末尾补全，四处必须同一口径；2~3 音节
-// 的回退本身仍保持 top10，理由见 compose 里回退段的注释）。
+// 音节查询、以及任何多段输入末尾的单字兜底，四处必须同一口径）。回退本身
+// 仍只取首段 top10，全量只在列表末尾的单字兜底块里补，理由见 compose 注释。
 //
 // 取 120 的依据（2026-10-28 实测）：同音字最多的音节（shi/yi/ji…）在 100 个
 // 上下，top20 裁剪会让「示」这类排 33 位的常用字整体不可达；放开到 120 后
@@ -987,15 +987,6 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 // 只对**单音节**放开是刻意的：多音节全拼的 exact 上限是 20（歧义切分路径 ×
 // exact 条数是乘法放大，放开会让热路径从 24.6µs 涨到 246µs，见下方注释）。
 const singleSyllableExactLimit = 120
-
-// singleCharBackfillMinWordFreq 是「整词候选足够可信」的词频门槛（0~100 词频
-// 标度）：2~3 音节全拼的整词候选最高词频低于它时，视为弱匹配/词库没有用户
-// 想要的词，在列表末尾补首音节同音字全量（逐字挑选）。
-//
-// 取 40 的依据（2026-11-02 实测）：失陪 30、配音 39 这类弱整词需要逐字挑选
-// （用户反馈 shipei 想打「适配」）；而长江 48、你好 52、北京 69、世界 73 等
-// 常用整词保持原有短列表，避免每次组词都翻十几页。
-const singleCharBackfillMinWordFreq = 40
 
 // typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
@@ -1278,7 +1269,7 @@ func (s *Session) compose() Composition {
 		// rankBackoff+drop），只作为列表末尾的额外选项：组合没有语言模型，
 		// 不能改变任何原有候选的先后（用户此前的硬要求）。
 		rankComposition = rankBackoff + 64
-		// rankSingleBackfill 是「弱整词匹配」时补的首音节同音字全量层级：
+		// rankSingleBackfill 是任何多段输入末尾补的首段全量单字层级：
 		// 排在**组合候选之后**、列表最末（纯单字收尾），只作为逐字挑选的兜底，
 		// 不参与用户历史优先排序，也不改变原有候选先后。用户要求（2026-11-02）：
 		// 单字块之后不能再出现词组（此前组合候选 是配/是培 落在单字块之后）。
@@ -1435,10 +1426,6 @@ func (s *Session) compose() Composition {
 	if len(tokenPatterns) > 0 {
 		inputSegs = len(tokenPatterns[0])
 	}
-	// maxFullWordFreq 是「词典全消耗单词」的最高词频（不含用户学习加权）：
-	// 2~3 音节弱整词判定只看词典事实——用户学过「失陪」不应永久抑制首音节
-	// 单字补全（用户仍可能想打「适配」这类别的词）。
-	maxFullWordFreq := 0
 	typoAdded := make(map[string]bool)
 	typoPhraseAdded := make(map[string]bool)
 	// mistakeKeys 标记来自「反序双字母归位修正」的候选：mistakeInput 时只有
@@ -1694,15 +1681,6 @@ func (s *Session) compose() Composition {
 				}
 				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
 			}
-			// 记录全消耗单词的词典词频（用于弱整词判定，见下方单字补全段）。
-			if !hasInitials && inputSegs >= 2 && len(qp) == inputSegs {
-				for _, e := range exacts {
-					if e.Freq > maxFullWordFreq {
-						maxFullWordFreq = e.Freq
-					}
-				}
-			}
-
 			if !hasInitials {
 				// 纯全拼匹配
 				for _, e := range exacts {
@@ -1788,17 +1766,14 @@ func (s *Session) compose() Composition {
 				// 单音节输入的召回口径：同音字全量进入候选池，逐字挑选（SelectPrefix）
 				// 才选得到 top10 之外的常用字。
 				//
-				// 2~3 音节的回退本身刻意保持 top10（2026-11-01 Lead 复核）：2 音节
-				// 是最高频输入形态，全量放开会让每次组词的候选从 ~20 条膨胀到
-				// ~80-150 条（实测 shijie 43→151 = 26 页），翻页观感与候选池排序
-				// 成本都变差。整词候选很弱、确实需要逐字挑选的场景，由下方
-				// 「弱整词匹配时补首音节同音字全量」单独补（rankSingleBackfill），
-				// 强整词输入（长江/你好/北京/世界）列表长度不变。
-				// 且「长」chang（词频 40）在 chang 同音字里排第 6，本就落在 top10 内
-				// 可达；用户打不出「长」的真实主因是安装词库过期（旧内置词库只有
-				// 长 zhang，安装器升级缺陷另行修复）。4 音节及以上才是「整词/整句
-				// 候选都不符合、需要逐字挑选」的输入形态，反向锁定见
-				// TestCommonDictShortPinyinKeepsTop10。
+				// 回退本身保持 top10（2 音节是最高频输入形态，全量放进回退层会让
+				// 每次组词的候选从 ~20 条膨胀到 ~80-150 条，翻页观感与候选池排序
+				// 成本都变差）；需要逐字挑选时由下方「单字兜底」统一在列表末尾
+				// 追加首段全量单字（rankSingleBackfill），整词/组合候选仍在前。
+				// 「长」chang（词频 40）在 chang 同音字里排第 6，本就 top10 可达；
+				// 用户打不出「长」的真实主因是安装词库过期（旧内置词库只有
+				// 长 zhang，安装器升级缺陷另行修复）。回归见
+				// TestCommonDictShortPinyinSingleFallbackAlways。
 				// 单字母简拼段（IsExact=false）不放开：它按声母跨多个音节匹配，候选量
 				// 爆炸且与 SelectPrefix 的按音节消费对不上。
 				exactLimit := 10
@@ -1875,82 +1850,33 @@ func (s *Session) compose() Composition {
 		}
 	}
 
-	// 弱整词匹配时补首音节同音字全量（2026-11-02 用户反馈：shipei 想打「适配」，
-	// 词库里没有该词，2 音节输入的回退只给首音节 top10，翻页也找不到「适」）。
-	// 只在 2~3 音节全拼、且词典里没有「强整词」（全消耗单词词频 ≥ 40）时追加：
-	// 此时整词多是生僻/巧合词（失陪 30、配音 39），用户更可能需要逐字挑选；
-	// 常用词（长江 48、你好 52、北京 69、世界 73）保持短列表。判定只看词典
-	// 词频（maxFullWordFreq），不采信候选 Score——用户学习加权会把「失陪」
-	// 抬到 500+，学过之后就会永久看不到首音节单字。
-	// 追加候选排在组合候选之后、列表最末（rankSingleBackfill = rankComposition+16），
-	// 让「逐字挑选」的单字块收尾，单字块之后不再出现词组。
-	if !typoSuspicious && !midSuspicious && !tailSuspicious && len(tokenPatterns) > 0 {
-		clean := tokenPatterns[0]
-		cleanExact := len(clean) >= 2 && len(clean) <= 3
-		for _, tok := range clean {
-			if !tok.IsExact {
-				cleanExact = false
-				break
-			}
-		}
-		if cleanExact {
-			// 弱整词判定只看词典全消耗单词的最高词频（不采信候选 Score：
-			// 用户学习加权会把「失陪」抬到 500+，导致学过之后再也看不到
-			// 首音节单字——用户仍可能想打「适配」这类词库没有的词）。
-			if maxFullWordFreq < singleCharBackfillMinWordFreq {
-				first := []Token{{Text: clean[0].Text, IsExact: true}}
-				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
-					addCandidate(e, e.Freq, false, rankSingleBackfill)
-				}
-			}
-		}
-	}
-
-	// 纯声母输入（3 段及以上）没有能覆盖整串的词典词时，末尾补首段全量单字：
-	// 候选只来自真实词条，但用户仍需要逐字选（kkdz 没有四字词，想打「烤可大」
-	// 这类词库没有的组合只能先选首字再继续）。否则回退只给首段 top10，翻页也
-	// 找不到生僻字，等于「没有整词就没法输入单字/自己造词」。
-	// 判定「没有整词」只看常规层级里是否有音节数与输入段数相同的候选；
-	// 追加层放在组合候选之后、列表最末（与弱整词单字兜底同层）。
+	// 单字兜底（任何时候都可用）：任何多段输入（全拼/混拼/简拼）都在候选
+	// 列表最末追加**首段全量单字**，让用户随时可以逐字挑选、拼出词库没有的
+	// 词。候选只来自词典/用户词库真实单字，不造词；单段输入本身已是全量
+	// 单字，无需重复。追加层排在组合候选之后、列表最末（rankSingleBackfill
+	// = rankComposition+16），不挤占整词/组合候选的首屏；单字块收尾后不再
+	// 出现词组。错拼输入例外：此时纠错候选才是主路径，单字兜底会破坏
+	// 「纠错固定第 3 位」的排序约定。
 	if !typoSuspicious && len(tokenPatterns) > 0 {
 		clean := tokenPatterns[0]
-		allInitials := len(clean) >= 3
-		for _, tok := range clean {
-			if tok.IsExact {
-				allInitials = false
-				break
-			}
-		}
-		if allInitials {
-			fullWord := false
-			for i := range items {
-				if items[i].rank >= rankBackoff {
+		if len(clean) >= 2 {
+			first := []Token{clean[0]}
+			for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
+				if len([]rune(e.Word)) != 1 {
 					continue
 				}
-				if strings.Count(items[i].cand.Syllables, "'")+1 == len(clean) {
-					fullWord = true
-					break
+				boost := 0
+				if s.user != nil {
+					boost = s.user.Score(e.Word, e.Syllables, s.prev)
 				}
+				addCandidate(e, e.Freq+boost, boost > 0, rankSingleBackfill)
 			}
-			if !fullWord {
-				first := []Token{{Text: clean[0].Text, IsExact: false}}
-				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
+			if s.user != nil {
+				for _, e := range s.user.QueryTokensExact(first, singleSyllableExactLimit) {
 					if len([]rune(e.Word)) != 1 {
 						continue
 					}
-					boost := 0
-					if s.user != nil {
-						boost = s.user.Score(e.Word, e.Syllables, s.prev)
-					}
-					addCandidate(e, e.Freq+boost, boost > 0, rankSingleBackfill)
-				}
-				if s.user != nil {
-					for _, e := range s.user.QueryTokensExact(first, singleSyllableExactLimit) {
-						if len([]rune(e.Word)) != 1 {
-							continue
-						}
-						addCandidate(e, e.Freq, true, rankSingleBackfill)
-					}
+					addCandidate(e, e.Freq, true, rankSingleBackfill)
 				}
 			}
 		}

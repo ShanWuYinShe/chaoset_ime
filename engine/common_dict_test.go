@@ -272,8 +272,9 @@ func TestCommonDictInitialsRecall(t *testing.T) {
 // 要求时想逐字挑选（SelectPrefix），但逐级回退只取 top10，首音节同音字
 // 整体被截断。
 //
-// 只对 >=4 音节放开是刻意的：2~3 音节是最高频输入形态，全量放开会让候选
-// 数量翻数倍（热路径 + 翻页观感双输），见 TestCommonDictShortPinyinKeepsTop10。
+// 回退本身只对 >=4 音节全量放开：2~3 音节是最高频输入形态，全量放进回退层
+// 会让候选数量翻数倍（热路径 + 翻页观感双输）；2~3 音节的逐字需求由列表
+// 末尾的单字兜底补全（见 TestCommonDictShortPinyinSingleFallbackAlways）。
 func TestCommonDictLongPinyinFirstSyllableFullRecall(t *testing.T) {
 	d := mustCommonDict(t)
 	cases := []struct {
@@ -329,10 +330,10 @@ func TestCommonDictLongPinyinFirstSyllableFullRecall(t *testing.T) {
 	}
 }
 
-// TestCommonDictShortPinyinKeepsTop10 反向锁定 2~3 音节保持 top10（2026-11-01
-// Lead 复核）：全量放开会让 jingchang/nihao/shijie 等最高频输入的候选从
-// ~20 条膨胀到 ~80-150 条（shijie 43→151 = 26 页），热路径与翻页观感双输。
-func TestCommonDictShortPinyinKeepsTop10(t *testing.T) {
+// TestCommonDictShortPinyinSingleFallbackAlways：2~3 音节输入同样在列表末尾
+// 追加首音节全量单字——任何时候都保留逐字挑选的兜底（用户要求），不再只给
+// top10；整词/组合候选仍在前面，单字块收尾。
+func TestCommonDictShortPinyinSingleFallbackAlways(t *testing.T) {
 	d := mustCommonDict(t)
 	cases := []struct {
 		input    string
@@ -342,11 +343,10 @@ func TestCommonDictShortPinyinKeepsTop10(t *testing.T) {
 		{"changjiang", "chang", "长"}, // 2 音节：「长」chang 本就在 top10 内可达
 		{"jisuanji", "ji", "计"},      // 3 音节
 	}
-	const backoffTop10 = 10
 	for _, c := range cases {
 		dictSingles := len(d.QueryTokensExact([]Token{{Text: c.firstSyl, IsExact: true}}, 500))
-		if dictSingles <= backoffTop10 {
-			t.Fatalf("词典 %s 同音字仅 %d 个，无法验证 top10 截断", c.firstSyl, dictSingles)
+		if dictSingles <= 10 {
+			t.Fatalf("词典 %s 同音字仅 %d 个，无法验证单字兜底", c.firstSyl, dictSingles)
 		}
 		s := NewSession(d, nil)
 		all := allCandidates(s, mustComp(s, c.input))
@@ -361,11 +361,16 @@ func TestCommonDictShortPinyinKeepsTop10(t *testing.T) {
 				found = true
 			}
 		}
-		if got != backoffTop10 {
-			t.Errorf("%s: 首音节单字召回 %d，期望保持 top10（2~3 音节不放开全量）", c.input, got)
+		want := dictSingles
+		if want > singleSyllableExactLimit {
+			want = singleSyllableExactLimit
+		}
+		if got < want {
+			t.Errorf("%s: 首音节单字召回 %d，应至少达到 %d（单字兜底始终可用，上限 %d）",
+				c.input, got, want, singleSyllableExactLimit)
 		}
 		if !found {
-			t.Errorf("%s: 候选里应有「%s」（top10 内可达）", c.input, c.word)
+			t.Errorf("%s: 候选里应有「%s」", c.input, c.word)
 		}
 	}
 }
