@@ -9,6 +9,14 @@ InputMethodKit 薄壳：只做「按键转发 + 文本上屏 + 候选窗展示�
 `Contents/Resources/` 内自带 `chaosetd`、`chaoset-import`、`dict_common.tsv`，
 LaunchAgent 直接指向 app 内的 daemon；`~/Library/Application Support/chaoset`
 只放用户数据（userdict.json）、当前词库（dict.tsv）、socket 与日志。
+
+`dict.tsv` 是 daemon 实际加载的词库：安装时由 app 内置 `dict_common.tsv` 部署，
+用户导入的词条合并进同一文件。升级时不能盲目保留或覆盖（旧内置词库会永远
+不更新，表现为常用字打不出），安装器按文件自身特征分三种情况处理：
+首行是内置词库头 → 未导入过的纯种子副本，直接替换为新内置词库（先备份）；
+首行是 `chaoset-import` 输出头 → 用 `chaoset-import -replace` 合并新内置词库
+（内置词频刷新、用户新增词条保留）；`dict.builtin.sha256` 记录已合并的内置
+版本，版本未变则跳过。
 不再把 daemon 单独复制到 Application Support。安装器（ChaosetSetup.app）
 同时把自己装到 `~/Applications/Chaoset.app`，供设置窗「导入词库」入口调用。
 

@@ -152,40 +152,54 @@ SUPPORT="$HOME/Library/Application Support/chaoset"
 DAEMON="$IM/ChaosetIME.app/Contents/Resources/chaosetd"
 if [ -x "$DAEMON" ]; then
   mkdir -p "$SUPPORT"
-  # 词库部署：app 内置 dict_common.tsv（约 14 万条）是默认词库。
-  # 已存在的旧词库不能盲目覆盖（用户可能导入过自己的词库），但 2026-10 之前的
-  # 早期安装会留下只含 Rime terra 单字表的旧 dict.tsv（约 7 万条、缺「经常」等
-  # 常用二字词，表现为「输入 jingchang 无候选」）——这类明显退化的词库要自动升级。
-  # 判据（可验证、不猜）：旧词库缺「经常」条目，且条目数不到内置词库的一半。
+  # 词库部署：app 内置 dict_common.tsv 是默认词库，复制/合并到
+  # $SUPPORT/dict.tsv 供 daemon -dict 加载。
+  #
+  # 升级既不能盲目覆盖（用户导入过自己的词库），也不能无条件保留——旧内置
+  # 词库会永远不更新（2026-11-01 用户实测：v0.3.5 仍加载 2026-10-22 的旧词库，
+  # 常用字「长(chang)」缺失，长拼音下连常用单字都选不到；旧判据只看「是否含
+  # 经常」，而旧种子副本恰好有该词，于是永远不升级）。
+  #
+  # 判据全部基于文件自身可验证的特征（chaoset-import 的两套文件头可区分状态）：
+  #   ① 无 dict.tsv                        → 复制内置词库；
+  #   ② 首行是内置词库头「# chaoset 内置常用词库」→ 从未经 chaoset-import 合并过
+  #      的**纯种子副本**（任意旧版本），可安全替换（先备份）；
+  #   ③ 首行是 chaoset-import 输出头（或其它内容）→ 用户导入/合并过词库，
+  #      不能整体覆盖：用 chaoset-import -replace 把新内置词库合并进去，内置词条
+  #      刷新为新词频，用户新增词条保留（合并/备份/原子替换仍在 Go 工具内）。
+  # dict.builtin.sha256 记录「词库已合并到哪个内置版本」：版本没变就跳过，
+  # 避免每次安装都重写词库。
   BUILTIN_DICT="$IM/ChaosetIME.app/Contents/Resources/dict_common.tsv"
   [ -f "$BUILTIN_DICT" ] || BUILTIN_DICT=../../data/dict_common.tsv
   if [ -f "$BUILTIN_DICT" ]; then
-    need_upgrade=no
-    reason=""
-    if [ ! -f "$SUPPORT/dict.tsv" ]; then
-      need_upgrade=yes
-      reason="原本没有词库"
-    elif grep -q "^经常	" "$SUPPORT/dict.tsv"; then
-      reason="旧词库已含「经常」，保留用户现用词库"
-    else
-      old_lines=$(grep -c "" "$SUPPORT/dict.tsv" || true)
-      builtin_lines=$(grep -c "" "$BUILTIN_DICT" || true)
-      if [ "$old_lines" -lt $((builtin_lines / 2)) ]; then
-        need_upgrade=yes
-        reason="旧词库只有 ${old_lines} 行（内置 ${builtin_lines} 行）且缺「经常」"
-      else
-        reason="旧词库条目足够（${old_lines} 行），保留用户现用词库"
-      fi
+    DICT_MARKER="$SUPPORT/dict.builtin.sha256"
+    BUILTIN_SHA=$(shasum -a 256 "$BUILTIN_DICT" | awk '{print $1}')
+    CURRENT_VERSION=""
+    if [ -f "$DICT_MARKER" ]; then
+      CURRENT_VERSION=$(cat "$DICT_MARKER" 2>/dev/null || true)
     fi
-    if [ "$need_upgrade" = yes ]; then
-      if [ -f "$SUPPORT/dict.tsv" ]; then
-        cp "$SUPPORT/dict.tsv" "$SUPPORT/dict.tsv.bak.$(date +%Y%m%d-%H%M%S)"
-        echo "   旧词库已备份"
-      fi
+    if [ ! -f "$SUPPORT/dict.tsv" ]; then
       cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
-      echo "   已部署内置常用词库（${reason}）"
+      printf '%s\n' "$BUILTIN_SHA" > "$DICT_MARKER"
+      echo "   已部署内置常用词库（原本没有词库）"
+    elif [ "$CURRENT_VERSION" = "$BUILTIN_SHA" ]; then
+      echo "   词库已是最新内置版本，保持不变"
+    elif printf '%s' "$(head -1 "$SUPPORT/dict.tsv" 2>/dev/null || true)" | grep -q '^# chaoset' \
+         && ! printf '%s' "$(head -1 "$SUPPORT/dict.tsv" 2>/dev/null || true)" | grep -q 'chaoset-import'; then
+      cp "$SUPPORT/dict.tsv" "$SUPPORT/dict.tsv.bak.$(date +%Y%m%d-%H%M%S)"
+      cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
+      printf '%s\n' "$BUILTIN_SHA" > "$DICT_MARKER"
+      echo "   已把旧的纯种子词库升级为新内置词库（原文件已备份）"
+    elif [ -x "$IM/ChaosetIME.app/Contents/Resources/chaoset-import" ]; then
+      if "$IM/ChaosetIME.app/Contents/Resources/chaoset-import" \
+          -o "$SUPPORT/dict.tsv" -backup -replace "$BUILTIN_DICT"; then
+        printf '%s\n' "$BUILTIN_SHA" > "$DICT_MARKER"
+        echo "   已把新内置词库合并进用户词库（保留导入词条，内置词频刷新）"
+      else
+        echo "⚠ 合并新内置词库失败，保留现用词库；可重跑安装或手动导入词库" >&2
+      fi
     else
-      echo "   词库保持不变（${reason}）"
+      echo "⚠ 找不到随包 chaoset-import，无法安全合并旧词库；保留现用词库" >&2
     fi
   fi
   # 安装（或修正）daemon 的 LaunchAgent：KeepAlive 保证 daemon 被 kill /
