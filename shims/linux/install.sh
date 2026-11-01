@@ -11,7 +11,6 @@ set -e
 cd "$(dirname "$0")"
 
 PREFIX_BIN=/usr/bin
-PREFIX_LOCAL_BIN=/usr/local/bin
 PREFIX_SHARE=/usr/share/chaoset
 COMPONENT_DIR=/usr/share/ibus/component
 ICON_ROOT=/usr/share/icons
@@ -21,9 +20,10 @@ uninstall() {
   rm -f "$PREFIX_BIN/chaosetd" "$PREFIX_BIN/chaoset-cli" \
         "$PREFIX_BIN/chaoset-import" "$PREFIX_BIN/chaoset-userdict" \
         "$PREFIX_BIN/chaoset-engine"
-  rm -f "$PREFIX_LOCAL_BIN/chaosetd" "$PREFIX_LOCAL_BIN/chaoset-cli" \
-        "$PREFIX_LOCAL_BIN/chaoset-import" "$PREFIX_LOCAL_BIN/chaoset-userdict" \
-        "$PREFIX_LOCAL_BIN/chaoset-engine"
+  # 清理旧版遗留的 /usr/local/bin 符号链接；新版只装 /usr/bin，避免两份 PATH 命中。
+  rm -f /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli \
+        /usr/local/bin/chaoset-import /usr/local/bin/chaoset-userdict \
+        /usr/local/bin/chaoset-engine
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
   # 设置窗口二进制随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下）
@@ -72,11 +72,9 @@ fi
 
 echo "==> 安装二进制到 $PREFIX_BIN"
 install -d "$PREFIX_BIN"
-install -d "$PREFIX_LOCAL_BIN"
 install -d "$PREFIX_SHARE"
 for b in chaosetd chaoset-cli chaoset-import chaoset-userdict chaoset-engine; do
   install -m 0755 "bin/$b" "$PREFIX_BIN/$b"
-  ln -sf "$PREFIX_BIN/$b" "$PREFIX_LOCAL_BIN/$b" 2>/dev/null || true
 done
 
 echo "==> 安装词库到 $PREFIX_SHARE"

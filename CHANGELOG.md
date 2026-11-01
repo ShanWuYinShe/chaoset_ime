@@ -2,6 +2,17 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.4（2026-11-01）
+
+- **macOS 安装器增加图形化卸载**：停止 LaunchAgent/daemon、移除输入法 app 与
+  安装器（TIS 条目在注销/重登后由系统刷新），保留 Application Support 里的
+  学习数据/词库；用户不再需要终端命令。
+- **安装文档面向普通用户重排**：明确每平台只下载一个推荐安装包；Windows `.zip`、
+  macOS `.zip`、Linux `.tar.gz` 标为高级；修正 macOS 最低版本（15+）、Linux 安装后
+  仍需在系统输入源中添加 Chaoset 的说明。
+- **Linux 安装器清理**：Arch post_install 不再重启所有登录用户的 ibus（避免打断正在
+  打字的人）；tar 安装不再写 `/usr/local/bin` 重复符号链接，只保留 `/usr/bin`。
+
 ## v0.3.3（2026-11-01）
 
 - **macOS 输入法改为自包含 app 安装（用户要求）**：`ChaosetIME.app/Contents/Resources/`

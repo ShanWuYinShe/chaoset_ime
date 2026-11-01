@@ -310,6 +310,38 @@ func installSetupApp() -> String {
     }
 }
 
+/// GUI 卸载：停止 LaunchAgent/daemon、注销 TIS、删除输入法 app 与安装器副本。
+/// 用户数据（Application Support）保留，重装后可继续使用。
+func uninstallIME() -> String {
+    let fm = FileManager.default
+    var out = ""
+    let domain = "gui/\(getuid())"
+    _ = runTool("/bin/launchctl", ["bootout", "\(domain)/ime.chaoset.daemon"])
+    _ = runTool("/usr/bin/killall", ["chaosetd"])
+    Thread.sleep(forTimeInterval: 0.5)
+    let la = daemonLaunchAgentPath()
+    if fm.fileExists(atPath: la) {
+        try? fm.removeItem(atPath: la)
+        out += "已移除 LaunchAgent\n"
+    }
+    let app = imeAppPath()
+    if fm.fileExists(atPath: app) {
+        // TIS 没有公开的 unregister API；删除 bundle 后系统会在注销/重登时刷新。
+        try? fm.removeItem(atPath: app)
+        out += "已移除输入法 app\n"
+    }
+    let installedSetup = NSHomeDirectory() + "/Applications/Chaoset.app"
+    if fm.fileExists(atPath: installedSetup) {
+        try? fm.removeItem(atPath: installedSetup)
+        out += "已移除安装与设置 app\n"
+    }
+    let alias = NSHomeDirectory() + "/Applications/ChaosetSetup.app"
+    if fm.fileExists(atPath: alias) { try? fm.removeItem(atPath: alias) }
+    out += "学习数据与词库保留在 ~/Library/Application Support/chaoset。\n"
+    out += "请注销并重新登录，让系统输入源列表刷新。\n"
+    return out
+}
+
 // ---- 安装 / 更新输入法 ----
 func installIME() -> String {
     let fm = FileManager.default
@@ -533,7 +565,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let row = NSStackView(views: [button("一键安装 / 更新", #selector(doInstall)),
                                       button("导入词库…", #selector(doImport)),
                                       button("重新检查", #selector(doRefresh)),
-                                      button("打开数据文件夹", #selector(doOpenFolder))])
+                                      button("打开数据文件夹", #selector(doOpenFolder)),
+                                      button("卸载", #selector(doUninstall))])
         row.orientation = .horizontal
         row.spacing = 8
         row.distribution = .fillEqually
@@ -588,6 +621,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func doRefresh() { refresh(); append("\n=== 状态已刷新 ===\n" + statusText()) }
+
+    @objc func doUninstall() {
+        guard !busy else { return }
+        let alert = NSAlert()
+        alert.messageText = "卸载 Chaoset 输入法？"
+        alert.informativeText = "将停止后台服务并移除输入法；学习数据和当前词库会保留，重装后可继续使用。卸载后需注销并重新登录，输入源列表才会刷新。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "卸载")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        busy = true
+        append("\n=== 卸载 Chaoset 输入法 ===\n" + uninstallIME())
+        busy = false
+    }
 
     @objc func doInstall() {
         guard !busy else { return }

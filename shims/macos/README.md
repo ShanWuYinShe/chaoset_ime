@@ -200,6 +200,11 @@ launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」�
 
 ## 卸载
 
+图形界面卸载：打开「Chaoset 安装与设置」→「卸载」（会停止 daemon、移除
+输入法 app 与安装器，保留 `Application Support` 里的学习数据/词库）。
+
+命令行兜底：
+
 ```sh
 launchctl bootout gui/$(id -u)/ime.chaoset.daemon
 rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist

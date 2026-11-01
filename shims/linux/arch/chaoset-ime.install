@@ -4,11 +4,9 @@ post_install() {
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
     fi
 
-    # 尝试重启所有当前登录用户的 ibus 守护进程以即时收录
-    for u in $(who | awk '{print $1}' | sort -u); do
-        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
-    done
-
+    # 不在 post_install 里重启其他用户的 ibus：包管理器安装不应终止
+    # 正在打字的会话（与 Debian postinst 的同一原则）。新组件会在下一次
+    # 登录或用户自己执行 `ibus restart` 时被收录。
     echo "==> Chaoset 拼音输入法已安装成功！"
     echo "    请在「系统设置 → 键盘 → 输入源」中添加「Chaoset Pinyin」即可使用。"
     echo "    若列表未刷新，可执行 ibus restart 或注销重新登录。"
@@ -23,7 +21,4 @@ post_remove() {
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
     fi
-    for u in $(who | awk '{print $1}' | sort -u); do
-        su - "$u" -c "ibus restart >/dev/null 2>&1 || true" 2>/dev/null || true
-    done
 }

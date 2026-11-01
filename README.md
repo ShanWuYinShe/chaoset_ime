@@ -4,34 +4,41 @@
 
 ## ⚡ 极简新手安装指南（零门槛·傻瓜式一键使用）
 
-> **致普通用户**：输入法面向的是广大日常电脑用户，绝不需要假设您有任何编程或命令行知识。直接下载对应系统的一键安装包，双击即可无障碍开始打字！
+> **致普通用户**：输入法面向的是广大日常电脑用户，不应该要求您懂命令行。
+> 每台电脑**只下载下面「推荐安装包」这一列**，按步骤做一次即可；`.zip` /
+> `.tar.gz` 是给开发者或绿色便携用户的高级选项，普通用户不用管。
 
 | 操作系统 | 推荐安装包（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
 | :--- | :--- | :--- | :--- |
-| **Windows** (10 / 11) | [📥 ChaosetSetup.exe](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **直接双击安装**，点击「下一步」完成（已自动注册并开机自启） | `Win + 空格` |
-| **macOS** (12+) | [📥 Chaoset-<版本>.dmg](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击打开**，打开里面的「Chaoset 安装与设置」，点击「一键安装」 | `Ctrl + 空格` 或 `Fn / 🌐` |
-| **Linux (Ubuntu / Debian / Mint)** | [📥 chaoset_amd64.deb](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在系统应用中心点击「安装」即可自动生效 | `Super + 空格` 或 `Ctrl + 空格` |
-| **Linux (Arch / Manjaro / EndeavourOS)** | [📥 chaoset-ime-x86_64.pkg.tar.zst](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | **双击文件**在应用商店（Pamac/发现）点击「安装」，或 `sudo pacman -U <包名>` | `Super + 空格` 或 `Ctrl + 空格` |
+| **Windows** (10 / 11) | [`ChaosetSetup.exe`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 → UAC 点「是」→ 一直「下一步」。**若 SmartScreen 提示未知发布者：点「更多信息」→「仍要运行」**（仅首次；免费签名证书尚未配置） | `Win + 空格` |
+| **macOS** (15+) | [`Chaoset-<版本>.dmg`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 DMG → 双击「Chaoset 安装与设置」→「一键安装」。**若提示无法验证开发者：右键安装器 →「打开」→ 再点「打开」**（仅首次） | `Ctrl + 空格` 或 `Fn / 🌐` |
+| **Linux (Ubuntu / Debian / Mint)** | [`chaoset_amd64.deb`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 `.deb` → 应用中心点「安装」；装完后在系统「键盘 → 输入源」添加 **Chaoset Pinyin**（列表暂时没有就注销重登一次） | `Super + 空格` 或 `Ctrl + 空格` |
+| **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
-> 📦 **开发者、绿色便携版与 AUR**：如需无需安装的独立归档，可前往 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases) 获取 `.zip` (Windows/macOS) 或 `.tar.gz` (Linux)；Arch Linux 用户亦可直接使用仓库自带的 `shims/linux/arch/PKGBUILD`。
+> **卸载**：macOS 打开「Chaoset 安装与设置」→「卸载」；Windows 在「设置 → 应用」卸载；Linux 用系统软件中心或包管理器卸载。
+>
+> 📦 **高级选项**：`chaoset-windows-x64.zip` / `chaoset-macos.zip` / `chaoset-linux-x86_64.tar.gz` 是绿色或排障用的高级包，需要管理员权限或命令行；普通用户不要下载。AUR/源码用户见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)。
 
 ---
 
 ## 架构概览
 
-架构：**Go 引擎 + 守护进程（daemon）+ 各平台薄壳**。引擎与组词逻辑只写一份，
-平台壳只负责「按键转发 + 文本上屏 + 光标定位」，通过 IPC 与 daemon 通信。
+架构：**Go 引擎 + 守护进程（daemon）+ 各平台原生薄壳**。拼音/联想算法只写一份
+在 `engine/`；平台壳只负责「按键转发 + 文本上屏 + UI」。macOS/Windows 通过 IPC
+连 daemon；Linux 目前是 ibus engine 进程内嵌 Go engine（历史例外，见下方说明）。
 该形态已被业界验证（小狼毫的 TSF DLL + WeaselServer、搜狗的多进程形态、
 macOS InputMethodKit 本身就是进程间模型）。
 
 ```
-┌──────────────────── chaosetd (Go，一份代码) ────────────────────┐
-│  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习           │
-│  ipc  ：length-prefixed JSON over Unix socket / 命名管道 / TCP    │
-└────────┬───────────────────┬───────────────────┬───────────────┘
-   macOS │             Windows│              Linux │
-  IMK 薄壳          TSF COM 薄壳 DLL       ibus engine（DBus 胶水）
-  (Swift)           (C++，仅转发+上报)
+┌──────────────── chaosetd (Go，一份代码) ────────────────┐
+│  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
+│  ipc  ：length-prefixed JSON（Unix socket / 命名管道 / TCP）│
+└───────┬───────────────────────────────┬────────────────┘
+        │ macOS                         │ Windows
+        │ Swift IMK 薄壳                │ C++ TSF 薄壳
+        │ （IPC）                       │ （IPC）
+
+Linux：ibus engine（Go）进程内直调 engine，不经过 daemon（历史例外）
 ```
 
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
@@ -558,19 +565,21 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
 「机器检查覆盖」）。
 
-传输形态：macOS/Linux 用 Unix socket；Windows daemon 已支持命名管道（`-pipe`，
+传输形态：macOS 用 Unix socket；Windows daemon 已支持命名管道（`-pipe`，
 按当前用户 SID 生成、ACL 限当前用户），Windows 壳/安装器迁移中，当前仍兼容
-TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
+TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）；Linux 目前由 ibus engine
+进程内直调 engine，不走 IPC（历史例外，见架构概览）。
 
 ## 下载与安装（GitHub Release）
 
 推 `v*` tag 时，Release workflow（`.github/workflows/release.yml`）会自动三端打包并创建 Release：
 
-| 平台 | 下载文件 | 安装方式 |
+| 平台 | 推荐（普通用户） | 高级/备用（不要选） |
 |---|---|---|
-| macOS | `Chaoset-<版本>.dmg` 或 `chaoset-macos.zip` | 双击打开 DMG，运行 **ChaosetSetup.app**，图形界面点安装。DMG 文件名与卷名都带版本；universal 二进制（arm64 + x86_64），Intel 与 Apple Silicon 通用；ad-hoc 签名，首次打开需右键 →「打开」 |
-| Linux | `chaoset-linux-x86_64.tar.gz` | 解包后 `sudo ./install.sh`（装二进制 + 14 万条词库 + ibus 组件 + 图标，并自检） |
-| Windows | `chaoset-windows-x64.zip` | 解包后**右键 install.bat → 以管理员身份运行**（自动 regsvr32 注册 + 启动 daemon） |
+| macOS | `Chaoset-<版本>.dmg` | `chaoset-macos.zip`（绿色/排障） |
+| Windows | `ChaosetSetup.exe` | `chaoset-windows-x64.zip`（需管理员 + install.bat） |
+| Linux Debian/Ubuntu | `chaoset_amd64.deb` | `chaoset-linux-x86_64.tar.gz`（需 sudo 脚本） |
+| Linux Arch | `chaoset-ime-x86_64.pkg.tar.zst` | 同左，无脚本包 |
 
 每个包都自带**完整的 14 万条常用词库**，装完即可用，不需要另配词库。
 
