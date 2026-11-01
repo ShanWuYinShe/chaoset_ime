@@ -256,6 +256,24 @@ func misspelledFromPatterns(s string, patterns [][]Token) bool {
 			}
 		}
 	}
+	// 纯声母序列（每一段都是声母碎片、没有完整音节）是合法的简拼输入：
+	// zg / jsj 是短简拼，kkdz / k'k'd'z / zgrmjhz 只是更长——长串同样必须
+	// 信任，否则会被当成错拼、跳过常规回退，最终一个候选都不给。
+	allInitials := len(patterns) > 0
+	for _, pat := range patterns {
+		for _, tok := range pat {
+			if tok.IsExact {
+				allInitials = false
+				break
+			}
+		}
+		if !allInitials {
+			break
+		}
+	}
+	if allInitials {
+		return false
+	}
 	return len(s) > 4
 }
 

@@ -368,3 +368,110 @@ func TestSelectPrefixInitialsPartialConsume(t *testing.T) {
 		}
 	}
 }
+
+// TestInitialsLongSingleCharFallback：长串纯声母（含撇号分隔）不是错拼；
+// 没有整词覆盖整串时，首段单字全量可达，用户仍能逐字输入/自己造词。
+func TestInitialsLongSingleCharFallback(t *testing.T) {
+	d := mustCommonDict(t)
+	for _, input := range []string{"k'k'd'z", "kkdz"} {
+		s := NewSession(d, nil)
+		comp, err := s.Input(input)
+		if err != nil {
+			t.Fatalf("%s: Input 失败: %v", input, err)
+		}
+		all := allCandidates(s, comp)
+		if len(all) == 0 {
+			t.Fatalf("%s: 应出候选，实际无候选", input)
+		}
+		singles := 0
+		hasKao := false
+		for _, c := range all {
+			if len([]rune(c.Text)) == 1 {
+				singles++
+			}
+			if c.Text == "烤" {
+				hasKao = true
+			}
+		}
+		if singles < 50 {
+			t.Fatalf("%s: 首段单字全量兜底未生效（单字=%d，回退 top10 时约 10）", input, singles)
+		}
+		if !hasKao {
+			t.Errorf("%s: 全量单字应包含生僻的「烤」，实际没有", input)
+		}
+
+		// 渐进消费：选「看看」只消耗 k'k，剩余 d'z 继续组词。
+		s2 := NewSession(d, nil)
+		if _, err := s2.Input(input); err != nil {
+			t.Fatalf("%s: Input 失败: %v", input, err)
+		}
+		idx := findCandidate(t, s2, "看看")
+		rest, committed, err := s2.SelectPrefix(idx)
+		if err != nil || committed != "看看" {
+			t.Fatalf("%s: 渐进选「看看」失败: committed=%q err=%v", input, committed, err)
+		}
+		wantRest := "dz"
+		if strings.Contains(input, "'") {
+			wantRest = "d'z"
+		}
+		if rest.Input != wantRest {
+			t.Errorf("%s: 选「看看」后剩余输入 = %q, 期望 %q", input, rest.Input, wantRest)
+		}
+	}
+}
+
+// TestInitialsNoWordStillInputtable：词库没有整词覆盖时（zxcv），仍要能
+// 逐字输入——首段单字全量可达，选一个字后剩余声母继续出候选。
+func TestInitialsNoWordStillInputtable(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	comp, err := s.Input("zxcv")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if len(comp.Candidates) == 0 {
+		t.Fatalf("zxcv 应至少给出首段单字候选，实际无候选")
+	}
+	all := allCandidates(s, comp)
+	singles := 0
+	for _, c := range all {
+		if len([]rune(c.Text)) == 1 {
+			singles++
+		}
+	}
+	if singles < 50 {
+		t.Fatalf("zxcv 首段单字全量兜底未生效（单字=%d）", singles)
+	}
+
+	s2 := NewSession(d, nil)
+	if _, err := s2.Input("zxcv"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	idx := findCandidate(t, s2, "在") // z 声母单字（全量兜底可达）
+	rest, committed, err := s2.SelectPrefix(idx)
+	if err != nil || committed != "在" {
+		t.Fatalf("zxcv 选首段单字「在」失败: committed=%q err=%v", committed, err)
+	}
+	if rest.Input != "xcv" || len(rest.Candidates) == 0 {
+		t.Fatalf("zxcv 选「在」后剩余输入 = %q，应剩 xcv 并继续出候选", rest.Input)
+	}
+}
+
+// TestShortInitialsNoFullBackfill：两段简拼不追加首段全量单字（避免页面爆炸），
+// 只保留常规回退的少量单字。
+func TestShortInitialsNoFullBackfill(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	comp, err := s.Input("zg")
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	singles := 0
+	for _, c := range allCandidates(s, comp) {
+		if len([]rune(c.Text)) == 1 {
+			singles++
+		}
+	}
+	if singles >= 80 {
+		t.Fatalf("zg 单字=%d，两段简拼不应追加首段全量单字", singles)
+	}
+}

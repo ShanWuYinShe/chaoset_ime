@@ -760,7 +760,10 @@ func isInitial(s string) bool {
 	}
 	if len(s) == 1 {
 		b := s[0]
-		return (b >= 'a' && b <= 'z') && b != 'v' && b != 'u' && b != 'i'
+		// v 是 ü 的键盘写法（nv/lve），单独作为声母没有音节匹配，但保留在
+		// 切分里可让 zxcv 这类串走常规回退拿到前面声母的单字候选，而不是
+		// 因整串切不动被判错拼后一个候选都不给。
+		return (b >= 'a' && b <= 'z') && b != 'u' && b != 'i'
 	}
 	return false
 }
@@ -1898,6 +1901,56 @@ func (s *Session) compose() Composition {
 				first := []Token{{Text: clean[0].Text, IsExact: true}}
 				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
 					addCandidate(e, e.Freq, false, rankSingleBackfill)
+				}
+			}
+		}
+	}
+
+	// 纯声母输入（3 段及以上）没有能覆盖整串的词典词时，末尾补首段全量单字：
+	// 候选只来自真实词条，但用户仍需要逐字选（kkdz 没有四字词，想打「烤可大」
+	// 这类词库没有的组合只能先选首字再继续）。否则回退只给首段 top10，翻页也
+	// 找不到生僻字，等于「没有整词就没法输入单字/自己造词」。
+	// 判定「没有整词」只看常规层级里是否有音节数与输入段数相同的候选；
+	// 追加层放在组合候选之后、列表最末（与弱整词单字兜底同层）。
+	if !typoSuspicious && len(tokenPatterns) > 0 {
+		clean := tokenPatterns[0]
+		allInitials := len(clean) >= 3
+		for _, tok := range clean {
+			if tok.IsExact {
+				allInitials = false
+				break
+			}
+		}
+		if allInitials {
+			fullWord := false
+			for i := range items {
+				if items[i].rank >= rankBackoff {
+					continue
+				}
+				if strings.Count(items[i].cand.Syllables, "'")+1 == len(clean) {
+					fullWord = true
+					break
+				}
+			}
+			if !fullWord {
+				first := []Token{{Text: clean[0].Text, IsExact: false}}
+				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
+					if len([]rune(e.Word)) != 1 {
+						continue
+					}
+					boost := 0
+					if s.user != nil {
+						boost = s.user.Score(e.Word, e.Syllables, s.prev)
+					}
+					addCandidate(e, e.Freq+boost, boost > 0, rankSingleBackfill)
+				}
+				if s.user != nil {
+					for _, e := range s.user.QueryTokensExact(first, singleSyllableExactLimit) {
+						if len([]rune(e.Word)) != 1 {
+							continue
+						}
+						addCandidate(e, e.Freq, true, rankSingleBackfill)
+					}
 				}
 			}
 		}
