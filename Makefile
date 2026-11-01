@@ -128,15 +128,8 @@ package-macos:
 	@echo "✓ 全部二进制 universal（主壳 + 安装器 + app 内置工具）"
 	mkdir -p dist
 	(cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
-	@if command -v hdiutil >/dev/null 2>&1; then \
-		echo "==> 构建 macOS 单文件磁盘映象 (Chaoset-$(VERSION).dmg)..."; \
-		rm -rf dist/dmg_staging; \
-		mkdir -p dist/dmg_staging; \
-		cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/; \
-		printf "【Chaoset 输入法 macOS 安装说明】\n\n版本：$(VERSION)\n\n1. 直接双击运行「Chaoset 安装与设置」(ChaosetSetup.app)；\n2. 在窗口中点击「一键安装 / 更新」，程序将自动部署输入法组件并启动后台服务；\n3. 按快捷键【Ctrl + 空格】（或 Fn / 🌐 键）切换至 Chaoset 即可开始打字！\n\n※ 全程图形化自动安装，无需将文件拖入应用程序目录，无需使用终端或运行脚本。\n\n安装完成后请关闭「Chaoset 安装与设置」窗口，再推出本 DMG。\n" > dist/dmg_staging/安装说明.txt; \
-		hdiutil create -volname "Chaoset $(VERSION)" -srcfolder dist/dmg_staging -ov -format UDZO dist/Chaoset-$(VERSION).dmg || exit 1; \
-		rm -rf dist/dmg_staging; \
-	fi
+	@test -f dist/chaoset-macos.zip || { echo "错误：未生成 dist/chaoset-macos.zip"; exit 1; }
+	@echo "✓ macOS 安装包：dist/chaoset-macos.zip（不发布 DMG）"
 
 # package-linux：显式交叉编译到 linux/amd64。
 #

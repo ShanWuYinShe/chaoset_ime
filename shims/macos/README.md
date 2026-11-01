@@ -45,14 +45,14 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 
 ### 用发布包（推荐）
 
-> 发布包文件名/卷名带版本（如 `Chaoset-0.3.1.dmg`）；设置窗底部和「Chaoset 安装与设置」状态页都会显示版本，升级后可先核对版本再排障。
+> 发布包为 `chaoset-macos.zip`（不提供 DMG）；设置窗底部和「Chaoset 安装与设置」状态页都会显示版本，升级后可先核对版本再排障。
 
-1. 从 GitHub Release 下载 **`Chaoset-<版本>.dmg`**（或 `chaoset-macos.zip`）；
-2. 双击打开 DMG 磁盘映象，直接运行里面的 **Chaoset 安装与设置**（`ChaosetSetup.app`）；
+1. 从 GitHub Release 下载 **`chaoset-macos.zip`** 并解压；
+2. 打开解压出的文件夹，运行 **Chaoset 安装与设置**（`ChaosetSetup.app`）；
 3. 在图形界面中点击「一键安装 / 更新」，程序会自动将输入法组件配置到系统、部署常用词库并拉起后台服务；
 4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
 
-- 磁盘映象内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
+- 安装包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
 - 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击**安装器** → 选择「打开」→ 确认打开即可。
   > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
 - 安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon；不会在 LaunchAgent 未就绪时再手动启动第二个 `chaosetd`（否则活动监视器会出现两个进程）。

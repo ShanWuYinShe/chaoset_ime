@@ -205,9 +205,9 @@ func daemonLaunchAgentPath() -> String {
 
 /// 写入/刷新 daemon 的 LaunchAgent。
 ///
-/// 必须由 GUI 安装器自己写：此前只依赖 install.sh 建好的 plist，DMG 用户
-/// 全新安装时没有 LaunchAgent，restartDaemon 会退化为「从 DMG 里直接跑
-/// chaosetd」——daemon 一直占着磁盘映象，推出 DMG 时提示文件正在使用，
+/// 必须由 GUI 安装器自己写：此前只依赖 install.sh 建好的 plist，从 zip 解压后
+/// 直接运行安装器的用户全新安装时没有 LaunchAgent，restartDaemon 会退化为
+/// 「从解压目录里直接跑 chaosetd」——daemon 一直占着安装目录，清理时提示正在使用，
 /// 且重启电脑后没有任何进程被拉起。
 func installDaemonLaunchAgent(support: String) -> String {
     let fm = FileManager.default
@@ -315,7 +315,7 @@ func restartDaemon(support: String) -> String {
 }
 
 /// 把安装器自己装到 ~/Applications/Chaoset.app，供输入法设置窗「导入词库」
-/// 与后续更新入口使用；不把安装器留在 DMG 里（DMG 会被用户弹出）。
+/// 与后续更新入口使用；不把安装器留在临时解压目录里（用户可能随时删除）。
 func installSetupApp() -> String {
     let fm = FileManager.default
     let src = URL(fileURLWithPath: Bundle.main.bundlePath).resolvingSymlinksInPath().path

@@ -218,10 +218,10 @@ jobs:
           go-version-file: go.mod
 
       # 直接跑 `make package-macos`（与 release 同一条打包链）：构建 universal
-      # app + 全部随包工具 universal 自检 + zip（有 hdiutil 时再出 dmg）。
+      # app + 全部随包工具 universal 自检 + zip。
       # 此前日常 CI 只跑 build.sh，打包脚本/资源清单坏了要到打 tag 才发现
       #（与 Linux 安装包自检同一类问题，2026-10-31 补齐）。
-      - name: macOS 构建 + 安装包（zip/dmg，含 universal 自检）
+      - name: macOS 构建 + 安装包（zip，含 universal 自检）
         run: |
           # equivalence.sh 的 B 段走 import-dict.sh，它用 bin/chaoset-import；
           # make package-macos 只构建 app 内副本，所以先 make build 产出 bin/。
@@ -243,7 +243,6 @@ jobs:
             || { echo "zip 缺少 app 内置 chaoset-import"; exit 1; }
           unzip -l dist/chaoset-macos.zip | grep -q 'ChaosetSetup.app/Contents/Resources/ChaosetIME.embedded/Contents/Resources/dict_common.tsv' \
             || { echo "zip 缺少安装器内 embedded 种子词库"; exit 1; }
-          ls dist/Chaoset-*.dmg >/dev/null 2>&1 && echo "DMG 已生成" || echo "（无 hdiutil，跳过 DMG）"
 
       # 顺带断言所有随包工具都是 universal：chaoset-import 曾因裸 go build 只出
       # arm64，Intel 用户点「导入词库」直接 Bad CPU type（2026-10-26 修复）。

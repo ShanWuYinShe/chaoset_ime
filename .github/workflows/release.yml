@@ -67,7 +67,7 @@ jobs:
                    shims/macos/tests/visual-parity.sh
           ./shims/macos/build.sh
           # 版本号必须来自 tag，而不是 build.sh 的 fallback；release v0.3.1
-          # 曾因 tag 推导失败把 0.0.0-dev 写进 DMG，用户无法判断是否更新。
+          # 曾因 tag 推导失败把 0.0.0-dev 写进安装包，用户无法判断是否更新。
           for app in ChaosetIME ChaosetSetup; do
             got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
                   "shims/macos/build/$app.app/Contents/Info.plist")
@@ -100,7 +100,7 @@ jobs:
             lipo -info "$bin" | grep -q 'arm64' || { echo "缺少 arm64 架构"; exit 1; }
           done
 
-      - name: 打包 DMG 与 ZIP
+      - name: 打包 ZIP
         env:
           VERSION: ${{ github.ref_name }}
         run: |
@@ -109,16 +109,10 @@ jobs:
           else
             export VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
           fi
-          DMG=dist/Chaoset-${VERSION}.dmg
           mkdir -p dist
           (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
-          mkdir -p dist/dmg_staging
-          cp -R shims/macos/build/ChaosetSetup.app dist/dmg_staging/
-          printf "【Chaoset 输入法 macOS 安装说明】\n\n版本：${VERSION}\n\n1. 直接双击运行「Chaoset 安装与设置」(ChaosetSetup.app)；\n2. 在窗口中点击「一键安装 / 更新」，程序将自动部署输入法组件并启动后台服务；\n3. 按快捷键【Ctrl + 空格】（或 Fn / 🌐 键）切换至 Chaoset 即可开始打字！\n\n※ 全程图形化自动安装，无需将文件拖入应用程序目录，无需使用终端或运行脚本。\n\n安装完成后请关闭「Chaoset 安装与设置」窗口，再推出本 DMG。\n" > dist/dmg_staging/安装说明.txt
-          hdiutil create -volname "Chaoset ${VERSION}" -srcfolder dist/dmg_staging -ov -format UDZO "$DMG"
-          rm -rf dist/dmg_staging
-          test -f "$DMG" || { echo "缺少 $DMG"; exit 1; }
-          echo "macOS DMG 产物生成并校验通过"
+          test -f dist/chaoset-macos.zip || { echo "缺少 dist/chaoset-macos.zip"; exit 1; }
+          echo "macOS ZIP 安装包生成并校验通过"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
@@ -126,7 +120,6 @@ jobs:
           name: chaoset-macos
           path: |
             dist/chaoset-macos.zip
-            dist/Chaoset-*.dmg
           retention-days: 14
 
   package-linux:
@@ -307,7 +300,6 @@ jobs:
         with:
           files: |
             dist/ChaosetSetup.exe
-            dist/Chaoset-*.dmg
             dist/chaoset_amd64.deb
             dist/chaoset-ime-x86_64.pkg.tar.zst
             dist/chaoset-windows-x64.zip

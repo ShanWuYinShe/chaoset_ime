@@ -11,12 +11,12 @@
 | 操作系统 | 推荐安装包（小白首选） | 极简安装步骤 | 切换输入法快捷键 |
 | :--- | :--- | :--- | :--- |
 | **Windows** (10 / 11) | [`ChaosetSetup.exe`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 → UAC 点「是」→ 一直「下一步」。**若 SmartScreen 提示未知发布者：点「更多信息」→「仍要运行」**（仅首次；免费签名证书尚未配置） | `Win + 空格` |
-| **macOS** (15+) | [`Chaoset-<版本>.dmg`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 DMG → 双击「Chaoset 安装与设置」→「一键安装」。**若提示无法验证开发者：右键安装器 →「打开」→ 再点「打开」**（仅首次） | `Ctrl + 空格` 或 `Fn / 🌐` |
+| **macOS** (15+) | [`chaoset-macos.zip`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 解压 ZIP → 双击「Chaoset 安装与设置」→「一键安装」。**若提示无法验证开发者：右键安装器 →「打开」→ 再点「打开」**（仅首次） | `Ctrl + 空格` 或 `Fn / 🌐` |
 | **Linux (Ubuntu / Debian / Mint)** | [`chaoset_amd64.deb`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 `.deb` → 应用中心点「安装」；装完后在系统「键盘 → 输入源」添加 **Chaoset Pinyin**（列表暂时没有就注销重登一次） | `Super + 空格` 或 `Ctrl + 空格` |
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
 > **macOS 首次打开被 Gatekeeper 拦截（无需开发者账号）**：
-> 截图里的提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开 DMG 里的
+> 截图里的提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开解压目录里的
 > **「Chaoset 安装与设置」**（`ChaosetSetup.app`）。若安装器也被拦截，在 Finder 中右键安装器 →「打开」，
 > 或到「系统设置 → 隐私与安全性 → 安全性」点「仍要打开」。
 >
@@ -778,15 +778,15 @@ Windows daemon 支持命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 
 | 平台 | 推荐（普通用户） | 高级/备用（不要选） |
 |---|---|---|
-| macOS | `Chaoset-<版本>.dmg` | `chaoset-macos.zip`（绿色/排障） |
+| macOS | `chaoset-macos.zip` | — |
 | Windows | `ChaosetSetup.exe` | `chaoset-windows-x64.zip`（需管理员 + install.bat） |
 | Linux Debian/Ubuntu | `chaoset_amd64.deb` | `chaoset-linux-x86_64.tar.gz`（需 sudo 脚本） |
 | Linux Arch | `chaoset-ime-x86_64.pkg.tar.zst` | 同左，无脚本包 |
 
 每个包都自带**完整的 14 万条常用词库**，装完即可用，不需要另配词库。
 
-> **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；macOS 的 DMG
-> 文件名/卷名也带版本号。升级后先看这里确认装的是新版本，再排查其他问题。
+> **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
+> 确认装的是新版本，再排查其他问题。
 
 > 2026-10-25 修复的发行缺陷（此前 Release 产物不可用）：Linux 包只带了 558 条的
 > 演示词库、引擎却要 `data/dict_common.tsv`，且相对路径依赖 cwd——装完引擎启动

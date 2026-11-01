@@ -14,7 +14,7 @@
 - **视觉参数与一致性检查**：设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，**无运行时消费者**），实际渲染实现是 macOS `CandidatePanel.swift` 与 Windows `win32.cpp` 两份。Go↔macOS 布局 5 项 + macOS 参考常量（含 divider）+ 浅/深各 13 色由 `shims/macos/tests/visual-parity.sh` 逐项机器断言（故意改字号/色值必须 FAIL）；**Windows 没有运行时视觉断言**（`tools/checkuiparity` 只做静态几何/配色字段契约；另有 pt 口径、交叉编译与核心行为测试），不要把它写成「双端已验证」。改动排版参数/按键矩阵必须同步更新 `docs/ui-parity.md` 与机器断言。
 - **候选窗任何 UI 改动（控制区/齿轮/翻页/配色/层级）必须三端同步检查**：macOS `CandidatePanel.swift`、Windows `win32.cpp`（`settingsRect_`/齿轮绘制）、Linux ibus（无自绘 UI 时在 `shims/linux/README.md` 记录不适用理由）——只改一个平台 = 未完成。绘制机制按平台落地但**视觉形态必须一致**（齿轮 = 圆环+8 齿矢量算法，**仅 macOS/Windows 两端**同几何参数同色值；Linux ibus 面板无齿轮；macOS 端 SF Symbol 模板图离屏着色失效因此手绘矢量，Windows GDI 同算法实现），机制说明记录在各壳源码注释。Windows 布局/字号/间距统一 **pt 口径**（`pt(v)=MulDiv(v,dpi,72)`），不要退回 px@96。
 - **三端设置窗**：macOS `shims/macos/setup/`（`SettingsWindow.swift`，含「词库导入」入口——打开 Setup.app 并自动弹导入面板）、Windows 设置窗、Linux 原生 GTK3 C 设置窗（`shims/linux/setup/chaoset-setup.c` + `setup_ctl.c`，`Gtk.Application` 单例 + hicolor 小尺寸图标，学习数据管理与词库导入在 GUI 内，只调用 Go 工具/ibus，engine 零改动；**禁止使用 Python/PyGObject**）。三端的词库导入安全流程与设置项契约由 `tools/checkuiparity` 静态断言，改动任一端设置窗必须三端同步并更新 `docs/ui-parity.md`。
-- **版本可见性（三端统一）**：三端设置窗底部必须显示 `Chaoset 版本 x.y.z`；macOS DMG 文件名/卷名带版本；`make check-uiparity` 的共享文案断言含「Chaoset 版本」，改设置窗时同步改。
+- **版本可见性（三端统一）**：三端设置窗底部必须显示 `Chaoset 版本 x.y.z`；macOS 发布包为 `chaoset-macos.zip`（不提供 DMG）；`make check-uiparity` 的共享文案断言含「Chaoset 版本」，改设置窗时同步改。
 - **三端 UI 一致性静态检查（`make check-uiparity`）**：`tools/checkuiparity` 覆盖设置窗、学习数据、词库导入与安全、联想即时性、退格/修饰键语义、候选窗几何/配色、CI 覆盖、shell 转义、文档对照等三端契约（组数以 `make check-uiparity` 输出为准，勿写死数字），已接入 `make vet` 与 CI 的 lint job。改 UI 契约时同步改断言，否则 `make vet` 红。
 - **用户目录约定**：daemon / Go 工具走 `internal/appdirs`（macOS Application Support、Linux XDG、Windows LOCALAPPDATA；Linux socket 优先 `$XDG_RUNTIME_DIR`）；Linux 原生引擎 `daemon.cpp` 按同一 XDG 口径解析路径，壳/脚本需要路径时仍应调 `chaoset-userdict -print-paths`，不要在壳里各自拼路径。
 - **自学习持久化**：用户词典、调频与上下文共现数据随 daemon 每 2 秒批量原子写盘（temp+rename，无 fsync；正常退出同步落盘，异常强杀最多丢最近 2 秒）。Linux 壳不再直接持有用户词典，落盘统一由 daemon 负责。`chaoset-userdict.json` 已 `.gitignore`。
@@ -72,7 +72,7 @@ go build ./...                    # 秒级
 | test | go test ./...（数据契约/引擎/壳行为测试） | 约 30s |
 | race | `go test -race` | 最重的一项，本机 45s+ |
 | linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页；Linux 安装包自检（tar.gz/deb 必含设置窗模块） | 需要 dbus + ibus，占资源 |
-| macos-build | macOS 壳构建 + universal 自检 + 安装包（zip/dmg）+ 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
+| macos-build | macOS 壳构建 + universal 自检 + ZIP 安装包 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
 | windows-build | Windows 壳 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 安装包编译 + ZIP 自检 | 需要 mingw-w64/NSIS，本机不装；每次提交都验证（不只在打 tag 时） |
 
 本地真需要跑完整验证时，`make test`、`shims/linux/test-ci.sh`、

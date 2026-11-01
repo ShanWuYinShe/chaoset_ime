@@ -363,7 +363,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   Windows 无障碍基础能力（候选窗 `WM_GETOBJECT` + UIA 宿主 provider；构建脚本
   断言 DLL 无 `uiautomationcore.dll` 静态导入）、
   CI 安装包自检（日常 linux-e2e 构建 tar.gz/deb 并断言设置窗模块随包；
-  macos-build 直接跑 `make package-macos` 产出 zip/dmg）、
+  macos-build 直接跑 `make package-macos` 产出 zip）、
   **词库导入安全流程**（三端壳都只负责选文件/传路径/检查退出码；合并/备份/
   原子替换由 Go `chaoset-import -o ... -seed ... -backup` 实现，2026-11-01 起三端
   不再各自 copy/rename）、**关闭联想的即时性**
