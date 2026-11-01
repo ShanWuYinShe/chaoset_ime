@@ -974,9 +974,9 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 }
 
 // singleSyllableExactLimit 是「单个完整音节」的精确匹配上限：同音字全量
-// 召回（单音节输入、>=4 音节长输入回退到首音节、以及 >7 token 长输入显式补
-// 的首音节查询，三处必须同一口径；2~3 音节的回退刻意保持 top10 不放开，
-// 理由见 compose 里回退段的注释）。
+// 召回（单音节输入、>=4 音节长输入回退到首音节、>7 token 长输入显式补的首
+// 音节查询、以及 2~3 音节弱整词时的列表末尾补全，四处必须同一口径；2~3 音节
+// 的回退本身仍保持 top10，理由见 compose 里回退段的注释）。
 //
 // 取 120 的依据（2026-10-28 实测）：同音字最多的音节（shi/yi/ji…）在 100 个
 // 上下，top20 裁剪会让「示」这类排 33 位的常用字整体不可达；放开到 120 后
@@ -984,6 +984,15 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 // 只对**单音节**放开是刻意的：多音节全拼的 exact 上限是 20（歧义切分路径 ×
 // exact 条数是乘法放大，放开会让热路径从 24.6µs 涨到 246µs，见下方注释）。
 const singleSyllableExactLimit = 120
+
+// singleCharBackfillMinWordFreq 是「整词候选足够可信」的词频门槛（0~100 词频
+// 标度）：2~3 音节全拼的整词候选最高词频低于它时，视为弱匹配/词库没有用户
+// 想要的词，在列表末尾补首音节同音字全量（逐字挑选）。
+//
+// 取 40 的依据（2026-11-02 实测）：失陪 30、配音 39 这类弱整词需要逐字挑选
+// （用户反馈 shipei 想打「适配」）；而长江 48、你好 52、北京 69、世界 73 等
+// 常用整词保持原有短列表，避免每次组词都翻十几页。
+const singleCharBackfillMinWordFreq = 40
 
 // typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
@@ -1266,6 +1275,10 @@ func (s *Session) compose() Composition {
 		// rankBackoff+drop），只作为列表末尾的额外选项：组合没有语言模型，
 		// 不能改变任何原有候选的先后（用户此前的硬要求）。
 		rankComposition = rankBackoff + 64
+		// rankSingleBackfill 是「弱整词匹配」时补的首音节同音字全量层级：
+		// 排在所有常规候选（含逐级回退碎片）之后、组合候选之前，只作为逐字
+		// 挑选的兜底，不参与用户历史优先排序，也不改变原有候选先后。
+		rankSingleBackfill = rankBackoff + 16
 	)
 
 	minPatternLen := 0
@@ -1759,9 +1772,12 @@ func (s *Session) compose() Composition {
 				// 单音节输入的召回口径：同音字全量进入候选池，逐字挑选（SelectPrefix）
 				// 才选得到 top10 之外的常用字。
 				//
-				// 2~3 音节刻意保持 top10（2026-11-01 Lead 复核）：2 音节是最高频输入
-				// 形态，全量放开会让每次组词的候选从 ~20 条膨胀到 ~80-150 条
-				// （实测 shijie 43→151 = 26 页），翻页观感与候选池排序成本都变差。
+				// 2~3 音节的回退本身刻意保持 top10（2026-11-01 Lead 复核）：2 音节
+				// 是最高频输入形态，全量放开会让每次组词的候选从 ~20 条膨胀到
+				// ~80-150 条（实测 shijie 43→151 = 26 页），翻页观感与候选池排序
+				// 成本都变差。整词候选很弱、确实需要逐字挑选的场景，由下方
+				// 「弱整词匹配时补首音节同音字全量」单独补（rankSingleBackfill），
+				// 强整词输入（长江/你好/北京/世界）列表长度不变。
 				// 且「长」chang（词频 40）在 chang 同音字里排第 6，本就落在 top10 内
 				// 可达；用户打不出「长」的真实主因是安装词库过期（旧内置词库只有
 				// 长 zhang，安装器升级缺陷另行修复）。4 音节及以上才是「整词/整句
@@ -1838,6 +1854,44 @@ func (s *Session) compose() Composition {
 							addCandidate(e, e.Freq, true, r)
 						}
 					}
+				}
+			}
+		}
+	}
+
+	// 弱整词匹配时补首音节同音字全量（2026-11-02 用户反馈：shipei 想打「适配」，
+	// 词库里没有该词，2 音节输入的回退只给首音节 top10，翻页也找不到「适」）。
+	// 只在 2~3 音节全拼、且没有任何「强整词候选」（全消耗单词、词频 ≥ 40）时
+	// 追加：此时整词多是生僻/巧合词（失陪 30、配音 39），用户更可能需要逐字
+	// 挑选；常用词（长江 48、你好 52、北京 69、世界 73）保持短列表。
+	// 追加候选排在所有常规候选之后（rankSingleBackfill），不改变原有首选。
+	if !typoSuspicious && !midSuspicious && !tailSuspicious && len(tokenPatterns) > 0 {
+		clean := tokenPatterns[0]
+		cleanExact := len(clean) >= 2 && len(clean) <= 3
+		for _, tok := range clean {
+			if !tok.IsExact {
+				cleanExact = false
+				break
+			}
+		}
+		if cleanExact {
+			strongWord := false
+			for i := range items {
+				if items[i].cand.typoFix || items[i].rank >= rankBackoff {
+					continue
+				}
+				if strings.Count(items[i].cand.Syllables, "'")+1 != len(clean) {
+					continue
+				}
+				if items[i].cand.Score >= singleCharBackfillMinWordFreq {
+					strongWord = true
+					break
+				}
+			}
+			if !strongWord {
+				first := []Token{{Text: clean[0].Text, IsExact: true}}
+				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
+					addCandidate(e, e.Freq, false, rankSingleBackfill)
 				}
 			}
 		}
