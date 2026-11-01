@@ -349,12 +349,12 @@ fi
 press "$P1" 65307 0  # Esc 保险
 
 # ---- daemon 单实例（引擎首键拉起；不应因多次 auto-spawn 留下两个进程）----
-DAEMON_COUNT=$(pgrep -f "$WORK/chaosetd" | wc -l | tr -d ' ')
+DAEMON_COUNT=$(pgrep -x chaosetd | wc -l | tr -d ' ')
 if [ "$DAEMON_COUNT" = "1" ]; then
   echo "PASS: chaosetd 单实例（进程数 = 1）"
 else
   echo "FAIL: chaosetd 进程数为 ${DAEMON_COUNT}（期望 1）" >&2
-  pgrep -af "$WORK/chaosetd" >&2 || true
+  pgrep -ax chaosetd >&2 || true
   exit 1
 fi
 
