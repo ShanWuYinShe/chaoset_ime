@@ -2,21 +2,42 @@
 
 package main
 
-// acquireSingleton 在 Windows 上是空操作。
+import (
+	"fmt"
+
+	"golang.org/x/sys/windows"
+)
+
+// acquireSingleton 在 Windows 上用会话级命名互斥体保证单实例。
 //
-// 与 Unix 不同，Windows 壳经 TCP 回环连 daemon（-tcp 127.0.0.1:7949），
-// 端口绑定本身由系统保证互斥：第二个实例 net.Listen 会直接拿到
-// WSAEADDRINUSE 并退出，不存在 Unix 下「先 unlink 再监听、两个进程都
-// 成功」的问题。因此这里不需要额外的锁文件。
-//
-// 若将来改用命名管道（会话隔离更干净，README 已列为待办），届时在此
-// 实现独占创建即可，调用方无需改动。
+// 不能只依赖 TCP 端口：安装器/开机自启动/设置窗可能用不同参数（TCP 与
+// 命名管道并存、或端口被改）启动 daemon；端口不同就会留下两个进程。
+// `Local\` 命名空间按登录会话隔离，Fast User Switching 下每个用户仍有
+// 自己的 daemon，不会跨用户误杀。
+const daemonMutexName = `Local\ChaosetDaemon`
+
 type lockHandle struct {
-	f struct{}
+	h windows.Handle
 }
 
-func (l *lockHandle) release() {}
+func (l *lockHandle) release() {
+	if l == nil || l.h == 0 {
+		return
+	}
+	_ = windows.CloseHandle(l.h)
+	l.h = 0
+}
 
-func acquireSingleton(socket string) (*lockHandle, error) {
-	return &lockHandle{}, nil
+func acquireSingleton(_ string) (*lockHandle, error) {
+	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(daemonMutexName))
+	if err != nil {
+		if err == windows.ERROR_ALREADY_EXISTS {
+			if h != 0 {
+				_ = windows.CloseHandle(h)
+			}
+			return nil, fmt.Errorf("已有 chaosetd 在运行（单实例互斥体 %s 被占用），本次启动已放弃", daemonMutexName)
+		}
+		return nil, fmt.Errorf("创建单实例互斥体失败: %w", err)
+	}
+	return &lockHandle{h: h}, nil
 }

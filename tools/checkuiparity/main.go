@@ -545,6 +545,20 @@ func Run(fsys fs.FS) []string {
 		"installedResource(\"chaosetd\")", "embeddedResource(\"chaoset-import\")", "installSetupApp")
 	checkContains(fsys, &problems, "打包安装", macInstall,
 		"$IM/ChaosetIME.app/Contents/Resources/chaosetd")
+
+	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
+	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
+	checkContains(fsys, &problems, "daemon 单实例", macSetup,
+		"waitLaunchdGone", "waitProcessGone", "只保留 launchd 一个 owner")
+	checkExcludes(fsys, &problems, "daemon 单实例", macSetup,
+		"已用已安装 app 内的 daemon 启动")
+	checkContains(fsys, &problems, "daemon 单实例", macInstall,
+		"killall chaosetd", "避免出现两个进程")
+	checkContains(fsys, &problems, "daemon 单实例", "cmd/chaosetd/main.go", "runtime.GOOS")
+	checkContains(fsys, &problems, "daemon 单实例", "cmd/chaosetd/singleton_windows.go",
+		"CreateMutex", `Local\ChaosetDaemon`)
+	checkContains(fsys, &problems, "daemon 单实例", linuxE2E, "chaosetd 单实例")
+
 	checkExists(fsys, &problems, "打包安装", linuxTest)
 	checkExists(fsys, &problems, "打包安装", linuxCtl)
 	for _, size := range []string{"16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256"} {

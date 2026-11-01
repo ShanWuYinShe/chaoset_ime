@@ -248,10 +248,33 @@ func installDaemonLaunchAgent(support: String) -> String {
     }
 }
 
+/// 等待 launchd 域里不再有该 label（bootout 是异步的）。
+func waitLaunchdGone(domain: String, label: String, timeout: TimeInterval = 3) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if runTool("/bin/launchctl", ["print", "\(domain)/\(label)"]).status != 0 {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return false
+}
+
+/// 等待进程退出；用于确保旧 daemon 不在时再 bootstrap，避免出现两个进程。
+func waitProcessGone(_ name: String, timeout: TimeInterval = 3) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if runTool("/usr/bin/pgrep", ["-U", String(getuid()), "-x", name]).status != 0 {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return false
+}
+
 func restartDaemon(support: String) -> String {
     var out = ""
     let daemon = installedResource("chaosetd")
-    let dict = support + "/dict.tsv"
     guard FileManager.default.isExecutableFile(atPath: daemon) else {
         return "daemon 未部署，未启动（缺少 \(daemon)）\n"
     }
@@ -259,32 +282,35 @@ func restartDaemon(support: String) -> String {
     let domain = "gui/\(getuid())"
     let label = "ime.chaoset.daemon"
     let laPath = daemonLaunchAgentPath()
+
+    // 只保留 launchd 一个 owner：先卸载旧 job，再杀残留进程，最后 bootstrap。
+    // 不能 bootout 后立刻 killall/bootstrap；launchd 的卸载是异步的，旧进程
+    // 可能在新 bootstrap 之后才退出，形成两个 chaosetd 的瞬间/常驻竞争。
     _ = runTool("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
+    if !waitLaunchdGone(domain: domain, label: label) {
+        out += "⚠ 旧 LaunchAgent 未在 3 秒内卸载，未启动新 daemon\n"
+        return out
+    }
     _ = runTool("/usr/bin/killall", ["chaosetd"])
-    Thread.sleep(forTimeInterval: 0.4)
+    if !waitProcessGone("chaosetd") {
+        out += "⚠ 旧 chaosetd 未在 3 秒内退出，未启动新 daemon\n"
+        return out
+    }
+
     let boot = runTool("/bin/launchctl", ["bootstrap", domain, laPath])
     if boot.status != 0 {
+        // bootstrap 对「已加载」会返回非零；此时用 kickstart 重启让它读新二进制。
         _ = runTool("/bin/launchctl", ["kickstart", "-k", "\(domain)/\(label)"])
     }
     if waitDaemonReady(support: support) {
         out += "已通过 LaunchAgent 重启 daemon 并确认 IPC 就绪\n"
         return out
     }
-    // launchd 拉起失败时兜底：从**已安装 app 内的 daemon** 直接启动，
-    // 绝不从 DMG 运行（否则 DMG 无法推出，且重启后无进程）。
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: daemon)
-    p.arguments = ["-socket", support + "/chaoset.sock", "-dict", dict,
-                   "-userdict", support + "/userdict.json",
-                   "-log", support + "/chaosetd.log"]
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    do { try p.run() } catch { return out + "daemon 启动失败：\(error)\n" }
-    if waitDaemonReady(support: support) {
-        out += "LaunchAgent 未生效，已用已安装 app 内的 daemon 启动\n"
-    } else {
-        out += "⚠ daemon 启动后 8 秒内 IPC 仍未就绪\n"
-    }
+    // 关键：launchd 失败时**不能再手动 exec 一个 daemon**。
+    // 旧实现会在 LaunchAgent 慢启动时兜底启动第二个进程，单实例锁只能让
+    // 其中一个退出，但活动监视器会短暂/持续看到两个 chaosetd，且 KeepAlive
+    // 会不断重试。这里只报告失败，让用户重试安装，保持单一 owner。
+    out += "⚠ LaunchAgent 未能拉起 daemon（IPC 8 秒未就绪）；未额外启动进程，请重试。\n"
     return out
 }
 

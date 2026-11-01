@@ -97,6 +97,17 @@ else
   warn "未注册 LaunchAgent：daemon 崩溃或重启电脑后不会自动拉起（./install.sh 会安装）"
 fi
 
+# ── 3c) daemon 单实例 ───────────────────────────────────────────
+printf '== 3c) daemon 单实例 ==\n'
+COUNT=$(pgrep -U "$(id -u)" -x chaosetd | wc -l | tr -d ' ')
+if [ "$COUNT" = "1" ]; then
+  ok "chaosetd 进程数 = 1"
+elif [ "$COUNT" = "0" ]; then
+  fail "没有运行中的 chaosetd（LaunchAgent 未启动）"
+else
+  fail "发现 ${COUNT} 个 chaosetd（安装/升级不应留下多实例）"
+fi
+
 # ── 4) IPC 全链路 ───────────────────────────────────────────────
 printf '== 4) IPC 全链路（组词/预编辑/上屏/歧义切分/退格/重置） ==\n'
 if [ -x build/smoke ] && [ -S "$SOCK" ]; then

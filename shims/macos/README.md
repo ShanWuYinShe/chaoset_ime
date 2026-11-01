@@ -47,6 +47,7 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 - 磁盘映象内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
 - 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击**安装器** → 选择「打开」→ 确认打开即可。
   > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
+- 安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon；不会在 LaunchAgent 未就绪时再手动启动第二个 `chaosetd`（否则活动监视器会出现两个进程）。
 
 ### 方式 B：终端免隔离安装（无开发者账号）
 

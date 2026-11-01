@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -178,10 +179,10 @@ func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPa
 	user.SetDeferred(true)
 
 	// 单实例保护：必须在 os.Remove(socket) 之前拿到锁。
-	// 否则第二个实例会先 unlink 掉正在运行的 daemon 的套接字文件，
-	// 再成功监听同名路径——两个进程都不报错（细节见 singleton_unix.go）。
-	// TCP/命名管道由系统命名空间天然互斥，不需要锁。
-	if ep.Network == "unix" {
+	// Unix 用 socket 旁的 flock；Windows 用会话级命名互斥体（TCP 端口/命名
+	// 管道只是第二道防线，不能保证不同参数启动的实例互斥）。
+	// 细节见 singleton_unix.go / singleton_windows.go。
+	if ep.Network == "unix" || runtime.GOOS == "windows" {
 		lock, lerr := acquireSingleton(ep.Address)
 		if lerr != nil {
 			return lerr

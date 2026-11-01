@@ -242,6 +242,20 @@ PLIST
     j=$((j + 1))
     sleep 0.1
   done
+  # bootout 只卸载 LaunchAgent，不会杀掉旧 daemon（旧版本可能仍在跑）。
+  # 先杀残留进程并等它真正退出，再 bootstrap；否则新旧两个 daemon 会同时
+  # 存在一段时间，Activity Monitor 里能看到两个 chaosetd。
+  /usr/bin/killall chaosetd 2>/dev/null || true
+  j=0
+  while [ $j -lt 30 ]; do
+    /usr/bin/pgrep -U "$(id -u)" -x chaosetd >/dev/null 2>&1 || break
+    j=$((j + 1))
+    sleep 0.1
+  done
+  if /usr/bin/pgrep -U "$(id -u)" -x chaosetd >/dev/null 2>&1; then
+    echo "✗ 旧 chaosetd 未能退出，未启动新 daemon（避免出现两个进程）" >&2
+    exit 1
+  fi
   if ! launchctl bootstrap "$LA_DOMAIN" "$DAEMON_LA" 2>/dev/null; then
     # bootstrap 对「已加载」会返回非零；此时用 kickstart 重启让它读新二进制
     launchctl kickstart -k "$LA_DOMAIN/$LA_LABEL" 2>/dev/null || true

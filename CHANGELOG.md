@@ -2,6 +2,18 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.6（2026-11-01）
+
+- **修复安装后出现两个 `chaosetd`**：macOS 安装器 `restartDaemon` 删除
+  「LaunchAgent 未就绪时直接再 exec 一个 daemon」的兜底；改为 bootout 后
+  等待 launchd job 消失、killall 并等待旧进程退出，再 bootstrap。LaunchAgent
+  是唯一 owner，安装器不再与它竞争。`install.sh` 同样先清理旧 daemon。
+- **Windows daemon 单实例**：新增会话级命名互斥体（`Local\ChaosetDaemon`），
+  即使 TCP/命名管道参数不同也不会启动第二个；TCP 端口绑定仍是第二道防线。
+- **回归断言**：macOS `verify.sh` 检查 `chaosetd` 进程数必须为 1；Linux e2e
+  检查自动拉起的 daemon 只有一个；`checkuiparity` 静态锁住上述安装/单实例
+  约束，防止以后重新引入双进程兜底。
+
 ## v0.3.5（2026-11-01）
 
 - **Linux ibus 壳迁为原生 C++/libibus（用户要求：shim 用平台原生语言）**：
