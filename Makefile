@@ -155,12 +155,9 @@ package-linux:
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-cli ./cmd/chaoset-cli
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-import ./cmd/chaoset-import
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-userdict ./cmd/chaoset-userdict
-	# 引擎在编译期写入安装后的词库绝对路径：ibus-daemon 按 component XML 的
-	# <exec> 拉起时 cwd 不确定，靠相对路径必然找不到词库（2026-10-25 实测的
-	# 发行缺陷）。运行时仍会在该路径不存在时回退到「可执行文件同级 data/」，
-	# 因此解包即用的绿色形态也能跑。
-	$(LINUX_GOENV) go build -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
-		-o dist/chaoset-linux-x86_64/bin/chaoset-engine ./shims/linux/ibus-engine/
+	# 引擎是平台原生壳（C++/libibus），只做 IBus UI 与按键路由；拼音/联想
+	# 由 Go chaosetd 通过 Unix socket 提供。必须在 Linux 上构建（CI/容器）。
+	sh shims/linux/engine/build.sh dist/chaoset-linux-x86_64/bin/chaoset-engine
 	sed "s/@VERSION@/$(VERSION)/g" shims/linux/component/chaoset.xml > dist/chaoset-linux-x86_64/component/chaoset.xml
 	cp -r shims/linux/icons/hicolor dist/chaoset-linux-x86_64/icons/
 	# 词库：随包携带常用词库（dict_common.tsv），安装到 /usr/share/chaoset/dict.tsv。
@@ -189,6 +186,7 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/chaoset; \
 		mkdir -p dist/deb_staging/usr/share/ibus/component; \
 		mkdir -p dist/deb_staging/usr/share/icons; \
+		chmod 0755 dist/deb_staging dist/deb_staging/DEBIAN; \
 		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
 		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
@@ -232,16 +230,16 @@ package-windows:
 	x86_64-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
 	i686-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
 	# 64 位 TSF 前端 DLL
-	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static \
+	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
-		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
+		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
-	i686-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
+	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
-		shims/windows/src/win32.cpp shims/windows/src/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
+		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/

@@ -9,7 +9,8 @@ cd "$(dirname "$0")"
 mkdir -p build
 echo "[1/3] 原生编译核心层测试..."
 CXX=${CXX:-clang++}
-"$CXX" -std=c++17 -O2 -Wall -Wextra -Isrc tests/core_test.cpp src/core.cpp -o build/core_test
+"$CXX" -std=c++17 -O2 -Wall -Wextra -Isrc -I../common/ipc \
+  tests/core_test.cpp ../common/ipc/core.cpp -o build/core_test
 
 echo "[2/3] 启动真实 daemon（TCP 回环）并跑行为测试..."
 (cd ../.. && go build -o shims/windows/build/chaosetd ./cmd/chaosetd)
@@ -34,9 +35,10 @@ CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
 WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
 "$WINDRES" -I resources resources/chaoset.rc -O coff -o build/chaoset_rc.o
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static \
+  -Isrc -I../common/ipc \
   -DCHAOSET_VERSION="\"$VERSION\"" \
   -o build/ChaosetIME.dll \
-  src/win32.cpp src/core.cpp build/chaoset_rc.o \
+  src/win32.cpp ../common/ipc/core.cpp build/chaoset_rc.o \
   -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
   echo "  图标资源已嵌入（.rsrc 段存在）"

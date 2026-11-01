@@ -2,6 +2,21 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.5（2026-11-01）
+
+- **Linux ibus 壳迁为原生 C++/libibus（用户要求：shim 用平台原生语言）**：
+  `shims/linux/engine/` 用 GObject 子类实现 `IBusEngine`，只保留 IBus 按键路由、
+  预编辑/候选表/辅助文本等平台 UI；拼音、词库、联想与用户词典全部经 Unix
+  socket 调用 Go `chaosetd`。删除 Go `shims/linux/ibus-engine` 与 `godbus` 依赖。
+- **共享 C++ IPC 核心**：Windows 的 `core.{hpp,cpp}` 移到 `shims/common/ipc/`，
+  Windows 与 Linux 原生壳共用帧协议、JSON 解析和 `Session` 封装。
+- **daemon 生命周期**：原生引擎首次按键自动拉起 `chaosetd`（支持绿色包同目录
+  daemon/词库回退）；Linux 设置窗在导入/清空学习数据前先停止 daemon，避免旧
+  内存状态回写；ibus 引擎与 daemon 的退出/重启路径统一。
+- **Linux 打包/CI**：Makefile、Arch PKGBUILD、Debian control、CI/release
+  安装 `libibus-1.0-dev` 并用 `g++` 构建；`test-ci.sh` 改为真实原生引擎 +
+  daemon 的端到端（含导入词候选、鼠标点选、多实例隔离）。
+
 ## v0.3.4（2026-11-01）
 
 - **macOS 安装器增加图形化卸载**：停止 LaunchAgent/daemon、移除输入法 app 与

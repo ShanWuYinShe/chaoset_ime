@@ -252,8 +252,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 候选窗由 ibus 原生面板渲染（UpdateLookupTable/UpdatePreeditText），
 无自绘 UI，本表排版参数部分不适用；模式提示经 UpdateAuxiliaryText。
 **按键与交互行为矩阵同样适用**（联想态翻页键集合、空格选词、Ctrl+Backspace、
-联想态 Shift+空格等均已在 `shims/linux/ibus-engine` 实现并由
-`behavior_test.go` 锁定）。
+联想态 Shift+空格等均已在 `shims/linux/engine/main.cpp` 原生壳实现，并由
+`shims/linux/test-ci.sh` 在真实 ibus 环境端到端锁定）。
 
 设置入口经 ibus-setup 的「首选项」（组件 XML `<setup>`）打开同构的 GTK3 设置
 窗口，写 `config.json` 的 `associate`。**保存即时生效**：引擎在每次进入联想前
@@ -304,8 +304,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
   **2026-10-31 起接入 CI**（审计 G7）：
   `shims/macos/tests/key_routing/run.sh` 负责编译测试二进制 + 起临时 daemon +
   清理，macos-build job 每次 push 执行；`tools/checkuiparity` 断言该脚本存在且
-  被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `behavior_test.go`
-  覆盖（2026-10-30 新增已确认段收尾 4 条与 mspy `;` 用例）。双拼可达性由
+  被 ci.yml 调用，防止再退回「死测试」。Linux 按键行为由 `shims/linux/test-ci.sh`
+  覆盖（真实 dbus/ibus 下的组词、上屏、多实例隔离、修饰键矩阵）。双拼可达性由
   engine 的会话级测试覆盖（遍历全部音节逐键喂 `Session.Input`）。
 - **shell 变量转义（2026-10-31）**：macOS 自带 bash 3.2 在 UTF-8 locale 下会把
   `$VAR）` 的多字节字符并入变量名，运行时报 `ARCH�: unbound variable`——
@@ -315,8 +315,8 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 - **设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格与修饰键语义/
   打包安装 + 候选窗静态几何/配色字段 + CI 覆盖 + shell 变量转义** 已由
   `tools/checkuiparity` 静态检查（`make vet` / CI lint，2026-10-31 起；审计 G6 落地）：
-  设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux 侧
-  不得引入引擎 DBus（engine 包纯净约束）、词库导入入口（三端 GUI；Linux 用户词库由
+  设置窗共享文案三端逐字一致、三端单例实现存在、学习数据 GUI 三端存在且 Linux
+  设置窗不得引入引擎 DBus（engine 包纯净约束；IBus 私有总线只由原生引擎使用）、词库导入入口（三端 GUI；Linux 用户词库由
   ibus 引擎 `-imported-dict` 自动加载，linux-e2e 断言导入词真的出现在候选）、
   Windows 无障碍基础能力（候选窗 `WM_GETOBJECT` + UIA 宿主 provider；构建脚本
   断言 DLL 无 `uiautomationcore.dll` 静态导入）、

@@ -77,9 +77,9 @@ const (
 	macInstall      = "shims/macos/install.sh"
 	winShell        = "shims/windows/src/win32.cpp"
 	winBuild        = "shims/windows/build.sh"
-	winCoreHpp      = "shims/windows/src/core.hpp"
-	linuxEngine     = "shims/linux/ibus-engine/ibus.go"
-	linuxEngineMain = "shims/linux/ibus-engine/main.go"
+	winCoreHpp      = "shims/common/ipc/core.hpp"
+	linuxEngine     = "shims/linux/engine/main.cpp"
+	linuxEngineMain = "shims/linux/engine/daemon.cpp"
 	linuxSetup      = "shims/linux/setup/chaoset-setup.c"
 	linuxCtl        = "shims/linux/setup/setup_ctl.c"
 	linuxDictImport = "shims/linux/setup/setup_ctl.c"
@@ -455,7 +455,7 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "设置窗单例", linuxSetup,
 		"gtk_application_new", `org.chaoset.Setup`)
 
-	// 3. 学习数据 GUI 三端存在；Linux 侧不得引入引擎 DBus 管理接口。
+	// 3. 学习数据 GUI 三端存在；Linux 设置窗不得引入引擎 DBus 管理接口。
 	checkContains(fsys, &problems, "学习数据 GUI", macEngine,
 		"func userStats", "func userClear", "func userExportAll")
 	checkContains(fsys, &problems, "学习数据 GUI", macSettings,
@@ -488,17 +488,17 @@ func Run(fsys fs.FS) []string {
 	checkExists(fsys, &problems, "词库导入入口", linuxDictImport)
 	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
 		"chaoset-import", "setup_import_dicts", "restart_engines")
-	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
-		"imported-dict", "defaultImportedDictPath", "withImportedDict")
-	// 三处默认路径必须同口径：C 侧优先调用 Go 工具 -print-paths（唯一
-	// 来源 internal/appdirs），Go 引擎直接走 appdirs.LinuxImportedDictPath；
+	checkContains(fsys, &problems, "词库导入入口", linuxEngine,
+		"-imported-dict", "importedDict")
+	// 默认路径同口径：C 侧优先调用 Go 工具 -print-paths（唯一来源
+	// internal/appdirs），原生引擎 daemon.cpp 也走 XDG 默认路径；
 	// C 仍保留 XDG 回退供源码树未构建时使用。
 	checkContains(fsys, &problems, "词库导入入口", linuxCtl,
 		"-print-paths", "tool_path")
 	checkContains(fsys, &problems, "词库导入入口", linuxDictImport,
 		`"imported_dict"`, `"dict.tsv"`)
 	checkContains(fsys, &problems, "词库导入入口", linuxEngineMain,
-		"appdirs.LinuxImportedDictPath")
+		"defaultLinuxPaths", "importedDict")
 	// linux-e2e 必须真实验证导入词参与候选，而不只是日志里有加载路径。
 	checkContains(fsys, &problems, "词库导入入口", linuxE2E, "用户导入词库", "测试词", "UpdateLookupTable")
 
@@ -517,7 +517,7 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "退格键语义", "shims/macos/src/ChaosetController.swift", "backspaceWord")
 	checkContains(fsys, &problems, "退格键语义", winShell, "backspaceWord", "kVkDelete")
 	checkContains(fsys, &problems, "退格键语义", winCoreHpp, "backspaceWord")
-	checkContains(fsys, &problems, "退格键语义", linuxEngine, "BackspaceWord", "keysymDelete")
+	checkContains(fsys, &problems, "退格键语义", linuxEngine, "backspaceWord", "kKeysymDelete")
 	checkContains(fsys, &problems, "退格键语义", uiParityDoc, "按音节回退")
 
 	// 4e. 修饰键映射（2026-10-31 用户要求）：macOS Command↔Windows Win↔
@@ -528,7 +528,7 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "修饰键映射", winShell,
 		"VK_CONTROL", "VK_MENU", "VK_LWIN")
 	checkContains(fsys, &problems, "修饰键映射", linuxEngine,
-		"ibusCtrlMask", "ibusMod1Mask", "ibusMod4Mask")
+		"IBUS_CONTROL_MASK", "IBUS_MOD1_MASK", "IBUS_MOD4_MASK")
 	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "Chaoset-$(VERSION).dmg")
@@ -578,7 +578,7 @@ func Run(fsys fs.FS) []string {
 	// 此前 Linux 没有 CandidateClicked，面板点候选无反应（2026-10-31 补齐）。
 	checkContains(fsys, &problems, "候选点选", macPanel, "mouseDown")
 	checkContains(fsys, &problems, "候选点选", winShell, "WM_LBUTTONDOWN")
-	checkContains(fsys, &problems, "候选点选", linuxEngine, "CandidateClicked")
+	checkContains(fsys, &problems, "候选点选", linuxEngine, "candidate_clicked")
 	checkContains(fsys, &problems, "候选点选", uiParityDoc, "鼠标点选候选")
 	// linux-e2e 必须真实验证 CandidateClicked（不只是单测）：防止 E2E 用例被删。
 	checkContains(fsys, &problems, "候选点选", linuxE2E, "CandidateClicked", "CommitText")

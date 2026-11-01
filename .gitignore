@@ -1,16 +1,10 @@
 # 构建产物（带 / 前缀锚定仓库根目录，避免误吞同名源码目录）
 bin/
 dist/
-/ibus-engine
-/chaoset-ibus-engine
 /build/
+/chaoset-engine
 shims/macos/build/
 shims/windows/build/
-# Linux 壳的容器构建产物目录（setup-container.sh 会往这里写二进制）。
-# 此前只忽略了 macos/windows，Linux 这个漏了——实测
-# `git check-ignore shims/linux/build/chaoset-ibus-engine` 退出码 1（未忽略），
-# 一旦有人在 shims/linux/ 下误跑脚本再 git add -A 就会把二进制提交进来。
-shims/linux/build/
 # Linux 原生设置窗本地构建产物（build.sh 默认输出到源码目录）
 shims/linux/setup/chaoset-setup
 

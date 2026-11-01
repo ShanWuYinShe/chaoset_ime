@@ -8,7 +8,7 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
 depends=('ibus' 'gtk3')
-makedepends=('go' 'gtk3')
+makedepends=('go' 'gcc' 'pkgconf' 'gtk3' 'ibus')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
@@ -16,12 +16,14 @@ sha256sums=('SKIP')
 build() {
     cd "chaoset_ime-$pkgver"
     export CGO_ENABLED=0
+    mkdir -p bin
     go build -o bin/chaosetd ./cmd/chaosetd
     go build -o bin/chaoset-cli ./cmd/chaoset-cli
     go build -o bin/chaoset-import ./cmd/chaoset-import
     go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
-    go build -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
-        -o bin/chaoset-engine ./shims/linux/ibus-engine/
+    # Linux 引擎是原生 C++/libibus 壳，必须用 g++ 与 ibus 头文件构建；
+    # 拼音/联想在 Go chaosetd 中通过 Unix socket 提供。
+    sh shims/linux/engine/build.sh bin/chaoset-engine
 }
 
 package() {

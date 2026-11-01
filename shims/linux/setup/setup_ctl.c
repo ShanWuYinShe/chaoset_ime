@@ -376,8 +376,8 @@ SetupResult setup_userdict_export(const gchar *out_path) {
     return result;
 }
 
-// engine_pids 扫描 /proc 找 chaoset-engine（与 Python 版同口径，不依赖 pgrep）。
-static GArray *engine_pids(void) {
+// process_pids 扫描 /proc 找指定 comm 的进程（不依赖 pgrep）。
+static GArray *process_pids(const gchar *name) {
     GArray *pids = g_array_new(FALSE, FALSE, sizeof(pid_t));
     DIR *proc = opendir("/proc");
     if (proc == NULL) {
@@ -399,7 +399,7 @@ static GArray *engine_pids(void) {
         gchar *comm = NULL;
         if (g_file_get_contents(comm_path, &comm, NULL, NULL)) {
             g_strstrip(comm);
-            if (g_strcmp0(comm, "chaoset-engine") == 0) {
+            if (g_strcmp0(comm, name) == 0) {
                 pid_t pid = (pid_t)g_ascii_strtoll(entry->d_name, NULL, 10);
                 g_array_append_val(pids, pid);
             }
@@ -410,6 +410,9 @@ static GArray *engine_pids(void) {
     closedir(proc);
     return pids;
 }
+
+static GArray *engine_pids(void) { return process_pids("chaoset-engine"); }
+static GArray *daemon_pids(void) { return process_pids("chaosetd"); }
 
 static gboolean wait_engines_gone(gint timeout_ms) {
     gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
@@ -449,6 +452,44 @@ static gboolean terminate_engines(GArray *pids, gint timeout_ms) {
     return wait_engines_gone(3000);
 }
 
+static gboolean wait_daemon_gone(gint timeout_ms) {
+    gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
+    for (;;) {
+        GArray *pids = daemon_pids();
+        gboolean gone = pids->len == 0;
+        g_array_free(pids, TRUE);
+        if (gone) {
+            return TRUE;
+        }
+        if (g_get_monotonic_time() >= deadline) {
+            return FALSE;
+        }
+        g_usleep(100 * 1000);
+    }
+}
+
+static gboolean terminate_daemon(void) {
+    GArray *pids = daemon_pids();
+    for (guint i = 0; i < pids->len; i++) {
+        pid_t pid = g_array_index(pids, pid_t, i);
+        if (kill(pid, SIGTERM) != 0 && errno != ESRCH) {
+            g_array_free(pids, TRUE);
+            return FALSE;
+        }
+    }
+    g_array_free(pids, TRUE);
+    if (wait_daemon_gone(5000)) {
+        return TRUE;
+    }
+    GArray *left = daemon_pids();
+    for (guint i = 0; i < left->len; i++) {
+        pid_t pid = g_array_index(left, pid_t, i);
+        (void)kill(pid, SIGKILL);
+    }
+    g_array_free(left, TRUE);
+    return wait_daemon_gone(3000);
+}
+
 static gboolean run_ibus(const gchar *subcommand) {
     gchar *ibus = find_tool("ibus");
     if (ibus == NULL) {
@@ -463,6 +504,11 @@ static gboolean run_ibus(const gchar *subcommand) {
 }
 
 static SetupResult restart_engines(void) {
+    // daemon 内存里有词库/用户词典；不先停掉，重启引擎后连上的还是旧 daemon，
+    // 导入/清空不会生效。
+    if (!terminate_daemon()) {
+        return result_error("无法停止 chaosetd，未能重启输入法");
+    }
     GArray *pids = engine_pids();
     gboolean has_engines = pids->len > 0;
     gchar *ibus = find_tool("ibus");
@@ -489,6 +535,9 @@ static SetupResult restart_engines(void) {
 }
 
 SetupResult setup_userdict_clear(void) {
+    if (!terminate_daemon()) {
+        return result_error("无法停止 chaosetd，未清空学习数据");
+    }
     GArray *pids = engine_pids();
     gboolean had_engines = pids->len > 0;
     gchar *ibus = find_tool("ibus");

@@ -1,6 +1,6 @@
 #!/bin/bash
-# chaoset ibus 引擎端到端验证（在 setup-container.sh 建好的容器内运行）。
-# 流程：重启引擎 → 动态定位唯一名 → CreateEngine 创建两个独立实例 →
+# chaoset ibus 原生引擎端到端验证（在 setup-container.sh 建好的容器内运行）。
+# 流程：重启原生引擎（首键自动拉起 chaosetd）→ 固定总线名 → CreateEngine 创建两个独立实例 →
 #       两实例交错打字（P1=ni、P2=hao）→ 各自空格上屏 →
 #       dbus-monitor 验证：两路径各自 CommitText（你好 / 好），
 #       证明组词状态按实例分离；另覆盖候选表/中英切换/翻页。
@@ -9,10 +9,15 @@ NAME=${NAME:-chaoset-ibus}
 
 docker exec -d $NAME bash -c '
 export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus_addr)
+export DISPLAY=:99
+export IBUS_ADDRESS=$(ibus address 2>/dev/null || true)
 pkill -x chaoset-engine 2>/dev/null || true
+pkill -x chaosetd 2>/dev/null || true
+rm -f /tmp/chaoset.sock /tmp/chaoset.sock.lock
 sleep 0.5
-# 直接后台启动引擎（不再经过 Python；shim 与测试脚本均不依赖 Python）。
 nohup /usr/local/bin/chaoset-engine \
+  -ibus -daemon /usr/local/bin/chaosetd \
+  -socket /tmp/chaoset.sock -log /tmp/chaosetd.log \
   -dict /usr/local/share/chaoset/dict.tsv \
   -userdict /tmp/chaoset-userdict.json \
   > /tmp/engine_launch.log 2>&1 &
@@ -21,22 +26,20 @@ nohup /usr/local/bin/chaoset-engine \
 sleep 4
 docker exec $NAME bash -c '
 export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus_addr)
+export DISPLAY=:99
+IBUS_ADDR=$(ibus address 2>/dev/null || true)
+[ -n "$IBUS_ADDR" ] && export IBUS_ADDRESS="$IBUS_ADDR" && export DBUS_SESSION_BUS_ADDRESS="$IBUS_ADDR"
 EPID=$(pgrep -x chaoset-engine | sort -n | tail -1)
 echo "引擎 pid: $EPID"
-UN=""
-for n in $(dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames 2>/dev/null | grep -o ":1\.[0-9]*" | sort -u); do
-  PID=$(dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.GetConnectionUnixProcessID string:$n 2>/dev/null | awk "/uint32/{print \$2}" | head -1)
-  [ "$PID" = "$EPID" ] && UN=$n
-done
-echo "引擎唯一名: $UN"
-[ -z "$UN" ] && { echo "FAIL: 引擎无总线连接"; exit 1; }
+UN=org.freedesktop.IBus.Chaoset
+echo "引擎总线名: $UN"
 
 FP=/org/freedesktop/IBus/Factory
 CREAT="org.freedesktop.IBus.Factory.CreateEngine"
 
 # ---- 多实例：CreateEngine 两次 → 两个独立对象路径 ----
-P1=$(dbus-send --session --print-reply --dest=$UN $FP $CREAT string:"chaoset" 2>/dev/null | grep -o "/org/freedesktop/IBus/Engine/chaoset/[0-9]*" | head -1)
-P2=$(dbus-send --session --print-reply --dest=$UN $FP $CREAT string:"chaoset" 2>/dev/null | grep -o "/org/freedesktop/IBus/Engine/chaoset/[0-9]*" | head -1)
+P1=$(dbus-send --session --print-reply --dest=$UN $FP $CREAT string:"chaoset" 2>/dev/null | grep -o "/org/freedesktop/IBus/Engine/[0-9]*" | head -1)
+P2=$(dbus-send --session --print-reply --dest=$UN $FP $CREAT string:"chaoset" 2>/dev/null | grep -o "/org/freedesktop/IBus/Engine/[0-9]*" | head -1)
 [ -n "$P1" ] && [ -n "$P2" ] && [ "$P1" != "$P2" ] || { echo "FAIL: 多实例创建失败 ($P1 / $P2)"; exit 1; }
 echo "PASS: 多实例 $P1 / $P2"
 
@@ -121,3 +124,6 @@ else
   echo "FAIL: Page Down 未被处理"; exit 1
 fi
 press $P2 65307 0                             # Esc 清空，结束'
+
+# daemon 是引擎拉起的独立进程，容器会保留；显式清理，避免下次测试连到旧实例。
+docker exec "$NAME" sh -c 'pkill -x chaosetd 2>/dev/null || true'

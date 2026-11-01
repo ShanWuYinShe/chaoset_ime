@@ -1,8 +1,16 @@
-# Linux 平台壳（ibus，已实现）
+# Linux 平台壳（ibus 原生 C++，已实现）
 
-形态：**ibus engine（Go）直接内嵌 chaoset 引擎**。Linux 上 ibus engine
-本就是独立进程，与「daemon 形态」天然一致，无需额外 IPC——engine 进程
-= 统一候选窗/词库/自学习逻辑的宿主。
+形态：**C++/libibus 薄壳 + Go chaosetd 跨进程 IPC**，与 macOS/Windows 同构：
+
+- `shims/linux/engine/`：原生 C++ `IBusEngine` 子类，只做 IBus 按键路由、
+  预编辑/LookupTable/辅助文本等平台 UI；不包含拼音/词库/学习逻辑。
+- `chaosetd`（纯 Go）：词库、拼音匹配、联想、用户词典，经 Unix socket 提供
+  `Session` 协议（`shims/common/ipc/core.cpp` 的 `chaoset::Session`）。
+- 首次按键时壳自动拉起 `chaosetd`；设置窗清空/导入词库前会先停 daemon，
+  避免内存旧状态回写。
+- ibus 使用私有 D-Bus 总线（`IBUS_ADDRESS`），不是 session bus：引擎必须走
+  `ibus_bus_new()`/`IBusFactory`，直接连 session bus 会导致 ibus-daemon 调不到
+  Factory（实测 `SetGlobalEngine` 超时）。
 
 选 ibus 而非 fcitx5 addon 的原因：fcitx5 addon 是加载进 fcitx5 守护
 进程的进程内 .so，引擎会被迫进宿主进程，与项目架构冲突。
@@ -10,14 +18,12 @@
 ## 目录
 
 ```
-ibus-engine/
-  main.go     入口：加载词库、DBus 连接、常驻
-  ibus.go     DBus 胶水：Factory.CreateEngine、Engine.ProcessKeyEvent
-              （按键映射到 engine.Session）、CommitText/UpdatePreeditText
-              信号发射（IBusText 序列化 = 元组 ("IBusText", a{sv}, 文本)，
-              与 libibus ibus_text_serialize 逐字段对应）
-../test.sh    容器内端到端验证脚本
-../setup-container.sh  可复现的容器验证环境（Ubuntu 24.04 + ibus 1.5）
+engine/
+  main.cpp   原生 IBusEngine：Factory/ProcessKeyEvent/预编辑/候选表/联想
+  daemon.cpp Unix socket 连接、XDG 路径、按需拉起 chaosetd
+  build.sh   g++ + pkg-config ibus-1.0（C++17）
+../test-ci.sh   CI 原生端到端验证脚本（真实 dbus + ibus + daemon）
+../setup-container.sh  可复现的本地容器验证环境
 ```
 
 按键：字母组词、`1`-`9`（主键盘与小键盘 KP_1-9）选候选（越界序号放行原键、
@@ -60,24 +66,25 @@ Windows 设置窗口同构：标题「Chaoset 设置」/ 分组「输入行为�
 无需 `ibus restart`；此前只在引擎启动时读一次，是文档与实现不符的遗留问题）。
 config.json 仍可直接手工编辑。
 
-**词库导入（2026-10-31）**：设置窗「词库」区选择 Rime dict.yaml / CC-CEDICT txt /
+**词库导入（2026-11-01）**：设置窗「词库」区选择 Rime dict.yaml / CC-CEDICT txt /
 TSV（可多选），由原生设置窗 `setup_ctl.c` 调用随包 `chaoset-import` 合并到
-`$XDG_DATA_HOME/chaoset/dict.tsv`（旧文件先备份、临时文件原子替换），成功后
-重启 ibus 引擎；引擎启动时用 `-imported-dict` 把用户词库与系统词库一起加载
-（engine 包零改动，不需要 root）。CI 的 linux-e2e 会捕获引擎 LookupTable 信号，
-断言导入词「测试词」真的出现在候选列表（不只是日志里有加载路径）。
+`$XDG_DATA_HOME/chaoset/dict.tsv`（旧文件先备份、临时文件原子替换）。导入前
+设置窗先停 `chaosetd`、重启 ibus 引擎，避免旧 daemon 继续使用内存中的旧词库；
+新引擎首次按键会自动拉起 daemon 并用 `-dict` 加载系统词库与 `-imported-dict`
+用户词库（不需要 root）。CI 的 linux-e2e 会捕获引擎 LookupTable 信号，断言
+导入词「测试词」真的出现在候选列表（不只是日志里有加载路径）。
 
-**学习数据（2026-10-31）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
+**学习数据（2026-11-01）**：设置窗「学习数据」区显示调频词/用户词组/上下文条数，
 提供「清空学习数据…」（二次确认）与「导出学习数据…」（TSV，可回灌
-`chaoset-import`）。实现刻意**不碰 engine 包**（保持纯拼音逻辑）也不改 ibus
-引擎壳：原生设置窗调用随包 `chaoset-userdict` 的本地文件模式（-userdict FILE）
-完成 stats/clear/export，清空时由设置窗编排 `ibus exit` → SIGTERM 全部
-`chaoset-engine` 进程并等待退出 → 清空文件 → `ibus restart`（失败再试
-`ibus start`）。只有确认没有引擎存活才清空，否则引擎内存态会在下一次延迟落盘
-时把旧数据写回。清空会短暂重启输入法（期间不可用），确认框已提示；
-`chaoset-setup` 二进制与设置窗逻辑同包安装（缺了设置窗无法启动，发布冒烟已断言）。
-清空/导入/导出等耗时操作在 GThread 后台线程执行，完成后经 `g_idle_add` 回主线程
-更新 UI（GTK 非线程安全，工作线程只跑 subprocess/文件 IO），避免设置窗「假死」。
+`chaoset-import`）。实现刻意**不碰 engine 包**（保持纯拼音逻辑）：原生设置窗调用
+随包 `chaoset-userdict` 的本地文件模式（-userdict FILE）完成 stats/clear/export；
+清空时编排 `ibus exit` → 终止全部 `chaoset-engine` 与 `chaosetd` 并等待退出 →
+清空文件 → `ibus restart`（失败再试 `ibus start`），防止 daemon 内存态在下一次
+延迟落盘时把旧数据写回。导入同样先停 daemon。清空/导入会短暂重启输入法
+（期间不可用），确认框已提示；`chaoset-setup` 二进制与设置窗逻辑同包安装
+（缺了设置窗无法启动，发布冒烟已断言）。清空/导入/导出等耗时操作在 GThread
+后台线程执行，完成后经 `g_idle_add` 回主线程更新 UI（GTK 非线程安全，工作线程
+只跑 subprocess/文件 IO），避免设置窗「假死」。
 
 **学习标记（不适用）**：macOS/Windows 候选窗对「被用户数据加权」的候选在文本后
 绘制绿色 `*`；ibus 面板端不适用——`IBusLookupTable` 的候选文本是唯一显示载体
@@ -90,28 +97,20 @@ underline），但只能改候选文本本身、没有独立装饰层，因此�
 **不**切换全/半角标点——三端实测一致（macOS/Windows 的联想分支同样先消费空格、
 不判 Shift）。全/半角切换只在组词态 Shift+空格生效。
 
-## 验证状态（2026-09-23，Docker linux/arm64 + ibus 1.5.29）
+## 验证状态
 
-已在容器内完成的验证：
+`test-ci.sh` 在真实 dbus + ibus-daemon + Xvfb 下覆盖：
 
-- **组件注册**：component XML 就位后 `ibus list-engine` 列出
-  `chaoset - Chaoset Pinyin`；`ibus engine chaoset` 激活成功，
-  `ibus engine` 确认全局引擎为 chaoset。
-- **引擎进程**：ibus-daemon 按组件 exec 拉起 Go 二进制（参数正确），
-  进程稳定存活（已修复：忽略 SIGHUP——容器会话退出会向进程组传播）。
-- **按键行为（端到端）**：`test.sh` 向引擎对象直发
-  `ProcessKeyEvent`——n/i/h/a/o 五键全部 handled=true，空格触发
-  `CommitText` 信号，dbus-monitor 捕获到中文「你好」上屏。
-- **候选表（端到端）**：组词中引擎发出 `UpdateLookupTable` 信号，
-  dbus-monitor 确认载荷为 `IBusLookupTable` 元组（page_size=6，直接取
-  `engine.PageSize()` 单一来源；历史上曾写死 9 与引擎脱节，2026-10-26 已改）、
-  candidates 为 IBusText av，与 ibus_lookup_table_serialize 逐字段
-  对应；数字键选择不再是盲选。
-- **多实例（端到端）**：`CreateEngine` 两次创建独立实例，交错打字
-  （实例 1=ni、实例 2=hao）后各自空格，`CommitText` 分别为 你好 / 好，
-  证明组词状态按 InputContext 分离、互不串扰。
-- 过程中修复一个真缺陷：引擎实例的 `engine.Session` 未初始化，
-  首次按键即空指针崩溃。
+- **引擎注册**：原生引擎持有 `org.freedesktop.IBus.Chaoset`，Factory
+  `CreateEngine` 创建独立实例；两个实例交错打字、各自上屏，状态互不串扰。
+- **按键路由**：中英切换、翻页、Alt/Ctrl/Super+Backspace/Delete、
+  Alt+U 放行、Ctrl+Shift+U 放行、CandidateClicked 鼠标点选。
+- **daemon 自动拉起**：首键拉起 `chaosetd`，日志断言词库加载；
+  用户导入词库「测试词」经 LookupTable 信号真实出现在候选列表。
+- **构建**：`sh shims/linux/engine/build.sh` 用 g++/libibus 构建；
+  CI 安装 `libibus-1.0-dev`。
+
+本地可用 `./shims/linux/test-ci.sh` 复现（需要 dbus/ibus/Xvfb/Go）。
 
 ## 已知限制
 
@@ -206,26 +205,22 @@ sudo ./install.sh          # 装二进制 + 词库 + ibus 组件 + 图标，并�
 
 ```sh
 make package-linux         # 产物：dist/chaoset-linux-x86_64.tar.gz
-# 或只编引擎：
-GOOS=linux GOARCH=amd64 go build \
-  -ldflags "-X main.buildTimeDict=/usr/share/chaoset/dict.tsv" \
-  -o chaoset-engine ./shims/linux/ibus-engine/
+# 或只编原生引擎（需要 Linux + libibus 开发头文件）：
+sh shims/linux/engine/build.sh chaoset-engine
 ```
 
 ### 词库路径是怎么找到的
 
-ibus-daemon 按 component XML 的 `<exec>` 拉起引擎，**不保证工作目录**，
-所以引擎不能依赖相对路径。查找顺序（命中即用）：
+ibus-daemon 按 component XML 的 `<exec>` 拉起原生引擎，**不保证工作目录**；
+引擎把路径解析后传给自动拉起的 `chaosetd`（真正加载词库的是 Go daemon）。
+主词库查找顺序（命中即用）：
 
-1. 编译期注入的绝对路径（打包时 `-ldflags -X main.buildTimeDict=...`，默认 `/usr/share/chaoset/dict.tsv`）；
-2. 可执行文件同级 `../data/dict.tsv` 等（解包即用的绿色形态）；
-3. `/usr/share/chaoset/dict.tsv`（安装包部署位置）；
-4. `data/dict_common.tsv`（在仓库里直接 `go run` 时）；
-5. **用户导入词库（可选，2026-10-31）**：`$XDG_DATA_HOME/chaoset/dict.tsv`
+1. 命令行 `-dict`（测试/高级用法）；
+2. `/usr/share/chaoset/dict.tsv`（安装包部署位置）；
+3. 可执行文件同级 `../data/dict.tsv`（解包即用的绿色形态）；
+4. 源码树 `data/dict_common.tsv`；
+5. **用户导入词库（可选）**：`$XDG_DATA_HOME/chaoset/dict.tsv`
    （缺省 `~/.local/share/chaoset/dict.tsv`），设置窗「导入词库…」写入；
-   引擎启动时用 `-imported-dict` 与主词库一起宽松加载，文件不存在则忽略。
+   引擎用 `-imported-dict` 传给 daemon，文件不存在则忽略。
 
-> 2026-10-25 修的发行缺陷：此前默认值写死为相对路径 `data/dict_common.tsv`，
-> 而发布包里只有 558 条的 `dict_seed.tsv`。结果是装完引擎立刻报
-> `打开词库 data/dict_common.tsv 失败` 并退出——ibus 里选了输入法却一个字
-> 都打不出来。现在包里带完整词库，且路径按上述顺序回退。
+安装器自检仍会检查主词库缺失并报错，避免「装完打不出字」。

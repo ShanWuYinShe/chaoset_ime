@@ -31,6 +31,10 @@ WORK=$(mktemp -d)
 cleanup() {
   kill "${ENGINE_PID:-}" 2>/dev/null || true
   wait "${ENGINE_PID:-}" 2>/dev/null || true
+  # 引擎是 daemon 的父进程；父进程退出不会自动杀 daemon，必须显式清理。
+  pkill -f "$WORK/chaosetd" 2>/dev/null || true
+  kill "${XVFB_PID:-}" 2>/dev/null || true
+  wait "${XVFB_PID:-}" 2>/dev/null || true
   for _ in 1 2 3 4 5; do
     rm -rf "$WORK" 2>/dev/null && break
     sleep 0.2
@@ -38,24 +42,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> 构建 Linux 引擎（amd64）"
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-  go build -ldflags "-X main.buildTimeDict=$ROOT/data/dict_common.tsv" \
-  -o "$WORK/chaoset-engine" ./shims/linux/ibus-engine/
+echo "==> 构建 Linux 原生引擎（C++/libibus）与 Go daemon"
+sh shims/linux/engine/build.sh "$WORK/chaoset-engine"
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$WORK/chaosetd" ./cmd/chaosetd
 
-echo "==> 启动私有 session bus 与 ibus-daemon"
+echo "==> 启动私有 session bus、Xvfb 与 ibus-daemon"
 dbus-daemon --session --fork --print-address > "$WORK/dbus_addr"
 DBUS_ADDR=$(cat "$WORK/dbus_addr")
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+# ibus-daemon 没有 X display 时 gtk3 扩展会崩，headless runner 必须给 Xvfb。
+Xvfb :99 -screen 0 1280x800x24 > "$WORK/xvfb.log" 2>&1 &
+XVFB_PID=$!
+export DISPLAY=:99
+sleep 1
 ibus-daemon --daemonize --panel=disable || true
 sleep 1
+# IBus 用私有 D-Bus 总线（不是 session bus）：引擎和测试都必须指向它。
+IBUS_ADDR=$(ibus address 2>/dev/null || true)
+if [ -z "$IBUS_ADDR" ]; then
+  echo "FAIL: 无法获取 IBUS_ADDRESS" >&2
+  exit 1
+fi
+export IBUS_ADDRESS="$IBUS_ADDR"
+export DBUS_SESSION_BUS_ADDRESS="$IBUS_ADDR"
 
 # 用户导入词库（Linux 设置窗「导入词库」写入 XDG 数据目录；这里显式传
 # -imported-dict 模拟，验证引擎启动时会与主词库一起加载）。
 printf '测试词\tce shi ci\t99\n' > "$WORK/imported.tsv"
 
-echo "==> 启动 chaoset-engine"
+echo "==> 启动 chaoset-engine（daemon 在首次按键时自动拉起）"
 "$WORK/chaoset-engine" -ibus \
+  -daemon "$WORK/chaosetd" \
+  -socket "$WORK/chaoset.sock" \
+  -log "$WORK/chaosetd.log" \
   -dict "$ROOT/data/dict_common.tsv" \
   -imported-dict "$WORK/imported.tsv" \
   -userdict "$WORK/userdict.json" > "$WORK/engine.log" 2>&1 &
@@ -84,20 +103,8 @@ if ! grep -q "用户导入词库: $WORK/imported.tsv" "$WORK/engine.log"; then
 fi
 echo "PASS: 用户导入词库已加载（$WORK/imported.tsv）"
 
-# 定位引擎的唯一总线名
-UN=""
-for n in $(dbus-send --session --print-reply --dest=org.freedesktop.DBus / \
-             org.freedesktop.DBus.ListNames 2>/dev/null | grep -o ":1\.[0-9]*" | sort -u); do
-  PID=$(dbus-send --session --print-reply --dest=org.freedesktop.DBus / \
-          org.freedesktop.DBus.GetConnectionUnixProcessID string:"$n" 2>/dev/null \
-        | awk "/uint32/{print \$2}" | head -1)
-  [ "$PID" = "$ENGINE_PID" ] && UN="$n"
-done
-if [ -z "$UN" ]; then
-  echo "FAIL: 引擎未连上 session bus（日志：）" >&2
-  cat "$WORK/engine.log" >&2
-  exit 1
-fi
+# 原生引擎用 GDBus 直接持有固定总线名；不必再按 PID 反查唯一名。
+UN=org.freedesktop.IBus.Chaoset
 echo "PASS: 引擎总线名 $UN"
 
 FP=/org/freedesktop/IBus/Factory
@@ -105,9 +112,9 @@ CREAT=org.freedesktop.IBus.Factory.CreateEngine
 
 # 两个独立实例
 P1=$(dbus-send --session --print-reply --dest="$UN" $FP $CREAT string:"chaoset" 2>/dev/null \
-     | grep -o "/org/freedesktop/IBus/Engine/chaoset/[0-9]*" | head -1)
+     | grep -o "/org/freedesktop/IBus/Engine/[0-9]*" | head -1)
 P2=$(dbus-send --session --print-reply --dest="$UN" $FP $CREAT string:"chaoset" 2>/dev/null \
-     | grep -o "/org/freedesktop/IBus/Engine/chaoset/[0-9]*" | head -1)
+     | grep -o "/org/freedesktop/IBus/Engine/[0-9]*" | head -1)
 if [ -z "$P1" ] || [ -z "$P2" ] || [ "$P1" = "$P2" ]; then
   echo "FAIL: 多实例创建失败（P1=${P1} P2=${P2}）" >&2
   exit 1

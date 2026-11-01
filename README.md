@@ -24,21 +24,19 @@
 ## 架构概览
 
 架构：**Go 引擎 + 守护进程（daemon）+ 各平台原生薄壳**。拼音/联想算法只写一份
-在 `engine/`；平台壳只负责「按键转发 + 文本上屏 + UI」。macOS/Windows 通过 IPC
-连 daemon；Linux 目前是 ibus engine 进程内嵌 Go engine（历史例外，见下方说明）。
-该形态已被业界验证（小狼毫的 TSF DLL + WeaselServer、搜狗的多进程形态、
-macOS InputMethodKit 本身就是进程间模型）。
+在 `engine/`；平台壳只负责「按键转发 + 文本上屏 + UI」。三端壳都通过 IPC 连
+daemon（Linux 为原生 C++/libibus 壳 + Unix socket；macOS 为 Swift IMK；
+Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + WeaselServer、
+搜狗的多进程形态、macOS InputMethodKit 本身就是进程间模型）。
 
 ```
 ┌──────────────── chaosetd (Go，一份代码) ────────────────┐
 │  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
 │  ipc  ：length-prefixed JSON（Unix socket / 命名管道 / TCP）│
-└───────┬───────────────────────────────┬────────────────┘
-        │ macOS                         │ Windows
-        │ Swift IMK 薄壳                │ C++ TSF 薄壳
-        │ （IPC）                       │ （IPC）
-
-Linux：ibus engine（Go）进程内直调 engine，不经过 daemon（历史例外）
+└───────┬───────────────────┬───────────────────┬────────┘
+        │ macOS             │ Windows           │ Linux
+        │ Swift IMK 薄壳    │ C++ TSF 薄壳      │ C++/libibus 薄壳
+        │ （IPC）           │ （IPC）           │ （Unix socket）
 ```
 
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
@@ -565,10 +563,9 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
 「机器检查覆盖」）。
 
-传输形态：macOS 用 Unix socket；Windows daemon 已支持命名管道（`-pipe`，
-按当前用户 SID 生成、ACL 限当前用户），Windows 壳/安装器迁移中，当前仍兼容
-TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）；Linux 目前由 ibus engine
-进程内直调 engine，不走 IPC（历史例外，见架构概览）。
+传输形态：macOS 用 Unix socket；Linux 用 Unix socket（`$XDG_RUNTIME_DIR/chaoset/chaoset.sock`）；
+Windows daemon 支持命名管道（`-pipe`，按当前用户 SID 生成、ACL 限当前用户），
+壳/安装器迁移期仍兼容 TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
 
 ## 下载与安装（GitHub Release）
 
@@ -598,7 +595,7 @@ TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）；Linux 目前由
 
 | 平台 | 壳 | 状态 |
 |---|---|---|
-| Linux | ibus engine（Go 内嵌引擎），DBus 直连 ibus-daemon | 已实现（容器内端到端验证；真机桌面闭环待环境） |
+| Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 已实现（容器内端到端验证；真机桌面闭环待环境） |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用，v0.2.0） |
 | Windows | TSF COM DLL（C++ 薄壳），命名管道优先（TCP 回环作迁移期回退）连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；命名管道运行时、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
 
@@ -685,7 +682,7 @@ sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个�
 
 ## 默认路径（internal/appdirs）
 
-daemon / 工具 / Linux ibus 引擎共用 `internal/appdirs` 的路径约定（2026-11-01）：
+daemon / Go 工具统一走 `internal/appdirs`；Linux 原生引擎的 `daemon.cpp` 按同一 XDG 口径解析路径：
 
 | 平台 | 数据目录 | 默认 socket | 默认用户词典 |
 |---|---|---|---|

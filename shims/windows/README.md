@@ -6,8 +6,8 @@
 ## 目录
 
 ```
-src/core.hpp|cpp   可移植核心：协议帧（4 字节大端长度 + JSON）、极小 JSON 解析、
-                   会话控制。零 OS 依赖——在 macOS 上对着真实 daemon 做行为测试。
+../common/ipc/core.hpp|cpp  可移植核心：协议帧（4 字节大端长度 + JSON）、
+                   极小 JSON 解析、会话控制；零 OS 依赖，Windows/Linux 原生壳共用。
 src/win32.cpp      Windows 胶水：COM TIP（ITfTextInputProcessor + ITfKeyEventSink）、
                    预编辑合成（ITfContextComposition）、命名管道传输（优先，
                    TCP 回环作迁移期回退）。
