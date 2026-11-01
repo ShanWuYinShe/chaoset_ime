@@ -155,13 +155,14 @@ func TestTypoCorrectionPrefixConsumesWholeInput(t *testing.T) {
 // 也能命中的候选**不是**纯错拼来源，渐进上屏必须保持既有部分消费语义——
 // 剩余输入是下一个待打音节/声母，不能当错拼碎片吞掉。
 //
-// 典型：chifanl = 吃饭 + l（合法混拼，用户接着打「了」），zhongg = 中国 +
-// g（guo 的声母），nihaox = 你好 + x。若把「同时被错拼路径命中」的候选一并
-// 整串消费，这些合法输入会丢字（2026-11-01 修复时实测的边界）。
+// 典型：chifanl = 吃饭 + l（合法混拼，用户接着打「了」），nihaox = 你好 + x。
+// 若把「同时被错拼路径命中」的候选一并整串消费，这些合法输入会丢字
+// （2026-11-01 修复时实测的边界）。zhongg 的 g 是候选音节 guo 的声母，
+// 选中「中国」时会一起消耗，不再作为「下一个待打声母」残留。
 func TestSelectPrefixKeepsLegitMixedPartialConsumption(t *testing.T) {
 	cases := []struct{ input, want, wantRest string }{
 		{"chifanl", "吃饭", "l"},
-		{"zhongg", "中国", "g"},
+		{"zhongg", "中国", ""},
 		{"nihaox", "你好", "x"},
 		{"xveshengwomen", "学生", "women"}, // 省写/别名形态（既有回归）
 		{"jintianwochile", "今天", "wochile"},

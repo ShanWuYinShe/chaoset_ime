@@ -489,8 +489,12 @@ func TestConsumeInputPrefix(t *testing.T) {
 		{"jin'tian", []string{"jin"}, false, "tian", 1},
 		{"jintian", []string{"jin", "tian"}, false, "", 2},
 		{"jin", []string{"jin", "tian"}, false, "", 1}, // 输入耗尽：只消耗已敲部分
-		// 部分匹配：剩余输入必须保留（旧实现直接清空）
-		{"zhongg", []string{"zhong", "guo"}, false, "g", 1},
+		// 完整音节 + 声母：声母属于候选音节（guo 的 g）时一起消耗；候选音节
+		// 覆盖不了的多余输入保留（nihaox 的 x / chifanl 的 l）。
+		{"zhongg", []string{"zhong", "guo"}, false, "", 2},
+		{"kkdz", []string{"kan", "kan"}, false, "dz", 2},      // 纯声母：只消耗前两个
+		{"kkdz", []string{"kai", "kuo", "di"}, false, "z", 3}, // 三声母覆盖三个音节
+		{"wmd", []string{"wo", "men"}, false, "d", 2},
 		{"zzz", []string{"jin"}, false, "zzz", 0},
 		// 省写/别名形态：候选音节是标准拼写
 		{"xveshengwomen", []string{"xue", "sheng"}, false, "women", 2},

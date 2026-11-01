@@ -124,15 +124,15 @@ func TestInitialsNoComposedSentence(t *testing.T) {
 	if len(comp.Candidates) == 0 {
 		t.Fatalf("wmd 应出候选，实际无候选")
 	}
-	// 正向：已有词「我们」可达。简拼形态无法逐音节消费（w/m/d 与 wo'men
-	// 逐字对不上），SelectPrefix 按既有回退语义整串上屏、组词清空。
+	// 正向：已有词「我们」可达。简拼按声母逐音节消费：w→wo、m→men，
+	// 剩余 d 继续组词（不再整串清空）。
 	idx := findCandidate(t, s, "我们")
 	rest, committed, err := s.SelectPrefix(idx)
 	if err != nil || committed != "我们" {
 		t.Fatalf("渐进选「我们」失败: committed=%q err=%v", committed, err)
 	}
-	if rest.Input != "" || len(rest.Candidates) != 0 {
-		t.Fatalf("简拼选「我们」应整串上屏，剩余组词应为空，实际 %+v", rest)
+	if rest.Input != "d" || len(rest.Candidates) == 0 {
+		t.Fatalf("简拼选「我们」应只消耗 w/m，剩余 d 继续出候选，实际 %+v", rest)
 	}
 
 	// 反向：全部候选必须能在词典找到出处，且不得出现「我们的」这类造词。
@@ -337,5 +337,34 @@ func TestUserDictQueryTokensExactAndPrefix(t *testing.T) {
 	}
 	if len(prefixes) != 2 {
 		t.Fatalf("prefixMatches 期望包含 2 个词（人民币、人民日报），实际: %+v", prefixes)
+	}
+}
+
+// TestSelectPrefixInitialsPartialConsume：纯声母输入选词时按声母逐音节消费，
+// 只吃掉候选覆盖的声母，剩余声母继续组词（用户反馈：kkdz 选「看看」不应把
+// d'z 一起吞掉）。
+func TestSelectPrefixInitialsPartialConsume(t *testing.T) {
+	d := mustCommonDict(t)
+	cases := []struct{ input, word, wantRest string }{
+		{"kkdz", "看看", "dz"},
+		{"kkdz", "开阔地", "z"},
+		{"wmd", "我们", "d"},
+	}
+	for _, c := range cases {
+		s := NewSession(d, nil)
+		if _, err := s.Input(c.input); err != nil {
+			t.Fatalf("%s: Input 失败: %v", c.input, err)
+		}
+		idx := findCandidate(t, s, c.word)
+		rest, committed, err := s.SelectPrefix(idx)
+		if err != nil || committed != c.word {
+			t.Fatalf("%s: 渐进选「%s」失败: committed=%q err=%v", c.input, c.word, committed, err)
+		}
+		if rest.Input != c.wantRest {
+			t.Errorf("%s: 选「%s」后剩余输入 = %q, 期望 %q", c.input, c.word, rest.Input, c.wantRest)
+		}
+		if c.wantRest != "" && len(rest.Candidates) == 0 {
+			t.Errorf("%s: 剩余输入 %q 应继续出候选", c.input, c.wantRest)
+		}
 	}
 }

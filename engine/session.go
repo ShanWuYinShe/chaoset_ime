@@ -532,11 +532,11 @@ func (s *Session) learnSelection(text string, sylls, segs []string) {
 //     直接给出整句候选（见 learnProgressiveSequence）。
 //
 // 候选音节是标准拼写，input 可能是省写/别名/模糊形态（xve→xue、jve→jue、
-// shuei→shui、-fuzzy 下 zheng 命中 zen）：消费时逐音节按 canonicalSyllable
-// 与模糊等价匹配（见 consumeInputPrefix），能匹配多少消耗多少——部分匹配的
-// 剩余输入继续组词（打 xveshengwomen 选「学生」不能丢 women）。只有候选与
-// 输入一个音节都对不上时（整句/简拼展开形态差异）才回退旧语义：整句上屏、
-// input 全清。
+// shuei→shui、-fuzzy 下 zheng 命中 zen），也可能是声母（kkdz）或没打完的
+// 拼音前缀（zhongg 的 g、gu→guo）：消费时逐音节匹配，能匹配多少消耗多少
+// ——部分匹配的剩余输入继续组词（打 xveshengwomen 选「学生」不能丢 women；
+// kkdz 选「看看」只吃 k'k，剩 d'z）。只有候选与输入一个音节都对不上时
+// （整句/简拼展开形态差异）才回退旧语义：整句上屏、input 全清。
 func (s *Session) SelectPrefix(index int) (comp Composition, committed string, err error) {
 	c := s.Compose()
 	if index < 0 || index >= len(c.Candidates) {
@@ -557,7 +557,7 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 		//
 		// 标记只打在**纯错拼来源**的候选上（见 compose 里的取消标记段）：常规
 		// 切分路径也能命中的候选不算，合法混拼的部分消费（chifanl 选「吃饭」
-		// 剩 l、xveshengwomen 选「学生」剩 women、zhongg 选「中国」剩 g）语义不变。
+		// 剩 l、xveshengwomen 选「学生」剩 women、nihaox 选「你好」剩 x）语义不变。
 		rest = ""
 	}
 

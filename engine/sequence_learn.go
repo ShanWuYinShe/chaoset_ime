@@ -43,17 +43,15 @@ func consumeInputPrefix(input string, sylls []string, fuzzy bool) (rest string, 
 		for i < len(input) && input[i] == '\'' {
 			i++ // 音节分隔符不参与比较
 		}
-		n := 0 // 本音节在 input 上消耗的字母数
-		for l := min(maxSyllableLength, len(input)-i); l >= 1; l-- {
-			sub := input[i : i+l]
-			if strings.IndexByte(sub, '\'') >= 0 {
-				continue // 子串不跨音节分隔符
-			}
-			if syllableMatchesInput(sub, syl, fuzzy) {
-				n = l
-				break
-			}
+		if i >= len(input) {
+			break
 		}
+		// 当前音节块（到下一个 ' 或输入结尾）：匹配不跨块。
+		end := i
+		for end < len(input) && input[end] != '\'' {
+			end++
+		}
+		n := matchSyllableChunk(input[i:end], syl, fuzzy)
 		if n == 0 {
 			break
 		}
@@ -64,6 +62,65 @@ func consumeInputPrefix(input string, sylls []string, fuzzy bool) (rest string, 
 		i++
 	}
 	return input[i:], matched
+}
+
+// matchSyllableChunk 返回输入块开头与候选音节 syl 匹配的字母数（0 = 不匹配）。
+//
+// 候选音节是标准拼写，输入块可能是：完整音节、省写/别名、模糊形态、
+// 声母（k/zh/…）、或只打了一半的拼音前缀（gu → guo、zho → zhong）。
+// 规则（长匹配优先）：
+//  1. 块开头是完整音节且与 syl 相同/别名/模糊等价 → 整段匹配；
+//  2. 块开头是完整音节、且是 syl 的前缀（gu → guo）→ 匹配该完整音节；
+//  3. 块开头没有完整音节时：整个块是 syl 的前缀（zho → zhong、g → guo）
+//     → 匹配整块；否则块开头的合法声母（zh/ch/sh 或单字母）是 syl 的前缀
+//     （k → kan、zh → zhong）→ 匹配声母长度。
+//
+// 完整音节不匹配时**不再退回声母**：用户敲的是另一个音节（zheng ≠ zen），
+// 不能把 zheng 拆成 z + heng 混进后续音节；同理 zzz 对 jin 必须整体不匹配。
+func matchSyllableChunk(chunk, syl string, fuzzy bool) int {
+	maxL := maxSyllableLength
+	if len(chunk) < maxL {
+		maxL = len(chunk)
+	}
+	// 1) 完整音节 / 省写别名 / 模糊形态：沿用原口径，块开头最长子串优先。
+	for l := maxL; l >= 1; l-- {
+		if syllableMatchesInput(chunk[:l], syl, fuzzy) {
+			return l
+		}
+	}
+	// 2) 块开头是完整音节、且是候选音节的前缀（gu → guo，用户只打了一半）。
+	longest := 0
+	for l := maxL; l >= 1; l-- {
+		if IsSyllable(chunk[:l]) {
+			longest = l
+			break
+		}
+	}
+	if longest > 0 {
+		if strings.HasPrefix(syl, chunk[:longest]) {
+			return longest
+		}
+		return 0
+	}
+	// 3) 块开头没有完整音节：整块是候选音节前缀（zho → zhong、g → guo），
+	//    或块开头的合法声母是候选音节前缀（k → kan、zh → zhong）。
+	if strings.HasPrefix(syl, chunk) {
+		return len(chunk)
+	}
+	init := ""
+	for _, cand := range []string{"zh", "ch", "sh"} {
+		if strings.HasPrefix(chunk, cand) {
+			init = cand
+			break
+		}
+	}
+	if init == "" && len(chunk) > 0 {
+		init = chunk[:1]
+	}
+	if init != "" && strings.HasPrefix(syl, init) {
+		return len(init)
+	}
+	return 0
 }
 
 // syllableMatchesInput 判定 input 子串 sub 是否对应标准音节 syl：先做输入侧
