@@ -1408,6 +1408,11 @@ func (s *Session) compose() Composition {
 	// 决定（见下方领跑判定）。
 	midSuspicious := !typoSuspicious && hasMidIsolatedInitial(tokenPatterns)
 	tailSuspicious := !typoSuspicious && !midSuspicious && hasTailIsolatedInitial(tokenPatterns)
+	// 含「反序双字母」（gn/hz/hc/hs）的输入：拼音里不合法，属于最高置信度手误。
+	// 该形态只走归位修正，并强制把修正结果提升到精确层（不再受「纠错词频须
+	// 达到常规候选 2 倍」的约束——h zong 的常规解析「汇总」词频很高，但用户
+	// 显然想打 zhong）。
+	mistakeInput := hasCommonMistakeCluster(s.input)
 	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
 	inputSegs := 0
 	if len(tokenPatterns) > 0 {
@@ -1415,6 +1420,11 @@ func (s *Session) compose() Composition {
 	}
 	typoAdded := make(map[string]bool)
 	typoPhraseAdded := make(map[string]bool)
+	// mistakeKeys 标记来自「反序双字母归位修正」的候选：mistakeInput 时只有
+	// 这些候选无条件提升到精确层，通用编辑（如 chagn 删 g 得到的 chan→产）
+	// 保持低层，避免把归位结果挤掉。
+	mistakeKeys := make(map[string]bool)
+	clusterFixCount := 0
 	typoIsNear := make(map[string]bool)
 	typoLen := make(map[string]int)
 	typoPhraseQueries := 0
@@ -1422,8 +1432,35 @@ func (s *Session) compose() Composition {
 	// 里存在的完整词）。有整词级结果时，组合候选不得抢到精确层——否则
 	// guabxi 的「古巴+西」会压掉真正纠错出来的「关系」。
 	typoWordFound := false
+	// mistakeSyllable 是反序归位修正后的首个音节（如 chagnshuru → chang），
+	// 用于在只有词组候选时补首音节单字，保证「单字始终保留」。
+	mistakeSyllable := ""
 	if typoSuspicious || midSuspicious || tailSuspicious {
-		fixes := typoCorrections(s.input, typoMaxCorrections)
+		// 含「反序双字母」（gn/hz/hc/hs）时只使用最高置信度的归位修正：
+		// 这类组合在拼音里不合法，是明确手误；不再混入删除/插入/邻键替换等
+		// 通用编辑，避免「chagn 删 g 得到 chan → 产」或用户学习词（孩子/产）
+		// 把正确修正挤掉。若归位修正无法切成合法音节（极端情况），退回通用纠错。
+		mistakeOnly := mistakeInput
+		var fixes []typoCorrection
+		if mistakeOnly {
+			clusterFixes := commonMistakeFixes(s.input)
+			clusterFixCount = len(clusterFixes)
+			for _, f := range clusterFixes {
+				fixes = append(fixes, typoCorrection{text: f, isNear: true})
+			}
+			// 归位修正之外仍保留通用纠错作为兜底/补充：单字候选来自这里
+			// （chagnshuru 的「差/茶馆」），保证「单字始终保留」不被破坏；
+			// 归位候选会无条件提升到精确层，仍排在前面。
+			fixes = append(fixes, typoCorrections(s.input, typoMaxCorrections)...)
+		}
+		if len(fixes) == 0 {
+			fixes = typoCorrections(s.input, typoMaxCorrections)
+		}
+		if mistakeOnly && len(fixes) > 0 {
+			if pats := enumerateAllTokens(strings.Split(fixes[0].text, "'")); len(pats) > 0 && len(pats[0]) > 0 {
+				mistakeSyllable = pats[0][0].Text
+			}
+		}
 		// 只查询靠前的若干条：生成很便宜（约 39µs），而每条一次的 Trie 查询
 		// 才是这部分的主要成本。typoCorrections 已按价值排序（相邻互换 →
 		// 删除 → 粘键折叠 → 邻键替换 → 插入 → 远端替换），前若干条覆盖绝大
@@ -1435,7 +1472,8 @@ func (s *Session) compose() Composition {
 		// 替换 → 插入」排好序，人工手误里越靠前的修正越可信。组合 DP 候选没有
 		// 语言模型，用这个顺序做先验，避免「删除 g 得到的 chanshuru」压过
 		// 「ng 互换得到的 changshuru」这类真正的意图。
-		for _, fix := range fixes {
+		for fixIdx, fix := range fixes {
+			isClusterFix := mistakeOnly && fixIdx < clusterFixCount
 			patterns := enumerateAllTokens(strings.Split(fix.text, "'"))
 			if len(patterns) == 0 {
 				continue
@@ -1455,7 +1493,7 @@ func (s *Session) compose() Composition {
 				typoIsNear[key] = fix.isNear
 				typoLen[key] = len(fix.text)
 				boost := 0
-				if s.user != nil {
+				if s.user != nil && !mistakeOnly && !mistakeInput {
 					boost = s.user.Score(e.Word, e.Syllables, s.prev)
 				}
 				score := e.Freq + boost - penalty
@@ -1463,9 +1501,12 @@ func (s *Session) compose() Composition {
 					score = 1
 				}
 				items[addCandidate(e, score, boost > 0, rankTypoFix)].cand.typoFix = true
+				if isClusterFix {
+					mistakeKeys[key] = true
+				}
 				typoWordFound = true
 			}
-			if s.user != nil {
+			if s.user != nil && !mistakeOnly && !mistakeInput {
 				uExacts, _ := s.user.QueryTokens(qp, 4)
 				for _, e := range uExacts {
 					key := userKey(e.Word, e.Syllables)
@@ -1513,6 +1554,30 @@ func (s *Session) compose() Composition {
 					}
 					items[addCandidate(e, score, false, rankTypoFix)].cand.typoFix = true
 				}
+			}
+		}
+	}
+
+	// 反序归位输入如果只有词组候选（chagnshuru → 常输入/长输入），补上
+	// 修正后首音节的单字候选，保证「单字始终保留」、用户仍可逐字选择。
+	if mistakeInput && mistakeSyllable != "" {
+		hasSingle := false
+		for i := range items {
+			if len([]rune(items[i].cand.Text)) == 1 {
+				hasSingle = true
+				break
+			}
+		}
+		if !hasSingle {
+			for _, e := range s.dict.QueryTokensExact([]Token{{Text: mistakeSyllable, IsExact: true}}, 8) {
+				key := userKey(e.Word, e.Syllables)
+				if typoAdded[key] {
+					continue
+				}
+				typoAdded[key] = true
+				typoIsNear[key] = true
+				typoLen[key] = len(s.input)
+				items[addCandidate(e, e.Freq, false, rankTypoFix)].cand.typoFix = true
 			}
 		}
 	}
@@ -1830,6 +1895,9 @@ func (s *Session) compose() Composition {
 			if typoPhraseAdded[k] {
 				continue
 			}
+			if mistakeInput && !mistakeKeys[k] {
+				continue
+			}
 			if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) && items[i].cand.Score > bestTypoFreq {
 				bestTypoFreq = items[i].cand.Score
 			}
@@ -1862,11 +1930,17 @@ func (s *Session) compose() Composition {
 				bestRegularFreq = items[i].cand.Score
 			}
 		}
-		if bestTypoFreq > 0 && (!hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
+		// 反序双字母（gn/hz/hc/hs）是明确手误：归位修正无条件提升到精确层，
+		// 不受常规候选词频门槛约束（常规解析往往是另一条合法混拼，如 hzong
+		// 的「汇总」、hci 的「贺词」）。
+		if bestTypoFreq > 0 && (mistakeInput || !hasRegularWord || bestTypoFreq >= typoPromoteRatio*bestRegularFreq) {
 			for i := range items {
 				k := typoKey(items[i].cand)
 				if typoPhraseAdded[k] {
 					continue // 组合候选只由上方「无整词命中」的规则提升
+				}
+				if mistakeInput && !mistakeKeys[k] {
+					continue // 反序归位输入只提升归位修正，通用编辑保持低层
 				}
 				if typoAdded[k] && typoIsNear[k] && (!tailSuspicious || typoLen[k] >= len(s.input)) {
 					items[i].rank = rankExact

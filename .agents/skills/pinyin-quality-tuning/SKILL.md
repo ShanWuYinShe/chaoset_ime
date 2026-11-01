@@ -68,6 +68,10 @@ git stash pop                                 # 恢复改动
 - 错拼修正路径是唯一例外：只有该输入没有任何整词级纠错命中时，组合候选才提升
   到精确层（最多 8 个）。回归测试：`engine/sentence_test.go`、
   `engine/typo_dp_test.go`、`engine/typo_test.go`。
+- **反序双字母（gn/hz/hc/hs → ng/zh/ch/sh）是独立最高置信度路径**：这些组合在
+  拼音里几乎不出现；遇它们只提升归位修正、通用编辑保持低层，否则会被常规混拼
+  （`hzong` 的「汇总」）或用户学习词挤掉。两侧都合法的相邻互换（ai/ia、
+  ui/iu、ou/uo、ei/ie）不要强行纠错。回归：`engine/typo_common_mistakes_test.go`。
 - 任何改动都必须保持「真实词条优先」：组合候选不得进入首屏（`pageSize` 内）。
 
 若将来重新评估任何拼合逻辑，先记住当时的坑：`UserDict.Score` 返回

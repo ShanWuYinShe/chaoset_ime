@@ -148,6 +148,63 @@ func canonicalSyllable(s string) string {
 	return s
 }
 
+// commonMistakePairs 是「手滑把双字母组合打反」的常见形态：左侧组合在普通话
+// 拼音里几乎不会出现，右侧才是正常拼写，属于最高置信度的输入手误。
+//
+//	gn → ng（dign → ding：ng 韵尾打反，用户 2026-11-01 反馈的高频错误）
+//	hz → zh（hzong → zhong）
+//	hc → ch（hci → chi）
+//	hs → sh（hsuo → shuo）
+//
+// 只列「反序后在拼音里不合法 / 极罕见」的组合。ai/ia、ui/iu、ou/uo、ei/ie
+// 这类两侧都是合法拼音的相邻互换不在此列——它们和正常输入同形，强行纠错会
+// 误伤混拼/正常候选（历史实测：放宽判据会让 mixed 首选率大幅下降）。
+var commonMistakePairs = [][2]string{
+	{"gn", "ng"},
+	{"hz", "zh"},
+	{"hc", "ch"},
+	{"hs", "sh"},
+}
+
+// hasCommonMistakeCluster 报告输入是否含有上述「反序双字母」组合。
+func hasCommonMistakeCluster(s string) bool {
+	for _, p := range commonMistakePairs {
+		if strings.Contains(s, p[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+// commonMistakeFixes 生成把输入中反序组合翻回正常顺序的修正串：
+// 每个位置单独翻一次 + 所有位置一起翻（支持同一输入里多处连错）。
+func commonMistakeFixes(input string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(s string) {
+		if s == "" || s == input || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, p := range commonMistakePairs {
+		from, to := p[0], p[1]
+		for i := 0; i+1 < len(input); i++ {
+			if input[i:i+2] != from {
+				continue
+			}
+			add(input[:i] + to + input[i+2:])
+		}
+	}
+	all := input
+	for _, p := range commonMistakePairs {
+		all = strings.ReplaceAll(all, p[0], p[1])
+	}
+	add(all)
+	return out
+}
+
 // misspelledFromPatterns 判断输入是否「像打错了」——错拼修正的预筛。
 // 调用方把已经算好的切分路径传进来（避免对同一输入重复切分，切分是
 // Compose 里最贵的纯计算步骤之一）。
@@ -170,6 +227,11 @@ func canonicalSyllable(s string) string {
 func misspelledFromPatterns(s string, patterns [][]Token) bool {
 	if s == "" {
 		return false
+	}
+	// 含「反序双字母」组合（gn/hz/hc/hs）：普通话拼音里几乎不会出现，
+	// 直接判定为手误，保证这类输入一定进入纠错路径。
+	if hasCommonMistakeCluster(s) {
+		return true
 	}
 	// 切分路径为空 = 整串无法切成任何音节——这正是最典型的错拼
 	// （zhonguo / jisuanjii / niihao 都切不动），必须走纠错。
@@ -319,6 +381,12 @@ func typoCorrections(input string, maxResults int) []typoCorrection {
 		}
 		seen[cand] = true
 		out = append(out, typoCorrection{text: cand, isNear: isNear})
+	}
+	// 0) 常见反序双字母（gn/hz/hc/hs → ng/zh/ch/sh）：最高置信度的手误，
+	// 优先于相邻互换 / 删除 / 插入等通用编辑，保证 dign→定、hzi→之 这类
+	// 修正排在纠错候选最前，而不是被通用编辑挤到后面。
+	for _, fixed := range commonMistakeFixes(input) {
+		add(fixed, true)
 	}
 	r := []byte(input)
 	n := len(r)

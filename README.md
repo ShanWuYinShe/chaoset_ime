@@ -240,6 +240,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
   不依赖音节切分枚举上限，也不会造词（西安交通大学这类长词不再漏）。
 - **错拼修正**：单次编辑修正出的词典整词 + （相邻互换/删除类）修正串的分词
   组合；仅当该输入没有任何整词级纠错命中时，组合候选才提升到精确层（最多 8 个）。
+  反序双字母（gn/hz/hc/hs）走最高置信度归位路径，无条件提升到精确层。
 - **用户历史优先**：上屏过的词 / 单字 / 整句记录优先于静态词频；与词库冲突时
   用户历史优先（`engine/user_history_test.go`）。
 - **学习数据删除**：IPC `userDelete` / `chaoset-userdict delete`；候选窗右键
@@ -296,6 +297,20 @@ go run ./.workwork/verify/scan    # 该脚本在 .workwork/（gitignore），口
 | 漏敲一个字母 | `zhonguo` / `jisuanjii` | `zhongguo` / `jisuanji` | **中国** / **计算机** |
 | QWERTY 邻键敲错 | `yishrng` / `diannap` / `nihap` | `yisheng` / `diannao` / `nihao` | **一声** / **电脑** / **你好** |
 | 省写与撮口呼习惯 | `dueibuqi` / `jvece` / `xionmao` | `dui'bu'qi` / `jue'ce` / `xiong'mao` | **对不起** / **决策** / **熊猫** |
+| 双字母反序（高置信度） | `dign` / `hzong` / `hcang` / `hsang` | `ding` / `zhong` / `chang` / `shang` | **定** / **中** / **常** / **上** |
+
+其中 **gn→ng、hz→zh、hc→ch、hs→sh** 在普通话拼音里几乎不出现，走独立的
+最高置信度路径：`misspelledFromPatterns` 遇到这些组合直接判定手误，归位修正
+排在 `typoCorrections` 最前；`mistakeInput` 时**只把归位修正无条件提升到
+精确层**（不受「纠错词频须达到常规候选 2 倍」的门槛约束，避免 `hzong` 的
+常规混拼「汇总」、`chagn` 删 g 的「产」或用户学习词压过正确修正），通用
+编辑保持低层兜底（保证单字仍可选）。同一输入多处连错会一起翻回
+（`dignhzi` → `dingzhi`）。
+
+**刻意不做**：`ai/ia`、`ui/iu`、`ou/uo`、`ei/ie` 这类**两侧都合法**的相邻
+互换（如 `shuoji` 对 `shouji`、`mieyou` 对 `meiyou`）不做强行纠错——它们与
+正常输入/合法混拼同形，强行纠正会误伤正常候选（历史实测 mixed 首选率大幅下降）。
+这类错误仍可通过通用单次编辑在「确实像手误」的输入上被修正。
 
 ### 判据与置信度分层
 
