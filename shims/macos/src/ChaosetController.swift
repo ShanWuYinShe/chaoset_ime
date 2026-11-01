@@ -464,6 +464,49 @@ final class ChaosetController: IMKInputController {
         return false
     }
 
+    /// 客户端当前标记区的长度（0 = 没有标记区）。IMKTextInput 没有 hasMarkedText
+    /// 成员（协议文档见 HIToolbox/IMKInputSession.h），markedRange 是唯一可用的
+    /// 标记区探测：文档约定「没有标记区或客户端不支持 TSMDocumentAccess 时
+    /// location 为 NSNotFound」；NSTextView 在清空后返回 length=0，故用 length 判定。
+    private func clientMarkedLength(_ client: any IMKTextInput) -> Int {
+        let range = client.markedRange()
+        return range.location == NSNotFound ? 0 : range.length
+    }
+
+    /// 组词结束收尾：把客户端里残留的标记区（marked text）真正清掉。
+    ///
+    /// 2026-11-01 用户真机反馈（macOS，v0.3.5）：输入 jin 退格到只剩 j 时，第一次
+    /// 退格看起来无效、要按第二次才删掉；且第一次之后那个 j **仍带下划线**（还是
+    /// 输入法预编辑），说明壳已经把组词状态清空（current=nil）并调用过
+    /// insertText("")，但该客户端**忽略了空字符串插入**，marked 文本原样留在文档里；
+    /// 下一次退格 current 已为 nil → 走「无组词放行」分支，宿主自己把 marked 的 j
+    /// 删掉，于是表现为要按两次。
+    ///
+    /// 为什么保留 insertText("")：多数客户端一次就能清掉标记区（最小 AppKit App
+    /// 直接调 NSTextInputClient 的对照实验里，NSTextView 空插入会删字且
+    /// markedRange 归零、不留空标记区），同时它是 2026-10-22 起验证过的 inline
+    /// session 收尾原语；直接换成 setMarkedText("") 曾在部分客户端留下空标记区
+    ///（「退格把已输入的词和拼音一起删了」）。因此这里按客户端真实状态分级兜底：
+    /// 只对「忽略空插入」的客户端多走一步，正常路径行为完全不变。
+    private func clearMarkedText(_ client: (any IMKTextInput)?) {
+        guard let client else { return }
+        // ① 既有收尾：空插入。多数客户端（含 NSTextView）清掉标记区并结束会话。
+        client.insertText("", replacementRange: NSRange(location: NSNotFound, length: 0))
+        // ② 仍有标记区 → 该客户端忽略了空插入：用 setMarkedText("") 显式清空内容
+        //   （标准「清空标记区」原语；直接对 NSTextView 的实验确认可删字且不留空标记区）。
+        guard clientMarkedLength(client) > 0 else { return }
+        client.setMarkedText(
+            "",
+            selectionRange: NSRange(location: 0, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        // ③ 仍残留（极端客户端，连空 setMarkedText 也不认）：按真实 markedRange
+        //   把标记区显式替换为空串，保证不留「看不见的预编辑」。
+        let markedRange = client.markedRange()
+        guard markedRange.location != NSNotFound, markedRange.length > 0 else { return }
+        client.insertText("", replacementRange: markedRange)
+    }
+
     /// 把已确认段一次性落盘并清空缓冲。调用时机 = 所有「不再继续组词」的
     /// 路径：整条组词选完、退格删空剩余拼音、失焦、透传、模式切换。
     /// 落盘必须用 insertText（替换整个 marked 区）——这是与整句上屏相同的、
@@ -654,11 +697,8 @@ final class ChaosetController: IMKInputController {
         // （与整句上屏同原语），不存在「组词中写正文」这一易碎操作。
         let marked = confirmedText + (current?.preedit ?? "")
         if marked.isEmpty {
-            // 组词结束：用 insertText("") 收掉 inline session。
-            // 直接 setMarkedText("") 在多数客户端里等于「留一个空标记区」，
-            // 之后的退格可能被继续路由到输入法或把相邻文本一起替换掉
-            //（2026-10-22 用户反馈「退格把已输入的词和拼音一起删了」）。
-            client?.insertText("", replacementRange: NSRange(location: NSNotFound, length: 0))
+            // 组词结束：收掉客户端里的标记区（in-place 预编辑）。
+            clearMarkedText(client)
         } else {
             // selectionRange 用 (0,0) 而不是 (0,length)：整段全选会让部分客户端
             // 把后续输入当成「替换整个选区」，退格时连带删掉已上屏内容。

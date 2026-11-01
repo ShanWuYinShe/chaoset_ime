@@ -3,7 +3,9 @@ import InputMethodKit
 
 // 按键路由回归测试：用合成 NSEvent 直接驱动 ChaosetController.handle，
 // 覆盖 keyUp 放行、字母进组词、Cmd/Ctrl/Option 放行、Shift 空按切换中英、
-// Shift+字母不误切换、Option+Backspace 按音节回退（2026-10-31 三端统一）。
+// Shift+字母不误切换、Option+Backspace 按音节回退（2026-10-31 三端统一），
+// 以及「退格删最后一个拼音字母」在忽略空插入的客户端上也能一次删空
+// （2026-11-01 用户真机反馈，根因见 clearMarkedText 注释）。
 // 修复前（2026-10-06 之前）旧实现 4/8 不通过。
 //
 // 推荐用法（自动编译 + 起临时 daemon + 清理）：
@@ -18,12 +20,24 @@ import InputMethodKit
 final class MockClient: NSObject, IMKTextInput {
     var marked = ""
     var inserted: [String] = []
+    /// 模拟「忽略空插入」的客户端（2026-11-01 用户真机症状）：insertText("")
+    /// 不改变 marked 区，客户端继续把最后一个字母显示为下划线预编辑。
+    /// 默认 false = 与真实 NSTextView 一致（空插入会删掉 marked、结束 inline session；
+    /// 最小 AppKit App 直接调 NSTextInputClient 的对照实验已验证）。
+    var ignoresEmptyInsert = false
     func insertText(_ string: Any!, replacementRange: NSRange) {
         // Any! 实际是 String?；String(describing:) 会得到 "Optional(…)" 并把
-        // 清空标记区（insertText("")）误记为普通插入。这里显式解包，
-        // 空串时同步清空 marked（真实客户端行为）。
+        // 清空标记区（insertText("")）误记为普通插入。这里显式解包。
         let s = (string as? String) ?? String(describing: string)
-        if s.isEmpty { marked = "" }
+        if s.isEmpty {
+            // 真实 NSTextView 会删掉 marked；忽略空插入的客户端则原样保留，
+            // 壳必须靠 markedRange() 探测（IMKTextInput 无 hasMarkedText）
+            // + setMarkedText("") 兜底清掉。
+            if !ignoresEmptyInsert { marked = "" }
+        } else {
+            // 非空插入 = 提交，AppKit 客户端此时会清掉 marked 区。
+            marked = ""
+        }
         inserted.append(s)
     }
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {
@@ -31,7 +45,10 @@ final class MockClient: NSObject, IMKTextInput {
     }
     func unmarkText() { marked = "" }
     func selectedRange() -> NSRange { return NSRange(location: 0, length: 0) }
-    func markedRange() -> NSRange { return NSRange(location: NSNotFound, length: 0) }
+    func markedRange() -> NSRange {
+        return marked.isEmpty ? NSRange(location: NSNotFound, length: 0)
+                              : NSRange(location: 0, length: (marked as NSString).length)
+    }
     func hasMarkedText() -> Bool { return !marked.isEmpty }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! { return NSAttributedString(string: "") }
     func length() -> Int { return 0 }
@@ -161,9 +178,44 @@ let shiftU = NSEvent.keyEvent(with: .keyDown, location: .zero,
 let r15 = c.handle(shiftU, client: m)
 check("Ctrl+Shift+U 放行（不清空组词）", r15 == false, "ret=\(r15)")
 
+// 用户真机回归（2026-11-01）：输入 jin 退格到只剩 j 时，第一次退格看起来无效、
+// 要按第二次才删掉。根因：壳在组词收尾时用 insertText("") 收掉标记区，但部分
+// 客户端忽略空插入，marked 文本原样留在文档里（仍是下划线预编辑）；下一次退格
+// 时 current 已 nil → 放行给宿主，宿主才删掉 marked 的字母（= 按两次）。
+// 修复：clearMarkedText 先空插入、再用 markedRange() 探测，仍残留则
+// setMarkedText("")（必要时按真实 markedRange 显式替换）。
+func typeJin(_ client: MockClient) {
+    _ = c.handle(ev("", 53), client: client) // Esc 清空
+    for (ch, code) in [("j", 38), ("i", 34), ("n", 45)] {
+        _ = c.handle(ev(ch, UInt16(code)), client: client)
+    }
+}
+
+// ① 忽略空插入的客户端（用户实际症状）：第 3 次退格必须一次删空。
+let mIgnore = MockClient()
+mIgnore.ignoresEmptyInsert = true
+typeJin(mIgnore)
+check("忽略空插入：jin 组词预编辑完整", mIgnore.marked == "jin", "marked=\(mIgnore.marked)")
+_ = c.handle(ev("\u{7F}", 51), client: mIgnore)
+_ = c.handle(ev("\u{7F}", 51), client: mIgnore)
+check("忽略空插入：退格两次后剩 j", mIgnore.marked == "j", "marked=\(mIgnore.marked)")
+let rJinIgnore3 = c.handle(ev("\u{7F}", 51), client: mIgnore)
+check("忽略空插入：第 3 次退格一次删掉最后一个字母", mIgnore.marked.isEmpty, "marked=\(mIgnore.marked)")
+check("忽略空插入：第 3 次退格被消费", rJinIgnore3 == true, "ret=\(rJinIgnore3)")
+
+// ② 正常客户端（NSTextView 语义：空插入能删 marked）：兜底不得改坏正常路径。
+typeJin(m)
+_ = c.handle(ev("\u{7F}", 51), client: m)
+_ = c.handle(ev("\u{7F}", 51), client: m)
+let rJinNormal3 = c.handle(ev("\u{7F}", 51), client: m)
+check("正常客户端：jin 三次退格后标记区为空", m.marked.isEmpty, "marked=\(m.marked)")
+check("正常客户端：第 3 次退格被消费", rJinNormal3 == true, "ret=\(rJinNormal3)")
+let rJinNormal4 = c.handle(ev("\u{7F}", 51), client: m)
+check("正常客户端：删空后再次退格放行给宿主", rJinNormal4 == false, "ret=\(rJinNormal4)")
+
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 22
+let expectedChecks = 29
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

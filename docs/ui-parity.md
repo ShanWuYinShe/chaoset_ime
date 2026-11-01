@@ -233,7 +233,7 @@ Linux ibus 延迟落盘（不再每次选词全量重写）、userdict 写盘串
 | 联想选词 | 空格 / 数字 1-9（含小键盘） / Shift+空格 | 空格与 **Shift+空格都选当前页第一个联想词**并继续联想（Shift 不切全半角，三端实测一致）；数字越界收起联想并放行 |
 | 鼠标点选候选 | 点击候选窗/ibus 候选表 | mac/Windows 原生自绘候选窗点选；**Linux ibus 面板点击经标准方法 `CandidateClicked` 回引擎（2026-10-31 补齐）**，语义与数字键完全一致（渐进上屏/联想连选；越界点击在联想中收起联想、普通组词保持原样） |
 | 组词回车 | Return | 已确认段按确认文本 + 剩余按原始拼音一次上屏（与系统拼音一致：已转换部分保留转换结果） |
-| 组词退格 | Backspace/Delete（逐字符）；Cmd(Win/Super)/Ctrl/Shift+Backspace/Delete 全部删除；Option/Alt+Backspace/Delete 按音节回退 | 普通 Backspace/Delete 只回退剩余拼音，剩余删空时已确认段立即落盘收尾；全部删除会取消整条组词（含未落盘确认段）并消费。**修饰键映射见「修饰键映射」节（2026-10-31 三端统一）** |
+| 组词退格 | Backspace/Delete（逐字符）；Cmd(Win/Super)/Ctrl/Shift+Backspace/Delete 全部删除；Option/Alt+Backspace/Delete 按音节回退 | 普通 Backspace/Delete 只回退剩余拼音，剩余删空时已确认段立即落盘收尾；全部删除会取消整条组词（含未落盘确认段）并消费。**修饰键映射见「修饰键映射」节（2026-10-31 三端统一）**。组词结束清标记区以客户端 `markedRange()` 校验 + 分级兜底（空 `insertText` → `setMarkedText("")` → 按真实 markedRange 替换），兼容忽略空插入的客户端（2026-11-01 修复「退格到最后一个拼音字母要按两次」） |
 | 失焦 / 透传键 / 切换输入法 | — | 已确认段先落盘再切换/透传（用户确认过的字不丢；纯拼音维持「清空」旧语义） |
 | 清空组词 | Ctrl+Backspace / Ctrl+U / Esc（Cmd(Win/Super)/Shift+Backspace/Delete 亦为整段清空） | 取消**整条组词**（含未落盘的已确认段）并消费按键 |
 | 删到行首 | Ctrl+Backspace | 同清空（三端对齐） |
