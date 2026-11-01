@@ -1431,6 +1431,10 @@ func (s *Session) compose() Composition {
 	if len(tokenPatterns) > 0 {
 		inputSegs = len(tokenPatterns[0])
 	}
+	// maxFullWordFreq 是「词典全消耗单词」的最高词频（不含用户学习加权）：
+	// 2~3 音节弱整词判定只看词典事实——用户学过「失陪」不应永久抑制首音节
+	// 单字补全（用户仍可能想打「适配」这类别的词）。
+	maxFullWordFreq := 0
 	typoAdded := make(map[string]bool)
 	typoPhraseAdded := make(map[string]bool)
 	// mistakeKeys 标记来自「反序双字母归位修正」的候选：mistakeInput 时只有
@@ -1686,6 +1690,14 @@ func (s *Session) compose() Composition {
 				}
 				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
 			}
+			// 记录全消耗单词的词典词频（用于弱整词判定，见下方单字补全段）。
+			if !hasInitials && inputSegs >= 2 && len(qp) == inputSegs {
+				for _, e := range exacts {
+					if e.Freq > maxFullWordFreq {
+						maxFullWordFreq = e.Freq
+					}
+				}
+			}
 
 			if !hasInitials {
 				// 纯全拼匹配
@@ -1861,9 +1873,11 @@ func (s *Session) compose() Composition {
 
 	// 弱整词匹配时补首音节同音字全量（2026-11-02 用户反馈：shipei 想打「适配」，
 	// 词库里没有该词，2 音节输入的回退只给首音节 top10，翻页也找不到「适」）。
-	// 只在 2~3 音节全拼、且没有任何「强整词候选」（全消耗单词、词频 ≥ 40）时
-	// 追加：此时整词多是生僻/巧合词（失陪 30、配音 39），用户更可能需要逐字
-	// 挑选；常用词（长江 48、你好 52、北京 69、世界 73）保持短列表。
+	// 只在 2~3 音节全拼、且词典里没有「强整词」（全消耗单词词频 ≥ 40）时追加：
+	// 此时整词多是生僻/巧合词（失陪 30、配音 39），用户更可能需要逐字挑选；
+	// 常用词（长江 48、你好 52、北京 69、世界 73）保持短列表。判定只看词典
+	// 词频（maxFullWordFreq），不采信候选 Score——用户学习加权会把「失陪」
+	// 抬到 500+，学过之后就会永久看不到首音节单字。
 	// 追加候选排在所有常规候选之后（rankSingleBackfill），不改变原有首选。
 	if !typoSuspicious && !midSuspicious && !tailSuspicious && len(tokenPatterns) > 0 {
 		clean := tokenPatterns[0]
@@ -1875,20 +1889,10 @@ func (s *Session) compose() Composition {
 			}
 		}
 		if cleanExact {
-			strongWord := false
-			for i := range items {
-				if items[i].cand.typoFix || items[i].rank >= rankBackoff {
-					continue
-				}
-				if strings.Count(items[i].cand.Syllables, "'")+1 != len(clean) {
-					continue
-				}
-				if items[i].cand.Score >= singleCharBackfillMinWordFreq {
-					strongWord = true
-					break
-				}
-			}
-			if !strongWord {
+			// 弱整词判定只看词典全消耗单词的最高词频（不采信候选 Score：
+			// 用户学习加权会把「失陪」抬到 500+，导致学过之后再也看不到
+			// 首音节单字——用户仍可能想打「适配」这类词库没有的词）。
+			if maxFullWordFreq < singleCharBackfillMinWordFreq {
 				first := []Token{{Text: clean[0].Text, IsExact: true}}
 				for _, e := range s.dict.QueryTokensExact(first, singleSyllableExactLimit) {
 					addCandidate(e, e.Freq, false, rankSingleBackfill)

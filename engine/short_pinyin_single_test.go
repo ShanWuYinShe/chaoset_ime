@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -143,4 +144,29 @@ func indexByte(s string, b byte) int {
 		}
 	}
 	return -1
+}
+
+// TestShortPinyinSingleCharBackfillIgnoresUserBoost：弱整词判定只看词典词频，
+// 用户学过「失陪」不能永久抑制首音节单字补全（用户仍可能想打「适配」）。
+func TestShortPinyinSingleCharBackfillIgnoresUserBoost(t *testing.T) {
+	d := mustCommonDict(t)
+	user, err := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
+	if err != nil {
+		t.Fatalf("构造用户词库失败: %v", err)
+	}
+	if err := user.BumpWord("失陪", []string{"shi", "pei"}); err != nil {
+		t.Fatalf("学习「失陪」失败: %v", err)
+	}
+	s := NewSession(d, user)
+	all := allCandidates(s, mustComp(s, "shipei"))
+	found := false
+	for _, c := range all {
+		if c.Text == "适" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("学习「失陪」后仍应补首音节单字「适」（弱整词判定只看词典词频，候选数 %d）", len(all))
+	}
 }
