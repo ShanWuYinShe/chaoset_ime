@@ -15,6 +15,18 @@
 | **Linux (Ubuntu / Debian / Mint)** | [`chaoset_amd64.deb`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 `.deb` → 应用中心点「安装」；装完后在系统「键盘 → 输入源」添加 **Chaoset Pinyin**（列表暂时没有就注销重登一次） | `Super + 空格` 或 `Ctrl + 空格` |
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
+> **macOS 首次打开被 Gatekeeper 拦截（无需开发者账号）**：
+> 截图里的提示针对的是 **`ChaosetIME.app`（输入法本体）**，不是安装器；请先打开 DMG 里的
+> **「Chaoset 安装与设置」**（`ChaosetSetup.app`）。若安装器也被拦截，在 Finder 中右键安装器 →「打开」，
+> 或到「系统设置 → 隐私与安全性 → 安全性」点「仍要打开」。
+>
+> 如果不想处理任何拦截提示，可在「终端」粘贴下面一行（脚本用 `curl` 下载 release 包、
+> 清除隔离标记后启动安装器；不需要 Apple 开发者账号，也不需要 `sudo`）：
+>
+> ```bash
+> /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
+> ```
+>
 > **卸载**：macOS 打开「Chaoset 安装与设置」→「卸载」；Windows 在「设置 → 应用」卸载；Linux 用系统软件中心或包管理器卸载。
 >
 > 📦 **高级选项**：`chaoset-windows-x64.zip` / `chaoset-macos.zip` / `chaoset-linux-x86_64.tar.gz` 是绿色或排障用的高级包，需要管理员权限或命令行；普通用户不要下载。AUR/源码用户见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)。

@@ -45,7 +45,25 @@ daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却�
 4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
 
 - 磁盘映象内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
-- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击该应用 → 选择「打开」→ 确认打开即可。
+- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书），首次打开如果被 Gatekeeper 拦截，只需在 Finder 中右键点击**安装器** → 选择「打开」→ 确认打开即可。
+  > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
+
+### 方式 B：终端免隔离安装（无开发者账号）
+
+如果右键「打开」仍被新版 macOS 拦截，可在「终端」执行：
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
+```
+
+脚本会从 GitHub Release 下载 `chaoset-macos.zip`，用 `ditto` 解包并移除 `com.apple.quarantine`，
+把安装器装到 `~/Applications/ChaosetSetup.app` 后自动打开；之后照常点「一键安装 / 更新」。
+不需要 Apple 开发者账号、不需要 `sudo`，也不会出现「Apple 无法验证」提示。
+也可以先下载 `shims/macos/install-online.sh` 人工检查，或指定本地包：
+
+```bash
+CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.sh
+```
 
 ### 从源码
 
