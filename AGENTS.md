@@ -107,8 +107,9 @@ go build ./...                    # 秒级
     （团）前。
   - **单段输入只出单字**：单音节全拼/单字母声母不再出前缀扩展词（`diao` 不出
     「调用」、`zhong` 不出「中国」）；`zh`/`ch`/`sh` 是多字母简拼，仍出词。
-    连写正好等于输入的多字词保留（`xian` 的「西安」、`tuan` 的「图案」）。
-    回归：`TestSingleSegmentOnlySingleChars` / `TestSingleSegmentKeepsExactJoinedWord` /
+    **能拆成多音节词的串不算单字输入**（`xian`=西安、`tuan`=图案），按多音节
+    词输入正常出词；拆不出真实多字词的串才只出单字。回归：
+    `TestSingleSegmentOnlySingleChars` / `TestAmbiguousSplittableInputKeepsWords` /
     `TestTwoLetterInitialKeepsWords`。
   - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
     `engine/common_dict_test.go`、`engine/typo_test.go`、

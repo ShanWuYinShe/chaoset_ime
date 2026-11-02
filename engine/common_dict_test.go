@@ -510,3 +510,32 @@ func TestSingleSegmentKeepsExactJoinedWord(t *testing.T) {
 		t.Fatalf("xian 应同时保留「先」与「西安」（全拼精确匹配），实际 %+v", all)
 	}
 }
+
+// TestAmbiguousSplittableInputKeepsWords：xian/tuan 能拆成多个完整音节，
+// 且切分对应词库真实多字词（西安/图案），属于多音节词输入，不做单字过滤。
+func TestAmbiguousSplittableInputKeepsWords(t *testing.T) {
+	d := mustCommonDict(t)
+	for _, tc := range []struct{ input, word string }{
+		{"xian", "西安"},
+		{"tuan", "图案"},
+	} {
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, tc.input))
+		found := false
+		words := 0
+		for _, c := range all {
+			if c.Text == tc.word {
+				found = true
+			}
+			if len([]rune(c.Text)) > 1 {
+				words++
+			}
+		}
+		if !found {
+			t.Fatalf("%s 候选里应有「%s」（多音节词输入）", tc.input, tc.word)
+		}
+		if words < 2 {
+			t.Fatalf("%s 应正常出多个词候选，实际多字词 %d 条", tc.input, words)
+		}
+	}
+}
