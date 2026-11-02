@@ -547,6 +547,48 @@ func TestSingleSegmentKeepsOnlyFullMatchWords(t *testing.T) {
 	}
 }
 
+// TestAllSingleSegmentInputsSingleCharsOrFullMatchWords：遍历内置词库的全部
+// 单音节与 26 个单字母声母，确保任何单段输入都不会出现前缀延伸词：
+// 多字词只允许拼音连写完全等于输入（jie 的饥饿、xian 的西安、tuan 的图案）。
+func TestAllSingleSegmentInputsSingleCharsOrFullMatchWords(t *testing.T) {
+	d := mustCommonDict(t)
+	syls := map[string]bool{}
+	for _, e := range d.entries {
+		if len([]rune(e.Word)) == 1 && len(e.Syllables) == 1 {
+			syls[e.Syllables[0]] = true
+		}
+	}
+	if len(syls) < 400 {
+		t.Fatalf("内置词库单音节只有 %d 个，预期 ≥400", len(syls))
+	}
+	for syl := range syls {
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, syl))
+		singles := 0
+		for _, c := range all {
+			if len([]rune(c.Text)) == 1 {
+				singles++
+				continue
+			}
+			if strings.ReplaceAll(c.Syllables, "'", "") != syl {
+				t.Fatalf("单音节 %s 出现前缀延伸词「%s」[%s]", syl, c.Text, c.Syllables)
+			}
+		}
+		if singles == 0 {
+			t.Fatalf("单音节 %s 没有任何单字候选", syl)
+		}
+	}
+	for r := 'a'; r <= 'z'; r++ {
+		input := string(r)
+		s := NewSession(d, nil)
+		for _, c := range allCandidates(s, mustComp(s, input)) {
+			if len([]rune(c.Text)) > 1 {
+				t.Fatalf("单字母声母 %s 出现多字词「%s」[%s]", input, c.Text, c.Syllables)
+			}
+		}
+	}
+}
+
 // TestCommonDictDiaoSingleQuality：用户反馈「diao 打不出屌、却混入刀/跳/鸟」。
 // 单字读音刷新后：屌正常收录但不特殊置顶（掉/调等级更高频的字在前），
 // 刀/跳/鸟 的误收 diāo 读音已删除。
