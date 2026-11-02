@@ -460,10 +460,15 @@ func TestInitialsNoWordStillInputtable(t *testing.T) {
 // TestShortInitialsAlwaysSingleFallback：两段简拼同样追加首段全量单字，
 // 任何时候都能逐字挑选（不再只给 top10）。
 func TestShortInitialsAlwaysSingleFallback(t *testing.T) {
-	s := NewSession(mustCommonDict(t), nil)
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
 	comp, err := s.Input("zg")
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
+	}
+	want := len(d.QueryTokensExact([]Token{{Text: "z", IsExact: false}}, 500))
+	if want > singleSyllableExactLimit {
+		want = singleSyllableExactLimit
 	}
 	singles := 0
 	for _, c := range allCandidates(s, comp) {
@@ -471,8 +476,8 @@ func TestShortInitialsAlwaysSingleFallback(t *testing.T) {
 			singles++
 		}
 	}
-	if singles < 120 {
-		t.Fatalf("zg 首段单字全量兜底未生效（单字=%d，期望 >=120）", singles)
+	if singles < want {
+		t.Fatalf("zg 首段单字全量兜底未生效（单字=%d，期望 >=%d）", singles, want)
 	}
 }
 

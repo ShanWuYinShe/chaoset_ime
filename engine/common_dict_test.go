@@ -434,3 +434,34 @@ func TestCommonDictLongPinyinFirstSyllableReachable(t *testing.T) {
 		}
 	}
 }
+
+// TestCommonDictSingleSyllableFullRecallBeyond120：旧上限 120 会把同音字超过
+// 120 的音节（yi 181、ji 152、yu 148、qi 121）尾部裁掉；提高上限后必须全量
+// 可达（用户反馈单字候选太少）。
+func TestCommonDictSingleSyllableFullRecallBeyond120(t *testing.T) {
+	d := mustCommonDict(t)
+	entries := d.QueryTokensExact([]Token{{Text: "yi", IsExact: true}}, 500)
+	if len(entries) <= 120 {
+		t.Fatalf("词典 yi 同音字仅 %d 个，无法验证 >120 场景", len(entries))
+	}
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "yi"))
+	got := 0
+	for _, c := range all {
+		if c.Syllables == "yi" {
+			got++
+		}
+	}
+	if got < len(entries) {
+		t.Fatalf("yi 同音字 %d 个，候选只有 %d 个（仍被上限 %d 裁剪）",
+			len(entries), got, singleSyllableExactLimit)
+	}
+	// 旧 120 上限之外的字（按词频排 151 位）必须可达。
+	target := entries[150].Word
+	for _, c := range all {
+		if c.Text == target {
+			return
+		}
+	}
+	t.Fatalf("yi 候选里找不到旧上限之外的字「%s」（%d 条候选）", target, len(all))
+}

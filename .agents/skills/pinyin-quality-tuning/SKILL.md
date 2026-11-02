@@ -61,7 +61,7 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 再按 `pageSize` 分页。
 
 **单字兜底**：任何多段非错拼输入都在列表末尾追加首段全量单字
-（≤`singleSyllableExactLimit`=120），层级 `rankSingleBackfill`，纯单字收尾；
+（≤`singleSyllableExactLimit`=300），层级 `rankSingleBackfill`，纯单字收尾；
 错拼输入（`typoSuspicious`）不追加——纠错候选才是主路径。
 
 ### 2. 拿基线：用 git stash 而不是另开目录
@@ -109,7 +109,7 @@ git stash pop                                 # 恢复改动
   `zg`）都在列表末尾追加首段全量单字（`rankSingleBackfill` =
   `rankComposition+16`，列表最末纯单字收尾，单字块之后不得再出现词组），
   保证 `SelectPrefix` 能选到 top10 之外的字（shipei → 适 + 配）。上限
-  `singleSyllableExactLimit`=120；单段输入本身已是全量单字，不重复追加。
+  `singleSyllableExactLimit`=300；单段输入本身已是全量单字，不重复追加。
   错拼输入（`typoSuspicious`）不追加：纠错候选才是主路径，追加会破坏
   「纠错固定第 3 位」。回归：`engine/short_pinyin_single_test.go`、
   `engine/initials_test.go`、`engine/common_dict_test.go`。

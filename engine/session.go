@@ -981,12 +981,14 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 // 音节查询、以及任何多段输入末尾的单字兜底，四处必须同一口径）。回退本身
 // 仍只取首段 top10，全量只在列表末尾的单字兜底块里补，理由见 compose 注释。
 //
-// 取 120 的依据（2026-10-28 实测）：同音字最多的音节（shi/yi/ji…）在 100 个
-// 上下，top20 裁剪会让「示」这类排 33 位的常用字整体不可达；放开到 120 后
-// 单音节首选与衍生词组数量均无回归（见 TestCommonDictSingleSyllableFullRecall）。
-// 只对**单音节**放开是刻意的：多音节全拼的 exact 上限是 20（歧义切分路径 ×
-// exact 条数是乘法放大，放开会让热路径从 24.6µs 涨到 246µs，见下方注释）。
-const singleSyllableExactLimit = 120
+// 取值 300：当前词典同音字最多的是 yi 181、ji 152、yu 148、qi 121——旧值 120
+// 会把 yi/ji/yu/qi 的尾部常用字裁掉（用户反馈单字候选太少）。300 覆盖当前
+// 词典全部单字并给用户词库/后续词库留余量；只对**单音节**放开是刻意的：
+// 多音节全拼的 exact 上限仍是 20（歧义切分路径 × exact 条数是乘法放大，
+// 放开会让热路径从 24.6µs 涨到 246µs，见下方注释）。
+// 回归：TestCommonDictSingleSyllableFullRecall（shi）、
+// TestCommonDictSingleSyllableFullRecallBeyond120（yi 全量）。
+const singleSyllableExactLimit = 300
 
 // typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
