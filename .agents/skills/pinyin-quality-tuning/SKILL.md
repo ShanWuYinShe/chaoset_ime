@@ -50,9 +50,9 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 1. **常规层 vs 逐级回退层**：`rank >= rankBackoff` 的候选后置；
 2. **超段仲裁（仅全拼输入）**：用户候选按 `maxInputSegs`（所有合法切分的最大
    段数）判，非用户候选按 `inputSegs`（首选切分）严格判；简拼/混拼的 token
-   数不是音节数，**不做**超段仲裁。`tuan` 可切 `tuan`/`tu'an`，学过「图案」
-   时它不被当超段；`hao` 只有 1 段，学过的「好家伙」（3 音节）仍判超段，
-   「好」优先；
+   数不是音节数，**不做**超段仲裁。显式分段 `tu'an`（2 段）下，学过「图案」
+   （2 音节）不被当超段，可按用户输入优先；单段输入只出单字、不存在词语候选，
+   不参与该仲裁；
 3. **用户输入 > 默认字频**：`FromUser` 候选优先（词 / 单字 / 整句记录）；
 4. 匹配层级 `rank`；
 5. 综合得分（词频 + 用户加权 − 续接代价）、词长、字典序。
@@ -75,7 +75,7 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 `engine/initials_test.go` 的 `TestTwoLetterInitialKeepsWords`。
 
 **两个 exact 上限不要混**：单音节全拼/单段声母（y/j/zh…）/单字兜底用
-`singleSyllableExactLimit`=300（同音字全量，yi 181 等）；**多段**简拼/混拼的
+`singleSyllableExactLimit`=300（同音字全量，yi 141 等）；**多段**简拼/混拼的
 词候选用 `initialsExactLimit`=120（放大到 300 会让 zg/dz 候选膨胀到 ~80 页，
 稀释单字页位）。
 

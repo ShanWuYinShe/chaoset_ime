@@ -436,7 +436,7 @@ func TestCommonDictLongPinyinFirstSyllableReachable(t *testing.T) {
 }
 
 // TestCommonDictSingleSyllableFullRecallBeyond120：旧上限 120 会把同音字超过
-// 120 的音节（yi 181、ji 152、yu 148、qi 121）尾部裁掉；提高上限后必须全量
+// 120 的音节（yi 141、ji 130、yu 124、qi 91）尾部裁掉；提高上限后必须全量
 // 可达（用户反馈单字候选太少）。
 func TestCommonDictSingleSyllableFullRecallBeyond120(t *testing.T) {
 	d := mustCommonDict(t)
