@@ -517,22 +517,16 @@ func TestUserWordPriorityStillGuardsFullPinyinOverSegment(t *testing.T) {
 	}
 }
 
-// TestUserWordPriorityForAmbiguousSegmentation：tuan 可切成 tuan 或 tu'an，
-// 两种解析优先级相同；用户学过 tu'an 的「图案」后应排在 tuan 的「团」之前
-// （用户输入 > 默认字频）。
-func TestUserWordPriorityForAmbiguousSegmentation(t *testing.T) {
+// TestUserWordPriorityForSegmentation：tuan 是单段输入，只出单字；学过
+// tu'an 的「图案」后仍是单字候选。显式输入 tu'an 时，用户词「图案」应按
+// 用户输入 > 默认字频排在「图」之前。
+func TestUserWordPriorityForSegmentation(t *testing.T) {
 	d := mustCommonDict(t)
-
 	s := NewSession(d, nil)
-	allDefault := allCandidates(s, mustComp(s, "tuan"))
-	hasTuAn := false
-	for _, c := range allDefault {
-		if c.Text == "图案" {
-			hasTuAn = true
+	for _, c := range allCandidates(s, mustComp(s, "tuan")) {
+		if len([]rune(c.Text)) > 1 {
+			t.Fatalf("tuan 是单段输入，不应出现词语「%s」", c.Text)
 		}
-	}
-	if !hasTuAn {
-		t.Fatalf("未学习时 tuan 候选里也应有 tu'an 的「图案」: %+v", firstTexts(allDefault, 6))
 	}
 
 	u := mustUserDict(t, filepath.Join(t.TempDir(), "user.json"))
@@ -540,9 +534,14 @@ func TestUserWordPriorityForAmbiguousSegmentation(t *testing.T) {
 		t.Fatalf("学习「图案」失败: %v", err)
 	}
 	s2 := NewSession(d, u)
-	comp2 := mustComp(s2, "tuan")
-	if len(comp2.Candidates) == 0 || comp2.Candidates[0].Text != "图案" {
-		t.Fatalf("学过「图案」后 tuan 首选应为「图案」，实际: %+v", firstTexts(allCandidates(s2, comp2), 6))
+	for _, c := range allCandidates(s2, mustComp(s2, "tuan")) {
+		if len([]rune(c.Text)) > 1 {
+			t.Fatalf("学过词语后 tuan 仍是单段输入，不应出现「%s」", c.Text)
+		}
+	}
+	comp := mustComp(s2, "tu'an")
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "图案" {
+		t.Fatalf("tu'an 首选应为用户学过的「图案」，实际: %+v", firstTexts(allCandidates(s2, comp), 6))
 	}
 }
 

@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-// mustXiDict 构造含 12 个「xi」单字词的词典（词频递减）→ 恰好 2 页。
+// mustXiDict 构造含 12 个不同「xi」单字的词典（词频递减）→ 恰好 2 页。
 func mustXiDict(t *testing.T) *Dictionary {
 	t.Helper()
+	chars := []string{"西", "希", "息", "喜", "系", "细", "习", "吸", "析", "嬉", "膝", "夕"}
 	var b strings.Builder
-	for i := 0; i < 12; i++ {
-		fmt.Fprintf(&b, "词%02d\txi\t%d\n", i, 90-i)
+	for i, ch := range chars {
+		fmt.Fprintf(&b, "%s\txi\t%d\n", ch, 90-i)
 	}
 	dict, err := ParseDict(strings.NewReader(b.String()))
 	if err != nil {
@@ -33,8 +34,8 @@ func TestPaginationPages(t *testing.T) {
 	if len(comp.Candidates) != pageSize {
 		t.Fatalf("第一页候选数 = %d, 期望 %d", len(comp.Candidates), pageSize)
 	}
-	if comp.Candidates[0].Text != "词00" {
-		t.Fatalf("第一页首选 = %q, 期望 词00", comp.Candidates[0].Text)
+	if comp.Candidates[0].Text != "西" {
+		t.Fatalf("第一页首选 = %q, 期望 西", comp.Candidates[0].Text)
 	}
 
 	// 下一页：恰好剩余一整页候选
@@ -45,8 +46,8 @@ func TestPaginationPages(t *testing.T) {
 	if comp.Page != 1 || len(comp.Candidates) != pageSize {
 		t.Fatalf("Page=%d 候选数=%d, 期望 第 1 页 %d 个候选", comp.Page, len(comp.Candidates), pageSize)
 	}
-	if comp.Candidates[0].Text != "词06" {
-		t.Fatalf("第二页首选 = %q, 期望 词06", comp.Candidates[0].Text)
+	if comp.Candidates[0].Text != "习" {
+		t.Fatalf("第二页首选 = %q, 期望 习", comp.Candidates[0].Text)
 	}
 
 	// 末页再下翻：钳制不动
@@ -73,8 +74,8 @@ func TestPaginationSelectPageRelative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
-	if text != "词06" {
-		t.Fatalf("第二页选 1 应得 词06, 得到 %q", text)
+	if text != "习" {
+		t.Fatalf("第二页选 1 应得 习, 得到 %q", text)
 	}
 	comp, _ := s.Input("")
 	if comp.Input != "" {

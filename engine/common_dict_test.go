@@ -490,67 +490,65 @@ func TestSingleSegmentOnlySingleChars(t *testing.T) {
 	}
 }
 
-// TestSingleSegmentKeepsExactJoinedWord：连写正好等于输入的多字词属于全拼精确
-// 匹配，不是前缀延伸（xian = xi'an 的「西安」、tuan = tu'an 的「图案」），
-// 单段输入仍保留。
-func TestSingleSegmentKeepsExactJoinedWord(t *testing.T) {
+// TestSingleSegmentExplicitSplitKeepsWord：单段 xian 只出单字；显式写成
+// xi'an 才算多音节词输入，候选里出现「西安」。
+func TestSingleSegmentExplicitSplitKeepsWord(t *testing.T) {
 	d := mustDict(t)
 	s := NewSession(d, nil)
 	all := allCandidates(s, mustComp(s, "xian"))
-	foundXian, foundXiAn := false, false
+	if len(all) == 0 {
+		t.Fatal("xian 候选为空")
+	}
 	for _, c := range all {
-		switch c.Text {
-		case "先":
-			foundXian = true
-		case "西安":
-			foundXiAn = true
+		if len([]rune(c.Text)) > 1 {
+			t.Fatalf("xian 是单段输入，不应出现词语「%s」", c.Text)
 		}
 	}
-	if !foundXian || !foundXiAn {
-		t.Fatalf("xian 应同时保留「先」与「西安」（全拼精确匹配），实际 %+v", all)
+	s2 := NewSession(d, nil)
+	found := false
+	for _, c := range allCandidates(s2, mustComp(s2, "xi'an")) {
+		if c.Text == "西安" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("xi'an 应出现「西安」")
 	}
 }
 
-// TestSingleSegmentKeepsOnlyFullMatchWords：单段输入只保留「拼音连写完全
-// 等于输入」的多字词（jie=饥饿、xian=西安、tuan=图案）；jie→结果/节约
-// 这类前缀延伸词必须全部丢弃。
-func TestSingleSegmentKeepsOnlyFullMatchWords(t *testing.T) {
+// TestSingleSegmentNoWords：单段输入（jie/xian/tuan）拼音匹配候选里
+// 只允许单字，连写全匹配词（饥饿/西安/图案）也不能出现；显式分段后
+// （ji'e/xi'an/tu'an）词语才出现。
+func TestSingleSegmentNoWords(t *testing.T) {
 	d := mustCommonDict(t)
-	for _, tc := range []struct{ input, word, prefix string }{
-		{"jie", "饥饿", "结果"},
-		{"xian", "西安", "现在"},
-		{"tuan", "图案", "团队"},
+	for _, tc := range []struct{ input, split, word string }{
+		{"jie", "ji'e", "饥饿"},
+		{"xian", "xi'an", "西安"},
+		{"tuan", "tu'an", "图案"},
 	} {
 		s := NewSession(d, nil)
-		all := allCandidates(s, mustComp(s, tc.input))
-		foundWord, foundPrefix := false, false
-		for _, c := range all {
-			if c.Text == tc.word {
-				foundWord = true
-			}
-			if c.Text == tc.prefix {
-				foundPrefix = true
-			}
+		for _, c := range allCandidates(s, mustComp(s, tc.input)) {
 			if len([]rune(c.Text)) > 1 {
-				if strings.ReplaceAll(c.Syllables, "'", "") != tc.input {
-					t.Fatalf("%s 出现非全匹配词组「%s」[%s]（前缀延伸词应丢弃）",
-						tc.input, c.Text, c.Syllables)
-				}
+				t.Fatalf("%s 是单段输入，不应出现词语「%s」[%s]", tc.input, c.Text, c.Syllables)
 			}
 		}
-		if !foundWord {
-			t.Fatalf("%s 候选里应有全匹配词「%s」", tc.input, tc.word)
+		s2 := NewSession(d, nil)
+		found := false
+		for _, c := range allCandidates(s2, mustComp(s2, tc.split)) {
+			if c.Text == tc.word {
+				found = true
+			}
 		}
-		if foundPrefix {
-			t.Fatalf("%s 不应出现前缀延伸词「%s」", tc.input, tc.prefix)
+		if !found {
+			t.Fatalf("%s 应出现「%s」", tc.split, tc.word)
 		}
 	}
 }
 
-// TestAllSingleSegmentInputsSingleCharsOrFullMatchWords：遍历内置词库的全部
-// 单音节与 26 个单字母声母，确保任何单段输入都不会出现前缀延伸词：
-// 多字词只允许拼音连写完全等于输入（jie 的饥饿、xian 的西安、tuan 的图案）。
-func TestAllSingleSegmentInputsSingleCharsOrFullMatchWords(t *testing.T) {
+// TestAllSingleSegmentInputsOnlySingleChars：遍历内置词库的全部单音节与
+// 26 个单字母声母，确保任何单段输入的拼音匹配候选里只有单字——词语
+// （前缀延伸词和连写全匹配词）一律不允许。
+func TestAllSingleSegmentInputsOnlySingleChars(t *testing.T) {
 	d := mustCommonDict(t)
 	syls := map[string]bool{}
 	for _, e := range d.entries {
@@ -564,18 +562,13 @@ func TestAllSingleSegmentInputsSingleCharsOrFullMatchWords(t *testing.T) {
 	for syl := range syls {
 		s := NewSession(d, nil)
 		all := allCandidates(s, mustComp(s, syl))
-		singles := 0
-		for _, c := range all {
-			if len([]rune(c.Text)) == 1 {
-				singles++
-				continue
-			}
-			if strings.ReplaceAll(c.Syllables, "'", "") != syl {
-				t.Fatalf("单音节 %s 出现前缀延伸词「%s」[%s]", syl, c.Text, c.Syllables)
-			}
+		if len(all) == 0 {
+			t.Fatalf("单音节 %s 没有任何候选", syl)
 		}
-		if singles == 0 {
-			t.Fatalf("单音节 %s 没有任何单字候选", syl)
+		for _, c := range all {
+			if len([]rune(c.Text)) != 1 {
+				t.Fatalf("单音节 %s 出现词语「%s」[%s]", syl, c.Text, c.Syllables)
+			}
 		}
 	}
 	for r := 'a'; r <= 'z'; r++ {

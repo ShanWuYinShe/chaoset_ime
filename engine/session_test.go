@@ -21,7 +21,7 @@ func TestComposeBasic(t *testing.T) {
 	}
 }
 
-// xian 存在 [xian] 与 [xi an] 两种切分，候选应同时包含「先」与「西安」。
+// xian 作为单段输入只出单字「先」；「西安」只能由显式 xi'an 匹配。
 func TestComposeSegmentationAmbiguity(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	comp, _ := s.Input("xian")
@@ -34,8 +34,8 @@ func TestComposeSegmentationAmbiguity(t *testing.T) {
 			hasXian0 = true
 		}
 	}
-	if !hasXian || !hasXian0 {
-		t.Fatalf("xian 候选应同时包含 先/西安，得到 %+v", comp.Candidates)
+	if !hasXian || hasXian0 {
+		t.Fatalf("xian 单段输入应只含单字「先」、不含「西安」，得到 %+v", comp.Candidates)
 	}
 }
 

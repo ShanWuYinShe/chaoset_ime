@@ -52,9 +52,11 @@ func newIPCClient(t *testing.T, dictSrc string, opts ...Option) *Client {
 // PrevPage 便捷方法与 daemon dispatch 分支（此前 ipc 包覆盖率审计发现
 // 这四个客户端方法 0% 覆盖）。
 func TestClientNavigationMethods(t *testing.T) {
+	// 8 个不同的「ni」单字（单段输入只出单字），两页。
+	chars := []string{"你", "尼", "呢", "拟", "泥", "逆", "妮", "匿"}
 	var src strings.Builder
-	for i := 1; i <= 8; i++ {
-		fmt.Fprintf(&src, "你%d\tni\t%d\n", i, 90-i)
+	for i, ch := range chars {
+		fmt.Fprintf(&src, "%s\tni\t%d\n", ch, 90-i)
 	}
 	c := newIPCClient(t, src.String())
 

@@ -103,13 +103,15 @@ go build ./...                    # 秒级
     `maxInputSegs`、非用户按首选切分 `inputSegs`；简拼/混拼不判超段）→
     用户输入 > 默认字频（`FromUser`）→ `rank` → Score/词长/字典序。
   - 单音节输入 vs 多字词组仍按超段仲裁：`hao` 的「好」不能被学过的「好家伙」
-    挤掉；歧义切分（`tuan`/`tu'an`）下用户学过的词（图案）可排在默认单字
-    （团）前。
-  - **单段输入只出单字**：单音节全拼/单字母声母不再出前缀扩展词（`diao` 不出
-    「调用」、`jie` 不出「结果/节约」）；`zh`/`ch`/`sh` 是多字母简拼，仍出词。
-    唯一例外是连写完全等于输入的多字词（`jie`=饥饿、`xian`=西安、`tuan`=图案）；
-    其它多字词必须完整输入。回归：`TestSingleSegmentOnlySingleChars` /
-    `TestSingleSegmentKeepsOnlyFullMatchWords` / `TestTwoLetterInitialKeepsWords`。
+    挤掉；显式分段（`tu'an`）下用户学过的词（图案）可排在默认单字（图）前；
+    单段 `tuan` 只出单字，不出现「图案」。
+  - **单段输入只出单字**：单音节全拼/单字母声母的拼音匹配层只允许单字，
+    不出现任何词语（前缀扩展词 `diao`→「调用」、`jie`→「结果/节约」；
+    连写全匹配词 `jie`→「饥饿」、`xian`→「西安」、`tuan`→「图案」都不出）；
+    要打词用显式分段（`ji'e`/`xi'an`/`tu'an`）或完整多音节输入，联想另算。
+    `zh`/`ch`/`sh` 是多字母简拼，仍出词。回归：
+    `TestSingleSegmentOnlySingleChars` / `TestSingleSegmentNoWords` /
+    `TestAllSingleSegmentInputsOnlySingleChars` / `TestTwoLetterInitialKeepsWords`。
   - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
     `engine/common_dict_test.go`、`engine/typo_test.go`、
     `engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。

@@ -2023,17 +2023,16 @@ func (s *Session) compose() Composition {
 		}
 	}
 
-	// 单段输入只出单字候选：单音节全拼（diao/yi）与单段声母（d/y）不再用
-	// 「前缀扩展词」（调用 diao'yong、调查 diao'cha）占位——用户明确要求
-	// 「输入单字就匹配单字」。例外：多字词的**连写正好等于输入**时保留
-	// （xian = xi'an 的「西安」、tuan = tu'an 的「图案」），这类是全拼精确
-	// 匹配，不是前缀延伸；其用户学习优先级继续由排序键保证。
+	// 单段输入只出单字候选：单音节全拼（diao/yi/jie）与单段声母（d/y）
+	// 不再出任何词语——既不是前缀扩展词（jie 的「结果/节约」），也不是
+	// 连写恰好等于输入的全匹配词（xian 的「西安」、jie 的「饥饿」）。
+	// 用户明确：把拼音当单字拼音时，拼音匹配候选里不能出现词语；词语只
+	// 能通过显式分段（xi'an/ji'e）或完整多音节输入匹配，联想另算。
 	if len(tokenPatterns) > 0 && len(tokenPatterns[0]) == 1 &&
 		(tokenPatterns[0][0].IsExact || len(tokenPatterns[0][0].Text) == 1) {
 		// 单字母声母（d/y）才是「单段输入」；sh/ch/zh 是多字母简拼，
 		// 继续按词候选处理，不做单字过滤。
 		tok := tokenPatterns[0][0]
-		inputJoined := strings.ReplaceAll(s.input, "'", "")
 		// 单音节全拼只保留「整个输入就是该音节」的单字；回退/另一切分产生的
 		// 其他音节单字（diao 的 di 声母字「第」）也不应混进来。模糊音/别名
 		// 输入的候选音节按 canonical + fuzzyVariants 归一后比较。
@@ -2046,12 +2045,7 @@ func (s *Session) compose() Composition {
 		for _, it := range items {
 			text := it.cand.Text
 			if len([]rune(text)) > 1 {
-				// 多字词只保留「拼音连写正好等于本输入」的精确匹配：jie 的
-				// 饥饿（ji'e）、xian 的西安（xi'an）、tuan 的图案（tu'an）。
-				// jie → 结果/节约 这类前缀延伸词全部丢弃。
-				if strings.ReplaceAll(it.cand.Syllables, "'", "") == inputJoined {
-					kept = append(kept, it)
-				}
+				// 单段输入的拼音匹配层只允许单字：词语全部丢弃。
 				continue
 			}
 			if !tok.IsExact {

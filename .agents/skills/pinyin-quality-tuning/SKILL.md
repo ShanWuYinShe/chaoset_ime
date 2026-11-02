@@ -65,13 +65,14 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 错拼输入（`typoSuspicious`）不追加——纠错候选才是主路径。
 
 **单段输入只出单字**：单音节全拼（`diao`/`zhong`/`jie`）与单字母声母
-（`d`/`y`）不保留前缀扩展词（`diao` 的「调用」、`jie` 的「结果/节约」），
-候选=该音节/声母的真实单字；`zh`/`ch`/`sh` 是多字母简拼，仍出词候选。
-唯一例外是**连写完全等于输入**的多字词（`jie`=饥饿、`xian`=西安、
-`tuan`=图案），保留；其它多字词全部要求完整输入。回归：
+（`d`/`y`）的拼音匹配层**只允许单字**，不出现任何词语：前缀扩展词
+（`diao` 的「调用」、`jie` 的「结果/节约」）和连写全匹配词（`jie` 的
+「饥饿」、`xian` 的「西安」、`tuan` 的「图案」）都不出。要打词用显式分段
+（`ji'e`/`xi'an`/`tu'an`）或完整多音节输入；联想是上屏后的独立路径。
+`zh`/`ch`/`sh` 是多字母简拼，仍出词候选。回归：
 `engine/common_dict_test.go` 的 `TestSingleSegmentOnlySingleChars` /
-`TestSingleSegmentKeepsOnlyFullMatchWords`、`engine/initials_test.go` 的
-`TestTwoLetterInitialKeepsWords`。
+`TestSingleSegmentNoWords` / `TestAllSingleSegmentInputsOnlySingleChars`、
+`engine/initials_test.go` 的 `TestTwoLetterInitialKeepsWords`。
 
 **两个 exact 上限不要混**：单音节全拼/单段声母（y/j/zh…）/单字兜底用
 `singleSyllableExactLimit`=300（同音字全量，yi 181 等）；**多段**简拼/混拼的
