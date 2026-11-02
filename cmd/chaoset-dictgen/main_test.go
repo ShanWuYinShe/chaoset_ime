@@ -355,7 +355,7 @@ func TestSelectSingleReadings(t *testing.T) {
 	}
 }
 
-func TestRefreshSinglesPreservesFreqsAndDropsBogusReadings(t *testing.T) {
+func TestRefreshSinglesUsesShareWithoutFloor(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.tsv")
 	if err := os.WriteFile(base, []byte(""+
@@ -375,7 +375,15 @@ func TestRefreshSinglesPreservesFreqsAndDropsBogusReadings(t *testing.T) {
 	if err := os.WriteFile(phrase, []byte(""+
 		"刀: dāo\n"+
 		"我的: wǒ de\n"+
+		"你的: nǐ de\n"+
 		"目的: mù dì\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	charfreq := filepath.Join(dir, "charfreq.csv")
+	if err := os.WriteFile(charfreq, []byte(""+
+		"frequency_rank,character\n"+
+		"1,的\n"+
+		"2,刀\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	extra := filepath.Join(dir, "extra.tsv")
@@ -387,20 +395,22 @@ func TestRefreshSinglesPreservesFreqsAndDropsBogusReadings(t *testing.T) {
 		basePath:     base,
 		pinyinPath:   phrase,
 		singlePath:   single,
+		charfreqPath: charfreq,
 		extraPath:    extra,
 		outPath:      out,
-		readingFloor: 0.3,
 		readingShare: 0.01,
 	}
 	if err := runRefreshSingles(o); err != nil {
 		t.Fatalf("单字刷新失败: %v", err)
 	}
 	d := parseDict(t, out)
-	if got := d.entries["刀"]; len(got) != 1 || got["dao"] != 25 {
-		t.Fatalf("刀的 diao 误收读音应被丢弃、dao 词频保留 25，实际 %v", got)
+	// 刀字频 rank2/共2字 → 1；dao 占 100% → 1；diao 零出现被丢弃。
+	if got := d.entries["刀"]; len(got) != 1 || got["dao"] != 1 {
+		t.Fatalf("刀的 diao 误收读音应被丢弃、dao 词频=字频×占比=1，实际 %v", got)
 	}
-	if got := d.entries["的"]; got["de"] != 89 || got["di"] != 39 {
-		t.Fatalf("保留读音词频不应变化，实际 %v", got)
+	// 的字频 rank1 → 99；de 2/3 → 66，di 1/3 → 33（无 readingFloor）。
+	if got := d.entries["的"]; got["de"] != 66 || got["di"] != 33 {
+		t.Fatalf("的读音词频应为字频×占比（66/33，无下限），实际 %v", got)
 	}
 	if got := d.entries["屌"]; got["diao"] != manualFreq(5000) {
 		t.Fatalf("补充字屌应按手工词频入库（%d），实际 %v", manualFreq(5000), got)

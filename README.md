@@ -564,10 +564,10 @@ TSV，每行三列（`#` 开头为注释）：
 **单字**：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名；
 多音字**首读音必留**，其余读音只有在 large_pinyin 词条里占比 ≥ 1%
 （`-readingshare`，默认 0.01）时才保留——pinyin-data 的历史多音里混有
-「刀 diāo」「跳 diāo」这类词条中零出现的误收读音，旧逻辑按 `-readingfloor`
-给 30% 基础词频，导致生僻读音混进常用字候选。词频仍按「该读音在
-large_pinyin 词条拼音里的占比」折算（`-readingfloor` 下限 0.3，由固定词表
-扫描定型），口语助词（吗/呢/吧）小幅补偿；输入 lue 时「略」排在「率」前。
+「刀 diāo」「跳 diāo」这类词条中零出现的误收读音。单字词频严格按
+**「字频 × 该读音在 large_pinyin 词条里的占比」**折算，不设任何下限：
+占比 1% 的读音只有字频的 1%（≤1 分），不会靠固定下限抬进高优先候选。
+口语助词（吗/呢/吧）小幅补偿；输入 lue 时「略」排在「率」前。
 通用规范汉字表未收但口语常用的字（如「屌」「囧」）由 `data/dict_extra.tsv`
 补充，按手工词频进入高优先段。
 
@@ -629,15 +629,17 @@ large_pinyin 词条拼音里的占比」折算（`-readingfloor` 下限 0.3，�
 同时作为词频源）即可，其余参数相同。
 
 单字读音质量刷新（没有完整生成源时）：以现有词库为基线，保留全部多字词，
-只按 pinyin-data 读音 + large_pinyin 占比重算单字读音（丢弃零/极低占比读音），
-并追加 `data/dict_extra.tsv` / `dict_hot.tsv` 里基线还没有的新词：
+只按 pinyin-data 读音 + large_pinyin 占比筛选单字读音，并按
+「Jun Da 字频 × 读音占比（无下限）」重算词频，追加 `data/dict_extra.tsv` /
+`dict_hot.tsv` 里基线还没有的新词：
 
     go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \
       -pinyin large_pinyin.txt -single pinyin.txt \
+      -charfreq hanzi_db.csv \
       -extra data/dict_extra.tsv -hot data/dict_hot.tsv \
       -o data/dict_common.tsv
 
-刷新只做「删误收读音 + 补新词」，保留读音的词频沿用基线，避免整库单字词频漂移。
+刷新只删除误收/极低占比读音并重算单字词频，多字词原样保留（候选质量扫描口径不变）。
 
 flag 说明：
 
@@ -660,7 +662,8 @@ flag 说明：
 | `-highfreqtop` | 高频用法取前 N 词（默认 20000） | 否 |
 | `-highfreqconf` | 高频词只用字读音统计补拼音时的最低置信度（默认 0.9） | 否 |
 | `-freqgamma` | 词频归一化幂次（默认 1.15，由固定词表扫描定型） | 否 |
-| `-readingfloor` | 单字多音字按读音占比折算的系数下限（默认 0.3，由固定词表扫描定型） | 否 |
+| `-readingshare` | 单字次读音保留门槛（默认 0.01；低于占比的读音丢弃，首读音必留） | 否 |
+| `-base` | 单字刷新模式：以该词库为基线，只重算单字、保留多字词 | 否 |
 | `-o` | 输出 TSV | 是 |
 
 生成过程约 2 秒；同一输入重复运行逐字节一致（`TestGenIdempotent` 兜底）。

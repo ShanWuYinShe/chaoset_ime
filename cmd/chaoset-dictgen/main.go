@@ -91,7 +91,6 @@ type options struct {
 
 	highfreqTop  int
 	highfreqConf float64
-	readingFloor float64
 	readingShare float64
 	freqGamma    float64
 }
@@ -145,7 +144,6 @@ func main() {
 	flag.IntVar(&o.highfreqTop, "highfreqtop", 20000, "词频源里按词频取前 N 个词进入词表（高频用法）")
 	flag.Float64Var(&o.highfreqConf, "highfreqconf", 0.9, "高频用法词只用字读音统计补拼音时的最低置信度（低于此值不收录）")
 	flag.Float64Var(&o.freqGamma, "freqgamma", 1.15, "词频归一化后的幂次（>1 拉开高频差距；默认 1.15 由固定词表扫描定型，见 README）")
-	flag.Float64Var(&o.readingFloor, "readingfloor", 0.3, "单字多音字读音占比折算的系数下限（share=1 时仍为满词频；0.3 由固定词表扫描定型）")
 	flag.Float64Var(&o.readingShare, "readingshare", minReadingShareDefault, "单字次读音保留门槛（占该字 large_pinyin 词条读音的比例，低于此值丢弃；首读音始终保留）")
 	flag.StringVar(&o.basePath, "base", "", "单字刷新模式：以该词库为基线，保留多字词、重算单字读音与词频；不填则做完整生成")
 	flag.Parse()
@@ -174,11 +172,8 @@ func validateOptions(o options) error {
 		return fmt.Errorf("-readingshare 必须在 0..1 之间")
 	}
 	if o.basePath != "" {
-		if o.pinyinPath == "" || o.singlePath == "" {
-			return fmt.Errorf("单字刷新模式需要 -pinyin / -single（读音数据）")
-		}
-		if o.readingFloor < 0 || o.readingFloor > 1 {
-			return fmt.Errorf("-readingfloor 必须在 0..1 之间")
+		if o.pinyinPath == "" || o.singlePath == "" || o.charfreqPath == "" {
+			return fmt.Errorf("单字刷新模式需要 -pinyin / -single / -charfreq")
 		}
 		return nil
 	}
@@ -211,9 +206,6 @@ func validateOptions(o options) error {
 	}
 	if o.highfreqConf < 0 || o.highfreqConf > 1 {
 		return fmt.Errorf("-highfreqconf 必须在 0..1 之间")
-	}
-	if o.readingFloor < 0 || o.readingFloor > 1 {
-		return fmt.Errorf("-readingfloor 必须在 0..1 之间")
 	}
 	return nil
 }
@@ -466,7 +458,9 @@ func run(o options) error {
 			if total > 0 {
 				share = float64(counts[syl]) / float64(total)
 			}
-			fr := int(math.Round(float64(base) * (o.readingFloor + (1-o.readingFloor)*share)))
+			// 单字读音词频严格按占比线性折算，不设下限：占比 1% 的读音
+			// 只有字频的 1%，不会靠 readingFloor 抬到 30% 混进高优先候选。
+			fr := int(math.Round(float64(base) * share))
 			if fr < 1 {
 				fr = 1
 			}
@@ -1463,6 +1457,33 @@ func runRefreshSingles(o options) error {
 	if err != nil {
 		return err
 	}
+	charRank, rankTotal, err := parseCharFrequency(o.charfreqPath)
+	if err != nil {
+		return err
+	}
+
+	// 手工补充表：单字词的权重用于覆盖字频（屌/囧不在通用规范汉字表与
+	// Jun Da 字频表里），多字词在最后追加到基线尚未包含的位置。
+	var manualRows []manualRow
+	manualSingles := make(map[rune]int)
+	for _, path := range []string{o.extraPath, o.hotPath} {
+		if path == "" {
+			continue
+		}
+		rows, err := parseManualTable(path)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			manualRows = append(manualRows, r)
+			if len([]rune(r.word)) == 1 {
+				ch := []rune(r.word)[0]
+				if fr := manualFreq(r.weight); fr > manualSingles[ch] {
+					manualSingles[ch] = fr
+				}
+			}
+		}
+	}
 
 	entries := append([]entry(nil), baseMulti...)
 	chars := make([]rune, 0, len(baseSingles))
@@ -1473,12 +1494,6 @@ func runRefreshSingles(o options) error {
 	dropped := 0
 	for _, ch := range chars {
 		cur := baseSingles[ch]
-		maxCur := 0
-		for _, f := range cur {
-			if f > maxCur {
-				maxCur = f
-			}
-		}
 		readings := single[ch]
 		counts := charStats[ch]
 		kept := selectSingleReadings(readings, counts, o.readingShare)
@@ -1489,17 +1504,51 @@ func runRefreshSingles(o options) error {
 			}
 			continue
 		}
-		// 保留读音沿用基线词频（基线已按读音占比折算过）；刷新只做
-		// 「丢弃生僻/误收读音」，不重算词频，避免整库单字相对词频漂移。
-		for _, syl := range kept {
-			fr := cur[syl]
-			if fr <= 0 {
-				fr = maxCur
+
+		base := 0
+		if fr, ok := manualSingles[ch]; ok {
+			base = fr
+		} else if rank, ok := charRank[ch]; ok {
+			base = charRankToFreq(rank, rankTotal)
+			if isOralParticle(ch) {
+				base += oralParticleBoost
+				if base > 99 {
+					base = 99
+				}
+			}
+		}
+		if base <= 0 {
+			// 字频表未收录的字（如手工补充的方言/网络字）：沿用基线词频。
+			for _, syl := range kept {
+				fr := cur[syl]
+				if fr <= 0 {
+					fr = 1
+				}
+				entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
+			}
+		} else {
+			total := 0
+			for _, n := range counts {
+				total += n
+			}
+			for i, syl := range kept {
+				share := 1.0
+				if total > 0 {
+					share = float64(counts[syl]) / float64(total)
+				} else if i > 0 {
+					share = 0
+				}
+				// 词频 = 字频 × 读音占比，不设下限：生僻读音只有占比对应的
+				// 词频，不会靠固定下限抬到可用区间。
+				fr := int(math.Round(float64(base) * share))
 				if fr < 1 {
 					fr = 1
 				}
+				if fr > base {
+					fr = base
+				}
+				entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
 			}
-			entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
 		}
 		if len(kept) < len(cur) {
 			dropped += len(cur) - len(kept)
@@ -1507,23 +1556,14 @@ func runRefreshSingles(o options) error {
 	}
 
 	manualAdded := 0
-	for _, path := range []string{o.extraPath, o.hotPath} {
-		if path == "" {
+	for _, r := range manualRows {
+		key := r.word + "\x00" + strings.Join(r.sylls, " ")
+		if existing[key] {
 			continue
 		}
-		rows, err := parseManualTable(path)
-		if err != nil {
-			return err
-		}
-		for _, r := range rows {
-			key := r.word + "\x00" + strings.Join(r.sylls, " ")
-			if existing[key] {
-				continue
-			}
-			entries = append(entries, entry{word: r.word, sylls: append([]string(nil), r.sylls...), freq: manualFreq(r.weight)})
-			existing[key] = true
-			manualAdded++
-		}
+		entries = append(entries, entry{word: r.word, sylls: append([]string(nil), r.sylls...), freq: manualFreq(r.weight)})
+		existing[key] = true
+		manualAdded++
 	}
 
 	sortEntries(entries)
@@ -1643,13 +1683,13 @@ func writeTSV(path string, entries []entry, o options) error {
 		header = append(header,
 			"#",
 			"# 本次为单字读音质量刷新（-base）：多字词沿基线原样保留；单字读音按",
-			"#   pinyin-data 读音 + large_pinyin 占比重新筛选/定词频：首读音必留，",
-			fmt.Sprintf("#   其余读音占比 < %g 的丢弃；data/dict_extra.tsv / dict_hot.tsv", o.readingShare),
-			"#   里基线尚未包含的新词按手工词频追加。",
+			"#   pinyin-data + large_pinyin 占比重新筛选：首读音必留，其余读音占比",
+			fmt.Sprintf("#   < %g 的丢弃；词频 = Jun Da 字频 × 读音占比（无下限）；", o.readingShare),
+			"#   data/dict_extra.tsv / dict_hot.tsv 里基线尚未包含的新词按手工词频追加。",
 			"#",
 			"# 刷新命令（在仓库根目录）：",
 			"#   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \\",
-			"#     -pinyin large_pinyin.txt -single pinyin.txt \\",
+			"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
 			"#     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv",
 		)
 	} else {

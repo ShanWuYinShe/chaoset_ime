@@ -22,18 +22,18 @@
 #   kHanyuPinlu/kFrequency（Unicode License）或取得授权。
 #
 # 本次为单字读音质量刷新（-base）：多字词沿基线原样保留；单字读音按
-#   pinyin-data 读音 + large_pinyin 占比重新筛选/定词频：首读音必留，
-#   其余读音占比 < 0.01 的丢弃；data/dict_extra.tsv / dict_hot.tsv
-#   里基线尚未包含的新词按手工词频追加。
+#   pinyin-data + large_pinyin 占比重新筛选：首读音必留，其余读音占比
+#   < 0.01 的丢弃；词频 = Jun Da 字频 × 读音占比（无下限）；
+#   data/dict_extra.tsv / dict_hot.tsv 里基线尚未包含的新词按手工词频追加。
 #
 # 刷新命令（在仓库根目录）：
 #   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \
-#     -pinyin large_pinyin.txt -single pinyin.txt \
+#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \
 #     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv
 # 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。
 一	yi	92
-的	de	89
 是	shi	87
+的	de	85
 不	bu	84
 一个	yi ge	83
 我们	wo men	82
@@ -186,7 +186,6 @@
 关于	guan yu	67
 内容	nei rong	67
 台湾	tai wan	67
-和	he	67
 国	guo	67
 大学	da xue	67
 大家	da jia	67
@@ -224,6 +223,7 @@
 到	dao	66
 单位	dan wei	66
 参加	can jia	66
+和	he	66
 国内	guo nei	66
 委员会	wei yuan hui	66
 完全	wan quan	66
@@ -294,7 +294,6 @@
 视频	shi pin	65
 认识	ren shi	65
 设计	she ji	65
-说	shuo	65
 资源	zi yuan	65
 过程	guo cheng	65
 集团	ji tuan	65
@@ -358,6 +357,7 @@
 要	yao	64
 规定	gui ding	64
 解决	jie jue	64
+说	shuo	64
 调查	diao cha	64
 负责	fu ze	64
 超过	chao guo	64
@@ -369,14 +369,12 @@
 中中	zhong zhong	63
 中年	zhong nian	63
 主席	zhu xi	63
-了	le	63
 人中	ren zhong	63
 人年	ren nian	63
 以上	yi shang	63
 以下	yi xia	63
 以来	yi lai	63
 价值	jia zhi	63
-会	hui	63
 具有	ju you	63
 几个	ji ge	63
 利用	li yong	63
@@ -442,6 +440,7 @@
 人物	ren wu	62
 以前	yi qian	62
 价格	jia ge	62
+会	hui	62
 你	ni	62
 俄罗斯	e luo si	62
 儿子	er zi	62
@@ -702,7 +701,6 @@
 还都	hai dou	60
 这等	zhe deng	60
 进一步	jin yi bu	60
-那	na	60
 那样	na yang	60
 采取	cai qu	60
 重新	chong xin	60
@@ -847,6 +845,7 @@
 还来	hai lai	59
 逐渐	zhu jian	59
 速度	su du	59
+那	na	59
 部长	bu zhang	59
 都将	dou jiang	59
 金融	jin rong	59
@@ -1247,7 +1246,6 @@
 囧	jiong	56
 国民	guo min	56
 国民党	guo min dang	56
-地	de	56
 培养	pei yang	56
 培训	pei xun	56
 境内	jing nei	56
@@ -1401,6 +1399,7 @@
 临时	lin shi	55
 主动	zhu dong	55
 之外	zhi wai	55
+了	le	55
 了当	liao dang	55
 争议	zheng yi	55
 人大	ren da	55
@@ -2064,7 +2063,6 @@
 苹果手机	ping guo shou ji	53
 荷兰	he lan	53
 落实	luo shi	53
-行	xing	53
 街道	jie dao	53
 表明	biao ming	53
 袭击	xi ji	53
@@ -2512,6 +2510,7 @@
 土耳其	tu er qi	51
 在家	zai jia	51
 在线教育	zai xian jiao yu	51
+地	de	51
 地上	di shang	51
 地下	di xia	51
 地事	di shi	51
@@ -2549,7 +2548,6 @@
 如中	ru zhong	51
 如是	ru shi	51
 婴儿	ying er	51
-定	ding	51
 宝宝	bao bao	51
 客服	ke fu	51
 客观	ke guan	51
@@ -2740,6 +2738,7 @@
 药品	yao pin	51
 药物	yao wu	51
 落后	luo hou	51
+行	xing	51
 街头	jie tou	51
 被捕	bei bu	51
 被迫	bei po	51
@@ -2950,6 +2949,7 @@
 女神	nv shen	50
 好事	hao shi	50
 好多	hao duo	50
+定	ding	50
 宝贝	bao bei	50
 实	shi	50
 实体	shi ti	50
@@ -3910,7 +3910,6 @@
 工	gong	48
 巩固	gong gu	48
 差距	cha ju	48
-已	yi	48
 市中	shi zhong	48
 市人	shi ren	48
 市会	shi hui	48
@@ -4041,7 +4040,6 @@
 欧美	ou mei	48
 欲望	yu wang	48
 正时	zheng shi	48
-此	ci	48
 死刑	si xing	48
 死者	si zhe	48
 殖民	zhi min	48
@@ -4054,7 +4052,6 @@
 气象	qi xiang	48
 水果	shui guo	48
 永久	yong jiu	48
-没	mei	48
 没关系	mei guan xi	48
 没干	mei gan	48
 没用	mei yong	48
@@ -4560,6 +4557,7 @@
 属性	shu xing	47
 州长	zhou zhang	47
 工作者	gong zuo zhe	47
+已	yi	47
 希特勒	xi te le	47
 带走	dai zou	47
 常用	chang yong	47
@@ -4701,6 +4699,7 @@
 欺骗	qi pian	47
 正	zheng	47
 正长	zheng chang	47
+此	ci	47
 此刻	ci ke	47
 此前	ci qian	47
 此家	ci jia	47
@@ -5409,6 +5408,7 @@
 氛围	fen wei	46
 水人	shui ren	46
 水泥	shui ni	46
+没	mei	46
 没办法	mei ban fa	46
 法制	fa zhi	46
 法将	fa jiang	46
@@ -5473,7 +5473,6 @@
 真人	zhen ren	46
 真心	zhen xin	46
 眼光	yan guang	46
-着	zhe	46
 短暂	duan zan	46
 研究员	yan jiu yuan	46
 破防	po fang	46
@@ -7585,7 +7584,6 @@
 书市	shu shi	43
 买手	mai shou	43
 买水	mai shui	43
-了	liao	43
 事宜	shi yi	43
 二台	er tai	43
 二女	er nv	43
@@ -8182,7 +8180,6 @@
 推迟	tui chi	43
 推销	tui xiao	43
 掩饰	yan shi	43
-提	ti	43
 提多	ti duo	43
 提说	ti shuo	43
 插入	cha ru	43
@@ -8613,7 +8610,6 @@
 行走	xing zou	43
 表决	biao jue	43
 表态	biao tai	43
-被	bei	43
 被面	bei mian	43
 装修	zhuang xiu	43
 西内	xi nei	43
@@ -8626,7 +8622,6 @@
 规定性	gui ding xing	43
 视察	shi cha	43
 视角	shi jiao	43
-解	jie	43
 解体	jie ti	43
 解开	jie kai	43
 解析	jie xi	43
@@ -9184,7 +9179,6 @@
 幸存者	xing cun zhe	42
 幼儿	you er	42
 应用科学	ying yong ke xue	42
-度	du	42
 延期	yan qi	42
 建制	jian zhi	42
 建材	jian cai	42
@@ -9276,6 +9270,7 @@
 推理	tui li	42
 推送	tui song	42
 掩护	yan hu	42
+提	ti	42
 揭示	jie shi	42
 揭秘	jie mi	42
 搜寻	sou xun	42
@@ -9549,6 +9544,7 @@
 见报	jian bao	42
 见笑	jian xiao	42
 视线	shi xian	42
+解	jie	42
 解决问题	jie jue wen ti	42
 解脱	jie tuo	42
 解说	jie shuo	42
@@ -9626,7 +9622,6 @@
 错爱	cuo ai	42
 错话	cuo hua	42
 镇中	zhen zhong	42
-长	chang	42
 门开	men kai	42
 门者	men zhe	42
 门道	men dao	42
@@ -9710,7 +9705,6 @@
 临近	lin jin	41
 主人公	zhu ren gong	41
 主次	zhu ci	41
-么	me	41
 乐意	le yi	41
 乖乖	guai guai	41
 乡约	xiang yue	41
@@ -10030,6 +10024,7 @@
 序列	xu lie	41
 底部	di bu	41
 店铺	dian pu	41
+度	du	41
 座谈会	zuo tan hui	41
 建筑师	jian zhu shi	41
 开战	kai zhan	41
@@ -10387,6 +10382,7 @@
 表述	biao shu	41
 衬衫	chen shan	41
 衰退	shuai tui	41
+被	bei	41
 被单	bei dan	41
 要不得	yao bu de	41
 要死	yao si	41
@@ -10457,7 +10453,6 @@
 遣返	qian fan	41
 邻国	lin guo	41
 部件	bu jian	41
-都	dou	41
 里程	li cheng	41
 重名	zhong ming	41
 重听	zhong ting	41
@@ -10585,7 +10580,6 @@
 亮点	liang dian	40
 人称	ren cheng	40
 人马	ren ma	40
-什	shi	40
 仆人	pu ren	40
 介绍信	jie shao xin	40
 代号	dai hao	40
@@ -11155,7 +11149,6 @@
 男式	nan shi	40
 界限	jie xian	40
 百货	bai huo	40
-的	di	40
 盗窃	dao qie	40
 直	zhi	40
 相类	xiang lei	40
@@ -11165,6 +11158,7 @@
 看作	kan zuo	40
 真传	zhen chuan	40
 真空	zhen kong	40
+着	zhe	40
 着力	zhuo li	40
 着急	zhao ji	40
 着重	zhuo zhong	40
@@ -11321,7 +11315,6 @@
 过多	guo duo	40
 过错	guo cuo	40
 运河	yun he	40
-还	hai	40
 还口	huan kou	40
 进修	jin xiu	40
 进出口	jin chu kou	40
@@ -11352,6 +11345,7 @@
 金字塔	jin zi ta	40
 错车	cuo che	40
 镇反	zhen fan	40
+长	chang	40
 长卷	chang juan	40
 长期以来	chang qi yi lai	40
 长街	chang jie	40
@@ -12502,7 +12496,6 @@
 与众不同	yu zhong bu tong	38
 丑恶	chou e	38
 专长	zhuan chang	38
-且	qie	38
 业大	ye da	38
 东周	dong zhou	38
 东边	dong bian	38
@@ -12550,6 +12543,7 @@
 人行道	ren xing dao	38
 人鱼	ren yu	38
 亿万	yi wan	38
+什	shi	38
 介意	jie yi	38
 介质	jie zhi	38
 从实	cong shi	38
@@ -13322,7 +13316,6 @@
 舍不得	she bu de	38
 舞会	wu hui	38
 艰辛	jian xin	38
-色	se	38
 艺术片	yi shu pian	38
 艾窝窝	ai wo wo	38
 节制	jie zhi	38
@@ -13463,7 +13456,6 @@
 部族	bu zu	38
 酝酿	yun niang	38
 里弄	li long	38
-重	zhong	38
 重型	zhong xing	38
 重头	chong tou	38
 重奖	zhong jiang	38
@@ -13556,6 +13548,7 @@
 不爽	bu shuang	37
 不用说	bu yong shuo	37
 不能不	bu neng bu	37
+且	qie	37
 世家	shi jia	37
 丘陵	qiu ling	37
 业经	ye jing	37
@@ -13641,7 +13634,6 @@
 侄子	zhi zi	37
 供应点	gong ying dian	37
 侵袭	qin xi	37
-便	bian	37
 便血	bian xie	37
 保护色	bao hu se	37
 保有	bao you	37
@@ -14654,6 +14646,7 @@
 良性	liang xing	37
 良知	liang zhi	37
 艰巨	jian ju	37
+色	se	37
 色带	se dai	37
 艺术照	yi shu zhao	37
 节令	jie ling	37
@@ -14721,7 +14714,6 @@
 许久	xu jiu	37
 设卡	she ka	37
 评论员	ping lun yuan	37
-识	shi	37
 识字	shi zi	37
 译文	yi wen	37
 语体	yu ti	37
@@ -15058,6 +15050,7 @@
 依从	yi cong	36
 依附	yi fu	36
 侦察机	zhen cha ji	36
+便	bian	36
 便饭	bian fan	36
 保人	bao ren	36
 保证金	bao zheng jin	36
@@ -15408,7 +15401,6 @@
 常数	chang shu	36
 常量	chang liang	36
 幕僚	mu liao	36
-干	gan	36
 干亲	gan qin	36
 干巴	gan ba	36
 干饭	gan fan	36
@@ -15902,7 +15894,6 @@
 细小	xi xiao	36
 终将	zhong jiang	36
 经销商	jing xiao shang	36
-给	gei	36
 给养	ji yang	36
 绝后	jue hou	36
 统计表	tong ji biao	36
@@ -16035,6 +16026,7 @@
 诀窍	jue qiao	36
 证	zheng	36
 评比	ping bi	36
+识	shi	36
 译本	yi ben	36
 试探	shi tan	36
 试种	shi zhong	36
@@ -16159,6 +16151,7 @@
 避孕套	bi yun tao	36
 邮编	you bian	36
 郑重	zheng zhong	36
+都	dou	36
 配乐	pei yue	36
 酒水	jiu shui	36
 重工业	zhong gong ye	36
@@ -16338,6 +16331,7 @@
 主权国	zhu quan guo	35
 主课	zhu ke	35
 主题歌	zhu ti ge	35
+么	me	35
 义师	yi shi	35
 义项	yi xiang	35
 乐师	yue shi	35
@@ -16395,7 +16389,6 @@
 伙计	huo ji	35
 会客	hui ke	35
 伟人	wei ren	35
-传	chuan	35
 传世	chuan shi	35
 传唤	chuan huan	35
 传情	chuan qing	35
@@ -16584,7 +16577,6 @@
 华	hua	35
 华山	hua shan	35
 协和	xie he	35
-单	dan	35
 单向	dan xiang	35
 单打	dan da	35
 卖唱	mai chang	35
@@ -16892,6 +16884,7 @@
 布面	bu mian	35
 帮手	bang shou	35
 常情	chang qing	35
+干	gan	35
 干冷	gan leng	35
 干支	gan zhi	35
 干洗	gan xi	35
@@ -17647,7 +17640,6 @@
 观察室	guan cha shi	35
 规程	gui cheng	35
 视而不见	shi er bu jian	35
-觉	jue	35
 解码	jie ma	35
 言情	yan qing	35
 言辞	yan ci	35
@@ -17762,6 +17754,7 @@
 近况	jin kuang	35
 近古	jin gu	35
 近海	jin hai	35
+还	hai	35
 进化论	jin hua lun	35
 进门	jin men	35
 远亲	yuan qin	35
@@ -17824,6 +17817,7 @@
 酿酒	niang jiu	35
 醒目	xing mu	35
 里边	li bian	35
+重	zhong	35
 重利	zhong li	35
 重托	zhong tuo	35
 重温	chong wen	35
@@ -18035,6 +18029,7 @@
 休养	xiu yang	34
 休息室	xiu xi shi	34
 会展	hui zhan	34
+传	chuan	34
 传人	chuan ren	34
 传代	chuan dai	34
 传唱	chuan chang	34
@@ -18238,6 +18233,7 @@
 升学	sheng xue	34
 半票	ban piao	34
 半载	ban zai	34
+单	dan	34
 单利	dan li	34
 单方面	dan fang mian	34
 单行	dan xing	34
@@ -19471,6 +19467,7 @@
 覆盖率	fu gai lv	34
 见效	jian xiao	34
 视	shi	34
+觉	jue	34
 解手	jie shou	34
 解数	xie shu	34
 解送	jie song	34
@@ -20981,6 +20978,7 @@
 绑带	bang dai	33
 结交	jie jiao	33
 结语	jie yu	33
+给	gei	33
 绝交	jue jiao	33
 绝境	jue jing	33
 绝收	jue shou	33
@@ -23055,7 +23053,6 @@
 营业员	ying ye yuan	32
 营区	ying qu	32
 营建	ying jian	32
-落	luo	32
 落山	luo shan	32
 落空	luo kong	32
 落网	luo wang	32
@@ -24015,7 +24012,6 @@
 土语	tu yu	31
 圣旨	sheng zhi	31
 圣诞树	sheng dan shu	31
-地	di	31
 地价	di jia	31
 地牢	di lao	31
 地皮	di pi	31
@@ -24617,7 +24613,6 @@
 暴发	bao fa	31
 暴虐	bao nve	31
 曲艺	qu yi	31
-曾	zeng	31
 替工	ti gong	31
 月终	yue zhong	31
 月食	yue shi	31
@@ -25057,7 +25052,6 @@
 私奔	si ben	31
 秘方	mi fang	31
 积压	ji ya	31
-称	cheng	31
 称道	cheng dao	31
 移师	yi shi	31
 稀疏	xi shu	31
@@ -25288,6 +25282,7 @@
 萤火虫	ying huo chong	31
 营盘	ying pan	31
 营长	ying zhang	31
+落	luo	31
 落座	luo zuo	31
 落得	luo de	31
 落款	luo kuan	31
@@ -25588,7 +25583,6 @@
 阴部	yin bu	31
 阵子	zhen zi	31
 阻隔	zu ge	31
-阿	a	31
 阿弥陀佛	e mi tuo fo	31
 附中	fu zhong	31
 附则	fu ze	31
@@ -25783,7 +25777,6 @@
 举步	ju bu	30
 乃至于	nai zhi yu	30
 久	jiu	30
-么	mo	30
 义务兵	yi wu bing	30
 义务工	yi wu gong	30
 义母	yi mu	30
@@ -26078,7 +26071,6 @@
 原状	yuan zhuang	30
 原籍	yuan ji	30
 原粮	yuan liang	30
-参	can	30
 参赞	can zan	30
 及至	ji zhi	30
 反击战	fan ji zhan	30
@@ -26138,7 +26130,6 @@
 告假	gao jia	30
 告病	gao bing	30
 告罪	gao zui	30
-呢	ne	30
 周旋	zhou xuan	30
 命中率	ming zhong lv	30
 咋办	za ban	30
@@ -26668,6 +26659,7 @@
 暗红	an hong	30
 暗记	an ji	30
 暗语	an yu	30
+曾	zeng	30
 有机物	you ji wu	30
 有生	you sheng	30
 望族	wang zu	30
@@ -27043,6 +27035,7 @@
 种地	zhong di	30
 租约	zu yue	30
 租钱	zu qian	30
+称	cheng	30
 移入	yi ru	30
 移情	yi qing	30
 税源	shui yuan	30
@@ -27229,7 +27222,6 @@
 芬芳	fen fang	30
 花边	hua bian	30
 苍穹	cang qiong	30
-若	ruo	30
 若无其事	ruo wu qi shi	30
 苦	ku	30
 苦命	ku ming	30
@@ -27519,6 +27511,7 @@
 阳间	yang jian	30
 阴毛	yin mao	30
 阻击	zu ji	30
+阿	a	30
 阿斗	a dou	30
 附着	fu zhuo	30
 附表	fu biao	30
@@ -27588,7 +27581,6 @@
 飞贼	fei zei	30
 飞雪	fei xue	30
 飞鱼	fei yu	30
-食	shi	30
 食具	shi ju	30
 食粮	shi liang	30
 饭堂	fan tang	30
@@ -28057,6 +28049,7 @@
 厮杀	si sha	29
 去留	qu liu	29
 去职	qu zhi	29
+参	can	29
 参看	can kan	29
 参评	can ping	29
 参赌	can du	29
@@ -28377,7 +28370,6 @@
 屏风	ping feng	29
 展台	zhan tai	29
 展宽	zhan kuan	29
-属	shu	29
 山炮	shan pao	29
 山险	shan xian	29
 岂能	qi neng	29
@@ -28468,7 +28460,6 @@
 影视圈	ying shi quan	29
 影视界	ying shi jie	29
 往昔	wang xi	29
-征	zheng	29
 征引	zheng yin	29
 征文	zheng wen	29
 征讨	zheng tao	29
@@ -29487,6 +29478,7 @@
 花木	hua mu	29
 花炮	hua pao	29
 花肥	hua fei	29
+若	ruo	29
 苦工	ku gong	29
 苦心	ku xin	29
 苦战	ku zhan	29
@@ -29605,7 +29597,6 @@
 请功	qing gong	29
 诸公	zhu gong	29
 课时	ke shi	29
-调	diao	29
 调护	tiao hu	29
 调研员	diao yan yuan	29
 调节税	tiao jie shui	29
@@ -29729,7 +29720,6 @@
 那般	na ban	29
 邦联	bang lian	29
 部颁	bu ban	29
-都	du	29
 配	pei	29
 配戴	pei dai	29
 配种	pei zhong	29
@@ -29901,6 +29891,7 @@
 飞奔	fei ben	29
 飞散	fei san	29
 飞涨	fei zhang	29
+食	shi	29
 食客	shi ke	29
 食料	shi liao	29
 食油	shi you	29
@@ -30425,7 +30416,6 @@
 哑口无言	ya kou wu yan	28
 哥	ge	28
 哨兵	shao bing	28
-哪	na	28
 哪样	na yang	28
 哭闹	ku nao	28
 哭鼻子	ku bi zi	28
@@ -30697,6 +30687,7 @@
 居高不下	ju gao bu xia	28
 展区	zhan qu	28
 展馆	zhan guan	28
+属	shu	28
 属国	shu guo	28
 山岭	shan ling	28
 山石	shan shi	28
@@ -30766,7 +30757,6 @@
 弄虚作假	nong xu zuo jia	28
 引种	yin zhong	28
 引证	yin zheng	28
-弟	di	28
 弥勒	mi le	28
 弯路	wan lu	28
 弹丸	dan wan	28
@@ -30784,6 +30774,7 @@
 彩球	cai qiu	28
 彩蛋	cai dan	28
 彻头彻尾	che tou che wei	28
+征	zheng	28
 征程	zheng cheng	28
 待机	dai ji	28
 徐图	xu tu	28
@@ -31146,7 +31137,6 @@
 标牌	biao pai	28
 标语牌	biao yu pai	28
 栈道	zhan dao	28
-校	xiao	28
 校准	jiao zhun	28
 校庆	xiao qing	28
 校样	jiao yang	28
@@ -31492,7 +31482,6 @@
 相悖	xiang bei	28
 相邀	xiang yao	28
 相配	xiang pei	28
-省	sheng	28
 省事	sheng shi	28
 省府	sheng fu	28
 省辖市	sheng xia shi	28
@@ -31852,7 +31841,6 @@
 观潮	guan chao	28
 观赏鱼	guan shang yu	28
 规约	gui yue	28
-角	jiao	28
 角斗	jue dou	28
 角质	jiao zhi	28
 解困	jie kun	28
@@ -31992,7 +31980,6 @@
 近邻	jin lin	28
 返校	fan xiao	28
 返程	fan cheng	28
-还	huan	28
 远足	yuan zu	28
 连环画	lian huan hua	28
 连翘	lian qiao	28
@@ -32334,7 +32321,6 @@
 义士	yi shi	27
 乌烟瘴气	wu yan zhang qi	27
 乌青	wu qing	27
-乐	le	27
 乐坛	yue tan	27
 乐此不疲	le ci bu pi	27
 乖巧	guai qiao	27
@@ -32350,6 +32336,7 @@
 买路钱	mai lu qian	27
 乳品	ru pin	27
 乳汁	ru zhi	27
+了	liao	27
 争战	zheng zhan	27
 争鸣	zheng ming	27
 事与愿违	shi yu yuan wei	27
@@ -32728,7 +32715,6 @@
 吵嘴	chao zui	27
 呆板	dai ban	27
 呈献	cheng xian	27
-呢	ni	27
 周游	zhou you	27
 味	wei	27
 呼	hu	27
@@ -32743,6 +32729,7 @@
 响声	xiang sheng	27
 响尾蛇	xiang wei she	27
 哗众取宠	hua zhong qu chong	27
+哪	na	27
 哭笑不得	ku xiao bu de	27
 哲人	zhe ren	27
 唯物	wei wu	27
@@ -33091,6 +33078,7 @@
 弃置	qi zhi	27
 引信	yin xin	27
 引言	yin yan	27
+弟	di	27
 张望	zhang wang	27
 张罗	zhang luo	27
 归侨	gui qiao	27
@@ -33148,7 +33136,6 @@
 恐	kong	27
 恩	en	27
 恰逢	qia feng	27
-恶	e	27
 恶性肿瘤	e xing zhong liu	27
 悦耳	yue er	27
 悬而未决	xuan er wei jue	27
@@ -33404,7 +33391,6 @@
 朋	peng	27
 服软	fu ruan	27
 朗声	lang sheng	27
-朝	chao	27
 木料	mu liao	27
 本职	ben zhi	27
 札记	zha ji	27
@@ -33446,6 +33432,7 @@
 树根	shu gen	27
 树阴	shu yin	27
 栖身	qi shen	27
+校	xiao	27
 校务	xiao wu	27
 栩栩如生	xu xu ru sheng	27
 核	he	27
@@ -33713,7 +33700,6 @@
 献宝	xian bao	27
 献演	xian yan	27
 献计	xian ji	27
-率	lv	27
 玉体	yu ti	27
 玉带	yu dai	27
 玉成	yu cheng	27
@@ -33809,6 +33795,7 @@
 相向	xiang xiang	27
 相待	xiang dai	27
 相迎	xiang ying	27
+省	sheng	27
 眉头	mei tou	27
 看不惯	kan bu guan	27
 看热闹	kan re nao	27
@@ -34194,6 +34181,7 @@
 见面礼	jian mian li	27
 见高低	jian gao di	27
 观礼	guan li	27
+角	jiao	27
 角钢	jiao gang	27
 解题	jie ti	27
 言说	yan shuo	27
@@ -34497,7 +34485,6 @@
 际会	ji hui	27
 陈腐	chen fu	27
 陈设	chen she	27
-降	jiang	27
 降旗	jiang qi	27
 险峻	xian jun	27
 陵园	ling yuan	27
@@ -34867,7 +34854,6 @@
 伫候	zhu hou	26
 伴唱	ban chang	26
 伺弄	si nong	26
-似	si	26
 但见	dan jian	26
 位卑	wei bei	26
 位能	wei neng	26
@@ -35299,7 +35285,6 @@
 叱问	chi wen	26
 叱骂	chi ma	26
 右行	you xing	26
-叶	ye	26
 叶脉	ye mai	26
 号啕	hao tao	26
 号头	hao tou	26
@@ -35412,7 +35397,6 @@
 哑场	ya chang	26
 哝哝	nong nong	26
 哟嗬	yo he	26
-哦	o	26
 哪吒	ne zha	26
 哽塞	geng se	26
 唐	tang	26
@@ -35839,7 +35823,6 @@
 巨	ju	26
 巨富	ju fu	26
 巨幅	ju fu	26
-差	cha	26
 差役	chai yi	26
 市两	shi liang	26
 市升	shi sheng	26
@@ -36011,6 +35994,7 @@
 恨晚	hen wan	26
 息肩	xi jian	26
 恰如其分	qia ru qi fen	26
+恶	e	26
 恶骂	e ma	26
 恹恹	yan yan	26
 悉心	xi xin	26
@@ -36588,7 +36572,6 @@
 概括性	gai kuo xing	26
 槁木	gao mu	26
 槽头	cao tou	26
-模	mo	26
 模压	mu ya	26
 横心	heng xin	26
 横是	heng shi	26
@@ -37691,6 +37674,7 @@
 诿过	wei guo	26
 谁个	shui ge	26
 谁人	shui ren	26
+调	diao	26
 调休	tiao xiu	26
 调函	diao han	26
 调唆	tiao suo	26
@@ -38116,6 +38100,7 @@
 陈请	chen qing	26
 陈账	chen zhang	26
 陈货	chen huo	26
+降	jiang	26
 降将	xiang jiang	26
 降等	jiang deng	26
 降表	jiang biao	26
@@ -38152,7 +38137,6 @@
 雷击	lei ji	26
 霉雨	mei yu	26
 霍然	huo ran	26
-露	lu	26
 露一手	lou yi shou	26
 露丑	lou chou	26
 露宿	lu su	26
@@ -38326,6 +38310,7 @@
 为期不远	wei qi bu yuan	25
 主销	zhu xiao	25
 义捐	yi juan	25
+乐	le	25
 乐呵呵	le he he	25
 乐池	yue chi	25
 习武	xi wu	25
@@ -38450,6 +38435,7 @@
 叫阵	jiao zhen	25
 可鉴	ke jian	25
 台柱	tai zhu	25
+叶	ye	25
 吃官司	chi guan si	25
 合不来	he bu lai	25
 合奏	he zou	25
@@ -38475,6 +38461,7 @@
 哄笑	hong xiao	25
 哄骗	hong pian	25
 哈哈镜	ha ha jing	25
+哦	o	25
 唐突	tang tu	25
 喷薄	pen bo	25
 嘉许	jia xu	25
@@ -38584,6 +38571,7 @@
 工休	gong xiu	25
 工作餐	gong zuo can	25
 巨细	ju xi	25
+差	cha	25
 差池	cha chi	25
 师训	shi xun	25
 带徒弟	dai tu di	25
@@ -38610,7 +38598,6 @@
 弯子	wan zi	25
 弯度	wan du	25
 弱	ruo	25
-弹	dan	25
 弹孔	dan kong	25
 强横	qiang heng	25
 强渡	qiang du	25
@@ -38759,12 +38746,12 @@
 景深	jing shen	25
 智谋	zhi mou	25
 暖阁	nuan ge	25
-暴	bao	25
 曲	qu	25
 曼丽	man li	25
 替	ti	25
 月息	yue xi	25
 有染	you ran	25
+朝	chao	25
 木头人	mu tou ren	25
 木模	mu mu	25
 木琴	mu qin	25
@@ -38796,6 +38783,7 @@
 森	sen	25
 槽牙	cao ya	25
 槽钢	cao gang	25
+模	mo	25
 横加	heng jia	25
 横死	heng si	25
 横生	heng sheng	25
@@ -38914,6 +38902,7 @@
 献丑	xian chou	25
 献礼	xian li	25
 献艺	xian yi	25
+率	lv	25
 玉	yu	25
 玩	wan	25
 玩花样	wan hua yang	25
@@ -38957,7 +38946,6 @@
 真迹	zhen ji	25
 眼屎	yan shi	25
 眼袋	yan dai	25
-着	zhao	25
 着重号	zhuo zhong hao	25
 瞎聊	xia liao	25
 瞒骗	man pian	25
@@ -39116,7 +39104,6 @@
 营寨	ying zhai	25
 萨	sa	25
 落地灯	luo di deng	25
-著	zhu	25
 葬送	zang song	25
 蒙	meng	25
 蒙医	meng yi	25
@@ -39168,7 +39155,6 @@
 说梦话	shuo meng hua	25
 请帖	qing tie	25
 诸	zhu	25
-谁	shui	25
 谋私	mou si	25
 谷仓	gu cang	25
 豆腐皮	dou fu pi	25
@@ -39194,7 +39180,6 @@
 赤露	chi lu	25
 超低温	chao di wen	25
 趋紧	qu jin	25
-趣	qu	25
 跳	tiao	25
 蹲坑	dun keng	25
 躲债	duo zhai	25
@@ -39315,6 +39300,7 @@
 雪	xue	25
 雪野	xue ye	25
 震区	zhen qu	25
+露	lu	25
 青饲料	qing si liao	25
 青黛	qing dai	25
 静养	jing yang	25
@@ -39360,7 +39346,6 @@
 鼓弄	gu nong	25
 鼓气	gu qi	25
 鼓词	gu ci	25
-齐	qi	25
 龟甲	gui jia	25
 一斑	yi ban	24
 一日千里	yi ri qian li	24
@@ -39543,7 +39528,6 @@
 吞吐	tun tu	24
 吞服	tun fu	24
 吞灭	tun mie	24
-否	fou	24
 吴	wu	24
 吵吵	chao chao	24
 吼声	hou sheng	24
@@ -39828,6 +39812,7 @@
 晴好	qing hao	24
 晴明	qing ming	24
 暗盒	an he	24
+暴	bao	24
 有线广播	you xian guang bo	24
 朗朗	lang lang	24
 木化石	mu hua shi	24
@@ -39849,7 +39834,6 @@
 极刑	ji xing	24
 极盛	ji sheng	24
 染	ran	24
-查	cha	24
 查岗	cha gang	24
 柱石	zhu shi	24
 柳编	liu bian	24
@@ -40013,7 +39997,6 @@
 省察	xing cha	24
 真格的	zhen ge de	24
 眼尖	yan jian	24
-着	zhuo	24
 着慌	zhao huang	24
 睡裙	shui qun	24
 睡裤	shui ku	24
@@ -40260,6 +40243,7 @@
 超负荷	chao fu he	24
 越冬	yue dong	24
 趋附	qu fu	24
+趣	qu	24
 蹲守	dun shou	24
 车前子	che qian zi	24
 转晴	zhuan qing	24
@@ -40409,6 +40393,7 @@
 鼓角	gu jiao	24
 鼻头	bi tou	24
 鼻血	bi xue	24
+齐	qi	24
 齐奏	qi zou	24
 龙颜	long yan	24
 丈	zhang	23
@@ -40458,12 +40443,12 @@
 代售	dai shou	23
 以利于	yi li yu	23
 仪	yi	23
-仿	fang	23
 仿生	fang sheng	23
 仿行	fang xing	23
 伏兵	fu bing	23
 伴	ban	23
 伸腿	shen tui	23
+似	si	23
 低幼	di you	23
 低缓	di huan	23
 低血压	di xue ya	23
@@ -40602,6 +40587,7 @@
 吹喇叭	chui la ba	23
 呈递	cheng di	23
 呜呼	wu hu	23
+呢	ne	23
 味蕾	wei lei	23
 呵责	he ze	23
 咸肉	xian rou	23
@@ -40756,6 +40742,7 @@
 弓子	gong zi	23
 弗	fu	23
 弦乐器	xian yue qi	23
+弹	dan	23
 强固	qiang gu	23
 当家的	dang jia de	23
 彩扩	cai kuo	23
@@ -41257,6 +41244,7 @@
 菜	cai	23
 萧墙	xiao qiang	23
 落花生	luo hua sheng	23
+著	zhu	23
 薄葬	bo zang	23
 虚火	xu huo	23
 虚脱	xu tuo	23
@@ -41302,6 +41290,7 @@
 请援	qing yuan	23
 课	ke	23
 课桌	ke zhuo	23
+谁	shui	23
 谋臣	mou chen	23
 谵妄	zhan wang	23
 豆沙	dou sha	23
@@ -41536,6 +41525,7 @@
 仗势	zhang shi	22
 以防万一	yi fang wan yi	22
 仰	yang	22
+仿	fang	22
 仿冒	fang mao	22
 仿古	fang gu	22
 仿建	fang jian	22
@@ -41657,7 +41647,6 @@
 叙功	xu gong	22
 叠合	die he	22
 叠放	die fang	22
-召	zhao	22
 叹词	tan ci	22
 吃斋	chi zhai	22
 吃现成	chi xian cheng	22
@@ -41666,7 +41655,6 @@
 启	qi	22
 吹	chui	22
 呆	dai	22
-和	huo	22
 咏唱	yong chang	22
 咬舌	yao she	22
 咯	ge	22
@@ -41696,7 +41684,6 @@
 垒墙	lei qiang	22
 堂叔	tang shu	22
 堆	dui	22
-塞	sai	22
 墨宝	mo bao	22
 墨客	mo ke	22
 墨斗	mo dou	22
@@ -42324,7 +42311,6 @@
 葬仪	zang yi	22
 蒂	di	22
 薄幸	bo xing	22
-藏	cang	22
 藤子	teng zi	22
 藤条	teng tiao	22
 虚惊	xu jing	22
@@ -42463,7 +42449,6 @@
 采择	cai ze	22
 采育	cai yu	22
 释疑	shi yi	22
-重	chong	22
 重灾	zhong zai	22
 野汉子	ye han zi	22
 野驴	ye lv	22
@@ -42729,6 +42714,7 @@
 古今中外	gu jin zhong wai	21
 古猿	gu yuan	21
 古藤	gu teng	21
+召	zhao	21
 台柱子	tai zhu zi	21
 叹服	tan fu	21
 吃干饭	chi gan fan	21
@@ -42738,12 +42724,13 @@
 吊孝	diao xiao	21
 后坐力	hou zuo li	21
 后备箱	hou bei xiang	21
+否	fou	21
 启齿	qi chi	21
 呈	cheng	21
+呢	ni	21
 咋舌	ze she	21
 咧嘴	lie zui	21
 咨文	zi wen	21
-咱	zan	21
 响彻	xiang che	21
 喷墨	pen mo	21
 喷壶	pen hu	21
@@ -42757,7 +42744,6 @@
 国境线	guo jing xian	21
 国际公法	guo ji gong fa	21
 圆筒	yuan tong	21
-圈	quan	21
 圈阅	quan yue	21
 地契	di qi	21
 坐禅	zuo chan	21
@@ -42770,6 +42756,7 @@
 垂问	chui wen	21
 塌方	ta fang	21
 塌落	ta luo	21
+塞	sai	21
 墨	mo	21
 壁饰	bi shi	21
 壮丁	zhuang ding	21
@@ -42781,7 +42768,6 @@
 多会儿	duo hui er	21
 多边形	duo bian xing	21
 多边贸易	duo bian mao yi	21
-大	dai	21
 大动脉	da dong mai	21
 大块头	da kuai tou	21
 大媒	da mei	21
@@ -42862,7 +42848,6 @@
 开眼界	kai yan jie	21
 开荒	kai huang	21
 弓腰	gong yao	21
-彭	peng	21
 徐缓	xu huan	21
 循例	xun li	21
 循声	xun sheng	21
@@ -43247,7 +43232,6 @@
 线装本	xian zhuang ben	21
 练习簿	lian xi bu	21
 绕	rao	21
-给	ji	21
 绩	ji	21
 缓冲器	huan chong qi	21
 缴租	jiao zu	21
@@ -43312,6 +43296,7 @@
 萌动	meng dong	21
 落枕	lao zhen	21
 薪给	xin gei	21
+藏	cang	21
 藏书票	cang shu piao	21
 藏红花	zang hong hua	21
 藤牌	teng pai	21
@@ -43326,7 +43311,6 @@
 融和	rong he	21
 蠢笨	chun ben	21
 血崩	xue beng	21
-行	hang	21
 行窃	xing qie	21
 衡器	heng qi	21
 裁夺	cai duo	21
@@ -43446,7 +43430,6 @@
 键	jian	21
 镶边	xiang bian	21
 镶金	xiang jin	21
-长	zhang	21
 长方体	chang fang ti	21
 长矛	chang mao	21
 长笛	chang di	21
@@ -43567,6 +43550,7 @@
 中药房	zhong yao fang	20
 临危	lin wei	20
 举手礼	ju shou li	20
+么	mo	20
 乡下佬	xiang xia lao	20
 书名号	shu ming hao	20
 书画展	shu hua zhan	20
@@ -43622,7 +43606,6 @@
 农奴主	nong nu zhu	20
 冠	guan	20
 冤情	yuan qing	20
-冯	feng	20
 冰凌	bing ling	20
 冰坝	bing ba	20
 冰霜	bing shuang	20
@@ -43648,7 +43631,6 @@
 前驱	qian qu	20
 割	ge	20
 劫狱	jie yu	20
-劲	jin	20
 劳动生产率	lao dong sheng chan lv	20
 勃兴	bo xing	20
 勃然	bo ran	20
@@ -43707,6 +43689,7 @@
 周详	zhou xiang	20
 咏怀	yong huai	20
 咬	yao	20
+咱	zan	20
 咸淡	xian dan	20
 哥老会	ge lao hui	20
 唇齿	chun chi	20
@@ -43727,6 +43710,7 @@
 国宴	guo yan	20
 国库券	guo ku quan	20
 圆谎	yuan huang	20
+圈	quan	20
 土俗	tu su	20
 土坝	tu ba	20
 地板革	di ban ge	20
@@ -43849,6 +43833,7 @@
 弹簧锁	tan huang suo	20
 弹簧门	tan huang men	20
 彩陶	cai tao	20
+彭	peng	20
 役畜	yi chu	20
 彻骨	che gu	20
 征尘	zheng chen	20
@@ -43900,7 +43885,6 @@
 房契	fang qi	20
 房管所	fang guan suo	20
 手头紧	shou tou jin	20
-扎	zha	20
 打字员	da zi yuan	20
 打拐	da guai	20
 扣	kou	20
@@ -44004,7 +43988,7 @@
 柏树	bai shu	20
 柏油	bai you	20
 柔美	rou mei	20
-查	zha	20
+查	cha	20
 柱	zhu	20
 柱廊	zhu lang	20
 栗色	li se	20
@@ -44051,7 +44035,6 @@
 沙荒	sha huang	20
 沟	gou	20
 沟坎	gou kan	20
-没	mo	20
 河塘	he tang	20
 河滨	he bin	20
 油橄榄	you gan lan	20
@@ -44545,7 +44528,6 @@
 亚运村	ya yun cun	19
 亡魂	wang hun	19
 人贩子	ren fan zi	19
-什	shen	19
 仆	pu	19
 仓	cang	19
 代偿	dai chang	19
@@ -44590,6 +44572,7 @@
 农机具	nong ji ju	19
 农机站	nong ji zhan	19
 冬储	dong chu	19
+冯	feng	19
 凉拌	liang ban	19
 凶暴	xiong bao	19
 凸轮	tu lun	19
@@ -44614,6 +44597,7 @@
 劝诱	quan you	19
 劣	lie	19
 劫	jie	19
+劲	jin	19
 勾销	gou xiao	19
 包孕	bao yun	19
 化验员	hua yan yuan	19
@@ -44796,7 +44780,6 @@
 归罪于	gui zui yu	19
 征聘	zheng pin	19
 待聘	dai pin	19
-得	dei	19
 循	xun	19
 心中有鬼	xin zhong you gui	19
 忍辱	ren ru	19
@@ -44832,9 +44815,9 @@
 战争贩子	zhan zheng fan zi	19
 截击	jie ji	19
 截稿	jie gao	19
-扁	bian	19
 手提包	shou ti bao	19
 手提式	shou ti shi	19
+扎	zha	19
 扒窃	pa qie	19
 打字纸	da zi zhi	19
 打摆子	da bai zi	19
@@ -45584,7 +45567,6 @@
 代耕	dai geng	18
 伟岸	wei an	18
 伪钞	wei chao	18
-似	shi	18
 低纬度	di wei du	18
 佐	zuo	18
 体外循环	ti wai xun huan	18
@@ -45652,7 +45634,6 @@
 刨床	bao chuang	18
 利禄	li lu	18
 制空权	zhi kong quan	18
-削	xue	18
 剑锋	jian feng	18
 助燃	zhu ran	18
 劳教所	lao jiao suo	18
@@ -45782,7 +45763,6 @@
 娇气	jiao qi	18
 娇贵	jiao gui	18
 娘娘腔	niang niang qiang	18
-娜	na	18
 嫁	jia	18
 嫩芽	nen ya	18
 子爵	zi jue	18
@@ -45801,7 +45781,6 @@
 宰	zai	18
 宴饮	yan yin	18
 家祠	jia ci	18
-宿	su	18
 宿仇	su chou	18
 宿命论	su ming lun	18
 宿营地	su ying di	18
@@ -45830,14 +45809,12 @@
 小白菜	xiao bai cai	18
 少林拳	shao lin quan	18
 尘肺	chen fei	18
-尿	niao	18
 尿盆	niao pen	18
 屈就	qu jiu	18
 屈才	qu cai	18
 屈指	qu zhi	18
 屈死	qu si	18
 屋脊	wu ji	18
-屏	ping	18
 屠刀	tu dao	18
 屠城	tu cheng	18
 屠户	tu hu	18
@@ -45883,6 +45860,7 @@
 慕	mu	18
 成文法	cheng wen fa	18
 成眠	cheng mian	18
+扁	bian	18
 扇	shan	18
 手杖	shou zhang	18
 才貌	cai mao	18
@@ -45901,7 +45879,6 @@
 披	pi	18
 抬杠	tai gang	18
 抬轿	tai jiao	18
-抹	mo	18
 拆	chai	18
 拐弯	guai wan	18
 拓印	ta yin	18
@@ -45985,13 +45962,11 @@
 果子露	guo zi lu	18
 果蝇	guo ying	18
 枫树	feng shu	18
-柏	bai	18
 染缸	ran gang	18
 柔嫩	rou nen	18
 柔润	rou run	18
 柔滑	rou hua	18
 柜	gui	18
-柴	chai	18
 栏	lan	18
 树墩	shu dun	18
 树龄	shu ling	18
@@ -46393,6 +46368,7 @@
 遂	sui	18
 遗诏	yi zhao	18
 郁	yu	18
+都	du	18
 酒浆	jiu jiang	18
 酒酿	jiu niang	18
 酬	chou	18
@@ -46573,7 +46549,6 @@
 俊逸	jun yi	17
 保质期	bao zhi qi	17
 信天游	xin tian you	17
-俩	lia	17
 修眉	xiu mei	17
 俯	fu	17
 倒插门	dao cha men	17
@@ -46602,6 +46577,7 @@
 凿子	zao zi	17
 制动器	zhi dong qi	17
 剃光头	ti guang tou	17
+削	xue	17
 削肩	xue jian	17
 剑眉	jian mei	17
 剪	jian	17
@@ -46676,7 +46652,6 @@
 告慰	gao wei	17
 呵斥	he chi	17
 咒	zhou	17
-咽	yan	17
 哀乐	ai le	17
 哀叫	ai jiao	17
 哀号	ai hao	17
@@ -46783,6 +46758,7 @@
 家慈	jia ci	17
 宽慰	kuan wei	17
 宾朋	bin peng	17
+宿	su	17
 寇仇	kou chou	17
 寒暑假	han shu jia	17
 寒窗	han chuang	17
@@ -46800,11 +46776,13 @@
 小辫子	xiao bian zi	17
 尘俗	chen su	17
 尘暴	chen bao	17
+尿	niao	17
 屁	pi	17
 居丧	ju sang	17
 屈居	qu ju	17
 屈节	qu jie	17
 屈身	qu shen	17
+屏	ping	17
 屏藩	ping fan	17
 屠	tu	17
 屠宰场	tu zai chang	17
@@ -46915,10 +46893,10 @@
 找门路	zhao men lu	17
 抄	chao	17
 投递员	tou di yuan	17
-折	she	17
 报丧	bao sang	17
 抱屈	bao qu	17
 抵偿	di chang	17
+抹	mo	17
 押韵	ya yun	17
 抽穗	chou sui	17
 拉皮条	la pi tiao	17
@@ -47003,7 +46981,9 @@
 枯死	ku si	17
 枯水	ku shui	17
 柄	bing	17
+柏	bai	17
 查勘	cha kan	17
+柴	chai	17
 柴禾	chai he	17
 柴薪	chai xin	17
 栈房	zhan fang	17
@@ -47053,7 +47033,6 @@
 没羞	mei xiu	17
 油膏	you gao	17
 治丧	zhi sang	17
-泊	bo	17
 泡泡纱	pao pao sha	17
 注塑	zhu su	17
 泼冷水	po leng shui	17
@@ -47235,7 +47214,6 @@
 红皮书	hong pi shu	17
 红药水	hong yao shui	17
 红血球	hong xue qiu	17
-纤	xian	17
 纱笼	sha long	17
 纳谏	na jian	17
 纷呈	fen cheng	17
@@ -47385,7 +47363,6 @@
 说来话长	shuo lai hua chang	17
 说闲话	shuo xian hua	17
 请柬	qing jian	17
-调	tiao	17
 调羹	tiao geng	17
 谅	liang	17
 谊	yi	17
@@ -47421,6 +47398,7 @@
 轻吟	qing yin	17
 过午	guo wu	17
 过秤	guo cheng	17
+还	huan	17
 进谏	jin jian	17
 连缀	lian zhui	17
 连贯性	lian guan xing	17
@@ -47586,7 +47564,6 @@
 供过于求	gong guo yu qiu	16
 侨	qiao	16
 俏丽	qiao li	16
-倘	tang	16
 倚重	yi zhong	16
 倚靠	yi kao	16
 借喻	jie yu	16
@@ -47649,7 +47626,6 @@
 十八罗汉	shi ba luo han	16
 半袖	ban xiu	16
 卑下	bei xia	16
-卜	bu	16
 卤味	lu wei	16
 卤素	lu su	16
 卧轨	wo gui	16
@@ -47662,7 +47638,6 @@
 卸除	xie chu	16
 厄	e	16
 厢	xiang	16
-厦	sha	16
 反倾销	fan qing xiao	16
 叔嫂	shu sao	16
 可视性	ke shi xing	16
@@ -47674,7 +47649,6 @@
 后空翻	hou kong fan	16
 吏	li	16
 吞蚀	tun shi	16
-否	pi	16
 含羞	han xiu	16
 含苞	han bao	16
 吸水性	xi shui xing	16
@@ -47685,6 +47659,7 @@
 咕	gu	16
 咨	zi	16
 咸	xian	16
+咽	yan	16
 咽气	yan qi	16
 哀思	ai si	16
 哄	hong	16
@@ -47718,6 +47693,7 @@
 回禀	hui bing	16
 回音壁	hui yin bi	16
 圆桌会议	yuan zhuo hui yi	16
+地	di	16
 地峡	di xia	16
 坎	kan	16
 坚贞	jian zhen	16
@@ -47737,7 +47713,6 @@
 塘	tang	16
 壤	rang	16
 壮阔	zhuang kuo	16
-壳	ke	16
 壶	hu	16
 外层空间	wai ceng kong jian	16
 夜光表	ye guang biao	16
@@ -47768,6 +47743,7 @@
 姨妹	yi mei	16
 娇惯	jiao guan	16
 娇滴滴	jiao di di	16
+娜	na	16
 娱	yu	16
 娶	qu	16
 婚丧	hun sang	16
@@ -47879,7 +47855,6 @@
 折皱	zhe zhou	16
 护腕	hu wan	16
 披巾	pi jin	16
-拓	tuo	16
 拓荒	tuo huang	16
 拔锚	ba mao	16
 拘泥	ju ni	16
@@ -47970,7 +47945,6 @@
 枯黄	ku huang	16
 柑子	gan zi	16
 染发剂	ran fa ji	16
-栖	qi	16
 株	zhu	16
 核威慑	he wei she	16
 核裁军	he cai jun	16
@@ -48026,6 +48000,7 @@
 沼	zhao	16
 沾	zhan	16
 泄洪	xie hong	16
+泊	bo	16
 泣	qi	16
 泥塑	ni su	16
 泥炭	ni tan	16
@@ -48183,6 +48158,7 @@
 紫罗兰	zi luo lan	16
 紫药水	zi yao shui	16
 繁茂	fan mao	16
+纤	xian	16
 纱	sha	16
 纵览	zong lan	16
 纷杂	fen za	16
@@ -48266,7 +48242,6 @@
 草字头	cao zi tou	16
 荐	jian	16
 药引子	yao yin zi	16
-莎	sha	16
 莲蓬	lian peng	16
 菊	ju	16
 菜籽	cai zi	16
@@ -48282,7 +48257,6 @@
 蓄积	xu ji	16
 蓄谋	xu mou	16
 蓬	peng	16
-薄	bao	16
 藕粉	ou fen	16
 虏	lu	16
 虹膜	hong mo	16
@@ -48302,7 +48276,6 @@
 袖标	xiu biao	16
 袖章	xiu zhang	16
 袖管	xiu guan	16
-被	pi	16
 袭扰	xi rao	16
 裘皮	qiu pi	16
 裙	qun	16
@@ -48338,13 +48311,10 @@
 贫富悬殊	pin fu xuan shu	16
 贬	bian	16
 贴现率	tie xian lv	16
-贾	jia	16
-赚	zhuan	16
 赤脚医生	chi jiao yi sheng	16
 赶庙会	gan miao hui	16
 赶明儿	gan ming er	16
 超低空	chao di kong	16
-趟	tang	16
 跋文	ba wen	16
 踢	ti	16
 踢皮球	ti pi qiu	16
@@ -48551,7 +48521,9 @@
 俊俏	jun qiao	15
 保温杯	bao wen bei	15
 信鸽	xin ge	15
+俩	lia	15
 俺	an	15
+倘	tang	15
 倚	yi	15
 倚赖	yi lai	15
 借刀杀人	jie dao sha ren	15
@@ -48597,7 +48569,6 @@
 刺儿头	ci er tou	15
 前滚翻	qian gun fan	15
 前茅	qian mao	15
-剥	bao	15
 剥蚀	bo shi	15
 力挫	li cuo	15
 功德无量	gong de wu liang	15
@@ -48622,14 +48593,15 @@
 半路出家	ban lu chu jia	15
 华氏度	hua shi du	15
 华诞	hua dan	15
-卒	zu	15
 南麓	nan lu	15
+卜	bu	15
 占卦	zhan gua	15
 印欧语	yin ou yu	15
 卸妆	xie zhuang	15
 卸责	xie ze	15
 厌学	yan xue	15
 厥	jue	15
+厦	sha	15
 双百方针	shuang bai fang zhen	15
 反诘	fan jie	15
 发辫	fa bian	15
@@ -48700,9 +48672,9 @@
 城关镇	cheng guan zhen	15
 基诺族	ji nuo zu	15
 堕	duo	15
-堡	bao	15
 墨晶	mo jing	15
 壁上观	bi shang guan	15
+壳	ke	15
 多动症	duo dong zheng	15
 多快好省	duo kuai hao sheng	15
 夜光杯	ye guang bei	15
@@ -48760,7 +48732,6 @@
 寇	kou	15
 寞	mo	15
 封疆	feng jiang	15
-将	qiang	15
 尊卑	zun bei	15
 小两口	xiao liang kou	15
 小人儿	xiao ren er	15
@@ -48863,6 +48834,7 @@
 拉后腿	la hou tui	15
 拉家常	la jia chang	15
 拉稀	la xi	15
+拓	tuo	15
 拙	zhuo	15
 招贴画	zhao tie hua	15
 拟声词	ni sheng ci	15
@@ -48937,12 +48909,10 @@
 有赖于	you lai yu	15
 有鉴于此	you jian yu ci	15
 本位主义	ben wei zhu yi	15
-朴	piao	15
 朽	xiu	15
 杀人不见血	sha ren bu jian xue	15
 杂烩	za hui	15
 杂货铺	za huo pu	15
-杉	shan	15
 村姑	cun gu	15
 松花蛋	song hua dan	15
 枕	zhen	15
@@ -48963,6 +48933,7 @@
 柳眉	liu mei	15
 栋	dong	15
 树荫	shu yin	15
+栖	qi	15
 栗	li	15
 校徽	xiao hui	15
 桐	tong	15
@@ -49304,6 +49275,7 @@
 荤食	hun shi	15
 荫	yin	15
 药饵	yao er	15
+莎	sha	15
 莲藕	lian ou	15
 莹	ying	15
 莽	mang	15
@@ -49375,7 +49347,10 @@
 贬斥	bian chi	15
 贱	jian	15
 贵庚	gui geng	15
+贾	jia	15
 贿	hui	15
+赚	zhuan	15
+趟	tang	15
 跑腿儿	pao tui er	15
 踏勘	ta kan	15
 踩	cai	15
@@ -49496,7 +49471,6 @@
 鸽	ge	15
 鹤	he	15
 麟	lin	15
-麽	mo	15
 黄豆芽	huang dou ya	15
 黏液	nian ye	15
 黑哨	hei shao	15
@@ -49595,7 +49569,6 @@
 什么的	shen me de	14
 仇隙	chou xi	14
 介绍人	jie shao ren	14
-仔	zai	14
 仕	shi	14
 仙姑	xian gu	14
 仡佬族	ge lao zu	14
@@ -49616,7 +49589,6 @@
 使绊儿	shi ban er	14
 使领馆	shi ling guan	14
 侄孙	zhi sun	14
-便	pian	14
 俏	qiao	14
 俏皮话	qiao pi hua	14
 保不定	bao bu ding	14
@@ -49690,7 +49662,6 @@
 凡尔丁	fan er ding	14
 凤蝶	feng die	14
 凸	tu	14
-凹	ao	14
 出主意	chu zhu yi	14
 出份子	chu fen zi	14
 出圈儿	chu quan er	14
@@ -49709,8 +49680,8 @@
 利己主义	li ji zhu yi	14
 别提了	bie ti le	14
 刮地皮	gua di pi	14
-刹	sha	14
 剃头刀	ti tou dao	14
+剥	bao	14
 副伤寒	fu shang han	14
 剿	jiao	14
 功不可没	gong bu ke mo	14
@@ -49735,6 +49706,7 @@
 半脱产	ban tuo chan	14
 半身像	ban shen xiang	14
 卑污	bei wu	14
+卒	zu	14
 单个儿	dan ge er	14
 单元门	dan yuan men	14
 单干户	dan gan hu	14
@@ -49753,7 +49725,6 @@
 厌恨	yan hen	14
 厌战	yan zhan	14
 厌食	yan shi	14
-厕	ce	14
 参谒	can ye	14
 双簧	shuang huang	14
 反之亦然	fan zhi yi ran	14
@@ -49777,7 +49748,6 @@
 可以说	ke yi shuo	14
 司乘人员	si cheng ren yuan	14
 叹惜	tan xi	14
-吁	yu	14
 吃不来	chi bu lai	14
 吃不透	chi bu tou	14
 吃偏饭	chi pian fan	14
@@ -50004,7 +49974,6 @@
 尼古丁	ni gu ding	14
 尾椎	wei zhui	14
 屈膝	qu xi	14
-屯	tun	14
 岂不是	qi bu shi	14
 岗哨	gang shao	14
 岬角	jia jiao	14
@@ -50029,7 +49998,6 @@
 带好儿	dai hao er	14
 帮衬	bang chen	14
 帽徽	mao hui	14
-幢	zhuang	14
 干净利落	gan jing li luo	14
 干打垒	gan da lei	14
 平滑肌	ping hua ji	14
@@ -50045,7 +50013,6 @@
 床头柜	chuang tou gui	14
 序跋	xu ba	14
 庐	lu	14
-度	duo	14
 庵	an	14
 庶	shu	14
 康拜因	kang bai yin	14
@@ -50058,7 +50025,6 @@
 开洋荤	kai yang hun	14
 引火线	yin huo xian	14
 弥勒佛	mi le fo	14
-弹	tan	14
 弹簧秤	tan huang cheng	14
 弹跳力	tan tiao li	14
 归拢	gui long	14
@@ -50149,7 +50115,7 @@
 抖包袱	dou bao fu	14
 抖威风	dou wei feng	14
 抖颤	dou chan	14
-折	zhe	14
+折	she	14
 折子戏	zhe zi xi	14
 抢手货	qiang shou huo	14
 抢时间	qiang shi jian	14
@@ -50292,7 +50258,6 @@
 有门儿	you men er	14
 服装师	fu zhuang shi	14
 朕	zhen	14
-朝	zhao	14
 朝气蓬勃	zhao qi peng bo	14
 朝阳花	chao yang hua	14
 朝霞	zhao xia	14
@@ -50303,6 +50268,7 @@
 本主儿	ben zhu er	14
 杂拌儿	za ban er	14
 杂院儿	za yuan er	14
+杉	shan	14
 杏	xing	14
 松塔儿	song ta er	14
 松节油	song jie you	14
@@ -50318,6 +50284,7 @@
 枯枝	ku zhi	14
 架得住	jia de zhu	14
 柔姿纱	rou zi sha	14
+查	zha	14
 柬	jian	14
 栀子花	zhi zi hua	14
 标准像	biao zhun xiang	14
@@ -50339,7 +50306,6 @@
 棒子面	bang zi mian	14
 棘	ji	14
 棱	leng	14
-椎	zhui	14
 椎骨	zhui gu	14
 椿树	chun shu	14
 概言之	gai yan zhi	14
@@ -50622,6 +50588,7 @@
 白面儿	bai mian er	14
 百事通	bai shi tong	14
 百日咳	bai ri ke	14
+的	di	14
 皓	hao	14
 皓齿	hao chi	14
 皮包公司	pi bao gong si	14
@@ -50906,6 +50873,7 @@
 蒿草	hao cao	14
 蓄水池	xu shui chi	14
 蓬松松	peng song song	14
+薄	bao	14
 藤蔓	teng wan	14
 虎着脸	hu zhe lian	14
 虔	qian	14
@@ -50943,7 +50911,6 @@
 裹胁	guo xie	14
 襄	xiang	14
 襟	jin	14
-见	xian	14
 见不得	jian bu de	14
 见阎王	jian yan wang	14
 观音竹	guan yin zhu	14
@@ -50965,7 +50932,6 @@
 说不着	shuo bu zhao	14
 说清楚	shuo qing chu	14
 说起来	shuo qi lai	14
-谁	shei	14
 谁知道	shei zhi dao	14
 调谐	tiao xie	14
 调门儿	diao men er	14
@@ -51291,7 +51257,6 @@
 主婚人	zhu hun ren	13
 主心骨	zhu xin gu	13
 义诊	yi zhen	13
-乐	yue	13
 乙醚	yi mi	13
 二流子	er liu zi	13
 二锅头	er guo tou	13
@@ -51301,7 +51266,6 @@
 亥时	hai shi	13
 亲睹	qin du	13
 人才辈出	ren cai bei chu	13
-仔	zi	13
 以防不测	yi fang bu ce	13
 仰卧	yang wo	13
 仿宋体	fang song ti	13
@@ -51311,7 +51275,6 @@
 优渥	you wo	13
 优选法	you xuan fa	13
 会剿	hui jiao	13
-传	zhuan	13
 伢	ya	13
 佟	tong	13
 佬	lao	13
@@ -51349,6 +51312,7 @@
 准尉	zhun wei	13
 凝脂	ning zhi	13
 凡士林	fan shi lin	13
+凹	ao	13
 出气筒	chu qi tong	13
 出诊	chu zhen	13
 函授班	han shou ban	13
@@ -51368,7 +51332,6 @@
 势利眼	shi li yan	13
 勺	shao	13
 匕	bi	13
-匙	chi	13
 匡	kuang	13
 匿藏	ni cang	13
 卉	hui	13
@@ -51386,6 +51349,7 @@
 厉鬼	li gui	13
 压担子	ya dan zi	13
 压轴戏	ya zhou xi	13
+厕	ce	13
 厮	si	13
 反光镜	fan guang jing	13
 反咬一口	fan yao yi kou	13
@@ -51406,6 +51370,7 @@
 叱	chi	13
 叶绿素	ye lv su	13
 叽	ji	13
+吁	yu	13
 各奔东西	ge ben dong xi	13
 各行其事	ge xing qi shi	13
 各行其是	ge xing qi shi	13
@@ -51442,7 +51407,6 @@
 噬	shi	13
 嚎	hao	13
 嚣	xiao	13
-嚼	jiao	13
 回锅肉	hui guo rou	13
 围拢	wei long	13
 国际妇女节	guo ji fu nv jie	13
@@ -51454,6 +51418,7 @@
 垢	gou	13
 城垣	cheng yuan	13
 埠头	bu tou	13
+堡	bao	13
 墙垣	qiang yuan	13
 壁垒森严	bi lei sen yan	13
 壁毯	bi tan	13
@@ -51495,7 +51460,6 @@
 妾	qie	13
 姑婆	gu po	13
 姑爷	gu ye	13
-姥	lao	13
 娇憨	jiao han	13
 娟秀	juan xiu	13
 娴	xian	13
@@ -51537,6 +51501,7 @@
 尽心竭力	jin xin jie li	13
 屉	ti	13
 屎	shi	13
+屯	tun	13
 岔	cha	13
 岳丈	yue zhang	13
 峨	e	13
@@ -51546,6 +51511,7 @@
 巩膜	gong mo	13
 帽盔	mao kui	13
 幌	huang	13
+幢	zhuang	13
 干休所	gan xiu suo	13
 平头百姓	ping tou bai xing	13
 平底鞋	ping di xie	13
@@ -51612,7 +51578,6 @@
 拭	shi	13
 拴	shuan	13
 拷	kao	13
-拽	zhuai	13
 拿手好戏	na shou hao xi	13
 指北针	zhi bei zhen	13
 挑大梁	tiao da liang	13
@@ -51629,7 +51594,6 @@
 接诊	jie zhen	13
 措置	cuo zhi	13
 描眉	miao mei	13
-提	di	13
 揣度	chuai duo	13
 揣想	chuai xiang	13
 揩油	kai you	13
@@ -51660,7 +51624,6 @@
 智多星	zhi duo xing	13
 暖洋洋	nuan yang yang	13
 暗娼	an chang	13
-曾	ceng	13
 替罪羊	ti zui yang	13
 月偏食	yue pian shi	13
 月光如水	yue guang ru shui	13
@@ -51668,6 +51631,7 @@
 末梢	mo shao	13
 本埠	ben bu	13
 札	zha	13
+朴	piao	13
 杠	gang	13
 枉杀	wang sha	13
 枉死	wang si	13
@@ -51713,7 +51677,6 @@
 毒腺	du xian	13
 毡帐	zhan zhang	13
 毡帽	zhan mao	13
-氓	meng	13
 水压机	shui ya ji	13
 水墨画	shui mo hua	13
 水暖工	shui nuan gong	13
@@ -51753,7 +51716,6 @@
 漠然	mo ran	13
 潇	xiao	13
 潜泳	qian yong	13
-澄	cheng	13
 濒	bin	13
 灵长目	ling zhang mu	13
 灿然	can ran	13
@@ -51766,7 +51728,6 @@
 烘制	hong zhi	13
 烘托	hong tuo	13
 热轧	re zha	13
-焘	tao	13
 焚尸	fen shi	13
 焚香	fen xiang	13
 煌煌	huang huang	13
@@ -51839,7 +51800,6 @@
 福如东海	fu ru dong hai	13
 离心泵	li xin beng	13
 秆子	gan zi	13
-称	chen	13
 秽	hui	13
 稻穗	dao sui	13
 稽察	ji cha	13
@@ -51864,7 +51824,6 @@
 簇拥	cu yong	13
 粤	yue	13
 糙	cao	13
-系	ji	13
 紊	wen	13
 紫檀	zi tan	13
 絮	xu	13
@@ -51949,14 +51908,12 @@
 蓝藻	lan zao	13
 蓦	mo	13
 蔓	man	13
-蔚	wei	13
 蔚然	wei ran	13
 蕉	jiao	13
 蕊	rui	13
 蕾	lei	13
 薇	wei	13
 薯	shu	13
-藉	jie	13
 藻饰	zao shi	13
 蚊蝇	wen ying	13
 蚌壳	bang ke	13
@@ -51973,16 +51930,13 @@
 衬裤	chen ku	13
 袱	fu	13
 裂隙	lie xi	13
-裳	chang	13
 裴	pei	13
 褂	gua	13
 褒扬	bao yang	13
 覆舟	fu zhou	13
 见机行事	jian ji xing shi	13
 观礼台	guan li tai	13
-觉	jiao	13
 角膜炎	jiao mo yan	13
-解	xie	13
 言不及义	yan bu ji yi	13
 言者无罪	yan zhe wu zui	13
 讨人喜欢	tao ren xi huan	13
@@ -52161,7 +52115,6 @@
 不容分说	bu rong fen shuo	12
 不成体统	bu cheng ti tong	12
 不能自拔	bu neng zi ba	12
-且	ju	12
 串门儿	chuan men er	12
 乒	ping	12
 乓	pang	12
@@ -52175,8 +52128,6 @@
 众口一词	zhong kou yi ci	12
 传呼机	chuan hu ji	12
 传诵	chuan song	12
-伽	jia	12
-佃	dian	12
 何首乌	he shou wu	12
 你来我往	ni lai wo wang	12
 佯	yang	12
@@ -52208,6 +52159,7 @@
 出奇制胜	chu qi zhi sheng	12
 出洋相	chu yang xiang	12
 刁	diao	12
+刹	sha	12
 剌	la	12
 前肢	qian zhi	12
 劝诫	quan jie	12
@@ -52220,7 +52172,6 @@
 卷扬机	juan yang ji	12
 卷铺盖	juan pu gai	12
 厩肥	jiu fei	12
-参	shen	12
 双休日	shuang xiu ri	12
 反哺	fan bu	12
 发家致富	fa jia zhi fu	12
@@ -52254,14 +52205,13 @@
 唠	lao	12
 唯命是从	wei ming shi cong	12
 啄	zhuo	12
-喔	wo	12
-喳	zha	12
 嗔	chen	12
 嘈	cao	12
 嘶鸣	si ming	12
 噗	pu	12
 噩	e	12
 噶	ga	12
+嚼	jiao	12
 回车键	hui che jian	12
 囱	cong	12
 圃	pu	12
@@ -52272,6 +52222,7 @@
 垛口	duo kou	12
 垛子	duo zi	12
 城垛	cheng duo	12
+埔	pu	12
 埠	bu	12
 堑	qian	12
 堰	yan	12
@@ -52291,6 +52242,7 @@
 奚落	xi luo	12
 妊	ren	12
 姑嫂	gu sao	12
+姥	lao	12
 娇媚	jiao mei	12
 娠	shen	12
 娼	chang	12
@@ -52350,11 +52302,9 @@
 引以自豪	yin yi zi hao	12
 弩	nu	12
 弱不禁风	ruo bu jin feng	12
-强	jiang	12
 弼	bi	12
 彗	hui	12
 彝	yi	12
-彷	pang	12
 得意洋洋	de yi yang yang	12
 徙	xi	12
 念诵	nian song	12
@@ -52384,7 +52334,6 @@
 戴绿帽子	dai lv mao zi	12
 才子佳人	cai zi jia ren	12
 打预防针	da yu fang zhen	12
-扛	kang	12
 扬水站	yang shui zhan	12
 扶手椅	fu shou yi	12
 抉	jue	12
@@ -52396,6 +52345,7 @@
 拌	ban	12
 拎	lin	12
 拔擢	ba zhuo	12
+拽	zhuai	12
 挑刺儿	tiao ci er	12
 捎	shao	12
 换气扇	huan qi shan	12
@@ -52450,18 +52400,17 @@
 木栓	mu shuan	12
 杂牌军	za pai jun	12
 枷	jia	12
-栅	shan	12
 栓剂	shuan ji	12
 核讹诈	he e zha	12
 桅	wei	12
 桌椅板凳	zhuo yi ban deng	12
 桑拿浴	sang na yu	12
 桔梗	jie geng	12
+椎	zhui	12
 楷	kai	12
 榄	lan	12
 榛子	zhen zi	12
 榨	zha	12
-模	mu	12
 横剖面	heng pou mian	12
 樵	qiao	12
 橄	gan	12
@@ -52478,6 +52427,7 @@
 殷墟	yin xu	12
 毗	pi	12
 毡	zhan	12
+氓	meng	12
 气味相投	qi wei xiang tou	12
 气焰	qi yan	12
 氖	nai	12
@@ -52530,6 +52480,7 @@
 演播厅	yan bo ting	12
 漪	yi	12
 漱	shu	12
+澄	cheng	12
 澈	che	12
 澎	peng	12
 濡湿	ru shi	12
@@ -52547,13 +52498,13 @@
 热心肠	re xin chang	12
 烹	peng	12
 烹制	peng zhi	12
+焘	tao	12
 焚掠	fen lve	12
 焰火	yan huo	12
 熔铸	rong zhu	12
 爱怜	ai lian	12
 爽身粉	shuang shen fen	12
 牛郎星	niu lang xing	12
-牟	mu	12
 犀	xi	12
 狐媚	hu mei	12
 狙	ju	12
@@ -52563,7 +52514,6 @@
 狼牙棒	lang ya bang	12
 猖	chang	12
 猪崽	zhu zai	12
-率	shuai	12
 珂	ke	12
 琅	lang	12
 琶	pa	12
@@ -52683,7 +52633,6 @@
 船舷	chuan xian	12
 良宵	liang xiao	12
 艰涩	jian se	12
-色	shai	12
 芭蕉	ba jiao	12
 芸豆	yun dou	12
 芸香	yun xiang	12
@@ -52702,15 +52651,14 @@
 葵	kui	12
 蒜	suan	12
 蓬蒿	peng hao	12
+蔚	wei	12
 蔼	ai	12
 蕃	fan	12
-薄	bo	12
 薪俸	xin feng	12
-藏	zang	12
+藉	jie	12
 藻井	zao jing	12
 蘑	mo	12
 虚妄	xu wang	12
-虾	xia	12
 蚕丝	can si	12
 蚕农	can nong	12
 蚕子	can zi	12
@@ -52730,6 +52678,7 @@
 袄	ao	12
 袅	niao	12
 袒	tan	12
+裳	chang	12
 褒	bao	12
 褥	ru	12
 襄理	xiang li	12
@@ -52742,7 +52691,6 @@
 讽谏	feng jian	12
 证婚人	zheng hun ren	12
 诃	he	12
-识	zhi	12
 识时务	shi shi wu	12
 诘	jie	12
 诛戮	zhu lu	12
@@ -52789,7 +52737,6 @@
 钗	chai	12
 钠	na	12
 钢化玻璃	gang hua bo li	12
-钥	yue	12
 钱串子	qian chuan zi	12
 钵	bo	12
 铁人三项	tie ren san xiang	12
@@ -52814,7 +52761,6 @@
 防渗	fang shen	12
 阳春白雪	yang chun bai xue	12
 阴晦	yin hui	12
-阿	e	12
 降半旗	jiang ban qi	12
 陡变	dou bian	12
 陡增	dou zeng	12
@@ -52901,13 +52847,16 @@
 五彩缤纷	wu cai bin fen	11
 亘	gen	11
 亭子间	ting zi jian	11
-亲	qing	11
 人尽其才	ren jin qi cai	11
 人工授精	ren gong shou jing	11
 人才济济	ren cai ji ji	11
+仔	zai	11
 以正视听	yi zheng shi ting	11
 仰泳	yang yong	11
 伤悼	shang dao	11
+似	shi	11
+伽	jia	11
+佃	dian	11
 佚	yi	11
 佼	jiao	11
 侥	yao	11
@@ -52948,7 +52897,6 @@
 勉力	mian li	11
 募化	mu hua	11
 募股	mu gu	11
-匮	kui	11
 协理员	xie li yuan	11
 卡宾枪	ka bin qiang	11
 卤	lu	11
@@ -52964,9 +52912,7 @@
 后事之师	hou shi zhi shi	11
 吮	shun	11
 呸	pei	11
-咋	za	11
 咔	ka	11
-咳	hai	11
 哂笑	shen xiao	11
 哒	da	11
 唧	ji	11
@@ -52975,8 +52921,9 @@
 啧	ze	11
 啬	se	11
 喋	die	11
+喔	wo	11
 喙	hui	11
-嗒	da	11
+喳	zha	11
 嗖	sou	11
 嗟	jie	11
 嗳	ai	11
@@ -52999,8 +52946,6 @@
 垂怜	chui lian	11
 垛	duo	11
 垦区	ken qu	11
-埔	pu	11
-堡	pu	11
 塾	shu	11
 壁橱	bi chu	11
 壑	he	11
@@ -53047,7 +52992,6 @@
 小褂	xiao gua	11
 尧舜	yao shun	11
 尿毒症	niao du zheng	11
-属	zhu	11
 屠戮	tu lu	11
 山洼	shan wa	11
 屹	yi	11
@@ -53056,7 +53000,6 @@
 崽	zai	11
 嵋	mei	11
 巅	dian	11
-差	chai	11
 师出无名	shi chu wu ming	11
 帝王将相	di wang jiang xiang	11
 席梦思	xi meng si	11
@@ -53070,8 +53013,8 @@
 引以为戒	yin yi wei jie	11
 弟媳	di xi	11
 当仁不让	dang ren bu rang	11
+彷	pang	11
 征募	zheng mu	11
-忒	tui	11
 忘乎所以	wang hu suo yi	11
 快人快语	kuai ren kuai yu	11
 怂	song	11
@@ -53097,7 +53040,6 @@
 愤然	fen ran	11
 憨	han	11
 懵	meng	11
-戌	xu	11
 戍	shu	11
 戟	ji	11
 扈	hu	11
@@ -53105,6 +53047,7 @@
 手下败将	shou xia bai jiang	11
 打头阵	da tou zhen	11
 打官腔	da guan qiang	11
+扛	kang	11
 抡	lun	11
 报幕员	bao mu yuan	11
 抵不上	di bu shang	11
@@ -53116,7 +53059,6 @@
 挎	kua	11
 挑拨离间	tiao bo li jian	11
 挞伐	ta fa	11
-挟	jia	11
 挟制	xie zhi	11
 挟带	xie dai	11
 挥发油	hui fa you	11
@@ -53174,7 +53116,7 @@
 枭	xiao	11
 柜橱	gui chu	11
 柿子椒	shi zi jiao	11
-校	jiao	11
+栅	shan	11
 栩	xu	11
 桐树	tong shu	11
 桐油	tong you	11
@@ -53284,6 +53226,7 @@
 燎	liao	11
 燥热	zao re	11
 牛瘟	niu wen	11
+牟	mu	11
 牢不可破	lao bu ke po	11
 牵牛花	qian niu hua	11
 牵线人	qian xian ren	11
@@ -53334,7 +53277,6 @@
 皿	min	11
 盅	zhong	11
 目光短浅	mu guang duan qian	11
-省	xing	11
 眈	dan	11
 眉梢	mei shao	11
 睐	lai	11
@@ -53346,11 +53288,9 @@
 瞰	kan	11
 瞳	tong	11
 瞻望	zhan wang	11
-石	dan	11
 石笋	shi sun	11
 硅藻	gui zao	11
 碗橱	wan chu	11
-磅	bang	11
 礼尚往来	li shang wang lai	11
 神农氏	shen nong shi	11
 祯	zhen	11
@@ -53380,8 +53320,6 @@
 篓	lou	11
 篮筐	lan kuang	11
 簌	su	11
-粘	nian	11
-粘	zhan	11
 糜	mi	11
 紧绷绷	jin beng beng	11
 紫云英	zi yun ying	11
@@ -53393,6 +53331,7 @@
 纤毛	xian mao	11
 纤瘦	xian shou	11
 纤秀	xian xiu	11
+给	ji	11
 绚	xuan	11
 绛	jiang	11
 继往开来	ji wang kai lai	11
@@ -53446,9 +53385,7 @@
 苞	bao	11
 苦衷	ku zhong	11
 苫布	shan bu	11
-茄	qie	11
 茗	ming	11
-茜	qian	11
 茬	cha	11
 茶炊	cha chui	11
 茸毛	rong mao	11
@@ -53459,7 +53396,6 @@
 荫庇	yin bi	11
 萦	ying	11
 葆	bao	11
-著	zhuo	11
 蒙汗药	meng han yao	11
 蒸饺	zheng jiao	11
 蓓	bei	11
@@ -53476,6 +53412,7 @@
 虔心	qian xin	11
 虔敬	qian jing	11
 虱	shi	11
+虾	xia	11
 蚕桑	can sang	11
 蚕豆	can dou	11
 蚤	zao	11
@@ -53578,6 +53515,7 @@
 酉	you	11
 酮	tong	11
 醮	jiao	11
+重	chong	11
 重见天日	chong jian tian ri	11
 野炊	ye chui	11
 釜	fu	11
@@ -53587,6 +53525,7 @@
 钓竿	diao gan	11
 钓鱼竿	diao yu gan	11
 钡	bei	11
+钥	yue	11
 钵盂	bo yu	11
 钾	jia	11
 铐	kao	11
@@ -53605,7 +53544,6 @@
 阂	he	11
 阉	yan	11
 阑	lan	11
-降	xiang	11
 陡坡	dou po	11
 陡壁	dou bi	11
 隐衷	yin zhong	11
@@ -53633,7 +53571,6 @@
 香樟	xiang zhang	11
 马褂	ma gua	11
 驭手	yu shou	11
-驮	tuo	11
 骋	cheng	11
 骥	ji	11
 骷	ku	11
@@ -53690,6 +53627,7 @@
 亟须	ji xu	10
 京畿	jing ji	10
 仄	ze	10
+仔	zi	10
 仗恃	zhang shi	10
 仙客来	xian ke lai	10
 代销店	dai xiao dian	10
@@ -53704,7 +53642,6 @@
 俚	li	10
 信天翁	xin tian weng	10
 信笺	xin jian	10
-俩	liang	10
 俭省	jian sheng	10
 俳句	pai ju	10
 倌	guan	10
@@ -53712,7 +53649,6 @@
 倦容	juan rong	10
 倦意	juan yi	10
 偃	yan	10
-偈	ji	10
 催命鬼	cui ming gui	10
 僚属	liao shu	10
 僚机	liao ji	10
@@ -53740,14 +53676,15 @@
 匍	pu	10
 匐	fu	10
 化脓	hua nong	10
+匙	chi	10
 匝	za	10
+匮	kui	10
 十二生肖	shi er sheng xiao	10
 千斤顶	qian jin ding	10
 卅	sa	10
 午膳	wu shan	10
 厩	jiu	10
 叁	san	10
-参	cen	10
 参差不齐	cen ci bu qi	10
 双氧水	shuang yang shui	10
 发嗲	fa dia	10
@@ -53761,12 +53698,11 @@
 各执一词	ge zhi yi ci	10
 同生共死	tong sheng gong si	10
 吟诵	yin song	10
-吭	keng	10
-吱	zhi	10
+否	pi	10
 吹拂	chui fu	10
-呱	gua	10
 呵叱	he chi	10
 咂	za	10
+咋	za	10
 咕咚	gu dong	10
 咛	ning	10
 咝	si	10
@@ -53775,8 +53711,6 @@
 哀怜	ai lian	10
 哀戚	ai qi	10
 哔叽	bi ji	10
-哪	ne	10
-哪	nei	10
 唏	xi	10
 唑	zuo	10
 啕	tao	10
@@ -53785,6 +53719,7 @@
 啻	chi	10
 啾	jiu	10
 喟	kui	10
+嗒	da	10
 嗤笑	chi xiao	10
 嗥	hao	10
 嗫	nie	10
@@ -53806,7 +53741,6 @@
 垦荒	ken huang	10
 垫脚石	dian jiao shi	10
 埂	geng	10
-塞	se	10
 填鸭式	tian ya shi	10
 墒	shang	10
 墨渍	mo zi	10
@@ -53814,7 +53748,6 @@
 夙	su	10
 多此一举	duo ci yi ju	10
 天字第一号	tian zi di yi hao	10
-奇	ji	10
 奔泻	ben xie	10
 奖掖	jiang ye	10
 女娲	nv wa	10
@@ -53823,8 +53756,6 @@
 妩	wu	10
 姑丈	gu zhang	10
 娑	suo	10
-娜	nuo	10
-娩	mian	10
 娲	wa	10
 婆娑	po suo	10
 婆媳	po xi	10
@@ -53880,6 +53811,7 @@
 心窍	xin qiao	10
 忐	tan	10
 忑	te	10
+忒	tui	10
 志得意满	zhi de yi man	10
 忧愤	you fen	10
 忻	xin	10
@@ -53890,7 +53822,6 @@
 怨愤	yuan fen	10
 恳切	ken qie	10
 恳谈	ken tan	10
-恶	wu	10
 恼人	nao ren	10
 恼恨	nao hen	10
 悬崖勒马	xuan ya le ma	10
@@ -53903,15 +53834,16 @@
 憩	qi	10
 憾事	han shi	10
 懋	mao	10
+戌	xu	10
 戾	li	10
 房檐	fang yan	10
-扒	ba	10
 打桩机	da zhuang ji	10
 执拗	zhi niu	10
 执牛耳	zhi niu er	10
 扩音机	kuo yin ji	10
 扪	men	10
 扶掖	fu ye	10
+折	zhe	10
 抠	kou	10
 抱憾	bao han	10
 抽噎	chou ye	10
@@ -53930,7 +53862,6 @@
 据理力争	ju li li zheng	10
 掬	ju	10
 掰	bai	10
-掺	chan	10
 揖让	yi rang	10
 握手言和	wo shou yan he	10
 摈	bin	10
@@ -54097,7 +54028,6 @@
 璜	huang	10
 甜面酱	tian mian jiang	10
 由表及里	you biao ji li	10
-町	ting	10
 番薯	fan shu	10
 畹	wan	10
 畿	ji	10
@@ -54125,11 +54055,11 @@
 盎然	ang ran	10
 相持不下	xiang chi bu xia	10
 盹	dun	10
+着	zhao	10
 睡懒觉	shui lan jiao	10
 睨	ni	10
 瞌	ke	10
 瞑	ming	10
-瞭	liao	10
 知法犯法	zhi fa fan fa	10
 石沉大海	shi chen da hai	10
 矿务局	kuang wu ju	10
@@ -54142,6 +54072,7 @@
 碌碌	lu lu	10
 碳素钢	tan su gang	10
 碴	cha	10
+磅	bang	10
 祐	you	10
 祗	zhi	10
 祛	qu	10
@@ -54152,7 +54083,6 @@
 祛风	qu feng	10
 秆	gan	10
 秋蝉	qiu chan	10
-秸	jie	10
 穑	se	10
 窠	ke	10
 立身处世	li shen chu shi	10
@@ -54231,8 +54161,6 @@
 臼	jiu	10
 舀	yao	10
 舐	shi	10
-般	bo	10
-般	pan	10
 舷梯	xian ti	10
 色迷迷	se mi mi	10
 芋	yu	10
@@ -54247,7 +54175,9 @@
 芳馨	fang xin	10
 苓	ling	10
 苦不堪言	ku bu kan yan	10
+茄	qie	10
 茉	mo	10
+茜	qian	10
 荒谬绝伦	huang miu jue lun	10
 荚	jia	10
 荤	hun	10
@@ -54260,8 +54190,6 @@
 萤石	ying shi	10
 萱	xuan	10
 萼	e	10
-落	la	10
-落	lao	10
 落花流水	luo hua liu shui	10
 蒙蒙亮	meng meng liang	10
 蒿	hao	10
@@ -54285,12 +54213,10 @@
 蛆	qu	10
 蛎	li	10
 蛐	qu	10
-蛤	ge	10
 蛭	zhi	10
 蛰	zhe	10
 蛳	si	10
 蜃	shen	10
-蜒	yan	10
 蜓	ting	10
 蜥	xi	10
 蝉翼	chan yi	10
@@ -54302,7 +54228,6 @@
 蟠	pan	10
 蟮	shan	10
 蠡	li	10
-血	xie	10
 行云流水	xing yun liu shui	10
 衢	qu	10
 表里不一	biao li bu yi	10
@@ -54311,13 +54236,11 @@
 衷肠	zhong chang	10
 袤	mao	10
 裆	dang	10
-褚	chu	10
 褛	lv	10
 褴	lan	10
 褶子	zhe zi	10
 要隘	yao ai	10
 觐	jin	10
-角	jue	10
 言之有据	yan zhi you ju	10
 训诲	xun hui	10
 记叙文	ji xu wen	10
@@ -54346,11 +54269,9 @@
 躬亲	gong qin	10
 躬行	gong xing	10
 躬身	gong shen	10
-轧	zha	10
 辍	chuo	10
 辎	zi	10
 辏	cou	10
-辗	nian	10
 迎头赶上	ying tou gan shang	10
 违拗	wei ao	10
 连脚裤	lian jiao ku	10
@@ -54443,6 +54364,7 @@
 馐	xiu	10
 馕	nang	10
 香喷喷	xiang pen pen	10
+驮	tuo	10
 驯养	xun yang	10
 驯兽	xun shou	10
 驯良	xun liang	10
@@ -54457,7 +54379,6 @@
 魇	yan	10
 鲇	nian	10
 鲈	lu	10
-鲑	gui	10
 鲫	ji	10
 鲫鱼	ji yu	10
 鳃	sai	10
@@ -54600,19 +54521,16 @@
 众怒难犯	zhong nu nan fan	9
 优柔寡断	you rou gua duan	9
 伤痕文学	shang hen wen xue	9
-伯	bai	9
 伶牙俐齿	ling ya li chi	9
 伸头探脑	shen tou tan nao	9
 低眉顺眼	di mei shun yan	9
 佘	she	9
 余勇可贾	yu yong ke gu	9
-佛	fu	9
 作茧自缚	zuo jian zi fu	9
 佞	ning	9
 佶屈聱牙	ji qu ao ya	9
 使用价值	shi yong jia zhi	9
 侃侃而谈	kan kan er tan	9
-侗	dong	9
 依山傍水	yi shan bang shui	9
 侦察卫星	zhen cha wei xing	9
 侦缉	zhen ji	9
@@ -54638,6 +54556,7 @@
 偃旗息鼓	yan qi xi gu	9
 偃武修文	yan wu xiu wen	9
 假日经济	jia ri jing ji	9
+偈	ji	9
 偏心眼儿	pian xin yan er	9
 傥	tang	9
 傻大黑粗	sha da hei cu	9
@@ -54694,7 +54613,6 @@
 别有天地	bie you tian di	9
 别树一帜	bie shu yi zhi	9
 刺刺不休	ci ci bu xiu	9
-刽	gui	9
 前俯后仰	qian fu hou yang	9
 前倨后恭	qian ju hou gong	9
 前后脚儿	qian hou jiao er	9
@@ -54709,9 +54627,7 @@
 助推火箭	zhu tui huo jian	9
 助桀为虐	zhu jie wei nve	9
 助纣为虐	zhu zhou wei nve	9
-劲	jing	9
 勉为其难	mian wei qi nan	9
-勒	lei	9
 勤工俭学	qin gong jian xue	9
 勤恳	qin ken	9
 勾魂摄魄	gou hun she po	9
@@ -54733,7 +54649,6 @@
 卖官鬻爵	mai guan yu jue	9
 南辕北辙	nan yuan bei zhe	9
 卞	bian	9
-卡	qia	9
 卫星云图	wei xing yun tu	9
 即景生情	ji jing sheng qing	9
 卷帙浩繁	juan zhi hao fan	9
@@ -54755,7 +54670,6 @@
 口干舌燥	kou gan she zao	9
 口服心服	kou fu xin fu	9
 古筝	gu zheng	9
-句	gou	9
 另当别论	ling dang bie lun	9
 另辟蹊径	ling pi xi jing	9
 叨咕	dao gu	9
@@ -54789,6 +54703,7 @@
 含而不露	han er bu lu	9
 含辛茹苦	han xin ru ku	9
 含饴弄孙	han yi nong sun	9
+吭	keng	9
 吱吱喳喳	zhi zhi zha zha	9
 吸吮	xi shun	9
 吹毛求疵	chui mao qiu ci	9
@@ -54797,6 +54712,7 @@
 呕心沥血	ou xin li xue	9
 呜噜呜噜	wu lu wu lu	9
 呤	ling	9
+呱	gua	9
 呱呱坠地	gu gu zhui di	9
 呱呱落地	gu gu luo di	9
 呶	nao	9
@@ -54804,7 +54720,6 @@
 呼风唤雨	hu feng huan yu	9
 命令主义	ming ling zhu yi	9
 命途多舛	ming tu duo chuan	9
-咀	zui	9
 和事佬	he shi lao	9
 和衷共济	he zhong gong ji	9
 咎由自取	jiu you zi qu	9
@@ -54813,8 +54728,7 @@
 咤	zha	9
 咩	mie	9
 咫尺天涯	zhi chi tian ya	9
-咱	za	9
-咳	ke	9
+咳	hai	9
 咸水湖	xian shui hu	9
 咿	yi	9
 哀兵必胜	ai bing bi sheng	9
@@ -54822,7 +54736,6 @@
 哆哆嗦嗦	duo duo suo suo	9
 哆嗦	duo suo	9
 响遏行云	xiang e xing yun	9
-哦	e	9
 哩哩啦啦	li li la la	9
 哭哭啼啼	ku ku ti ti	9
 哭天抹泪	ku tian mo lei	9
@@ -54869,7 +54782,6 @@
 噤若寒蝉	jin ruo han chan	9
 噫	yi	9
 噼里啪啦	pi li pa la	9
-嚓	cha	9
 四季如春	si ji ru chun	9
 回纥	hui he	9
 因事制宜	yin shi zhi yi	9
@@ -54959,6 +54871,7 @@
 姹紫嫣红	cha zi yan hong	9
 威信扫地	wei xin sao di	9
 娣	di	9
+娩	mian	9
 婀	e	9
 婀娜多姿	e nuo duo zi	9
 媾	gou	9
@@ -55056,7 +54969,6 @@
 左支右绌	zuo zhi you chu	9
 左道旁门	zuo dao pang men	9
 巧舌如簧	qiao she ru huang	9
-差	ci	9
 市场体系	shi chang ti xi	9
 常备不懈	chang bei bu xie	9
 帼	guo	9
@@ -55081,7 +54993,6 @@
 引火烧身	yin huo shao shen	9
 引而不发	yin er bu fa	9
 弛缓	chi huan	9
-弟	ti	9
 张皇失措	zhang huang shi cuo	9
 弭	mi	9
 弱不胜衣	ruo bu sheng yi	9
@@ -55178,6 +55089,7 @@
 户枢不蠹	hu shu bu du	9
 手疾眼快	shou ji yan kuai	9
 手眼通天	shou yan tong tian	9
+扒	ba	9
 打光棍儿	da guang gun er	9
 打入冷宫	da ru leng gong	9
 打太极拳	da tai ji quan	9
@@ -55234,8 +55146,8 @@
 指甲盖儿	zhi jia gai er	9
 按图索骥	an tu suo ji	9
 挛缩	luan suo	9
-挝	wo	9
 挞	ta	9
+挟	jia	9
 挟嫌报复	xie xian bao fu	9
 振聋发聩	zhen long fa kui	9
 捉襟见肘	zhuo jin jian zhou	9
@@ -55244,7 +55156,7 @@
 捡破烂儿	jian po lan er	9
 掇	duo	9
 排难解纷	pai nan jie fen	9
-掸	dan	9
+掺	chan	9
 揄	yu	9
 揆	kui	9
 描摹	miao mo	9
@@ -55338,7 +55250,6 @@
 晓行夜宿	xiao xing ye su	9
 晕头晕脑	yun tou yun nao	9
 晗	han	9
-景	ying	9
 景泰蓝	jing tai lan	9
 晴雨表	qing yu biao	9
 晶莹剔透	jing ying ti tou	9
@@ -55459,7 +55370,6 @@
 池鱼之殃	chi yu zhi yang	9
 污言秽语	wu yan hui yu	9
 汩	gu	9
-汶	wen	9
 沁人肺腑	qin ren fei fu	9
 沆瀣一气	hang xie yi qi	9
 沏	qi	9
@@ -55530,7 +55440,6 @@
 澧	li	9
 濡	ru	9
 濯	zhuo	9
-瀑	pu	9
 火急火燎	huo ji huo liao	9
 火烧火燎	huo shao huo liao	9
 火眼金睛	huo yan jin jing	9
@@ -55620,6 +55529,7 @@
 电子汇款	dian zi hui kuan	9
 电烤炉	dian kao lu	9
 电磁污染	dian ci wu ran	9
+町	ting	9
 画龙点睛	hua long dian jing	9
 畏葸不前	wei xi bu qian	9
 略见一斑	lve jian yi ban	9
@@ -55631,7 +55541,6 @@
 疮疤	chuang ba	9
 疮痍满目	chuang yi man mu	9
 疯癫	feng dian	9
-疸	dan	9
 疾言厉色	ji yan li se	9
 疾风劲草	ji feng jing cao	9
 病入膏肓	bing ru gao huang	9
@@ -55678,11 +55587,13 @@
 省吃俭用	sheng chi jian yong	9
 看风使舵	kan feng shi duo	9
 真知灼见	zhen zhi zhuo jian	9
+着	zhuo	9
 睡眼惺忪	shui yan xing song	9
 睢	sui	9
 睹物伤情	du wu shang qing	9
 瞎说八道	xia shuo ba dao	9
 瞥见	pie jian	9
+瞭	liao	9
 瞻前顾后	zhan qian gu hou	9
 知人论世	zhi ren lun shi	9
 矫枉过正	jiao wang guo zheng	9
@@ -55717,6 +55628,7 @@
 秣马厉兵	mo ma li bing	9
 秦晋之好	qin jin zhi hao	9
 称孤道寡	cheng gu dao gua	9
+秸	jie	9
 稀里哗啦	xi li hua la	9
 稗官野史	bai guan ye shi	9
 穴居野处	xue ju ye chu	9
@@ -55763,6 +55675,7 @@
 粑	ba	9
 粕	po	9
 粗手笨脚	cu shou ben jiao	9
+粘	zhan	9
 粲	can	9
 粲然	can ran	9
 精神头儿	jing shen tou er	9
@@ -55822,7 +55735,6 @@
 老骥伏枥	lao ji fu li	9
 耍心眼儿	shua xin yan er	9
 耍滑头	shua hua tou	9
-耙	pa	9
 耦	ou	9
 耳朵眼儿	er duo yan er	9
 耳濡目染	er ru mu ran	9
@@ -55858,7 +55770,6 @@
 脑袋瓜儿	nao dai gua er	9
 脑髓	nao sui	9
 脓肿	nong zhong	9
-脚	jue	9
 腌	yan	9
 腥风血雨	xing feng xue yu	9
 腴	yu	9
@@ -55906,7 +55817,6 @@
 苗圃	miao pu	9
 苛捐杂税	ke juan za shui	9
 苡	yi	9
-若	re	9
 苫	shan	9
 英姿飒爽	ying zi sa shuang	9
 英雄气短	ying xiong qi duan	9
@@ -55926,12 +55836,10 @@
 莅	li	9
 莘	shen	9
 莘莘学子	shen shen xue zi	9
-莞	wan	9
 莫可名状	mo ke ming zhuang	9
 莫衷一是	mo zhong yi shi	9
 菠	bo	9
 落落寡合	luo luo gua he	9
-著	zhe	9
 蒙昧	meng mei	9
 蓑	suo	9
 蓝牙技术	lan ya ji shu	9
@@ -55954,8 +55862,10 @@
 蚝	hao	9
 蚩	chi	9
 蛉	ling	9
+蛤	ge	9
 蜇	zhe	9
 蜊	li	9
+蜒	yan	9
 蜚	fei	9
 蜷伏	quan fu	9
 蜷曲	quan qu	9
@@ -55980,8 +55890,8 @@
 装殓	zhuang lian	9
 裟	sha	9
 裱	biao	9
+褚	chu	9
 褡	da	9
-褪	tun	9
 要言不烦	yao yan bu fan	9
 见危授命	jian wei shou ming	9
 见景生情	jian jing sheng qing	9
@@ -56018,6 +55928,7 @@
 说好说歹	shuo hao shuo dai	9
 说实在的	shuo shi zai de	9
 说长道短	shuo chang dao duan	9
+调	tiao	9
 谖	xuan	9
 谲	jue	9
 谶	chen	9
@@ -56065,12 +55976,14 @@
 车篷	che peng	9
 车轱辘话	che gu lu hua	9
 车载斗量	che zai dou liang	9
+轧	zha	9
 转忧为喜	zhuan you wei xi	9
 轭	e	9
 软硬不吃	ruan ying bu chi	9
 轱	gu	9
 轻重倒置	qing zhong dao zhi	9
 辔	pei	9
+辗	nian	9
 辩诬	bian wu	9
 达斡尔族	da wo er zu	9
 过滤嘴儿	guo lv zui er	9
@@ -56152,7 +56065,6 @@
 铉	xuan	9
 铡	zha	9
 铡刀	zha dao	9
-铣	xi	9
 铤而走险	ting er zou xian	9
 铨	quan	9
 铩	sha	9
@@ -56174,6 +56086,7 @@
 锲	qie	9
 锷	e	9
 镳	biao	9
+长	zhang	9
 长啸	chang xiao	9
 长话短说	chang hua duan shuo	9
 问心无愧	wen xin wu kui	9
@@ -56193,8 +56106,6 @@
 阴森森	yin sen sen	9
 阴阳先生	yin yang xian sheng	9
 阿谀逢迎	e yu feng ying	9
-陂	bei	9
-陆	liu	9
 陈规陋习	chen gui lou xi	9
 险隘	xian ai	9
 陲	chui	9
@@ -56213,7 +56124,6 @@
 震古烁今	zhen gu shuo jin	9
 霏	fei	9
 霰	xian	9
-露	lou	9
 青堂瓦舍	qing tang wa she	9
 青面獠牙	qing mian liao ya	9
 非驴非马	fei lv fei ma	9
@@ -56233,7 +56143,6 @@
 顶梁柱	ding liang zhu	9
 顾影自怜	gu ying zi lian	9
 顿开茅塞	dun kai mao se	9
-颉	jie	9
 颏	ke	9
 颓丧	tui sang	9
 额手称庆	e shou cheng qing	9
@@ -56250,7 +56159,6 @@
 风烛残年	feng zhu can nian	9
 飞檐走壁	fei yan zou bi	9
 飞针走线	fei zhen zou xian	9
-食	si	9
 食不甘味	shi bu gan wei	9
 飧	sun	9
 飨	xiang	9
@@ -56299,6 +56207,7 @@
 魑	chi	9
 魑魅魍魉	chi mei wang liang	9
 鱿	you	9
+鲑	gui	9
 鲟	xun	9
 鲱鱼	fei yu	9
 鳅	qiu	9
@@ -56313,13 +56222,13 @@
 鹊巢鸠占	que chao jiu zhan	9
 鹌	an	9
 鹗	e	9
-鹘	hu	9
 鹬	yu	9
 麂	ji	9
 麋	mi	9
 麒	qi	9
 麝牛	she niu	9
 麻袋片儿	ma dai pian er	9
+麽	mo	9
 黄口小儿	huang kou xiao er	9
 黄金地带	huang jin di dai	9
 黏黏糊糊	nian nian hu hu	9
@@ -56355,7 +56264,6 @@
 为人师表	wei ren shi biao	8
 乖僻	guai pi	8
 乖戾	guai li	8
-乘	sheng	8
 二愣子	er leng zi	8
 五代十国	wu dai shi guo	8
 五斗柜	wu dou gui	8
@@ -56364,10 +56272,10 @@
 仃	ding	8
 以一当十	yi yi dang shi	8
 仪仗队	yi zhang dui	8
-伽	qie	8
 体贴入微	ti tie ru wei	8
 佗	tuo	8
 佻	tiao	8
+侗	dong	8
 侩	kuai	8
 俎	zu	8
 俣	yu	8
@@ -56376,10 +56284,8 @@
 俯卧	fu wo	8
 俯察	fu cha	8
 俳	pai	8
-倜	ti	8
 倨	ju	8
 假寐	jia mei	8
-偻	lv	8
 傈	li	8
 僻远	pi yuan	8
 僻静	pi jing	8
@@ -56400,11 +56306,8 @@
 分而治之	fen er zhi zhi	8
 刎	wen	8
 刚正不阿	gang zheng bu e	8
-刨	bao	8
-刨	pao	8
-刹	cha	8
+刽	gui	8
 剖白	pou bai	8
-剥	bo	8
 功成名就	gong cheng ming jiu	8
 动真格的	dong zhen ge de	8
 劬	qu	8
@@ -56412,7 +56315,6 @@
 勖	xu	8
 化为乌有	hua wei wu you	8
 北京猿人	bei jing yuan ren	8
-匙	shi	8
 匦	gui	8
 医嘱	yi zhu	8
 千夫所指	qian fu suo zhi	8
@@ -56424,11 +56326,8 @@
 反攻倒算	fan gong dao suan	8
 口是心非	kou shi xin fei	8
 叨叨	dao dao	8
-召	shao	8
 可圈可点	ke quan ke dian	8
 可憎	ke zeng	8
-叶	xie	8
-吁	xu	8
 吃败仗	chi bai zhang	8
 各取所需	ge qu suo xu	8
 各家各户	ge jia ge hu	8
@@ -56437,19 +56336,17 @@
 同心同德	tong xin tong de	8
 名不副实	ming bu fu shi	8
 吒	zha	8
-吓	he	8
 吡	bi	8
 听天由命	ting tian you ming	8
 吭声	keng sheng	8
 吭气	keng qi	8
-吱	zi	8
+吱	zhi	8
 吱声	zhi sheng	8
 吹灰之力	chui hui zhi li	8
 告罄	gao qing	8
 呋	fu	8
 呐喊助威	na han zhu wei	8
 呔	tai	8
-呷	xia	8
 和婉	he wan	8
 和洽	he qia	8
 咣当	guang dang	8
@@ -56463,6 +56360,7 @@
 嘣	beng	8
 嘧	mi	8
 嘱托	zhu tuo	8
+嚓	cha	8
 囊中物	nang zhong wu	8
 四书五经	si shu wu jing	8
 四海为家	si hai wei jia	8
@@ -56471,16 +56369,12 @@
 围堰	wei yan	8
 囵	lun	8
 囿于	you yu	8
-圈	juan	8
-圩	xu	8
 圻	qi	8
-坏	pi	8
 垭	ya	8
 堋	peng	8
 壅	yong	8
 壅塞	yong se	8
 士绅	shi shen	8
-壳	qiao	8
 夤	yin	8
 大篆	da zhuan	8
 天人合一	tian ren he yi	8
@@ -56543,26 +56437,22 @@
 廓清	kuo qing	8
 开斋节	kai zhai jie	8
 异乎寻常	yi hu xun chang	8
-弄	long	8
 彩墨画	cai mo hua	8
 彩绸	cai chou	8
 徭	yao	8
 徵	zhi	8
 心潮起伏	xin chao qi fu	8
 忤	wu	8
-忪	song	8
 忾	kai	8
 怒火中烧	nu huo zhong shao	8
 急于求成	ji yu qiu cheng	8
 怪僻	guai pi	8
 怯场	qie chang	8
 怯弱	qie ruo	8
-恁	nen	8
 恂	xun	8
 恍如	huang ru	8
 恍然	huang ran	8
 恍若	huang ruo	8
-恫	dong	8
 恹	yan	8
 悌	ti	8
 悖谬	bei miu	8
@@ -56576,7 +56466,6 @@
 愧悔	kui hui	8
 慢吞吞	man tun tun	8
 戬	jian	8
-扎	za	8
 扣人心弦	kou ren xin xian	8
 扬子鳄	yang zi e	8
 扼制	e zhi	8
@@ -56588,20 +56477,17 @@
 抻	chen	8
 拒贿	ju hui	8
 招赘	zhao zhui	8
-择	zhai	8
-括	gua	8
 挈	qie	8
-挟	xie	8
-捋	lv	8
+挝	wo	8
 捐躯	juan qu	8
 掂量	dian liang	8
 掩蔽	yan bi	8
 掮	qian	8
+掸	dan	8
 掼	guan	8
 撂倒	liao dao	8
 撒欢儿	sa huan er	8
 擤	xing	8
-攒	zan	8
 放任自流	fang ren zi liu	8
 敌酋	di qiu	8
 敲边鼓	qiao bian gu	8
@@ -56617,10 +56503,8 @@
 旷达	kuang da	8
 明矾	ming fan	8
 昶	chang	8
-暴	pu	8
 暴戾	bao li	8
 曷	he	8
-朴	pu	8
 杞柳	qi liu	8
 杼	zhu	8
 枇	pi	8
@@ -56631,12 +56515,10 @@
 枰	ping	8
 枳	zhi	8
 枸	gou	8
-柏	bo	8
 柔婉	rou wan	8
 柔韧	rou ren	8
 柚木	you mu	8
 柢	di	8
-核	hu	8
 桉	an	8
 梦寐	meng mei	8
 棂	ling	8
@@ -56668,6 +56550,7 @@
 汗马功劳	han ma gong lao	8
 汨	mi	8
 汲水	ji shui	8
+汶	wen	8
 沟壑	gou he	8
 沤	ou	8
 油垢	you gou	8
@@ -56698,7 +56581,7 @@
 潸	shan	8
 濉	sui	8
 濠	hao	8
-瀑	bao	8
+瀑	pu	8
 灏	hao	8
 灯红酒绿	deng hong jiu lv	8
 灼灼	zhuo zhuo	8
@@ -56742,8 +56625,8 @@
 用心良苦	yong xin liang ku	8
 由此及彼	you ci ji bi	8
 甲胄	jia zhou	8
-畲	she	8
 疥	jie	8
+疸	dan	8
 疹子	zhen zi	8
 痂	jia	8
 痈	yong	8
@@ -56755,7 +56638,6 @@
 皮划艇	pi hua ting	8
 皮疹	pi zhen	8
 皱褶	zhou zhe	8
-盛	cheng	8
 直筒子	zhi tong zi	8
 相安无事	xiang an wu shi	8
 真才实学	zhen cai shi xue	8
@@ -56812,6 +56694,7 @@
 篑	kui	8
 簟	dian	8
 籼稻	xian dao	8
+粘	nian	8
 粽	zong	8
 索贿	suo hui	8
 纡	yu	8
@@ -56830,7 +56713,6 @@
 绦	tao	8
 绱	shang	8
 绸子	chou zi	8
-绿	lu	8
 缁	zi	8
 缂	ke	8
 缄口	jian kou	8
@@ -56847,6 +56729,7 @@
 翕	xi	8
 翳	yi	8
 老生常谈	lao sheng chang tan	8
+耙	pa	8
 耨	nou	8
 耳垢	er gou	8
 耳廓	er kuo	8
@@ -56874,9 +56757,7 @@
 舸	ge	8
 舻	lu	8
 艄	shao	8
-艾	yi	8
 芄	wan	8
-芎	xiong	8
 芏	du	8
 芗	xiang	8
 芡	qian	8
@@ -56901,6 +56782,7 @@
 莆	pu	8
 莒	ju	8
 莜	you	8
+莞	wan	8
 莠	you	8
 莴	wo	8
 莸	you	8
@@ -56922,6 +56804,7 @@
 蓖	bi	8
 蔺	lin	8
 蕲	qi	8
+薄	bo	8
 藿	huo	8
 虼	ge	8
 蚋	rui	8
@@ -56953,10 +56836,9 @@
 裰	duo	8
 裹脚布	guo jiao bu	8
 褓	bao	8
-褪	tui	8
+褪	tun	8
 褶皱	zhe zhou	8
 襁	qiang	8
-覃	qin	8
 见分晓	jian fen xiao	8
 觞	shang	8
 解嘲	jie chao	8
@@ -56995,7 +56877,6 @@
 赜	ze	8
 赫哲族	he zhe zu	8
 趔	lie	8
-趣	cu	8
 趸	dun	8
 趿	ta	8
 跎	tuo	8
@@ -57020,7 +56901,6 @@
 过关斩将	guo guan zhan jiang	8
 过犹不及	guo you bu ji	8
 过街天桥	guo jie tian qiao	8
-迫	pai	8
 迸溅	beng jian	8
 迸裂	beng lie	8
 逋	bu	8
@@ -57028,7 +56908,6 @@
 逡	qun	8
 逶	wei	8
 遑	huang	8
-遗	wei	8
 遢	ta	8
 遴	lin	8
 遵嘱	zun zhu	8
@@ -57062,7 +56941,6 @@
 钏	chuan	8
 钒	fan	8
 钤	qian	8
-钥	yao	8
 钹	bo	8
 铁面无私	tie mian wu si	8
 铆	mao	8
@@ -57070,7 +56948,7 @@
 铆接	mao jie	8
 铆钉	mao ding	8
 铛	cheng	8
-铤	ting	8
+铣	xi	8
 铵	an	8
 锒	lang	8
 锕	a	8
@@ -57078,7 +56956,6 @@
 锶	si	8
 镉	ge	8
 镏	liu	8
-镐	hao	8
 镒	yi	8
 镢	jue	8
 闪烁其词	shan shuo qi ci	8
@@ -57096,6 +56973,7 @@
 阕	que	8
 阗	tian	8
 阡	qian	8
+陂	bei	8
 陡峻	dou jun	8
 除垢	chu gou	8
 除虫菊	chu chong ju	8
@@ -57117,6 +56995,7 @@
 顺水人情	shun shui ren qing	8
 顾全大局	gu quan da ju	8
 颀	qi	8
+颉	jie	8
 颓靡	tui mi	8
 颞	nie	8
 颢	hao	8
@@ -57163,6 +57042,7 @@
 鸹	gua	8
 鹆	yu	8
 鹕	hu	8
+鹘	hu	8
 鹚	ci	8
 鹜	wu	8
 鹧	zhe	8
@@ -57173,11 +57053,9 @@
 黏稠	nian chou	8
 黑乎乎	hei hu hu	8
 黩	du	8
-黾	mian	8
 鼋	yuan	8
 鼓风炉	gu feng lu	8
 鼹	yan	8
-齐	ji	8
 龃	ju	8
 龅牙	bao ya	8
 龆	tiao	8
@@ -57204,7 +57082,6 @@
 举手之劳	ju shou zhi lao	7
 举手投足	ju shou tou zu	7
 乔其纱	qiao qi sha	7
-乜	nie	7
 乱哄哄	luan hong hong	7
 于心不忍	yu xin bu ren	7
 亓	qi	7
@@ -57213,14 +57090,13 @@
 人丁兴旺	ren ding xing wang	7
 人之常情	ren zhi chang qing	7
 人云亦云	ren yun yi yun	7
-仇	qiu	7
+什	shen	7
 从早到晚	cong zao dao wan	7
 仞	ren	7
 仟	qian	7
 以假乱真	yi jia luan zhen	7
 仫	mu	7
 任人摆布	ren ren bai bu	7
-仿	pang	7
 伉	kang	7
 伥	chang	7
 伧	chen	7
@@ -57241,13 +57117,13 @@
 俯仰	fu yang	7
 倘使	tang shi	7
 倘或	tang huo	7
+倜	ti	7
 倥	kong	7
 倬	zhuo	7
 倮	luo	7
 偬	zong	7
+偻	lv	7
 偾	fen	7
-傀	gui	7
-傀	kui	7
 傧	bin	7
 傻乎乎	sha hu hu	7
 僦	jiu	7
@@ -57267,7 +57143,6 @@
 凼	dang	7
 刖	yue	7
 剃须刀	ti xu dao	7
-削	xiao	7
 剖腹	pou fu	7
 劢	mai	7
 劣绅	lie shen	7
@@ -57282,7 +57157,6 @@
 卑琐	bei suo	7
 单口相声	dan kou xiang sheng	7
 南来北往	nan lai bei wang	7
-卜	bo	7
 卣	you	7
 卫戍	wei shu	7
 卯榫	mao sun	7
@@ -57293,18 +57167,15 @@
 口耳相传	kou er xiang chuan	7
 古拙	gu zhuo	7
 叨唠	dao lao	7
-吭	hang	7
 吸墨纸	xi mo zhi	7
 呖	li	7
 呦	you	7
-呲	ci	7
-咀	ju	7
+呷	xia	7
+咀	zui	7
 咂嘴	za zui	7
-咯	ka	7
-咯	luo	7
 咯吱	ge zhi	7
+咳	ke	7
 咴	hui	7
-咽	ye	7
 哀婉	ai wan	7
 哌	pai	7
 哔	bi	7
@@ -57318,8 +57189,6 @@
 啖	dan	7
 啜泣	chuo qi	7
 啰唆	luo suo	7
-喁	yong	7
-喔	o	7
 喱	li	7
 喾	ku	7
 嗌	ai	7
@@ -57331,7 +57200,6 @@
 噱	jue	7
 噻	sai	7
 嚯	huo	7
-嚼	jue	7
 囤	dun	7
 囹	ling	7
 圄	yu	7
@@ -57340,15 +57208,15 @@
 圆鼓鼓	yuan gu gu	7
 圜	huan	7
 土拨鼠	tu bo shu	7
+圩	xu	7
 圮	pi	7
 坎儿井	kan er jing	7
 坨	tuo	7
 垡	fa	7
-埋	man	7
 埙	xun	7
 堇	jin	7
 堞	die	7
-堡	bu	7
+堡	pu	7
 堤堰	di yan	7
 塘堰	tang yan	7
 塬	yuan	7
@@ -57379,8 +57247,6 @@
 孬种	nao zhong	7
 宄	gui	7
 守擂	shou lei	7
-宓	mi	7
-宿	xiu	7
 密密层层	mi mi ceng ceng	7
 寤	wu	7
 对号入座	dui hao ru zuo	7
@@ -57389,11 +57255,7 @@
 尚方宝剑	shang fang bao jian	7
 尥	liao	7
 尽如人意	jin ru ren yi	7
-尾	yi	7
-尿	sui	7
-屏	bing	7
 屙	e	7
-岂	kai	7
 岔口	cha kou	7
 岔子	cha zi	7
 岔开	cha kai	7
@@ -57403,7 +57265,6 @@
 岵	hu	7
 岿	kui	7
 峄	yi	7
-峒	dong	7
 崃	lai	7
 崞	guo	7
 崤	xiao	7
@@ -57427,9 +57288,9 @@
 开怀大笑	kai huai da xiao	7
 引人深思	yin ren shen si	7
 张三李四	zhang san li si	7
+弹	tan	7
 强加于人	qiang jia yu ren	7
 彀	gou	7
-彭	bang	7
 徉	yang	7
 徜	chang	7
 德昂族	de ang zu	7
@@ -57437,11 +57298,14 @@
 心领神会	xin ling shen hui	7
 心魄	xin po	7
 必由之路	bi you zhi lu	7
+忪	song	7
 怄	ou	7
 怙	hu	7
 怛	da	7
 急湍	ji tuan	7
 怫	fu	7
+恁	nen	7
+恫	dong	7
 悒	yi	7
 悬索桥	xuan suo qiao	7
 悭	qian	7
@@ -57457,8 +57321,6 @@
 戍守	shu shou	7
 戍边	shu bian	7
 戏谑	xi xue	7
-扁	pian	7
-扒	pa	7
 打岔	da cha	7
 打擂	da lei	7
 打道回府	da dao hui fu	7
@@ -57479,7 +57341,6 @@
 按部就班	an bu jiu ban	7
 挑唆	tiao suo	7
 挹	yi	7
-捋	luo	7
 捌	ba	7
 捩	lie	7
 捭	bai	7
@@ -57495,7 +57356,6 @@
 擂主	lei zhu	7
 擂鼓	lei gu	7
 擘	bo	7
-攒	cuan	7
 攻擂	gong lei	7
 放赈	fang zhen	7
 敞篷	chang peng	7
@@ -57529,20 +57389,16 @@
 朽烂	xiu lan	7
 杂沓	za ta	7
 杓	shao	7
-杷	pa	7
 果子狸	guo zi li	7
-枞	cong	7
 枵	xiao	7
 柏油路	bai you lu	7
 柘	zhe	7
 栀	zhi	7
-桔	jie	7
 桡	rao	7
 梆子	bang zi	7
 梆硬	bang ying	7
 棉织品	mian zhi pin	7
 椁	guo	7
-椎	chui	7
 椰枣	ye zao	7
 椰蓉	ye rong	7
 椴	duan	7
@@ -57554,8 +57410,6 @@
 榇	chen	7
 榱	cui	7
 槔	gao	7
-槟	bin	7
-槟	bing	7
 槲	hu	7
 樗	chu	7
 檩	lin	7
@@ -57564,18 +57418,16 @@
 正中下怀	zheng zhong xia huai	7
 死于非命	si yu fei ming	7
 死里逃生	si li tao sheng	7
-殖	shi	7
 殛	ji	7
 氡	dong	7
 水瓢	shui piao	7
 汜	si	7
-汤	shang	7
 沆	hang	7
 沙砾	sha li	7
+没	mo	7
 河南坠子	he nan zhui zi	7
 河狸	he li	7
 油乎乎	you hu hu	7
-泊	po	7
 泔	gan	7
 泠	ling	7
 泫	xuan	7
@@ -57596,7 +57448,6 @@
 渑	mian	7
 湍急	tuan ji	7
 湍流	tuan liu	7
-湫	qiu	7
 湿乎乎	shi hu hu	7
 溘	ke	7
 溧	li	7
@@ -57617,14 +57468,12 @@
 烛泪	zhu lei	7
 烛火	zhu huo	7
 焐	wu	7
-焯	chao	7
 煅	duan	7
 煤焦油	mei jiao you	7
 煳	hu	7
 煸	bian	7
 熘	liu	7
 燧石	sui shi	7
-爪	zhua	7
 物尽其用	wu jin qi yong	7
 牯	gu	7
 特遣部队	te qian bu dui	7
@@ -57656,7 +57505,7 @@
 畏怯	wei qie	7
 畚	ben	7
 畛	zhen	7
-番	pan	7
+畲	she	7
 疃	tuan	7
 疖	jie	7
 疝	shan	7
@@ -57678,7 +57527,6 @@
 盹儿	dun er	7
 眦	zi	7
 睇	di	7
-瞋	chen	7
 瞎子摸象	xia zi mo xiang	7
 知人之明	zhi ren zhi ming	7
 知难而进	zhi nan er jin	7
@@ -57697,7 +57545,6 @@
 硝烟	xiao yan	7
 硝石	xiao shi	7
 碡	zhou	7
-磅	pang	7
 磔	zhe	7
 磨砺	mo li	7
 祝祷	zhu dao	7
@@ -57734,14 +57581,11 @@
 糖衣炮弹	tang yi pao dan	7
 綦	qi	7
 縻	mi	7
-繇	yao	7
 红烛	hong zhu	7
 红艳艳	hong yan yan	7
 约定俗成	yue ding su cheng	7
-络	lao	7
 绨	ti	7
 绲	gun	7
-综	zeng	7
 绿篱	lv li	7
 缃	xiang	7
 缇	ti	7
@@ -57749,7 +57593,6 @@
 缔交	di jiao	7
 缗	min	7
 缣	jian	7
-缩	su	7
 缯	zeng	7
 缱	qian	7
 罘	fu	7
@@ -57784,21 +57627,17 @@
 胙	zuo	7
 胨	dong	7
 胼	pian	7
-脉	mo	7
 脓疮	nong chuang	7
 脘	wan	7
 脲	niao	7
-腊	xi	7
 腚	ding	7
 腥膻	xing shan	7
 腮腺	sai xian	7
-膀	pang	7
 膈	ge	7
 膻	shan	7
 自不待言	zi bu dai yan	7
 自不量力	zi bu liang li	7
 自鸣钟	zi ming zhong	7
-臭	xiu	7
 舅子	jiu zi	7
 舅母	jiu mu	7
 舅父	jiu fu	7
@@ -57806,7 +57645,6 @@
 艉	wei	7
 艏	shou	7
 艽	jiao	7
-艿	reng	7
 芊	qian	7
 芑	qi	7
 芟	shan	7
@@ -57834,7 +57672,6 @@
 荽	sui	7
 莪	e	7
 莼	chun	7
-菀	wan	7
 菔	fu	7
 菹	zu	7
 菽	shu	7
@@ -57850,7 +57687,6 @@
 薜	bi	7
 薨	hong	7
 薹	tai	7
-藉	ji	7
 藏拙	cang zhuo	7
 蘅	heng	7
 蘖	nie	7
@@ -57894,6 +57730,7 @@
 裾	ju	7
 褫	chi	7
 西番莲	xi fan lian	7
+覃	qin	7
 觳	hu	7
 言之有物	yan zhi you wu	7
 訇	hong	7
@@ -57901,6 +57738,7 @@
 诡计多端	gui ji duo duan	7
 误人子弟	wu ren zi di	7
 诼	zhuo	7
+谁	shei	7
 谇	sui	7
 谈情说爱	tan qing shuo ai	7
 谢忱	xie chen	7
@@ -57912,11 +57750,9 @@
 贝雷帽	bei lei mao	7
 贬谪	bian zhe	7
 贽	zhi	7
-贾	gu	7
 赀	zi	7
 赅	gai	7
 赈济	zhen ji	7
-赚	zuan	7
 赤忱	chi chen	7
 赧	nan	7
 赫赫有名	he he you ming	7
@@ -57949,7 +57785,6 @@
 遒	qiu	7
 道岔	dao cha	7
 邨	cun	7
-邪	ye	7
 邰	tai	7
 郴	chen	7
 郾	yan	7
@@ -57979,6 +57814,7 @@
 铄	shuo	7
 铋	bi	7
 铍	pi	7
+铤	ting	7
 铧	hua	7
 铳	chong	7
 锆	gao	7
@@ -57991,6 +57827,7 @@
 镇定自若	zhen ding zi ruo	7
 镊	nie	7
 镌刻	juan ke	7
+镐	hao	7
 镛	yong	7
 镞	zu	7
 镧	lan	7
@@ -58018,7 +57855,6 @@
 颎	jiong	7
 颔首	han shou	7
 颛	zhuan	7
-颤	zhan	7
 食蚁兽	shi yi shou	7
 馃	guo	7
 馊主意	sou zhu yi	7
@@ -58068,6 +57904,7 @@
 麻织品	ma zhi pin	7
 黢	qu	7
 黧	li	7
+黾	mian	7
 鼍	tuo	7
 鼗	tao	7
 鼙	pi	7
@@ -58105,6 +57942,8 @@
 举棋不定	ju qi bu ding	6
 乌孜别克族	wu zi bie ke zu	6
 乌溜溜	wu liu liu	6
+乐	yue	6
+乜	nie	6
 二一添作五	er yi tian zuo wu	6
 二道贩子	er dao fan zi	6
 五体投地	wu ti tou di	6
@@ -58118,7 +57957,6 @@
 休止符	xiu zhi fu	6
 伛	yu	6
 伸懒腰	shen lan yao	6
-伽	ga	6
 伽马射线	ga ma she xian	6
 佃农	dian nong	6
 佃客	dian ke	6
@@ -58130,8 +57968,9 @@
 侉	kua	6
 侑	you	6
 俜	ping	6
-倘	chang	6
+俩	liang	6
 倦怠	juan dai	6
+傀	gui	6
 傺	chi	6
 僬	jiao	6
 僻壤	pi rang	6
@@ -58139,17 +57978,16 @@
 六腑	liu fu	6
 共商国是	gong shang guo shi	6
 兵痞	bing pi	6
-兹	ci	6
 农谚	nong yan	6
-冯	ping	6
 冰糖葫芦	bing tang hu lu	6
 凄厉	qi li	6
 刀削面	dao xiao mian	6
 刀马旦	dao ma dan	6
+刨	bao	6
+刨	pao	6
 刨花板	bao hua ban	6
 别具一格	bie ju yi ge	6
 别无二致	bie wu er zhi	6
-券	xuan	6
 刿	gui	6
 剀	kai	6
 前襟	qian jin	6
@@ -58162,18 +58000,17 @@
 助理研究员	zhu li yan jiu yuan	6
 劳逸结合	lao yi jie he	6
 勤杂工	qin za gong	6
+匙	shi	6
 十指连心	shi zhi lian xin	6
 半推半就	ban tui ban jiu	6
 半真半假	ban zhen ban jia	6
 华而不实	hua er bu shi	6
-卑	bi	6
 卓有成就	zhuo you cheng jiu	6
 卖国求荣	mai guo qiu rong	6
 卡介苗	ka jie miao	6
 厄尔尼诺	e er ni nuo	6
 厚颜无耻	hou yan wu chi	6
 原地踏步	yuan di ta bu	6
-厦	xia	6
 参酌	can zhuo	6
 又红又专	you hong you zhuan	6
 双刃剑	shuang ren jian	6
@@ -58186,13 +58023,12 @@
 吖	a	6
 吣	qin	6
 含糊其词	han hu qi ci	6
+吱	zi	6
 吲	yin	6
 呒	wu	6
-呗	bei	6
 呙	guo	6
 呢喃	ni nan	6
-呱	gu	6
-咋	ze	6
+呲	ci	6
 咕哝	gu nong	6
 哄堂大笑	hong tang da xiao	6
 哏	gen	6
@@ -58204,12 +58040,12 @@
 商酌	shang zhuo	6
 啼哭	ti ku	6
 啼鸣	ti ming	6
+喁	yong	6
 喜筵	xi yan	6
 喹	kui	6
 嘀咕	di gu	6
 嘀嗒	di da	6
 嘬	zuo	6
-嚓	ca	6
 四个现代化	si ge xian dai hua	6
 四面楚歌	si mian chu ge	6
 回心转意	hui xin zhuan yi	6
@@ -58230,7 +58066,6 @@
 垓	gai	6
 垧	shang	6
 垴	nao	6
-埔	bu	6
 塄	leng	6
 墼	ji	6
 多如牛毛	duo ru niu mao	6
@@ -58257,7 +58092,6 @@
 妻儿老小	qi er lao xiao	6
 姑舅	gu jiu	6
 姝	shu	6
-姥	mu	6
 娈	luan	6
 婚姻介绍所	hun yin jie shao suo	6
 婢女	bi nv	6
@@ -58267,7 +58101,6 @@
 孥	nu	6
 孵卵	fu luan	6
 孵育	fu yu	6
-宓	fu	6
 宛然	wan ran	6
 宛若	wan ruo	6
 宫外孕	gong wai yun	6
@@ -58277,7 +58110,6 @@
 对襟	dui jin	6
 封官许愿	feng guan xu yuan	6
 射电望远镜	she dian wang yuan jing	6
-尉	yu	6
 尊姓大名	zun xing da ming	6
 小巫见大巫	xiao wu jian da wu	6
 小憩	xiao qi	6
@@ -58292,16 +58124,15 @@
 岜	ba	6
 岣	gou	6
 岽	dong	6
+峒	dong	6
 峰巅	feng dian	6
 崦	yan	6
-崴	wai	6
 嵫	zi	6
 嵯	cuo	6
 嶷	ni	6
 工薪阶层	gong xin jie ceng	6
 巯	qiu	6
 幛	zhang	6
-幢	chuang	6
 干馏	gan liu	6
 平淡无奇	ping dan wu qi	6
 平白无故	ping bai wu gu	6
@@ -58322,7 +58153,6 @@
 心服口服	xin fu kou fu	6
 忉	dao	6
 忍俊不禁	ren jun bu jin	6
-忒	te	6
 忘年之交	wang nian zhi jiao	6
 忤逆	wu ni	6
 快刀斩乱麻	kuai dao zhan luan ma	6
@@ -58351,28 +58181,23 @@
 戽	hu	6
 扃	jiong	6
 手到病除	shou dao bing chu	6
-扛	gang	6
 扼腕	e wan	6
 技术密集型	ji shu mi ji xing	6
 披挂上阵	pi gua shang zhen	6
-抹	ma	6
 抿嘴	min zui	6
-拆	ca	6
-拓	ta	6
-拾	she	6
 指令性计划	zhi ling xing ji hua	6
-挲	suo	6
+捋	lv	6
 掘墓人	jue mu ren	6
 掴	guo	6
-掺	can	6
 插秧	cha yang	6
 握手言欢	wo shou yan huan	6
-揭	qi	6
 搴	qian	6
 摇头摆尾	yao tou bai wei	6
 摇撼	yao han	6
 摇旗呐喊	yao qi na han	6
 撄	ying	6
+攒	cuan	6
+攒	zan	6
 敉	mi	6
 敛迹	lian ji	6
 敢作敢为	gan zuo gan wei	6
@@ -58413,24 +58238,22 @@
 有血有肉	you xue you rou	6
 服膺	fu ying	6
 望子成龙	wang zi cheng long	6
+朝	zhao	6
 木糖醇	mu tang chun	6
-朴	po	6
 杌	wu	6
 来日方长	lai ri fang chang	6
 杩	ma	6
 杪	miao	6
+杷	pa	6
 极昼	ji zhou	6
 枘	rui	6
+枞	cong	6
 枨	cheng	6
 枯朽	ku xiu	6
 柙	xia	6
-柚	you	6
-柜	ju	6
 柞	zha	6
 柰	nai	6
-柴	zhai	6
 柽	cheng	6
-栅	zha	6
 栊	long	6
 栌	lu	6
 树倒猢狲散	shu dao hu sun san	6
@@ -58449,6 +58272,8 @@
 椹	shen	6
 楮	chu	6
 榍	xie	6
+槟	bin	6
+槟	bing	6
 槠	zhu	6
 樘	tang	6
 樨	xi	6
@@ -58468,10 +58293,8 @@
 毽	jian	6
 氆	pu	6
 氇	lu	6
-氏	zhi	6
 民族共同语	min zu gong tong yu	6
 民谚	min yan	6
-氓	mang	6
 氙	xian	6
 水浇地	shui jiao di	6
 水溶性	shui rong xing	6
@@ -58482,14 +58305,12 @@
 没日没夜	mei ri mei ye	6
 沤肥	ou fei	6
 沭	shu	6
-泄	yi	6
 泮	pan	6
 洄游	hui you	6
 洇	yin	6
 浪迹江湖	lang ji jiang hu	6
 海军航空兵	hai jun hang kong bing	6
 浼	mei	6
-涌	chong	6
 涠	wei	6
 涤棉	di mian	6
 涤荡	di dang	6
@@ -58500,6 +58321,7 @@
 港汊	gang cha	6
 湓	pen	6
 湔	jian	6
+湫	qiu	6
 溏	tang	6
 溱	qin	6
 溲	sou	6
@@ -58508,10 +58330,8 @@
 潋	lian	6
 潦倒	liao dao	6
 潦草	liao cao	6
-澄	deng	6
 澄澈	cheng che	6
 澌	si	6
-澳	yu	6
 濞	bi	6
 瀣	xie	6
 灰溜溜	hui liu liu	6
@@ -58520,6 +58340,7 @@
 炻	shi	6
 烀	hu	6
 焙干	bei gan	6
+焯	chao	6
 照葫芦画瓢	zhao hu lu hua piao	6
 煺	tui	6
 煽惑	shan huo	6
@@ -58529,7 +58350,6 @@
 片甲不留	pian jia bu liu	6
 牙周炎	ya zhou yan	6
 牛肝菌	niu gan jun	6
-牟	mou	6
 特别行政区	te bie xing zheng qu	6
 犍	jian	6
 犬牙交错	quan ya jiao cuo	6
@@ -58549,10 +58369,8 @@
 獠牙	liao ya	6
 玉皇大帝	yu huang da di	6
 玎	ding	6
-玢	bin	6
 珉	min	6
 珙	gong	6
-珲	hun	6
 瑗	yuan	6
 瑷	ai	6
 璩	qu	6
@@ -58569,7 +58387,6 @@
 男乒	nan ping	6
 畋	tian	6
 畎	quan	6
-畜	xu	6
 略知一二	lve zhi yi er	6
 疔	ding	6
 疳	gan	6
@@ -58600,6 +58417,7 @@
 睚	ya	6
 睥	pi	6
 瞀	mao	6
+瞋	chen	6
 瞽	gu	6
 石拱桥	shi gong qiao	6
 砑	ya	6
@@ -58627,7 +58445,6 @@
 神魂颠倒	shen hun dian dao	6
 祢	mi	6
 祧	tiao	6
-禅	shan	6
 福无双至	fu wu shuang zhi	6
 私塾	si shu	6
 秕	bi	6
@@ -58665,8 +58482,8 @@
 糍	ci	6
 糗	qiu	6
 糨	jiang	6
+繇	yao	6
 纛	dao	6
-纤	qian	6
 约法三章	yue fa san zhang	6
 纮	hong	6
 纻	zhu	6
@@ -58685,7 +58502,6 @@
 缡	li	6
 缧	lei	6
 缰绳	jiang sheng	6
-缴	zhuo	6
 缵	zuan	6
 罨	yan	6
 羁留	ji liu	6
@@ -58701,7 +58517,6 @@
 育秧	yu yang	6
 肺气肿	fei qi zhong	6
 胆魄	dan po	6
-胖	pan	6
 胡侃	hu kan	6
 胩	ka	6
 胬	nu	6
@@ -58709,14 +58524,12 @@
 胸襟	xiong jin	6
 脉管炎	mai guan yan	6
 脏腑	zang fu	6
-脔	luan	6
 脚丫子	jiao ya zi	6
 脱缰	tuo jiang	6
 腈	jing	6
 腊八粥	la ba zhou	6
 腧	shu	6
 膂	lv	6
-臂	bei	6
 臊子	sao zi	6
 自投罗网	zi tou luo wang	6
 自知之明	zi zhi zhi ming	6
@@ -58729,17 +58542,15 @@
 艚	cao	6
 艟	chong	6
 艨	meng	6
+艿	reng	6
 芈	mi	6
 芒硝	mang xiao	6
 芜菁	wu jing	6
-芫	yuan	6
 芴	wu	6
-芾	fei	6
 苈	li	6
 苍茫	cang mang	6
 苒	ran	6
 茀	bo	6
-茄	jia	6
 茕	qiong	6
 茛	gen	6
 茭	jiao	6
@@ -58748,15 +58559,12 @@
 荒诞不经	huang dan bu jing	6
 荜	bi	6
 荡涤	dang di	6
-荥	ying	6
 荦	luo	6
-荨	qian	6
-荨	xun	6
 荸	bi	6
-莎	suo	6
 莞尔	wan er	6
 莳	shi	6
 莶	xian	6
+菀	wan	6
 菘	song	6
 菜篮子工程	cai lan zi gong cheng	6
 菜蔬	cai shu	6
@@ -58787,10 +58595,8 @@
 藁	gao	6
 藩篱	fan li	6
 蘧	qu	6
-虾	ha	6
 蚍	pi	6
 蚺	ran	6
-蜒	dan	6
 蜗居	wo ju	6
 蝓	yu	6
 蝰	kui	6
@@ -58798,12 +58604,12 @@
 蝾	rong	6
 螋	sou	6
 蟥	huang	6
+行	hang	6
 街头巷尾	jie tou xiang wei	6
 衣不解带	yi bu jie dai	6
 衣冠禽兽	yi guan qin shou	6
 衣襟	yi jin	6
 装裱	zhuang biao	6
-裳	shang	6
 褊	bian	6
 褙	bei	6
 褰	qian	6
@@ -58842,8 +58648,6 @@
 赏罚分明	shang fa fen ming	6
 赘疣	zhui you	6
 走马观花	zou ma guan hua	6
-趄	ju	6
-趄	qie	6
 趑	zi	6
 趼	jian	6
 跌宕	die dang	6
@@ -58858,7 +58662,6 @@
 身外之物	shen wai zhi wu	6
 身无分文	shen wu fen wen	6
 车水马龙	che shui ma long	6
-轧	ya	6
 轫	ren	6
 转弯抹角	zhuan wan mo jiao	6
 轾	zhi	6
@@ -58866,7 +58669,6 @@
 辋	wang	6
 辗转反侧	zhan zhuan fan ce	6
 辚	lin	6
-辟	bi	6
 近水楼台	jin shui lou tai	6
 迓	ya	6
 连理枝	lian li zhi	6
@@ -58959,19 +58761,18 @@
 鞲	gou	6
 韭黄	jiu huang	6
 顸	han	6
-颉	xie	6
 颟	man	6
 颡	sang	6
 风雨无阻	feng yu wu zu	6
 飏	yang	6
 饮水思源	yin shui si yuan	6
+馇	cha	6
 驺	zou	6
 驽	nu	6
 骐	qi	6
 骖	can	6
 骘	zhi	6
 骝	liu	6
-骠	biao	6
 骺	hou	6
 髀	bi	6
 高头大马	gao tou da ma	6
@@ -59002,6 +58803,7 @@
 鹪	jiao	6
 鹮	huan	6
 麂子	ji zi	6
+麽	me	6
 黄毛丫头	huang mao ya tou	6
 黑漆漆	hei qi qi	6
 默祷	mo dao	6
@@ -59045,14 +58847,11 @@
 以少胜多	yi shao sheng duo	5
 以身试法	yi shen shi fa	5
 传经送宝	chuan jing song bao	5
-伺	ci	5
-佃	tian	5
 低声下气	di sheng xia qi	5
 何罪之有	he zui zhi you	5
 你追我赶	ni zhui wo gan	5
 佾	yi	5
 侈靡	chi mi	5
-侥	jiao	5
 俗不可耐	su bu ke nai	5
 俗谚	su yan	5
 保驾护航	bao jia hu hang	5
@@ -59061,7 +58860,7 @@
 假戏真做	jia xi zhen zuo	5
 假洋鬼子	jia yang gui zi	5
 偷天换日	tou tian huan ri	5
-傍	pang	5
+傀	kui	5
 储油罐	chu you guan	5
 像模像样	xiang mu xiang yang	5
 儇	xuan	5
@@ -59072,27 +58871,22 @@
 凄凄	qi qi	5
 凄婉	qi wan	5
 凤尾鱼	feng wei yu	5
-凹	wa	5
 出殡	chu bin	5
 出谋划策	chu mou hua ce	5
 分赃	fen zang	5
 刚直不阿	gang zhi bu e	5
 别有洞天	bie you dong tian	5
 刳	ku	5
-剡	yan	5
-剿	chao	5
+刹	cha	5
 劓	yi	5
 勃朗宁	bo lang ning	5
 十万八千里	shi wan ba qian li	5
 十二指肠	shi er zhi chang	5
 千军万马	qian jun wan ma	5
 千秋万代	qian qiu wan dai	5
-卒	cu	5
 卺	jin	5
-厕	si	5
 叠嶂	die zhang	5
 古往今来	gu wang jin lai	5
-叨	tao	5
 只言片语	zhi yan pian yu	5
 可鄙	ke bi	5
 吃里爬外	chi li pa wai	5
@@ -59100,11 +58894,9 @@
 名不见经传	ming bu jian jing zhuan	5
 后起之秀	hou qi zhi xiu	5
 含混不清	han hun bu qing	5
-呷	ga	5
-咋	zha	5
+咀	ju	5
 和煦	he xu	5
 咏叹调	yong tan diao	5
-咖	ga	5
 咿呀	yi ya	5
 哀恸	ai tong	5
 哚	duo	5
@@ -59118,20 +58910,13 @@
 喧天	xuan tian	5
 喧扰	xuan rao	5
 喧腾	xuan teng	5
-喳	cha	5
-嗒	ta	5
-嗽	shu	5
-嘲	zhao	5
 噍	jiao	5
 嚆	hao	5
-嚣	ao	5
 四通八达	si tong ba da	5
 因小失大	yin xiao shi da	5
-囤	tun	5
 图文并茂	tu wen bing mao	5
 圉	yu	5
 土霉素	tu mei su	5
-圩	wei	5
 圬	wu	5
 地老天荒	di lao tian huang	5
 圹	kuang	5
@@ -59157,7 +58942,6 @@
 堍	tu	5
 堙	yin	5
 堠	hou	5
-堤	ti	5
 塍	cheng	5
 塔塔尔族	ta ta er zu	5
 墁	man	5
@@ -59179,14 +58963,16 @@
 妇孺皆知	fu ru jie zhi	5
 妤	yu	5
 姥爷	lao ye	5
+娜	nuo	5
 婵娟	chan juan	5
 媵	ying	5
 学贯中西	xue guan zhong xi	5
 宁死不屈	ning si bu qu	5
 安民告示	an min gao shi	5
 安谧	an mi	5
+宓	fu	5
+宓	mi	5
 官宦	guan huan	5
-宛	yuan	5
 实至名归	shi zhi ming gui	5
 宦海	huan hai	5
 害群之马	hai qun zhi ma	5
@@ -59201,13 +58987,10 @@
 山光水色	shan guang shui se	5
 岈	ya	5
 岙	ao	5
-峒	tong	5
-峙	shi	5
 峰回路转	feng hui lu zhuan	5
 崔嵬	cui wei	5
-崴	wei	5
+崴	wai	5
 巍然	wei ran	5
-巷	hang	5
 帷帐	wei zhang	5
 帻	ze	5
 幔子	man zi	5
@@ -59225,8 +59008,6 @@
 徂	cu	5
 徇情	xun qing	5
 徇私	xun si	5
-徊	hui	5
-徵	zheng	5
 德才兼备	de cai jian bei	5
 心烦意乱	xin fan yi luan	5
 心直口快	xin zhi kou kuai	5
@@ -59236,7 +59017,6 @@
 忮	zhi	5
 怠惰	dai duo	5
 恧	nv	5
-恫	tong	5
 息息相通	xi xi xiang tong	5
 悃	kun	5
 悔不当初	hui bu dang chu	5
@@ -59252,20 +59032,18 @@
 扉页	fei ye	5
 抖擞	dou sou	5
 抬轿子	tai jiao zi	5
-拂	bi	5
 拉帮结派	la bang jie pai	5
 拍案叫绝	pai an jiao jue	5
 拖家带口	tuo jia dai kou	5
-拗	ao	5
-拶	za	5
 挎包	kua bao	5
-挝	zhua	5
+挟	xie	5
+挲	suo	5
 捃	jun	5
+捋	luo	5
 掊	pou	5
 推搡	tui sang	5
 掷地有声	zhi di you sheng	5
 掷弹筒	zhi dan tong	5
-掺	shan	5
 揠	ya	5
 揸	zha	5
 搛	jian	5
@@ -59285,7 +59063,6 @@
 文武双全	wen wu shuang quan	5
 料事如神	liao shi ru shen	5
 斤斤计较	jin jin ji jiao	5
-於	yu	5
 旌旗	jing qi	5
 无为而治	wu wei er zhi	5
 无往不胜	wu wang bu sheng	5
@@ -59294,16 +59071,13 @@
 更有甚者	geng you shen zhe	5
 木槿	mu jin	5
 朴实无华	pu shi wu hua	5
-杉	sha	5
 林林总总	lin lin zong zong	5
-枞	zong	5
 枧	jian	5
 柁	tuo	5
 柒	qi	5
-柚	zhou	5
+柚	you	5
 柝	tuo	5
 柳絮	liu xu	5
-栖	xi	5
 栳	lao	5
 根瘤菌	gen liu jun	5
 栽秧	zai yang	5
@@ -59315,29 +59089,24 @@
 棋高一着	qi gao yi zhao	5
 棒打鸳鸯	bang da yuan yang	5
 棰	chui	5
-棱	ling	5
 椐	ju	5
 椟	du	5
 椠	qian	5
-槛	jian	5
 樊篱	fan li	5
 横行无忌	heng xing wu ji	5
 橼	yuan	5
 檗	bo	5
 正儿八经	zheng er ba jing	5
 殂	cu	5
-殷	yan	5
 毵	san	5
 民族自决权	min zu zi jue quan	5
 气吞山河	qi tun shan he	5
 汆	cuan	5
 汔	qi	5
-汶	men	5
 汽轮机	qi lun ji	5
 沱茶	tuo cha	5
 河漫滩	he man tan	5
 治外法权	zhi wai fa quan	5
-泌	bi	5
 泌尿	mi niao	5
 泐	le	5
 泺	luo	5
@@ -59347,10 +59116,8 @@
 洫	xu	5
 浅陋	qian lou	5
 测谎仪	ce huang yi	5
-浍	hui	5
 海蜇	hai zhe	5
 海阔天空	hai kuo tian kong	5
-涡	guo	5
 淫猥	yin wei	5
 深宅大院	shen zhai da yuan	5
 深明大义	shen ming da yi	5
@@ -59365,12 +59132,12 @@
 漶	huan	5
 潲	shao	5
 澉	gan	5
+瀑	bao	5
 瀚海	han hai	5
 点石成金	dian shi cheng jin	5
 烟灰缸	yan hui gang	5
 热火朝天	re huo chao tian	5
 燕尾服	yan wei fu	5
-燥	sao	5
 爝	jue	5
 片言只语	pian yan zhi yu	5
 牾	wu	5
@@ -59382,8 +59149,11 @@
 猩红	xing hong	5
 猪鬃	zhu zong	5
 猹	cha	5
+率	shuai	5
 玉簪	yu zan	5
+玢	bin	5
 珧	yao	5
+珲	hun	5
 琚	ju	5
 璁	cong	5
 生老病死	sheng lao bing si	5
@@ -59424,10 +59194,8 @@
 矻	ku	5
 矽肺	xi fei	5
 破陋	po lou	5
-碌	liu	5
 磉	sang	5
 磨砂玻璃	mo sha bo li	5
-磻	bo	5
 礌	lei	5
 礓	jiang	5
 礞	meng	5
@@ -59436,13 +59204,10 @@
 禊	xi	5
 禛	zhen	5
 秧苗	yang miao	5
-秸	ji	5
 秾	nong	5
 稗子	bai zi	5
 稚拙	zhi zhuo	5
-稽	qi	5
 窗扉	chuang fei	5
-窨	xun	5
 竹筏	zhu fa	5
 筏子	fa zi	5
 筚	bi	5
@@ -59476,7 +59241,6 @@
 经纶	jing lun	5
 绐	dai	5
 绖	die	5
-绰	chao	5
 缎子	duan zi	5
 缮写	shan xie	5
 缳	huan	5
@@ -59494,7 +59258,6 @@
 聍	ning	5
 聚宝盆	ju bao pen	5
 聱	ao	5
-肋	le	5
 肺腑	fei fu	5
 胆小如鼠	dan xiao ru shu	5
 胠	qu	5
@@ -59502,10 +59265,10 @@
 脆生生	cui sheng sheng	5
 脑膜炎	nao mo yan	5
 脒	mi	5
+脔	luan	5
 脞	cuo	5
 脩	xiu	5
 脬	pao	5
-脯	pu	5
 腔肠动物	qiang chang dong wu	5
 腘	guo	5
 腠	cou	5
@@ -59520,22 +59283,22 @@
 舁	yu	5
 舄	xi	5
 舭	bi	5
-舳	zhu	5
 艋	meng	5
 艰苦卓绝	jian ku zhuo jue	5
-艿	nai	5
+芎	xiong	5
 芘	pi	5
-芫	yan	5
+芫	yuan	5
 花缎	hua duan	5
 花花绿绿	hua hua lv lv	5
+芾	fei	5
 茆	mao	5
-茈	zi	5
 茌	chi	5
-茜	xi	5
 茼	tong	5
 荑	yi	5
 荟集	hui ji	5
-荠	qi	5
+荥	ying	5
+荨	qian	5
+荨	xun	5
 莩	piao	5
 莹莹	ying ying	5
 莼菜	chun cai	5
@@ -59563,11 +59326,11 @@
 蓥	ying	5
 蔀	bu	5
 蔌	su	5
-蔓	wan	5
 蕞	zui	5
 蕺	ji	5
 蕻	hong	5
 薤	xie	5
+藏	zang	5
 虫蛀	chong zhu	5
 蛀牙	zhu ya	5
 蛀虫	zhu chong	5
@@ -59591,9 +59354,9 @@
 袪	qu	5
 裒	pou	5
 裕固族	yu gu zu	5
-裨	pi	5
 裱糊	biao hu	5
 裼	xi	5
+褪	tui	5
 褫夺	chi duo	5
 襦	ru	5
 见怪不怪	jian guai bu guai	5
@@ -59611,7 +59374,6 @@
 诤友	zheng you	5
 诤言	zheng yan	5
 语焉不详	yu yan bu xiang	5
-谜	mei	5
 谞	xu	5
 谫	jian	5
 豨	xi	5
@@ -59638,7 +59400,7 @@
 赤胆忠心	chi dan zhong xin	5
 起搏器	qi bo qi	5
 趁火打劫	chen huo da jie	5
-趟	cheng	5
+趄	qie	5
 趱	zan	5
 趵	bo	5
 跐	ci	5
@@ -59646,10 +59408,8 @@
 踬	zhi	5
 蹁	pian	5
 蹅	cha	5
-蹊	xi	5
 蹐	ji	5
 蹯	fan	5
-蹲	cun	5
 躐	lie	5
 躜	zuan	5
 身怀绝技	shen huai jue ji	5
@@ -59659,7 +59419,6 @@
 轺	yao	5
 轻重缓急	qing zhong huan ji	5
 辀	zhou	5
-辗	zhan	5
 迮	ze	5
 迷魂阵	mi hun zhen	5
 追赃	zhui zang	5
@@ -59699,15 +59458,14 @@
 鏊子	ao zi	5
 钘	xing	5
 钟馗	zhong kui	5
+钥	yao	5
 钬	huo	5
 钲	zheng	5
-铅	yan	5
 铊	ta	5
 铏	xing	5
 铕	you	5
 铗	jia	5
 铚	zhi	5
-铛	dang	5
 铝箔	lv bo	5
 铟	yin	5
 铪	ha	5
@@ -59720,14 +59478,12 @@
 锡箔	xi bo	5
 锦纶	jin lun	5
 锦缎	jin duan	5
-镐	gao	5
 镡	tan	5
 镨	pu	5
 镩	cuan	5
 门扉	men fei	5
 闭门思过	bi men si guo	5
 闭门造车	bi men zao che	5
-阇	du	5
 阔叶林	kuo ye lin	5
 阔叶树	kuo ye shu	5
 阡陌	qian mo	5
@@ -59745,7 +59501,6 @@
 陴	pi	5
 随声附和	sui sheng fu he	5
 随行就市	sui hang jiu shi	5
-雀	qiao	5
 雩	yu	5
 霄汉	xiao han	5
 霅	zha	5
@@ -59756,12 +59511,10 @@
 靠背椅	kao bei yi	5
 靰	wu	5
 靸	sa	5
-鞘	shao	5
 鞡	la	5
 鞭笞	bian chi	5
 鞮	di	5
 颃	hang	5
-颈	geng	5
 颙	yong	5
 风雨飘摇	feng yu piao yao	5
 飑	biao	5
@@ -59769,8 +59522,6 @@
 饥馑	ji jin	5
 饸	he	5
 首鼠两端	shou shu liang duan	5
-馘	guo	5
-驮	duo	5
 驱虫剂	qu chong ji	5
 驴肝肺	lv gan fei	5
 驵	zang	5
@@ -59779,7 +59530,7 @@
 骎	qin	5
 骕	su	5
 骙	kui	5
-骠	piao	5
+骠	biao	5
 骢	cong	5
 髋关节	kuan guan jie	5
 髋骨	kuan gu	5
@@ -59820,7 +59571,6 @@
 鹦鹉学舌	ying wu xue she	5
 麇	jun	5
 麈	zhu	5
-麽	me	5
 黄曲霉	huang qu mei	5
 黟	yi	5
 黹	zhi	5
@@ -59830,7 +59580,6 @@
 齐头并进	qi tou bing jin	5
 龁	he	5
 龂	yin	5
-龟	qiu	5
 龠	yue	5
 䴗	ju	4
 一息尚存	yi xi shang cun	4
@@ -59859,7 +59608,6 @@
 丹凤眼	dan feng yan	4
 举不胜举	ju bu sheng ju	4
 乐融融	le rong rong	4
-乜	mie	4
 九牛一毛	jiu niu yi mao	4
 九牛二虎之力	jiu niu er hu zhi li	4
 事到临头	shi dao lin tou	4
@@ -59868,7 +59616,6 @@
 五光十色	wu guang shi se	4
 五十步笑百步	wu shi bu xiao bai bu	4
 五花大绑	wu hua da bang	4
-亢	gang	4
 人各有志	ren ge you zhi	4
 人定胜天	ren ding sheng tian	4
 人微言轻	ren wei yan qing	4
@@ -59876,18 +59623,13 @@
 仉	zhang	4
 从一而终	cong yi er zhong	4
 从容不迫	cong rong bu po	4
-仡	ge	4
 仡	yi	4
 仳	pi	4
+伽	qie	4
 余烬	yu jin	4
-侗	tong	4
 侨眷	qiao juan	4
-俞	shu	4
-俟	qi	4
 倒果为因	dao guo wei yin	4
-倜	zhou	4
 倾巢出动	qing chao chu dong	4
-偻	lou	4
 公之于世	gong zhi yu shi	4
 公之于众	gong zhi yu zhong	4
 冁	chan	4
@@ -59903,9 +59645,10 @@
 前所未见	qian suo wei jian	4
 前所未闻	qian suo wei wen	4
 剞	ji	4
+剡	yan	4
+剥	bo	4
 劐	huo	4
 化干戈为玉帛	hua gan ge wei yu bo	4
-匮	gui	4
 十年寒窗	shi nian han chuang	4
 千变万化	qian bian wan hua	4
 千山万水	qian shan wan shui	4
@@ -59917,6 +59660,7 @@
 另眼相看	ling yan xiang kan	4
 只字不提	zhi zi bu ti	4
 叫苦连天	jiao ku lian tian	4
+吁	xu	4
 吃吃喝喝	chi chi he he	4
 吃哑巴亏	chi ya ba kui	4
 各司其职	ge si qi zhi	4
@@ -59926,20 +59670,18 @@
 名特优新	ming te you xin	4
 含羞草	han xiu cao	4
 听而不闻	ting er bu wen	4
-呲	zi	4
+吭	hang	4
 和盘托出	he pan tuo chu	4
-哆	chi	4
 哈喇子	ha la zi	4
 哈雷彗星	ha lei hui xing	4
 哕	yue	4
 唏嘘	xi xu	4
 唪	beng	4
-唬	xia	4
 唾沫	tuo mo	4
-喋	zha	4
-喏	re	4
+喔	o	4
 喧嚷	xuan rang	4
 嘻皮笑脸	xi pi xiao lian	4
+嚓	ca	4
 国富民强	guo fu min qiang	4
 图谋不轨	tu mou bu gui	4
 土坯	tu pi	4
@@ -59953,6 +59695,7 @@
 垂涎	chui xian	4
 堂堂正正	tang tang zheng zheng	4
 堑壕	qian hao	4
+塞	se	4
 墓志铭	mu zhi ming	4
 壕堑	hao qian	4
 处暑	chu shu	4
@@ -59969,7 +59712,6 @@
 好大喜功	hao da xi gong	4
 娩出	mian chu	4
 子午线	zi wu xian	4
-孛	bei	4
 孝悌	xiao ti	4
 孤军奋战	gu jun fen zhan	4
 孺子	ru zi	4
@@ -59988,12 +59730,10 @@
 小姨子	xiao yi zi	4
 小打小闹	xiao da xiao nao	4
 小暑	xiao shu	4
-屎	xi	4
-屯	zhun	4
 崔巍	cui wei	4
-嵌	kan	4
+崴	wei	4
 左袒	zuo tan	4
-帱	chou	4
+差	chai	4
 干柴烈火	gan chai lie huo	4
 平易近人	ping yi jin ren	4
 年老力衰	nian lao li shuai	4
@@ -60005,7 +59745,6 @@
 异想天开	yi xiang tian kai	4
 弥天大罪	mi tian da zui	4
 强人所难	qiang ren suo nan	4
-彷	fang	4
 徒劳无功	tu lao wu gong	4
 得而复失	de er fu shi	4
 徭役	yao yi	4
@@ -60021,16 +59760,15 @@
 意气相投	yi qi xiang tou	4
 意气风发	yi qi feng fa	4
 愕然	e ran	4
-戌	qu	4
 成家立业	cheng jia li ye	4
 戤	gai	4
 手忙脚乱	shou mang jiao luan	4
+扒	pa	4
 打卤面	da lu mian	4
 打呼噜	da hu lu	4
 打小算盘	da xiao suan pan	4
 打杈	da cha	4
 打落水狗	da luo shui gou	4
-扳	pan	4
 技高一筹	ji gao yi chou	4
 投其所好	tou qi suo hao	4
 投石问路	tou shi wen lu	4
@@ -60041,20 +59779,16 @@
 拔刀相助	ba dao xiang zhu	4
 拔苗助长	ba miao zhu zhang	4
 拦河坝	lan he ba	4
-拽	ye	4
+拶	za	4
 挂羊头卖狗肉	gua yang tou mai gou rou	4
 按捺	an na	4
 挚情	zhi qing	4
 挚诚	zhi cheng	4
-挲	sa	4
-捻	nie	4
 掎	ji	4
 排涝	pai lao	4
 探亲访友	tan qin fang you	4
-掸	shan	4
 搋	chuai	4
 摇头晃脑	yao tou huang nao	4
-撮	zuo	4
 擅离职守	shan li zhi shou	4
 政出多门	zheng chu duo men	4
 救生筏	jiu sheng fa	4
@@ -60071,29 +59805,28 @@
 暑热	shu re	4
 暖融融	nuan rong rong	4
 暗无天日	an wu tian ri	4
-曝	bao	4
+曾	ceng	4
 有两下子	you liang xia zi	4
 有眉目	you mei mu	4
 有眼不识泰山	you yan bu shi tai shan	4
+朴	pu	4
 杀人不眨眼	sha ren bu zha yan	4
 杂乱无章	za luan wu zhang	4
 杏脯	xing fu	4
-杷	ba	4
 果脯	guo fu	4
 枝杈	zhi cha	4
 枯水期	ku shui qi	4
-柞	zuo	4
 树杈	shu cha	4
 栝	gua	4
 核糖核酸	he tang he suan	4
 桁架	heng jia	4
 棉铃虫	mian ling chong	4
-棣	dai	4
+椎	chui	4
 榔头	lang tou	4
+模	mu	4
 橛子	jue zi	4
 橡皮图章	xiang pi tu zhang	4
 橡皮筏	xiang pi fa	4
-檐	dan	4
 檑	lei	4
 欣羡	xin xian	4
 正本清源	zheng ben qing yuan	4
@@ -60115,9 +59848,7 @@
 水滴石穿	shui di shi chuan	4
 汉语拼音方案	han yu pin yin fang an	4
 汉语水平考试	han yu shui ping kao shi	4
-汩	yu	4
 沉湎	chen mian	4
-沓	da	4
 泄洪道	xie hong dao	4
 泖	mao	4
 泥坯	ni pi	4
@@ -60125,16 +59856,15 @@
 洗濯	xi zhuo	4
 洚	jiang	4
 洪涝	hong lao	4
+浍	hui	4
 济济一堂	ji ji yi tang	4
 浑然一体	hun ran yi ti	4
-浒	xu	4
 浩渺	hao miao	4
 消暑	xiao shu	4
 涝灾	lao zai	4
 深山老林	shen shan lao lin	4
 深挚	shen zhi	4
 渺远	miao yuan	4
-溺	niao	4
 溻	ta	4
 滑翔机	hua xiang ji	4
 滔天	tao tian	4
@@ -60142,14 +59872,9 @@
 滞纳金	zhi na jin	4
 满打满算	man da man suan	4
 漫无边际	man wu bian ji	4
-漯	luo	4
-漯	ta	4
-潦	lao	4
 瀹	yue	4
 炎暑	yan shu	4
 炭疽	tan ju	4
-烙	luo	4
-焘	dao	4
 熟稔	shu ren	4
 物极必反	wu ji bi fan	4
 犋	ju	4
@@ -60157,16 +59882,12 @@
 独领风骚	du ling feng sao	4
 猃	xian	4
 玉米螟	yu mi ming	4
-玟	min	4
 珍馐	zhen xiu	4
-琢	zuo	4
 瓠子	hu zi	4
 甍	meng	4
 生气勃勃	sheng qi bo bo	4
 甩手掌柜	shuai shou zhang gui	4
-町	ding	4
 画舫	hua fang	4
-疟	yao	4
 疰	zhu	4
 痄	zha	4
 痛改前非	tong gai qian fei	4
@@ -60184,23 +59905,22 @@
 眵	chi	4
 眼明手快	yan ming shou kuai	4
 睄	qiao	4
-睢	hui	4
-瞿	ju	4
 矞	yu	4
 知书达理	zhi shu da li	4
 知足常乐	zhi zu chang le	4
 知难而退	zhi nan er tui	4
 矰	zeng	4
 石舫	shi fang	4
-砌	qie	4
 砖坯	zhuan pi	4
 砥砺	di li	4
 硁	keng	4
 硚	qiao	4
 碉楼	diao lou	4
 碧螺春	bi luo chun	4
+磅	pang	4
 磜	qi	4
 磡	kan	4
+磻	bo	4
 祸不单行	huo bu dan xing	4
 祼	guan	4
 禋	yin	4
@@ -60209,11 +59929,12 @@
 秋后算账	qiu hou suan zhang	4
 科学社会主义	ke xue she hui zhu yi	4
 秬	ju	4
+称	chen	4
 称羡	cheng xian	4
 稃	fu	4
 穹庐	qiong lu	4
 窥伺	kui si	4
-窨	yin	4
+窨	xun	4
 笑里藏刀	xiao li cang dao	4
 筅	xian	4
 筘	kou	4
@@ -60221,7 +59942,6 @@
 筦	guan	4
 筼	yun	4
 箅	bi	4
-箐	jing	4
 箖	lin	4
 箢	yuan	4
 箩筐	luo kuang	4
@@ -60229,23 +59949,17 @@
 簰	pai	4
 粗粝	cu li	4
 粗鄙	cu bi	4
-粥	yu	4
 糈	xu	4
 糊里糊涂	hu li hu tu	4
-糜	mei	4
 累死累活	lei si lei huo	4
 絮叨	xu dao	4
-綮	qi	4
 红领巾	hong ling jin	4
-纥	ge	4
-纶	guan	4
 绊马索	ban ma suo	4
 结痂	jie jia	4
 绝口不提	jue kou bu ti	4
 绠	geng	4
 维尼纶	wei ni lun	4
 绹	tao	4
-缪	mou	4
 缲	qiao	4
 罅隙	xia xi	4
 罗曼蒂克	luo man di ke	4
@@ -60257,10 +59971,8 @@
 翂	fen	4
 翃	hong	4
 翕动	xi dong	4
-翟	di	4
 老来俏	lao lai qiao	4
 耖	chao	4
-耙	ba	4
 耢	lao	4
 耩	jiang	4
 肉脯	rou fu	4
@@ -60275,7 +59987,6 @@
 脱脂棉	tuo zhi mian	4
 腋窝	ye wo	4
 腋臭	ye chou	4
-腌	a	4
 腙	zong	4
 腥臊	xing sao	4
 腽	wa	4
@@ -60286,33 +59997,25 @@
 臭味相投	xiu wei xiang tou	4
 至善至美	zhi shan zhi mei	4
 舲	ling	4
+舳	zhu	4
 良药苦口	liang yao ku kou	4
 艳羡	yan xian	4
 芊芊	qian qian	4
-芍	que	4
-芥	gai	4
 芥子气	jie zi qi	4
-芾	fu	4
 苠	min	4
-苣	qu	4
 苧	ning	4
 苾	bi	4
+茈	zi	4
 茚	yin	4
 茺	chong	4
 荄	gai	4
-荠	ji	4
-荥	xing	4
-荼	shu	4
-莘	xin	4
+荠	qi	4
 莛	ting	4
-莞	guan	4
-莨	lang	4
-莨	liang	4
-菀	yu	4
 菉	lu	4
 菍	nie	4
 菜畦	cai qi	4
 萦回	ying hui	4
+著	zhuo	4
 葙	xiang	4
 葴	zhen	4
 蒇	chan	4
@@ -60323,23 +60026,14 @@
 蓰	xi	4
 蔗农	zhe nong	4
 蔗田	zhe tian	4
-蔚	yu	4
 蔟	cu	4
 蔸	dou	4
-蕃	bo	4
-蕉	qiao	4
 蕗	lu	4
 薳	wei	4
 薿	ni	4
 虎口余生	hu kou yu sheng	4
 虒	si	4
-蚌	beng	4
-蛤	ha	4
-蛸	shao	4
-蛾	yi	4
-蜴	xi	4
 蝘	yan	4
-蝤	you	4
 融会贯通	rong hui guan tong	4
 螟虫	ming chong	4
 血流如注	xue liu ru zhu	4
@@ -60347,13 +60041,11 @@
 衒	xuan	4
 袒护	tan hu	4
 袒露	tan lu	4
+被	pi	4
 装神弄鬼	zhuang shen nong gui	4
 裈	kun	4
-裼	ti	4
-褚	zhu	4
 褯	jie	4
 襕	lan	4
-覃	tan	4
 见利忘义	jian li wang yi	4
 见微知著	jian wei zhi zhu	4
 见所未见	jian suo wei jian	4
@@ -60366,7 +60058,6 @@
 訚	yin	4
 诐	bi	4
 诓骗	kuang pian	4
-诘	ji	4
 话匣子	hua xia zi	4
 说一不二	shuo yi bu er	4
 谄媚	chan mei	4
@@ -60378,12 +60069,12 @@
 赤膊	chi bo	4
 赭石	zhe shi	4
 赭黄色	zhe huang se	4
+趄	ju	4
 足不出户	zu bu chu hu	4
 跂	qi	4
 踦	ji	4
 蹾	dun	4
 躔	chan	4
-轧	ga	4
 轪	dai	4
 轵	zhi	4
 辌	liang	4
@@ -60413,7 +60104,6 @@
 酂	zan	4
 酎	zhou	4
 酒逢知己	jiu feng zhi ji	4
-酪	luo	4
 酴	tu	4
 酾	shai	4
 醨	li	4
@@ -60427,7 +60117,6 @@
 铁证如山	tie zheng ru shan	4
 铁锨	tie xian	4
 铞	diao	4
-铤	ding	4
 铥	diu	4
 铽	te	4
 铿锵	keng qiang	4
@@ -60450,6 +60139,7 @@
 闭关自守	bi guan zi shou	4
 闭关锁国	bi guan suo guo	4
 闻鸡起舞	wen ji qi wu	4
+阇	du	4
 阘	ta	4
 防不胜防	fang bu sheng fang	4
 防暑	fang shu	4
@@ -60459,7 +60149,6 @@
 陧	nie	4
 隃	yu	4
 障眼法	zhang yan fa	4
-隽	juan	4
 雷打不动	lei da bu dong	4
 露馅儿	lou xian er	4
 霹雷	pi lei	4
@@ -60482,11 +60171,13 @@
 飗	liu	4
 飞短流长	fei duan liu chang	4
 馅儿饼	xian er bing	4
+馘	guo	4
 馧	yun	4
 驳壳枪	bo ke qiang	4
 验钞机	yan chao ji	4
 骒	ke	4
 骟	shan	4
+骠	piao	4
 骶骨	di gu	4
 高枕无忧	gao zhen wu you	4
 鬏	jiu	4
@@ -60552,22 +60243,19 @@
 以理服人	yi li fu ren	3
 以身相许	yi shen xiang xu	3
 以身许国	yi shen xu guo	3
-伉	gang	3
 众口难调	zhong kou nan tiao	3
+传	zhuan	3
 伯仲之间	bo zhong zhi jian	3
 似是而非	si shi er fei	3
-佗	yi	3
-佝	kou	3
 佯攻	yang gong	3
 佯称	yang cheng	3
+便	pian	3
 修身养性	xiu shen yang xing	3
 倒买倒卖	dao mai dao mai	3
 倒栽葱	dao zai cong	3
 倒背如流	dao bei ru liu	3
 倾国倾城	qing guo qing cheng	3
 倾城倾国	qing cheng qing guo	3
-偈	jie	3
-僮	zhuang	3
 克尽职守	ke jin zhi shou	3
 入情入理	ru qing ru li	3
 八仙过海	ba xian guo hai	3
@@ -60586,12 +60274,14 @@
 凋谢	diao xie	3
 分秒必争	fen miao bi zheng	3
 刍议	chu yi	3
-剡	shan	3
 劫后余生	jie hou yu sheng	3
+劲	jing	3
 十八般武艺	shi ba ban wu yi	3
 半死不活	ban si bu huo	3
 半生不熟	ban sheng bu shu	3
 单季稻	dan ji dao	3
+卜	bo	3
+参	shen	3
 双季稻	shuang ji dao	3
 双管齐下	shuang guan qi xia	3
 反刍	fan chu	3
@@ -60605,23 +60295,23 @@
 名山大川	ming shan da chuan	3
 吹吹打打	chui chui da da	3
 告老还乡	gao lao huan xiang	3
+呱	gu	3
 呱呱	gu gu	3
+呷	ga	3
+咋	ze	3
+咱	za	3
 哳	zha	3
-啜	chuai	3
-喁	yu	3
 喃喃	nan nan	3
 善男信女	shan nan xin nv	3
-嗲	die	3
-噱	xue	3
+嚼	jue	3
 囊中羞涩	nang zhong xiu se	3
 国色天香	guo se tian xiang	3
 圊	qing	3
-圜	yuan	3
 在天之灵	zai tian zhi ling	3
-圩	yu	3
 堂倌	tang guan	3
 堪培拉	kan pei la	3
 墚	liang	3
+壳	qiao	3
 多姿多彩	duo zi duo cai	3
 夜以继日	ye yi ji ri	3
 大姑子	da gu zi	3
@@ -60631,16 +60321,12 @@
 天女散花	tian nv san hua	3
 天花乱坠	tian hua luan zhui	3
 天高气爽	tian gao qi shuang	3
-夯	ben	3
 夺门而出	duo men er chu	3
 奇谈怪论	qi tan guai lun	3
 奋勇当先	fen yong dang xian	3
 如梦初醒	ru meng chu xing	3
-娩	wan	3
 婺剧	wu ju	3
-嬷	ma	3
 学富五车	xue fu wu che	3
-孱	can	3
 安之若素	an zhi ruo su	3
 寂寥	ji liao	3
 寥寥无几	liao liao wu ji	3
@@ -60650,7 +60336,9 @@
 尽善尽美	jin shan jin mei	3
 尾大不掉	wei da bu diao	3
 屈打成招	qu da cheng zhao	3
+属	zhu	3
 屺	qi	3
+峒	tong	3
 嵯峨	cuo e	3
 巍峨	wei e	3
 左撇子	zuo pie zi	3
@@ -60658,18 +60346,20 @@
 差强人意	cha qiang ren yi	3
 市侩	shi kuai	3
 席地而坐	xi di er zuo	3
+帱	chou	3
 平分秋色	ping fen qiu se	3
 异军突起	yi jun tu qi	3
 张口结舌	zhang kou jie she	3
 当啷	dang lang	3
 当头一棒	dang tou yi bang	3
 当头棒喝	dang tou bang he	3
+徵	zheng	3
 心绞痛	xin jiao tong	3
+忒	te	3
 忙不迭	mang bu die	3
-忪	zhong	3
 急起直追	ji qi zhi zhui	3
 怪里怪气	guai li guai qi	3
-恁	ren	3
+恫	tong	3
 恬淡	tian dan	3
 恬适	tian shi	3
 恬静	tian jing	3
@@ -60679,16 +60369,17 @@
 戕害	qiang hai	3
 戛然	jia ran	3
 才高八斗	cai gao ba dou	3
+扎	za	3
 打诨	da hun	3
+扛	gang	3
 扦插	qian cha	3
 扫黄打非	sao huang da fei	3
 拓荒者	tuo huang zhe	3
-挲	sha	3
+挝	zhua	3
 捧哏	peng gen	3
 据为己有	ju wei ji you	3
 排山倒海	pai shan dao hai	3
 掭	tian	3
-掴	guai	3
 搌	zhan	3
 改朝换代	gai chao huan dai	3
 政通人和	zheng tong ren he	3
@@ -60711,18 +60402,20 @@
 朝夕相处	zhao xi xiang chu	3
 杀手锏	sha shou jian	3
 杳然	yao ran	3
-枸	ju	3
+枞	zong	3
 柃	ling	3
-栎	yue	3
+柏	bo	3
+柚	zhou	3
+栅	zha	3
+校	jiao	3
 桀纣	jie zhou	3
-桁	hang	3
+桔	jie	3
 梧桐	wu tong	3
 梳妆台	shu zhuang tai	3
 棺椁	guan guo	3
 楗	jian	3
 横亘	heng gen	3
 欢聚一堂	huan ju yi tang	3
-歙	she	3
 死不悔改	si bu hui gai	3
 殡殓	bin lian	3
 毹	shu	3
@@ -60731,12 +60424,11 @@
 水涨船高	shui zhang chuan gao	3
 永垂不朽	yong chui bu xiu	3
 江洋大盗	jiang yang da dao	3
+汶	men	3
 没头没脑	mei tou mei nao	3
 沥沥	li li	3
 沩	wei	3
 泥牛入海	ni niu ru hai	3
-泷	shuang	3
-浚	xun	3
 涔涔	cen cen	3
 淡而无味	dan er wu wei	3
 淬火	cui huo	3
@@ -60745,24 +60437,21 @@
 源远流长	yuan yuan liu chang	3
 滥觞	lan shang	3
 漤	lan	3
-澹	tan	3
+漯	luo	3
+漯	ta	3
+澄	deng	3
 烟霭	yan ai	3
-焯	zhuo	3
-熨	yu	3
 熹微	xi wei	3
 牛倌	niu guan	3
 牛刀小试	niu dao xiao shi	3
+牟	mou	3
 牿	gu	3
-犍	qian	3
 犏	pian	3
 犟劲	jiang jin	3
 狗急跳墙	gou ji tiao qiang	3
 狼狈为奸	lang bei wei jian	3
-獠	lao	3
-玟	wen	3
-玢	fen	3
+玟	min	3
 珐琅	fa lang	3
-珲	hui	3
 瓞	die	3
 生生世世	sheng sheng shi shi	3
 生财有道	sheng cai you dao	3
@@ -60771,14 +60460,13 @@
 甲亢	jia kang	3
 电焊机	dian han ji	3
 疵点	ci dian	3
-疸	da	3
 痛不欲生	tong bu yu sheng	3
 痛心疾首	tong xin ji shou	3
 瘢痕	ban hen	3
 白垩	bai e	3
 盐碱滩	yan jian tan	3
 相辅而行	xiang fu er xing	3
-瞋	tian	3
+省	xing	3
 瞫	shen	3
 瞵	lin	3
 矢车菊	shi che ju	3
@@ -60793,7 +60481,6 @@
 硝酸甘油	xiao suan gan you	3
 碃	qing	3
 磹	tan	3
-磻	pan	3
 祃	ma	3
 祋	dui	3
 祛暑	qu shu	3
@@ -60807,17 +60494,16 @@
 窅	yao	3
 窊	wa	3
 窠臼	ke jiu	3
+窨	yin	3
 立锥之地	li zhui zhi di	3
-笮	zuo	3
-筠	jun	3
 筻	gang	3
 箅子	bi zi	3
-箐	qing	3
+箐	jing	3
 篼	dou	3
 簃	yi	3
 糵	nie	3
 索然无味	suo ran wu wei	3
-綮	qing	3
+綮	qi	3
 縢	teng	3
 纴	ren	3
 纷纭	fen yun	3
@@ -60830,7 +60516,6 @@
 翚	hui	3
 翯	he	3
 老调重弹	lao diao chong tan	3
-耆	shi	3
 耥	tang	3
 耰	you	3
 肘腋	zhou ye	3
@@ -60845,58 +60530,64 @@
 自矜	zi jin	3
 舟楫	zhou ji	3
 舣	yi	3
-舳	zhou	3
 艎	huang	3
 良辰美景	liang chen mei jing	3
 艴	fu	3
+艿	nai	3
 芃	peng	3
+芎	qiong	3
+芫	yan	3
+芾	fu	3
 苋菜	xian cai	3
-苕	shao	3
 苘	qing	3
 若明若暗	ruo ming ruo an	3
 苦中作乐	ku zhong zuo le	3
+茄	jia	3
+茜	xi	3
 茝	chai	3
 茫然若失	mang ran ruo shi	3
 茴香	hui xiang	3
 草木皆兵	cao mu jie bing	3
-荑	ti	3
 荖	lao	3
-荤	xun	3
+荠	ji	3
+荥	xing	3
 荬	mai	3
-莩	fu	3
+莨	lang	3
+莨	liang	3
 莫此为甚	mo ci wei shen	3
 莲蓬头	lian peng tou	3
 莿	ci	3
 菂	di	3
 葖	tu	3
-葚	ren	3
 蒟	ju	3
 蓂	mi	3
 薢	xie	3
+藉	ji	3
 藠	jiao	3
 藦	mo	3
 藿香	huo xiang	3
+虾	ha	3
 蛔虫	hui chong	3
-蛸	xiao	3
+蛸	shao	3
 蜂王浆	feng wang jiang	3
 蜐	jie	3
+蜒	dan	3
 蜜饯	mi jian	3
 蜻蜓点水	qing ting dian shui	3
 蝉蜕	chan tui	3
-蝤	qiu	3
-蝥	mao	3
+蝤	you	3
 螟蛉	ming ling	3
 螣	te	3
-螫	zhe	3
 血气方刚	xue qi fang gang	3
 行将就木	xing jiang jiu mu	3
 袗	zhen	3
 被褥	bei ru	3
-袷	qia	3
+裨	pi	3
 裨益	bi yi	3
 褥子	ru zi	3
 襫	shi	3
 覆盆子	fu pen zi	3
+觉	jiao	3
 解囊相助	jie nang xiang zhu	3
 觭	ji	3
 詟	zhe	3
@@ -60909,20 +60600,21 @@
 说三道四	shuo san dao si	3
 谈虎色变	tan hu se bian	3
 谰言	lan yan	3
-贲	bi	3
+贾	gu	3
 赞不绝口	zan bu jue kou	3
 赪	cheng	3
 走火入魔	zou huo ru mo	3
 赶尽杀绝	gan jin sha jue	3
-趵	bao	3
 跱	zhi	3
 踱步	duo bu	3
 踺	jian	3
 蹽	liao	3
+轧	ya	3
 轻手轻脚	qing shou qing jiao	3
 轻车熟路	qing che shu lu	3
 轻车简从	qing che jian cong	3
 辁	quan	3
+辗	zhan	3
 进退维谷	jin tui wei gu	3
 远见卓识	yuan jian zhuo shi	3
 迺	nai	3
@@ -60939,7 +60631,6 @@
 邘	yu	3
 郈	hou	3
 鄫	zeng	3
-酢	zuo	3
 醑	xu	3
 醾	mi	3
 重晶石	zhong jing shi	3
@@ -60947,27 +60638,22 @@
 金丝绒	jin si rong	3
 金盆洗手	jin pen xi shou	3
 钖	yang	3
-钿	tian	3
 铁砧	tie zhen	3
-铣	xian	3
 铹	lao	3
-铻	wu	3
-铻	yu	3
 锐不可当	rui bu ke dang	3
 错落有致	cuo luo you zhi	3
 锳	ying	3
+镐	gao	3
 镤	pu	3
 镥	lu	3
 镦	dun	3
 镵	chan	3
 长命百岁	chang ming bai sui	3
 闻风而动	wen feng er dong	3
-阇	she	3
-阏	yan	3
 阶下囚	jie xia qiu	3
+阿	e	3
 阿谀	e yu	3
-陂	pi	3
-陂	po	3
+降	xiang	3
 难分难解	nan fen nan jie	3
 难解难分	nan jie nan fen	3
 雄心壮志	xiong xin zhuang zhi	3
@@ -60978,22 +60664,20 @@
 雾霭	wu ai	3
 青云直上	qing yun zhi shang	3
 青天白日	qing tian bai ri	3
-靓	jing	3
 面如土色	mian ru tu se	3
 鞧	qiu	3
 韂	chan	3
 顶礼膜拜	ding li mo bai	3
+颉	xie	3
 颋	ting	3
 风花雪月	feng hua xue yue	3
 飐	zhan	3
 飞来横祸	fei lai heng huo	3
 餐巾纸	can jin zhi	3
-饧	tang	3
 饯别	jian bie	3
 饯行	jian xing	3
 饱经沧桑	bao jing cang sang	3
 饴糖	yi tang	3
-饹	ge	3
 饹	le	3
 馉	gu	3
 馍馍	mo mo	3
@@ -61004,13 +60688,11 @@
 高歌猛进	gao ge meng jin	3
 高跷	gao qiao	3
 鬼祟	gui sui	3
-鲑	xie	3
 鲗	zei	3
 鲼	fen	3
 鲾	bi	3
 鳒	jian	3
 鳛	xi	3
-鳜	gui	3
 鳟鱼	zun yu	3
 鳠	hu	3
 鸟语花香	niao yu hua xiang	3
@@ -61018,12 +60700,10 @@
 鸡飞狗跳	ji fei gou tiao	3
 鸭绒被	ya rong bei	3
 鸼	zhou	3
-鹄	gu	3
 鹅毛大雪	e mao da xue	3
 鹍	kun	3
 鹐	qian	3
 鹖	he	3
-鹘	gu	3
 麖	jing	3
 黄褐斑	huang he ban	3
 黇	tian	3
@@ -61031,10 +60711,7 @@
 黡	yan	3
 黯然失色	an ran shi se	3
 黯然神伤	an ran shen shang	3
-黾	meng	3
-黾	min	3
 齐抓共管	qi zhua gong guan	3
-龈	ken	3
 㭎	gang	2
 䁖	lou	2
 䲟	yin	2
@@ -61067,28 +60744,35 @@
 举目无亲	ju mu wu qin	2
 义正词严	yi zheng ci yan	2
 乌七八糟	wu qi ba zao	2
+乜	mie	2
 乱蓬蓬	luan peng peng	2
 争强好胜	zheng qiang hao sheng	2
 五七干校	wu qi gan xiao	2
 人多势众	ren duo shi zhong	2
 从长计议	cong chang ji yi	2
 付诸东流	fu zhu dong liu	2
+仡	ge	2
 以弱胜强	yi ruo sheng qiang	2
 以身殉职	yi shen xun zhi	2
 仪态万方	yi tai wan fang	2
 众志成城	zhong zhi cheng cheng	2
 众望所归	zhong wang suo gui	2
 伤天害理	shang tian hai li	2
-伧	cang	2
 似懂非懂	si dong fei dong	2
+佃	tian	2
 作壁上观	zuo bi shang guan	2
+侗	tong	2
+侥	jiao	2
 侮慢	wu man	2
 保墒	bao shang	2
 保质保量	bao zhi bao liang	2
 倒坍	dao tan	2
+倘	chang	2
+倜	zhou	2
 偌大	ruo da	2
 做贼心虚	zuo zei xin xu	2
 偷鸡摸狗	tou ji mo gou	2
+偻	lou	2
 傻里傻气	sha li sha qi	2
 光怪陆离	guang guai lu li	2
 克敌制胜	ke di zhi sheng	2
@@ -61103,7 +60787,9 @@
 决一雌雄	jue yi ci xiong	2
 冷言冷语	leng yan leng yu	2
 出言不逊	chu yan bu xun	2
+削	xiao	2
 前思后想	qian si hou xiang	2
+剡	shan	2
 劣根性	lie gen xing	2
 势不两立	shi bu liang li	2
 勇冠三军	yong guan san jun	2
@@ -61121,49 +60807,57 @@
 卵磷脂	luan lin zhi	2
 卷帘门	juan lian men	2
 厚墩墩	hou dun dun	2
+厦	xia	2
 双簧管	shuang huang guan	2
 发窘	fa jiong	2
 受窘	shou jiong	2
 口出狂言	kou chu kuang yan	2
 古尔邦节	gu er bang jie	2
+召	shao	2
 叵测	po ce	2
 吃闭门羹	chi bi men geng	2
 同床异梦	tong chuang yi meng	2
 名正言顺	ming zheng yan shun	2
 吐故纳新	tu gu na xin	2
-吖	ya	2
 吵吵嚷嚷	chao chao rang rang	2
 吹拉弹唱	chui la tan chang	2
-呔	dai	2
 周而复始	zhou er fu shi	2
+呲	zi	2
+和	huo	2
 和气生财	he qi sheng cai	2
 和稀泥	huo xi ni	2
+咖	ga	2
+咽	ye	2
 品头论足	pin tou lun zu	2
 品学兼优	pin xue jian you	2
 响彻云霄	xiang che yun xiao	2
 哐啷	kuang lang	2
+哦	e	2
+哪	nei	2
 哼哈二将	heng ha er jiang	2
 唱双簧	chang shuang huang	2
 唱对台戏	chang dui tai xi	2
-啁	zhao	2
 善解人意	shan jie ren yi	2
+喏	re	2
 喘吁吁	chuan xu xu	2
+喳	cha	2
 喳喳	cha cha	2
-嘬	chuai	2
+嗒	ta	2
 四世同堂	si shi tong tang	2
 四平八稳	si ping ba wen	2
 回眸	hui mou	2
 因循守旧	yin xun shou jiu	2
+囤	tun	2
 囤积居奇	tun ji ju qi	2
 困窘	kun jiong	2
+圈	juan	2
+圩	wei	2
 地大物博	di da wu bo	2
 坍陷	tan xian	2
 坐以待毙	zuo yi dai bi	2
-坻	chi	2
 垌	dong	2
 垲	kai	2
 城下之盟	cheng xia zhi meng	2
-埏	yan	2
 塥	ge	2
 墒情	shang qing	2
 声名狼藉	sheng ming lang ji	2
@@ -61190,31 +60884,33 @@
 姘头	pin tou	2
 姘妇	pin fu	2
 姘居	pin ju	2
+姥	mu	2
 孑遗	jie yi	2
 安琪儿	an qi er	2
 安身立命	an shen li ming	2
 官官相护	guan guan xiang hu	2
 宰牲节	zai sheng jie	2
 宽以待人	kuan yi dai ren	2
+宿	xiu	2
 寥廓	liao kuo	2
 对症下药	dui zheng xia yao	2
 尖酸刻薄	jian suan ke bo	2
 尘嚣	chen xiao	2
 尜	ga	2
 尺牍	chi du	2
+尿	sui	2
 居高临下	ju gao lin xia	2
+屏	bing	2
 山穷水尽	shan qiong shui jin	2
-峤	jiao	2
 崩坍	beng tan	2
-嶷	yi	2
 川流不息	chuan liu bu xi	2
 巨擘	ju bo	2
-帱	dao	2
 帷幔	wei man	2
+幢	chuang	2
 平步青云	ping bu qing yun	2
 年富力强	nian fu li qiang	2
 广而告之	guang er gao zhi	2
-廑	qin	2
+度	duo	2
 弥天大谎	mi tian da huang	2
 弦外之音	xian wai zhi yin	2
 当机立断	dang ji li duan	2
@@ -61224,7 +60920,6 @@
 彪形大汉	biao xing da han	2
 得其所哉	de qi suo zai	2
 御侮	yu wu	2
-徼	yao	2
 心心念念	xin xin nian nian	2
 心潮澎湃	xin chao peng pai	2
 忍饥挨饿	ren ji ai e	2
@@ -61234,32 +60929,34 @@
 怔怔	zheng zheng	2
 思前想后	si qian xiang hou	2
 怪声怪气	guai sheng guai qi	2
-怫	fei	2
 恣情	zi qing	2
 恣意	zi yi	2
 恣肆	zi si	2
+恶	wu	2
 患难与共	huan nan yu gong	2
 情有独钟	qing you du zhong	2
 情真意切	qing zhen yi qie	2
 惭色	can se	2
-慊	qian	2
 慌里慌张	huang li huang zhang	2
 慢腾腾	man teng teng	2
-戆	zhuang	2
+扁	pian	2
 扑面而来	pu mian er lai	2
 打马虎眼	da ma hu yan	2
+拓	ta	2
+拗	ao	2
 招兵买马	zhao bing mai ma	2
 拥政爱民	yong zheng ai min	2
 拴马桩	shuan ma zhuang	2
-拶	zan	2
+挲	sa	2
 捅娄子	tong lou zi	2
 捅马蜂窝	tong ma feng wo	2
 探头探脑	tan tou tan nao	2
 推己及人	tui ji ji ren	2
 掰腕子	bai wan zi	2
+掺	can	2
+掺	shan	2
 搪塞	tang se	2
 摈除	bin chu	2
-擘	bai	2
 擘划	bo hua	2
 支气管炎	zhi qi guan yan	2
 改天换地	gai tian huan di	2
@@ -61273,7 +60970,6 @@
 无精打采	wu jing da cai	2
 旱冰场	han bing chang	2
 旱冰鞋	han bing xie	2
-晟	cheng	2
 暴风骤雨	bao feng zhou yu	2
 有伤风化	you shang feng hua	2
 有增无减	you zeng wu jian	2
@@ -61286,10 +60982,10 @@
 期期艾艾	qi qi ai ai	2
 木已成舟	mu yi cheng zhou	2
 本末倒置	ben mo dao zhi	2
-杓	biao	2
 来者不拒	lai zhe bu ju	2
+杷	ba	2
 果不其然	guo bu qi ran	2
-柁	duo	2
+柞	zuo	2
 树大招风	shu da zhao feng	2
 格物致知	ge wu zhi zhi	2
 案牍	an du	2
@@ -61297,7 +60993,6 @@
 椎间盘	zhui jian pan	2
 楼堂馆所	lou tang guan suo	2
 檀香木	tan xiang mu	2
-欹	yi	2
 欺侮	qi wu	2
 歹人	dai ren	2
 歹心	dai xin	2
@@ -61305,21 +61000,21 @@
 歹意	dai yi	2
 歹毒	dai du	2
 死记硬背	si ji ying bei	2
+氓	mang	2
 水落石出	shui luo shi chu	2
 沉疴	chen ke	2
 没精打采	mei jing da cai	2
 泄洪闸	xie hong zha	2
+泊	po	2
 泣不成声	qi bu cheng sheng	2
 泥水匠	ni shui jiang	2
 泥瓦匠	ni wa jiang	2
 洞若观火	dong ruo guan huo	2
-浍	kuai	2
 涕泪	ti lei	2
 涤纶	di lun	2
 深居简出	shen ju jian chu	2
 渣滓	zha zi	2
 游刃有余	you ren you yu	2
-湫	jiao	2
 溃不成军	kui bu cheng jun	2
 滂沱	pang tuo	2
 滴滴涕	di di ti	2
@@ -61327,11 +61022,11 @@
 火树银花	huo shu yin hua	2
 灯芯绒	deng xin rong	2
 灵机一动	ling ji yi dong	2
-炔	gui	2
 热腾腾	re teng teng	2
 烽烟	feng yan	2
 照猫画虎	zhao mao hua hu	2
 熟门熟路	shu men shu lu	2
+爪	zhua	2
 爱莫能助	ai mo neng zhu	2
 牛头马面	niu tou ma mian	2
 牛鬼蛇神	niu gui she shen	2
@@ -61340,6 +61035,9 @@
 独断专行	du duan zhuan xing	2
 獐子	zhang zi	2
 玉镯	yu zhuo	2
+玟	wen	2
+玢	fen	2
+珲	hui	2
 生搬硬套	sheng ban ying tao	2
 生机勃勃	sheng ji bo bo	2
 生生不息	sheng sheng bu xi	2
@@ -61347,6 +61045,7 @@
 甬路	yong lu	2
 甬道	yong dao	2
 电热毯	dian re tan	2
+町	ding	2
 疖子	jie zi	2
 疟蚊	nve wen	2
 痃	xuan	2
@@ -61359,19 +61058,18 @@
 眸子	mou zi	2
 睎	xi	2
 知根知底	zhi gen zhi di	2
-砉	huo	2
 砫	zhu	2
 破绽百出	po zhan bai chu	2
 硊	wei	2
 硕大无朋	shuo da wu peng	2
-碡	du	2
-祕	mi	2
+磻	pan	2
 神清气爽	shen qing qi shuang	2
 祾	ling	2
 禔	zhi	2
 禤	xuan	2
 私心杂念	si xin za nian	2
 积少成多	ji shao cheng duo	2
+秸	ji	2
 移山倒海	yi shan dao hai	2
 稀巴烂	xi ba lan	2
 稀里糊涂	xi li hu tu	2
@@ -61390,25 +61088,21 @@
 筥	ju	2
 筶	gao	2
 简牍	jian du	2
+箐	qing	2
 篦子	bi zi	2
 簕	le	2
 簠	fu	2
 粮秣	liang mo	2
 精兵强将	jing bing qiang jiang	2
 精兵简政	jing bing jian zheng	2
-糁	san	2
-絜	xie	2
 絮絮	xu xu	2
-繇	you	2
-繇	zhou	2
+綮	qing	2
 红颜薄命	hong yan bo ming	2
 纸上谈兵	zhi shang tan bing	2
 细水长流	xi shui chang liu	2
 经久不息	jing jiu bu xi	2
 绤	xi	2
 绵亘	mian gen	2
-缊	yun	2
-缞	cui	2
 缭乱	liao luan	2
 置之脑后	zhi zhi nao hou	2
 美其名曰	mei qi ming yue	2
@@ -61424,8 +61118,8 @@
 老谋深算	lao mou shen suan	2
 耇	gou	2
 耑	zhuan	2
+耙	ba	2
 聋哑人	long ya ren	2
-聒	gua	2
 肋膜炎	le mo yan	2
 肠梗阻	chang geng zu	2
 肸	xi	2
@@ -61434,42 +61128,45 @@
 胸无大志	xiong wu da zhi	2
 能者多劳	neng zhe duo lao	2
 脑体倒挂	nao ti dao gua	2
-脔	ji	2
 腨	shuan	2
 腹诽	fu fei	2
-膻	dan	2
+膀	pang	2
 自卖自夸	zi mai zi kua	2
 自惭	zi can	2
 自食其果	zi shi qi guo	2
+臭	xiu	2
+般	pan	2
+舳	zhou	2
 艄公	shao gong	2
-芎	qiong	2
 芡实	qian shi	2
+苣	qu	2
 苦思冥想	ku si ming xiang	2
-茀	fu	2
-茈	ci	2
-茝	zhi	2
 茽	zhong	2
 荠菜	ji cai	2
+莎	suo	2
+莞	guan	2
 莫测高深	mo ce gao shen	2
-菹	ju	2
+菀	yu	2
 萚	tuo	2
 落井下石	luo jing xia shi	2
-葰	sui	2
+葚	ren	2
 蒄	guan	2
 蒈	kai	2
 蒻	ruo	2
 蔊	han	2
 薪炭林	xin tan lin	2
-蘖	bo	2
 蘘	rang	2
 虎口拔牙	hu kou ba ya	2
 虚位以待	xu wei yi dai	2
 虚情假意	xu qing jia yi	2
+蛤	ha	2
+蛸	xiao	2
 蜂拥而上	feng yong er shang	2
 蜂拥而至	feng yong er zhi	2
 蜎	yuan	2
+蝤	qiu	2
+蝥	mao	2
 蝮蛇	fu she	2
-螣	teng	2
 螺蛳	luo si	2
 蟠桃	pan tao	2
 蟠龙	pan long	2
@@ -61478,10 +61175,15 @@
 衣食住行	yi shi zhu xing	2
 装疯卖傻	zhuang feng mai sha	2
 裛	yi	2
+裳	shang	2
+裼	ti	2
+褚	zhu	2
 褥疮	ru chuang	2
 西装革履	xi zhuang ge lv	2
+覃	tan	2
 见多识广	jian duo shi guang	2
 见财起意	jian cai qi yi	2
+角	jue	2
 誓不罢休	shi bu ba xiu	2
 譬喻	pi yu	2
 讥刺	ji ci	2
@@ -61490,19 +61192,17 @@
 说东道西	shuo dong dao xi	2
 调虎离山	diao hu li shan	2
 谦谦君子	qian qian jun zi	2
-豉	shi	2
-貉	hao	2
-貉	he	2
 贲门	ben men	2
 费尽心机	fei jin xin ji	2
 赑	bi	2
+赚	zuan	2
 起承转合	qi cheng zhuan he	2
 超凡脱俗	chao fan tuo su	2
 趯	yue	2
+趵	bao	2
 跑旱船	pao han chuan	2
-跞	li	2
 踮脚	dian jiao	2
-躅	zhuo	2
+蹊	xi	2
 身不由己	shen bu you ji	2
 身经百战	shen jing bai zhan	2
 身首异处	shen shou yi chu	2
@@ -61515,36 +61215,32 @@
 远走高飞	yuan zou gao fei	2
 连滚带爬	lian gun dai pa	2
 邪祟	xie sui	2
-郄	qie	2
-郇	xun	2
 鄑	zi	2
 鄙陋	bi lou	2
-酦	fa	2
 酦	po	2
-酾	shi	2
 醉生梦死	zui sheng meng si	2
 釉面砖	you mian zhuan	2
 金榜题名	jin bang ti ming	2
 金童玉女	jin tong yu nv	2
 金箍棒	jin gu bang	2
 针头线脑	zhen tou xian nao	2
-铫	diao	2
+铛	dang	2
+铤	ding	2
+铻	wu	2
+铻	yu	2
 锐意进取	rui yi jin qu	2
-锜	qi	2
 锧	zhi	2
 镃	zi	2
-镡	chan	2
 镯子	zhuo zi	2
 长绒棉	chang rong mian	2
 长袖善舞	chang xiu shan wu	2
-阚	han	2
-阽	dian	2
+阇	she	2
 附庸风雅	fu yong feng ya	2
 随遇而安	sui yu er an	2
-隗	kui	2
 隩	yu	2
 隺	he	2
 雾凇	wu song	2
+露	lou	2
 非同凡响	fei tong fan xiang	2
 面如死灰	mian ru si hui	2
 韨	fu	2
@@ -61553,12 +61249,11 @@
 风雨同舟	feng yu tong zhou	2
 风风火火	feng feng huo huo	2
 食古不化	shi gu bu hua	2
-馇	cha	2
-馘	xu	2
+饹	ge	2
 马不停蹄	ma bu ting ti	2
 马蹄铁	ma ti tie	2
 马马虎虎	ma ma hu hu	2
-骀	tai	2
+驮	duo	2
 骄矜	jiao jin	2
 骑虎难下	qi hu nan xia	2
 髌骨	bin gu	2
@@ -61569,15 +61264,14 @@
 鬶	gui	2
 鱽	dao	2
 鲬	yong	2
-鲭	zheng	2
 鲳鱼	chang yu	2
 鳂	wei	2
+鳜	gui	2
 鸡飞蛋打	ji fei dan da	2
 鸧	cang	2
 鹒	geng	2
 鹙	qiu	2
 鹠	liu	2
-麇	qun	2
 黄澄澄	huang deng deng	2
 鼎力相助	ding li xiang zhu	2
 鼫	shi	2
@@ -61727,6 +61421,7 @@
 与虎谋皮	yu hu mou pi	1
 丏	mian	1
 丑态百出	chou tai bai chu	1
+且	ju	1
 世态炎凉	shi tai yan liang	1
 业精于勤	ye jing yu qin	1
 东倒西歪	dong dao xi wai	1
@@ -61764,6 +61459,7 @@
 乐滋滋	le zi zi	1
 乐而忘返	le er wang fan	1
 乔迁之喜	qiao qian zhi xi	1
+乘	sheng	1
 乘人之危	cheng ren zhi wei	1
 乘虚而入	cheng xu er ru	1
 乘风破浪	cheng feng po lang	1
@@ -61794,6 +61490,7 @@
 井底之蛙	jing di zhi wa	1
 亡命之徒	wang ming zhi tu	1
 亡羊补牢	wang yang bu lao	1
+亢	gang	1
 交头接耳	jiao tou jie er	1
 交媾	jiao gou	1
 交相辉映	jiao xiang hui ying	1
@@ -61803,6 +61500,7 @@
 亭亭玉立	ting ting yu li	1
 亭台楼阁	ting tai lou ge	1
 亮晶晶	liang jing jing	1
+亲	qing	1
 亶	chan	1
 亶	dan	1
 亸	duo	1
@@ -61820,6 +61518,7 @@
 人迹罕至	ren ji han zhi	1
 仁人志士	ren ren zhi shi	1
 仁至义尽	ren zhi yi jin	1
+仇	qiu	1
 今非昔比	jin fei xi bi	1
 仓猝	cang cu	1
 仗义执言	zhang yi zhi yan	1
@@ -61849,7 +61548,9 @@
 任人唯贤	ren ren wei xian	1
 任人宰割	ren ren zai ge	1
 任劳任怨	ren lao ren yuan	1
+仿	pang	1
 伈	xin	1
+伉	gang	1
 伉俪	kang li	1
 伋	ji	1
 休戚相关	xiu qi xiang guan	1
@@ -61864,10 +61565,14 @@
 伣	qian	1
 伤筋动骨	shang jin dong gu	1
 伤风败俗	shang feng bai su	1
+伧	cang	1
 伫立	zhu li	1
 伭	xian	1
+伯	bai	1
 伶仃	ling ding	1
 伶俐	ling li	1
+伺	ci	1
+伽	ga	1
 伾	pi	1
 佁	chi	1
 佁	yi	1
@@ -61875,10 +61580,13 @@
 何乐而不为	he le er bu wei	1
 何足挂齿	he zu gua chi	1
 佖	bi	1
+佗	yi	1
 余悸	yu ji	1
 余音绕梁	yu yin rao liang	1
+佛	fu	1
 作奸犯科	zuo jian fan ke	1
 作威作福	zuo wei zuo fu	1
+佝	kou	1
 佞人	ning ren	1
 佞臣	ning chen	1
 你争我夺	ni zheng wo duo	1
@@ -61900,6 +61608,8 @@
 促膝谈心	cu xi tan xin	1
 俍	liang	1
 俙	xi	1
+俞	shu	1
+俟	qi	1
 信口雌黄	xin kou ci huang	1
 信誓旦旦	xin shi dan dan	1
 俫	lai	1
@@ -61933,6 +61643,7 @@
 假公济私	jia gong ji si	1
 假惺惺	jia xing xing	1
 假模假式	jia mo jia shi	1
+偈	jie	1
 偎依	wei yi	1
 偏听偏信	pian ting pian xin	1
 偓	wo	1
@@ -61948,6 +61659,7 @@
 偷梁换柱	tou liang huan zhu	1
 傃	su	1
 傉	nu	1
+傍	pang	1
 傒	xi	1
 傕	jue	1
 傧相	bin xiang	1
@@ -61957,6 +61669,7 @@
 僎	zhuan	1
 僔	zun	1
 僧多粥少	seng duo zhou shao	1
+僮	zhuang	1
 僰	bo	1
 儦	biao	1
 儳	chan	1
@@ -61984,6 +61697,7 @@
 兵强马壮	bing qiang ma zhuang	1
 兵荒马乱	bing huang ma luan	1
 其貌不扬	qi mao bu yang	1
+兹	ci	1
 养尊处优	yang zun chu you	1
 兼收并蓄	jian shou bing xu	1
 内忧外患	nei you wai huan	1
@@ -61993,6 +61707,7 @@
 冥顽不灵	ming wan bu ling	1
 冬虫夏草	dong chong xia cao	1
 冮	gang	1
+冯	ping	1
 冰清玉洁	bing qing yu jie	1
 冰肌玉骨	bing ji yu gu	1
 冷冽	leng lie	1
@@ -62008,6 +61723,7 @@
 凶多吉少	xiong duo ji shao	1
 凶相毕露	xiong xiang bi lu	1
 凶神恶煞	xiong shen e sha	1
+凹	wa	1
 出乖露丑	chu guai lou chou	1
 出岔子	chu cha zi	1
 出谋献策	chu mou xian ce	1
@@ -62032,6 +61748,7 @@
 别出心裁	bie chu xin cai	1
 刬	chan	1
 刮痧	gua sha	1
+券	xuan	1
 刻舟求剑	ke zhou qiu jian	1
 剅	lou	1
 削足适履	xue zu shi lv	1
@@ -62047,6 +61764,7 @@
 剟	duo	1
 剽悍	piao han	1
 剽掠	piao lve	1
+剿	chao	1
 劄	zha	1
 劈头盖脸	pi tou gai lian	1
 劈波斩浪	pi bo zhan lang	1
@@ -62067,6 +61785,7 @@
 势均力敌	shi jun li di	1
 势如破竹	shi ru po zhu	1
 勍	qing	1
+勒	lei	1
 勒紧裤带	lei jin ku dai	1
 勔	mian	1
 勚	yi	1
@@ -62078,6 +61797,7 @@
 化险为夷	hua xian wei yi	1
 匜	yi	1
 匠心独运	jiang xin du yun	1
+匮	gui	1
 匹夫之勇	pi fu zhi yong	1
 匼	ke	1
 十恶不赦	shi e bu she	1
@@ -62093,6 +61813,8 @@
 半信半疑	ban xin ban yi	1
 半斤八两	ban jin ba liang	1
 半老徐娘	ban lao xu niang	1
+卑	bi	1
+卒	cu	1
 卓尔不群	zhuo er bu qun	1
 卖友求荣	mai you qiu rong	1
 南柯一梦	nan ke yi meng	1
@@ -62100,6 +61822,7 @@
 博采众长	bo cai zhong chang	1
 博闻强记	bo wen qiang ji	1
 卜筮	bu shi	1
+卡	qia	1
 卧薪尝胆	wo xin chang dan	1
 卫戍区	wei shu qu	1
 卬	ang	1
@@ -62108,6 +61831,7 @@
 卸磨杀驴	xie mo sha lv	1
 卿卿我我	qing qing wo wo	1
 历历在目	li li zai mu	1
+厕	si	1
 厖	mang	1
 厖	pang	1
 厚此薄彼	hou ci bo bi	1
@@ -62115,6 +61839,7 @@
 去伪存真	qu wei cun zhen	1
 去粗取精	qu cu qu jing	1
 厾	du	1
+参	cen	1
 叆	ai	1
 叇	dai	1
 双喜临门	shuang xi lin men	1
@@ -62136,13 +61861,16 @@
 口蹄疫	kou ti yi	1
 古色古香	gu se gu xiang	1
 古道热肠	gu dao re chang	1
+句	gou	1
 另起炉灶	ling qi lu zao	1
+叨	tao	1
 只争朝夕	zhi zheng zhao xi	1
 叫苦不迭	jiao ku bu die	1
 叮咛	ding ning	1
 可望而不可即	ke wang er bu ke ji	1
 可歌可泣	ke ge ke qi	1
 叱咤风云	chi zha feng yun	1
+叶	xie	1
 叶落归根	ye luo gui gen	1
 叽里咕噜	ji li gu lu	1
 吃大锅饭	chi da guo fan	1
@@ -62166,6 +61894,8 @@
 后晌	hou shang	1
 后生可畏	hou sheng ke wei	1
 后继乏人	hou ji fa ren	1
+吓	he	1
+吖	ya	1
 吝惜	lin xi	1
 吞云吐雾	tun yun tu wu	1
 吞吞吐吐	tun tun tu tu	1
@@ -62185,6 +61915,8 @@
 呇	qi	1
 告竣	gao jun	1
 呓语	yi yu	1
+呔	dai	1
+呗	bei	1
 呜呼哀哉	wu hu ai zai	1
 呣	mou	1
 呱呱叫	gua gua jiao	1
@@ -62199,6 +61931,7 @@
 咇	bi	1
 咇	bie	1
 咉	yang	1
+咋	zha	1
 和光同尘	he guang tong chen	1
 和颜悦色	he yan yue se	1
 和风细雨	he feng xi yu	1
@@ -62210,13 +61943,17 @@
 咬文嚼字	yao wen jiao zi	1
 咬牙切齿	yao ya qie chi	1
 咬紧牙关	yao jin ya guan	1
+咯	ka	1
+咯	luo	1
 咯噔	ge deng	1
 咺	xuan	1
 哃	tong	1
+哆	chi	1
 哑然失笑	ya ran shi xiao	1
 哕	hui	1
 哢	long	1
 哧溜	chi liu	1
+哪	ne	1
 哱	bo	1
 哼哧	heng chi	1
 哼唧	heng ji	1
@@ -62229,21 +61966,26 @@
 唝	gong	1
 唧筒	ji tong	1
 唪	feng	1
+唬	xia	1
 唯利是图	wei li shi tu	1
 唯唯诺诺	wei wei nuo nuo	1
 唯我独尊	wei wo du zun	1
 唯物史观	wei wu shi guan	1
 唱独角戏	chang du jiao xi	1
 唵	an	1
+啁	zhao	1
 啁啾	zhou jiu	1
+啜	chuai	1
 啪嚓	pa cha	1
 啫	zhe	1
 啰	luo	1
 啴	chan	1
 啴	tan	1
+喁	yu	1
 善始善终	shan shi shan zhong	1
 善罢甘休	shan ba gan xiu	1
 喆	zhe	1
+喋	zha	1
 喋血	die xue	1
 喑哑	yin ya	1
 喜不自禁	xi bu zi jin	1
@@ -62263,18 +62005,24 @@
 嗐	hai	1
 嗞	zi	1
 嗫嚅	nie ru	1
+嗲	die	1
 嗷嗷待哺	ao ao dai bu	1
+嗽	shu	1
 嘘寒问暖	xu han wen nuan	1
 嘚	de	1
 嘡	tang	1
+嘬	chuai	1
+嘲	zhao	1
 嘹亮	liao liang	1
 噀	xun	1
 噂	zun	1
 噇	chuang	1
 噤声	jin sheng	1
+噱	xue	1
 噼啪	pi pa	1
 嚄	huo	1
 嚚	yin	1
+嚣	ao	1
 嚭	pi	1
 囊空如洗	nang kong ru xi	1
 四舍五入	si she wu ru	1
@@ -62296,6 +62044,7 @@
 圌	chui	1
 圐	ku	1
 圙	lve	1
+圜	yuan	1
 土头土脑	tu tou tu nao	1
 土腥味	tu xing wei	1
 土豪劣绅	tu hao lie shen	1
@@ -62303,6 +62052,7 @@
 圢	ting	1
 在劫难逃	zai jie nan tao	1
 在所不辞	zai suo bu ci	1
+圩	yu	1
 圫	yu	1
 地久天长	di jiu tian chang	1
 地广人稀	di guang ren xi	1
@@ -62311,6 +62061,7 @@
 坉	tun	1
 坋	ben	1
 坋	fen	1
+坏	pi	1
 坐井观天	zuo jing guan tian	1
 坐享其成	zuo xiang qi cheng	1
 坐怀不乱	zuo huai bu luan	1
@@ -62328,6 +62079,7 @@
 坬	gua	1
 坰	jiong	1
 坷垃	ke la	1
+坻	chi	1
 坽	ling	1
 垂头丧气	chui tou sang qi	1
 垂帘听政	chui lian ting zheng	1
@@ -62351,7 +62103,10 @@
 垿	xu	1
 埆	que	1
 埇	yong	1
+埋	man	1
 埌	lang	1
+埏	yan	1
+埔	bu	1
 埗	bu	1
 埪	kong	1
 埫	chong	1
@@ -62363,6 +62118,8 @@
 堌	gu	1
 堎	leng	1
 堐	ya	1
+堡	bu	1
+堤	ti	1
 堧	ruan	1
 堨	ai	1
 堨	ye	1
@@ -62402,6 +62159,7 @@
 多谋善断	duo mou shan duan	1
 夜不闭户	ye bu bi hu	1
 夜深人静	ye shen ren jing	1
+大	dai	1
 大义凛然	da yi lin ran	1
 大义灭亲	da yi mie qin	1
 大刀阔斧	da dao kuo fu	1
@@ -62447,12 +62205,14 @@
 天长日久	tian chang ri jiu	1
 夫唱妇随	fu chang fu sui	1
 夬	guai	1
+夯	ben	1
 失之交臂	shi zhi jiao bi	1
 失魂落魄	shi hun luo po	1
 头昏眼花	tou hun yan hua	1
 头昏脑胀	tou hun nao zhang	1
 夸夸其谈	kua kua qi tan	1
 夺眶而出	duo kuang er chu	1
+奇	ji	1
 奇形怪状	qi xing guai zhuang	1
 奇珍异宝	qi zhen yi bao	1
 奇耻大辱	qi chi da ru	1
@@ -62510,6 +62270,7 @@
 娇生惯养	jiao sheng guan yang	1
 娉婷	ping ting	1
 娓娓动听	wei wei dong ting	1
+娩	wan	1
 娵	ju	1
 婀娜	e nuo	1
 婌	shu	1
@@ -62549,6 +62310,7 @@
 嬛	xuan	1
 嬥	tiao	1
 嬬	ru	1
+嬷	ma	1
 嬿	yan	1
 孀妇	shuang fu	1
 孀居	shuang ju	1
@@ -62556,6 +62318,7 @@
 孑然一身	jie ran yi shen	1
 孖	ma	1
 字正腔圆	zi zheng qiang yuan	1
+孛	bei	1
 孜孜以求	zi zi yi qiu	1
 孝子贤孙	xiao zi xian sun	1
 孤儿寡母	gu er gua mu	1
@@ -62563,6 +62326,7 @@
 孤芳自赏	gu fang zi shang	1
 孤魂野鬼	gu hun ye gui	1
 学而不厌	xue er bu yan	1
+孱	can	1
 孱弱	chan ruo	1
 孺子牛	ru zi niu	1
 守口如瓶	shou kou ru ping	1
@@ -62574,6 +62338,7 @@
 安贫乐道	an pin le dao	1
 完璧归赵	wan bi gui zhao	1
 官运亨通	guan yun heng tong	1
+宛	yuan	1
 实报实销	shi bao shi xiao	1
 宠辱不惊	chong ru bu jing	1
 审时度势	shen shi duo shi	1
@@ -62598,8 +62363,10 @@
 寻章摘句	xun zhang zhai ju	1
 寻花问柳	xun hua wen liu	1
 封山育林	feng shan yu lin	1
+将	qiang	1
 将信将疑	jiang xin jiang yi	1
 将功补过	jiang gong bu guo	1
+尉	yu	1
 尊师重教	zun shi zhong jiao	1
 尊师重道	zun shi zhong dao	1
 小家碧玉	xiao jia bi yu	1
@@ -62617,13 +62384,16 @@
 尸横遍野	shi heng bian ye	1
 尺蠖	chi huo	1
 尽收眼底	jin shou yan di	1
+尾	yi	1
 屁滚尿流	pi gun niao liu	1
 屃	xi	1
 居安思危	ju an si wei	1
+屎	xi	1
 屡战屡胜	lv zhan lv sheng	1
 屡战屡败	lv zhan lv bai	1
 屡教不改	lv jiao bu gai	1
 屡禁不绝	lv jin bu jue	1
+屯	zhun	1
 山楂	shan zha	1
 山毛榉	shan mao ju	1
 山珍海味	shan zhen hai wei	1
@@ -62632,6 +62402,7 @@
 屹然	yi ran	1
 屼	wu	1
 屾	shen	1
+岂	kai	1
 岂有此理	qi you ci li	1
 岊	jie	1
 岍	qian	1
@@ -62642,8 +62413,10 @@
 峃	xue	1
 峗	wei	1
 峘	huan	1
+峙	shi	1
 峛	li	1
 峣	yao	1
+峤	jiao	1
 峥嵘	zheng rong	1
 峧	jiao	1
 峭拔	qiao ba	1
@@ -62664,6 +62437,7 @@
 崿	e	1
 嵁	kan	1
 嵅	han	1
+嵌	kan	1
 嵎	yu	1
 嵖	cha	1
 嵚	qin	1
@@ -62676,6 +62450,7 @@
 嶟	zun	1
 嶦	zhan	1
 嶲	xi	1
+嶷	yi	1
 巇	xi	1
 巉	chan	1
 巍巍	wei wei	1
@@ -62687,10 +62462,13 @@
 巧取豪夺	qiao qu hao duo	1
 巧夺天工	qiao duo tian gong	1
 巧言令色	qiao yan ling se	1
+差	ci	1
 巴山蜀水	ba shan shu shui	1
+巷	hang	1
 帕金森病	pa jin sen bing	1
 帡	ping	1
 帨	shui	1
+帱	dao	1
 帷幄	wei wo	1
 幖	biao	1
 幪	meng	1
@@ -62714,6 +62492,7 @@
 庼	qing	1
 廆	gui	1
 廋	sou	1
+廑	qin	1
 廙	yi	1
 延年益寿	yan nian yi shou	1
 建功立业	jian gong li ye	1
@@ -62724,6 +62503,7 @@
 开诚布公	kai cheng bu gong	1
 异曲同工	yi qu tong gong	1
 弃暗投明	qi an tou ming	1
+弄	long	1
 弆	ju	1
 弇	yan	1
 弓弩手	gong nu shou	1
@@ -62731,6 +62511,7 @@
 引狼入室	yin lang ru shi	1
 引经据典	yin jing ju dian	1
 引蛇出洞	yin she chu dong	1
+弟	ti	1
 张冠李戴	zhang guan li dai	1
 张灯结彩	zhang deng jie cai	1
 张牙舞爪	zhang ya wu zhao	1
@@ -62742,6 +62523,7 @@
 弹冠相庆	tan guan xiang qing	1
 弹尽粮绝	dan jin liang jue	1
 弹无虚发	dan wu xu fa	1
+强	jiang	1
 强取豪夺	qiang qu hao duo	1
 强弩之末	qiang nu zhi mo	1
 强词夺理	qiang ci duo li	1
@@ -62749,17 +62531,22 @@
 彟	yue	1
 形影相吊	xing ying xiang diao	1
 彧	yu	1
+彭	bang	1
 彳	chi	1
 彳亍	chi chu	1
+彷	fang	1
 徇私舞弊	xun si wu bi	1
+徊	hui	1
 徐娘半老	xu niang ban lao	1
 徒子徒孙	tu zi tu sun	1
 徒有其表	tu you qi biao	1
 徒有虚名	tu you xu ming	1
+得	dei	1
 徛	ji	1
 徜徉	chang yang	1
 循循善诱	xun xun shan you	1
 微服私访	wei fu si fang	1
+徼	yao	1
 心乱如麻	xin luan ru ma	1
 心如刀割	xin ru dao ge	1
 心如刀绞	xin ru dao jiao	1
@@ -62798,6 +62585,7 @@
 忡忡	chong chong	1
 忧国忧民	you guo you min	1
 忧心如焚	you xin ru fen	1
+忪	zhong	1
 快马加鞭	kuai ma jia bian	1
 忳	tun	1
 忺	xian	1
@@ -62824,7 +62612,9 @@
 怨声载道	yuan sheng zai dao	1
 怨天尤人	yuan tian you ren	1
 怪模怪样	guai mo guai yang	1
+怫	fei	1
 怯生生	qie sheng sheng	1
+恁	ren	1
 恋恋不舍	lian lian bu she	1
 恓	qi	1
 恓	xi	1
@@ -62891,6 +62681,7 @@
 愤懑	fen men	1
 愭	qi	1
 慆	tao	1
+慊	qian	1
 慎之又慎	shen zhi you shen	1
 慥	zao	1
 慬	jin	1
@@ -62901,6 +62692,8 @@
 憭	liao	1
 憺	dan	1
 懊丧	ao sang	1
+戆	zhuang	1
+戌	qu	1
 成竹在胸	cheng zhu zai xiong	1
 戛然而止	jia ran er zhi	1
 戡乱	kan luan	1
@@ -62934,6 +62727,7 @@
 扭亏为盈	niu kui wei ying	1
 扭亏增盈	niu kui zeng ying	1
 扭秧歌	niu yang ge	1
+扳	pan	1
 扶危济困	fu wei ji kun	1
 扶摇直上	fu yao zhi shang	1
 扶老携幼	fu lao xie you	1
@@ -62955,9 +62749,12 @@
 抱头鼠窜	bao tou shu cuan	1
 抱残守缺	bao can shou que	1
 抵牾	di wu	1
+抹	ma	1
 抽油烟机	chou you yan ji	1
+拂	bi	1
 拃	zha	1
 担惊受怕	dan jing shou pa	1
+拆	ca	1
 拈阄	nian jiu	1
 拉帮结伙	la bang jie huo	1
 拉祜族	la hu zu	1
@@ -62969,9 +62766,14 @@
 招摇过市	zhao yao guo shi	1
 拤	qia	1
 拥军优属	yong jun you shu	1
+择	zhai	1
 择善而从	ze shan er cong	1
+括	gua	1
 拳打脚踢	quan da jiao ti	1
+拶	zan	1
 拼死拼活	pin si pin huo	1
+拽	ye	1
+拾	she	1
 拾人牙慧	shi ren ya hui	1
 拾掇	shi duo	1
 拾级而上	she ji er shang	1
@@ -62989,6 +62791,7 @@
 挦	xian	1
 挨家挨户	ai jia ai hu	1
 振振有词	zhen zhen you ci	1
+挲	sha	1
 挽幛	wan zhang	1
 捕风捉影	bu feng zhuo ying	1
 损人利己	sun ren li ji	1
@@ -62998,6 +62801,7 @@
 捯	dao	1
 捶胸顿足	chui xiong dun zu	1
 捷足先登	jie zu xian deng	1
+捻	nie	1
 捽	zuo	1
 掐头去尾	qia tou qu wei	1
 排忧解难	pai you jie nan	1
@@ -63011,11 +62815,15 @@
 掩耳盗铃	yan er dao ling	1
 掩蔽部	yan bi bu	1
 掮客	qian ke	1
+掴	guai	1
+掸	shan	1
+提	di	1
 提挈	ti qie	1
 插一杠子	cha yi gang zi	1
 插秧机	cha yang ji	1
 插翅难飞	cha chi nan fei	1
 揕	zhen	1
+揭	qi	1
 揭不开锅	jie bu kai guo	1
 揭疮疤	jie chuang ba	1
 揳	xie	1
@@ -63038,9 +62846,11 @@
 撑杆跳高	cheng gan tiao gao	1
 撒手锏	sa shou jian	1
 撖	han	1
+撮	zuo	1
 撼人心魄	han ren xin po	1
 擀面杖	gan mian zhang	1
 擎天柱	qing tian zhu	1
+擘	bai	1
 擿	ti	1
 擿	zhai	1
 擿	zhi	1
@@ -63083,6 +62893,7 @@
 斩钉截铁	zhan ding jie tie	1
 断子绝孙	duan zi jue sun	1
 斶	chu	1
+於	yu	1
 旁征博引	pang zheng bo yin	1
 旁敲侧击	pang qiao ce ji	1
 旐	zhao	1
@@ -63147,10 +62958,12 @@
 晓之以理	xiao zhi yi li	1
 晙	jun	1
 晞	xi	1
+晟	cheng	1
 晢	zhe	1
 晪	tian	1
 晫	zhuo	1
 普天同庆	pu tian tong qing	1
+景	ying	1
 晱	shan	1
 智勇双全	zhi yong shuang quan	1
 暅	geng	1
@@ -63159,6 +62972,7 @@
 暗送秋波	an song qiu bo	1
 暮气沉沉	mu qi chen chen	1
 暲	zhang	1
+暴	pu	1
 暴跳如雷	bao tiao ru lei	1
 暴饮暴食	bao yin bao shi	1
 暵	han	1
@@ -63166,6 +62980,7 @@
 暿	xi	1
 曈	tong	1
 曌	zhao	1
+曝	bao	1
 曲径通幽	qu jing tong you	1
 曲曲弯弯	qu qu wan wan	1
 曲终人散	qu zhong ren san	1
@@ -63196,6 +63011,7 @@
 木屐	mu ji	1
 未老先衰	wei lao xian shuai	1
 朳	ba	1
+朴	po	1
 朸	li	1
 机杼	ji zhu	1
 杀气腾腾	sha qi teng teng	1
@@ -63206,8 +63022,10 @@
 杂糅	za rou	1
 权宜之计	quan yi zhi ji	1
 杄	qian	1
+杉	sha	1
 李代桃僵	li dai tao jiang	1
 村规民约	cun gui min yue	1
+杓	biao	1
 杕	di	1
 杕	duo	1
 杙	yi	1
@@ -63236,32 +63054,40 @@
 枯木逢春	ku mu feng chun	1
 枯槁	ku gao	1
 枲	xi	1
+枸	ju	1
 枹	bao	1
+柁	duo	1
 柈	ban	1
 柈	pan	1
 柊	zhong	1
 柔肠寸断	rou chang cun duan	1
 柖	shao	1
+柜	ju	1
 柞木	zuo mu	1
 柞树	zuo shu	1
 柞蚕	zuo can	1
 柳暗花明	liu an hua ming	1
+柴	zhai	1
 柴米油盐	chai mi you yan	1
 柷	chu	1
 柷	zhu	1
 柽柳	cheng liu	1
 栀子	zhi zi	1
 标新立异	biao xin li yi	1
+栎	yue	1
 栐	yong	1
 树碑立传	shu bei li zhuan	1
 栒	xun	1
+栖	xi	1
 栝	kuo	1
 栟	ben	1
 栟	bing	1
 栴	zhan	1
+核	hu	1
 根深叶茂	gen shen ye mao	1
 栻	shi	1
 格杀勿论	ge sha wu lun	1
+桁	hang	1
 桃红柳绿	tao hong liu lv	1
 桊	juan	1
 桯	ting	1
@@ -63283,12 +63109,14 @@
 棁	zhuo	1
 棐	fei	1
 棓	bang	1
+棣	dai	1
 棤	cuo	1
 棨	qi	1
 棪	yan	1
 棫	yu	1
 棬	juan	1
 棬	quan	1
+棱	ling	1
 棻	fen	1
 棽	chen	1
 棽	shen	1
@@ -63317,6 +63145,7 @@
 榰	zhi	1
 槃	pan	1
 槚	jia	1
+槛	jian	1
 槜	zui	1
 槱	you	1
 樟脑丸	zhang nao wan	1
@@ -63328,6 +63157,7 @@
 橞	hui	1
 橦	tong	1
 檀香扇	tan xiang shan	1
+檐	dan	1
 檞	jie	1
 櫆	kui	1
 欂	bo	1
@@ -63341,6 +63171,7 @@
 欲言又止	yu yan you zhi	1
 欲速则不达	yu su ze bu da	1
 欸	ai	1
+欹	yi	1
 欺上瞒下	qi shang man xia	1
 欺世盗名	qi shi dao ming	1
 欺人太甚	qi ren tai shen	1
@@ -63352,6 +63183,7 @@
 歅	yin	1
 歉疚	qian jiu	1
 歌功颂德	ge gong song de	1
+歙	she	1
 正气凛然	zheng qi lin ran	1
 歪七扭八	wai qi niu ba	1
 歪打正着	wai da zheng zhao	1
@@ -63369,7 +63201,9 @@
 殊途同归	shu tu tong gui	1
 残兵败将	can bing bai jiang	1
 殒命	yun ming	1
+殖	shi	1
 殣	jin	1
+殷	yan	1
 毁家纾难	hui jia shu nan	1
 毁誉参半	hui yu can ban	1
 毌	guan	1
@@ -63379,6 +63213,7 @@
 毛遂自荐	mao sui zi jian	1
 毪	mu	1
 毽子	jian zi	1
+氏	zhi	1
 民不聊生	min bu liao sheng	1
 民脂民膏	min zhi min gao	1
 气息奄奄	qi xi yan yan	1
@@ -63404,7 +63239,9 @@
 汛期	xun qi	1
 江郎才尽	jiang lang cai jin	1
 污泥浊水	wu ni zhuo shui	1
+汤	shang	1
 汧	qian	1
+汩	yu	1
 汫	jing	1
 汭	rui	1
 沁人心脾	qin ren xin pi	1
@@ -63412,6 +63249,7 @@
 沇	yan	1
 沉甸甸	chen dian dian	1
 沉鱼落雁	chen yu luo yan	1
+沓	da	1
 沘	bi	1
 沚	zhi	1
 沟沟坎坎	gou gou kan kan	1
@@ -63431,9 +63269,11 @@
 沾花惹草	zhan hua re cao	1
 泂	jiong	1
 泃	ju	1
+泄	yi	1
 泅水	qiu shui	1
 泅渡	qiu du	1
 泇	jia	1
+泌	bi	1
 泔水	gan shui	1
 法不责众	fa bu ze zhong	1
 泙	peng	1
@@ -63445,6 +63285,7 @@
 泪如泉涌	lei ru quan yong	1
 泰然处之	tai ran chu zhi	1
 泰然自若	tai ran zi ruo	1
+泷	shuang	1
 泾渭分明	jing wei fen ming	1
 洁身自好	jie shen zi hao	1
 洈	wei	1
@@ -63472,12 +63313,15 @@
 流连忘返	liu lian wang fan	1
 浈	zhen	1
 浉	shi	1
+浍	kuai	1
 浐	chan	1
 浑水摸鱼	hun shui mo yu	1
+浒	xu	1
 浓墨重彩	nong mo zhong cai	1
 浓妆艳抹	nong zhuang yan mo	1
 浓眉大眼	nong mei da yan	1
 浕	jin	1
+浚	xun	1
 浛	han	1
 浟	you	1
 浡	bo	1
@@ -63494,9 +63338,11 @@
 涂脂抹粉	tu zhi mo fen	1
 涄	ping	1
 消火栓	xiao huo shuan	1
+涌	chong	1
 涍	xiao	1
 涐	e	1
 涘	si	1
+涡	guo	1
 涢	yun	1
 涴	wan	1
 涴	wo	1
@@ -63538,6 +63384,7 @@
 湜	shi	1
 湝	jie	1
 湣	min	1
+湫	jiao	1
 湲	yuan	1
 湴	ban	1
 湿淋淋	shi lin lin	1
@@ -63554,6 +63401,7 @@
 溦	wei	1
 溵	yin	1
 溹	suo	1
+溺	niao	1
 溽暑	ru shu	1
 滃	weng	1
 滆	ge	1
@@ -63587,6 +63435,7 @@
 潖	pa	1
 潜滋暗长	qian zi an zhang	1
 潟	xi	1
+潦	lao	1
 潩	yi	1
 潮汛	chao xun	1
 潴留	zhu liu	1
@@ -63599,7 +63448,9 @@
 澥	xie	1
 澪	ling	1
 澭	yong	1
+澳	yu	1
 澴	huan	1
+澹	tan	1
 澼	pi	1
 澽	ju	1
 激浊扬清	ji zhuo yang qing	1
@@ -63626,11 +63477,13 @@
 炊事班	chui shi ban	1
 炌	kai	1
 炒买炒卖	chao mai chao mai	1
+炔	gui	1
 炘	xin	1
 炙手可热	zhi shou ke re	1
 炟	da	1
 炣	ke	1
 烔	tong	1
+烙	luo	1
 烜	hui	1
 烜	xuan	1
 烝	zheng	1
@@ -63644,9 +63497,11 @@
 焌	jun	1
 焌	qu	1
 焗	ju	1
+焘	dao	1
 焜	kun	1
 焞	tun	1
 焦头烂额	jiao tou lan e	1
+焯	zhuo	1
 煁	chen	1
 煃	kui	1
 煅烧	duan shao	1
@@ -63665,6 +63520,7 @@
 熟能生巧	shu neng sheng qiao	1
 熟视无睹	shu shi wu du	1
 熥	teng	1
+熨	yu	1
 熻	xi	1
 燃眉之急	ran mei zhi ji	1
 燊	shen	1
@@ -63672,6 +63528,7 @@
 燋	zhuo	1
 燏	yu	1
 燚	yi	1
+燥	sao	1
 燧人氏	sui ren shi	1
 爇	ruo	1
 爔	xi	1
@@ -63702,6 +63559,7 @@
 犁铧	li hua	1
 犄角	ji jiao	1
 犇	ben	1
+犍	qian	1
 犒劳	kao lao	1
 犒赏	kao shang	1
 犨	chou	1
@@ -63744,6 +63602,7 @@
 猰	ya	1
 猴年马月	hou nian ma yue	1
 猺	yao	1
+獠	lao	1
 獴	meng	1
 玃	jue	1
 玄之又玄	xuan zhi you xuan	1
@@ -63812,6 +63671,7 @@
 琔	dian	1
 琟	wei	1
 琡	chu	1
+琢	zuo	1
 琤	cheng	1
 琫	beng	1
 琭	lu	1
@@ -63881,9 +63741,11 @@
 畏缩不前	wei suo bu qian	1
 畏首畏尾	wei shou wei wei	1
 畖	wa	1
+畜	xu	1
 畤	zhi	1
 略胜一筹	lve sheng yi chou	1
 略逊一筹	lve xun yi chou	1
+番	pan	1
 畬	she	1
 畬	yu	1
 畯	jun	1
@@ -63892,12 +63754,14 @@
 疐	di	1
 疐	zhi	1
 疑神疑鬼	yi shen yi gui	1
+疟	yao	1
 疟原虫	nve yuan chong	1
 疢	chen	1
 疥疮	jie chuang	1
 疥癣	jie xuan	1
 疭	zong	1
 疲于奔命	pi yu ben ming	1
+疸	da	1
 疾恶如仇	ji e ru chou	1
 疾风骤雨	ji feng zhou yu	1
 病秧子	bing yang zi	1
@@ -63948,6 +63812,7 @@
 盉	he	1
 监守自盗	jian shou zi dao	1
 盖棺论定	gai guan lun ding	1
+盛	cheng	1
 盛情难却	sheng qing nan que	1
 盛气凌人	sheng qi ling ren	1
 盥洗	guan xi	1
@@ -63967,18 +63832,22 @@
 眼疾手快	yan ji shou kuai	1
 眼花缭乱	yan hua liao luan	1
 睄	shao	1
+睢	hui	1
 睥睨	pi ni	1
 睹物思人	du wu si ren	1
 睽睽	kui kui	1
+瞋	tian	1
 瞌睡	ke shui	1
 瞑目	ming mu	1
 瞒天过海	man tian guo hai	1
 瞠目	cheng mu	1
+瞿	ju	1
 矍铄	jue shuo	1
 矢志不渝	shi zhi bu yu	1
 知遇之恩	zhi yu zhi en	1
 矫揉造作	jiao rou zao zuo	1
 矬子	cuo zi	1
+石	dan	1
 石破天惊	shi po tian jing	1
 石磙	shi gun	1
 矸石	gan shi	1
@@ -63986,6 +63855,8 @@
 矼	qiang	1
 砄	jue	1
 砆	fu	1
+砉	huo	1
+砌	qie	1
 砒霜	pi shuang	1
 砝码	fa ma	1
 砠	ju	1
@@ -64000,10 +63871,12 @@
 硔	hong	1
 硿	kong	1
 碈	min	1
+碌	liu	1
 碌碡	liu zhou	1
 碍手碍脚	ai shou ai jiao	1
 碏	que	1
 碑碣	bei jie	1
+碡	du	1
 碧血丹心	bi xue dan xin	1
 碨	wei	1
 碹	xuan	1
@@ -64013,6 +63886,7 @@
 礵	shuang	1
 礼贤下士	li xian xia shi	1
 祊	beng	1
+祕	mi	1
 祖祖辈辈	zu zu bei bei	1
 神不守舍	shen bu shou she	1
 神乎其神	shen hu qi shen	1
@@ -64021,6 +63895,7 @@
 祸从天降	huo cong tian jiang	1
 祸殃	huo yang	1
 祸起萧墙	huo qi xiao qiang	1
+禅	shan	1
 禒	xian	1
 禚	zhuo	1
 离乡背井	li xiang bei jing	1
@@ -64046,6 +63921,7 @@
 稳扎稳打	wen zha wen da	1
 稳操胜券	wen cao sheng quan	1
 稻瘟病	dao wen bing	1
+稽	qi	1
 穜	zhong	1
 穟	sui	1
 穷凶极恶	qiong xiong ji e	1
@@ -64076,12 +63952,14 @@
 笨头笨脑	ben tou ben nao	1
 笨手笨脚	ben shou ben jiao	1
 笨鸟先飞	ben niao xian fei	1
+笮	zuo	1
 笯	nu	1
 笼屉	long ti	1
 筀	gui	1
 等闲视之	deng xian shi zhi	1
 筑巢引凤	zhu chao yin feng	1
 筜	dang	1
+筠	jun	1
 筤	lang	1
 筲箕	shao ji	1
 管中窥豹	guan zhong kui bao	1
@@ -64097,6 +63975,7 @@
 粗制滥造	cu zhi lan zao	1
 粗枝大叶	cu zhi da ye	1
 粗茶淡饭	cu cha dan fan	1
+粥	yu	1
 粳稻	jing dao	1
 粳米	jing mi	1
 粼粼	lin lin	1
@@ -64108,25 +63987,34 @@
 精耕细作	jing geng xi zuo	1
 精雕细刻	jing diao xi ke	1
 粿	guo	1
+糁	san	1
 糅合	rou he	1
 糍粑	ci ba	1
 糒	bei	1
+糜	mei	1
 糨糊	jiang hu	1
+系	ji	1
 素昧平生	su mei ping sheng	1
 紧箍咒	jin gu zhou	1
 紧锣密鼓	jin luo mi gu	1
 紫穗槐	zi sui huai	1
+絜	xie	1
 絮聒	xu guo	1
 繁缛	fan ru	1
 繁花似锦	fan hua si jin	1
 繄	yi	1
+繇	you	1
+繇	zhou	1
 红彤彤	hong tong tong	1
 红杏出墙	hong xing chu qiang	1
 红缨枪	hong ying qiang	1
+纤	qian	1
+纥	ge	1
 纨绔	wan ku	1
 纰漏	pi lou	1
 纲举目张	gang ju mu zhang	1
 纵横驰骋	zong heng chi cheng	1
+纶	guan	1
 纸醉金迷	zhi zui jin mi	1
 纹丝不动	wen si bu dong	1
 纼	zhen	1
@@ -64139,18 +64027,27 @@
 绗	hang	1
 绘声绘色	hui sheng hui se	1
 绚丽多姿	xuan li duo zi	1
+络	lao	1
 络腮胡	luo sai hu	1
 络腮胡子	luo sai hu zi	1
 绝处逢生	jue chu feng sheng	1
+绰	chao	1
+综	zeng	1
+绿	lu	1
 绿茵场	lv yin chang	1
 绿茵茵	lv yin yin	1
+缊	yun	1
 缐	xian	1
 缓兵之计	huan bing zhi ji	1
 缘木求鱼	yuan mu qiu yu	1
+缞	cui	1
 缥缈	piao miao	1
+缩	su	1
 缩手缩脚	suo shou suo jiao	1
+缪	mou	1
 缫丝	sao si	1
 缱绻	qian quan	1
+缴	zhuo	1
 缺心眼儿	que xin yan er	1
 缺斤少两	que jin shao liang	1
 缺斤短两	que jin duan liang	1
@@ -64165,6 +64062,7 @@
 羞赧	xiu nan	1
 群策群力	qun ce qun li	1
 羱	yuan	1
+翟	di	1
 翩然	pian ran	1
 翩翩	pian pian	1
 翩跹	pian xian	1
@@ -64188,6 +64086,7 @@
 老鸨	lao bao	1
 老鸹	lao gua	1
 考妣	kao bi	1
+耆	shi	1
 耍嘴皮子	shua zui pi zi	1
 耏	er	1
 耏	nai	1
@@ -64202,6 +64101,7 @@
 耷拉	da la	1
 耸人听闻	song ren ting wen	1
 聊胜于无	liao sheng yu wu	1
+聒	gua	1
 聒噪	guo zao	1
 联翩	lian pian	1
 聚沙成塔	ju sha cheng ta	1
@@ -64209,6 +64109,7 @@
 肃然起敬	su ran qi jing	1
 肄业	yi ye	1
 肉孜节	rou zi jie	1
+肋	le	1
 肌腱	ji jian	1
 肝肠寸断	gan chang cun duan	1
 肝胆相照	gan dan xiang zhao	1
@@ -64221,6 +64122,7 @@
 背井离乡	bei jing li xiang	1
 背信弃义	bei xin qi yi	1
 胎死腹中	tai si fu zhong	1
+胖	pan	1
 胡子拉碴	hu zi la cha	1
 胡搅蛮缠	hu jiao man chan	1
 胡服骑射	hu fu qi she	1
@@ -64237,12 +64139,18 @@
 能工巧匠	neng gong qiao jiang	1
 能歌善舞	neng ge shan wu	1
 能言善辩	neng yan shan bian	1
+脉	mo	1
 脍炙人口	kuai zhi ren kou	1
 脑溢血	nao yi xue	1
 脑满肠肥	nao man chang fei	1
+脔	ji	1
+脚	jue	1
 脟	lie	1
+脯	pu	1
 脱胎换骨	tuo tai huan gu	1
 脿	biao	1
+腊	xi	1
+腌	a	1
 腒	ju	1
 腮帮子	sai bang zi	1
 腮腺炎	sai xian yan	1
@@ -64255,6 +64163,8 @@
 膏肓	gao huang	1
 膏腴	gao yu	1
 膙	jiang	1
+膻	dan	1
+臂	bei	1
 臆想	yi xiang	1
 臆断	yi duan	1
 臆测	yi ce	1
@@ -64280,16 +64190,21 @@
 舞文弄墨	wu wen nong mo	1
 舠	dao	1
 舥	pa	1
+般	bo	1
 舶来品	bo lai pin	1
 艅	yu	1
 良师益友	liang shi yi you	1
+色	shai	1
+艾	yi	1
 节外生枝	jie wai sheng zhi	1
 节衣缩食	jie yi suo shi	1
+芍	que	1
 芍药	shao yao	1
 芒刺在背	mang ci zai bei	1
 芠	wen	1
 芣	fou	1
 芣	fu	1
+芥	gai	1
 芨芨草	ji ji cao	1
 芫荽	yan sui	1
 芭蕉扇	ba jiao shan	1
@@ -64304,17 +64219,22 @@
 苁蓉	cong rong	1
 苉	pi	1
 苎麻	zhu ma	1
+苕	shao	1
 苜蓿	mu xu	1
 苟且偷安	gou qie tou an	1
 苟且偷生	gou qie tou sheng	1
+若	re	1
 若隐若现	ruo yin ruo xian	1
 苦口婆心	ku kou po xin	1
 苦大仇深	ku da chou shen	1
 苦尽甘来	ku jin gan lai	1
 苦心孤诣	ku xin gu yi	1
+茀	fu	1
 茅塞顿开	mao se dun kai	1
+茈	ci	1
 茋	zhi	1
 茓	xue	1
+茝	zhi	1
 茫无头绪	mang wu tou xu	1
 茭白	jiao bai	1
 茯苓	fu ling	1
@@ -64327,23 +64247,29 @@
 草莽英雄	cao mang ying xiong	1
 草菅人命	cao jian ren ming	1
 荏苒	ren ran	1
+荑	ti	1
 荒诞无稽	huang dan wu ji	1
 荓	ping	1
 荙	da	1
 荡气回肠	dang qi hui chang	1
 荡然无存	dang ran wu cun	1
 荣辱与共	rong ru yu gong	1
+荤	xun	1
 荮	zhou	1
 荷枪实弹	he qiang shi dan	1
+荼	shu	1
+莘	xin	1
 莙	jun	1
 莜麦	you mai	1
 莝	cuo	1
+莩	fu	1
 莫逆之交	mo ni zhi jiao	1
 莰	kan	1
 莴笋	wo sun	1
 莺歌燕舞	ying ge yan wu	1
 菖蒲	chang pu	1
 菟丝子	tu si zi	1
+菹	ju	1
 菼	tan	1
 萍水相逢	ping shui xiang feng	1
 萎蔫	wei nian	1
@@ -64351,10 +64277,14 @@
 萧规曹随	xiao gui cao sui	1
 萳	nan	1
 萹	bian	1
+落	la	1
+落	lao	1
 落寞	luo mo	1
 落荒而逃	luo huang er tao	1
+著	zhe	1
 著书立说	zhu shu li shuo	1
 葬身鱼腹	zang shen yu fu	1
+葰	sui	1
 葱茏	cong long	1
 葳蕤	wei rui	1
 葵花籽	kui hua zi	1
@@ -64370,10 +64300,14 @@
 蓦然	mo ran	1
 蔃	qiang	1
 蔈	biao	1
+蔓	wan	1
+蔚	yu	1
 蔚为壮观	wei wei zhuang guan	1
 蔚为大观	wei wei da guan	1
 蔚然成风	wei ran cheng feng	1
 蔹	lian	1
+蕃	bo	1
+蕉	qiao	1
 蕹菜	weng cai	1
 薁	yu	1
 薄利多销	bo li duo xiao	1
@@ -64385,6 +64319,7 @@
 藟	lei	1
 藨	biao	1
 藨	pao	1
+蘖	bo	1
 虎头虎脑	hu tou hu nao	1
 虎头蛇尾	hu tou she wei	1
 虎背熊腰	hu bei xiong yao	1
@@ -64400,6 +64335,7 @@
 蚂蚱	ma zha	1
 蚄	fang	1
 蚆	ba	1
+蚌	beng	1
 蚍蜉	pi fu	1
 蚱蜢	zha meng	1
 蚲	ping	1
@@ -64407,18 +64343,23 @@
 蛤蚧	ge jie	1
 蛤蜊	ge li	1
 蛲虫	nao chong	1
+蛾	yi	1
 蜎	xuan	1
 蜚声	fei sheng	1
+蜴	xi	1
 蝲	la	1
 蝼蚁	lou yi	1
 蝼蛄	lou gu	1
 蝾螈	rong yuan	1
 螠	yi	1
+螣	teng	1
+螫	zhe	1
 螱	wei	1
 螽斯	zhong si	1
 蟏	xiao	1
 蠕蠕	ru ru	1
 蠢蠢欲动	chun chun yu dong	1
+血	xie	1
 血口喷人	xue kou pen ren	1
 血海深仇	xue hai shen chou	1
 血盆大口	xue pen da kou	1
@@ -64433,6 +64374,7 @@
 袅袅	niao niao	1
 袈裟	jia sha	1
 袯	bo	1
+袷	qia	1
 装傻充愣	zhuang sha chong leng	1
 装聋作哑	zhuang long zuo ya	1
 装腔作势	zhuang qiang zuo shi	1
@@ -64445,6 +64387,7 @@
 襜	chan	1
 襟怀坦白	jin huai tan bai	1
 覆水难收	fu shui nan shou	1
+见	xian	1
 见仁见智	jian ren jian zhi	1
 见异思迁	jian yi si qian	1
 见缝插针	jian feng cha zhen	1
@@ -64454,6 +64397,7 @@
 觐见	jin jian	1
 觜	zui	1
 觟	hua	1
+解	xie	1
 解甲归田	jie jia gui tian	1
 觥筹交错	gong chou jiao cuo	1
 触景生情	chu jing sheng qing	1
@@ -64479,7 +64423,9 @@
 访贫问苦	fang pin wen ku	1
 评头品足	ping tou pin zu	1
 评头论足	ping tou lun zu	1
+识	zhi	1
 识文断字	shi wen duan zi	1
+诘	ji	1
 诡谲	gui jue	1
 语无伦次	yu wu lun ci	1
 请君入瓮	qing jun ru weng	1
@@ -64487,15 +64433,19 @@
 谄谀	chan yu	1
 谆谆	zhun zhun	1
 谋财害命	mou cai hai ming	1
+谜	mei	1
 谨小慎微	jin xiao shen wei	1
 谼	hong	1
 豁然开朗	huo ran kai lang	1
 豆蔻年华	dou kou nian hua	1
 豆豉	dou chi	1
+豉	shi	1
 豪言壮语	hao yan zhuang yu	1
 豮	fen	1
 豸	zhi	1
 貆	huan	1
+貉	hao	1
+貉	he	1
 貌合神离	mao he shen li	1
 负疚	fu jiu	1
 负荆请罪	fu jing qing zui	1
@@ -64505,6 +64455,7 @@
 贪得无厌	tan de wu yan	1
 贫下中农	pin xia zhong nong	1
 贫病交加	pin bing jiao jia	1
+贲	bi	1
 贻笑大方	yi xiao da fang	1
 贼喊捉贼	zei han zhuo zei	1
 贼头贼脑	zei tou zei nao	1
@@ -64522,6 +64473,8 @@
 超然物外	chao ran wu wai	1
 趋利避害	qu li bi hai	1
 趋炎附势	qu yan fu shi	1
+趟	cheng	1
+趣	cu	1
 趯	ti	1
 足智多谋	zu zhi duo mou	1
 趾高气扬	zhi gao qi yang	1
@@ -64532,6 +64485,7 @@
 跋山涉水	ba shan she shui	1
 跌跌撞撞	die die zhuang zhuang	1
 跑冒滴漏	pao mao di lou	1
+跞	li	1
 路不拾遗	lu bu shi yi	1
 跳蚤市场	tiao zao shi chang	1
 踌躇	chou chu	1
@@ -64546,10 +64500,13 @@
 蹢	di	1
 蹢	zhi	1
 蹩脚	bie jiao	1
+蹲	cun	1
+躅	zhuo	1
 身临其境	shen lin qi jing	1
 身先士卒	shen xian shi zu	1
 身怀六甲	shen huai liu jia	1
 身败名裂	shen bai ming lie	1
+轧	ga	1
 轧花机	ya hua ji	1
 转危为安	zhuan wei wei an	1
 软硬兼施	ruan ying jian shi	1
@@ -64561,12 +64518,14 @@
 载歌载舞	zai ge zai wu	1
 辎重	zi zhong	1
 辘辘	lu lu	1
+辟	bi	1
 辿	chan	1
 迅雷不及掩耳	xun lei bu ji yan er	1
 返老还童	fan lao huan tong	1
 远交近攻	yuan jiao jin gong	1
 远涉重洋	yuan she chong yang	1
 迤逦	yi li	1
+迫	pai	1
 述而不作	shu er bu zuo	1
 迷途知返	mi tu zhi fan	1
 追悔莫及	zhui hui mo ji	1
@@ -64592,6 +64551,7 @@
 遒劲	qiu jing	1
 道听途说	dao ting tu shuo	1
 道貌岸然	dao mao an ran	1
+遗	wei	1
 遣词造句	qian ci zao ju	1
 遨游	ao you	1
 遮阳篷	zhe yang peng	1
@@ -64599,7 +64559,10 @@
 避实就虚	bi shi jiu xu	1
 避重就轻	bi zhong jiu qing	1
 邋遢	la ta	1
+邪	ye	1
 邪门歪道	xie men wai dao	1
+郄	qie	1
+郇	xun	1
 郎才女貌	lang cai nv mao	1
 郚	wu	1
 鄀	ruo	1
@@ -64614,7 +64577,11 @@
 酒囊饭袋	jiu nang fan dai	1
 酒色财气	jiu se cai qi	1
 酒足饭饱	jiu zu fan bao	1
+酢	zuo	1
+酦	fa	1
+酪	luo	1
 酸甜苦辣	suan tian ku la	1
+酾	shi	1
 金口玉言	jin kou yu yan	1
 金屋藏娇	jin wu cang jiao	1
 金戈铁马	jin ge tie ma	1
@@ -64632,14 +64599,19 @@
 钟鸣鼎食	zhong ming ding shi	1
 钢钎	gang qian	1
 钻牛角尖	zuan niu jiao jian	1
+钿	tian	1
 铁板钉钉	tie ban ding ding	1
 铁石心肠	tie shi xin chang	1
+铅	yan	1
 铘	ye	1
 铙钹	nao bo	1
 铜墙铁壁	tong qiang tie bi	1
+铣	xian	1
+铫	diao	1
 铴	tang	1
 锃亮	zeng liang	1
 锋芒毕露	feng mang bi lu	1
+锜	qi	1
 锦囊妙计	jin nang miao ji	1
 锦衣玉食	jin yi yu shi	1
 锲而不舍	qie er bu she	1
@@ -64647,6 +64619,7 @@
 镋	tang	1
 镏金	liu jin	1
 镜花水月	jing hua shui yue	1
+镡	chan	1
 镢头	jue tou	1
 镦	dui	1
 镪水	qiang shui	1
@@ -64664,17 +64637,23 @@
 闷闷不乐	men men bu le	1
 闻过则喜	wen guo ze xi	1
 闻风丧胆	wen feng sang dan	1
+阏	yan	1
 阑尾炎	lan wei yan	1
 阘	da	1
+阚	han	1
 防微杜渐	fang wei du jian	1
 防患未然	fang huan wei ran	1
 阳奉阴违	yang feng yin wei	1
 阴差阳错	yin cha yang cuo	1
 阴错阳差	yin cuo yang cha	1
+阽	dian	1
 阿司匹林	a si pi lin	1
 阿嚏	a ti	1
 阿訇	a hong	1
 阿谀奉承	e yu feng cheng	1
+陂	pi	1
+陂	po	1
+陆	liu	1
 陈词滥调	chen ci lan diao	1
 陎	shu	1
 陑	er	1
@@ -64687,11 +64666,14 @@
 隐恶扬善	yin e yang shan	1
 隔墙有耳	ge qiang you er	1
 隔岸观火	ge an guan huo	1
+隗	kui	1
 隩	ao	1
 隺	hu	1
+隽	juan	1
 难兄难弟	nan xiong nan di	1
 难舍难分	nan she nan fen	1
 难言之隐	nan yan zhi yin	1
+雀	qiao	1
 雁过拔毛	yan guo ba mao	1
 雄姿英发	xiong zi ying fa	1
 雄心勃勃	xiong xin bo bo	1
@@ -64717,6 +64699,7 @@
 青稞	qing ke	1
 青红皂白	qing hong zao bai	1
 青翠欲滴	qing cui yu di	1
+靓	jing	1
 非同小可	fei tong xiao ke	1
 非此即彼	fei ci ji bi	1
 靡靡之音	mi mi zhi yin	1
@@ -64730,6 +64713,7 @@
 靽	ban	1
 鞁	bei	1
 鞍前马后	an qian ma hou	1
+鞘	shao	1
 鞭辟入里	bian pi ru li	1
 鞭长莫及	bian chang mo ji	1
 鞳	ta	1
@@ -64741,11 +64725,13 @@
 顾名思义	gu ming si yi	1
 顾此失彼	gu ci shi bi	1
 颀长	qi chang	1
+颈	geng	1
 颐养天年	yi yang tian nian	1
 颐指气使	yi zhi qi shi	1
 颠三倒四	dian san dao si	1
 颠扑不破	dian pu bu po	1
 颠来倒去	dian lai dao qu	1
+颤	zhan	1
 颤巍巍	chan wei wei	1
 颧骨	quan gu	1
 风华正茂	feng hua zheng mao	1
@@ -64765,14 +64751,17 @@
 飞沙走石	fei sha zou shi	1
 飞禽走兽	fei qin zou shou	1
 飞黄腾达	fei huang teng da	1
+食	si	1
 食不果腹	shi bu guo fu	1
 饥不择食	ji bu ze shi	1
 饥寒交迫	ji han jiao po	1
+饧	tang	1
 饱经风霜	bao jing feng shuang	1
 饳	duo	1
 饻	xi	1
 馌	ye	1
 馓子	san zi	1
+馘	xu	1
 馝	bi	1
 馞	bo	1
 馥郁	fu yu	1
@@ -64782,6 +64771,7 @@
 驲	ri	1
 驽钝	nu dun	1
 驾轻就熟	jia qing jiu shu	1
+骀	tai	1
 骁勇	xiao yong	1
 骁将	xiao jiang	1
 骁悍	xiao han	1
@@ -64814,9 +64804,11 @@
 鱼腥草	yu xing cao	1
 鱼贯而入	yu guan er ru	1
 鲅鱼	ba yu	1
+鲑	xie	1
 鲖	tong	1
 鲘	hou	1
 鲥鱼	shi yu	1
+鲭	zheng	1
 鲺	shi	1
 鳇鱼	huang yu	1
 鳏夫	guan fu	1
@@ -64839,9 +64831,11 @@
 鸸鹋	er miao	1
 鸿篇巨制	hong pian ju zhi	1
 鹁鸽	bo ge	1
+鹄	gu	1
 鹈鹕	ti hu	1
 鹌鹑	an chun	1
 鹔	su	1
+鹘	gu	1
 鹝	yi	1
 鹢	yi	1
 鹤发童颜	he fa tong yan	1
@@ -64852,6 +64846,7 @@
 鹲	meng	1
 鹴	shuang	1
 鹿死谁手	lu si shei shou	1
+麇	qun	1
 黄灿灿	huang can can	1
 黄粱梦	huang liang meng	1
 黄芪	huang qi	1
@@ -64862,6 +64857,8 @@
 默不作声	mo bu zuo sheng	1
 黧黑	li hei	1
 黩武	du wu	1
+黾	meng	1
+黾	min	1
 鼎足之势	ding zu zhi shi	1
 鼎鼎大名	ding ding da ming	1
 鼒	zi	1
@@ -64873,13 +64870,16 @@
 鼾声	han sheng	1
 齇	zha	1
 齉	nang	1
+齐	ji	1
 龃龉	ju yu	1
 龇牙	zi ya	1
+龈	ken	1
 龙争虎斗	long zheng hu dou	1
 龙潭虎穴	long tan hu xue	1
 龙爪槐	long zhao huai	1
 龙腾虎跃	long teng hu yue	1
 龙飞凤舞	long fei feng wu	1
+龟	qiu	1
 鿍	gang	1
 鿎	ta	1
 鿏	mai	1
