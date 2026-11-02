@@ -106,11 +106,10 @@ go build ./...                    # 秒级
     挤掉；歧义切分（`tuan`/`tu'an`）下用户学过的词（图案）可排在默认单字
     （团）前。
   - **单段输入只出单字**：单音节全拼/单字母声母不再出前缀扩展词（`diao` 不出
-    「调用」、`zhong` 不出「中国」）；`zh`/`ch`/`sh` 是多字母简拼，仍出词。
-    **能拆成多音节词的串不算单字输入**（`xian`=西安、`tuan`=图案），按多音节
-    词输入正常出词；拆不出真实多字词的串才只出单字。回归：
-    `TestSingleSegmentOnlySingleChars` / `TestAmbiguousSplittableInputKeepsWords` /
-    `TestTwoLetterInitialKeepsWords`。
+    「调用」、`jie` 不出「结果/节约」）；`zh`/`ch`/`sh` 是多字母简拼，仍出词。
+    唯一例外是连写完全等于输入的多字词（`jie`=饥饿、`xian`=西安、`tuan`=图案）；
+    其它多字词必须完整输入。回归：`TestSingleSegmentOnlySingleChars` /
+    `TestSingleSegmentKeepsOnlyFullMatchWords` / `TestTwoLetterInitialKeepsWords`。
   - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
     `engine/common_dict_test.go`、`engine/typo_test.go`、
     `engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。

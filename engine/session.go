@@ -2033,78 +2033,40 @@ func (s *Session) compose() Composition {
 		// 单字母声母（d/y）才是「单段输入」；sh/ch/zh 是多字母简拼，
 		// 继续按词候选处理，不做单字过滤。
 		tok := tokenPatterns[0][0]
-		// xian/tuan 这类串本身也能切成多个完整音节，且切分在词典/用户词库里
-		// 对应真实多字词（西安 = xi'an、图案 = tu'an）——它们属于「多音节词
-		// 输入」，不是单字输入，不做单字过滤，正常出词候选。
-		ambiguousWord := false
-		if tok.IsExact {
-			for _, pat := range tokenPatterns {
-				if len(pat) < 2 {
-					continue
-				}
-				allExact := true
-				for _, t := range pat {
-					if !t.IsExact {
-						allExact = false
-						break
-					}
-				}
-				if !allExact {
-					continue
-				}
-				for _, e := range s.dict.QueryTokensExact(pat, 4) {
-					if len([]rune(e.Word)) >= 2 {
-						ambiguousWord = true
-						break
-					}
-				}
-				if !ambiguousWord && s.user != nil {
-					for _, e := range s.user.QueryTokensExact(pat, 4) {
-						if len([]rune(e.Word)) >= 2 {
-							ambiguousWord = true
-							break
-						}
-					}
-				}
-				if ambiguousWord {
-					break
-				}
-			}
+		inputJoined := strings.ReplaceAll(s.input, "'", "")
+		// 单音节全拼只保留「整个输入就是该音节」的单字；回退/另一切分产生的
+		// 其他音节单字（diao 的 di 声母字「第」）也不应混进来。模糊音/别名
+		// 输入的候选音节按 canonical + fuzzyVariants 归一后比较。
+		canon := canonicalSyllable(tok.Text)
+		allowed := map[string]bool{canon: true}
+		for _, v := range fuzzyVariants(canon) {
+			allowed[v] = true
 		}
-		if !ambiguousWord {
-			inputJoined := strings.ReplaceAll(s.input, "'", "")
-			// 单音节全拼只保留「整个输入就是该音节」的单字；回退/另一切分产生的
-			// 其他音节单字（diao 的 di 声母字「第」）也不应混进来。模糊音/别名
-			// 输入的候选音节按 canonical + fuzzyVariants 归一后比较。
-			canon := canonicalSyllable(tok.Text)
-			allowed := map[string]bool{canon: true}
-			for _, v := range fuzzyVariants(canon) {
-				allowed[v] = true
-			}
-			kept := items[:0]
-			for _, it := range items {
-				text := it.cand.Text
-				if len([]rune(text)) > 1 {
-					// 多字词只保留连写正好等于输入的精确匹配（极端兜底）。
-					if strings.ReplaceAll(it.cand.Syllables, "'", "") == inputJoined {
-						kept = append(kept, it)
-					}
-					continue
-				}
-				if !tok.IsExact {
-					// 单字母声母：只保留该声母能匹配的单字。纠错/回退路径会给
-					// d 混入 e/a/o 声母字（QWERTY 邻键修正），这里一并清掉。
-					if matchSyllable(canonicalSyllable(strings.ReplaceAll(it.cand.Syllables, "'", "")), tok) {
-						kept = append(kept, it)
-					}
-					continue
-				}
-				if allowed[strings.ReplaceAll(it.cand.Syllables, "'", "")] {
+		kept := items[:0]
+		for _, it := range items {
+			text := it.cand.Text
+			if len([]rune(text)) > 1 {
+				// 多字词只保留「拼音连写正好等于本输入」的精确匹配：jie 的
+				// 饥饿（ji'e）、xian 的西安（xi'an）、tuan 的图案（tu'an）。
+				// jie → 结果/节约 这类前缀延伸词全部丢弃。
+				if strings.ReplaceAll(it.cand.Syllables, "'", "") == inputJoined {
 					kept = append(kept, it)
 				}
+				continue
 			}
-			items = kept
+			if !tok.IsExact {
+				// 单字母声母：只保留该声母能匹配的单字。纠错/回退路径会给
+				// d 混入 e/a/o 声母字（QWERTY 邻键修正），这里一并清掉。
+				if matchSyllable(canonicalSyllable(strings.ReplaceAll(it.cand.Syllables, "'", "")), tok) {
+					kept = append(kept, it)
+				}
+				continue
+			}
+			if allowed[strings.ReplaceAll(it.cand.Syllables, "'", "")] {
+				kept = append(kept, it)
+			}
 		}
+		items = kept
 	}
 
 	// 排序键（从高到低）：① 常规匹配层优先于逐级回退层；② 输入完全消耗的

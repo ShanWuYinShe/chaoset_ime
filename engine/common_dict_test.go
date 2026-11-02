@@ -511,31 +511,38 @@ func TestSingleSegmentKeepsExactJoinedWord(t *testing.T) {
 	}
 }
 
-// TestAmbiguousSplittableInputKeepsWords：xian/tuan 能拆成多个完整音节，
-// 且切分对应词库真实多字词（西安/图案），属于多音节词输入，不做单字过滤。
-func TestAmbiguousSplittableInputKeepsWords(t *testing.T) {
+// TestSingleSegmentKeepsOnlyFullMatchWords：单段输入只保留「拼音连写完全
+// 等于输入」的多字词（jie=饥饿、xian=西安、tuan=图案）；jie→结果/节约
+// 这类前缀延伸词必须全部丢弃。
+func TestSingleSegmentKeepsOnlyFullMatchWords(t *testing.T) {
 	d := mustCommonDict(t)
-	for _, tc := range []struct{ input, word string }{
-		{"xian", "西安"},
-		{"tuan", "图案"},
+	for _, tc := range []struct{ input, word, prefix string }{
+		{"jie", "饥饿", "结果"},
+		{"xian", "西安", "现在"},
+		{"tuan", "图案", "团队"},
 	} {
 		s := NewSession(d, nil)
 		all := allCandidates(s, mustComp(s, tc.input))
-		found := false
-		words := 0
+		foundWord, foundPrefix := false, false
 		for _, c := range all {
 			if c.Text == tc.word {
-				found = true
+				foundWord = true
+			}
+			if c.Text == tc.prefix {
+				foundPrefix = true
 			}
 			if len([]rune(c.Text)) > 1 {
-				words++
+				if strings.ReplaceAll(c.Syllables, "'", "") != tc.input {
+					t.Fatalf("%s 出现非全匹配词组「%s」[%s]（前缀延伸词应丢弃）",
+						tc.input, c.Text, c.Syllables)
+				}
 			}
 		}
-		if !found {
-			t.Fatalf("%s 候选里应有「%s」（多音节词输入）", tc.input, tc.word)
+		if !foundWord {
+			t.Fatalf("%s 候选里应有全匹配词「%s」", tc.input, tc.word)
 		}
-		if words < 2 {
-			t.Fatalf("%s 应正常出多个词候选，实际多字词 %d 条", tc.input, words)
+		if foundPrefix {
+			t.Fatalf("%s 不应出现前缀延伸词「%s」", tc.input, tc.prefix)
 		}
 	}
 }
