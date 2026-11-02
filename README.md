@@ -335,13 +335,18 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 | 双字母反序（强制归位） | `dign` / `hzong` / `hcang` / `hsang` / `lev` | `ding` / `zhong` / `chang` / `shang` / `lve` | **定** / **中** / **常** / **上** / **略** |
 | 韵母反序（软纠错） | `hoa` / `doa` / `hau` / `xeu` | `hao` / `dao` / `hua` / `xue` | **好** / **大** / **化** / **学** |
 
-其中 **gn→ng、hz→zh、hc→ch、hs→sh、ev→ve** 在普通话拼音里几乎不出现，走独立的
-最高置信度路径（`forcedMistakePairs`）：`misspelledFromPatterns` 遇到这些组合
-直接判定手误，归位修正排在 `typoCorrections` 最前；`mistakeInput` 时**只把归位
-修正无条件提升到精确层**（不受「纠错词频须达到常规候选 2 倍」门槛约束，避免
-`hzong` 的常规混拼「汇总」、`chagn` 删 g 的「产」或用户学习词压过正确修正），
-通用编辑保持低层兜底（保证单字仍可选）。同一输入多处连错会一起翻回
-（`dignhzi` → `dingzhi`）。
+其中 **gn→ng、hz→zh、hc→ch、hs→sh、ev→ve** 在普通话拼音音节内部几乎不出现，
+走独立的最高置信度路径（`forcedMistakePairs`）：`misspelledFromPatterns` 在
+**无法完整切分**时遇到这些组合才判定手误，归位修正排在 `typoCorrections` 最前；
+`mistakeInput` 时**只把归位修正无条件提升到精确层**（不受「纠错词频须达到常规
+候选 2 倍」门槛约束，避免 `hzong` 的常规混拼「汇总」、`chagn` 删 g 的「产」或
+用户学习词压过正确修正），通用编辑保持低层兜底（保证单字仍可选）。同一输入
+多处连错会一起翻回（`dignhzi` → `dingzhi`）。
+
+**跨音节边界不算反序手误**：`gongneng` = `gong`+`neng` 的 `gn` 是合法拼写；
+纯声母简拼 `gn`（= gong+neng）同样合法。整串能切成完整音节、或所有切分路径
+都是纯声母碎片时，不触发反序手误判定，常规候选与单字兜底照常工作（回归：
+`engine/initials_test.go` 的 `TestValidPinyinCrossBoundaryGN`）。
 
 韵母级反序 **ao/oa、ua/au、ue/eu** 在拼音音节里不出现，但可能与「合法混拼」同形
 （如 `oa` = o+a），归为软纠错（`softMistakePairs`）：只在纠错路径里作为最高

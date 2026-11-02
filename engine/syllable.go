@@ -187,6 +187,41 @@ func hasCommonMistakeCluster(s string) bool {
 	return false
 }
 
+// hasCleanFullSplit 报告是否存在「所有段都是完整音节」的切分路径。
+func hasCleanFullSplit(patterns [][]Token) bool {
+	for _, pat := range patterns {
+		if len(pat) == 0 {
+			continue
+		}
+		allExact := true
+		for _, tok := range pat {
+			if !tok.IsExact {
+				allExact = false
+				break
+			}
+		}
+		if allExact {
+			return true
+		}
+	}
+	return false
+}
+
+// allInitialPatterns 报告输入的所有切分路径是否都只由声母碎片组成（纯简拼）。
+func allInitialPatterns(patterns [][]Token) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, pat := range patterns {
+		for _, tok := range pat {
+			if tok.IsExact {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // commonMistakeFixes 生成把输入中反序组合翻回正常顺序的修正串：
 // 每个位置单独翻一次 + 所有位置一起翻（支持同一输入里多处连错）。
 func commonMistakeFixes(input string) []string {
@@ -239,8 +274,18 @@ func misspelledFromPatterns(s string, patterns [][]Token) bool {
 	if s == "" {
 		return false
 	}
-	// 含「反序双字母」组合（gn/hz/hc/hs）：普通话拼音里几乎不会出现，
-	// 直接判定为手误，保证这类输入一定进入纠错路径。
+	// 纯声母简拼（gn = gong+neng、zg = zhong+guo）合法，不能因为跨声母的
+	// 两字母组合（gn）被误判成反序手误。
+	if allInitialPatterns(patterns) {
+		return false
+	}
+	// 整串能切成完整音节时，反序组合可能跨音节边界：gongneng = gong+neng
+	// 里的 gn 是合法拼写，不是手误。只有在无法完整切分时才用反序组合兜底。
+	if hasCleanFullSplit(patterns) {
+		return false
+	}
+	// 含「反序双字母」组合（gn/hz/hc/hs）：普通话拼音音节内部几乎不出现，
+	// 无法完整切分时直接判定为手误，保证这类输入一定进入纠错路径。
 	if hasCommonMistakeCluster(s) {
 		return true
 	}
@@ -258,22 +303,7 @@ func misspelledFromPatterns(s string, patterns [][]Token) bool {
 	}
 	// 纯声母序列（每一段都是声母碎片、没有完整音节）是合法的简拼输入：
 	// zg / jsj 是短简拼，kkdz / k'k'd'z / zgrmjhz 只是更长——长串同样必须
-	// 信任，否则会被当成错拼、跳过常规回退，最终一个候选都不给。
-	allInitials := len(patterns) > 0
-	for _, pat := range patterns {
-		for _, tok := range pat {
-			if tok.IsExact {
-				allInitials = false
-				break
-			}
-		}
-		if !allInitials {
-			break
-		}
-	}
-	if allInitials {
-		return false
-	}
+	// 信任（已在函数开头 allInitialPatterns 分支返回）。
 	return len(s) > 4
 }
 

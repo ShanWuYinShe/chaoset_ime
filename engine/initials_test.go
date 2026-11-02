@@ -588,3 +588,47 @@ func TestInitialsPageCountBounded(t *testing.T) {
 		t.Fatalf("zg 页数 %d 过多（多段简拼词候选上限被放大？）", comp.PageCount)
 	}
 }
+
+// TestValidPinyinCrossBoundaryGN：gongneng 的 gn 是 gong+neng 跨音节边界，
+// 不是反序手误（旧实现 hasCommonMistakeCluster 按原始串命中 gn → typo=true，
+// 跳过常规路径与单字兜底，只剩 2 页词候选）。修复后必须出首段单字。
+func TestValidPinyinCrossBoundaryGN(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	comp := mustComp(s, "gongneng")
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "功能" {
+		t.Fatalf("gongneng 首选应为「功能」，实际: %+v", firstTexts(allCandidates(s, comp), 6))
+	}
+	all := allCandidates(s, comp)
+	singles := 0
+	for _, c := range all {
+		if len([]rune(c.Text)) == 1 {
+			singles++
+		}
+	}
+	if singles == 0 {
+		t.Fatalf("gongneng 应有首段单字兜底（当前 %d 条候选全是词组）", len(all))
+	}
+	if comp.PageCount <= 2 {
+		t.Fatalf("gongneng 应超过 2 页（单字兜底生效），实际 %d 页 / %d 条", comp.PageCount, len(all))
+	}
+}
+
+// TestPureInitialsGNTrusted：gn 是合法简拼（gong+neng），不能被反序组合
+// gn→ng 误判成手误、丢掉常规候选。
+func TestPureInitialsGNTrusted(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	comp := mustComp(s, "gn")
+	all := allCandidates(s, comp)
+	found := false
+	for _, c := range all {
+		if c.Text == "功能" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("gn 简拼候选里应有「功能」，实际: %+v", firstTexts(all, 6))
+	}
+}

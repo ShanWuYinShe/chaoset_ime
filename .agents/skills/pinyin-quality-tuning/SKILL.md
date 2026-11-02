@@ -100,8 +100,10 @@ git stash pop                                 # 恢复改动
   `engine/typo_dp_test.go`、`engine/typo_test.go`。
 - **反序双字母分两档**（由音节表推导：正序出现、反序从不出现的组合，剔除反序
   本身可能是合法混拼的）：
-  - 强制归位（gn/hz/hc/hs/ev → ng/zh/ch/sh/ve）：遇它们只提升归位修正、通用编辑
-    保持低层，否则会被常规混拼（`hzong` 的「汇总」）或用户学习词挤掉；
+  - 强制归位（gn/hz/hc/hs/ev → ng/zh/ch/sh/ve）：**只在无法完整切分时**才触发
+    （`gongneng` 的 gn 跨 gong+neng 边界、纯简拼 `gn` 都合法，不能误判），
+    触发时只提升归位修正、通用编辑保持低层，否则会被常规混拼（`hzong` 的
+    「汇总」）或用户学习词挤掉；
   - 软纠错（oa/au/eu → ao/ua/ue）：只在纠错路径里最高优先级，不强制触发、不无条件
     提升（可能与合法混拼同形）。
   两侧都合法的相邻互换（ai/ia、ui/iu、ou/uo、ei/ie、an/na、en/ne、in/ni、un/nu）

@@ -1428,7 +1428,10 @@ func (s *Session) compose() Composition {
 	// 该形态只走归位修正，并强制把修正结果提升到精确层（不再受「纠错词频须
 	// 达到常规候选 2 倍」的约束——h zong 的常规解析「汇总」词频很高，但用户
 	// 显然想打 zhong）。
-	mistakeInput := hasCommonMistakeCluster(s.input)
+	// 整串能切成完整音节或纯声母简拼时，反序组合可能跨音节/声母边界
+	// （gongneng 的 gn = gong+neng；gn 简拼 = gong+neng），不能当手误。
+	mistakeInput := !hasCleanFullSplit(tokenPatterns) &&
+		!allInitialPatterns(tokenPatterns) && hasCommonMistakeCluster(s.input)
 	// 音节超段仲裁的输入段数：首选切分的段数（与跑分/纠错口径一致）。
 	inputSegs := 0
 	// maxInputSegs 是所有合法切分里最多的段数：tuan 既能切成 tuan（1 段）
