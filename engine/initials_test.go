@@ -545,3 +545,46 @@ func TestUserWordPriorityForAmbiguousSegmentation(t *testing.T) {
 		t.Fatalf("学过「图案」后 tuan 首选应为「图案」，实际: %+v", firstTexts(allCandidates(s2, comp2), 6))
 	}
 }
+
+// TestSingleInitialMoreSingles：单段声母（y）也放开到单字上限，旧 120 上限之外
+// 的同声母单字必须可达（y 声母在词典里有 900+ 单字）。
+func TestSingleInitialMoreSingles(t *testing.T) {
+	d := mustCommonDict(t)
+	entries := d.QueryTokensExact([]Token{{Text: "y", IsExact: false}}, 500)
+	if len(entries) <= 120 {
+		t.Fatalf("词典 y 声母单字仅 %d 个，无法验证 >120 场景", len(entries))
+	}
+	want := len(entries)
+	if want > singleSyllableExactLimit {
+		want = singleSyllableExactLimit
+	}
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "y"))
+	singles := 0
+	target := entries[250].Word
+	found := false
+	for _, c := range all {
+		if len([]rune(c.Text)) == 1 {
+			singles++
+		}
+		if c.Text == target {
+			found = true
+		}
+	}
+	if singles < want {
+		t.Fatalf("y 单字候选 %d，期望 >=%d（单段声母仍被旧上限裁剪）", singles, want)
+	}
+	if !found {
+		t.Fatalf("y 候选里找不到旧上限之外的字「%s」", target)
+	}
+}
+
+// TestInitialsPageCountBounded：多段简拼的词候选 exact 上限保持 initialsExactLimit，
+// 不能随单字上限一起放大（zg 会从 ~75 页膨胀到 ~84 页）。
+func TestInitialsPageCountBounded(t *testing.T) {
+	s := NewSession(mustCommonDict(t), nil)
+	comp := mustComp(s, "zg")
+	if comp.PageCount > 80 {
+		t.Fatalf("zg 页数 %d 过多（多段简拼词候选上限被放大？）", comp.PageCount)
+	}
+}

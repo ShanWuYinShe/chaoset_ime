@@ -245,6 +245,8 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
   4. 组合候选：只由已有词段组成，`rankComposition` 层；
   5. 单字兜底：任何多段非错拼输入，在列表末尾追加首段全量单字
      （≤`singleSyllableExactLimit`=300，词典 + 用户词库），`rankSingleBackfill` 层；
+     简拼/混拼的**词**候选 exact 上限仍是 120（`initialsExactLimit`，避免 zg 等
+     输入候选页膨胀）；单段声母（y/j/zh…）与单音节全拼一样走 300 的单字上限；
   6. 错拼修正：单次编辑 / 连击粘键折叠 / QWERTY 邻键 / 反序归位，命中词按
      「纠错词频 ≥ 常规候选词频 × `typoPromoteRatio`」提升；
   7. 排序 → 纠错固定第 3 位 → 分页（每页 `pageSize`=6）。
@@ -307,7 +309,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 | `full` | 80.02% | 97.67% | 0 | 1.3 |
 | `tail1` | 47.38% | 77.20% | 2 | 2.9 |
 | `tail2` | 30.17% | 57.12% | 6 | 4.2 |
-| `initials` | 9.99% | 17.46% | 20 | 39.0 |
+| `initials` | 9.99% | 17.46% | 73 | 32.9 |
 | `mixed` | 30.16% | 57.70% | 10 | 4.4 |
 
 关键取舍：`continuationPenalty` 取值经过扫描（20 / 25 / 30 / 35 / 40 全跑过），

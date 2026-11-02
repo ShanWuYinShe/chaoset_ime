@@ -64,6 +64,11 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 （≤`singleSyllableExactLimit`=300），层级 `rankSingleBackfill`，纯单字收尾；
 错拼输入（`typoSuspicious`）不追加——纠错候选才是主路径。
 
+**两个 exact 上限不要混**：单音节全拼/单段声母（y/j/zh…）/单字兜底用
+`singleSyllableExactLimit`=300（同音字全量，yi 181 等）；**多段**简拼/混拼的
+词候选用 `initialsExactLimit`=120（放大到 300 会让 zg/dz 候选膨胀到 ~80 页，
+稀释单字页位）。
+
 ### 2. 拿基线：用 git stash 而不是另开目录
 
 ```sh

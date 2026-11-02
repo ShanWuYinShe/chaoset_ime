@@ -990,6 +990,12 @@ func expandTokenVariants(tokens []Token, fuzzy bool) [][]Token {
 // TestCommonDictSingleSyllableFullRecallBeyond120（yi 全量）。
 const singleSyllableExactLimit = 300
 
+// initialsExactLimit 是**多段简拼/混拼**的词候选精确上限。它与单字上限分开：
+// exact 放大到 300 会让 zg/dz 这类两段简拼的候选从 ~50 页膨胀到 ~80 页（词洪水
+// 稀释单字页位）；多段输入需要的单字由列表末尾的 rankSingleBackfill 块全量补。
+// 单段声母输入（y/j/zh…）结果全是单字，仍走 singleSyllableExactLimit。
+const initialsExactLimit = 120
+
 // typoMaxCorrections 是一次错拼修正最多**生成**的修正串数量。
 //
 // 单次编辑能生成的串数上限约 3n + 26(n+1) + 25n（n = 输入长度），十来个
@@ -1692,10 +1698,18 @@ func (s *Session) compose() Composition {
 				// prefix 若随 exact 一并放大，低频衍生词组洪水会稀释单字页位
 				// 并进一步拖慢热路径（实测 32.9µs → 71µs），故两类上限独立。
 				exactLimit, prefixLimit := 20, 20
-				if len(qp) == 1 && qp[0].IsExact {
+				switch {
+				case len(qp) == 1 && qp[0].IsExact:
+					// 单音节全拼：同音字全量（yi 181 / ji 152 / yu 148 / qi 121）。
 					exactLimit = singleSyllableExactLimit
-				} else if hasInitials {
+				case len(qp) == 1:
+					// 单段声母（y/j/zh…）：QueryTokensExact 只返回单字，放开到
+					// 单字上限，让单字母简拼也能选到更多同声母单字。
 					exactLimit = singleSyllableExactLimit
+				case hasInitials:
+					// 多段简拼/混拼：词候选上限保持 120，避免页面膨胀；
+					// 单字由末尾兜底块全量补。
+					exactLimit = initialsExactLimit
 				}
 				exacts, prefixes = s.dict.queryTokens(qp, prefixLimit, exactLimit)
 			}
