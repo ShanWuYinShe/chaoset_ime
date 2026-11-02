@@ -651,3 +651,24 @@ func TestTwoLetterInitialKeepsWords(t *testing.T) {
 		}
 	}
 }
+
+// TestSingleLetterInitialOnlyMatchingInitial：单字母声母 d 的候选必须都是
+// d 声母单字；纠错路径混入的 e/a/o 声母字（鄂/恶/阿）要清掉。
+func TestSingleLetterInitialOnlyMatchingInitial(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "d"))
+	if len(all) == 0 {
+		t.Fatal("d 应有单字候选")
+	}
+	tok := Token{Text: "d", IsExact: false}
+	for _, c := range all {
+		if len([]rune(c.Text)) != 1 {
+			t.Fatalf("d 出现多字候选「%s」", c.Text)
+		}
+		syl := strings.ReplaceAll(c.Syllables, "'", "")
+		if !matchSyllable(canonicalSyllable(syl), tok) {
+			t.Fatalf("d 出现非 d 声母候选「%s」（音节 %s）", c.Text, c.Syllables)
+		}
+	}
+}

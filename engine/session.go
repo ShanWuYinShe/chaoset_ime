@@ -2053,8 +2053,11 @@ func (s *Session) compose() Composition {
 				continue
 			}
 			if !tok.IsExact {
-				// 单段声母（d/y/zh…）的单字本来就按声母匹配。
-				kept = append(kept, it)
+				// 单字母声母：只保留该声母能匹配的单字。纠错/回退路径会给
+				// d 混入 e/a/o 声母字（QWERTY 邻键修正），这里一并清掉。
+				if matchSyllable(canonicalSyllable(strings.ReplaceAll(it.cand.Syllables, "'", "")), tok) {
+					kept = append(kept, it)
+				}
 				continue
 			}
 			if allowed[strings.ReplaceAll(it.cand.Syllables, "'", "")] {
