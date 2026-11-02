@@ -16,6 +16,10 @@ const testPhrase = `经常: jīng cháng
 好人: hǎo rén
 图像: tú xiàng
 后天: hòu tiān
+目的: mù dì
+我的: wǒ de
+你的: nǐ de
+好的: hǎo de
 `
 
 const testSingle = `U+7684: de,dí,dì  # 的
@@ -329,5 +333,76 @@ func TestCJKWordOK(t *testing.T) {
 		if cjkWordOK(w) {
 			t.Errorf("%q 应被拒绝", w)
 		}
+	}
+}
+
+func TestSelectSingleReadings(t *testing.T) {
+	// 零占比次读音丢弃（刀只有 dao）。
+	if got := selectSingleReadings([]string{"dao", "diao"}, map[string]int{"dao": 100}, 0.01); len(got) != 1 || got[0] != "dao" {
+		t.Fatalf("零占比次读音应丢弃，实际 %v", got)
+	}
+	// 首读音无论占比都保留；占比达标的次读音保留。
+	if got := selectSingleReadings([]string{"de", "di"}, map[string]int{"di": 100}, 0.01); len(got) != 2 {
+		t.Fatalf("首读音 + 达标次读音都应保留，实际 %v", got)
+	}
+	// 占比低于门槛的次读音丢弃（鸟的 diǎo 仅 0.3%，应丢）。
+	if got := selectSingleReadings([]string{"niao", "diao"}, map[string]int{"niao": 680, "diao": 2}, 0.01); len(got) != 1 || got[0] != "niao" {
+		t.Fatalf("占比 0.3%% 的次读音应丢弃，实际 %v", got)
+	}
+	// 没有词条证据时只保留首读音。
+	if got := selectSingleReadings([]string{"fo", "fu", "bi"}, nil, 0.01); len(got) != 1 || got[0] != "fo" {
+		t.Fatalf("无词条证据时应只保留首读音，实际 %v", got)
+	}
+}
+
+func TestRefreshSinglesPreservesFreqsAndDropsBogusReadings(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.tsv")
+	if err := os.WriteFile(base, []byte(""+
+		"刀\tdao\t25\n"+
+		"刀\tdiao\t8\n"+
+		"的\tde\t89\n"+
+		"的\tdi\t39\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	single := filepath.Join(dir, "pinyin.txt")
+	if err := os.WriteFile(single, []byte(""+
+		"U+5200: dāo,diāo  # 刀\n"+
+		"U+7684: de,dí,dì  # 的\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	phrase := filepath.Join(dir, "large_pinyin.txt")
+	if err := os.WriteFile(phrase, []byte(""+
+		"刀: dāo\n"+
+		"我的: wǒ de\n"+
+		"目的: mù dì\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(dir, "extra.tsv")
+	if err := os.WriteFile(extra, []byte("屌\tdiao\t5000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.tsv")
+	o := options{
+		basePath:     base,
+		pinyinPath:   phrase,
+		singlePath:   single,
+		extraPath:    extra,
+		outPath:      out,
+		readingFloor: 0.3,
+		readingShare: 0.01,
+	}
+	if err := runRefreshSingles(o); err != nil {
+		t.Fatalf("单字刷新失败: %v", err)
+	}
+	d := parseDict(t, out)
+	if got := d.entries["刀"]; len(got) != 1 || got["dao"] != 25 {
+		t.Fatalf("刀的 diao 误收读音应被丢弃、dao 词频保留 25，实际 %v", got)
+	}
+	if got := d.entries["的"]; got["de"] != 89 || got["di"] != 39 {
+		t.Fatalf("保留读音词频不应变化，实际 %v", got)
+	}
+	if got := d.entries["屌"]; got["diao"] != manualFreq(5000) {
+		t.Fatalf("补充字屌应按手工词频入库（%d），实际 %v", manualFreq(5000), got)
 	}
 }

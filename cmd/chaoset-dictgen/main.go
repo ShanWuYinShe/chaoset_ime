@@ -47,6 +47,11 @@ const (
 	// 按 ln(w)/ln(1e6) 压缩到 1..99，使人工补录词落在常用词中高区间
 	// （微信/支付宝约 55-60 分），不会盖过 的/是/我们 这种核心高频词。
 	manualFreqScale = 1e6
+	// minReadingShareDefault 是单字次读音保留门槛：large_pinyin 词条里该读音
+	// 占比低于 1% 时视为生僻/误收读音丢弃（首读音始终保留）。
+	// 旧逻辑对零占比读音也按 readingFloor 给 30% 基础词频，导致 diao 混入
+	// 刀/跳/鸟 这类误收读音。
+	minReadingShareDefault = 0.01
 	// oralParticleBoost：口语助词/语气词在书面语字频里被低估的定向补偿。
 	oralParticleBoost = 8
 	// zipfMin/zipfSpan：wordfreq zipf 值约 1..8，映射到 0..1 归一化区间。
@@ -79,9 +84,15 @@ type options struct {
 	reviewOut string
 	outPath   string
 
+	// basePath 非空时进入「单字刷新」模式：保留基线词库的多字词，
+	// 只按最新 pinyin-data/large_pinyin 重算单字读音与词频，并追加
+	// dict_extra/dict_hot 里基线尚未包含的新词。
+	basePath string
+
 	highfreqTop  int
 	highfreqConf float64
 	readingFloor float64
+	readingShare float64
 	freqGamma    float64
 }
 
@@ -134,14 +145,22 @@ func main() {
 	flag.IntVar(&o.highfreqTop, "highfreqtop", 20000, "词频源里按词频取前 N 个词进入词表（高频用法）")
 	flag.Float64Var(&o.highfreqConf, "highfreqconf", 0.9, "高频用法词只用字读音统计补拼音时的最低置信度（低于此值不收录）")
 	flag.Float64Var(&o.freqGamma, "freqgamma", 1.15, "词频归一化后的幂次（>1 拉开高频差距；默认 1.15 由固定词表扫描定型，见 README）")
-	flag.Float64Var(&o.readingFloor, "readingfloor", 0.3, "单字多音字读音占比折算的系数下限（share=1 时仍为满词频；0.3 由固定词表扫描定型，极罕见读音保留 30% 基础词频）")
+	flag.Float64Var(&o.readingFloor, "readingfloor", 0.3, "单字多音字读音占比折算的系数下限（share=1 时仍为满词频；0.3 由固定词表扫描定型）")
+	flag.Float64Var(&o.readingShare, "readingshare", minReadingShareDefault, "单字次读音保留门槛（占该字 large_pinyin 词条读音的比例，低于此值丢弃；首读音始终保留）")
+	flag.StringVar(&o.basePath, "base", "", "单字刷新模式：以该词库为基线，保留多字词、重算单字读音与词频；不填则做完整生成")
 	flag.Parse()
 	if err := validateOptions(o); err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(o); err != nil {
+	var err error
+	if o.basePath != "" {
+		err = runRefreshSingles(o)
+	} else {
+		err = run(o)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "chaoset-dictgen:", err)
 		os.Exit(1)
 	}
@@ -150,6 +169,18 @@ func main() {
 func validateOptions(o options) error {
 	if o.outPath == "" {
 		return fmt.Errorf("-o 必填")
+	}
+	if o.readingShare < 0 || o.readingShare > 1 {
+		return fmt.Errorf("-readingshare 必须在 0..1 之间")
+	}
+	if o.basePath != "" {
+		if o.pinyinPath == "" || o.singlePath == "" {
+			return fmt.Errorf("单字刷新模式需要 -pinyin / -single（读音数据）")
+		}
+		if o.readingFloor < 0 || o.readingFloor > 1 {
+			return fmt.Errorf("-readingfloor 必须在 0..1 之间")
+		}
+		return nil
 	}
 	if o.freqMode != "wf" && o.freqMode != "hanlp" {
 		return fmt.Errorf("-freq 只支持 wf 或 hanlp，实际 %q", o.freqMode)
@@ -430,17 +461,10 @@ func run(o options) error {
 		for _, n := range counts {
 			total += n
 		}
-		seen := make(map[string]bool, len(readings))
-		for i, syl := range readings {
-			if seen[syl] {
-				continue
-			}
-			seen[syl] = true
+		for _, syl := range selectSingleReadings(readings, counts, o.readingShare) {
 			share := 1.0
 			if total > 0 {
 				share = float64(counts[syl]) / float64(total)
-			} else if i > 0 {
-				share = 0
 			}
 			fr := int(math.Round(float64(base) * (o.readingFloor + (1-o.readingFloor)*share)))
 			if fr < 1 {
@@ -1390,6 +1414,177 @@ func writeReview(path string, items []reviewItem, mode string) error {
 	return bw.Flush()
 }
 
+// selectSingleReadings 挑出单字要保留的读音：首读音始终保留；其余读音只有
+// 在 large_pinyin 词条里出现占比 >= minShare 时才保留。旧逻辑对所有读音都
+// 给词频（零占比也按 readingFloor 给 30% 基础分），导致 diao 混入刀/跳/鸟
+// 等误收读音（pinyin-data 的历史多音），用户反馈「生僻字混进常用字候选」。
+func selectSingleReadings(readings []string, counts map[string]int, minShare float64) []string {
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	var out []string
+	seen := make(map[string]bool, len(readings))
+	for i, syl := range readings {
+		if syl == "" || seen[syl] {
+			continue
+		}
+		keep := i == 0 // 首读音是 pinyin-data 的主读音，无条件保留
+		if total > 0 {
+			share := float64(counts[syl]) / float64(total)
+			if share >= minShare {
+				keep = true
+			}
+		}
+		if keep {
+			seen[syl] = true
+			out = append(out, syl)
+		}
+	}
+	if len(out) == 0 && len(readings) > 0 && readings[0] != "" {
+		out = append(out, readings[0])
+	}
+	return out
+}
+
+// runRefreshSingles 是「单字读音质量刷新」模式：多字词条目原样沿用基线词库，
+// 只重算单字读音/词频，并追加 dict_extra / dict_hot 里基线还没有的新词。
+// 用于没有完整生成源（wordfreq/HanLP/规范字表）时修复单字质量，不触碰多字词。
+func runRefreshSingles(o options) error {
+	baseMulti, baseSingles, existing, err := readBaseDict(o.basePath)
+	if err != nil {
+		return err
+	}
+	single, err := parseSinglePinyin(o.singlePath)
+	if err != nil {
+		return err
+	}
+	_, charStats, err := parsePhrasePinyin(o.pinyinPath)
+	if err != nil {
+		return err
+	}
+
+	entries := append([]entry(nil), baseMulti...)
+	chars := make([]rune, 0, len(baseSingles))
+	for ch := range baseSingles {
+		chars = append(chars, ch)
+	}
+	sort.Slice(chars, func(i, j int) bool { return chars[i] < chars[j] })
+	dropped := 0
+	for _, ch := range chars {
+		cur := baseSingles[ch]
+		maxCur := 0
+		for _, f := range cur {
+			if f > maxCur {
+				maxCur = f
+			}
+		}
+		readings := single[ch]
+		counts := charStats[ch]
+		kept := selectSingleReadings(readings, counts, o.readingShare)
+		if len(readings) == 0 || len(kept) == 0 {
+			// 数据缺失时保留基线条目，避免刷新把字弄丢。
+			for syl, fr := range cur {
+				entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
+			}
+			continue
+		}
+		// 保留读音沿用基线词频（基线已按读音占比折算过）；刷新只做
+		// 「丢弃生僻/误收读音」，不重算词频，避免整库单字相对词频漂移。
+		for _, syl := range kept {
+			fr := cur[syl]
+			if fr <= 0 {
+				fr = maxCur
+				if fr < 1 {
+					fr = 1
+				}
+			}
+			entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
+		}
+		if len(kept) < len(cur) {
+			dropped += len(cur) - len(kept)
+		}
+	}
+
+	manualAdded := 0
+	for _, path := range []string{o.extraPath, o.hotPath} {
+		if path == "" {
+			continue
+		}
+		rows, err := parseManualTable(path)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			key := r.word + "\x00" + strings.Join(r.sylls, " ")
+			if existing[key] {
+				continue
+			}
+			entries = append(entries, entry{word: r.word, sylls: append([]string(nil), r.sylls...), freq: manualFreq(r.weight)})
+			existing[key] = true
+			manualAdded++
+		}
+	}
+
+	sortEntries(entries)
+	if err := writeTSV(o.outPath, entries, o); err != nil {
+		return err
+	}
+	fmt.Printf("单字刷新完成：%d → %d 条（丢弃次读音 %d；补充词表新增 %d）\n",
+		len(baseMulti)+countSingles(baseSingles), len(entries), dropped, manualAdded)
+	return nil
+}
+
+func countSingles(m map[rune]map[string]int) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
+
+// readBaseDict 读取既有生成词库：返回多字词条目、单字「字→读音→词频」，
+// 以及已有词条键集合（用于判断补充词表里的词是否已合并）。
+func readBaseDict(path string) ([]entry, map[rune]map[string]int, map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("打开基线词库 %s 失败: %w", path, err)
+	}
+	var multi []entry
+	singles := make(map[rune]map[string]int)
+	existing := make(map[string]bool)
+	for i, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			return nil, nil, nil, fmt.Errorf("%s 第 %d 行应为 3 列: %q", path, i+1, line)
+		}
+		word := parts[0]
+		sylls := strings.Fields(parts[1])
+		freq, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || freq < 1 || freq > 99 {
+			return nil, nil, nil, fmt.Errorf("%s 第 %d 行词频非法: %q", path, i+1, line)
+		}
+		if len(sylls) != len([]rune(word)) || len(sylls) == 0 {
+			return nil, nil, nil, fmt.Errorf("%s 第 %d 行字数与音节数不等: %q", path, i+1, line)
+		}
+		existing[word+"\x00"+strings.Join(sylls, " ")] = true
+		if len([]rune(word)) == 1 {
+			ch := []rune(word)[0]
+			if singles[ch] == nil {
+				singles[ch] = make(map[string]int)
+			}
+			singles[ch][sylls[0]] = freq
+			continue
+		}
+		multi = append(multi, entry{word: word, sylls: append([]string(nil), sylls...), freq: freq})
+	}
+	return multi, singles, existing, nil
+}
+
 // writeTSV 写出三列 TSV；文件头按词频模式声明来源与许可，并附再生成命令。
 func writeTSV(path string, entries []entry, o options) error {
 	dir := filepath.Dir(path)
@@ -1443,13 +1638,32 @@ func writeTSV(path string, entries []entry, o options) error {
 		"# 单字字频源：Jun Da 现代汉语字频（https://github.com/ruddfawcett/hanziDB.csv）；",
 		"#   原作者声明仅限研究/教学、商业使用需书面许可——发布前需替换为 Unihan",
 		"#   kHanyuPinlu/kFrequency（Unicode License）或取得授权。",
-		"#",
-		"# 再生成（在仓库根目录，数据文件需自行下载；完整参数见 README「内置词库与再生成」）：",
-		fmt.Sprintf("#   go run ./cmd/chaoset-dictgen -freq %s -norm changyongcibiao.txt -hsk hsk30_words.txt \\", o.freqMode),
-		fmt.Sprintf("#     %s -thucl THUOCL_data \\", freqFlagHint(o.freqMode)),
-		"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
-		"#     -hanlppinyin hanlp_pinyin.txt -gsc1 level-1.txt -gsc2 level-2.txt -gsc3 level-3.txt \\",
-		"#     -hot data/dict_hot.tsv -extra data/dict_extra.tsv -o data/dict_common.tsv",
+	)
+	if o.basePath != "" {
+		header = append(header,
+			"#",
+			"# 本次为单字读音质量刷新（-base）：多字词沿基线原样保留；单字读音按",
+			"#   pinyin-data 读音 + large_pinyin 占比重新筛选/定词频：首读音必留，",
+			fmt.Sprintf("#   其余读音占比 < %g 的丢弃；data/dict_extra.tsv / dict_hot.tsv", o.readingShare),
+			"#   里基线尚未包含的新词按手工词频追加。",
+			"#",
+			"# 刷新命令（在仓库根目录）：",
+			"#   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \\",
+			"#     -pinyin large_pinyin.txt -single pinyin.txt \\",
+			"#     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv",
+		)
+	} else {
+		header = append(header,
+			"#",
+			"# 再生成（在仓库根目录，数据文件需自行下载；完整参数见 README「内置词库与再生成」）：",
+			fmt.Sprintf("#   go run ./cmd/chaoset-dictgen -freq %s -norm changyongcibiao.txt -hsk hsk30_words.txt \\", o.freqMode),
+			fmt.Sprintf("#     %s -thucl THUOCL_data \\", freqFlagHint(o.freqMode)),
+			"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
+			"#     -hanlppinyin hanlp_pinyin.txt -gsc1 level-1.txt -gsc2 level-2.txt -gsc3 level-3.txt \\",
+			"#     -hot data/dict_hot.tsv -extra data/dict_extra.tsv -o data/dict_common.tsv",
+		)
+	}
+	header = append(header,
 		"# 同一输入重复运行输出逐字节一致（已排序，不含时间戳）。",
 	)
 	for _, line := range header {

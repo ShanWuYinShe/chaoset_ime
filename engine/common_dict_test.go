@@ -456,8 +456,8 @@ func TestCommonDictSingleSyllableFullRecallBeyond120(t *testing.T) {
 		t.Fatalf("yi 同音字 %d 个，候选只有 %d 个（仍被上限 %d 裁剪）",
 			len(entries), got, singleSyllableExactLimit)
 	}
-	// 旧 120 上限之外的字（按词频排 151 位）必须可达。
-	target := entries[150].Word
+	// 旧 120 上限之外的字（按词频排第 131 位）必须可达。
+	target := entries[130].Word
 	for _, c := range all {
 		if c.Text == target {
 			return
@@ -537,5 +537,29 @@ func TestAmbiguousSplittableInputKeepsWords(t *testing.T) {
 		if words < 2 {
 			t.Fatalf("%s 应正常出多个词候选，实际多字词 %d 条", tc.input, words)
 		}
+	}
+}
+
+// TestCommonDictDiaoSingleQuality：用户反馈「diao 打不出屌、却混入刀/跳/鸟」。
+// 单字读音刷新后：屌按口语补充高频进入；刀/跳/鸟 的误收 diāo 读音已删除。
+func TestCommonDictDiaoSingleQuality(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "diao"))
+	if len(all) == 0 || all[0].Text != "屌" {
+		t.Fatalf("diao 首选应为「屌」，实际: %+v", firstTexts(all, 6))
+	}
+	bogus := map[string]bool{"刀": true, "跳": true, "鸟": true}
+	foundDiao := false
+	for _, c := range all {
+		if bogus[c.Text] {
+			t.Fatalf("diao 不应出现误收读音的字「%s」", c.Text)
+		}
+		if c.Text == "调" {
+			foundDiao = true
+		}
+	}
+	if !foundDiao {
+		t.Fatalf("diao 候选应保留「调」，实际: %+v", firstTexts(all, 6))
 	}
 }
