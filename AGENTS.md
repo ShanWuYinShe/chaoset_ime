@@ -105,6 +105,11 @@ go build ./...                    # 秒级
   - 单音节输入 vs 多字词组仍按超段仲裁：`hao` 的「好」不能被学过的「好家伙」
     挤掉；歧义切分（`tuan`/`tu'an`）下用户学过的词（图案）可排在默认单字
     （团）前。
+  - **单段输入只出单字**：单音节全拼/单字母声母不再出前缀扩展词（`diao` 不出
+    「调用」、`zhong` 不出「中国」）；`zh`/`ch`/`sh` 是多字母简拼，仍出词。
+    连写正好等于输入的多字词保留（`xian` 的「西安」、`tuan` 的「图案」）。
+    回归：`TestSingleSegmentOnlySingleChars` / `TestSingleSegmentKeepsExactJoinedWord` /
+    `TestTwoLetterInitialKeepsWords`。
   - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
     `engine/common_dict_test.go`、`engine/typo_test.go`、
     `engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。

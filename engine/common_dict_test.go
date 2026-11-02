@@ -200,9 +200,9 @@ func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
 		t.Fatalf("「示」位次 %d 过深（期望 ≤60，词频 50 属常用字）", pos)
 	}
 
-	// 反向：prefix 词组不被 exactLimit 放大——单字召回数 = 词典中 shi
-	// 单音节词条数（去繁体前 107、去繁体后 93），词组保持在原 top20
-	// 量级而非洪水。
+	// 反向：单段输入只出单字候选，prefix 前缀词（超过输入音节数的词）
+	// 已不再出现；单字召回数 = 词典中 shi 单音节词条数（去繁体前 107、
+	// 去繁体后 93）。
 	singles := 0
 	for _, c := range all {
 		if !strings.Contains(c.Syllables, "'") {
@@ -217,8 +217,8 @@ func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
 		t.Fatalf("词典 shi 同音字 %d 过少，词库生成疑似异常", dictSingles)
 	}
 	phrases := len(all) - singles
-	if phrases > 25 {
-		t.Fatalf("shi 衍生词组 %d 条超出 prefix 上限（20±5），单字页位被词组洪水稀释", phrases)
+	if phrases != 0 {
+		t.Fatalf("shi 单段输入不应出现前缀词候选，实际多出 %d 条", phrases)
 	}
 }
 
@@ -464,4 +464,49 @@ func TestCommonDictSingleSyllableFullRecallBeyond120(t *testing.T) {
 		}
 	}
 	t.Fatalf("yi 候选里找不到旧上限之外的字「%s」（%d 条候选）", target, len(all))
+}
+
+// TestSingleSegmentOnlySingleChars：单段输入（单音节全拼/单段声母）只出单字候选，
+// 不再用「前缀扩展词」占位（diao 不应出现 调用/调查）。
+func TestSingleSegmentOnlySingleChars(t *testing.T) {
+	d := mustCommonDict(t)
+	for _, input := range []string{"diao", "yi", "d"} {
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, input))
+		if len(all) == 0 {
+			t.Fatalf("%s 候选为空", input)
+		}
+		for _, c := range all {
+			if len([]rune(c.Text)) != 1 {
+				t.Fatalf("%s 出现多字候选「%s」（单段输入只应出单字）", input, c.Text)
+			}
+		}
+		if input == "diao" {
+			want := len(d.QueryTokensExact([]Token{{Text: "diao", IsExact: true}}, 500))
+			if len(all) != want {
+				t.Fatalf("diao 单字候选 %d，期望词典同音字全量 %d", len(all), want)
+			}
+		}
+	}
+}
+
+// TestSingleSegmentKeepsExactJoinedWord：连写正好等于输入的多字词属于全拼精确
+// 匹配，不是前缀延伸（xian = xi'an 的「西安」、tuan = tu'an 的「图案」），
+// 单段输入仍保留。
+func TestSingleSegmentKeepsExactJoinedWord(t *testing.T) {
+	d := mustDict(t)
+	s := NewSession(d, nil)
+	all := allCandidates(s, mustComp(s, "xian"))
+	foundXian, foundXiAn := false, false
+	for _, c := range all {
+		switch c.Text {
+		case "先":
+			foundXian = true
+		case "西安":
+			foundXiAn = true
+		}
+	}
+	if !foundXian || !foundXiAn {
+		t.Fatalf("xian 应同时保留「先」与「西安」（全拼精确匹配），实际 %+v", all)
+	}
 }

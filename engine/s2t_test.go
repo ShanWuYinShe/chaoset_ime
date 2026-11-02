@@ -47,9 +47,9 @@ func TestSessionTraditional(t *testing.T) {
 		t.Fatalf("解析词库失败: %v", err)
 	}
 
-	// 关闭：简体
+	// 关闭：简体（单段输入只出单字，用完整全拼验证词条转换）
 	s := NewSession(dict, nil)
-	comp, _ := s.Input("zhong")
+	comp, _ := s.Input("zhongguo")
 	if !hasCand(comp, "中国") {
 		t.Fatalf("关闭繁体应输出 中国, 得到 %v", comp.Candidates)
 	}
@@ -57,7 +57,7 @@ func TestSessionTraditional(t *testing.T) {
 	// 开启：候选与上屏均为繁体
 	s2 := NewSession(dict, nil)
 	s2.SetTraditional(true)
-	comp, err = s2.Input("zhong")
+	comp, err = s2.Input("zhongguo")
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

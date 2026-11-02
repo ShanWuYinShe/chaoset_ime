@@ -2023,6 +2023,47 @@ func (s *Session) compose() Composition {
 		}
 	}
 
+	// 单段输入只出单字候选：单音节全拼（diao/yi）与单段声母（d/y）不再用
+	// 「前缀扩展词」（调用 diao'yong、调查 diao'cha）占位——用户明确要求
+	// 「输入单字就匹配单字」。例外：多字词的**连写正好等于输入**时保留
+	// （xian = xi'an 的「西安」、tuan = tu'an 的「图案」），这类是全拼精确
+	// 匹配，不是前缀延伸；其用户学习优先级继续由排序键保证。
+	if len(tokenPatterns) > 0 && len(tokenPatterns[0]) == 1 &&
+		(tokenPatterns[0][0].IsExact || len(tokenPatterns[0][0].Text) == 1) {
+		// 单字母声母（d/y）才是「单段输入」；sh/ch/zh 是多字母简拼，
+		// 继续按词候选处理，不做单字过滤。
+		tok := tokenPatterns[0][0]
+		inputJoined := strings.ReplaceAll(s.input, "'", "")
+		// 单音节全拼只保留「整个输入就是该音节」的单字；回退/另一切分产生的
+		// 其他音节单字（diao 的 di 声母字「第」）也不应混进来。模糊音/别名
+		// 输入的候选音节按 canonical + fuzzyVariants 归一后比较。
+		canon := canonicalSyllable(tok.Text)
+		allowed := map[string]bool{canon: true}
+		for _, v := range fuzzyVariants(canon) {
+			allowed[v] = true
+		}
+		kept := items[:0]
+		for _, it := range items {
+			text := it.cand.Text
+			if len([]rune(text)) > 1 {
+				// 多字词只保留连写正好等于输入的精确匹配（西安 = xi'an）。
+				if strings.ReplaceAll(it.cand.Syllables, "'", "") == inputJoined {
+					kept = append(kept, it)
+				}
+				continue
+			}
+			if !tok.IsExact {
+				// 单段声母（d/y/zh…）的单字本来就按声母匹配。
+				kept = append(kept, it)
+				continue
+			}
+			if allowed[strings.ReplaceAll(it.cand.Syllables, "'", "")] {
+				kept = append(kept, it)
+			}
+		}
+		items = kept
+	}
+
 	// 排序键（从高到低）：① 常规匹配层优先于逐级回退层；② 输入完全消耗的
 	// 候选优先于超段候选（音节超段仲裁，仅对全拼输入生效）；③ 用户数据
 	// 加权候选优先（用户输入 > 默认字频）；④ 匹配层级（rank）；

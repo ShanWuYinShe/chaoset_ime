@@ -375,6 +375,10 @@ func TestDoublePinyinSessionSemicolonPunct(t *testing.T) {
 	if _, err := s.Input("ni"); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
+	// 单段输入现在只出单字；补 hk（mspy 的 hao）组成 nihao 再验上屏。
+	if _, err := s.Input("hk"); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
 	comp, err := s.Input(";")
 	if err != nil {
 		t.Fatalf("双拼 ';' 输入失败: %v", err)

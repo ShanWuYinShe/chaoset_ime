@@ -632,3 +632,22 @@ func TestPureInitialsGNTrusted(t *testing.T) {
 		t.Fatalf("gn 简拼候选里应有「功能」，实际: %+v", firstTexts(all, 6))
 	}
 }
+
+// TestTwoLetterInitialKeepsWords：sh/ch/zh 是多字母简拼（三后=sh、出会=ch），
+// 不能按「单段输入只出单字」过滤掉词候选。
+func TestTwoLetterInitialKeepsWords(t *testing.T) {
+	d := mustCommonDict(t)
+	for _, input := range []string{"sh", "ch", "zh"} {
+		s := NewSession(d, nil)
+		all := allCandidates(s, mustComp(s, input))
+		words := 0
+		for _, c := range all {
+			if len([]rune(c.Text)) > 1 {
+				words++
+			}
+		}
+		if words == 0 {
+			t.Fatalf("%s 是简拼，应保留多字词候选，实际全是单字", input)
+		}
+	}
+}

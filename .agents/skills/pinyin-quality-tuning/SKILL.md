@@ -64,6 +64,14 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 （≤`singleSyllableExactLimit`=300），层级 `rankSingleBackfill`，纯单字收尾；
 错拼输入（`typoSuspicious`）不追加——纠错候选才是主路径。
 
+**单段输入只出单字**：单音节全拼（`diao`/`zhong`）与单字母声母（`d`/`y`）
+不保留前缀扩展词（`diao` 的「调用」、`zhong` 的「中国」），候选=该音节/声母
+的真实单字；`zh`/`ch`/`sh` 是多字母简拼，仍出词候选。连写正好等于输入的多字词
+例外（`xian` 的「西安」、`tuan` 的「图案」，属于全拼精确匹配）。回归：
+`engine/common_dict_test.go` 的 `TestSingleSegmentOnlySingleChars` /
+`TestSingleSegmentKeepsExactJoinedWord`、`engine/initials_test.go` 的
+`TestTwoLetterInitialKeepsWords`。
+
 **两个 exact 上限不要混**：单音节全拼/单段声母（y/j/zh…）/单字兜底用
 `singleSyllableExactLimit`=300（同音字全量，yi 181 等）；**多段**简拼/混拼的
 词候选用 `initialsExactLimit`=120（放大到 300 会让 zg/dz 候选膨胀到 ~80 页，
