@@ -19,7 +19,7 @@ MIN_MACOS=15.0
 if [ -z "$VERSION" ]; then
   # 脚本顶部已 cd 到 shims/macos，dirname "$0" 仍是调用时的相对路径；
   # 再拼 ../.. 会算到 shims/ 而不是仓库根，git describe 失败后静默回退
-  # 0.0.0-dev（2026-11-02 本地直接运行 build.sh 实测）。用已解析的 $ROOT。
+  # 0.0.0-dev（2026-11-02 本地直接运行 build.sh 实测）。用已解析的 ROOT 变量。
   VERSION=$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
 fi
 VERSION=${VERSION:-0.0.0-dev}
