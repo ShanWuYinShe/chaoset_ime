@@ -541,25 +541,31 @@ func TestAmbiguousSplittableInputKeepsWords(t *testing.T) {
 }
 
 // TestCommonDictDiaoSingleQuality：用户反馈「diao 打不出屌、却混入刀/跳/鸟」。
-// 单字读音刷新后：屌按口语补充高频进入；刀/跳/鸟 的误收 diāo 读音已删除。
+// 单字读音刷新后：屌正常收录但不特殊置顶（掉/调等级更高频的字在前），
+// 刀/跳/鸟 的误收 diāo 读音已删除。
 func TestCommonDictDiaoSingleQuality(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
 	all := allCandidates(s, mustComp(s, "diao"))
-	if len(all) == 0 || all[0].Text != "屌" {
-		t.Fatalf("diao 首选应为「屌」，实际: %+v", firstTexts(all, 6))
+	if len(all) == 0 || all[0].Text != "掉" {
+		t.Fatalf("diao 首选应为高频的「掉」，实际: %+v", firstTexts(all, 6))
 	}
 	bogus := map[string]bool{"刀": true, "跳": true, "鸟": true}
-	foundDiao := false
-	for _, c := range all {
+	pos := map[string]int{}
+	for i, c := range all {
 		if bogus[c.Text] {
 			t.Fatalf("diao 不应出现误收读音的字「%s」", c.Text)
 		}
-		if c.Text == "调" {
-			foundDiao = true
-		}
+		pos[c.Text] = i + 1
 	}
-	if !foundDiao {
+	if pos["屌"] == 0 {
+		t.Fatalf("diao 候选应包含「屌」，实际: %+v", firstTexts(all, 6))
+	}
+	if pos["调"] == 0 {
 		t.Fatalf("diao 候选应保留「调」，实际: %+v", firstTexts(all, 6))
+	}
+	// 屌按常用度排在 掉/调 之后，不特殊置顶。
+	if pos["屌"] < pos["调"] || pos["屌"] < pos["掉"] {
+		t.Fatalf("屌应按常用度排序（掉/调 在前），实际位次: %v", pos)
 	}
 }
