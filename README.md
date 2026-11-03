@@ -843,8 +843,9 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 「机器检查覆盖」）。
 
 传输形态：macOS 用 Unix socket；Linux 用 Unix socket（`$XDG_RUNTIME_DIR/chaoset/chaoset.sock`）；
-Windows daemon 支持命名管道（`-pipe`，按当前用户 SID 生成、ACL 限当前用户），
-壳/安装器迁移期仍兼容 TCP 回环（daemon `-tcp 127.0.0.1:7949`，仅本机回环）。
+Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL 限当前用户）；
+安装器 Run 项与 TSF 懒启动均用命名管道，TCP 回环（`-tcp 127.0.0.1:7949`）仅兼容
+旧版 daemon/旧壳。
 
 ## 下载与安装（GitHub Release）
 

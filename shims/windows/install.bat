@@ -5,7 +5,8 @@ REM Usage: right-click "Run as administrator" on this file
 REM        Uninstall: install.bat uninstall
 REM
 REM TSF input methods must be registered via COM (regsvr32), hence admin rights.
-REM The daemon uses the local loopback TCP form; shell <-> daemon talk on 127.0.0.1:7949.
+REM The daemon is started per interactive user (login Run item or TSF first-use
+REM lazy start); shell <-> daemon use the current user's named pipe (no TCP port).
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
@@ -29,6 +30,13 @@ echo ==^> Checking required files
 if not exist "%DLL%"    ( echo ERROR: %DLL% missing & pause & exit /b 1 )
 if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
+
+echo ==^> Refreshing user dictionary (preserve imported words)
+REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps
+REM its imported words while the packaged baseline is refreshed; it creates the
+REM directory and backs up the old file. If this fails the daemon still seeds
+REM the dictionary on first use.
+if exist "%~dp0chaoset-import.exe" "%~dp0chaoset-import.exe" -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
 
 echo ==^> Cleaning legacy UILess category (v0.2.16 and earlier)
 REM v0.2.17 no longer declares TFCAT_TIPCAP_UIELEMENTENABLED (this shell does not
@@ -84,8 +92,10 @@ pause
 exit /b 0
 
 :uninstall
-echo ==^> Stopping daemon
+echo ==^> Stopping daemon and removing autostart entry
 taskkill /IM %DAEMON% /F >nul 2>&1
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
 echo ==^> Unregistering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe
 if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe

@@ -523,6 +523,17 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	// TSF 壳必须在当前用户上下文懒启动（-seeddict 首次初始化用户词库）。
 	checkContains(fsys, problems, group, winShell,
 		"ensureDaemonStarted", "ensureDaemonConnected", "-seeddict")
+	// 设置窗重启 daemon 必须用 detached 启动；settingsRunProcess 会等 120s
+	// 再 TerminateProcess，曾把 daemon 当普通导入器进程杀掉。
+	checkContains(fsys, problems, group, winShell, "settingsStartProcessDetached")
+	checkExcludes(fsys, problems, group, winShell, `settingsRunProcess(L"", run`)
+	// 词库刷新必须走 Go 导入器（保留用户导入词 + 备份 + 原子替换），不能
+	// 用 CopyFiles 直接覆盖用户词库。
+	checkContains(fsys, problems, group, winInstaller,
+		"chaoset-import.exe", "-seed", "-backup")
+	checkContains(fsys, problems, group, winInstallBat, "chaoset-import.exe")
+	checkExcludes(fsys, problems, group, winInstaller,
+		`CopyFiles /SILENT "$INSTDIR\dict.tsv"`)
 	// 安装器不得自己启动 daemon（管理员上下文会写错用户数据/管道）。
 	checkExcludes(fsys, problems, group, winInstaller,
 		`Exec '"$INSTDIR\chaosetd.exe"`)

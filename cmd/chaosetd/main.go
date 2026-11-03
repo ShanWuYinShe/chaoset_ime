@@ -125,8 +125,22 @@ func seedDictFiles(seed string, targets []string) []string {
 		if filepath.Clean(target) == filepath.Clean(seed) {
 			continue
 		}
-		if _, err := os.Stat(target); err == nil {
-			continue
+		if info, err := os.Stat(target); err == nil {
+			if info.IsDir() {
+				log.Printf("警告: 词库路径 %s 是目录；本次改用种子词库", target)
+				out[i] = seed
+				continue
+			}
+			if info.Size() > 0 {
+				continue
+			}
+			// 0 字节文件通常是上次安装/导入中断留下的，daemon 加载它会
+			// 得到 0 词条直接退出；按「缺失」处理并重建。
+			if err := os.Remove(target); err != nil {
+				log.Printf("警告: 清理空词库 %s 失败: %v；改用种子词库", target, err)
+				out[i] = seed
+				continue
+			}
 		} else if !os.IsNotExist(err) {
 			log.Printf("警告: 检查词库 %s 失败: %v；改用种子词库", target, err)
 			out[i] = seed

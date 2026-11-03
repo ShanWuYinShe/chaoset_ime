@@ -181,13 +181,20 @@ Section "MainSection" SEC01
     ; 为当前用户激活语言配置 (HKCU)
     WriteRegDWORD HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
-    ; 自动添加到用户当前语言列表并无条件强制刷新（免手动配置，即装即用 Win+Space 切换）
-    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $$l = Get-WinUserLanguageList; $$z = $$l | Where-Object { $$_.LanguageTag -like \"zh*\" }; if ($$z) { if (-not ($$z.InputMethodTips -contains $$tip)) { $$z.InputMethodTips.Add($$tip) } } else { $$z = New-WinUserLanguageList zh-CN; $$z[0].InputMethodTips.Add($$tip); $$l += $$z[0] }; Set-WinUserLanguageList $$l -Force"'
+    ; 自动添加到用户当前语言列表并无条件强制刷新（免手动配置，即装即用 Win+Space 切换）。
+    ; 用 Sysnative 的 64 位 PowerShell：32 位 NSIS 直接调用 powershell.exe 会被
+    ; WOW64 重定向，语言列表相关 cmdlet 在 32 位会话下可能不可用/行为不一致。
+    ${If} ${RunningX64}
+        StrCpy $R1 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    ${Else}
+        StrCpy $R1 "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    ${EndIf}
+    nsExec::Exec '"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $$l = Get-WinUserLanguageList; $$z = $$l | Where-Object { $$_.LanguageTag -like \"zh*\" }; if ($$z) { if (-not ($$z.InputMethodTips -contains $$tip)) { $$z.InputMethodTips.Add($$tip) } } else { $$z = New-WinUserLanguageList zh-CN; $$z[0].InputMethodTips.Add($$tip); $$l += $$z[0] }; Set-WinUserLanguageList $$l -Force"'
 
-    ; 为安装器当前用户同步一份可写词库（与旧版一致，升级时刷新基础词库）；
-    ; 其他用户的首次启动由 -seeddict 从 $INSTDIR 初始化。
-    CreateDirectory "$LOCALAPPDATA\Chaoset"
-    CopyFiles /SILENT "$INSTDIR\dict.tsv" "$LOCALAPPDATA\Chaoset\dict.tsv"
+    ; 为安装器当前用户刷新可写词库：调用 Go 导入器以 -seed 合并，保留用户
+    ; 已导入的词（旧文件由 -backup 备份），不在壳/NSIS 里重复实现合并逻辑。
+    ; 其他用户的首次启动仍由 daemon -seeddict 从 $INSTDIR 初始化。
+    nsExec::Exec '"$INSTDIR\chaoset-import.exe" -o "$LOCALAPPDATA\Chaoset\dict.tsv" -seed "$INSTDIR\dict.tsv" -backup "$INSTDIR\dict.tsv"'
 
     ; 不再强杀 ctfmon / 系统宿主，也不在提升后的安装器里启动 daemon：
     ; 管理员账户与交互用户可能不是同一个，强杀会打断用户正在使用的程序，
@@ -232,11 +239,15 @@ Section "Uninstall"
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
     Sleep 300
 
-    ; 从用户语言列表中移除输入法
-    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$l = Get-WinUserLanguageList; foreach ($$x in $$l) { $$x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $$l -Force"'
+    ; 从用户语言列表中移除输入法（同样用 64 位 PowerShell，避免 WOW64 重定向）
+    ${If} ${RunningX64}
+        StrCpy $R1 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    ${Else}
+        StrCpy $R1 "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    ${EndIf}
+    nsExec::Exec '"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$l = Get-WinUserLanguageList; foreach ($$x in $$l) { $$x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $$l -Force"'
     ; 不强制重启 ctfmon / 系统宿主：卸载同样不打断用户正在使用的程序；
     ; 输入法从语言列表移除后由下一次注销/重启完成宿主侧刷新。
-    ; 清理旧版本曾授予的回环豁免（新版本已改用命名管道，不再需要）。
     ; 清理旧版本曾授予系统输入宿主的回环豁免（新版本已改用命名管道）
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.Search_cw5n1h2txyewy'

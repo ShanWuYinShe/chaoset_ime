@@ -2,6 +2,27 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.12（2026-11-03）
+
+- **Windows 设置窗导入词库后不再卡死/杀掉 daemon**（审查发现）：原实现用
+  等待子进程退出的 `settingsRunProcess` 启动常驻 daemon，会阻塞 120 秒后
+  `TerminateProcess`。新增 detached 启动路径；便携版/缺失 Run 项时也能从
+  安装目录按 `-pipe -seeddict` 兜底拉起 daemon。
+- **安装器/便携版刷新词库不再覆盖用户导入词**：改用 Go `chaoset-import`
+  以 `-seed` 合并，旧文件按 `-backup` 备份；不再用 `CopyFiles` 直接覆盖
+  `%LOCALAPPDATA%\Chaoset\dict.tsv`。
+- **词库种子恢复**：`-seeddict` 对 0 字节目标词库也重新初始化（此前只处理
+  文件缺失，空文件会让 daemon 加载 0 条词条后退出）。
+- **TSF 懒启动细节**：已连接时不再重复拉起 daemon；尝试脱离宿主 Job
+  （浏览器等宿主退出时不易带走 daemon）；daemon 起不来时后续按键不再逐键
+  长时间阻塞；TCP 回退连接也计入“已连接”，避免旧 daemon 升级期重复拉起。
+- **安装器语言列表注册**：改用 64 位 Sysnative PowerShell，避免 32 位 NSIS
+  被 WOW64 重定向到 32 位 PowerShell；安装/卸载共用。
+- **install.bat 对齐**：安装时用 Go 导入器刷新词库、卸载时清理 HKLM/HKCU
+  的 Run 项；不再有 TCP/强杀宿主的旧描述。
+- 验证：`go test ./...`、`make vet`、`checkuiparity` 全绿；Windows DLL
+  交叉编译、NSIS 编译、`make package-windows` 成功；Windows 真机行为待验。
+
 ## v0.3.11（2026-11-03）
 
 - **Windows 安装器不再关闭已打开的程序**（用户反馈：安装时浏览器/编辑器/

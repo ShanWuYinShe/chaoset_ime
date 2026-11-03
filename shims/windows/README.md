@@ -54,6 +54,9 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 4. **升级提示**：安装程序**不会关闭任何正在运行的程序**。已打开的程序继续用
    旧版 DLL，关闭并重新打开即可加载新版；开始菜单/搜索等系统宿主在注销或
    重启后完成刷新。被占用的 DLL 由安装器改名/预约重启替换，不会打断用户。
+5. **词库刷新**：安装器调用 `chaoset-import.exe -seed` 把随包底库合并进当前
+   用户的 `%LOCALAPPDATA%\Chaoset\dict.tsv`（保留已导入词、旧文件备份）；
+   其他登录用户首次输入时由 daemon `-seeddict` 初始化。
 
 > 卸载：直接在 Windows「设置 → 应用 → 安装的应用」中找到 **Chaoset 拼音输入法** 点击「卸载」，或在开始菜单中点击「卸载 Chaoset 输入法」。
 
@@ -192,12 +195,12 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
    band 之下。修法：用 `ITfContextView::GetWnd()` 取宿主 HWND 作 owner
    （`CandidateWindow::setOwner` / `hostWindowOf`），owned window 恒在 owner
    之上，可跨 band。
-2. **安装器杀错进程名**。安装器硬编码 `ctfmon/TextInputHost/SearchHost/
-   StartMenuExperienceHost` 四个名字，但实机承载开始菜单输入的宿主是
-   **`SearchApp.exe`**（Windows 11 各版本叫法不同：`SearchUI.exe` →
-   `SearchApp.exe` → `SearchHost.exe`）。漏杀的那个进程带着旧 DLL 一直活着，
-   新版修复对它完全无效。修法：改为按模块名动态枚举——终止所有加载了
-   `ChaosetIME*.dll` 的进程（排除 `explorer`/`dwm`），不再依赖进程名。
+2. **旧版安装器杀错进程名（已修复）**。旧版安装器硬编码
+   `ctfmon/TextInputHost/SearchHost/StartMenuExperienceHost` 四个名字，但实机
+   承载开始菜单输入的宿主是 **`SearchApp.exe`**（Windows 11 各版本叫法不同：
+   `SearchUI.exe` → `SearchApp.exe` → `SearchHost.exe`）。旧版还会枚举所有
+   加载 `ChaosetIME*.dll` 的用户进程并强制终止。现在安装器**不再终止任何宿主**，
+   只替换文件并由改名/预约重启兜底，已打开程序重新打开后加载新版。
 
 **为什么这个坑极难定位**（排障方法论，下次照此做）：
 

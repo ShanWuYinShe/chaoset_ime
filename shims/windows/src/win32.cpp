@@ -1799,7 +1799,9 @@ public:
     PipeTransport() : pipeName_(currentUserPipeName()) {}
     ~PipeTransport() override { closeConn(); }
 
-    bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
+    // TCP 回退已连上也算“已连接”：升级期旧 daemon 只开 TCP 时，避免
+    // Activate/OnSetFocus 误判未连接而反复尝试拉起新的 pipe daemon。
+    bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE || fallback_.isConnected(); }
 
     bool ensureConnected() {
         if (pipe_ != INVALID_HANDLE_VALUE) return true;
@@ -2027,8 +2029,25 @@ static bool ensureDaemonStarted() {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
-                                   CREATE_NO_WINDOW, nullptr, dataDir.c_str(), &si, &pi);
+    // lpCurrentDirectory 传 nullptr：daemon 所有路径都是绝对路径，工作目录
+    // 无关紧要；AppContainer 宿主对 LOCALAPPDATA 可能无写权限，若该目录不存在
+    // 再用它当 cwd 会让 CreateProcess 直接失败。
+    //
+    // 优先 BREAKAWAY：TSF 宿主（浏览器等）可能位于带 kill-on-close 的 Job
+    // 对象里，普通子进程会随宿主退出被杀死；Job 不允许 breakaway 时回退普通
+    // 创建，行为与旧版一致。
+    DWORD logErr = 0;
+    BOOL ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                             CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
+                             nullptr, nullptr, &si, &pi);
+    if (!ok) {
+        logErr = GetLastError();
+        if (logErr == ERROR_ACCESS_DENIED) {
+            ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                                CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+            if (!ok) logErr = GetLastError();
+        }
+    }
     if (ok) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
@@ -2036,7 +2055,7 @@ static bool ensureDaemonStarted() {
     }
     if (diagBudget()) {
         diagPrintf(L"tsf.log", "daemon lazy start ok=%d err=%lu appcontainer=%d\n",
-                   ok ? 1 : 0, ok ? 0UL : GetLastError(), isAppContainer() ? 1 : 0);
+                   ok ? 1 : 0, ok ? 0UL : logErr, isAppContainer() ? 1 : 0);
     }
     return ok;
 }
@@ -2050,7 +2069,12 @@ static bool ensureDaemonConnected(PipeTransport& transport) {
     const DWORD now = GetTickCount();
     const DWORD startedAt = g_daemonStartOkAt;
     const bool recentStart = startedAt != 0 && now - startedAt < 5000;
-    const int attempts = (started || recentStart) ? 8 : 1;
+    // 每次发起启动后只完整等待一次；若 8 次都失败，2s 内后续按键不再逐键
+    // 阻塞（否则 daemon 起不来时打字会持续卡顿），2s 后仍允许再等一轮。
+    static DWORD lastWaitAt = 0;
+    const bool canWait = started || (recentStart && (lastWaitAt == 0 || now - lastWaitAt > 2000));
+    if (canWait) lastWaitAt = now;
+    const int attempts = canWait ? 8 : 1;
     for (int i = 0; i < attempts; ++i) {
         transport.closeConn();  // 清掉失败冷却，允许本轮立即重试
         if (transport.ensureConnected()) return true;
@@ -2334,10 +2358,12 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
-        // 非阻塞预热：daemon 未运行时先把懒启动发出去；首次输入的等待在
-        // OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
-        ensureDaemonStarted();
-        transport_.ensureConnected();
+        // 非阻塞预热：只在尚未连上时尝试启动，已连接则直接复用；首次输入的
+        // 等待在 OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
+        if (!transport_.isConnected()) {
+            ensureDaemonStarted();
+            transport_.ensureConnected();
+        }
         return S_OK;
     }
 
@@ -2401,7 +2427,7 @@ public:
                     endComposition();
                 }
             }
-        } else {
+        } else if (!transport_.isConnected()) {
             ensureDaemonStarted();
             transport_.ensureConnected();
         }
@@ -4407,9 +4433,58 @@ static bool settingsRunProcess(const std::wstring& exe, const std::wstring& cmdL
     return wait == WAIT_OBJECT_0;
 }
 
+// 启动常驻子进程（daemon）用：settingsRunProcess 会等待进程退出并超时
+// TerminateProcess，不能拿来启动 daemon，否则设置窗会卡 120s 再把服务杀掉。
+static bool settingsStartProcessDetached(const std::wstring& exe, const std::wstring& cmdLine) {
+    std::wstring mutableCmd = cmdLine;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(exe.empty() ? nullptr : exe.c_str(), mutableCmd.data(),
+                             nullptr, nullptr, FALSE,
+                             CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
+                             nullptr, nullptr, &si, &pi);
+    if (!ok && GetLastError() == ERROR_ACCESS_DENIED) {
+        // 设置窗宿主在禁止 breakaway 的 Job 中时回退普通创建（短命设置窗
+        // 通常无所谓；这里主要保证 daemon 不在可被宿主关闭杀死的 Job 内）。
+        ok = CreateProcessW(exe.empty() ? nullptr : exe.c_str(), mutableCmd.data(),
+                            nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                            nullptr, nullptr, &si, &pi);
+    }
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    return ok != FALSE;
+}
+
+// 便携安装/被手工删过 Run 项时的兜底：按 DLL 所在目录 + 当前用户数据目录
+// 拼出与 TSF 懒启动相同的 -pipe 命令行，避免设置窗导入词库后无法重启 daemon。
+static bool settingsStartDaemonFromInstall() {
+    wchar_t module[MAX_PATH] = {0};
+    if (GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0) return false;
+    std::wstring dir(module);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return false;
+    dir.resize(slash);
+    const std::wstring exe = dir + L"\\chaosetd.exe";
+    if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+    wchar_t appData[MAX_PATH] = {0};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData))) return false;
+    const std::wstring dataDir = std::wstring(appData) + L"\\Chaoset";
+    CreateDirectoryW(dataDir.c_str(), nullptr);
+    std::wstring cmd = settingsQuote(exe) + L" -pipe" +
+                       L" -dict " + settingsQuote(dataDir + L"\\dict.tsv") +
+                       L" -seeddict " + settingsQuote(dir + L"\\dict.tsv") +
+                       L" -userdict " + settingsQuote(dataDir + L"\\userdict.json") +
+                       L" -log " + settingsQuote(dataDir + L"\\chaosetd.log");
+    return settingsStartProcessDetached(exe, cmd);
+}
+
 // 重启 daemon：从安装器写入的 Run 项（HKLM 优先、HKCU 兜底）取完整命令行。
-// 先 taskkill 旧进程再按原命令行启动；没有自启动项时返回 false（由调用方提示
-// 用户重启电脑/注销后生效）。
+// 先 taskkill 旧进程再按原命令行启动；没有自启动项时用安装目录兜底启动
+// （便携版没有 Run 项），仍失败才返回 false 让调用方提示重启。
 static bool settingsRestartDaemon() {
     const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     std::wstring run;
@@ -4425,8 +4500,8 @@ static bool settingsRestartDaemon() {
                                  reinterpret_cast<LPBYTE>(val.data()), &size) == ERROR_SUCCESS) {
                 run = val.data();
                 if (type == REG_EXPAND_SZ) {
-                    // Run 值若写成 %LOCALAPPDATA% 形式，CreateProcess 不会展开；
-                    // 安装器目前写的是已展开路径，这里兜底兼容手改过的部署。
+                    // 安装器写的是 REG_EXPAND_SZ（保留 %LOCALAPPDATA%）；CreateProcess
+                    // 不会展开环境变量，必须用设置窗当前用户的环境展开后再启动。
                     std::vector<wchar_t> expanded(32768, 0);
                     const DWORD n = ExpandEnvironmentStringsW(run.c_str(), expanded.data(),
                                                               static_cast<DWORD>(expanded.size()));
@@ -4437,16 +4512,17 @@ static bool settingsRestartDaemon() {
         RegCloseKey(h);
         if (!run.empty()) break;
     }
-    if (run.empty()) return false;
     wchar_t sysDir[MAX_PATH] = {0};
     if (GetSystemDirectoryW(sysDir, MAX_PATH) == 0) return false;
     const std::wstring taskkill = std::wstring(sysDir) + L"\\taskkill.exe";
     settingsRunProcess(taskkill, settingsQuote(taskkill) + L" /IM chaosetd.exe /F", L"", nullptr);
-    // taskkill /F 立即生效，但进程退出与监听端口释放可能略滞后；给 1s 再启动，
-    // 避免新 daemon 因端口占用启动失败（导入是一次显式操作，1s 可接受）。
+    // taskkill /F 立即生效，但进程退出与监听资源释放可能略滞后；给 1s 再启动，
+    // 避免新 daemon 因单实例互斥体/管道占位启动失败（导入是显式操作，1s 可接受）。
     Sleep(1000);
-    DWORD code = 1;
-    return settingsRunProcess(L"", run, L"", &code);
+    if (!run.empty()) {
+        return settingsStartProcessDetached(L"", run);
+    }
+    return settingsStartDaemonFromInstall();
 }
 
 static void SettingsImportDictionary(HWND wnd) {
