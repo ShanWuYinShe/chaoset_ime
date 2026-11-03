@@ -123,6 +123,14 @@ ibus 上游面板，超出本壳边界。替代入口：
 
 本地可用 `./shims/linux/test-ci.sh` 复现（需要 dbus/ibus/Xvfb/Go）。
 
+## 日志
+
+- ibus 引擎/壳的 stderr 以 `chaoset-engine: ` 开头（daemon 未就绪、IPC
+  请求失败、配置/词库加载失败等），由 ibus/systemd 收集，可查
+  `journalctl --user -b | grep chaoset-engine`。
+- daemon 自身的启动构建、词库加载、用户词典落盘、每条 IPC 连接与请求错误
+  写入 `~/.local/share/chaoset/chaosetd.log`（引擎用 `-log` 传入）。
+
 ## 已知限制
 
 - 预编辑与候选列表均经 ibus 面板显示（UpdatePreeditText /

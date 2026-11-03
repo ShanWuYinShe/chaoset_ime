@@ -65,8 +65,20 @@ func main() {
 		if f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 			defer f.Close()
 			log.SetOutput(f)
+		} else {
+			// 安装版是 Windows GUI 子系统，stderr 看不到；显式日志路径打不开
+			// 时再尝试用户临时目录，至少给排障留一份可读日志。
+			log.Printf("警告: 无法打开日志文件 %s: %v", *logPath, err)
+			// 用 PID 后缀避免多用户/多实例共用 /tmp 时互相覆盖或读到对方日志。
+			fallback := filepath.Join(os.TempDir(), fmt.Sprintf("chaosetd-%d.log", os.Getpid()))
+			if ff, ferr := os.OpenFile(fallback, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); ferr == nil {
+				defer ff.Close()
+				log.SetOutput(ff)
+				log.Printf("警告: 日志已改写到 %s", fallback)
+			}
 		}
 	}
+	log.Printf("chaosetd 启动: %s", buildinfo.Info())
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_common.tsv"}
 	}
@@ -90,6 +102,11 @@ func main() {
 	// 数据/日志目录由首次启动的当前用户创建：安装器以管理员运行，不能假定
 	// 管理员与交互用户是同一个账户（否则会把路径写进错误的 LOCALAPPDATA）。
 	ensureParentDir(resolvedUserPath)
+	if resolvedUserPath == "" {
+		log.Printf("用户词典: 未启用（显式传入空路径）")
+	} else {
+		log.Printf("用户词典: %s", resolvedUserPath)
+	}
 
 	socketPath := *socket
 	if socketPath == "" {

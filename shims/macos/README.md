@@ -232,6 +232,8 @@ p99 17–20ms、最大 31–57ms、0 次超时；空闲 p99 约 7ms 不变。
 `~/Library/Application Support/chaoset/chaosetd.log`（2026-10-31 补；此前
 launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」等信息看不到）。
 真机排障先跑 app 内 `.../Contents/Resources/chaosetd -version` 确认构建，再对照该日志。
+壳侧（IMK）连不上 daemon / IPC 失败降级时写 macOS 统一日志（每 2 秒最多一条，
+不会随击键刷屏）：`log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"' --info --debug`。
 
 ## 卸载
 

@@ -62,12 +62,15 @@ func (s *Server) Serve() error {
 			}
 			return fmt.Errorf("接受连接失败: %w", err)
 		}
-		// TCP 连接记录到 daemon 日志（每壳进程一条持久连接，不会刷屏）：
-		// 开始菜单等 AppContainer 宿主能否到达 daemon，由此一眼可辨——
-		// 排障时与壳的 tsf.log 对读（2026-10-29 开始菜单排障）。
-		if _, isTCP := conn.RemoteAddr().(*net.TCPAddr); isTCP {
-			log.Printf("ipc 连接: %s", conn.RemoteAddr())
+		// 每条持久连接记录一行（每个壳进程一条，不会按键刷屏）：排查「壳是否
+		// 真正到达 daemon」时，与壳侧日志对读即可区分未连接 / ACL 拒绝 / 连上后
+		// 业务错误。命名管道与 Unix socket 同样记录，不能只记 TCP。
+		remote := conn.RemoteAddr()
+		network, addr := "unknown", ""
+		if remote != nil {
+			network, addr = remote.Network(), remote.String()
 		}
+		log.Printf("ipc 连接: network=%s addr=%s", network, addr)
 		go s.handleConn(conn)
 	}
 }
@@ -105,6 +108,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	if s.doublePinyin != "" {
 		sess.SetDoublePinyin(s.doublePinyin)
 	}
+	// 每个连接只记第一条业务错误，避免某个异常请求把日志刷满；错误本身仍
+	// 原样返回给壳，不改变协议行为。
+	var loggedRequestError bool
 	for {
 		var req Request
 		if err := readMessage(conn, &req); err != nil {
@@ -117,6 +123,10 @@ func (s *Server) handleConn(conn net.Conn) {
 		resp := Response{ID: req.ID}
 		if err != nil {
 			resp.Error = err.Error()
+			if !loggedRequestError {
+				loggedRequestError = true
+				log.Printf("ipc 请求失败: method=%s err=%v", req.Method, err)
+			}
 		} else if result != nil {
 			data, merr := json.Marshal(result)
 			if merr != nil {

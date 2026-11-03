@@ -19,6 +19,7 @@
 // 2026-10-30 审计 A16 修正过期注释）。
 
 import AppKit
+import os
 
 // MARK: - 主题色（与 skin.DefaultSkinFor 色值一一对应）
 
@@ -556,6 +557,8 @@ final class CandidatePanelView: NSView {
 /// 全进程共用一个候选窗面板（同旧 imagePanel 的理由：IMK 每个输入上下文
 /// 建一个 Controller 实例，实例各自持面板会残留；任何时刻最多一个可见）。
 enum CandidatePanelController {
+    private static let logger = Logger(subsystem: "ime.chaoset.inputmethod", category: "candidate")
+
     private static var panel: NSPanel?
     private static var view: CandidatePanelView?
     /// 点击候选的回调，由 Controller 在显示时设置（weak self 由调用方保证）。
@@ -578,7 +581,12 @@ enum CandidatePanelController {
             return false
         }
         let p = ensurePanel()
-        guard let v = view else { return false }
+        guard let v = view else {
+            // 候选窗创建失败时没有系统错误弹窗；写统一日志，配合
+            // log show --predicate 'subsystem == "ime.chaoset.inputmethod"' 排障。
+            logger.error("候选窗 view 创建失败，本次不显示候选")
+            return false
+        }
         v.onSelect = { onSelect?($0) }
         v.onPageDown = { onPageDown?() }
         v.onPageUp = { onPageUp?() }

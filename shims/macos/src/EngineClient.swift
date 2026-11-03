@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // EngineClient 是 chaosetd 的最小 IPC 客户端。
 // 协议与 Go 侧 ipc 包一致：4 字节大端长度 + JSON 载荷，
@@ -45,6 +46,20 @@ final class EngineClient {
     private let cooldown: TimeInterval = 1.0 // 连不上时的重试冷却，避免每次击键都白连
     private let socketPath: String
 
+    // 壳侧 IPC 失败日志：macOS 输入法进程没有控制台，daemon 日志也看不到
+    // 「壳为什么降级成英文」。用统一日志（Console.app / log show）记录，且
+    // 2 秒内只记一条，避免 daemon 故障时每次击键都写日志影响输入延迟。
+    private let logger = Logger(subsystem: "ime.chaoset.inputmethod", category: "ipc")
+    private var lastFailureLogAt: TimeInterval = 0
+
+    private func logFailure(_ message: @autoclosure () -> String) {
+        let now = Date().timeIntervalSince1970
+        guard now - lastFailureLogAt >= 2 else { return }
+        lastFailureLogAt = now
+        let text = message()
+        logger.error("\(text, privacy: .public)")
+    }
+
     init(socketPath: String = EngineClient.defaultSocketPath) {
         self.socketPath = socketPath
     }
@@ -67,6 +82,7 @@ final class EngineClient {
         let sock = socket(AF_UNIX, SOCK_STREAM, 0)
         guard sock >= 0 else {
             lastFailAt = now
+            logFailure("socket(AF_UNIX) 创建失败 errno=\(errno)")
             return false
         }
         // daemon 在写入途中消失时不能触发 SIGPIPE：否则整个输入法进程会被信号杀死
@@ -77,8 +93,10 @@ final class EngineClient {
         // 没了」。失败就放弃这次连接，下次按键再试（2026-10-26 审查发现）。
         if setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe,
                       socklen_t(MemoryLayout<Int32>.size)) != 0 {
+            let err = errno
             Darwin.close(sock)
             lastFailAt = now
+            logFailure("SO_NOSIGPIPE 设置失败 errno=\(err)")
             return false
         }
 
@@ -100,6 +118,7 @@ final class EngineClient {
         guard pathBytes.count < MemoryLayout.size(ofValue: addr.sun_path) else {
             Darwin.close(sock)
             lastFailAt = now
+            logFailure("socket 路径过长（\(pathBytes.count) 字节）")
             return false
         }
         withUnsafeMutableBytes(of: &addr.sun_path) { dest in
@@ -121,26 +140,35 @@ final class EngineClient {
                 var pfd = pollfd(fd: sock, events: Int16(POLLOUT), revents: 0)
                 let pollRes = poll(&pfd, 1, 20) // 20ms 超短超时
                 if pollRes <= 0 || (pfd.revents & Int16(POLLOUT)) == 0 {
+                    let pollErr = errno
                     Darwin.close(sock)
                     lastFailAt = now
+                    logFailure("connect 超时/未就绪 poll=\(pollRes) errno=\(pollErr)")
                     return false
                 }
                 var sockErr: Int32 = 0
                 var errLen = socklen_t(MemoryLayout<Int32>.size)
                 if getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) != 0 || sockErr != 0 {
+                    let getErr = errno
                     Darwin.close(sock)
                     lastFailAt = now
+                    logFailure("connect SO_ERROR 失败 errno=\(getErr) sockErr=\(sockErr)")
                     return false
                 }
             } else {
                 Darwin.close(sock)
                 lastFailAt = now
+                logFailure("connect 失败 errno=\(err) socket=\(socketPath)")
                 return false
             }
         }
         // 连上后恢复常规模式（受上面设置的 SO_RCVTIMEO/SO_SNDTIMEO 250ms 保护）
         _ = fcntl(sock, F_SETFL, flags)
         fd = sock
+        if lastFailureLogAt != 0 {
+            logger.info("daemon 连接已恢复")
+            lastFailureLogAt = 0
+        }
         return true
     }
 
@@ -150,7 +178,10 @@ final class EngineClient {
             let n = bytes.withUnsafeBufferPointer { buf in
                 Darwin.send(fd, buf.baseAddress! + off, bytes.count - off, 0)
             }
-            guard n > 0 else { return false }
+            guard n > 0 else {
+                logFailure("IPC send 失败 errno=\(errno) fd=\(fd)")
+                return false
+            }
             off += n
         }
         return true
@@ -163,7 +194,10 @@ final class EngineClient {
             let n = out.withUnsafeMutableBufferPointer { buf in
                 Darwin.recv(fd, buf.baseAddress! + off, count - off, 0)
             }
-            guard n > 0 else { return nil }
+            guard n > 0 else {
+                logFailure("IPC recv 失败/EOF errno=\(errno) fd=\(fd)")
+                return nil
+            }
             off += n
         }
         return out
@@ -193,7 +227,10 @@ final class EngineClient {
         let reqID = nextID
         var req: [String: Any] = ["id": reqID, "method": method]
         if !params.isEmpty { req["params"] = params }
-        guard let payload = try? JSONSerialization.data(withJSONObject: req) else { return nil }
+        guard let payload = try? JSONSerialization.data(withJSONObject: req) else {
+            logFailure("IPC 请求序列化失败 method=\(method)")
+            return nil
+        }
 
         let len = payload.count
         let header: [UInt8] = [
@@ -202,12 +239,14 @@ final class EngineClient {
         ]
         guard writeAll(header + [UInt8](payload)),
               let headBytes = readAll(4) else {
+            logFailure("IPC 帧头收发失败 method=\(method)")
             disconnect()
             return nil
         }
         let size = Int(headBytes[0]) << 24 | Int(headBytes[1]) << 16 | Int(headBytes[2]) << 8 | Int(headBytes[3])
         guard size > 0, size <= (1 << 20), let body = readAll(size),
               let resp = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
+            logFailure("IPC 响应帧无效 method=\(method) size=\(size)")
             disconnect()
             return nil
         }
@@ -218,10 +257,12 @@ final class EngineClient {
         // 不校验就会把**别的请求的结果当成本次的**——在输入法里就是上屏错字。
         // 出问题即断开重连，让下一次按键走干净路径（2026-10-26 审查发现）。
         guard let respID = resp["id"] as? UInt64, respID == reqID else {
+            logFailure("IPC 响应 id 不匹配 method=\(method) req=\(reqID)")
             disconnect()
             return nil
         }
-        if resp["error"] != nil {
+        if let error = resp["error"] as? String {
+            logFailure("daemon 业务错误 method=\(method): \(error)")
             return nil
         }
         return resp["result"] as? [String: Any] ?? [:]
@@ -229,7 +270,10 @@ final class EngineClient {
 
     private func parseComp(_ result: [String: Any]?) -> Comp? {
         guard let result,
-              let input = result["input"] as? String else { return nil }
+              let input = result["input"] as? String else {
+            logFailure("daemon composition 响应缺少 input 字段")
+            return nil
+        }
         let preedit = result["preedit"] as? String ?? ""
         var list: [Candidate] = []
         if let arr = result["candidates"] as? [[String: Any]] {

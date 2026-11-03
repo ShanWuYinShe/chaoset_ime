@@ -99,7 +99,10 @@ chaosetd.exe -pipe -dict dict.tsv -seeddict dict.tsv -userdict userdict.json -lo
 1. 确认装的是新构建：`"%ProgramFiles%\Chaoset\chaosetd.exe" -version`；
 2. 看 daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`（启动失败会写原因）；
    TSF 连接/懒启动诊断在 `%LOCALAPPDATA%\Chaoset\tsf.log`（AppContainer 宿主
-   可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）；
+   可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）。
+   daemon 日志含启动构建、用户词典路径与每条 IPC 连接（`network=pipe`）；
+   `tsf.log` 的 `daemon request failed op=... connected=...` 表示已连上但请求
+   超时/失败（2 秒节流，不会随击键刷屏）。
 3. 手动启动（普通用户权限，可在终端复现）：
    `"%ProgramFiles%\Chaoset\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "%ProgramFiles%\Chaoset\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"`；
 4. 用 `chaoset-cli.exe -pipe` 验证 IPC；只有旧版 daemon 才用

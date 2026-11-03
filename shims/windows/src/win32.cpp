@@ -2083,6 +2083,20 @@ static bool ensureDaemonConnected(PipeTransport& transport) {
     return false;
 }
 
+// daemon 请求失败（连接还在但 session 方法返回 !ok）：每条 2s 最多记一次，
+// 不随每个按键写日志。配合 Pipe/TCP 连接失败日志，可区分「根本没连上」与
+// 「连上了但请求失败（超时/daemon 业务错误）」。
+static void diagDaemonRequestFailure(PipeTransport& transport, const char* op) {
+    static DWORD last = 0;
+    const DWORD now = GetTickCount();
+    if (last != 0 && now - last < 2000) return;
+    last = now;
+    if (diagBudget()) {
+        diagPrintf(L"tsf.log", "daemon request failed op=%s connected=%d\n",
+                   op, transport.isConnected() ? 1 : 0);
+    }
+}
+
 // ---- TIP 主体 ----
 
 // ---- 模式切换提示（短暂 toast）----
@@ -2321,7 +2335,10 @@ public:
     HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override {
         g_lastOp = kOpActivate;
         ensureCrashHandler();
-        if (diagBudget()) {
+        // 每个宿主进程只记一次 Activate：字段统一不变，同时避免反复聚焦耗尽
+        // diagBudget（预算要留给真正的 daemon 失败/渲染失败日志）。
+        static volatile LONG activateLogged = 0;
+        if (InterlockedCompareExchange(&activateLogged, 1, 0) == 0 && diagBudget()) {
             char host[260];
             diagHostName(host, static_cast<int>(sizeof(host)));
             diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d build=%s %s\n",
@@ -2334,7 +2351,9 @@ public:
         // ITfUIElementMgr 提交候选、由宿主渲染；本壳不实现这些接口，候选窗
         // 是自绘 GDI 弹窗，在 UILess 宿主里必然看不到。这是判断「撤掉
         // UIELEMENTENABLED 类别是否奏效」的直接证据：修复生效后该位应为 0。
-        if (diagBudget() && ptim != nullptr) {
+        static volatile LONG activeFlagsLogged = 0;
+        if (ptim != nullptr && InterlockedCompareExchange(&activeFlagsLogged, 1, 0) == 0 &&
+            diagBudget()) {
             ITfThreadMgrEx* tme = nullptr;
             DWORD flags = 0;
             HRESULT hrEx = ptim->QueryInterface(IID_ITfThreadMgrEx,
@@ -2720,6 +2739,7 @@ public:
             chaoset::Comp rest = session_.input(raw, halfWidth_);
             if (!rest.ok) {
                 // 极端故障（daemon 半死）：已确认段先落盘，避免合成悬空丢字。
+                diagDaemonRequestFailure(transport_, "input(refresh)");
                 comp_ = chaoset::Comp();
                 flushOrCancel(ctx.get());
                 showModeToast(L"删除后刷新候选失败");
@@ -2739,6 +2759,7 @@ public:
         comp_ = next ? session_.nextPage() : session_.prevPage();
         if (!comp_.ok) {
             // daemon 故障：已确认段先落盘收尾，不能随翻页失败被 endComposition 丢弃
+            diagDaemonRequestFailure(transport_, "page(mouse)");
             flushOrCancel(ctx.get());
             return;
         }
@@ -3042,6 +3063,7 @@ private:
             if (alt) {
                 comp_ = session_.backspaceWord();
                 if (!comp_.ok) {
+                    diagDaemonRequestFailure(transport_, "backspaceWord");
                     flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                     return true;
                 }
@@ -3118,6 +3140,7 @@ private:
             if (!comp_.ok) {
                 // daemon 确实不可达：收尾（已确认段落盘，不因 daemon 故障丢字）
                 // 并放行原键，保证宿主应用不卡死
+                diagDaemonRequestFailure(transport_, "input");
                 flushOrCancel(pic);
                 return false;
             }
@@ -3151,6 +3174,7 @@ private:
             bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
             comp_ = isPrev ? session_.prevPage() : session_.nextPage();
             if (!comp_.ok) {
+                diagDaemonRequestFailure(transport_, "page");
                 flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return true;
             }
@@ -3173,6 +3197,7 @@ private:
                 }
             }
             if (!comp_.ok) {
+                diagDaemonRequestFailure(transport_, "input;");
                 flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return false;       // 绝不吞键：daemon 不可达时让 ; 原样进文档
             }
@@ -3204,6 +3229,7 @@ private:
                     }
                 }
                 if (!comp_.ok) {
+                    diagDaemonRequestFailure(transport_, "input'");
                     flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                     return false;
                 }
@@ -3254,6 +3280,7 @@ private:
         if (vk == kVkBackspace || vk == kVkDelete) {
             comp_ = session_.backspace();
             if (!comp_.ok) {
+                diagDaemonRequestFailure(transport_, "backspace");
                 flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return true;
             }
