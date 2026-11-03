@@ -190,7 +190,7 @@ jobs:
           retention-days: 14
 
   package-windows:
-    name: 打包 Windows (TSF DLL + TCP Daemon)
+    name: 打包 Windows (TSF DLL + 命名管道 Daemon)
     runs-on: ubuntu-24.04
     needs: test
     steps:
@@ -206,12 +206,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
 
-      # 核心层行为测试：用真实 chaosetd（TCP 回环，即 Windows 壳的实际传输
-      # 形态）驱动 core.cpp 的协议与会话逻辑。
-      #
-      # 为什么必须放进 CI（2026-10-26 修复）：这项测试以前**只在开发机手工
-      # 跑**，CI 从不执行，于是断言里写死的「每页 9 个候选」在引擎改成 6 之后
-      # 一直失败却没人发现。测试不跑 = 没有测试。
+      # 核心层行为测试：用真实 chaosetd 的 TCP 回环测试台驱动 core.cpp 的
+      # 协议与会话逻辑；安装版壳实际走命名管道。测试必须在 CI 常跑，
+      # 否则引擎/协议断言漂移不会被发现。
       - name: 核心层行为测试（真实 daemon + TCP 回环）
         run: |
           set -e

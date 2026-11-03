@@ -17,9 +17,10 @@
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
 > **Windows 安装不会关闭已打开的程序**：安装器只替换文件，不会强杀浏览器/
-> 编辑器/聊天软件或开始菜单等系统宿主；已打开程序重新打开后加载新版。daemon
-> 在首次输入时以当前用户身份自动启动（命名管道，无需管理员权限）。若切换后
-> 暂时没有候选窗，注销并重新登录一次即可完成系统宿主刷新。
+> 编辑器/聊天软件或开始菜单等系统宿主；已有导入词由 Go 导入器合并保留。已打开
+> 程序重新打开后加载新版。daemon 在首次输入时以当前用户身份自动启动（命名管道，
+> 无需管理员权限）；系统宿主在注销/重启后刷新。若切换后暂时没有候选窗，先注销
+> 并重新登录一次。
 
 > **macOS 推荐安装（终端一行命令，无需开发者账号）**：打开「终端」（聚焦搜索 `Terminal` /「终端」），粘贴并回车：
 >
@@ -80,10 +81,8 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 - `engine/double_pinyin.go` 的双拼键位按 Rime schema 的 speller algebra 规则
   **转写生成**（表由本项目正向生成并做完整性测试，不是拷贝实现）。
 
-> 排障提示：系统「输入法」列表里若出现**鼠须管**（`im.rime.inputmethod.Squirrel`），
-> 那是官方 Rime/Squirrel 应用。2026-10-05 排查"macOS 为何不枚举本输入法"时，
-> 曾把官方 Squirrel 重签后放进 `~/Library/Input Methods` 作为对照样本；
-> 它**不属于本项目**，其代码、名称与图标都不得复用。详见 `shims/macos/README.md`。
+> 排障提示：系统「输入法」列表里的**鼠须管**（`im.rime.inputmethod.Squirrel`）是
+> 官方 Rime/Squirrel 应用，**不属于本项目**；本项目不复用其代码、名称或图标。
 
 ## 目录结构
 
@@ -102,8 +101,8 @@ ipc/               IPC 协议与服务端/客户端（client 实现 engine.Contr
 skin/              候选窗视觉参数设计基准（几何 + 浅/深配色，DefaultSkinFor(dark)）：
                    无运行时消费者——实际渲染是 macOS CandidatePanel.swift 与
                    Windows win32.cpp 两份实现；Go↔macOS 的布局/色值一致性由
-                   shims/macos/tests/visual-parity.sh 机器断言
-                   （2026-10-27 起 daemon 贴图渲染链路已删）
+                   shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
+                   渲染链路
 cmd/
   chaosetd/          守护进程二进制（-dict 可多次叠加）
   chaoset-cli/       终端测试台（本地内嵌引擎或连接 daemon）
@@ -132,15 +131,15 @@ shims/
 3. **词组进化**：相邻两次上屏的组合（如分字打出「键盘」「鼠标」）
    共现满 2 次且主词典没有该词时，自动固化为用户词组（≤4 音节），
    之后整词输入 `jianpanshubiao` 直接出「键盘鼠标」。
-4. **整句输入习惯（2026-10-30）**：多字拼音没有合适的整体候选时，用户
+4. **整句输入习惯**：多字拼音没有合适的整体候选时，用户
    可以逐段选择（如 `jintianxingqiyi` 选「今天」→ 剩余 `xing'qiyi` 再选
    「星期一」）；整串拼完后，各段拼成的整句会记为**带分段**的习惯记录
    （5 音节以上也能学），下次完整输入同一串时整句候选被调频加权排前。
    **但绝不整词贪婪匹配**：整句记录只在完整输入时作为整句候选，部分输入
    （`jin`/`jintian`）不出现整句候选；联想也只在用户确认过的**分段边界**
    剥前缀——上屏「今天」会联想「星期一」，上屏「今」绝不会给出「天星期一」，
-   所以学过整句后「只想输入今天」的路径完全不受影响。旧版本学习数据没有
-   分段信息时，用主词典「分段数最少」DP 推断边界（不是最长词贪心）；推断不出的按普通词处理。
+   所以学过整句后「只想输入今天」的路径完全不受影响。缺少分段信息的学习记录
+   用主词典「分段数最少」DP 推断边界（不是最长词贪心）；推断不出的按普通词处理。
    学习数据由 daemon 每 2 秒批量原子落盘（temp+rename），正常退出前同步落盘；异常强杀最多丢最近 2 秒（Windows 无优雅退出，只靠定时器）。
 
 ## 中文标点
@@ -155,11 +154,11 @@ shims/
 ## 输入预测（末音节续接）
 
 用户在打字时，**每个音节的最后一个字母之前都处于「没打完」状态**——这是输入法
-最高频的输入形态。旧版对这些输入只能给出巧合的碎词：`zhonggu` 出「中古」、
+最高频的输入形态。普通匹配容易给出巧合碎词：`zhonggu` 出「中古」、
 `beijin` 出「被进」、`daxu` 出「大需」，真正想打的「中国 / 北京 / 大学」
-完全找不到。现在把末段当作**待补全的音节**去词典续接（`engine.QueryContinuation`）：
+反而找不到。本项目把末段当作**待补全的音节**去词典续接（`engine.QueryContinuation`）：
 
-| 输入 | 旧首选 | 新首选 | 续接依据 |
+| 输入 | 普通匹配首选 | 续接首选 | 续接依据 |
 |---|---|---|---|
 | `zhonggu` | 中古 | **中国** | gu → guo |
 | `beijin` | 被进 | **北京** | jin → jing |
@@ -186,9 +185,8 @@ shims/
 
 ### 多音节长输入：真实词条优先，组合候选只在末尾
 
-多字拼音没有单条词库词条时，**首屏候选只来自已存在的词**（旧版会用多词 DP
-把词典片段自由拼成「你号码」「我们的」「中华人民共和国」并占据首屏，用户明确
-要求移除）。候选来源与优先级：
+多字拼音没有单条词库词条时，**首屏候选只来自已存在的词**；多词 DP 拼合只允许
+出现在列表末尾的组合候选里，不允许占据首屏。候选来源与优先级：
 
 - 词典词条：精确命中、末段续接、前缀续接、逐级回退得到的前缀词；
 - 用户词库 / 学习记录（含用户逐段拼出的带分段整句记录）；
@@ -231,10 +229,8 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 `engine/typo_test.go`（既有纠错首选不变）、`engine/user_history_test.go`
 （用户历史优先）。
 
-移除拼合造词后，固定口径扫描的 top1/top3 持平或上升（历史对比数据见
-`CHANGELOG.md` v0.3.7；当前词库的基线见下方「实测数据」）。热路径为微秒级
-（少了一次逐键多词 DP 搜索），基准见 `engine/scale_bench_test.go` 的
-`BenchmarkComposeCommonDict`。
+固定口径扫描的 top1/top3 见下方「实测数据」；热路径为微秒级，基准见
+`engine/scale_bench_test.go` 的 `BenchmarkComposeCommonDict`。
 
 ### 引擎候选规则速览（当前）
 
@@ -305,10 +301,10 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 现在 `lue`/ `nue` 会归一为 `lve`/`nve`（`engine.syllableAliases`），
 两者都能打出「略 / 虐」。`jue/que/xue/yue` 本来就以 u 记写，不在别名表里，不受影响。
 
-### 实测数据（可复现）
+### 实测数据（固定口径）
 
-口径固定（扫描器源码在 `.workwork/verify/scan`，`.workwork/` 已 gitignore；
-每次改动前后都用同一份脚本与同一口径）：
+下列数字来自内部固定口径扫描（扫描器不随仓库分发）；日常回归以 `engine/` 的测试
+与基准为准，改排序前后应使用同一口径重新取数，不要直接跨版本比较绝对值：
 
 - 词条池：`data/dict_common.tsv` 中 2–4 音节、词频 ≥30、词长 == 音节数
   （当前 26,766 条）；
@@ -332,8 +328,8 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 ## 错拼修正（手滑打错一两个字母）
 
 打字手滑是常态：相邻两键颠倒（`zhogn`）、多敲一个字母（`zhonng` / `niihao`）、
-漏敲一个字母（`zhonguo`）、敲错一个键。旧版对这些输入要么给出一堆碎片假词
-（`zhogn` → 「中欧国内」），要么直接无候选。
+漏敲一个字母（`zhonguo`）、敲错一个键。普通匹配对这些输入要么给出一堆碎片
+假词（`zhogn` → 「中欧国内」），要么直接无候选。
 
 现在对输入做**单次编辑与粘键折叠**修正后重新查询（`engine/typoCorrections`），覆盖六类手误与拼音习惯：
 
@@ -389,7 +385,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 **刻意不做**：`ai/ia`、`ui/iu`、`ou/uo`、`ei/ie`、`an/na`、`en/ne`、
 `in/ni`、`un/nu` 这类**两侧都合法**的相邻互换（如 `shuoji` 对 `shouji`、
 `mieyou` 对 `meiyou`、`zoutian` 对 `zuotian`）不做强行纠错——它们与正常输入/
-合法混拼同形，强行纠正会误伤正常候选（历史实测 mixed 首选率大幅下降）。这类错误
+合法混拼同形，强行纠正会误伤正常候选（mixed 首选率明显下降）。这类错误
 仍可通过通用单次编辑在「确实像手误」的输入上被修正。
 
 ### 判据与置信度分层
@@ -405,14 +401,13 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 
 ### 实测与性能
 
-正常输入指标**逐项零回归**（全拼首选 80.68%、简拼 17.53%、混拼 34.32%、
-末音节残缺 43.42%，均与前一轮完全一致），24 个典型错拼场景中 13 个修复为正确首选。
+正常输入指标不因纠错下降；当前基线以固定口径扫描为准（见「实测数据」）。
 
 性能：纠错只在「切不动」时触发，正常打字路径零额外开销
-（`BenchmarkComposeCommonDict` 22.0µs/键，与改动前一致）。触发纠错的输入
+（`BenchmarkComposeCommonDict` 约 22µs/键，本机参考）。触发纠错的输入
 （如 `zhogn`）本身就要 2ms 量级的切分扫描，纠错只在其上增加约 6%；
-查询条数由 `typoMaxQueries` 封顶（生成便宜、每条 Trie 查询较贵，
-实测 160 条会让 `zhonguo` 从 0.8µs 涨到 25ms，压到 32 条后回到百微秒级）。
+查询条数由 `typoMaxQueries` 封顶：生成便宜、每条 Trie 查询较贵，160 条会让
+`zhonguo` 从 0.8µs 涨到 25ms，压到 32 条后回到百微秒级。
 
 ## 模糊音
 
@@ -458,7 +453,7 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 成对解码，无效键码对整体丢弃；退格按按键事件粒度整段回滚。
 见 `engine/double_pinyin.go`。
 
-**`;` 键的三端路由（2026-10-30）**：mspy 的 `ing` 韵母键是 `;`，而 `;` 平时是
+**`;` 键的三端路由**：mspy 的 `ing` 韵母键是 `;`，而 `;` 平时是
 中文标点键。引擎在 `Composition` 里下发 `shuangpin` 方案名，三端壳据此把双拼
 模式下的 `;` 路由到 `input`（`dpPending` 非 0 时参与成对解码；为 0 时按标点
 语义上屏「首选词 + 分号」，文本经 `committed` 返回）；非双拼模式与 Shift+`;`
@@ -553,7 +548,7 @@ TSV，每行三列（`#` 开头为注释）：
 `engine/data_contract_test.go` 另保证：内置词库 ≥6 万条、单字 ≥8,000、音节数等于
 字数、`dict_extra`/`dict_hot` 全部合并；当前词库实际覆盖通用规范汉字表 8105 全部单字。
 规范常用词覆盖/精度与 98 热词探针属于词库生成期的固定词表评估（脚本未入库），
-历史数据见 `CHANGELOG.md` v0.3.7，不作为候选排序回归指标。
+不作为候选排序回归指标。
 
 **只收简体**：内置词库只收简体字、常用简体字词组；繁体、异体、粤语/方言用字
 **不内置**。需要时通过额外词库加载——daemon `-dict` 可重复叠加多个 TSV，
@@ -573,7 +568,7 @@ TSV，每行三列（`#` 开头为注释）：
 
 **单字**：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名；
 多音字**首读音必留**，其余读音只有在 large_pinyin 词条里占比 ≥ 1%
-（`-readingshare`，默认 0.01）时才保留——pinyin-data 的历史多音里混有
+（`-readingshare`，默认 0.01）时才保留——pinyin-data 中混有
 「刀 diāo」「跳 diāo」这类词条中零出现的误收读音。单字词频严格按
 **「字频 × 该读音在 large_pinyin 词条里的占比」**折算，不设任何下限：
 占比 1% 的读音只有字频的 1%（≤1 分），不会靠固定下限抬进高优先候选。
@@ -767,20 +762,17 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 go test ./engine/ -bench . -benchtime 3x
 ```
 
-基准项与对应测量对象（数字为历史基准记录值，Apple M1）：
+基准项与测量对象（参考量级；复跑以本机结果为准）：
 
-| 基准函数 | 测的是什么 | 记录值（Apple M1） |
+| 基准函数 | 测的是什么 | 参考量级 |
 |---|---|---|
-| `BenchmarkLoadDict100k` | 解析 10 万行 TSV 建索引（daemon 启动路径，只跑一次） | ~42ms/次 |
-| `BenchmarkCompose100k` | 单次组词，含全量候选排序 + 分页切片 | ~0.36ms/键 |
-| `BenchmarkQueryPrefix100k` | 残缺音节前缀查询（线性扫描） | ~0.34ms/键 |
+| `BenchmarkLoadDict100k` | 解析 10 万行 TSV 建索引（daemon 启动路径，只跑一次） | 数十 ms |
+| `BenchmarkCompose100k` | 单次组词，含全量候选排序 + 分页切片 | 亚毫秒/键 |
+| `BenchmarkQueryPrefix100k` | 残缺音节前缀查询（线性扫描） | 亚毫秒/键 |
 
-> 这些是**历史记录值**，不是硬指标：同一台 M1 上复跑会受机器负载、Go 版本、
-> 电源策略影响（2026-10-22 复跑同命令得 ~60ms / ~0.47ms / ~0.59ms，即量级一致、
-> 绝对值偏高）。判断回归时请在**同一环境**前后对比，不要跨机比绝对值。
-
-真实词库侧的另一组实测：120,282 条 CC-CEDICT 合并词库，daemon 秒级就绪，
-逐键链路 74ms（含进程启动），翻页在数千候选下正常（如 h → 738 页）。
+> 复跑会受机器负载、Go 版本与电源策略影响；判断回归时请在**同一环境**前后对比。
+> 120,282 条 CC-CEDICT 合并词库下 daemon 秒级就绪，逐键链路在毫秒级
+> （含进程启动），翻页在数千候选下正常。
 
 #### 内置词库（真实数据）
 
@@ -791,24 +783,24 @@ go test ./engine/ -bench . -benchtime 3x
 go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 ```
 
-| 基准函数 | 测的是什么 | 结果（Apple M1 / go1.27.3） |
+| 基准函数 | 测的是什么 | 参考量级 |
 |---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 65,051 条真实词库建索引（daemon 启动时跑一次） | ~100ms；堆 22MB（旧 14.5 万条库 ~320ms / 56MB） |
-| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | ~25–31µs/键（2026-10-30 复测） |
+| `BenchmarkLoadCommonDict` | 解析 65,051 条真实词库建索引（daemon 启动时跑一次） | 百毫秒级；堆约 22MB |
+| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | 数十微秒/键 |
 
 词库自身规模：**65,051 条 / 1.2 MB**，词频区间 1–99；按词长分布为
 1 字 8,699、2 字 42,744、3 字 7,310、4 字 6,150、5 字 120、6 字 28。
-即换用真实词库后 daemon 冷启动多花约 0.1 秒，而逐键组词仍在**数十微秒级**（本机复测约 25–31µs，负载下偏高），
-对打字延迟没有可感知影响。
+真实词库下 daemon 冷启动约 0.1 秒，逐键组词仍在**数十微秒级**，对打字延迟
+没有可感知影响。
 
 ## IPC 协议
 
 帧格式：4 字节大端长度 + JSON 载荷（上限 1 MiB）。
 
 - 请求：`{"id":1,"method":"input","params":{"text":"nihao","half":false}}`
-  （`half` 可选：壳侧全/半角标点状态，2026-10-31 起每次 input 下发；旧壳省略
-  时保持会话内旧状态。双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次
-  壳状态，否则会有 1 键瞬态。）
+  （`half` 可选：壳侧全/半角标点状态，每次 input 下发；省略时保持会话内状态。
+  双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次壳状态，否则会有 1 键
+  瞬态。）
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法（16 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
@@ -832,8 +824,7 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
 候选窗由 mac/Windows 壳原生自绘（macOS 用 AppKit，见
 `shims/macos/src/CandidatePanel.swift`；Windows 用 GDI），Linux 不重绘面板、
-用 ibus 原生 LookupTable/Preedit 呈现。历史上的 `candidateImage` 贴图方法
-（daemon 渲染 PNG）随壳不再使用，已于 2026-10-27 删除。
+用 ibus 原生 LookupTable/Preedit 呈现；daemon 不提供贴图渲染。
 
 视觉参数（几何 + 浅/深配色）的设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，
 **无运行时消费者**）；mac/Windows 两份壳实现按它手写。Go↔macOS 的布局常量
@@ -858,28 +849,24 @@ Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 | Linux Debian/Ubuntu | `chaoset_amd64.deb` | `chaoset-linux-x86_64.tar.gz`（需 sudo 脚本） |
 | Linux Arch | `chaoset-ime-x86_64.pkg.tar.zst` | 同左，无脚本包 |
 
-每个包都自带**完整的 14 万条常用词库**，装完即可用，不需要另配词库。
+每个包都自带**完整的内置常用词库（约 6.5 万条）**，装完即可用，不需要另配词库。
 
 > **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
 > 确认装的是新版本，再排查其他问题。
 
-> 2026-10-25 修复的发行缺陷（此前 Release 产物不可用）：Linux 包只带了 558 条的
-> 演示词库、引擎却要 `data/dict_common.tsv`，且相对路径依赖 cwd——装完引擎启动
-> 即退出，ibus 里一个字都打不出来；三个平台的打包命令都没显式指定
-> `GOOS/GOARCH`，在 macOS 开发机上打包会把 Darwin 二进制塞进 Linux/Windows 包
-> （CI 跑在对应平台所以看不出来）；macOS 只出 arm64，Intel 机器无法打开；
-> Windows 没有任何安装脚本，用户得手工敲 `regsvr32`。现在四项都已修复，
-> 并在 CI 里加了对应的验证步骤（架构断言 + 真实安装后启动引擎的冒烟校验）。
+发布包由 CI 在目标平台构建并做启动冒烟：Linux/Windows 包显式指定
+`GOOS/GOARCH`，macOS 为 universal，Windows 提供 `ChaosetSetup.exe` 与
+`install.bat`，词库数量与架构均在包内容自检中断言。
 
 ## 平台壳
 
 | 平台 | 壳 | 状态 |
 |---|---|---|
-| Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 已实现（容器内端到端验证；真机桌面闭环待环境） |
-| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘（v3） | 已实现（真机启用；Shift 空按中英切换、LaunchAgent `ProcessType=Interactive` 高负载 QoS 均已真机验证） |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道优先（TCP 回环作迁移期回退）连 daemon；壳内 GDI 原生自绘候选窗（键帽序号/首选胶囊/学习标记）+ 合成内预编辑 | 已实现（Windows 11 真机首轮验证：记事本/浏览器/终端/开始菜单/搜索候选窗；命名管道运行时、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待验） |
+| Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 容器内端到端验证；真机桌面闭环待环境 |
+| macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon（TCP 仅兼容旧版）；壳内 GDI 原生自绘候选窗 + 合成内预编辑 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
 
-### 渐进上屏的跨程序兼容模型（2026-10-30）
+### 渐进上屏的跨程序兼容模型
 
 三端壳对「逐段渐进拼句」（`jintianxingqiyi` 选「今天」→ 剩余继续组词）采用
 **同一模型：已确认段并入预编辑/合成，整条组词结束才一次落盘**：
@@ -893,14 +880,12 @@ Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 - Linux：已确认段并入 `UpdatePreeditText`，不再在预编辑激活期间发
   `CommitText`；落盘 = 整串一次 `CommitText`。
 
-为什么：逐段选择若「先写正文、再刷新预编辑」（旧实现），是对宿主的**两步
-文档变更**，部分程序处理不好——实测会把刚选的字丢掉、候选清空、剩余拼音
-卡死在文档里（macOS 部分版本 Notes/Electron/终端对「marked 区激活期间收到
-insertText」有缺陷；Windows 部分宿主对合成结束/重建的选区记账有缺陷，新
-合成锚点落回旧文本处直接覆盖刚上屏的段；Linux XIM 桥接/自绘输入对预编辑
-激活期间的提交同理）。逐键输入在所有程序都正常，因为它只有一步预编辑更新
-——本模型让渐进上屏的兼容面与逐键输入完全一致，并与 macOS 系统拼音 /
-微软拼音「合成内已转换段」的行为对齐。
+为什么：逐段选择若「先写正文、再刷新预编辑」，会对宿主产生**两步文档变更**，
+部分程序处理不好——刚选的字被丢掉、候选清空、剩余拼音卡在文档里（Notes/
+Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部分宿主对
+合成结束/重建的选区记账有缺陷；Linux XIM 桥接/自绘输入同理）。逐键输入只有
+一步预编辑更新，因此把渐进上屏也收进同一条合成，兼容面与逐键输入一致，
+并与 macOS 系统拼音/微软拼音「合成内已转换段」的行为对齐。
 
 随之统一的行为（三端一致，矩阵见 `docs/ui-parity.md`）：已确认段在预编辑里
 以**已转换形态**（汉字而非拼音）随剩余拼音一起显示；Esc / 全部删除取消整条
@@ -920,16 +905,24 @@ shims/windows/README。
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
 > `ime.chaoset.inputmethod.ChaosetIME`，输入模式为
-> `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（`.Hans` 仅作为历史别名保留在
-> 安装器的语言映射里）。**bundle id 必须含内层
-> `.inputmethod.` 段**（仅以 `inputmethod` 结尾的写法 TIS 不收录）。
-> 安装用 `shims/macos/install.sh`（含 `TISRegisterInputSource`）。
->
-> 2026-10-21 实测更正：**bundle 有效时不需要注销重登**——装好并调用
-> `TISRegisterInputSource` 后 TIS 立即枚举到本输入法，系统设置里可直接添加。
-> 早期「新增输入法只能在登录扫描时收录」的结论，是当时 bundle id 不含内层
-> `.inputmethod.` 段导致的误判。真机细节（灰色条目、缓存重建等坑）
-> 见 `shims/macos/README.md` 的「输入源标识与显示名」与「验证状态」两节。
+> `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（`.Hans` 仅作为兼容别名保留在
+> 安装器的语言映射里）。**bundle id 必须含内层 `.inputmethod.` 段**（仅以
+> `inputmethod` 结尾的写法 TIS 不收录）。安装用 `shims/macos/install.sh`；
+> bundle 有效时 `TISRegisterInputSource` 后 TIS 即可枚举，无需注销重登。
+> 真机细节（灰色条目、缓存重建等）见 `shims/macos/README.md`。
+
+## 日志
+
+- Windows：daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`，TSF 连接/渲染/
+  请求诊断 `tsf.log`，宿主崩溃 `crash.log`；AppContainer 宿主的 TSF 日志可能
+  写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
+- macOS：daemon 日志 `~/Library/Application Support/chaoset/chaosetd.log`；
+  壳侧 IPC/候选窗失败写 macOS 统一日志：
+  `log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"'`。
+- Linux：daemon 日志 `~/.local/share/chaoset/chaosetd.log`；引擎 stderr 前缀
+  `chaoset-engine:`，可用 `journalctl --user -b | grep chaoset-engine` 查看。
+- 真机排障先跑 `chaosetd -version` / `chaoset-cli -version` 确认构建；
+  daemon 只在启动、连接与失败路径写日志，正常按键不产生磁盘 I/O。
 
 ## 热词导入
 
@@ -1012,7 +1005,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 
 学习数据是增量优化，**不能因为它让输入法起不来**。daemon 与 ibus 引擎启动时
 用宽松加载：`chaoset-userdict.json` 若无法解析（断电写坏、磁盘满、手工编辑、
-旧版本残留），会把它改名备份为 `chaoset-userdict.json.corrupt-<时间戳>`
+异常写入残留），会把它改名备份为 `chaoset-userdict.json.corrupt-<时间戳>`
 并日志记一条警告，然后以空词典继续启动——不会退出、不需要手工删文件。
 
 备份文件保留现场便于排查；确认无用后可自行删除。读取失败（权限不足等）
@@ -1022,9 +1015,10 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 按次数降序、UTC 时间，输出稳定可 diff）；空段省略。`clear` 不可撤销，
 建议先 `export` 备份。
 
-## 版本与变更记录
+## 版本
 
-当前版本与安装包见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)；按阶段的功能、修复与验收记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本与安装包见 [GitHub Releases](https://github.com/ShanWuYinShe/chaoset_ime/releases)；
+版本历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 开发
 
@@ -1044,7 +1038,7 @@ make race     # 并发竞争检测（提交前建议）
 | `engine.TestCommonDictSingleSyllableRanksCommonChar` | 单音节 `jing` 第一候选是常用字「经」，不被生僻字淹没 |
 | `engine.TestExactSyllableCountPreferred` | 完全匹配优先：「经常」排在「经常化」前 |
 | `engine.TestUserBoostBeatsExactMatch` | 反向约束：用户选过的长词要能压过「完全匹配优先」 |
-| `engine.TestCommonDictScale` | 规模与完整性回归：≥10 万条、常用词都在、词频全部落在 1..99 |
+| `engine.TestCommonDictScale` | 规模与完整性回归：≥6 万条、常用词都在、词频全部落在 1..99 |
 
 生成工具自身（`cmd/chaoset-dictgen/main_test.go`，用小样本，不依赖那三个大源文件）：
 

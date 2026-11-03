@@ -1,329 +1,161 @@
 # Windows 平台壳（TSF）
 
-形态：**TSF COM DLL 薄壳（C++）+ 命名管道连 chaosetd（TCP 回环仅兼容旧 daemon）**
-（同 macOS 壳架构：引擎与候选逻辑全在 daemon，DLL 只做按键转发 + 预编辑合成 + 上屏）。
+形态：**TSF COM DLL 薄壳（C++） + 命名管道连接 `chaosetd`**。引擎、词库、候选数据与
+用户学习全部在 daemon；DLL 只负责按键路由、预编辑合成、上屏与原生候选窗。
 
 ## 目录
 
 ```
-../common/ipc/core.hpp|cpp  可移植核心：协议帧（4 字节大端长度 + JSON）、
-                   极小 JSON 解析、会话控制；零 OS 依赖，Windows/Linux 原生壳共用。
-src/win32.cpp      Windows 胶水：COM TIP（ITfTextInputProcessor + ITfKeyEventSink）、
-                   预编辑合成（ITfContextComposition）、命名管道传输（优先，
-                   TCP 回环作迁移期回退）。
-tests/core_test.cpp 核心层行为测试（原生编译，非交叉）。
-build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉编译 + 导出检查。
+../common/ipc/core.hpp|cpp  跨平台 IPC 核心：4 字节大端长度 + JSON、会话控制；
+                             Windows/Linux 原生壳共用。
+src/win32.cpp               TSF COM、键盘/文本编辑会话、候选窗、传输、设置窗。
+tests/core_test.cpp         核心层行为测试（Linux/CI 原生编译，真实 daemon）。
+build.sh                    核心行为测试 + mingw 交叉编译（64/32 位 DLL）。
+installer/chaoset.nsi       NSIS 安装器。
+install.bat                 便携 ZIP 安装/卸载脚本。
 ```
 
-## 验证状态（2026-10-31 更新）
-
-- **真机验证（2026-10-30/31，Windows 11）**：开始菜单/搜索框候选窗恢复显示
-  （owner 缺失 + UILess 类别误声明 + 安装器杀错进程三处修复，v0.2.17 实机
-  确认）；记事本/浏览器/终端等常规宿主正常。游戏/全屏、UWP/AppContainer 细节、
-  多会话（RDP/快切）、无障碍仍待验；per-monitor DPI 与设置窗深色已做编译级实现
-  （2026-10-31），需真机验收（见「已知限制」）。
-- **CI 构建（2026-10-31 新增）**：`ci.yml` 的 `windows-build` job 每次 push/PR
-  都跑 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 编译安装脚本 +
-  ZIP 内容自检；不再只在打 tag 的 release 流程里编译 C++/NSIS。
-- **核心层：行为级验证通过**——`core_test` 用真实 chaosetd（TCP 回环测试台）
-  跑通 17 项：协议帧、JSON（转义/中文/截断）、组词/预编辑/选词上屏/歧义切分/
-  退格/重置、业务错误后连接复用；DLL 实际传输优先命名管道（2026-11-01 新增，
-  TCP 回退），命名管道运行时行为需 Windows 真机验收。
-- **Win32 胶水层：双架构全面支持与原生候选窗**——同时编译出 64 位 `ChaosetIME.dll` 与 32 位 `ChaosetIME32.dll`，
-  规范导出 `DllRegisterServer/DllUnregisterServer/DllUninstallServer/DllGetClassObject/DllCanUnloadNow`，
-  内置原生双缓冲高 DPI 浮动候选窗（光标精准跟随、屏幕边缘防溢出、首选高亮与翻页指示器），
-  注册环节全面支持现代 Windows TSF COM 接口（`ITfInputProcessorProfiles` 与 `ITfCategoryMgr`）及键盘类别/沉浸式/托盘支持，
-  同一个安装包自动同时注册 64 位原生与 32 位 WOW64（如 Steam、游戏、32位办公软件），实现全环境无死角打字。
-- **后台服务：静默 GUI 子系统运行**——`chaosetd.exe` 采用 Windows GUI 子系统构建，开机与运行 0 黑框、0 弹窗，后台完全隐形，日志直接落盘到 `%LOCALAPPDATA%\Chaoset\chaosetd.log`。
-
-## 安装（Windows 真机）
-
-### 方式一：一键安装程序（最推荐，适合所有普通用户）
-
-从 GitHub Release 直接下载 **`ChaosetSetup.exe`**：
-
-1. **直接双击 `ChaosetSetup.exe`**，系统弹出 UAC 提权提示时点击「是」；
-2. 安装向导自动完成：
-   - 释放核心文件到 `C:\Program Files\Chaoset`
-   - 自动注册 64 位与 32 位 TSF COM 输入法组件（`regsvr32`）
-   - 配置开机自动启动后台守护进程（`Run` 用 REG_EXPAND_SZ 按每个用户展开
-     `%LOCALAPPDATA%`；代价是**不关闭任何已打开程序**）
-   - 写入 Windows「已安装的应用 / 控制面板」标准卸载程序
-3. 按 `Win+Space` 切换到 **Chaoset 拼音输入法** 即可开始打字；首次输入时 TSF
-   会以当前用户身份自动启动 daemon（命名管道），无需管理员权限、无需重启。
-4. **升级提示**：安装程序**不会关闭任何正在运行的程序**。已打开的程序继续用
-   旧版 DLL，关闭并重新打开即可加载新版；开始菜单/搜索等系统宿主在注销或
-   重启后完成刷新。被占用的 DLL 由安装器改名/预约重启替换，不会打断用户。
-5. **词库刷新**：安装器调用 `chaoset-import.exe -seed` 把随包底库合并进当前
-   用户的 `%LOCALAPPDATA%\Chaoset\dict.tsv`（保留已导入词、旧文件备份）；
-   其他登录用户首次输入时由 daemon `-seeddict` 初始化。
-
-> 卸载：直接在 Windows「设置 → 应用 → 安装的应用」中找到 **Chaoset 拼音输入法** 点击「卸载」，或在开始菜单中点击「卸载 Chaoset 输入法」。
-
-### 方式二：便携 ZIP 压缩包（免安装）
-
-从 GitHub Release 下载 `chaoset-windows-x64.zip`，解包后：
-
-1. 右键 `install.bat` → 以管理员身份运行；
-2. 卸载：右键管理员运行 `install.bat uninstall`。
-
-> 覆盖升级：`install.bat` 与 NSIS 安装器一致，**不枚举、不强杀加载旧 DLL 的
-> 用户程序或系统宿主**；只清理旧版残留的 UILess 类别并注册新 DLL，占用文件由
-> 重启替换兜底。daemon 在首次输入时以当前用户身份懒启动。
-
-### 方式三：从源码
+## 构建
 
 ```sh
-# macOS 上交叉编译（brew install mingw-w64）
-./build.sh    # 产出 build/ChaosetIME.dll
+# macOS 上交叉编译（需要 brew install mingw-w64）。
+# 产物：build/ChaosetIME.dll、build/ChaosetIME32.dll、build/core_test。
+./shims/windows/build.sh
 
-# Windows 机器上（管理员）：
-regsvr32 ChaosetIME.dll
-# 推荐：命名管道（DLL 自动按当前用户 SID 计算管道名）
-chaosetd.exe -pipe -dict dict.tsv -seeddict dict.tsv -userdict userdict.json -log chaosetd.log
-# 旧 daemon/迁移期仍可用 TCP 回环（DLL 管道失败会自动回退）
-# chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log chaosetd.log
-# 系统设置 → 时间和语言 → 语言和区域 → 添加输入法 ChaosetIME
-# 卸载：regsvr32 /u ChaosetIME.dll
+# 完整 Windows 分发包与 NSIS 安装包（需要 mingw-w64 + makensis）。
+make package-windows
 ```
 
-> `make package-windows` 产出的是可直接分发的 zip，内含
-> `dict.tsv`（14 万条常用词库）、`install.bat`、DLL 与三个 exe。
+`make package-windows` 生成 `dist/chaoset-windows-x64.zip` 与 `dist/ChaosetSetup.exe`。
+ZIP 内含 64/32 位 DLL、`chaosetd.exe`、`chaoset-cli.exe`、`chaoset-import.exe`、
+`chaoset-userdict.exe`、`dict.tsv`、`install.bat` 和本 README。
 
-### daemon 启动与排障（安装后只有英文时先看这里）
+## 安装
 
-安装器**不启动 daemon**，也不会关闭任何已打开程序；daemon 由两处拉起：
-登录时的 `Run` 项（按每个用户的 `%LOCALAPPDATA%` 展开），以及 TSF 首次
-输入时的懒启动（同样以当前用户身份、`-pipe`、`-seeddict` 初始化种子词库）。
+### 一键安装程序（推荐）
 
-1. 确认装的是新构建：`"%ProgramFiles%\Chaoset\chaosetd.exe" -version`；
-2. 看 daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`（启动失败会写原因）；
-   TSF 连接/懒启动诊断在 `%LOCALAPPDATA%\Chaoset\tsf.log`（AppContainer 宿主
-   可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）。
-   daemon 日志含启动构建、用户词典路径与每条 IPC 连接（`network=pipe`）；
-   `tsf.log` 的 `daemon request failed op=... connected=...` 表示已连上但请求
-   超时/失败（2 秒节流，不会随击键刷屏）。
-3. 手动启动（普通用户权限，可在终端复现）：
-   `"%ProgramFiles%\Chaoset\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "%ProgramFiles%\Chaoset\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"`；
-4. 用 `chaoset-cli.exe -pipe` 验证 IPC；只有旧版 daemon 才用
-   `-tcp 127.0.0.1:7949`。
-5. 若开始菜单/搜索框仍是英文，先在同一用户会话的普通程序里打一次拼音让
-   daemon 启动；系统宿主在注销/重启后加载新版 DLL。
+从 GitHub Release 下载 `ChaosetSetup.exe`，双击并允许 UAC。安装器会：
+
+- 把程序安装到 `C:\Program Files\Chaoset`；
+- 注册 64 位与 32 位 TSF COM 组件；
+- 写 HKLM `Run` 项（`REG_EXPAND_SZ`，`%LOCALAPPDATA%` 由每个登录用户展开）；
+- 用 Go 导入器把随包底库合并到当前用户 `%LOCALAPPDATA%\Chaoset\dict.tsv`
+  （保留已导入词，旧文件备份）；
+- 写入标准卸载信息。
+
+安装器**不关闭任何已运行程序**：被占用的 DLL 由改名/重启替换处理。已打开程序继续
+使用旧版 DLL，重新打开后加载新版；系统输入宿主在注销/重启后刷新。
+
+### 便携 ZIP
+
+解压后以管理员身份运行 `install.bat`；卸载运行 `install.bat uninstall`。
+便携脚本不写 Run 项，daemon 在首次输入时懒启动；卸载会清理 HKLM/HKCU 的 Run 项。
+
+### 从源码手动注册
+
+```bat
+regsvr32 ChaosetIME.dll
+chaosetd.exe -pipe -dict dict.tsv -seeddict dict.tsv -userdict userdict.json -log chaosetd.log
+```
+
+然后在「设置 → 时间和语言 → 语言和区域」添加输入法 **Chaoset**，用 `Win+Space`
+切换。卸载：`regsvr32 /u ChaosetIME.dll`。
+
+## daemon 生命周期
+
+安装器不启动 daemon。daemon 有两个启动入口，均运行在**当前交互用户**上下文：
+
+1. 登录时 `Run` 项启动；
+2. TSF 首次激活/首键时懒启动（`-pipe`，当前用户权限）。
+
+daemon 参数：
+
+```bat
+"%ProgramFiles%\Chaoset\chaosetd.exe" -pipe ^
+  -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" ^
+  -seeddict "%ProgramFiles%\Chaoset\dict.tsv" ^
+  -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" ^
+  -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"
+```
+
+`-seeddict` 只在目标词库不存在或为 0 字节时复制安装目录底库，不覆盖用户导入词。
+TSF 懒启动只在尚未连接时尝试，失败后按退避重试，不会每个按键长时间阻塞宿主。
+
+## 传输与安全
+
+- 默认：命名管道 `\\.\pipe\chaoset-<当前用户 SID>`；DLL 与 daemon 用同一 SID 规则。
+- ACL：当前用户 + SYSTEM + ALL APPLICATION PACKAGES 读写；其他本地用户不可连。
+- 兼容：旧版 daemon 只开 TCP 时，壳会回退 `127.0.0.1:7949`；新安装统一使用管道。
+- TCP 回退没有 Unix socket 权限等价物，本机其他用户进程可连，仅用于旧版过渡。
+
+## 日志与排障
+
+先确认二进制构建：
+
+```bat
+chaosetd.exe -version
+chaoset-cli.exe -version
+```
+
+- `%LOCALAPPDATA%\Chaoset\chaosetd.log`：daemon 启动构建、用户词典路径、词库加载、
+  每条 IPC 连接（`network=pipe`）与请求错误。
+- `%LOCALAPPDATA%\Chaoset\tsf.log`：TIP 生命周期、宿主/AppContainer 标志、
+  TSF 调用 HRESULT、候选窗失败、全屏抑制、Shift 跟踪、`daemon request failed`。
+  AppContainer 宿主可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
+  每个进程最多 200 条。
+- `%LOCALAPPDATA%\Chaoset\crash.log`：宿主未处理异常（异常码/地址/模块/调用栈/
+  最后一次 TSF 操作），记录后继续交给 WER。
+
+只有英文候选时：先看 daemon 日志是否启动、`tsf.log` 是否连接失败；用
+`chaoset-cli.exe -pipe` 复验 IPC；只有旧版 daemon 才用 `-tcp 127.0.0.1:7949`。
 
 ## 命令行工具
 
-Windows 安装版 daemon 默认走 `-pipe`（命名管道）；`chaoset-cli` /
-`chaoset-userdict` 也已支持 `-pipe`，传输需与 daemon 一致（只有旧版 daemon 才用
-`-tcp`）。`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑它
-确认装的是新构建**：
-
 ```bat
-REM 确认当前安装/解包的二进制是不是最新提交
-chaosetd.exe -version
-chaoset-cli.exe -version
-
-REM 终端测试台连 daemon（首次输入会懒启动 daemon；传输与 daemon 一致）
+REM 终端测试台（未运行 daemon 时首次调用会触发懒启动）
 chaoset-cli.exe -pipe
-REM 旧版 daemon/TCP 兼容：chaoset-cli.exe -tcp 127.0.0.1:7949
+
+REM 用户词典统计/清空/导出（传输需与 daemon 一致）
+chaoset-userdict.exe -pipe stats
+chaoset-userdict.exe -pipe export -o userdict-backup.tsv
+
+REM 旧版 daemon 兼容
+chaoset-cli.exe -tcp 127.0.0.1:7949
 ```
 
-> 随包携带的 `chaoset-userdict.exe` 同样支持 `-tcp 127.0.0.1:7949 stats|clear|export`
-> （2026-10-31 起与 Linux 包对齐；此前只有源码构建才有该工具）。
+## 功能与验收
 
-| 功能特性 | 状态 |
+| 功能 | 当前状态 |
 | :--- | :--- |
-| 预编辑经 ITfContextComposition 合成；上屏即合成文本替换 | 已实现（编译级） |
-| 原生浮动候选词窗口（双缓冲 GDI、首选高亮、分页指示、**学习标记 `*`**、单页箭头置灰） | 已实现（编译级） |
-| 候选窗布局单位（2026-10-30）：全部 pt 口径 `MulDiv(v,dpi,72)`，与 macOS 1:1（间距/键帽/圆角/最大宽此前是 px@96 的 0.75 倍；96/120/144/192 dpi 像素表见 win32.cpp `pt()` 注释） | 已实现（编译级） |
-| 描边线宽（2026-10-30 补）：面板/键帽/分隔线/Toast 边框改为 pt 化 `max(1,MulDiv(1,dpi,72))`，与 mac 1pt 对齐（此前固定 1 设备像素，125%/150% 缩放下比 mac 细 33%–40%） | 已实现（编译级） |
-| 鼠标点选候选（2026-10-30）：与数字键/空格同路径——先 selectPrefix 渐进上屏、失败才整句 select；此前直接 select，长串下点候选会清空整串拼音 | 已实现（编译级） |
-| 主题切换重绘（2026-10-31）：`WM_SETTINGCHANGE`/`WM_THEMECHANGED` 立即重绘候选窗与提示条，不再保持旧配色直到下次输入 | 已实现（编译级） |
-| 模式提示 Toast：光标行下方 6pt（与候选窗同锚点）+ WS_EX_TRANSPARENT 点击穿透（mac ignoresMouseEvents 对应） | 已实现（编译级，待真机确认观感） |
-| 光标跟随与屏幕边缘碰撞反弹（GetTextExt -> GetGUIThreadInfo -> GetCursorPos） | 已实现（编译级） |
-| 后台服务完全静默（GUI Subsystem，零黑框，零控制台窗口常驻） | 已实现（编译级） |
-| `-` / `=` / `[` / `]` / PageUp / PageDown 候选翻页 | 已实现（核心行为级） |
-| Shift 空按切换中英（英文模式全放行；已确认段先落盘）。2026-10-31 跟踪移到 TSF Test 阶段（OnTestKeyDown/OnTestKeyUp），「非 Shift 键取消空按窗口」同步移入；见「已知限制」 | 已实现（编译级，待真机确认） |
-| Shift+空格切换全角/半角标点（**仅组词态可切**；联想态=选第一个联想词，不切全半角；GetKeyState 查 Shift 状态） | 已实现（编译级） |
-| 已确认段（渐进上屏）收尾（2026-10-30）：Alt/Win 透传、Shift 切中英、空格无候选、翻页通信失败都先落盘/拼接确认段再收尾（与 mac 语义一致，此前会丢已确认的字） | 已实现（编译级） |
-| 双拼 mspy `;` 键（2026-10-30）：`Comp.shuangpin` 下发方案名，双拼模式把 `;` 路由到 `input` 并上屏 `committed`（`m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 | 已实现（编译级） |
-| 模式切换提示（中英/全半角切换时光标旁短暂 toast，约 1.2s 自动消失） | 已实现（编译级） |
-| 词组联想（选词后按上屏词音节查续接词组，复用候选窗展示；上限 30 条分页展示，数字连选/空格结束/字母退出/- = 翻页；associateSelect 学习路径与 select 一致） | 已实现（核心行为级） |
-| 候选栏设置入口（折叠区左侧齿轮 → 独立设置窗口「Chaoset 设置」：输入行为分组 + 词组联想开关 + **学习数据（统计/清空/导出 TSV，2026-10-31）** + **词库导入（GUI，2026-10-31）** + 说明文字，与 macOS SettingsWindow 同构；存 HKCU\Software\Chaoset）。**关闭联想后已显示的联想候选立即收起（2026-10-31）**：设置窗 `PostMessage(HWND_BROADCAST, RegisterWindowMessageW("Chaoset.AssociateChanged"))` → 各宿主进程候选窗转发 TIP `clearAssociate`；设置窗仍不持有 TIP 指针，无宿主进程 UAF（与 mac 通知即时收起对齐） | 已实现（编译级；窗口交互待真机确认） |
-| 候选窗置顶层级：TOPMOST 保持——Windows 下拉菜单是系统模态 topmost popup（弹出时位于 Z 序最上并独占鼠标），候选窗 frame 重叠不会拦截菜单点击；与 macOS 端「popUpMenu 拦截菜单点击 → 降级 floating」的修复互为对照 | 已实现（编译级） |
-| Shift 组合键语义（大写字母/Shift+数字字符不进组词；`?!:<>~"^()` 字符级标点映射） | 已实现（编译级） |
-| 快捷键零 daemon 往返（2026-10-29）：全/半角开关等 UI 开关归壳本地持有，状态随 punct 请求下发，daemon 只按状态产出文本；修饰键组合在 sink 内微秒级放行 | 已实现（编译级） |
-| 键盘只在需要打字时介入（2026-10-29）：未组词时先判相关性（字母/标点）再触碰连接，无关键（数字/导航/F键/修饰组合）微秒级放行；鼠标零特例，候选栏/toast 均为普通窗口行为 | 已实现（编译级） |
-| 宿主上下文不支持 TSF 合成/插入时按键放行（开始菜单搜索框可正常唤起） | 已实现（编译级，待真机确认） |
-| 开始菜单/搜索框拼音：使用当前用户命名管道（ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES），AppContainer 宿主可连；连接失败即时降级英文透传，不再依赖回环豁免 | 已实现（编译级，待真机确认） |
-| 候选窗锚点：合成范围 GetTextExt 拿到零矩形（Chromium 首帧未布局）或宿主无 GDI 光标时退回鼠标位置，不再借 hwndFocus 的恒零 rcCaret（此前候选窗飞到屏幕左上角） | 已实现（编译级，待真机确认） |
-| UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
+| 64/32 位 TSF COM，注册/卸载/类别配置 | 已实现；CI 校验导出 |
+| 命名管道、当前用户按需启动、AppContainer ACL | 已实现；Windows 真机需验收 |
+| 原生 GDI 候选窗、学习标记、鼠标点选、翻页 | 已实现；视觉静态契约由 `checkuiparity` 校验 |
+| 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 编译级实现；交互需真机验收 |
+| Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 投递需真机验收 |
+| 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
+| 游戏/全屏、UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
-## 排障日志（2026-10-29 起）
-
-DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
-
-> 真机排障第一步（2026-10-31 教训）：`chaosetd.exe -version` / `chaoset-cli.exe
-> -version` 打印提交号与构建时间，先确认装的是不是新构建，再看日志。
-
-- `%LOCALAPPDATA%\Chaoset\tsf.log`：TIP 生命周期（宿主进程名、AppContainer 标志）
-  与 TSF 调用失败（`RequestEditSession` / `StartComposition` / `SetText` 的 HRESULT；
-  `no composition after render` 表示宿主上下文不接受合成——预编辑没建出或只读文档
-  拒绝写入，按键已放行给宿主）。每个进程最多 200 条。
-  2026-10-30/31 起新增真机排障行：`candidate shown ... visible=...`（候选窗最终
-  落点/可见性）、`candidate window create FAILED`（创建失败错误码）、
-  `candidate suppressed (fullscreen)`（全屏免打扰命中）、
-  `candidate setOwner FAILED`（owner 设置被拒）、`activeflags ... uiless=0`
-  （宿主是否仍以 UILess 模式运行，修复生效后应为 0）。
-  Shift 跟踪一次性诊断（2026-10-31）：`modifier in OnTestKeyDown/OnTestKeyUp/
-  OnKeyDown/OnKeyUp vk=...` 与 `shift toggle enMode=...`。真机按一次 Shift 后
-  正常应看到 `OnTestKeyDown` + `OnTestKeyUp` + `shift toggle`（OnKeyDown/OnKeyUp
-  可能不出现，这正是两阶段模型的表现）；若连 OnTestKeyUp 与 toggle 都没有，
-  说明该宿主连 Test 阶段都不完整（见「已知限制」）。
-- `%LOCALAPPDATA%\Chaoset\crash.log`：宿主进程未处理异常。记录异常码、异常地址、
-  故障模块 + 偏移、访问类型（读/写/执行）、调用栈与崩溃前最后一次 TSF 操作。
-  记录后返回 `EXCEPTION_CONTINUE_SEARCH`，WER 与宿主自己的崩溃处理不受影响。
-
-反馈崩溃问题时附上这两个文件（如存在），可直接定位到具体模块与偏移。
-
-## 踩坑记录：开始菜单候选窗不显示（2026-10-30）
-
-**症状**：记事本/浏览器/终端里候选窗正常，Windows 11 开始菜单/搜索框里
-完全看不到候选窗；预编辑（带下划线的拼音）显示正常。
-
-**根因是两层，缺一不可**：
-
-1. **候选窗 owner 为空**。`CreateWindowExW` 的 owner 参数一直是 `nullptr`，
-   候选窗是无主顶层窗口，只靠 `WS_EX_TOPMOST` 维持可见性。普通桌面宿主够用，
-   但开始菜单/搜索是**沉浸式 z 序 band** 窗口，无主 topmost 窗口会被压在整个
-   band 之下。修法：用 `ITfContextView::GetWnd()` 取宿主 HWND 作 owner
-   （`CandidateWindow::setOwner` / `hostWindowOf`），owned window 恒在 owner
-   之上，可跨 band。
-2. **旧版安装器杀错进程名（已修复）**。旧版安装器硬编码
-   `ctfmon/TextInputHost/SearchHost/StartMenuExperienceHost` 四个名字，但实机
-   承载开始菜单输入的宿主是 **`SearchApp.exe`**（Windows 11 各版本叫法不同：
-   `SearchUI.exe` → `SearchApp.exe` → `SearchHost.exe`）。旧版还会枚举所有
-   加载 `ChaosetIME*.dll` 的用户进程并强制终止。现在安装器**不再终止任何宿主**，
-   只替换文件并由改名/预约重启兜底，已打开程序重新打开后加载新版。
-
-**为什么这个坑极难定位**（排障方法论，下次照此做）：
-
-- 「预编辑正常但没候选窗」把范围收窄到候选窗自身——排除了 daemon、IPC、
-  TSF 合成三类问题，因为预编辑就来自 daemon 返回的 `comp_.preedit`。
-- **`tsf.log` 零新增是最强的误导信号**。它可能是「没激活」，也可能是
-  「激活了但日志写不进」。AppContainer 进程的 `LOCALAPPDATA` 被系统重定向，
-  原实现两条路径都失败就静默 `return`。现加了第三条兜底：`TEMP`
-  （`\Packages\<Family>\LocalCache\Local\Temp\Chaoset\`）。
-- **决定性证据来自三份数据的交叉对照**：① 进程列表显示 `SearchApp` 加载了
-  DLL；② 日志零新增；③ `EnumWindows` 枚举发现 `firefox`/`WindowsTerminal`
-  有候选窗但 `SearchApp` 连窗口对象都没有。三者结合才排除「被盖住」与
-  「没渲染」，指向 owner 缺失。
-- 教训：**先确认装的是不是新构建**。用户 `LastWriteTime` 停留在旧时间戳，
-  前面几轮的修复其实从未被测到。`Get-Item <dll> | Select LastWriteTime`
-  应作为真机测试的第一步。
-
-**验证等级**：已通过 Windows 11 真机确认（2026-10-30，用户报告开始菜单
-候选窗恢复显示）。
-
-**2026-10-31 收尾（审计 A 批）**：owner 生命周期回收（owner 销毁时 owned
-候选窗被系统连带销毁，`WM_NCDESTROY` 统一清句柄 + 归还防卸载计数，避免计数
-永久泄漏导致 `DllCanUnloadNow` 恒 `S_FALSE`）、ModeToast 补 owner 与计数、
-便携 ZIP 升级路径补旧 UILess 类别清理与按模块杀宿主、NSIS 改用 Sysnative
-64 位 PowerShell 枚举 64 位模块、全屏免打扰、Shift 诊断日志。游戏/全屏独占
-场景仍未真机验证，见「已知限制」。
-
-## 图标与设置界面
-
-- **应用与资源图标**：`resources/chaoset.ico` 提供包含 16×16、24×24、32×32、48×48、64×64、256×256
-  六帧合一的 Windows 标准 ICO 资源，图标统一为极光电光蓝底板 + 纯白与霓虹青「Cs」组合标志 + 顶部拼音声调符号。
-- **语言栏图标**：TSF 不会自动显示应用图标。需实现
-  `ITfLangBarItemButton::GetIcon`（返回 `HICON`），并在 DLL 资源中提供
-  16×16 与 32×32（高 DPI）两档图标；`ITfInputProcessorProfileMgr::RegisterProfile`
-  的 `pszIconFile`/`iconIndex` 也要指向该资源，否则语言栏只有系统默认图标。
-- **设置界面**：Windows 不会给第三方 TSF 输入法提供配置页，因此本壳自绘设置
-  窗口。**当前唯一入口是候选栏右侧齿轮**（`CandidateWindow::onLButtonDown` →
-  `ChaosetTIP::showSettingsWindow`）；语言栏菜单/托盘入口**尚未实现**
-  （`ITfLangBarItem`/托盘菜单在全仓 grep 无命中，此前本文写的「从语言栏菜单/
-  托盘入口打开」与代码不符，2026-10-30 修正）。设置项存
-  `HKCU\\Software\\Chaoset`（`Associate` DWORD），每次进入联想前重读、即时生效。
-- **设置窗口视觉**：380×390pt、13pt 标签 / 11pt 说明（与 macOS SettingsWindow
-  对齐；2026-10-31 增加「学习数据」「词库」区后由 380×190 调高）。**跟随系统深浅**：
-  DWM 深色标题栏（动态加载 dwmapi，属性 20/19）+ 自绘背景/文字/复选框/按钮，
-  `WM_SETTINGCHANGE`/`WM_THEMECHANGED` 即时重绘；分组标题改为加粗 Static
-  （与 mac 的 bold label 同构，避免 GroupBox 在深色下留下浅色边框）。
-  **per-monitor DPI**：按设置窗所在显示器 DPI 布局，`WM_DPICHANGED` 重排。
-  以上为编译级实现，**需真机验收**。
-- **词库导入（2026-10-31，GUI）**：设置窗「词库」区 →「导入词库…」→ 选择
-  Rime dict.yaml / CC-CEDICT txt / TSV（可多选）→ 调随包 `chaoset-import.exe`
-  与 `%LOCALAPPDATA%\Chaoset\dict.tsv` 合并 → 备份旧词库
-  （`dict.tsv.bak.<时间戳>`）→ 同卷 staging + `MoveFileEx` 原子替换 → 读安装器
-  写入的 `ChaosetDaemon` Run 项命令行重启 daemon。导入器退出码非 0 / 无产物 /
-  备份或替换失败都会中止并提示（绝不留下「旧词库已删、新词库没到位」的中间态）。
-  仅作用于安装器管理的默认词库路径；自定义 `-dict` 的部署需手工替换。
+候选窗默认全屏抑制由 `HKCU\Software\Chaoset\FullscreenSuppress` 控制（DWORD，缺省 1）。
+设置窗唯一入口是候选栏齿轮，语言栏/托盘菜单未实现；设置项存
+`HKCU\Software\Chaoset`。
 
 ## 已知限制
 
-- **游戏/全屏场景（2026-10-30 用户提出，未真机测试）**：用户明确要求
-  「游戏中一定不能干扰快捷键、鼠标，那会严重影响使用」。现状分析：
-  - **不会干扰鼠标**：全仓无 `SetWindowsHookEx` / `ClipCursor` / `SetCapture` /
-    `SendInput` / `mouse_event` / `keybd_event`（逐项 grep 均为 0）。鼠标事件
-    只有候选窗自身的 `WM_LBUTTONDOWN`（窗口内点击），不拦截全局鼠标。
-  - **不会干扰快捷键**：组词中按修饰键映射只处理退格/Delete——`Alt+Backspace/Delete`
-    按音节回退、`Win+Backspace/Delete`（映射 macOS Command）全部删除、
-    `Ctrl+Backspace/Delete/U` 全部删除；其余 Alt/Win/Ctrl 组合放行。数字/导航/F 键/
-    空格在未组词时立即放行且不触碰 daemon 连接。
-  - **但中文输入法激活时字母键会被拦**：未组词状态按字母（不带 Shift）会
-    进入组词（`wouldHandle` 的 `relevant` 判定 → `handleKey` 字母分支）。
-    游戏里 WASD 会变成打拼音——这是**任何中文输入法激活时的固有行为**，
-    不是本壳缺陷。用户需在游戏前切英文模式（Shift 空按或 Win+Space）。
-    注意「Shift 空按切换中英」本身待真机确认（见上一条限制）。
-  - **全屏免打扰（2026-10-31 实现）**：`CandidateWindow::show` 前用
-    `SHQueryUserNotificationState` 判定 `QUNS_RUNNING_D3D_FULL_SCREEN` /
-    `QUNS_PRESENTATION_MODE` 时抑制候选窗显示（不改变按键/组词逻辑，避免
-    置顶窗口盖在全屏游戏上闪屏/干扰焦点）。
-    `HKCU\Software\Chaoset\FullscreenSuppress`（DWORD，缺省 1）可关闭——
-    部分全屏浏览器/视频也会命中 D3D 全屏状态，此时设 0 恢复候选窗。
-  - **边界**：无边框全屏（borderless fullscreen）返回
-    `QUNS_ACCEPTS_NOTIFICATIONS`，**不会**触发抑制；独占全屏游戏里是否还有
-    其它干扰仍需真机验证。
-  - **游戏内 WASD 被组词**：中文输入法激活时字母键会进入组词，这是 IME 固有
-    行为，不是本壳缺陷；游戏前请切英文模式（Shift 空按或 Win+Space，Shift
-    切换本身待真机确认）。
+- 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
+- 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
+- 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
+- Shift 跟踪依赖 TSF Test 阶段；若宿主连 `OnTestKeyUp` 都不调用，需要退回
+  `GetKeyState` 轮询。
+- 中文标点按 US 布局字符级映射；其他键盘布局未接入 `ToAscii`。
+- `GUID_TFCAT_CATEGORY_OF_TIP` 在 mingw uuid 库缺失，当前只登记键盘类。
+- 多会话（RDP/快速用户切换）与同一用户多会话的管道命名仍待验证。
 
-- **候选窗 DPI（2026-10-31 已改，待真机验收）**：`layoutAndPosition()` 改用
-  `dpiForPoint(targetPos_)`（动态加载 shcore!GetDpiForMonitor）按锚点所在显示器
-  布局，`onPaint` 复用缓存的 `layoutDpi_`；`WM_DPICHANGED` 重新布局+重绘。
-  Toast 同改（按提示位置取 DPI）。混合 DPI 多屏仍需真机验证。
-- **中英切换已改到 TSF Test 阶段（2026-10-31，待真机确认）**：Shift 空按跟踪
-  原写在 `OnKeyDown`/`OnKeyUp`；按 TSF 两阶段模型，`OnTestKeyDown` 返回 `FALSE`
-  的按键不会再调 `OnKeyDown`，修饰键可能永远进不了跟踪函数（中英切换失效）。
-  现移到 `OnTestKeyDown`/`OnTestKeyUp`（Test 阶段对每个按键都会调用），
-  「非 Shift 键取消空按窗口」也移入 Test 阶段——顺带修掉 Shift+方向键等
-  未组词按键松 Shift 时误切换中英的问题；Ctrl/Alt/Win 的按下与释放同样
-  取消空按窗口（2026-10-31 三端复核补齐，此前 Shift→Ctrl→松 Shift 会误切换）。
-  诊断日志保留（见「排障日志」）：
-  真机按一次 Shift，正常应看到 `modifier in OnTestKeyDown` +
-  `modifier in OnTestKeyUp` + `shift toggle`；若仍只有 TestKeyDown 而无
-  toggle，说明该宿主连 OnTestKeyUp 都不调（罕见），需改 GetKeyState 轮询。
-  这条必须真机验证。
-- **无障碍（2026-10-31，基础能力）**：候选窗处理 `WM_GETOBJECT`，动态加载
-  `uiautomationcore.dll` 并返回 **UIA 宿主 provider（窗口级）**，屏幕阅读器可
-  识别候选窗名称/控件类型/位置；**逐条候选子项与上屏动作未实现**（macOS 有
-  VoiceOver 子元素），需 Windows 真机 + Narrator 验收。
-- 传输：**命名管道优先**——管道名 `\\.\pipe\chaoset-<当前用户SID>`，
-  ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES（开始菜单等 AppContainer
-  宿主可连，其他本地用户不可连）；管道连接失败自动回退 TCP 回环（仅旧 daemon
-  兼容，升级期不中断）。安装版 Run 项与 TSF 懒启动都已切到 `-pipe`。
-- **TCP 回环没有 Unix socket 权限等价物**：mac/Linux 的 daemon 套接字已
-  `chmod 0600`；Windows 若回退到 `127.0.0.1:7949`，本机任何用户进程都能连接
-  daemon 收发组词/上屏数据。命名管道实现后默认路径已消除该问题，回退仅作
-  迁移期兜底。
-- 双拼 `;` 的标点宽度瞬态**已修复（2026-10-31）**：`input` 请求新增可选 `half`
-  字段，壳每次按键下发全/半角状态，引擎先同步再处理——刚切全/半角后单按 `;`
-  不再按旧宽度出标点。
-- 中文标点按 US 布局**字符级映射**（含 Shift 变体：`,` `.` `;` `[` `]` `\` `'`
-  与 Shift 产生的 `:` `<` `>` `?` `~` `!` `^` `(` `)` `"`，已对齐 macOS/ibus
-  壳与 daemon 的字符集；2026-10-27 前 Shift 组合全部错映射、十个中文标点
-  不可达，已修）。仅覆盖 US 键盘布局；其它布局（如德法 AZERTY 的 OEM 键位
-  不同）待真机按需接 ToAscii。
-- `GUID_TFCAT_CATEGORY_OF_TIP` 的值不在 mingw uuid 库中，注册分类暂只
-  登记键盘类；注册完备性待真机确认（`regsvr32` 报错与否即可判断）。
+## 测试
+
+```sh
+./shims/windows/build.sh      # core_test + 交叉编译 + 导出检查
+make package-windows          # ZIP + NSIS 安装器
+```
+
+CI 的 `windows-build` 每次 push/PR 运行上述构建与包内容自检；Release 工作流在打 tag 时
+重新构建并上传 `ChaosetSetup.exe` / `chaoset-windows-x64.zip`。

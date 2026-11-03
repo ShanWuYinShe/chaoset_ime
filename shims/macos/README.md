@@ -1,614 +1,202 @@
 # macOS 平台壳（ChaosetIME）
 
-InputMethodKit 薄壳：只做「按键转发 + 文本上屏 + 候选窗展示」，全部组词逻辑
-在 chaosetd。daemon 未运行时所有按键原样透传，不会影响宿主应用输入。
+InputMethodKit 薄壳：只负责按键转发、文本上屏与原生候选窗；拼音、词库、学习和
+联想全部在 `chaosetd`。daemon 不可达时按键原样透传，不阻塞宿主应用。
 
-## 安装布局（2026-11-01）
+## 安装布局
 
-安装后只有一个输入法 app：`~/Library/Input Methods/ChaosetIME.app`。
-`Contents/Resources/` 内自带 `chaosetd`、`chaoset-import`、`dict_common.tsv`，
-LaunchAgent 直接指向 app 内的 daemon；`~/Library/Application Support/chaoset`
-只放用户数据（userdict.json）、当前词库（dict.tsv）、socket 与日志。
+安装后用户目录只有一个输入法 app：
 
-`dict.tsv` 是 daemon 实际加载的词库：安装时由 app 内置 `dict_common.tsv` 部署，
-用户导入的词条合并进同一文件。升级时不能盲目保留或覆盖（旧内置词库会永远
-不更新，表现为常用字打不出），安装器按文件自身特征分三种情况处理：
-首行是内置词库头 → 未导入过的纯种子副本，直接替换为新内置词库（先备份）；
-首行是 `chaoset-import` 输出头 → 用 `chaoset-import -replace` 合并新内置词库
-（内置词频刷新、用户新增词条保留）；`dict.builtin.sha256` 记录已合并的内置
-版本，版本未变则跳过。
-不再把 daemon 单独复制到 Application Support。安装器（ChaosetSetup.app）
-同时把自己装到 `~/Applications/Chaoset.app`，供设置窗「导入词库」入口调用。
+```
+~/Library/Input Methods/ChaosetIME.app/
+  Contents/Resources/chaosetd
+  Contents/Resources/chaoset-import
+  Contents/Resources/dict_common.tsv
+  Contents/Resources/ChaosetIME-input.tiff
+```
 
-## 按键
+- daemon/导入工具/种子词库都在 app 内，LaunchAgent 指向 app 内 daemon；
+- `~/Library/Application Support/chaoset/` 放用户数据：`dict.tsv`、`userdict.json`、
+  `chaoset.sock`、`chaosetd.log`；
+- 安装器 `ChaosetSetup.app` 同时把「Chaoset 安装与设置」装到 `~/Applications/Chaoset.app`，
+  设置窗的「导入词库」入口调用它；
+- 发布包是 **universal**（arm64 + x86_64），ad-hoc 签名，不需要 Apple 开发者账号，
+  不使用 DMG。
 
-| 按键 | 行为 |
-|---|---|
-| a-z / ' | 进入或追加组词（双拼方案下按键两两成对解码） |
-| 1-9 | 选择本页对应候选并渐进上屏（每页 6 个；越界则清空组词后放行） |
-| 空格 / 回车 | 组词中：空格选首选并渐进上屏（剩余无候选时=确认段+原始拼音上屏）；回车=确认段按文本+剩余按原始拼音一次上屏 |
-| `-` `=` `[` `]` PageUp/PageDown | 候选/联想翻页（`[` `]` 在无候选时是标点键，输出【】） |
-| Shift 空按 | 切换中英（英文模式全透传），提示「英文模式/中文模式」；已确认段先落盘。IMK 只投递 recognizedEvents 声明的事件：壳必须声明 keyDown + flagsChanged，否则真机收不到 Shift（2026-11-02 修复） |
-| Shift+空格 | **组词态**切换全角/半角标点；联想态=选第一个联想词（不切全半角） |
-| 双拼 `;` | `-shuangpin mspy` 时 `;` 是 ing 韵母键（如 `m`+`;`=ming）；非双拼/Shift+`;` 仍是标点 |
-| 标点键 `,` `.` `;` 等 | 输出中文标点（组词中先上屏首选候选）；组词中的 `'` 为音节分隔符 |
-| 退格 | 逐字符回退剩余拼音；剩余删空=确认段立即落盘。Option+Delete=按音节回退；Shift/Ctrl+Delete=取消整条 |
-| Esc | 取消整条组词（含未落盘的已确认段） |
+`dict.tsv` 是 daemon 实际加载的词库。安装/升级时不能盲目保留或覆盖：
 
-## 套接字约定
-
-壳按以下顺序找 daemon：环境变量 `CHAOSET_SOCKET` →
-`~/Library/Application Support/chaoset/chaoset.sock`。
-daemon 必须用相同路径启动（`-socket`）。连接失败有 1 秒冷却重试。
+- 首行是内置词库头 → 未导入过的纯种子副本，替换为新内置词库（先备份）；
+- 首行是 `chaoset-import` 输出头 → 用 `chaoset-import -replace` 合并新内置词库，
+  用户新增词保留；
+- `dict.builtin.sha256` 记录已合并的内置版本，版本未变则跳过。
 
 ## 构建与安装
 
-### 推荐：终端一行命令安装（无需开发者账号）
-
-在「终端」粘贴并回车：
+### 一行命令安装
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ShanWuYinShe/chaoset_ime/main/shims/macos/install-online.sh)"
 ```
 
-脚本会从 GitHub Release 下载 `chaoset-macos.zip`，用 `ditto` 解包并移除 `com.apple.quarantine`，
-把安装器装到 `~/Applications/ChaosetSetup.app` 后自动打开；在窗口里点「一键安装 / 更新」即可。
-不需要 Apple 开发者账号、不需要 `sudo`，也不会出现「Apple 无法验证」提示。
-也可以先下载 `shims/macos/install-online.sh` 人工检查，或指定本地包：
+脚本下载 Release 的 `chaoset-macos.zip`，用 `ditto` 解包并移除 quarantine，把
+`ChaosetSetup.app` 放到 `~/Applications` 后打开；在窗口中点「一键安装 / 更新」。
+不需要 `sudo`，可指定本地包：
 
 ```bash
 CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.sh
 ```
 
-### 手动安装（离线/备选）
+### 手动安装
 
-> 发布包为 `chaoset-macos.zip`（不提供 DMG）；设置窗底部和「Chaoset 安装与设置」状态页都会显示版本，升级后可先核对版本再排障。
+从 Release 下载 `chaoset-macos.zip` 解压，运行 `ChaosetSetup.app`，点
+「一键安装 / 更新」，再按 `Ctrl + 空格`（或 `Fn / 🌐`）切换。
 
-1. 从 GitHub Release 下载 **`chaoset-macos.zip`** 并解压；
-2. 打开解压出的文件夹，运行 **Chaoset 安装与设置**（`ChaosetSetup.app`）；
-3. 在图形界面中点击「一键安装 / 更新」，程序会自动将输入法组件配置到系统、部署常用词库并拉起后台服务；
-4. 按 `Ctrl + 空格`（或根据您的系统设置按 `Fn / 🌐`）切换到 Chaoset 即可开始打字！
+> 不要直接双击 `ChaosetIME.app`：它是安装后的输入法本体，不是安装器。
+> 浏览器下载的 app 带 `com.apple.quarantine` 时，右键安装器 →「打开」。
 
-- 安装包内是 **universal 二进制**（arm64 + x86_64），Apple Silicon 与 Intel Mac 都能直接用；
-- 采用 **ad-hoc 签名**（无商业 Apple 开发者证书）。浏览器下载 zip 后解压的 app 会带 `com.apple.quarantine`，
-  首次打开可能提示「无法验证开发者」，右键**安装器** →「打开」即可；推荐用上面一行命令安装（不会带隔离标记）。
-  > **不要直接双击 `ChaosetIME.app`**：它是安装后的输入法本体，不是安装器；首次安装请运行 `ChaosetSetup.app`。
-- 安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon；不会在 LaunchAgent 未就绪时再手动启动第二个 `chaosetd`（否则活动监视器会出现两个进程）。
+安装器只通过 `ime.chaoset.daemon` LaunchAgent 管理 daemon，不会额外启动第二个
+`chaosetd`。
 
 ### 从源码
 
 ```sh
-./build.sh          # 产出 build/ChaosetIME.app（自带 daemon/chaoset-import/种子词库）、
-                    # build/ChaosetSetup.app 与验证工具 build/tis、build/smoke
-                    # 图标由 tools/make-icon.swift 现场绘制，不依赖任何外部素材
-                    # 默认构建 universal（ARCHS="arm64 x86_64"）；
-                    # 本地快速迭代可只出单架构：ARCHS=arm64 ./build.sh
-
-# 1. 一键安装：把一个自包含的 ChaosetIME.app（移除旧版→拷入→lsregister→TIS 登记）
-#    装入 ~/Library/Input Methods；daemon/导入工具/种子词库都在 app 内，
-#    LaunchAgent 指向 app 内 daemon；用户数据仍在 Application Support。
-./install.sh
-
-# 2. 若没有配 LaunchAgent，手动前台启动 app 内 daemon 先试通
-"$HOME/Library/Input Methods/ChaosetIME.app/Contents/Resources/chaosetd" \
-  -socket "$HOME/Library/Application Support/chaoset/chaoset.sock" \
-  -dict "$HOME/Library/Application Support/chaoset/dict.tsv" \
-  -userdict "$HOME/Library/Application Support/chaoset/userdict.json"
-
-# 3a.（可选，免重登尝试）在普通终端里尽力登记并启用；沙盒进程做不了这件事
-./reregister.sh
-#     它会：重新登记 → 查系统输入源表是否可见 → 可见则 enable + select。
-#     不可见就说明依旧只能走"注销重登"。
-
-# 3b. 一键自检（装入 / TIS 枚举 / daemon / IPC 全链路四段结论）
-./verify.sh
-#    单独看枚举也可：./build/tis list | grep -i chaoset
-#    期望出现父容器 ime.chaoset.inputmethod.ChaosetIME 与模式 ime.chaoset.inputmethod.ChaosetIME.Pinyin 两行
-#    （.Hans 是历史别名：install.sh 会禁用并清理旧模式残留）
-
-# 5. 系统设置 → 键盘 → 输入法 → 添加「Chaoset」，切到它开始打字
+./shims/macos/build.sh     # build/ChaosetIME.app、build/ChaosetSetup.app、build/tis、build/smoke
+./shims/macos/install.sh   # 装入 ~/Library/Input Methods
+./shims/macos/reregister.sh # 普通终端尽力登记并启用（不保证免注销）
+./shims/macos/verify.sh     # TIS/daemon/IPC 全链路自检
 ```
 
-> ℹ️ **2026-10-21 更正：bundle 有效时不需要注销重登。** 装好并调用
-> `TISRegisterInputSource` 后，TIS 立即枚举到本输入法，系统设置「输入法」
-> 里直接可添加、可切换（当日实测）。此前"新增输入法只能靠登录扫描"的结论是
-> 误判：当时 bundle id 以 `inputmethod` 结尾，TIS 审讯不通过——注册返回 noErr
-> 但不会收录（根因与修法见「输入源标识与显示名」）。历史观察（2026-10-06，
-> 对象是无效 bundle）保留如下：`TISRegisterInputSource`、`lsregister -f`、
-> `killall TextInputMenuAgent`、直接 `open` 都不会让它进入输入源列表。
+`build.sh` 默认构建 universal（`ARCHS="arm64 x86_64"`），本地迭代可用
+`ARCHS=arm64 ./shims/macos/build.sh`。图标由 `tools/make-icon.swift` 现场绘制，
+不依赖外部素材。
 
 ## 输入源标识与显示名
 
 | 项 | 值 |
 |---|---|
-| `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（**两者必须一致**；bundle id 必须含内层 `.inputmethod.` 段，见下） |
-| 输入模式（`ComponentInputModeDict.tsInputModeListKey`） | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`，采用标准拼音模式命名避免与系统合成模式冲突） |
-| 显示名 | **Chaoset**（中英同名，无中文译名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 按上面两个 ID 提供 |
-| 图标契约 | 由 `tests/equivalence.sh` 机器断言，避免再次回退：<br>1. **输入源图标（`ChaosetIME-input.tiff`，五个 TIS 图标键全部指向它）**：**22×16 宽扁 keycap**——双帧模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），alpha 为满幅实心圆角按键并把「C」挖空。System Settings、菜单栏（系统栏）、快捷键切换 HUD 统一同一形态（macOS 只有 bundle/mode 两套图标记号，菜单栏与 HUD 共用 mode 级，无法再分）。<br>2. **应用程序图标（`ChaosetIME.icns`）**：极光电光蓝底板 + 纯白/霓虹青「Cs」+ 拼音声调符号（¯）+ PINYIN 字标，用于访达、启动台、活动监视器与设置面板。 |
-| 图标生成 | `tools/make-icon.swift` 现场绘制，不依赖外部素材。**改图标后必须重装并让 TIS 重建缓存**（`./install.sh` 已包含注册与重试）。 |
+| `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（两者必须一致；id 中间必须含 `.inputmethod.` 段） |
+| 输入模式 | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`） |
+| 显示名 | **Chaoset**（中英同名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 提供 |
+| 应用图标 | `ChaosetIME.icns`：极光电光蓝底板 + 白/霓虹青「Cs」+ 声调符号 + PINYIN 字标 |
 
-### 图标要求（用户确认，禁止回退）
+`.Hans` 是旧输入模式别名，`install.sh` 会禁用并清理残留。
 
-**输入源图标 = 22×16 宽扁 keycap**：满幅实心圆角按键 + alpha 挖空单字符「C」，
-五个 TIS 图标键（bundle 级 + mode 级）全部指向 `ChaosetIME-input.tiff`。
-System Settings「添加输入法」列表、菜单栏（系统栏）、快捷键切换 HUD 统一同一形态。
+### 输入源图标（已确认，禁止回退）
 
-为什么不做分场景拆分（2026-10-25 探针实测，结论已用户确认）：
-- macOS 对第三方输入法只有 **两套**图标记号：
-  - bundle 级 `tsInputMethodIconFileKey` / `tsInputMethodAlternateIconFileKey`
-    → System Settings「添加输入法」列表 / 输入源列表；
-  - mode 级 `tsInputModeMenuIconFileKey` / `tsInputModeAlternateMenuIconFileKey` / palette
-    → 快捷键切换 HUD **以及**菜单栏（系统栏）/ 输入菜单。
-- 验证方式：bundle 级 = keycap、mode 级 = 无边框字形、palette = 第三个标记字形，
-  分别测量 `IPInputSource.iconImage`（System Settings 结果键）与合成
-  `TUINSCursorUISwitcher`（HUD 读 mode 键）；另用 `TextInputMenuUI` 的 `InputSource`
-  确认菜单栏标题图取 mode 级图标（`kTISPropertyIconImageURL` 对 mode 返回 mode 级文件）。
-- 因此 **没有** 第三套键可把「菜单栏」与「HUD」再分开：无法做到
-  「系统设置+系统栏 keycap、HUD 无边框字形」。
-- 用户 2026-10-25 确认该限制后选择：**统一为扁平带边框 keycap 版本**，
-  避免同一输入法在不同系统位置形态不一致。
+**统一为 22×16 宽扁 keycap**：满幅实心圆角按键 + alpha 挖空单字符「C」，双帧
+模板 TIFF（22×16@72dpi + 44×32@144dpi、RGB 全黑、ExtraSamples=2、LZW），
+五个 TIS 图标键全部指向 `ChaosetIME-input.tiff`。
 
-关键事实（实测，勿凭记忆）：
-- 尺寸：`IPInputSource -iconImage` 对系统输入源实测渲染为 **22×16 pt（44×32 @2x）**；
-  第三方输入源按 TIS 图标文件的**原始尺寸**显示（16×16 会显示成方块）。
-- 渲染方式：`TISIconIsTemplate=true`，系统按 alpha 着色；图标只需用 alpha 表达形状，
-  RGB 恒 0；keycap 用满幅圆角 alpha + 字形挖空。
-- 复核命令：`./build/icon-size`（与本机 System Settings `iconImage` 尺寸比对）；
-  `tiffutil -info build/Resources/ChaosetIME-input.tiff` 复核双帧与 DPI。
+macOS 第三方输入法只有 bundle 级与 mode 级两套图标键：
 
-改动与验收清单（**动尺寸/形态/配色/键映射前先问用户**）：
-1. 只改 `tools/make-icon.swift` 的 `inputSourceRep` / `writeInputSourceTiff` 与
-   `build.sh` 的图标键映射，保持 22×16 + 44×32 双帧、72/144 DPI、RGB=0、
-   ExtraSamples=2、实心按键 + 挖空「C」，五个键指向同一文件；
-2. `./build.sh` → `./tests/equivalence.sh`（D 段断言 keycap 契约 + 键映射，E 段比对渲染尺寸）；
-3. `./install.sh`（普通终端）后重开系统设置 / 触发一次快捷键切换，目检各处图标一致；
-4. **禁止**改测试或降低断言来“通过”。
+- System Settings 读取 bundle 级图标；
+- 菜单栏/系统栏与快捷键切换 HUD 共用 mode 级图标；
+- 没有第三套键把「菜单栏」和「HUD」再分开，因此统一用带边框 keycap，
+  不做「HUD 无边框」变体。
 
-> ⚠️ **bundle id 必须含内层 `.inputmethod.` 段**（前后都还有别的段），例如
-> `im.rime.inputmethod.Squirrel`、`app.msime.inputmethod.MetasequoiaIME`。
-> 仅以 `inputmethod` 结尾（如曾经的 `ime.chaoset.inputmethod`）**不会生效**：
-> 2026-10-21 本机（macOS 15.8.1）重启登录复验，TIS 输入源缓存（138,876 B，
-> 与纯系统表等大）里仍无该 identifier，系统设置也看不到；这正是此前
-> 「plist 键逐一对齐 Squirrel 仍不收录」的真正原因。依据：
-> `TextInputSources.h`（InputSourceID 推导规则含 "ends in `.inputmethod.`"）、
-> rdar://21376022（结尾写法实测无效、改到中间才生效）、SO 8960016。
->
-> ⚠️ 系统「输入法」列表里若出现**鼠须管**，那是官方 Rime/Squirrel 应用
-> （`im.rime.inputmethod.Squirrel`）。2026-10-05 排障时曾把官方 Squirrel 1.1.2
-> 下载、ad-hoc 重签后放进 `~/Library/Input Methods/SquirrelAdhoc.app`，用作
-> 「同目录第三方输入法能否被枚举」的对照样本；它**不是本项目**，其源码、图标与
-> 名称都不得复用。本项目自身可被枚举后即可删除该样本。
+修改图标必须同时保持：
 
-## 开机自启（LaunchAgent）
+1. `tools/make-icon.swift` 与 `build.sh` 的图标键映射；
+2. `./shims/macos/tests/equivalence.sh` 的 keycap 契约与五键一致断言；
+3. `./shims/macos/build/icon-size` 的 System Settings 渲染尺寸比对。
 
-本机 macOS 15.8.1 实测存在一个 IMK 侧限制：**imklaunchagent 无法按需拉起本输入法**
-（统一日志：`LaunchInputMethod() Error, status=-50`；且 `man imklaunchagent` 写明它会
-对"短时间内反复异常退出"的输入法**直接禁止拉起**——调试期反复 `killall` 会踩到）。
-表现就是输入菜单里选中本输入法后**打字完全没反应**（进程没被拉起，按键被吞）。
-规避方式：**让输入法进程常驻**（实测常驻时客户端能正常 Activate Server，打字正常）。
-因此 `install.sh` 只安装 **一个** LaunchAgent：`ime.chaoset.daemon` → 引擎 daemon（见下）。
-输入法进程本身由系统 IMK 框架拉起（2026-10-26 起不再装 `ime.chaoset.inputmethod`
-常驻 LaunchAgent——额外的 LaunchAgent 会让活动监视器出现两个 ChaosetIME 进程；
-`install.sh` 会主动清理旧版遗留的该 plist）。
+**禁止改测试或降低断言来通过。**
 
-`~/Library/LaunchAgents/ime.chaoset.daemon.plist`（把路径里的 `you` 换成实际值）：
+## 约定与行为
+
+- 套接字：环境变量 `CHAOSET_SOCKET` → `~/Library/Application Support/chaoset/chaoset.sock`；
+  daemon 必须用相同 `-socket` 启动。连接失败有 1 秒冷却重试。
+- 候选窗：AppKit 原生自绘，键帽序号、首选蓝胶囊、学习标记 `*`、分页指示、
+  鼠标点选、VoiceOver 读取；跟随光标与屏幕边缘防溢出。
+- 按键：
+  - a-z / `'` 组词；1-9 选择本页候选（每页 6 个，越界放行）；
+  - 空格选首选并渐进上屏；回车确认段+原始拼音一次上屏；
+  - `-` `=` `[` `]` PageUp/PageDown 翻页；无候选时 `[` `]` 是标点；
+  - Shift 空按切中英（已确认段先落盘）；Shift+空格在组词态切全/半角；
+  - 双拼 mspy 的 `;` 是 ing 韵母键，非双拼/Shift+`;` 仍输出标点；
+  - 退格逐字符，Option+Delete 按音节，Shift/Ctrl+Delete 取消整条；
+  - Esc 取消整条组词。
+- 预编辑经 `setMarkedText` 展示；组词结束清标记区，兼容忽略空插入的客户端。
+
+## LaunchAgent
+
+`~/Library/LaunchAgents/ime.chaoset.daemon.plist` 管理 daemon：
 
 ```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>ime.chaoset.daemon</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/Users/you/Library/Input Methods/ChaosetIME.app/Contents/Resources/chaosetd</string>
-		<string>-socket</string>
-		<string>/Users/you/Library/Application Support/chaoset/chaoset.sock</string>
-		<string>-dict</string>
-		<string>/Users/you/Library/Application Support/chaoset/dict.tsv</string>
-		<string>-userdict</string>
-		<string>/Users/you/Library/Application Support/chaoset/userdict.json</string>
-		<string>-log</string>
-		<string>/Users/you/Library/Application Support/chaoset/chaosetd.log</string>
-	</array>
-	<key>RunAtLoad</key><true/>
-	<key>KeepAlive</key><true/>
-	<key>ProcessType</key><string>Interactive</string>
-</dict>
-</plist>
+<key>Label</key><string>ime.chaoset.daemon</string>
+<key>ProgramArguments</key>
+<array>
+  <string>.../ChaosetIME.app/Contents/Resources/chaosetd</string>
+  <string>-socket</string><string>.../chaoset.sock</string>
+  <string>-dict</string><string>.../dict.tsv</string>
+  <string>-userdict</string><string>.../userdict.json</string>
+  <string>-log</string><string>.../chaosetd.log</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Interactive</string>
 ```
+
+`ProcessType=Interactive` 必须保留：默认 Background 调度会在高负载下节流 daemon，
+造成打字卡顿/丢首字母。安装器会在写入 plist 后用 `grep` 断言该键。
+
+输入法进程本身由系统 IMK 拉起，不再安装第二个常驻 LaunchAgent；
+`install.sh` 会清理旧的 `ime.chaoset.inputmethod` 残留。
+
+## 设置窗口
+
+候选栏右侧齿轮 →「Chaoset 设置」：
+
+- 输入行为：词组联想开关，保存即生效；
+- 学习数据：调频词/用户词组/上下文统计、清空（二次确认）、导出 TSV；
+  经 `EngineClient` IPC 操作 daemon，内存与磁盘一次生效；
+- 词库：打开 `~/Applications/Chaoset.app --import`，由 Setup.app 弹出文件选择，
+  合并 → 备份 → 原子替换 → 重启 daemon；
+- 底部显示 `Chaoset 版本 x.y.z`。
+
+设置窗与 macOS 输入法进程同源，不持有 TIP 裸指针；关闭联想通过通知让已显示
+联想候选立即收起。
+
+## 日志
+
+- daemon：`~/Library/Application Support/chaoset/chaosetd.log`，含启动构建、
+  词库加载、用户词典路径、每条 IPC 连接与请求错误。
+- 壳侧：连接失败、IPC 协议/业务错误、候选窗创建失败写 macOS 统一日志，
+  按 2 秒节流：
 
 ```sh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ime.chaoset.daemon.plist
+log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"' --info --debug
 ```
 
-**QoS（高负载打字卡顿）**：LaunchAgent 不声明 `ProcessType` 时默认按 Background
-调度，系统高负载下 daemon 的 IPC 会被 CPU 节流，表现为打字卡顿/偶发丢首字母。
-必须保留 `ProcessType=Interactive`（`install.sh` 会写入并用 `grep` 断言，删除即回归）。
-8 核满载实测：声明前 IPC p99 452ms、最大 775ms、27 次 >250ms 超时；声明后
-p99 17–20ms、最大 31–57ms、0 次超时；空闲 p99 约 7ms 不变。
-
-`-log` 让 launchd 下的 daemon 日志落到
-`~/Library/Application Support/chaoset/chaosetd.log`（2026-10-31 补；此前
-launchd 不收集 stdout/stderr，daemon 的「已加载词典/落盘失败」等信息看不到）。
-真机排障先跑 app 内 `.../Contents/Resources/chaosetd -version` 确认构建，再对照该日志。
-壳侧（IMK）连不上 daemon / IPC 失败降级时写 macOS 统一日志（每 2 秒最多一条，
-不会随击键刷屏）：`log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"' --info --debug`。
+排障先跑 `.../Contents/Resources/chaosetd -version`，再对照 daemon 与统一日志。
 
 ## 卸载
 
-图形界面卸载：打开「Chaoset 安装与设置」→「卸载」（会停止 daemon、移除
-输入法 app 与安装器，保留 `Application Support` 里的学习数据/词库）。
-
-命令行兜底：
+打开「Chaoset 安装与设置」→「卸载」，会停止 daemon、移除输入法 app 与安装器，
+保留 `Application Support` 中的学习数据/词库。命令行兜底：
 
 ```sh
 launchctl bootout gui/$(id -u)/ime.chaoset.daemon
 rm -f ~/Library/LaunchAgents/ime.chaoset.daemon.plist
 rm -rf ~/Library/Input\ Methods/ChaosetIME.app
 rm -rf ~/Applications/Chaoset.app ~/Applications/ChaosetSetup.app
-# 旧版可能残留（已弃用，装新版时 install.sh 会自动清理）：
-launchctl bootout gui/$(id -u)/ime.chaoset.inputmethod 2>/dev/null || true
-rm -f ~/Library/LaunchAgents/ime.chaoset.inputmethod.plist
 ```
 
-## 验证状态（2026-09-23，本机 macOS 15 / arm64）
+## 验证
 
-已在本机完成的运行时验证：
-
-- **Swift IPC 客户端**：`build/smoke` 用与 app 相同的 EngineClient 实现
-  驱动真实 daemon，6/6 项通过（连接/组词/预编辑/选词上屏/歧义切分/退格/重置）。
-- **app 进程**：二进制可独立启动，IMKServer 初始化 + 主循环存活不崩溃。
-- **ObjC 类注册**：控制器类以 `@objc(ChaosetController)` 显式注册
-  （IMK 用 NSClassFromString 查找，Swift 类不注册会找不到），类名已确认编入二进制。
-- **系统安装**：安装到 `~/Library/Input Methods`、`plutil` 校验、
-  ad-hoc 签名、`TISRegisterInputSource` 返回成功。
-- 过程中修复两处真缺陷：初版误用 `LSBackgroundOnly`（参照 Squirrel
-  改为 `LSUIElement` + `NSPrincipalClass` + `TISInputSourceID` +
-  `TISIntendedLanguage`）；控制器类未注册 ObjC 名。
-- **v3 原生候选窗（当前默认）**：壳内 AppKit 自绘面板
-  （`src/CandidatePanel.swift`）——键帽序号、首选蓝胶囊、深浅色两套静态
-  sRGB 按 appearance 选择、鼠标点选候选、VoiceOver 读取；数据来自 daemon 的
-  Composition（纯数据 IPC）。**v2 统一候选窗贴图**（`candidateImage`
-  客户端方法 + NSPanel 贴图面板）已于 2026-10-27 删除——mac/Windows 两端壳
-  均为原生自绘、Linux 改用 **ibus 原生面板**（不属本项目自绘）后，daemon 侧
-  渲染链路整体移除。深浅色是两套静态 sRGB NSColor，按 `effectiveAppearance`
-  选择并在外观切换时重绘（不是 NSColor 动态色；2026-10-30 修正注释）；
-  不存在渲染回退路径（原生面板不可用时回退 IMKCandidates，v1 起）。
-  **2026-10-22 起面板跟随光标而非鼠标**：经
-  `client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)` 取插入点
-  矩形，优先放在光标行**下方**（`rect.minY - 6`）、下方空间不足时翻到**上方**
-  （`rect.maxY + 6`），并用 `NSScreen.visibleFrame` 钳制不出屏；仅在矩形全零/
-  非有限值时退回鼠标位置（部分 Electron、远程桌面客户端会返回零矩形）。
-- **2026-09-28 真机反馈修复**：Info.plist 此前缺 `ComponentInputModeDict`
-  （输入模式声明），TIS 不把本壳枚举为可添加输入源——已装进
-  `~/Library/Input Methods` 且注销重登，系统设置仍无此输入法，
-  `tis list` 全量输入源中也无条目（`TISRegisterInputSource` 却返回成功，
-  即注册成功 ≠ 可被枚举）。对照 Squirrel `resources/Info.plist` 补
-  单一 zh-Hans 模式（当时用 `…ChaosetIME.Hans`；现为 `…ChaosetIME.Pinyin`，
-  历史别名仅保留在 InfoPlist.strings 映射里）。
-- **2026-10-06 视觉与命名融入中国元素（显示名与图标部分已被 2026-10-22 取代）**：图标改为中国印章语汇——中国红渐变底、
-  `0.022em` 白色外框 + 细内框、宋体（STSongti-SC-Bold，取不到则退系统中文字重）「超」字、
-  大尺寸再叠三枚圆弧组成的如意云纹暗纹；当时中文显示名定为「超集拼音」（英文
-  Chaoset Pinyin）。小尺寸（16/32px）自动退化为干净的印章徽标。
-  **2026-10-22 更正**：项目名是 chaos + set（不是 chao + set），「超集」是误读，
-  显示名已改为中英同名的 **Chaoset**；印章图标只保留为应用图标（.icns），
-  输入源图标改为系统规格的模板图（见上表）。
-- **2026-09-28 显示名本地化**：输入源显示名定名「Chaoset 拼音」
-  （英文环境 Chaoset Pinyin），经 `Resources/*.lproj/InfoPlist.strings`
-  提供——除 CFBundleDisplayName 外还按输入源 ID 逐模式命名
-  （机制同 Squirrel 的 InfoPlist.xcstrings），避免与系统「简体拼音」混淆。
-- **2026-10-06 重要机制发现：文件变化触发的重建"不新增"第三方输入法**。
-  实测：把本项目 app（20:26:16 装入）以及随后的 4 个对照 bundle（含一个改名的官方
-  Squirrel，21:43 正确签名装入）放进 `~/Library/Input Methods`，用户级输入源缓存
-  仍随之被重建（mtime 20:26:19 → 21:42:24 → 21:43:37，均由文件监视触发），但**始终
-  没有新增任何第三方条目**（头部计数保持 66 = 系统输入源数，大小恒为 138,876 B）。
-  即：FS 事件重建负责**移除/刷新**，而**新增第三方输入法只能在登录扫描
-  （`LoginLogoutSCNotificationCallback` → `kCacheRebuildAll`）时发生**——这与
-  macOS 不允许应用在运行期"热插"输入法的安全设计一致。因此 20:26 那次重建没有收录
-  本项目，**不能**说明本 bundle 被拒绝；判定依旧要靠一次登录。
-- **2026-10-06 安装产物体检**：已装 app 的可执行文件为 `0755`、Mach-O arm64；
-  `codesign --verify --deep --strict` → *valid on disk / satisfies its Designated Requirement*；
-  xattr 只有 `com.apple.provenance`（与官方 Squirrel 样本一致）；`spctl` 两者同为
-  *rejected*（ad-hoc 签名皆然，非差异项）。即**文件级问题（权限/签名/扩展属性）可排除**。
-  另：TIS 缓存头部计数对照，19:11（含 Squirrel）为 69 个输入源、20:26 重建后为 66 个
-  （正好少 3 条 `im.rime.inputmethod.Squirrel*`），其中仍无本项目条目——本项目是否在
-  该次重建中被跳过（竞态）还是被审讯拒绝，只有下一次登录重建才能区分。
-- **2026-10-06 缓存重建机制取证**：从本机 dyld 共享缓存的 HIToolbox 字符串确认，
-  TIS 输入源表是**缓存 + 按需重建**：
-  `LoginLogoutSCNotificationCallback -> islcRebuildInputSourceCache( kCacheRebuildAll )`
-  （登录/登出重建）、`InputSourceFSEventCallback -> TISUpdateIntlFileCache`
-  （被监视目录有文件变化时重建，监视列表含 `~/Library/Input Methods/`、`~/Library/Keyboard Layouts/`、
-  `~/Library/Components/`、`/Library/Input Methods/` 等）。用户级主缓存在
-  `$TMPDIR/C/com.apple.IntlDataCache.le.kbdx`（138,876 B）；对照 19:11 的旧副本（139,548 B）
-  可见第三方输入法**确实会进这份表**（当时有 3 条 `im.rime.inputmethod.Squirrel*`）。
-  该缓存与所在目录对本会话均不可写，`killall TextInputMenuAgent`、打开系统设置也不触发重建
-  （系统设置自己的缓存副本停在 19:11），故"重建一次看结果"只能靠登录。
-- **2026-10-06 键集完备性取证**：从本机 dyld 共享缓存的 HIToolbox 字符串里提取系统认识的
-  全部 `tsInputMode*` 键共 12 个（`tsInputModeListKey`、`…KeyEquivalentModifiersKey`、
-  `…KeyEquivalentKey`、`…ScriptKey`、`…PrimaryInScriptKey`、`…PaletteIconFileKey`、
-  `…MenuIconFileKey`、`…IsVisibleKey`、`…DefaultUINameKey`、`…DefaultStateKey`、
-  `…CharacterRepertoireKey`、`…AlternateMenuIconFileKey`）。本壳覆盖其中 11 个，
-  未用的两个（KeyEquivalentKey / DefaultUINameKey）官方 Squirrel 同样没有——即不存在
-  "漏写某个必需键"这一可能，剩余变量只剩登录扫描时机与旧 id 的记忆问题。
-- **2026-10-06 按键路由修复与回归测试**：`tests/key_routing/main.swift` 用合成 NSEvent
-  直接驱动 `ChaosetController.handle`：**新实现 22/22 通过**（2026-10-31 增
-  Option+Backspace/Delete、修饰键映射与联想态/翻页键一致性 11 条），同一套检查下
-  **修复前旧实现 4/8 不通过**（keyUp 未放行、Cmd+S/Ctrl+A 被输入法吞、
-  Shift 空按根本没切换）。
-  三处修复：① 只处理 keyDown/flagsChanged，keyUp 一律放行（否则同一按键可能被处理两次）；
-  ② 带 Command/Control/Option 的组合键一律放行；③ Shift 空按改为"按下装填、松开判定、
-  期间出现其它按键即取消"，Shift+字母 不再误切换。
-  用法：`shims/macos/tests/key_routing/run.sh`（需先 `./build.sh`；脚本自动编译测试、
-  起临时 daemon、跑 22 项断言并清理）；**2026-10-31 起已接入 CI macos-build job**
-  （审计 G7：此前是未接入 CI 的死测试）。
-- **2026-10-06 IPC 韧性修复**：客户端连接后设 `SO_NOSIGPIPE`。daemon 在写入途中退出时，
-  `send()` 到已关闭套接字会触发 SIGPIPE（默认终止进程），**整个输入法进程会被信号杀死**；
-  macOS 没有 `MSG_NOSIGNAL`，按 BSD 惯例设 `SO_NOSIGPIPE` 后写入返回 EPIPE，客户端按既有
-  逻辑断开并降级（按键透传）。差分实测（连接→正常调用→杀掉 daemon→再调用）：
-  **修复前 exit=141（被 SIGPIPE 杀死），修复后 exit=0 且第二次调用返回 nil**。
-- **2026-10-06 候选窗字体实测（renderer 时代，2026-10-27 渲染链路删除后仅作存档）**：
-  本机（macOS 15.8.1）`/System/Library/Fonts/PingFang.ttc`
-  **不存在**，renderer 的平台探测实际命中 `/System/Library/Fonts/Hiragino Sans GB.ttc`（覆盖率好：
-  同一组 9 个候选全部有字形）。**不要把系统宋体加入探测序列**：`Supplemental/Songti.ttc` 的
-  第 0 号 face 覆盖不全，实测同一组候选里有 6 个画成空白（像素统计：含文字行数 50 vs
-  Hiragino 的 114）。AppKit 自绘候选窗用系统字体栈，不经过此探测。
-- **2026-10-06 本地化与"系统确实读过我们的 bundle"复核**：
-  - `InfoPlist.strings` 按输入源 ID 逐模式命名（`CFBundleDisplayName`、`CFBundleName`、
-    `ime.chaoset.inputmethod`、`ime.chaoset.inputmethod.Hans`），与官方 Squirrel 的命名方式
-    一致（Squirrel 同样按 `im.rime.inputmethod.Squirrel[.Hans|.Hant]` 命名），故系统设置里
-    显示的是「超集拼音 / Chaoset Pinyin」（当时显示名；现为 Chaoset），不会露出裸 ID。
-  - `launchctl print gui/$(id -u)` 里有 `application.ime.chaoset.inputmethod.<...>` 处于
-    **running**（program 指向 `~/Library/Input Methods/ChaosetIME.app`，immediate reason =
-    launch job demand）：系统（runningboardd）**已按需拉起过我们的 bundle**，说明它能读到这个
-    app；但输入源**表**（`$TMPDIR/C/…IntlDataCache.le.kbdx`）里仍无条目，佐证"表只在登录时扩充"。
-  - 用 TIS 公共 API 做**过滤**查询（`TISCreateInputSourceList(filter, true)`）在本沙盒进程里
-    一律返回 NULL（不带过滤的查询正常返回 310 条），所以无法在会话内直接
-    `TISEnableInputSource` 把本输入法塞进已启用列表——只能走"注销重登"。
-- **2026-10-06 运行时复查**：把已装好的 `~/Library/Input Methods/ChaosetIME.app`
-  直接启动，能在本会话 bootstrap 里看到它注册的 IMK 服务
-  `ime.chaoset.inputmethod_Connection`（launchctl 里也有 `application.ime.chaoset.inputmethod` 进程），
-  即装在输入法目录里的这份 bundle 能正常作为输入法服务起来。注意 `IMKServer(name:bundleIdentifier:)`
-  的连接名由 **bundle id 推导**（`<bundleID>_Connection`）：实测同一份 plist 连接名、
-  换 bundle id 后注册名随之改变，官方 Squirrel 亦同（其 plist 写 `Squirrel_Connection`，
-  实际注册名仍按 bundle id 推导），故 `InputMethodConnectionName` 只需保持与
-  `CFBundleIdentifier` 同源即可，系统两侧一致。
-- **2026-10-06 枚举失败根因排查（待系统级复验）**：本机 macOS 15.8.1 实测，
-  输入法目录里的 ChaosetIME.app（已有 ComponentInputModeDict、`codesign -v`
-  通过、当天 08:27 重启登录过）在 `tis list` 的 313 个输入源里**依然没有**；
-  而**同目录**下 ad-hoc 重签的官方 Squirrel 1.1.2 能被正常枚举（3 条：
-  `im.rime.inputmethod.Squirrel[.Hans/.Hant]`）。即：不是签名、不是
-  LaunchServices、不是缓存没刷新，而是 TIS 对本 bundle 的 Info.plist 审讯不通过。
-  对照已知可用样本，本壳原有三处结构性差异：① `TISInputSourceID`
-  （`…ChaosetIME`）与 `CFBundleIdentifier`（`…inputmethod`）不一致；
-  ② 完全没有图标键与图标资源；③ 缺 `LSMinimumSystemVersion`、
-  `CFBundleSupportedPlatforms`、`CFBundleSignature`、`LSBackgroundOnly`、
-  `TICapsLockLanguageSwitchCapable`、`InputMethodServerDelegateClass` 等
-  样板键（`CFBundleDevelopmentRegion` 也从 `zh_CN` 改为 `en`）。
-  已按「逐键对齐可用样本」重写 `build.sh` 的 plist 模板并把 ID 对齐为
-  `ime.chaoset.inputmethod[.Hans]`，同时新增自有图标生成器；
-  装入输入法目录后用 `./build/tis list | grep -i chaoset` 复验。
-- **2026-10-21 根因确认（键集对齐不是充分条件）**：用户重启系统（12:37 重启、
-  12:38 登录）后复验，TIS 输入源缓存仍为 138,876 B（=纯系统表大小，无第三方
-  条目），`tis list` 310 条里无本输入法——即键集对齐后的 plist 依旧被拒。
-  对照同一台机器上曾被枚举的 ad-hoc Squirrel（`im.rime.inputmethod.Squirrel`）
-  与官方/同类实现（`app.msime.inputmethod.MetasequoiaIME` 等）后确认：
-  **bundle id 缺少内层 `.inputmethod.` 段**（当时为 `ime.chaoset.inputmethod`，
-  inputmethod 在末尾）是剩余唯一结构性差异。检索证据：
-  - `TextInputSources.h`（本机 SDK）：InputSourceID 由 BundleID 推导时，
-    InputModeID 后缀的裁剪规则写作 "…or that ends in `.inputmethod.`"；
-  - rdar://21376022（Open Radar）：bundle id 为 `…MyInputMethodName.inputmethod`
-    （结尾写法）时注销重登也不显示，改到中间 `…inputmethod.MyInputMethodName`
-    后才出现；
-  - SO 8960016 的公认答案：bundle id 必须含 `inputmethod` 段（`com.blugs.inputmethod.IPAPalette`）。
-  已把 bundle id / TISInputSourceID / 模式 ID / 本地化键统一改为
-  `ime.chaoset.inputmethod.ChaosetIME[.Hans]`，需再注销重登一次让登录扫描收录；登录后
-  `./build/tis list | grep chaoset` 应出现两条，再用系统设置添加或
-  `./reregister.sh` 启用+选中。
-
-- **2026-10-21 候选窗残留修复**：真机使用反馈——输入后点击文本框外或切换应用，
-  v2 贴图候选窗会残留在屏幕上、点不掉也关不掉（`CGWindowList` 实测 owner
-  「超集拼音」（当时显示名）累计数十个 on-screen 窗口）。根因有两点：① 系统结束输入会话
-  （点击文本框外、切换应用/输入法）走的是 `commitComposition:`，而壳只实现了
-  `deactivateServer:`；② 每个控制器实例各持一个 `NSPanel`，会话结束后无人
-  `orderOut`，窗口被 AppKit 的窗口表保留成"孤儿"。修复：候选面板改为全进程
-  共用（静态），`commitComposition:`/`activateServer:`/`deactivateServer:`/
-  `deinit` 全部收起面板，并设 `ignoresMouseEvents` 让点击穿透到宿主应用、
-  触发正常的会话提交。
-
-- **2026-10-21 输入源图标空白修复（已被 2026-10-22 的模板图方案取代，历史记录）**：输入菜单与系统设置里本输入法只显示一个空白
-  圆角方块。根因不是图标文件加载失败（`NSBundle.image(forResource: "ChaosetIME.pdf")`
-  能正常取到 22×22 图），而是系统把输入源图标当**模板图**渲染——只取 alpha 通道着色。
-  原印章 PDF 的 alpha 在字形处也是不透明（中心区域透明像素 0%），整块被涂成白色；
-  对照 Squirrel 的 rime.pdf 中心区域有 42% 透明像素（「鼠」字是挖空的）。
-  修复：菜单/状态栏图标改为**多分辨率 TIFF（16/32/64）并用 `destinationOut` 把「超」
-  字从 alpha 挖空**（TIFF 也是 TextInputSources.h 声明的输入模式图标常规格式）；.icns
-  应用图标保持白字彩底不变。验证：TIFF 三页中心透明像素占 17%–22%，装回后菜单图标
-  呈现「超」字形。
-- **2026-10-22 输入源图标改为系统同款 keycap「Cs」+ 双变体**：真机反馈——① 输入菜单
-  里本输入法条目呈灰色、图标仍是空白方块，而系统设置里能显示红色印章图；② 方形印章
-  图标与 ABC/简体拼音的扁平 keycap 尺寸风格不一致，希望改用「Cs」（Chaoset）字标。
-  对应调整：
-  - 输入源图标改为 **20×16 扁平圆角 keycap + 系统字体「Cs」**（多分辨率
-    20×16/40×32/60×48）；应用图标 `.icns` 也改为同一 keycap 设计（方形画布居中）；
-  - 生成两个模式图标变体 `ChaosetIME-menu.tiff` / `ChaosetIME-palette.tiff`
-    （均为字形 alpha 挖空），分别挂到 `tsInputModeMenuIconFileKey`/`…AlternateMenu…`
-    与 `…Palette…`；
-  - 补 bundle 级 `tsInputMethodIconFileKey`/`…AlternateIconFileKey`（指向 palette），
-    让父输入源也有图标，避免菜单/系统设置里出现空白或裸 ID。
-  - **为什么必须两个文件**：输入菜单按模板图渲染（只取 alpha），系统设置按彩色渲染；
-    同一张图无法同时满足（挖空字形在彩色浅色界面会"隐形"，实心彩色图在模板路径会成
-    实心方块）。
-  - 系统设置列表与切换 HUD 的图标来源：两者取的是**应用图标**（`.icns` / TIS
-    IconRef），不是 mode 图标；HUD 还按模板图渲染。所以 `.icns` 必须一起改成
-    keycap 并挖空字形，否则系统设置显示旧印章、HUD 显示白方块（2026-10-22 实测）。
-  - 灰色条目的真因（2026-10-22 定位）：输入菜单里的灰色条目 = **系统 TIS 输入源表
-    里没有本 bundle，但 `~/Library/Preferences/com.apple.inputsources.plist` 的
-    `AppleEnabledThirdPartyInputSources` 里仍有启用记录**（菜单按启用记录画出占位项，
-    因查不到输入源元数据而置灰不可选）。而 TIS 表缺失，是**重装 bundle 的竞态**造成：
-    替换 `~/Library/Input Methods` 里的文件会触发 TIS 缓存（`$TMPDIR/../C/
-    com.apple.IntlDataCache.le.kbdx`）重建，重建只移除/刷新、**不新增第三方输入源**；
-    登记动作若落在重建落盘之前就会被随后覆盖。
-  - 判定：在**普通终端（无沙盒）**执行 `build/tis list | grep chaoset` 看不到条目，
-    缓存大小是 138,876 B（纯系统表）；而 `defaults read`/`plutil` 里仍有启用记录。
-    注意：沙盒进程读不到系统缓存，会临时扫描目录凑出一份列表（能"看到"本输入法），
-    所以**必须在无沙盒终端判断**。
-  - 恢复：普通终端执行 `build/tis register "$HOME/Library/Input Methods/ChaosetIME.app"`，
-    缓存应变为 139,3xx B 并出现 `…ChaosetIME` / `…ChaosetIME.Hans` 两条，
-    菜单里的灰色条目随即恢复可选，**无需注销重登**。`install.sh` 已改为拷贝后
-    `sleep 2` 再登记并重试校验，避免再次踩到。
-
-- **2026-10-22 IMK 连接名与按需拉起限制**：
-  - `InputMethodConnectionName` 必须是 **`<CFBundleIdentifier>_Connection`** 形式
-    （本壳为 `ime.chaoset.inputmethod.ChaosetIME_Connection`，main.swift 直接读 plist，
-    两处不会再不一致）。不满足时 `imklaunchagent` 记录
-    `Refusing connection name for bundle: unrecognized 'InputMethodConnectionName' value`。
-    依据：imklaunchagent 行为实测 + metasequoiaime/msime PR #2989（同一坑的修复记录）。
-  - 本机（macOS 15.8.1）实测 **imklaunchagent 仍无法按需拉起本输入法**：
-    `LaunchInputMethod() Error, status=-50` → 客户端拿不到 endpoint → 选中后打字
-    完全没反应。`man imklaunchagent` 还写明：对"短时间内反复异常退出"的输入法会
-    **直接禁止拉起**——调试时反复 `killall` 很容易踩到。
-  - 规避（已落地）：`install.sh` 安装 **`ime.chaoset.inputmethod` LaunchAgent**
-    让输入法进程常驻；实测常驻时客户端能正常 `Activate Server`、打字正常。
-    排查时不要把常驻进程当作"泄漏"随手 kill（会触发上面的禁启保护）。
-
-安装后的人工步骤（**无需注销重登**，2026-10-21 实测）：
-
-1. 系统设置 → 键盘 → 输入法 → 添加「Chaoset」并切换过去；
-   不想用系统设置时，可运行 `./reregister.sh`（尽力启用+选中）。
-2. 在任意文本框打字验证：字母组词、数字/空格选词、候选窗跟随光标（在窗口最下方输入时应翻到光标上方）。
-3. 若系统设置里仍看不到：`./build/tis list | grep chaoset` 查看枚举状态，
-   必要时注销重登一次刷新菜单缓存。
-
-- **2026-10-22 输入源图标对齐系统规格（切换 HUD 空白方块的真正根因）**：
-  真机反馈「用 ⌃空格 切换输入法时，系统弹窗里本输入法没有图标（一块空白圆角方块）」。
-  逐像素对照系统 `SCIM.app/…/pinyin.tiff` 后定位到规格差异：
-  ① 系统图标是 **16×16（72dpi）+ 32×32（144dpi）双帧 TIFF**，我们此前是 20×16/40×32/60×48
-  三帧（尺寸与 Retina 帧比例都不符）；② 系统图标 **RGB 恒为 (0,0,0)**、形状只由 alpha 表达，
-  我们此前是白底 RGB 图；③ 系统 plist 用 `tsInputMethodIconFileKey` 同时给父输入源与模式，
-  我们此前父级指向 palette 变体、模式指向 menu 变体，两处不一致。
-  修复：`tools/make-icon.swift` 改为生成 `ChaosetIME-input.tiff`（16×16+32×32、RGB 全黑、
-  alpha 表达圆角方块 + 挖空「Cs」），Info.plist 五个图标键全部指向它，并补 `CFBundleIconName`。
-  **验证**：`file` 确认 LZW 双帧、Pillow 确认 RGB=(0,0,0) 且 alpha 0/255 双峰、
-  `tis` 确认 `kTISPropertyIconImageURL` 指向新文件。HUD 实际显示需重装后由人工确认。
-
-- **2026-10-22 第三次修正：2x 帧 DPI 与字形度量（系统设置里仍显示不一致）**：
-  用户反馈系统设置「添加输入法」列表里图标仍与其他输入法风格不符。逐项排查后
-  又发现三处：
-  ① **2x 帧的 Resolution 标签必须是 144**——`tiffutil -cathidpicheck` 会沿用
-     输入 PNG 的 DPI，而 `NSBitmapImageRep.representation` 写的 PNG 不带 pHYs，
-     结果两帧都标成 72dpi。系统据此认不出 32×32 是 2x，HiDPI 下拿 16×16 拉伸，
-     表现为图标糊、字形位置偏。修法：PNG 用 `CGImageDestination` 带 DPI 写出，
-     并在 tiffutil 之后**直接改 TIFF 二进制的 282/283 标签**（逐帧 72/144）。
-  ② **字形高度必须按墨迹（glyph path bounds）二分，不能用行高**——
-     `NSAttributedString.size()` 含上下留白，用它当目标高度会让实际墨迹偏小
-     （实测 32×32 帧只占 16 行，期望 22 行）。改用
-     `CTLineGetBoundsWithOptions(.useGlyphPathBounds)` 二分字号。
-  ③ **CGBitmapContext 原点在左下**——像素缓冲按「第 0 行在上」读回时必须翻转 y，
-     否则字形整体偏移。
-  验证：与系统 `pinyin.tiff` 逐帧比对，`n_frames`、两帧尺寸、`282/283`、
-  `ExtraSamples`、`compress`、`SamplesPerPixel`、`BitsPerSample` 全部一致；
-  AppKit 解码路径下 alpha 网格与 `拼` 同构。
-
-- **2026-10-22 输入源图标规格再修正（用户反馈颜色/大小/hover 不一致）**：
-  系统设置与菜单栏里本输入法图标比 ABC、简体拼音偏亮、字形偏小、hover 无变化。
-  逐标签比对系统 `pinyin.tiff` / `Korean.tiff` / `Katakana.tiff` 后确认三处差异：
-  ① **ExtraSamples 标签**——系统是 `2`（UNASSOCIATED，非预乘 alpha），
-     我们用 `CGImageDestination` 直接写多帧得到 `1`（ASSOCIATED，预乘），
-     系统按模板图取 alpha 着色时两者观感不同。改用 `tiffutil -cathidpicheck`
-     合成，输出与系统逐标签一致（`ExtraSamples=(2,)`、`tiffutil v350`、LZW）。
-  ② **字形必须是单字符**——系统内置输入源全部单字符（ABC「A」、简体拼音「拼」、
-     韩文「한」、假名「あ」）。此前的「Cs」两字符在 16px 里只能占一半宽度，
-     视觉重量明显轻于系统图标。改为单字符「C」。
-  ③ **字形高度 0.69×边长**（系统图实测 11/16 行）。直接在 16×16 上画字体笔画
-     只有 1px 会断成 4 段，故先在 8× 超采样画布上用 `CGBitmapContext` 绘制
-     「圆角方块挖去字形」，再用 alphaOnly 灰度上下文读回 alpha、降采样写入。
-  验证：`file` 确认双帧 LZW、Pillow 确认 `ExtraSamples=(2,)` 且 RGB 恒 0、
-  模板渲染目检与系统图标同款。**hover 是系统对模板图自动加的高亮，图标本身是
-  纯 alpha 后即由系统统一处理。**
-
-- **2026-10-24 输入源图标回归系统同款扁平 keycap + 刷新链路可验证化**：
-  真机反馈——系统设置「添加输入法」列表与菜单栏/状态栏里的本输入法图标呈
-  「细描边空心底座 + 实心 C」，与系统 ABC / 简体拼音的实心扁平按键不一致，像系统
-  通用占位图；同时添加列表里出现多条 Chaoset 重复条目。逐像素对照后定位并修复：
-  - **图标**：系统 `SCIM/.../pinyin.tiff` 的 alpha 是**满幅实心圆角按键 + 字形挖空**
-    （alpha 均值 187.7），而此前的 `ChaosetIME-menu.tiff` 是**描边 + 半透明底 + 实心 C**
-    （alpha 均值 117.0），模板渲染后必然呈「空心按键」。已改回系统同款
-    `ChaosetIME-input.tiff`（实心按键 + 挖空 C，alpha 均值 192，双帧尺寸/DPI/
-    ExtraSamples 与系统逐标签一致），Info.plist 五个图标键统一指向它（palette 键
-    仍指向纯字形 HUD 图），并删除 menu/icon2 两个历史变体。
-  - **重复条目**：在全新进程里用 InputMethodKit 同源的
-    `IPAddInputSourceSheetController`（PreferencePanesSupport 私有类）枚举
-    「简体中文」候选，只有 1 条 Chaoset + 5 条系统输入源——说明 bundle/TIS 本身
-    不产生重复；重复来自安装/刷新期间系统设置进程沿用旧 TIS 快照（旧版 install.sh 的
-    `find /var/folders ... -delete`、`pkill System Settings` 等步骤在沙盒/受限进程里
-    会静默失败，且未清理「每进程一份」的 `com.apple.IntlDataCache`）。install.sh 已改：
-    运行前探测写权限（受限时明确报错退出）、登记幂等（已收录不重复 register）、
-    按用户临时目录清理**全部** TIS 缓存副本并重启 System Settings / 键盘设置扩展 /
-    HUD 相关进程、结束前校验 TIS 表中恰好 2 条（父容器 + Pinyin 模式）。
-  - **机器自证**：`tests/equivalence.sh` 的图标契约改为断言 input.tiff 的
-    「实心按键 + 挖空字形」（alpha 均值、边角、内部镂空像素数、双帧尺寸），并校验
-    Info.plist 五个图标键全部指向预期文件。
-  - **追加修正（同日，用户第二次反馈「应该是扁平的，而不是正方形」）**：系统设置/菜单栏
-    实际按 **22×16（44×32@2x）宽扁 keycap** 渲染——用 `IPInputSource.iconImage` 实测
-    系统输入源统一返回 22×16，第三方输入源则按 TIS 图标文件原尺寸显示；此前提供的
-    16×16 正方形因此被显示成方块。已把 `ChaosetIME-input.tiff`/`palette.tiff` 全部改为
-    22×16 宽扁画布，`tests/equivalence.sh` 同步断言 22×16/44×32 尺寸。
-  - **追加修正（同日，用户第三次反馈「快捷键切换 HUD 里必须是无边框的 C」）**：
-    实测确认快捷键切换 HUD、系统设置添加列表、菜单栏读的是**同一份 TIS 图标**——
-    把 `ChaosetIME-input.tiff` 临时替换为无边框字形后 HUD 立即变成无边框 C，
-    macOS 不会给第三方输入法按场景区分图标。因此最终把输入源图标统一为
-    **22×16 无边框纯字形「C」**（透明底、无按键底板/描边），删除 palette 变体，
-    Info.plist 五个图标键全部指向同一文件；`tests/equivalence.sh` 改为断言
-    22×16 + 四边透明 + 字形存在，`shims/macos/README.md` 与项目 `AGENTS.md` 同步更新。
-  - **最终修正（同日，用户第四次反馈「HUD 里的图标对了，但系统设置的图标也被你改成这个了」）**：
-    上一轮把五个图标键合并成一份文件，导致 HUD 与 System Settings 无法区分。用探针图标
-    （keycap / 字形 C / 字形 H 三种形态分别挂到 bundle 级与 mode 级键）实测确认：
-    - System Settings 的 `IPInputSource.iconImage` 取 **bundle 级**键
-      （`tsInputMethodIconFileKey` / `tsInputMethodAlternateIconFileKey`）；
-    - 快捷键切换 HUD（`TUINSCursorUISwitcher`）取 **mode 级**菜单键
-      （`tsInputModeMenuIconFileKey` / `tsInputModeAlternateMenuIconFileKey`）。
-    因此恢复两份 22×16 模板图并分别映射：`ChaosetIME-input.tiff`（keycap，bundle 级键）+
-    `ChaosetIME-hud.tiff`（无边框字形，mode 级键），mode palette 键同用 hud 图。
-    `tests/equivalence.sh` 改为双契约 + 键映射断言（并保留 E 段渲染尺寸比对），
-    `AGENTS.md` 与本 README 同步更新；System Settings 与 HUD 现在各自正确。
-  - **2026-10-25 最终统一（用户确认 macOS 限制后决定）**：用户要求先确认 macOS 是否
-    不支持「系统设置+系统栏 keycap、HUD 无边框字形」这种区分。探针实测结论：
-    - System Settings → bundle 级图标键；
-    - 快捷键切换 HUD **与菜单栏（系统栏）** → mode 级图标键
-      （`TISGetInputSourceProperty(kTISPropertyIconImageURL)` 对 mode 返回 mode 级文件；
-      `TextInputMenuUI` 的 `InputSource` 菜单栏标题图也取 mode 级图标）；
-    - macOS 只有 bundle/mode 两套图标记号，**没有第三套**可把菜单栏与 HUD 分开，
-      所以第三方输入法无法同时满足「系统栏 keycap + HUD 无边框字形」。
-    用户确认后选择「统一用扁平的带边框版本」：恢复单一 `ChaosetIME-input.tiff`
-    （22×16 实心圆角 keycap + 挖空 C），五个图标键全部指向它，删除 hud 变体；
-    `tests/equivalence.sh` 改为单 keycap 契约 + 五键一致断言，`AGENTS.md` 与本 README 同步。
-
-## 设置窗口（候选栏齿轮）
-
-候选栏右侧齿轮 → 「Chaoset 设置」窗口（三端同构）。2026-10-31 起包含：
-
-- **输入行为**：词组联想开关（即时生效）。
-- **学习数据**：调频词 / 用户词组 / 上下文统计；「清空学习数据…」（二次确认）、
-  「导出学习数据…」（NSSavePanel 保存 TSV）。数据经 `EngineClient` IPC 直接作用于
-  daemon（内存 + 磁盘一次生效）；普通用户无需命令行（`chaoset-userdict` 仅高级/
-  无 GUI 环境兜底）。
-- **词库**：「导入词库…」打开随包安装的 `~/Applications/Chaoset.app`（安装与设置）
-  并传 `--import`，由它直接弹文件选择面板（Rime dict.yaml / CC-CEDICT txt / TSV，
-  可多选），完成合并 → 备份 → 原子替换 → 重启 daemon。导入实现只有 Setup.app 一份，
-  输入法壳不复制逻辑；入口与 Windows 设置窗「词库」区对齐（2026-10-31）。
+- `shims/macos/tests/key_routing/main.swift`：按键路由/组词/上屏行为；
+- `shims/macos/tests/equivalence.sh`：图标契约、universal 架构、TIS 图标键；
+- `shims/macos/tests/visual-parity.sh`：macOS 候选窗布局与配色常量；
+- `build/smoke`：真实 daemon 的 IPC 组词/上屏/退格/重置；
+- `shims/macos/verify.sh`：装入、TIS 枚举、daemon、IPC 全链路。
 
 ## 已知限制
 
-- 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；
-  少数客户端（个别 Electron 应用、远程桌面）返回零矩形，此时退回鼠标位置，
-  位置可能不理想。
-- 双拼 `;` 的标点宽度瞬态**已修复（2026-10-31）**：`input` 请求新增可选 `half`
-  字段，壳每次按键下发全/半角状态，引擎先同步再处理——刚切全/半角后单按 `;`
-  不再按旧宽度出标点。
-- 首项超长候选现在按字符截断加「…」（2026-10-30），保证面板内容宽 ≤638pt、窗宽 ≤714pt；
-  候选文本本身不会被截断存储，VoiceOver 仍读完整文本。
-- 修改 app 后重装：`install.sh` 结束时会清 TIS 缓存并重启系统设置相关进程；重装期间
-  如果系统设置正开着，请关掉后重新打开再看「添加输入法」列表（旧窗口可能停留在装前快照）。
-  已经添加过的本输入法在该列表里呈灰色是正常现象（表示已启用，不能再添加一次）。
-- 打字闭环尚未人工验证（需要 GUI 交互与注销重登，无法脚本化）。
+- 候选窗跟随光标依赖 `attributes(forCharacterIndex:lineHeightRectangle:)`；个别
+  Electron 应用或远程桌面返回零矩形时退回鼠标位置。
+- VoiceOver 提供候选文字与窗口级信息；逐条候选子项动作未实现。
+- 首项超长候选按字符截断加「…」，面板内容宽 ≤638pt、窗宽 ≤720pt；存储与
+  VoiceOver 文本仍完整。
+- 修改 app 后重装会清 TIS 缓存；若系统设置一直开着，关闭再打开才能看到新列表。
+  已添加的输入法在列表中呈灰色表示已启用，不能再添加一次。
+- 打字闭环的真机交互（GUI 点选、注销重登）需人工验收，脚本化测试不能完全替代。

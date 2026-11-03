@@ -1,6 +1,6 @@
 ---
 name: ime-daemon-lifecycle
-description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）的生命周期排障：多实例、僵尸套接字、首字母丢失、菜单栏重复条目、LaunchAgent 自启、输入源被杀。触发：活动监视器里出现多个 chaosetd、切换输入法后首字母丢失或打不出字、菜单栏/系统设置出现多个 Chaoset、装完输入法从菜单栏消失、kill daemon 后不自动恢复、TIS 条目数不是 2。
+description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）/ Windows TSF 的生命周期排障：多实例、僵尸套接字、首字母丢失、菜单栏重复条目、LaunchAgent 自启、输入源被杀、Windows 安装后只有英文、命名管道/懒启动失败。触发：活动监视器里出现多个 chaosetd、切换输入法后首字母丢失或打不出字、菜单栏/系统设置出现多个 Chaoset、装完输入法从菜单栏消失、kill daemon 后不自动恢复、TIS 条目数不是 2、Windows 首键无候选。
 ---
 
 # 守护进程与输入源生命周期（本项目专用）
@@ -122,6 +122,24 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
   真正消失再 bootstrap，且不要紧跟 kickstart（会杀掉刚拉起的进程）。
 - 就绪判定**必须用真实 IPC 往返**（`build/smoke`），不能只看套接字文件存在
   或盲目 sleep。
+
+## Windows 守护进程
+
+安装器不启动 daemon。daemon 由当前交互用户启动，两处入口：登录时的
+`HKLM\...\Run` 值（REG_EXPAND_SZ，按用户展开 `%LOCALAPPDATA%`）与 TSF 首次
+激活/首键的懒启动；都传 `-pipe -seeddict`。
+
+- 管道名 `\\.\pipe\chaoset-<当前用户 SID>`；ACL 当前用户 + SYSTEM +
+  ALL APPLICATION PACKAGES。TCP 回退只用于旧版 daemon。
+- 候选只有英文：先看 `%LOCALAPPDATA%\Chaoset\chaosetd.log` 是否启动、是否
+  有 `ipc 连接 network=pipe`；再看 `tsf.log` 的 `daemon lazy start`、
+  `pipe connect failed`、`daemon request failed`。AppContainer 宿主日志可能在
+  `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
+- 手动复现：`chaosetd.exe -pipe -dict ... -seeddict ... -userdict ... -log ...`，
+  再用 `chaoset-cli.exe -pipe` 验 IPC；不要以管理员身份启动 daemon。
+- 安装/升级不得强杀用户程序或系统输入宿主；被占用 DLL 由改名/重启替换。
+- 设置窗导入词库后重启 daemon 走 detached 启动，不能用等待进程退出的
+  `settingsRunProcess`。
 
 ## 四、验证命令（改完这一块必跑）
 
