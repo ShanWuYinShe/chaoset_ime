@@ -73,6 +73,8 @@ description: chaoset_ime 拼音匹配与输入预测的质量调优流程：如�
 `engine/common_dict_test.go` 的 `TestSingleSegmentOnlySingleChars` /
 `TestSingleSegmentNoWords` / `TestAllSingleSegmentInputsOnlySingleChars`、
 `engine/initials_test.go` 的 `TestTwoLetterInitialKeepsWords`。
+其余相关回归：`engine/short_pinyin_single_test.go`、`engine/typo_test.go`、
+`engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。
 
 **两个 exact 上限不要混**：单音节全拼/单段声母（y/j/zh…）/单字兜底用
 `singleSyllableExactLimit`=300（同音字全量，yi 141 等）；**多段**简拼/混拼的

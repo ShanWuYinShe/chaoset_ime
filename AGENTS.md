@@ -56,27 +56,14 @@ make check-version  # 断言源码里没有写死的版本号
 
 ### 验证交给 CI，本地只跑轻量项
 
-测试尽量由 GitHub Actions 承担，本地跑测试会占用 CPU 影响正常使用电脑。
-因此 **提交前本地只需要**：
+测试/构建重活一律交给 CI，本地跑会占用 CPU 影响正常使用电脑。**提交前本地只需要**：
 
 ```bash
 gofmt -l $(git ls-files '*.go')   # 应无输出
 go build ./...                    # 秒级
 ```
 
-其余全部由 CI 并行执行（单次提交约 3-5 分钟出全部结论）：
-
-| CI job | 覆盖内容 | 为什么不在本地跑 |
-|---|---|---|
-| lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 三端 UI 一致性（`check-uiparity`）/ 构建 | 快，但统一在 CI 跑保证一致 |
-| test | go test ./...（数据契约/引擎/壳行为测试） | 约 30s |
-| race | `go test -race` | 最重的一项，本机 45s+ |
-| linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页；Linux 安装包自检（tar.gz/deb 必含设置窗模块） | 需要 dbus + ibus，占资源 |
-| macos-build | macOS 壳构建 + universal 自检 + ZIP 安装包 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
-| windows-build | Windows 壳 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 安装包编译 + ZIP 自检 | 需要 mingw-w64/NSIS，本机不装；每次提交都验证（不只在打 tag 时） |
-
-本地真需要跑完整验证时，`make test`、`shims/linux/test-ci.sh`、
-`shims/macos/tests/equivalence.sh` 都能直接执行（与 CI 同一套脚本）。
+6 个并行 job 的覆盖范围、本地复跑方式与 CI 相关陷阱见 skill `ime-daemon-lifecycle`「五、CI 相关」。
 
 ## 候选质量（拼音匹配 / 输入预测）
 
@@ -89,32 +76,14 @@ go build ./...                    # 秒级
   （只写正向测试时，「把所有预测候选置顶」这种粗暴实现也能通过）；
 - 经验参数（如 `continuationPenalty`）必须经完整基线数据扫描定型，
   取值理由写进代码注释与 README，不允许后来者凭手感调整。
-- **整句学习安全约束**：整句式学习记录必须带分段
-  （`Words.Segs` / `Phrases.Segs`），只在**完整输入**时作为整句候选；部分输入
-  不得出现整词候选；联想只能在用户确认过的**分段边界**剥前缀——打「今」绝不
-  得给出「天星期一」。改动学习/联想/候选生成逻辑后必须保留
-  `engine/sequence_learn_test.go` 的双向回归（完整输入学到的整句可用 +
-  部分输入不反噬「今天」）。
-- **当前候选/排序硬约束**（改 `engine/` 排序/候选生成必须同时满足）：
-  - 候选只来自真实词条；组合候选只在 `rankComposition`，单字兜底只在
-    `rankSingleBackfill`（列表最末纯单字收尾）；错拼输入不追加单字兜底
-    （保持纠错固定第 3 位）。
-  - 排序键顺序：常规层/回退层 → 超段仲裁（**仅全拼**；用户词按
-    `maxInputSegs`、非用户按首选切分 `inputSegs`；简拼/混拼不判超段）→
-    用户输入 > 默认字频（`FromUser`）→ `rank` → Score/词长/字典序。
-  - 超段仲裁只影响多段/显式分段输入：显式 `tu'an`（2 段）下用户学过的词
-    （图案）可排在默认单字（图）前；单段 `hao`/`tuan` 只出单字、不出现词语，
-    不参与超段仲裁。
-  - **单段输入只出单字**：单音节全拼/单字母声母的拼音匹配层只允许单字，
-    不出现任何词语（前缀扩展词 `diao`→「调用」、`jie`→「结果/节约」；
-    连写全匹配词 `jie`→「饥饿」、`xian`→「西安」、`tuan`→「图案」都不出）；
-    要打词用显式分段（`ji'e`/`xi'an`/`tu'an`）或完整多音节输入，联想另算。
-    `zh`/`ch`/`sh` 是多字母简拼，仍出词。回归：
-    `TestSingleSegmentOnlySingleChars` / `TestSingleSegmentNoWords` /
-    `TestAllSingleSegmentInputsOnlySingleChars` / `TestTwoLetterInitialKeepsWords`。
-  - 回归测试：`engine/short_pinyin_single_test.go`、`engine/initials_test.go`、
-    `engine/common_dict_test.go`、`engine/typo_test.go`、
-    `engine/user_history_test.go`；新增排序能力必须双向测试（生效 + 不反噬）。
+- **整句学习安全约束**：整句式学习记录必须带分段（`Words.Segs` / `Phrases.Segs`），
+  只在**完整输入**时作为整句候选、只在用户确认过的**分段边界**剥前缀；部分输入不得
+  出现整词候选（打「今」绝不得给出「天星期一」）。细节与双向回归见 skill
+  `pinyin-quality-tuning` 陷阱 6。
+- **候选/排序硬约束**：候选只来自真实词条；组合候选只在 `rankComposition`，单字兜底
+  只在 `rankSingleBackfill`（列表最末纯单字收尾）；错拼输入不追加单字兜底（纠错固定
+  第 3 位）；单段输入只出单字；超段仲裁仅全拼。排序键顺序、回归测试清单与判据见
+  skill `pinyin-quality-tuning`「1.1 当前排序键与用户优先规则」。
 
 ## 约束
 
