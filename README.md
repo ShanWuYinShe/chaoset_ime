@@ -323,7 +323,8 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 
 关键取舍：`continuationPenalty` 取值经过扫描（20 / 25 / 30 / 35 / 40 全跑过），
 30 是唯一同时保住完整输入首选率（不降）与残缺输入首选率的点；
-性能无实质变化（`BenchmarkComposeCommonDict` 约 21–23µs/键，与改动前同量级）。
+性能无实质变化（`BenchmarkComposeCommonDict` 约 70–120µs/键，本机参考；
+判断回归用同一环境前后对比）。
 
 ## 错拼修正（手滑打错一两个字母）
 
@@ -404,7 +405,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 正常输入指标不因纠错下降；当前基线以固定口径扫描为准（见「实测数据」）。
 
 性能：纠错只在「切不动」时触发，正常打字路径零额外开销
-（`BenchmarkComposeCommonDict` 约 22µs/键，本机参考）。触发纠错的输入
+（`BenchmarkComposeCommonDict` 约 70–120µs/键，本机参考）。触发纠错的输入
 （如 `zhogn`）本身就要 2ms 量级的切分扫描，纠错只在其上增加约 6%；
 查询条数由 `typoMaxQueries` 封顶：生成便宜、每条 Trie 查询较贵，160 条会让
 `zhonguo` 从 0.8µs 涨到 25ms，压到 32 条后回到百微秒级。
@@ -785,12 +786,12 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 
 | 基准函数 | 测的是什么 | 参考量级 |
 |---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 65,051 条真实词库建索引（daemon 启动时跑一次） | 百毫秒级；堆约 22MB |
-| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | 数十微秒/键 |
+| `BenchmarkLoadCommonDict` | 解析 65,051 条真实词库建索引（daemon 启动时跑一次） | 约 46–71ms；启动期分配约 35MB |
+| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | 约 70–120µs/键 |
 
 词库自身规模：**65,051 条 / 1.2 MB**，词频区间 1–99；按词长分布为
 1 字 8,699、2 字 42,744、3 字 7,310、4 字 6,150、5 字 120、6 字 28。
-真实词库下 daemon 冷启动约 0.1 秒，逐键组词仍在**数十微秒级**，对打字延迟
+真实词库下 daemon 冷启动约 50–100ms，逐键组词约 **70–120µs**，对打字延迟
 没有可感知影响。
 
 ## IPC 协议
