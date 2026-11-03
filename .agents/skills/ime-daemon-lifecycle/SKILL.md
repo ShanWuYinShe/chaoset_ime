@@ -175,11 +175,10 @@ GitHub 会提示 "Due to capacity constraints, jobs targeting macOS arm64 runner
 may experience longer queue times"。macos-build 排队几分钟是正常现象，
 不要因为「怎么还不开始」去改 workflow。
 
-### linux-e2e 为什么用 test-ci.sh 而不是 test.sh
+### linux-e2e 用 test-ci.sh（不用 test.sh）
 
 `test.sh` 假设本地已用 `setup-container.sh` 起了 docker 容器并通过 `docker exec`
-操作；而 GitHub runner 本身就是一次性 VM，再套 docker 要多花 1-3 分钟拉镜像、
-装 ibus。`test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
+操作；GitHub runner 本身就是一次性 VM，再套 docker 要多花时间拉镜像、装 ibus。
+`test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
 
-**在本机用 docker 预演这套 E2E 会很慢**（验证：apt 装 ibus 在容器里
-10 分钟仍未完成），不值得——直接推 CI 跑（约 38 秒出结果）。
+本机不要用 docker 预演这套 E2E（容器内装 ibus 耗时不可控），直接推 CI 跑。

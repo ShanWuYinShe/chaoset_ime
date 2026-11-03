@@ -8,7 +8,7 @@
 
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。该约束由 `engine/purity_test.go` 机器守卫：只允许标准库 import、禁止 `//go:build` 构建标签 / CGO / 平台文件（`*_windows.go` 等），违反即 `go test ./...` 红。
 - **macOS 安装布局**：运行组件随 `ChaosetIME.app` 安装，daemon/导入工具/种子词库位于 `Contents/Resources/`；LaunchAgent 指向 app 内 daemon；`~/Library/Application Support/chaoset` 只放用户数据/词库/socket/日志。禁止把 daemon 单独拷到 Application Support。
-- **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI（设置窗也是 shim：macOS Swift / Windows C++ / Linux 原生 GTK3 C，**不要把设置窗搬进 Go**）；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`；三端壳共用 `shims/common/ipc/core.{hpp,cpp}` 的 JSON/帧协议与 `Session` 封装。三端词库导入均委托 `chaoset-import -o ... -seed ... -backup`；Windows 命名管道优先、TCP 回退仅兼容旧版；安装器 Run/TSF 懒启动均已用 -pipe。Linux 壳必须是原生 C++/libibus（`shims/linux/engine/`），不得回退为 Go 进程内引擎。
+- **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI（设置窗也是 shim：macOS Swift / Windows C++ / Linux 原生 GTK3 C，**不要把设置窗搬进 Go**）；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`；三端壳共用 `shims/common/ipc/core.{hpp,cpp}` 的 JSON/帧协议与 `Session` 封装。三端词库导入均委托 `chaoset-import -o ... -seed ... -backup`。Linux 壳必须是原生 C++/libibus（`shims/linux/engine/`），不得回退为 Go 进程内引擎。
 - **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB），传输通过 `ipc.Endpoint` 抽象（`unix`/`pipe`/`tcp`）。macOS/Linux 用 Unix socket；Windows 命名管道：daemon `-pipe` + C++ 壳优先命名管道（失败回退 TCP 仅兼容旧版），ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES；安装器 Run 项与 TSF 懒启动均用 `-pipe`；安装/升级**不得强杀用户程序或系统输入宿主**（由 `checkuiparity` 机器校验）。Linux 原生引擎首次按键自动拉起 `chaosetd`；设置窗清空/导入词库前必须先停 daemon，防止内存旧状态回写。
 - **日志**：daemon 用 `-log` 写启动构建/词库加载/用户词典路径/IPC 连接与请求错误；Windows TSF 壳写 `tsf.log`（失败与生命周期，单进程预算）与 `crash.log`；macOS 壳写统一日志 `subsystem=ime.chaoset.inputmethod`；Linux 壳写 stderr（journal）。排障先跑 `chaosetd -version`/`chaoset-cli -version` 确认构建，日志只覆盖启动/连接/失败路径，不按键写盘。
 - **候选窗为纯数据 IPC + mac/Windows 原生自绘、Linux ibus 面板**：daemon 只返回 Composition/Candidate 纯数据（`input`/`select` 等不变）。macOS 用 AppKit（`shims/macos/src/CandidatePanel.swift`：键帽序号、首选蓝胶囊、学习标记 `*`，浅/深两套静态 sRGB 按 appearance 选择，支持鼠标点选与 VoiceOver）；Windows 用 GDI（`win32.cpp`，同样绘制学习标记 `*`）；Linux **不重绘候选窗**，用 ibus 原生 LookupTable/Preedit 呈现（学习标记不适用理由记在 `shims/linux/README.md`）。**daemon 不提供贴图渲染**（无 `renderer/` 包与 `candidateImage` IPC，勿在文档或壳里引用）。
@@ -24,23 +24,22 @@
 
 输入源图标统一为 **22×16 宽扁 keycap**（满幅实心圆角按键 + alpha 挖空单字符「C」），
 五个 TIS 图标键全部指向 `ChaosetIME-input.tiff`：System Settings、菜单栏（系统栏）、
-快捷键切换 HUD 共用同一形态。该形态为最终要求，不做拆分。
+快捷键切换 HUD 共用同一形态。该形态是硬性要求，不做拆分。
 
-为什么不做「系统设置+系统栏 keycap、HUD 无边框字形」的拆分（验证方式：探针实测）：
-- System Settings → 读 **bundle 级**图标键（`tsInputMethodIconFileKey` / `Alternate`）；
-- 快捷键切换 HUD 与**菜单栏（系统栏）** → 读 **mode 级**图标键
+图标键只有 bundle / mode 两级，第三方输入法无法同时满足「系统栏 keycap + HUD 无边框字形」：
+- System Settings 读 **bundle 级**图标键（`tsInputMethodIconFileKey` / `Alternate`）；
+- 快捷键切换 HUD 与**菜单栏（系统栏）**读 **mode 级**图标键
   （`tsInputModeMenuIconFileKey` / `Alternate`、palette 键）；
 - macOS 没有第三套图标键可把「菜单栏」与「HUD」再分开（`InputSource`
   的菜单栏标题图取 mode 级图标；`kTISPropertyIconImageURL` 对 mode 返回 mode 级文件），
-  因此第三方输入法无法同时满足「系统栏 keycap + HUD 无边框字形」；
-- 统一采用扁平带边框 keycap 版本（避免同一输入法在不同系统位置形态不一致）。
+  因此统一采用扁平带边框 keycap 版本，不做「HUD 无边框」变体（避免同一输入法在不同系统位置形态不一致）。
 
 - 规格：22×16@72dpi + 44×32@144dpi 双帧、RGB 全黑、ExtraSamples=2、LZW 模板 TIFF；
   不要改成 16×16 正方形、描边空心块或纯色方块。
 - 改动图标（尺寸/形态/配色/键映射）**前必须先问用户**；改完必须跑
   `./shims/macos/tests/equivalence.sh`（D 段 keycap 契约 + 五个键指向同一文件断言、
   E 段与系统渲染尺寸比对）与 `./shims/macos/build/icon-size`，不许改测试/降断言来“通过”。
-- 详细要求与验收清单见 `shims/macos/README.md`「图标要求（用户确认，禁止回退）」。
+- 详细要求与验收清单见 `shims/macos/README.md`「输入源图标（已确认，禁止回退）」。
 
 ## 本地构建与验证
 
@@ -82,8 +81,8 @@ go build ./...                    # 秒级
 ## 候选质量（拼音匹配 / 输入预测）
 
 改动 `engine/` 里任何「输入串 → 候选列表」的逻辑（切分、匹配层级、排序打分、
-续接预测）前，**必须先量化基线再改**，流程与打分陷阱见项目技能
-`.agents/skills/pinyin-quality-tuning/SKILL.md`。以下硬约束：
+续接预测）前，**必须先量化基线再改**，流程与打分陷阱见 skill `pinyin-quality-tuning`。
+以下硬约束：
 
 - 排序改动必须给出**前后对比数据**（命中率/首选率），不得以「看起来更合理」为由提交；
 - 回归测试必须**双向**：既证明新能力生效，也证明不反噬既有行为
@@ -133,7 +132,7 @@ go build ./...                    # 秒级
   **代码 MIT，词库数据 CC BY-SA 4.0（方案 A）**；单字 Jun Da 字频有商用许可风险，发布前须处理。
 - 中间文件：所有测试日志、原型草稿一律放 `.workwork/`，禁止提交根目录临时生成的 `*.sock` 或词库临时产物。
 
-## 按需加载的 skill（`.agents/skills/`）
+## 按需加载的 skill
 
 | skill | 何时加载 |
 |---|---|
