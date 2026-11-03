@@ -2,6 +2,30 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.11（2026-11-03）
+
+- **Windows 安装器不再关闭已打开的程序**（用户反馈：安装时浏览器/编辑器/
+  聊天软件被强制关闭，未保存内容可能丢失）：删除「枚举加载 ChaosetIME*.dll
+  的进程并 Stop-Process」以及强停 ctfmon/TextInputHost/SearchHost/StartMenu
+  等系统宿主的逻辑；只终止本输入法自己的旧 daemon，被占用的 DLL 由改名/
+  重启替换兜底。
+- **Windows daemon 启动修复**（用户反馈：装完 daemon 未运行，只能打英文）：
+  安装器不再以提升后的管理员身份启动 daemon（不同管理员账户会导致
+  LOCALAPPDATA/命名管道 ACL 属于错误用户）。改为：
+  - 安装器只写 REG_EXPAND_SZ 的 Run 项，`%LOCALAPPDATA%` 由每个登录用户展开；
+  - TSF 在首次激活/首键时以当前用户身份懒启动 daemon，短暂等待管道就绪；
+  - 安装版统一切到命名管道（`-pipe`），去掉 TCP 端口/多用户/回环豁免依赖；
+  - `chaosetd` 新增 `-seeddict`：首次从安装目录复制种子词库到用户目录并创建
+    用户词典/日志目录，不覆盖已有导入词库。
+- **NSIS PowerShell 变量未转义**：`$tip/$l/$z/$x` 被 NSIS 当变量吞掉，语言
+  列表注册命令实际损坏；统一写成 `$$`，恢复自动加入输入法列表。
+- 便携版 `install.bat` 同步：不枚举/强杀加载旧 DLL 的宿主，不强制重启 ctfmon。
+- `checkuiparity` 新增「Windows 安装安全」契约，防止批量杀进程/管理员启动
+  daemon 的回归。
+- **验证**：Windows DLL 交叉编译、NSIS 安装脚本编译、`make package-windows`
+  成功；`chaosetd -seeddict` 单测与真实 daemon 集成通过；`go test ./...`、
+  `make vet`、CI 全绿。Windows 真机行为待用户用新安装包验证。
+
 ## v0.3.10（2026-11-03）
 
 - **单字读音词频去掉固定下限**（用户反馈 `readingFloor` 把不对的字混进来）：
