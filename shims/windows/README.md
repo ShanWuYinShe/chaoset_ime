@@ -1,6 +1,6 @@
 # Windows 平台壳（TSF）
 
-形态：**TSF COM DLL 薄壳（C++）+ 命名管道连 chaosetd（TCP 回环作迁移期回退）**
+形态：**TSF COM DLL 薄壳（C++）+ 命名管道连 chaosetd（TCP 回环仅兼容旧 daemon）**
 （同 macOS 壳架构：引擎与候选逻辑全在 daemon，DLL 只做按键转发 + 预编辑合成 + 上屏）。
 
 ## 目录
@@ -46,11 +46,14 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 2. 安装向导自动完成：
    - 释放核心文件到 `C:\Program Files\Chaoset`
    - 自动注册 64 位与 32 位 TSF COM 输入法组件（`regsvr32`）
-   - 配置开机自动启动后台守护进程（写入注册表 `Run`，静默隐形运行，重启电脑永不失效）
+   - 配置开机自动启动后台守护进程（`Run` 用 REG_EXPAND_SZ 按每个用户展开
+     `%LOCALAPPDATA%`；代价是**不关闭任何已打开程序**）
    - 写入 Windows「已安装的应用 / 控制面板」标准卸载程序
-   - 立即启动输入法后台服务（完全静默无控制台黑框）
-3. 按 `Win+Space` 切换到 **Chaoset 拼音输入法** 即可开始打字。
-4. **覆盖升级提示**：新打开的任何软件已自动加载新版本；若在安装前已经打开了软件（如记事本、聊天软件），只需将其【关闭并重新打开】即可体验新版！
+3. 按 `Win+Space` 切换到 **Chaoset 拼音输入法** 即可开始打字；首次输入时 TSF
+   会以当前用户身份自动启动 daemon（命名管道），无需管理员权限、无需重启。
+4. **升级提示**：安装程序**不会关闭任何正在运行的程序**。已打开的程序继续用
+   旧版 DLL，关闭并重新打开即可加载新版；开始菜单/搜索等系统宿主在注销或
+   重启后完成刷新。被占用的 DLL 由安装器改名/预约重启替换，不会打断用户。
 
 > 卸载：直接在 Windows「设置 → 应用 → 安装的应用」中找到 **Chaoset 拼音输入法** 点击「卸载」，或在开始菜单中点击「卸载 Chaoset 输入法」。
 
@@ -61,9 +64,9 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 1. 右键 `install.bat` → 以管理员身份运行；
 2. 卸载：右键管理员运行 `install.bat uninstall`。
 
-> 覆盖升级（v0.2.17+）：`install.bat` 会先清理旧版残留的 UILess 类别并终止
-> 加载了旧 `ChaosetIME*.dll` 的进程（按模块名枚举，含 SearchApp 等开始菜单
-> 宿主），再注册新 DLL——与 NSIS 安装器的升级路径行为一致（2026-10-31）。
+> 覆盖升级：`install.bat` 与 NSIS 安装器一致，**不枚举、不强杀加载旧 DLL 的
+> 用户程序或系统宿主**；只清理旧版残留的 UILess 类别并注册新 DLL，占用文件由
+> 重启替换兜底。daemon 在首次输入时以当前用户身份懒启动。
 
 ### 方式三：从源码
 
@@ -74,8 +77,8 @@ build.sh           一键：核心行为测试（真实 daemon）+ mingw 交叉�
 # Windows 机器上（管理员）：
 regsvr32 ChaosetIME.dll
 # 推荐：命名管道（DLL 自动按当前用户 SID 计算管道名）
-chaosetd.exe -pipe -dict dict.tsv -userdict userdict.json -log chaosetd.log
-# 旧安装器/迁移期仍可用 TCP 回环（DLL 管道失败会自动回退）
+chaosetd.exe -pipe -dict dict.tsv -seeddict dict.tsv -userdict userdict.json -log chaosetd.log
+# 旧 daemon/迁移期仍可用 TCP 回环（DLL 管道失败会自动回退）
 # chaosetd.exe -tcp 127.0.0.1:7949 -dict dict.tsv -userdict userdict.json -log chaosetd.log
 # 系统设置 → 时间和语言 → 语言和区域 → 添加输入法 ChaosetIME
 # 卸载：regsvr32 /u ChaosetIME.dll
@@ -84,21 +87,38 @@ chaosetd.exe -pipe -dict dict.tsv -userdict userdict.json -log chaosetd.log
 > `make package-windows` 产出的是可直接分发的 zip，内含
 > `dict.tsv`（14 万条常用词库）、`install.bat`、DLL 与三个 exe。
 
+### daemon 启动与排障（安装后只有英文时先看这里）
+
+安装器**不启动 daemon**，也不会关闭任何已打开程序；daemon 由两处拉起：
+登录时的 `Run` 项（按每个用户的 `%LOCALAPPDATA%` 展开），以及 TSF 首次
+输入时的懒启动（同样以当前用户身份、`-pipe`、`-seeddict` 初始化种子词库）。
+
+1. 确认装的是新构建：`"%ProgramFiles%\Chaoset\chaosetd.exe" -version`；
+2. 看 daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`（启动失败会写原因）；
+   TSF 连接/懒启动诊断在 `%LOCALAPPDATA%\Chaoset\tsf.log`（AppContainer 宿主
+   可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）；
+3. 手动启动（普通用户权限，可在终端复现）：
+   `"%ProgramFiles%\Chaoset\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "%ProgramFiles%\Chaoset\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"`；
+4. 用 `chaoset-cli.exe -pipe` 验证 IPC；只有旧版 daemon 才用
+   `-tcp 127.0.0.1:7949`。
+5. 若开始菜单/搜索框仍是英文，先在同一用户会话的普通程序里打一次拼音让
+   daemon 启动；系统宿主在注销/重启后加载新版 DLL。
+
 ## 命令行工具
 
-Windows 上 daemon 推荐 `-pipe`（命名管道）；`chaoset-cli` / `chaoset-userdict`
-也已支持 `-pipe`（2026-11-01），传输需与 daemon 一致（旧安装器仍 `-tcp` 时用
-`-tcp`）；`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑它
-确认装的是新构建**（2026-10-31 新增）：
+Windows 安装版 daemon 默认走 `-pipe`（命名管道）；`chaoset-cli` /
+`chaoset-userdict` 也已支持 `-pipe`，传输需与 daemon 一致（只有旧版 daemon 才用
+`-tcp`）。`-version` 打印构建信息里的提交号/构建时间，**真机排障第一步先跑它
+确认装的是新构建**：
 
 ```bat
 REM 确认当前安装/解包的二进制是不是最新提交
 chaosetd.exe -version
 chaoset-cli.exe -version
 
-REM 终端测试台连 daemon（先确保 daemon 已启动；传输与 daemon 一致）
+REM 终端测试台连 daemon（首次输入会懒启动 daemon；传输与 daemon 一致）
 chaoset-cli.exe -pipe
-REM 旧安装器/TCP 模式：chaoset-cli.exe -tcp 127.0.0.1:7949
+REM 旧版 daemon/TCP 兼容：chaoset-cli.exe -tcp 127.0.0.1:7949
 ```
 
 > 随包携带的 `chaoset-userdict.exe` 同样支持 `-tcp 127.0.0.1:7949 stats|clear|export`
@@ -128,7 +148,7 @@ REM 旧安装器/TCP 模式：chaoset-cli.exe -tcp 127.0.0.1:7949
 | 快捷键零 daemon 往返（2026-10-29）：全/半角开关等 UI 开关归壳本地持有，状态随 punct 请求下发，daemon 只按状态产出文本；修饰键组合在 sink 内微秒级放行 | 已实现（编译级） |
 | 键盘只在需要打字时介入（2026-10-29）：未组词时先判相关性（字母/标点）再触碰连接，无关键（数字/导航/F键/修饰组合）微秒级放行；鼠标零特例，候选栏/toast 均为普通窗口行为 | 已实现（编译级） |
 | 宿主上下文不支持 TSF 合成/插入时按键放行（开始菜单搜索框可正常唤起） | 已实现（编译级，待真机确认） |
-| 开始菜单/搜索框拼音：AppContainer 宿主默认禁回环，安装器授予 CheckNetIsolation 回环豁免（StartMenuExperienceHost / Search），壳尝试连接、失败即时降级英文透传 | 已实现（编译级，待真机确认） |
+| 开始菜单/搜索框拼音：使用当前用户命名管道（ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES），AppContainer 宿主可连；连接失败即时降级英文透传，不再依赖回环豁免 | 已实现（编译级，待真机确认） |
 | 候选窗锚点：合成范围 GetTextExt 拿到零矩形（Chromium 首帧未布局）或宿主无 GDI 光标时退回鼠标位置，不再借 hwndFocus 的恒零 rcCaret（此前候选窗飞到屏幕左上角） | 已实现（编译级，待真机确认） |
 | UWP/AppContainer 场景、多会话（RDP/快切） | 待真机验证 |
 
@@ -283,11 +303,10 @@ DLL 只在失败/异常路径落盘，正常打字不产生磁盘 I/O。
   `uiautomationcore.dll` 并返回 **UIA 宿主 provider（窗口级）**，屏幕阅读器可
   识别候选窗名称/控件类型/位置；**逐条候选子项与上屏动作未实现**（macOS 有
   VoiceOver 子元素），需 Windows 真机 + Narrator 验收。
-- 传输：**命名管道优先**（2026-11-01 新增）——管道名 `\\.\pipe\chaoset-<当前
-  用户SID>`，ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES（开始菜单等
-  AppContainer 宿主可连，其他本地用户不可连）；管道连接失败自动回退 TCP 回环
-  （旧安装器仍 `-tcp`，升级期不中断）。安装器切换到 `-pipe` 需 Windows 真机
-  验收后做。
+- 传输：**命名管道优先**——管道名 `\\.\pipe\chaoset-<当前用户SID>`，
+  ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES（开始菜单等 AppContainer
+  宿主可连，其他本地用户不可连）；管道连接失败自动回退 TCP 回环（仅旧 daemon
+  兼容，升级期不中断）。安装版 Run 项与 TSF 懒启动都已切到 `-pipe`。
 - **TCP 回环没有 Unix socket 权限等价物**：mac/Linux 的 daemon 套接字已
   `chmod 0600`；Windows 若回退到 `127.0.0.1:7949`，本机任何用户进程都能连接
   daemon 收发组词/上屏数据。命名管道实现后默认路径已消除该问题，回退仅作

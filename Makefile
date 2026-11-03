@@ -217,7 +217,7 @@ package-windows:
 	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
-	# 用户词典管理工具：与 Linux 包对齐（Windows 上必须用 -tcp 连 daemon）。
+	# 用户词典管理工具：与 Linux 包对齐（Windows 上优先 -pipe 连 daemon，-tcp 仅兼容旧版）。
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-userdict.exe ./cmd/chaoset-userdict
 	# 资源文件编译（将应用图标嵌入 DLL，确保 Windows 语言栏与切换菜单显示专属图标）
 	x86_64-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o

@@ -37,6 +37,7 @@ func main() {
 	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
+	seedDict := flag.String("seeddict", "", "种子词库路径：-dict 目标不存在时先复制一份（Windows 安装器/开机自启首次运行；不覆盖已有用户词库）")
 	userPath := flag.String("userdict", "", "用户词典路径（空=按平台用户数据目录生成；显式传空串表示不落盘）")
 	logPath := flag.String("log", "", "日志输出文件路径（为空则输出到标准日志）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）")
@@ -59,6 +60,7 @@ func main() {
 	// 本进程常驻内存约 100–150MB（词库 14 万条占大头且不会被回收），
 	// 放宽 GC 阈值对内存的实际增量很小，换来的是按键延迟的确定性。
 	debug.SetGCPercent(400)
+	ensureParentDir(*logPath) // 日志目录可能尚不存在（首次用户会话）
 	if *logPath != "" {
 		if f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 			defer f.Close()
@@ -67,6 +69,13 @@ func main() {
 	}
 	if len(dicts) == 0 {
 		dicts = repeatFlag{"data/dict_common.tsv"}
+	}
+	// Windows 安装器/开机自启以当前用户身份启动 daemon 时，用户词库副本可能
+	// 尚不存在（安装器是管理员上下文，不能可靠地替交互用户准备 LOCALAPPDATA）。
+	// 用 -seeddict 在用户首次启动时从安装目录复制种子词库，绝不覆盖已存在的
+	// 用户副本（其中可能已有导入词）。
+	if *seedDict != "" {
+		dicts = seedDictFiles(*seedDict, dicts)
 	}
 	userdictSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -78,6 +87,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 数据/日志目录由首次启动的当前用户创建：安装器以管理员运行，不能假定
+	// 管理员与交互用户是同一个账户（否则会把路径写进错误的 LOCALAPPDATA）。
+	ensureParentDir(resolvedUserPath)
 
 	socketPath := *socket
 	if socketPath == "" {
@@ -93,6 +105,66 @@ func main() {
 	}
 	if err := run(ep, dicts, resolvedUserPath, *fuzzy, *trad, *shuangpin); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// seedDictFiles 把种子词库复制到每个尚不存在的 -dict 目标；已存在的目标
+// 一律不动（用户可能已经导入/编辑过）。复制失败时把该目标替换成种子路径，
+// 保证本次 daemon 仍能加载内置词库；后续导入后目标存在，重启会优先加载它。
+func seedDictFiles(seed string, targets []string) []string {
+	data, err := os.ReadFile(seed)
+	if err != nil {
+		log.Printf("警告: 读取种子词库 %s 失败: %v", seed, err)
+		return targets
+	}
+	out := append([]string(nil), targets...)
+	for i, target := range targets {
+		if target == "" {
+			continue
+		}
+		if filepath.Clean(target) == filepath.Clean(seed) {
+			continue
+		}
+		if _, err := os.Stat(target); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			log.Printf("警告: 检查词库 %s 失败: %v；改用种子词库", target, err)
+			out[i] = seed
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			log.Printf("警告: 创建词库目录 %s 失败: %v；改用种子词库", filepath.Dir(target), err)
+			out[i] = seed
+			continue
+		}
+		tmp := target + ".seed.tmp"
+		if err := os.WriteFile(tmp, data, 0o644); err != nil {
+			log.Printf("警告: 初始化词库 %s 失败: %v；改用种子词库", target, err)
+			out[i] = seed
+			continue
+		}
+		if err := os.Rename(tmp, target); err != nil {
+			_ = os.Remove(tmp)
+			log.Printf("警告: 初始化词库 %s 失败: %v；改用种子词库", target, err)
+			out[i] = seed
+			continue
+		}
+		log.Printf("已从种子词库初始化 %s", target)
+	}
+	return out
+}
+
+// ensureParentDir 为 -userdict / -log 建父目录；失败只告警，不阻断输入。
+func ensureParentDir(path string) {
+	if path == "" {
+		return
+	}
+	dir := filepath.Dir(path)
+	if dir == "" || dir == "." {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("警告: 创建目录 %s 失败: %v", dir, err)
 	}
 }
 

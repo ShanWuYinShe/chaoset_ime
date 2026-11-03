@@ -16,6 +16,11 @@
 | **Linux (Ubuntu / Debian / Mint)** | [`chaoset_amd64.deb`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 双击 `.deb` → 应用中心点「安装」；装完后在系统「键盘 → 输入源」添加 **Chaoset Pinyin**（列表暂时没有就注销重登一次） | `Super + 空格` 或 `Ctrl + 空格` |
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
+> **Windows 安装不会关闭已打开的程序**：安装器只替换文件，不会强杀浏览器/
+> 编辑器/聊天软件或开始菜单等系统宿主；已打开程序重新打开后加载新版。daemon
+> 在首次输入时以当前用户身份自动启动（命名管道，无需管理员权限）。若切换后
+> 暂时没有候选窗，注销并重新登录一次即可完成系统宿主刷新。
+
 > **macOS 推荐安装（终端一行命令，无需开发者账号）**：打开「终端」（聚焦搜索 `Terminal` /「终端」），粘贴并回车：
 >
 > ```bash
@@ -906,9 +911,11 @@ insertText」有缺陷；Windows 部分宿主对合成结束/重建的选区记�
 
 Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
 行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输优先命名管道
-（2026-11-01 新增，无端口、ACL 限当前用户），管道不可用时回退 TCP 回环
-（旧安装器仍 `-tcp`，升级期不中断）；自绘候选窗与 UWP/AppContainer 场景待真机。
-逐项状态见 shims/windows/README。
+（无端口、ACL 限当前用户），安装版 Run 项与 TSF 懒启动均用 `-pipe`，仅旧版
+daemon 兼容 TCP 回退；daemon 未运行时 TSF 在首次输入以当前用户身份懒启动
+（`-seeddict` 首次初始化用户词库），不再由管理员安装器启动；安装/升级不关闭
+用户程序。自绘候选窗与 UWP/AppContainer 场景待真机。逐项状态见
+shims/windows/README。
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
 > `ime.chaoset.inputmethod.ChaosetIME`，输入模式为

@@ -10,7 +10,7 @@
 //	chaoset-userdict [-socket PATH] clear
 //	chaoset-userdict [-socket PATH] delete 词 [音节...]
 //	chaoset-userdict [-socket PATH] export [-phrases] [-o FILE]
-//	chaoset-userdict [-tcp ADDR] stats|clear|delete|export ...（Windows 壳的 TCP 形态）
+//	chaoset-userdict [-pipe | -tcp ADDR] stats|clear|delete|export ...（Windows：优先命名管道）
 //	chaoset-userdict -userdict FILE stats|clear|delete|export ...
 //
 // delete 删除一个词的学习记录（Words 调频 + 由它进化的 Phrases 词组；

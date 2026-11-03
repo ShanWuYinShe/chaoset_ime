@@ -22,7 +22,7 @@ RequestExecutionLevel admin
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "Chaoset 拼音输入法安装完成"
-!define MUI_FINISHPAGE_TEXT "Chaoset 拼音输入法已安装成功并自动激活！$\r$\n$\r$\n【使用小贴士】$\r$\n1. 新打开的任何软件已立即生效，随时按 Win+Space 即可打字。$\r$\n2. 若您在安装前已经打开了软件（如记事本、聊天软件），只需将其【关闭并重新打开】即可体验新版全部特性！"
+!define MUI_FINISHPAGE_TEXT "Chaoset 拼音输入法安装完成。$\r$\n$\r$\n1. 打开任意程序，按 Win+Space 切换后打拼音；首次输入会自动启动后台服务（当前用户权限，无需管理员）。$\r$\n2. 安装前已打开的程序不会被安装程序关闭，但它们仍使用旧版 DLL，请关闭并重新打开；开始菜单/搜索等系统宿主在注销或重启后加载新版。$\r$\n3. 若切换后没有候选窗，请先尝试注销并重新登录一次。"
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "按 Win+Space 随时切换 Chaoset 拼音输入法"
@@ -88,62 +88,16 @@ Section "MainSection" SEC01
     SetOutPath "$INSTDIR"
     SetOverwrite on
 
-    ; 终止可能运行中的旧守护进程并等待系统完全释放文件句柄
+    ; 只终止本输入法自己的旧 daemon（用户程序、输入宿主一律不动）。
+    ;
+    ; 旧版安装器会枚举所有加载 ChaosetIME*.dll 的进程并 Stop-Process，还会强停
+    ; ctfmon/TextInputHost/SearchHost/StartMenu 等系统宿主——用户打开的浏览器、
+    ; 编辑器、聊天软件会连带被关闭，未保存内容可能丢失，严重影响正常使用。
+    ; 新版安装器不再强杀任何宿主：被占用的 DLL 由 InstallRobustFile 先改名再写
+    ; 新文件（或预约重启替换）；已打开的旧程序继续用旧版 DLL，重新打开后加载新
+    ; 版，绝不以关闭用户程序为代价追求「立即全面生效」。
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
     Sleep 300
-
-    ; 系统输入宿主自上次安装起就一直映射着旧 ChaosetIME.dll：LoadLibrary
-    ; 句柄不带 FILE_SHARE_DELETE，既不能删也不能改名（2026-10-29 实机升级
-    ; 报「无法写入 ChaosetIME.dll」的根因）。这些宿主由系统按需自动重启，
-    ; 强停无感；explorer 不动（用户桌面）。
-    ;
-    ; **按模块名动态查找，不再硬编码进程名**（2026-10-30 修）：
-    ; 此前写死 ctfmon/TextInputHost/SearchHost/StartMenuExperienceHost 四个名字，
-    ; 但 Windows 11 各版本承载开始菜单与搜索的宿主叫法不同——实测用户机器上
-    ; 是 **SearchApp.exe**（历史还有 SearchUI.exe），不在列表里就杀不到，
-    ; 它带着旧 DLL 一直活着，新版候选窗修复对它完全无效（2026-10-30 实机：
-    ; 开始菜单打拼音零日志，因为跑的还是旧代码）。
-    ; 现在枚举所有加载了 ChaosetIME*.dll 的进程终止，与新版本名无关。
-    ; 排除 explorer/dwm：杀 explorer 会重启桌面（用户无感中断），dwm 是
-    ; 桌面合成器不能动；这两个若仍占用，由下方 .new + 重启预约兜底。
-    ; 位数陷阱（2026-10-31 审计 A3）：NSIS 安装器是 32 位，nsExec 直接启动
-    ; "powershell.exe" 会被 WOW64 重定向到 32 位 PowerShell；.NET 从 32 位
-    ; 进程枚举 64 位进程的 Modules 会失败（LIST_MODULES_ALL 不支持 32 位
-    ; 调用者），try/catch 会静默跳过 → 64 位宿主（SearchApp/TextInputHost
-    ; 等）可能没被杀到。这里改用 Sysnative 的 64 位 PowerShell（纯 32 位
-    ; 系统回退 System32，本身就是 32 位）。
-    ${If} ${RunningX64}
-        StrCpy $R1 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
-    ${Else}
-        StrCpy $R1 "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-    ${EndIf}
-    nsExec::Exec `"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-Process | Where-Object { $$_.ProcessName -notin @('explorer','dwm') -and $$_.Id -ne $$PID } | ForEach-Object { try { if (@($$_.Modules | Where-Object { $$_.ModuleName -like 'ChaosetIME*' }).Count -gt 0) { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue } } catch {} }"`
-    ; 同时保留按名强停系统输入宿主（它们可能尚未加载 DLL，但持有 TSF 状态，
-    ; 重启可让语言栏/输入法缓存刷新）。
-    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
-    nsExec::Exec 'taskkill /F /IM TextInputHost.exe'
-    nsExec::Exec 'taskkill /F /IM SearchHost.exe'
-    nsExec::Exec 'taskkill /F /IM StartMenuExperienceHost.exe'
-    nsExec::Exec 'taskkill /F /IM SearchApp.exe'
-    nsExec::Exec 'taskkill /F /IM SearchUI.exe'
-    Sleep 1200
-
-    ; 检查是否有正在运行的应用锁定了输入法 DLL（如用户先前打开的记事本、浏览器或聊天软件）
-    ${If} ${FileExists} "$INSTDIR\ChaosetIME.dll"
-        ClearErrors
-        FileOpen $0 "$INSTDIR\ChaosetIME.dll" a
-        ${If} ${Errors}
-            MessageBox MB_YESNO|MB_ICONQUESTION \
-                "检测到当前有正在运行的软件（如记事本、浏览器或聊天软件）正在使用旧版输入法。$\r$\n$\r$\n是否由安装程序尝试温和关闭这些软件，以便新版本能够【立即生效】？$\r$\n$\r$\n（若您在打开的软件中有未保存的内容，请先保存，或选择“否”并在安装完成后手动重新打开对应软件）" \
-                IDYES close_running_apps IDNO keep_running_apps
-            close_running_apps:
-                nsExec::Exec '"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$p = Get-Process | Where-Object { try { $_.Modules.ModuleName -contains \"ChaosetIME.dll\" -or $_.Modules.ModuleName -contains \"ChaosetIME32.dll\" } catch { $false } } | Where-Object { $_.ProcessName -notin @(\"explorer\", \"dwm\", \"ctfmon\", \"TextInputHost\", \"SearchHost\", \"ShellExperienceHost\") }; foreach ($x in $p) { $x.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 200 }"'
-                Sleep 500
-            keep_running_apps:
-        ${Else}
-            FileClose $0
-        ${EndIf}
-    ${EndIf}
 
     ; 安全写入二进制文件与资源（支持热替换）
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME.dll"
@@ -228,38 +182,22 @@ Section "MainSection" SEC01
     WriteRegDWORD HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}\LanguageProfile\0x00000804\{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}" "Enable" 1
 
     ; 自动添加到用户当前语言列表并无条件强制刷新（免手动配置，即装即用 Win+Space 切换）
-    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like \"zh*\" }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force"'
+    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $$l = Get-WinUserLanguageList; $$z = $$l | Where-Object { $$_.LanguageTag -like \"zh*\" }; if ($$z) { if (-not ($$z.InputMethodTips -contains $$tip)) { $$z.InputMethodTips.Add($$tip) } } else { $$z = New-WinUserLanguageList zh-CN; $$z[0].InputMethodTips.Add($$tip); $$l += $$z[0] }; Set-WinUserLanguageList $$l -Force"'
 
-    ; 重启 Windows 文本输入框架服务（ctfmon.exe），消除旧版输入法缓存，让系统任务栏与切换菜单立即加载专属图标
-    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
-    Sleep 200
-    Exec '"$WINDIR\system32\ctfmon.exe"'
-
-    ; 系统输入宿主（开始菜单 / 搜索框）运行在 AppContainer 里，默认禁止
-    ; 回环连接，连不上 127.0.0.1:7949 的 daemon，拼音无从转换（2026-10-29
-    ; 实机反馈：开始菜单只能输英文）。授予回环豁免后即可正常打拼音；
-    ; 未获豁免的宿主连接被立即拒绝，壳自动降级为英文透传，绝不阻塞。
-    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
-    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.Search_cw5n1h2txyewy'
-    ; TextInputHost（打包应用输入管线宿主）与 ShellExperienceHost（Win10 开始菜单）
-    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy'
-    nsExec::Exec 'CheckNetIsolation LoopbackExempt -a -n=Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy'
-
-    ; 准备数据目录并同步词库
+    ; 为安装器当前用户同步一份可写词库（与旧版一致，升级时刷新基础词库）；
+    ; 其他用户的首次启动由 -seeddict 从 $INSTDIR 初始化。
     CreateDirectory "$LOCALAPPDATA\Chaoset"
     CopyFiles /SILENT "$INSTDIR\dict.tsv" "$LOCALAPPDATA\Chaoset\dict.tsv"
 
-    ; 写入开机自启动项 (解决重启后守护进程未运行导致输入法打不出字)
+    ; 不再强杀 ctfmon / 系统宿主，也不在提升后的安装器里启动 daemon：
+    ; 管理员账户与交互用户可能不是同一个，强杀会打断用户正在使用的程序，
+    ; 用管理员 LOCALAPPDATA 启动/写词库也会让普通用户运行时找不到。
+    ; daemon 的自动启动交给下面的 Run 项与 TSF 懒启动。
     ;
-    ; **必须显式传 -userdict**（2026-10-26 修复）：chaosetd 的 -userdict 默认是
-    ; 相对路径 chaoset-userdict.json，而安装版的工作目录是 Program Files，
-    ; 普通用户无权写入 → 每次上屏的学习落盘失败。虽然现在落盘失败不再阻断
-    ; 上屏（engine/session.go），但自学习会永久失效。
-    ; install.bat 一直传了 %LOCALAPPDATA% 下的路径，两种装法此前行为不一致。
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -userdict "$LOCALAPPDATA\Chaoset\userdict.json" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
-
-    ; 立即启动后台服务（GUI 无控制台黑框直接运行，日志静默落盘）
-    Exec '"$INSTDIR\chaosetd.exe" -tcp 127.0.0.1:7949 -dict "$LOCALAPPDATA\Chaoset\dict.tsv" -userdict "$LOCALAPPDATA\Chaoset\userdict.json" -log "$LOCALAPPDATA\Chaoset\chaosetd.log"'
+    ; Run 用 REG_EXPAND_SZ 保留 %LOCALAPPDATA%，由每个登录用户在 Explorer
+    ; 上下文展开；-seeddict 让 daemon 首次运行时从 $INSTDIR 复制种子词库到
+    ; 当前用户的 LOCALAPPDATA（不覆盖用户已导入的词库）。
+    WriteRegExpandStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "$INSTDIR\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"'
 
     ; 写入系统“已安装的应用/控制面板”标准卸载信息
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayName" "Chaoset 拼音输入法"
@@ -295,12 +233,11 @@ Section "Uninstall"
     Sleep 300
 
     ; 从用户语言列表中移除输入法
-    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $l -Force"'
-    nsExec::Exec 'taskkill /F /IM ctfmon.exe'
-    Sleep 200
-    Exec '"$WINDIR\system32\ctfmon.exe"'
-
-    ; 移除安装时授予系统输入宿主的回环豁免
+    nsExec::Exec 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$l = Get-WinUserLanguageList; foreach ($$x in $$l) { $$x.InputMethodTips.Remove(\"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\") }; Set-WinUserLanguageList $$l -Force"'
+    ; 不强制重启 ctfmon / 系统宿主：卸载同样不打断用户正在使用的程序；
+    ; 输入法从语言列表移除后由下一次注销/重启完成宿主侧刷新。
+    ; 清理旧版本曾授予的回环豁免（新版本已改用命名管道，不再需要）。
+    ; 清理旧版本曾授予系统输入宿主的回环豁免（新版本已改用命名管道）
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy'
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.Search_cw5n1h2txyewy'
     nsExec::Exec 'CheckNetIsolation LoopbackExempt -d -n=Microsoft.Windows.TextInputHost_cw5n1h2txyewy'

@@ -1979,6 +1979,86 @@ private:
     LONG ref_ = 1;
 };
 
+// ---- daemon 懒启动（当前用户上下文） ----
+//
+// 安装器以管理员权限运行，不能可靠地替交互用户启动 daemon：LOCALAPPDATA、
+// 命名管道 ACL、用户词库都可能属于提升后的管理员账户；反之亦然。
+// 因此安装器只写开机 Run 项，不启动 daemon；TSF 在首次激活/首键时以当前
+// 用户身份启动（-pipe，用户数据写 %LOCALAPPDATA%\Chaoset）。daemon 的
+// -seeddict 负责首次从安装目录复制种子词库，不覆盖已有用户词库。
+// 启动失败只记诊断日志并按英文透传降级，绝不阻塞/关闭宿主程序。
+
+static std::wstring daemonQuote(const std::wstring& s) { return L"\"" + s + L"\""; }
+
+// 最近一次成功 CreateProcess 的时间（5s 内用于让首个按键短暂等待 daemon
+// 完成词库加载，之后立即复用连接）。放在文件作用域便于 Activate 的预热与
+// OnTestKeyDown 的实际等待共享同一状态。
+static volatile DWORD g_daemonStartOkAt = 0;
+
+// 返回 true 表示本次确实发起了 daemon 进程（CreateProcess 成功）；被 3s 节流
+// 或找不到 exe 时返回 false，调用方据此避免每键都长时间等待。
+static bool ensureDaemonStarted() {
+    static volatile LONG lastAttempt = 0;
+    const DWORD now = GetTickCount();
+    const LONG prev = lastAttempt;
+    if (prev != 0 && static_cast<DWORD>(now - static_cast<DWORD>(prev)) < 3000) return false;
+    lastAttempt = static_cast<LONG>(now);
+
+    wchar_t module[MAX_PATH] = {0};
+    if (GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0) return false;
+    std::wstring dllDir(module);
+    const size_t slash = dllDir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return false;
+    dllDir.resize(slash);
+    const std::wstring exe = dllDir + L"\\chaosetd.exe";
+    if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+    wchar_t appData[MAX_PATH] = {0};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData))) return false;
+    const std::wstring dataDir = std::wstring(appData) + L"\\Chaoset";
+    CreateDirectoryW(dataDir.c_str(), nullptr);
+
+    std::wstring cmd = daemonQuote(exe) + L" -pipe" +
+                       L" -dict " + daemonQuote(dataDir + L"\\dict.tsv") +
+                       L" -seeddict " + daemonQuote(dllDir + L"\\dict.tsv") +
+                       L" -userdict " + daemonQuote(dataDir + L"\\userdict.json") +
+                       L" -log " + daemonQuote(dataDir + L"\\chaosetd.log");
+    std::wstring mutableCmd = cmd;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                                   CREATE_NO_WINDOW, nullptr, dataDir.c_str(), &si, &pi);
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        g_daemonStartOkAt = now;
+    }
+    if (diagBudget()) {
+        diagPrintf(L"tsf.log", "daemon lazy start ok=%d err=%lu appcontainer=%d\n",
+                   ok ? 1 : 0, ok ? 0UL : GetLastError(), isAppContainer() ? 1 : 0);
+    }
+    return ok;
+}
+
+// 首次输入时启动并短暂等待管道就绪；之后连接常驻复用，不再产生等待。
+// daemon 启动后首次加载 6.5 万词条约需 100ms；只在确实刚发起进程或 5s 内
+// 刚成功发起过时等待，避免 daemon 缺失时每个按键都阻塞上千毫秒。
+static bool ensureDaemonConnected(PipeTransport& transport) {
+    if (transport.isConnected()) return true;
+    const bool started = ensureDaemonStarted();
+    const DWORD now = GetTickCount();
+    const DWORD startedAt = g_daemonStartOkAt;
+    const bool recentStart = startedAt != 0 && now - startedAt < 5000;
+    const int attempts = (started || recentStart) ? 8 : 1;
+    for (int i = 0; i < attempts; ++i) {
+        transport.closeConn();  // 清掉失败冷却，允许本轮立即重试
+        if (transport.ensureConnected()) return true;
+        if (i + 1 < attempts) Sleep(25);
+    }
+    return false;
+}
+
 // ---- TIP 主体 ----
 
 // ---- 模式切换提示（短暂 toast）----
@@ -2254,8 +2334,9 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
-        // 非阻塞预热连接（< 0.1ms；AppContainer 未获回环豁免时是即时拒绝，
-        // 同样不阻塞，见 PipeTransport/TcpTransport::ensureConnected 注释）
+        // 非阻塞预热：daemon 未运行时先把懒启动发出去；首次输入的等待在
+        // OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
+        ensureDaemonStarted();
         transport_.ensureConnected();
         return S_OK;
     }
@@ -2321,6 +2402,7 @@ public:
                 }
             }
         } else {
+            ensureDaemonStarted();
             transport_.ensureConnected();
         }
         return S_OK;
@@ -2805,8 +2887,7 @@ private:
             const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter && !shiftActive()) ||
                                   keyPunctChar(vk, shiftActive()) != nullptr;
             if (!relevant) return false;
-            if (!const_cast<PipeTransport&>(transport_).isConnected() &&
-                !const_cast<PipeTransport&>(transport_).ensureConnected()) {
+            if (!ensureDaemonConnected(const_cast<PipeTransport&>(transport_))) {
                 return false;
             }
         }
@@ -3004,7 +3085,7 @@ private:
                 // 失败冷却——daemon 半死（响应超时）时每键都会重新全量重试，
                 // 宿主 UI 线程每键被阻塞 ~200ms；现在尊重 failConn 冷却，
                 // 冷却期内直接降级放行（2026-10-27 审查发现）。
-                if (!transport_.isConnected() && transport_.ensureConnected()) {
+                if (!transport_.isConnected() && ensureDaemonConnected(transport_)) {
                     comp_ = session_.input(ch, halfWidth_);
                 }
             }
@@ -3061,7 +3142,7 @@ private:
             comp_ = session_.input(";", halfWidth_);
             if (!comp_.ok) {
                 // 与字母/撇号分支同一重连策略：尊重连接失败冷却
-                if (!transport_.isConnected() && transport_.ensureConnected()) {
+                if (!transport_.isConnected() && ensureDaemonConnected(transport_)) {
                     comp_ = session_.input(";", halfWidth_);
                 }
             }
@@ -3092,7 +3173,7 @@ private:
                 comp_ = session_.input("'", halfWidth_);
                 if (!comp_.ok) {
                     // 只在偶发断开时重连重试（尊重失败冷却，见字母分支注释）
-                    if (!transport_.isConnected() && transport_.ensureConnected()) {
+                    if (!transport_.isConnected() && ensureDaemonConnected(transport_)) {
                         comp_ = session_.input("'", halfWidth_);
                     }
                 }
@@ -4369,26 +4450,36 @@ static bool settingsRestartDaemon() {
 }
 
 static void SettingsImportDictionary(HWND wnd) {
-    // 1) 词库文件位置（安装器固定写 %LOCALAPPDATA%\Chaoset\dict.tsv）
+    // 1) 用户数据目录 + 随包 DLL/种子目录
     wchar_t appData[MAX_PATH] = {0};
     if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData))) {
         MessageBoxW(wnd, L"无法定位用户数据目录。", L"导入词库", MB_OK | MB_ICONERROR);
         return;
     }
     const std::wstring dataDir = std::wstring(appData) + L"\\Chaoset";
-    const std::wstring dictPath = dataDir + L"\\dict.tsv";
-    if (GetFileAttributesW(dictPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        MessageBoxW(wnd, L"找不到词库文件 dict.tsv。\n请先通过安装程序安装 Chaoset 后再导入。",
-                    L"导入词库", MB_OK | MB_ICONERROR);
-        return;
-    }
-    // 2) 随包导入器（与 DLL 同目录；便携 zip 里也在同目录）
     wchar_t module[MAX_PATH] = {0};
     if (GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0) return;
     std::wstring dir(module);
     const size_t slash = dir.find_last_of(L"\\/");
     if (slash == std::wstring::npos) return;
     dir.resize(slash);
+
+    // 2) 词库文件位置；安装器不再以管理员身份复制用户词库，首次导入前
+    // 用随包种子初始化（与 daemon -seeddict 语义一致，不覆盖已有文件）。
+    const std::wstring dictPath = dataDir + L"\\dict.tsv";
+    if (GetFileAttributesW(dictPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const std::wstring seed = dir + L"\\dict.tsv";
+        CreateDirectoryW(dataDir.c_str(), nullptr);
+        if (GetFileAttributesW(seed.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            CopyFileW(seed.c_str(), dictPath.c_str(), FALSE);
+        }
+    }
+    if (GetFileAttributesW(dictPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxW(wnd, L"找不到词库文件 dict.tsv。\n请先通过安装程序安装 Chaoset 后再导入。",
+                    L"导入词库", MB_OK | MB_ICONERROR);
+        return;
+    }
+    // 3) 随包导入器（与 DLL 同目录；便携 zip 里也在同目录）
     const std::wstring importer = dir + L"\\chaoset-import.exe";
     if (GetFileAttributesW(importer.c_str()) == INVALID_FILE_ATTRIBUTES) {
         MessageBoxW(wnd, L"找不到 chaoset-import.exe（请使用完整安装包）。", L"导入词库",

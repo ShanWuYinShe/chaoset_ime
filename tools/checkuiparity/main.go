@@ -82,6 +82,8 @@ const (
 	macInstall      = "shims/macos/install.sh"
 	winShell        = "shims/windows/src/win32.cpp"
 	winBuild        = "shims/windows/build.sh"
+	winInstaller    = "shims/windows/installer/chaoset.nsi"
+	winInstallBat   = "shims/windows/install.bat"
 	winCoreHpp      = "shims/common/ipc/core.hpp"
 	winCoreCpp      = "shims/common/ipc/core.cpp"
 	linuxEngine     = "shims/linux/engine/main.cpp"
@@ -493,6 +495,39 @@ func checkKeyRoutingCount(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
+//  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
+//     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
+//  2. daemon 不能由提升后的安装器以管理员身份启动（LOCALAPPDATA/管道 ACL
+//     可能属于另一个账户，用户侧因此打不出拼音）；改为 Run 项（REG_EXPAND_SZ
+//     + %LOCALAPPDATA%）与 TSF 首次输入懒启动（-pipe + -seeddict）。
+func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
+	const group = "Windows 安装安全"
+	// 禁止任何按模块名批量杀进程或强停系统输入宿主的执行语句；注释里提到
+	// 历史行为不算（只匹配实际执行片段）。
+	for _, path := range []string{winInstaller, winInstallBat} {
+		checkExcludes(fsys, problems, group, path,
+			"Stop-Process -Id $_",
+			"taskkill /F /IM ctfmon.exe",
+			"taskkill /F /IM TextInputHost.exe",
+			"taskkill /F /IM SearchHost.exe",
+			"taskkill /F /IM StartMenuExperienceHost.exe",
+			"taskkill /F /IM SearchApp.exe",
+			"taskkill /F /IM SearchUI.exe",
+		)
+	}
+	// Run 项必须按用户展开 LOCALAPPDATA，并交给 daemon 首次初始化种子词库。
+	checkContains(fsys, problems, group, winInstaller,
+		"WriteRegExpandStr", "%LOCALAPPDATA%\\Chaoset\\dict.tsv",
+		"-pipe", "-seeddict")
+	// TSF 壳必须在当前用户上下文懒启动（-seeddict 首次初始化用户词库）。
+	checkContains(fsys, problems, group, winShell,
+		"ensureDaemonStarted", "ensureDaemonConnected", "-seeddict")
+	// 安装器不得自己启动 daemon（管理员上下文会写错用户数据/管道）。
+	checkExcludes(fsys, problems, group, winInstaller,
+		`Exec '"$INSTDIR\chaosetd.exe"`)
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 func Run(fsys fs.FS) []string {
 	var problems []string
@@ -598,6 +633,7 @@ func Run(fsys fs.FS) []string {
 		"installedResource(\"chaosetd\")", "embeddedResource(\"chaoset-import\")", "installSetupApp")
 	checkContains(fsys, &problems, "打包安装", macInstall,
 		"$IM/ChaosetIME.app/Contents/Resources/chaosetd")
+	checkWindowsInstallSafety(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
