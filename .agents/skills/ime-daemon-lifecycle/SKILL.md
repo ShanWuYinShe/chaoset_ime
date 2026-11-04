@@ -219,3 +219,12 @@ macOS 的**安全键盘输入（Secure Event Input）**，第三方输入法会�
   两处都正常仍灰，优先怀疑安全输入释放不彻底或另一个进程重新占用了它。
 - tis list 的 [*] 只表示条目 enabled；安全输入开启时菜单仍会禁用第三方输入法，
   所以不能用它否定安全输入这个根因。
+- 安全输入已释放但菜单仍灰时，强制选中一次再刷新菜单代理：
+
+      cd shims/macos
+      ./build/tis select ime.chaoset.inputmethod.ChaosetIME.Pinyin
+      killall TextInputMenuAgent
+
+  `TISSelectInputSource` 成功且 TIS 属性 `selected=true`，说明系统层已允许选中，
+  菜单灰色通常只是 `TextInputMenuAgent` 的陈旧缓存；必要时用 AX 检查状态菜单项
+  `enabled` 是否为 true。
