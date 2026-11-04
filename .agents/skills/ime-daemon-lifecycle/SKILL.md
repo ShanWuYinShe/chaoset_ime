@@ -194,3 +194,28 @@ may experience longer queue times"。macos-build 排队几分钟是正常现象�
 `test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
 
 本机不要用 docker 预演这套 E2E（容器内装 ibus 耗时不可控），直接推 CI 跑。
+
+## 六、输入源置灰 / 无法选择
+
+**现象**：菜单栏输入法列表里 Chaoset 变灰，点不过去；系统设置仍能看到条目，
+tis list 也显示 enabled。先不要重装输入法，也不要反复重启 daemon——这大概率是
+macOS 的**安全键盘输入（Secure Event Input）**，第三方输入法会被系统暂时禁用。
+
+    PID=$(ioreg -l -w 0 | grep -o 'kCGSSessionSecureInputPID=[0-9]*' | head -1 | cut -d= -f2)
+    echo "secure-input PID=$PID"
+    if [ -n "$PID" ]; then
+      ps -p "$PID" -o pid,comm,args
+      lsof -p "$PID" 2>/dev/null | grep -m1 '\.app/'   # 定位是哪个 app
+    fi
+
+- 有 PID：该进程正持有安全输入（常见于 Chrome 的密码框/密码管理器、终端
+  Secure Keyboard Entry、远程桌面、解锁弹窗）。在该进程释放安全输入前，
+  Chaoset 等第三方 IME 在菜单里会一直灰；这不是 daemon、TIS 或词库故障。
+- 释放：切回普通输入框、关闭密码页/弹窗；仍不释放就正常退出该进程（先 ⌘Q，
+  不要直接 kill -9），必要时注销重登。释放后上面的命令应无输出。
+- 无 PID 但菜单仍灰：killall TextInputMenuAgent 让菜单重建；再核对
+  cd shims/macos && ./build/tis list | grep -c chaoset 为 2，
+  defaults read com.apple.HIToolbox AppleEnabledInputSources | grep -c ChaosetIME ≥ 1。
+  两处都正常仍灰，优先怀疑安全输入释放不彻底或另一个进程重新占用了它。
+- tis list 的 [*] 只表示条目 enabled；安全输入开启时菜单仍会禁用第三方输入法，
+  所以不能用它否定安全输入这个根因。
