@@ -50,8 +50,12 @@ func TestEndpointUnixRoundTrip(t *testing.T) {
 
 // TestEndpointRejectsUnknownNetwork：未知传输必须明确报错，不能静默连错。
 func TestEndpointRejectsUnknownNetwork(t *testing.T) {
-	if _, err := Listen(Endpoint{Network: "bogus", Address: "x"}); err == nil {
+	_, err := Listen(Endpoint{Network: "bogus", Address: "x"})
+	if err == nil {
 		t.Fatal("Listen 未知传输应报错")
+	}
+	if !strings.Contains(err.Error(), "unix/pipe") {
+		t.Fatalf("错误文案应说明支持 unix/pipe，实际 %v", err)
 	}
 	if _, err := DialEndpoint(Endpoint{Network: "bogus", Address: "x"}); err == nil {
 		t.Fatal("DialEndpoint 未知传输应报错")

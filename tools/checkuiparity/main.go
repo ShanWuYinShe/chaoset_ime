@@ -76,6 +76,7 @@ const (
 	macSettings     = "shims/macos/src/SettingsWindow.swift"
 	macEngine       = "shims/macos/src/EngineClient.swift"
 	macController   = "shims/macos/src/ChaosetController.swift"
+	macEngineClient = "shims/macos/src/EngineClient.swift"
 	macSetup        = "shims/macos/setup/main.swift"
 	macKeyTest      = "shims/macos/tests/key_routing/main.swift"
 	macBuild        = "shims/macos/build.sh"
@@ -537,6 +538,15 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	// 安装器不得自己启动 daemon（管理员上下文会写错用户数据/管道）。
 	checkExcludes(fsys, problems, group, winInstaller,
 		`Exec '"$INSTDIR\chaosetd.exe"`)
+
+	// 三端都必须有「发现 daemon 没起来就拉起它」的懒启动路径：自启动（Run 项 /
+	// LaunchAgent）是常态，但被用户关掉、被安全软件拦截、安装后未重新登录等
+	// 情况都要能自愈。Windows/Linux 早就有了，macOS 曾缺失（只依赖
+	// LaunchAgent），这里固定三端都存在。
+	checkContains(fsys, problems, group, winShell,
+		"ensureDaemonStarted", "CreateProcessW")
+	checkContains(fsys, problems, group, linuxEngineMain, "spawnDaemon")
+	checkContains(fsys, problems, group, macEngineClient, "Process()", "chaosetd")
 }
 
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。

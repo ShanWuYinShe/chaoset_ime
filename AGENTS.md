@@ -1,6 +1,6 @@
 # chaoset_ime
 
-跨平台中文输入法：Go 核心引擎（chaosetd） + IPC 通信（Unix socket / Windows 命名管道，TCP 兼容过渡） + 平台原生薄壳（macOS IMK / Windows TSF / Linux C++/libibus）。
+跨平台中文输入法：Go 核心引擎（chaosetd） + IPC 通信（Unix socket / Windows 命名管道） + 平台原生薄壳（macOS IMK / Windows TSF / Linux C++/libibus）。
 
 通用约束以全局 `~/AGENTS.md` 为准，本文件只做项目特有补充。
 
@@ -9,7 +9,7 @@
 - **引擎与平台解耦**：`engine/` 为纯 Go 逻辑，禁止引入任何平台特定 API 或 CGO 依赖；所有引擎状态机与算法必须 100% 能够通过纯单测覆盖。该约束由 `engine/purity_test.go` 机器守卫：只允许标准库 import、禁止 `//go:build` 构建标签 / CGO / 平台文件（`*_windows.go` 等），违反即 `go test ./...` 红。
 - **macOS 安装布局**：运行组件随 `ChaosetIME.app` 安装，daemon/导入工具/种子词库位于 `Contents/Resources/`；LaunchAgent 指向 app 内 daemon；`~/Library/Application Support/chaoset` 只放用户数据/词库/socket/日志。禁止把 daemon 单独拷到 Application Support。
 - **职责边界**：`engine/` 只做拼音/联想算法；`shims/` 只做平台集成 + UI（设置窗也是 shim：macOS Swift / Windows C++ / Linux 原生 GTK3 C，**不要把设置窗搬进 Go**）；工具逻辑（词库合并、备份、原子替换、用户词典导入导出）必须在 Go `cmd/chaoset-*`，禁止在 shims 里重复实现。IPC 传输层归 `ipc/`；三端壳共用 `shims/common/ipc/core.{hpp,cpp}` 的 JSON/帧协议与 `Session` 封装。三端词库导入均委托 `chaoset-import -o ... -seed ... -backup`。Linux 壳必须是原生 C++/libibus（`shims/linux/engine/`），不得回退为 Go 进程内引擎。
-- **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB），传输通过 `ipc.Endpoint` 抽象（`unix`/`pipe`/`tcp`）。macOS/Linux 用 Unix socket；Windows 命名管道：daemon `-pipe` + C++ 壳优先命名管道（失败回退 TCP 仅兼容旧版），ACL 当前用户 + SYSTEM + ALL APPLICATION PACKAGES；安装器 Run 项与 TSF 懒启动均用 `-pipe`；安装/升级**不得强杀用户程序或系统输入宿主**（由 `checkuiparity` 机器校验）。Linux 原生引擎首次按键自动拉起 `chaosetd`；设置窗清空/导入词库前必须先停 daemon，防止内存旧状态回写。
+- **IPC 协议契约**：4 字节大端长度 + JSON 载荷（上限 1 MiB），传输通过 `ipc.Endpoint` 抽象（只有 `unix`/`pipe` 两种，**没有 TCP**：不监听任何端口，也没有回退传输）。macOS/Linux 用 Unix socket；Windows 命名管道：daemon `-pipe` + C++ 壳只走管道，安全描述符 = DACL（当前用户 + SYSTEM + ALL APPLICATION PACKAGES）+ 低完整性标签 `S:(ML;;NW;;;LW)`（AppContainer 宿主是低完整性，缺标签只能连不能写，见 `ipc/pipe_sddl.go` 与其单测）；安装器 Run 项与 TSF 懒启动均用 `-pipe`；安装/升级**不得强杀用户程序或系统输入宿主**（由 `checkuiparity` 机器校验）。**daemon 自启与恢复**：登录 Run 项 / LaunchAgent 常驻，三端 shell 都有「连不上就拉起 daemon」的懒启动（Windows `ensureDaemonStarted`、macOS `EngineClient.spawnDaemonIfNeeded`、Linux `Daemon::ensureReady`，由 `checkuiparity` 断言三端都存在）；**AppContainer 宿主内不发起进程**（`CreateProcessW` 会继承 AppContainer 身份），只连接已运行的 daemon。Linux 原生引擎首次按键自动拉起 `chaosetd`；设置窗清空/导入词库前必须先停 daemon，防止内存旧状态回写。
 - **日志**：daemon 用 `-log` 写启动构建/词库加载/用户词典路径/IPC 连接与请求错误；Windows TSF 壳写 `tsf.log`（失败与生命周期，单进程预算）与 `crash.log`；macOS 壳写统一日志 `subsystem=ime.chaoset.inputmethod`；Linux 壳写 stderr（journal）。排障先跑 `chaosetd -version`/`chaoset-cli -version` 确认构建，日志只覆盖启动/连接/失败路径，不按键写盘。
 - **候选窗为纯数据 IPC + mac/Windows 原生自绘、Linux ibus 面板**：daemon 只返回 Composition/Candidate 纯数据（`input`/`select` 等不变）。macOS 用 AppKit（`shims/macos/src/CandidatePanel.swift`：键帽序号、首选蓝胶囊、学习标记 `*`，浅/深两套静态 sRGB 按 appearance 选择，支持鼠标点选与 VoiceOver）；Windows 用 GDI（`win32.cpp`，同样绘制学习标记 `*`）；Linux **不重绘候选窗**，用 ibus 原生 LookupTable/Preedit 呈现（学习标记不适用理由记在 `shims/linux/README.md`）。**daemon 不提供贴图渲染**（无 `renderer/` 包与 `candidateImage` IPC，勿在文档或壳里引用）。
 - **视觉参数与一致性检查**：设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，**无运行时消费者**），实际渲染实现是 macOS `CandidatePanel.swift` 与 Windows `win32.cpp` 两份。Go↔macOS 布局 5 项 + macOS 参考常量（含 divider）+ 浅/深各 13 色由 `shims/macos/tests/visual-parity.sh` 逐项机器断言（故意改字号/色值必须 FAIL）；**Windows 没有运行时视觉断言**（`tools/checkuiparity` 只做静态几何/配色字段契约；另有 pt 口径、交叉编译与核心行为测试），不要把它写成「双端已验证」。改动排版参数/按键矩阵必须同步更新 `docs/ui-parity.md` 与机器断言。

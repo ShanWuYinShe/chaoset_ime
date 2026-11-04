@@ -10,7 +10,7 @@
 //	chaoset-userdict [-socket PATH] clear
 //	chaoset-userdict [-socket PATH] delete 词 [音节...]
 //	chaoset-userdict [-socket PATH] export [-phrases] [-o FILE]
-//	chaoset-userdict [-pipe | -tcp ADDR] stats|clear|delete|export ...（Windows：优先命名管道）
+//	chaoset-userdict -pipe stats|clear|delete|export ...（Windows 命名管道）
 //	chaoset-userdict -userdict FILE stats|clear|delete|export ...
 //
 // delete 删除一个词的学习记录（Words 调频 + 由它进化的 Phrases 词组；
@@ -43,7 +43,6 @@ import (
 
 func main() {
 	socket := flag.String("socket", "", "chaosetd 的 Unix 套接字路径（空=按平台用户数据目录生成）；管理操作经 daemon 生效")
-	tcpAddr := flag.String("tcp", "", "经该 TCP 地址连接 chaosetd（如 127.0.0.1:7949，旧壳兼容）；与 -socket/-pipe 二选一")
 	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
 	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
 	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
@@ -61,7 +60,7 @@ func main() {
 		fmt.Println(text)
 		return
 	}
-	// 显式传入 -socket 又传 -tcp 视为用法错误；只看默认值无法区分「没传」
+	// 显式传入 -socket 又传 -pipe 视为用法错误；只看默认值无法区分「没传」
 	// 与「显式传了默认值」，所以用 flag.Visit 检测是否出现过。
 	socketSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -69,8 +68,8 @@ func main() {
 			socketSet = true
 		}
 	})
-	if (socketSet && *tcpAddr != "") || (*usePipe && (socketSet || *tcpAddr != "")) {
-		fmt.Fprintln(os.Stderr, "-socket / -tcp / -pipe 只能三选一")
+	if *usePipe && socketSet {
+		fmt.Fprintln(os.Stderr, "-socket / -pipe 只能二选一")
 		os.Exit(2)
 	}
 
@@ -101,7 +100,7 @@ func main() {
 	case "stats", "clear":
 		// 无专属旗标
 	default:
-		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -tcp ADDR | -pipe | -userdict FILE] stats|clear|delete 词 [音节...]|export [-phrases] [-o FILE]")
+		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -pipe | -userdict FILE] stats|clear|delete 词 [音节...]|export [-phrases] [-o FILE]")
 		os.Exit(2)
 	}
 
@@ -116,12 +115,13 @@ func main() {
 				log.Fatal(nameErr)
 			}
 			ep = ipc.Endpoint{Network: "pipe", Address: name}
-		} else if *tcpAddr != "" {
-			ep = ipc.Endpoint{Network: "tcp", Address: *tcpAddr}
 		} else if ep.Address == "" {
 			socketPath, pathErr := appdirs.SocketPath()
 			if pathErr != nil {
-				log.Fatal(pathErr)
+				// Windows 没有 Unix socket：这里给出可操作的用法，而不是把
+				// 「Windows 使用命名管道…没有 Unix socket 路径」直接抛给用户
+				// （与 daemon 曾经的 bug 同一反模式：平台必然失败的默认路径）。
+				log.Fatalf("%v（Windows 请显式加 -pipe，或加 -userdict FILE 走本地文件模式）", pathErr)
 			}
 			ep.Address = socketPath
 		}
@@ -170,7 +170,7 @@ func splitSyllables(s string) []string {
 }
 
 // runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；删除/清空无覆盖竞态）。
-// ep 为 unix/tcp/pipe 任一传输端点。
+// ep 为 unix 或 pipe 端点。
 func runDaemon(ep ipc.Endpoint, cmd string, args cmdArgs) error {
 	c, err := ipc.DialEndpoint(ep)
 	if err != nil {

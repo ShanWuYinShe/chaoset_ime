@@ -10,8 +10,9 @@ import (
 
 // acquireSingleton 在 Windows 上用会话级命名互斥体保证单实例。
 //
-// 不能只依赖 TCP 端口：安装器/开机自启动/设置窗可能用不同参数（TCP 与
-// 命名管道并存、或端口被改）启动 daemon；端口不同就会留下两个进程。
+// 不让互斥依赖端点：安装器 Run 项、开机自启动与设置窗各自拉起 daemon 时
+// 参数可能不同（管道名、词库路径），只按端点判断会留下两个进程；会话级
+// 命名互斥体与参数无关。
 // `Local\` 命名空间按登录会话隔离，Fast User Switching 下每个用户仍有
 // 自己的 daemon，不会跨用户误杀。
 const daemonMutexName = `Local\ChaosetDaemon`

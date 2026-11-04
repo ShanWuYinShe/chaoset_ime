@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -101,18 +103,58 @@ func TestResolveUserDictPath(t *testing.T) {
 	}
 }
 
-// TestResolveEndpoint：命令行旗标到 IPC 端点的翻译；-pipe 与 -tcp 互斥。
+// TestResolveEndpoint：命令行旗标到 IPC 端点的翻译。
 func TestResolveEndpoint(t *testing.T) {
-	ep, err := resolveEndpoint("chaoset.sock", "", false)
+	ep, err := resolveEndpoint("chaoset.sock", false)
 	if err != nil || ep.Network != "unix" || ep.Address != "chaoset.sock" {
 		t.Fatalf("默认端点应为 unix:chaoset.sock，实际 %+v err=%v", ep, err)
 	}
-	ep, err = resolveEndpoint("", "127.0.0.1:7949", false)
-	if err != nil || ep.Network != "tcp" {
-		t.Fatalf("-tcp 端点错误: %+v err=%v", ep, err)
+	// -pipe：端点是当前用户 SID 自动生成的命名管道名。Windows 上必然成功；
+	// 其它平台 DefaultPipeName 报错，此时必须把错误原样上抛（不能静默退回
+	// Unix socket，否则 Windows 用户会连到一个不存在的套接字）。
+	ep, pipeErr := resolveEndpoint("", true)
+	if pipeErr != nil {
+		if runtime.GOOS == "windows" {
+			t.Fatalf("-pipe 在 Windows 上应生成命名管道名，实际 %v", pipeErr)
+		}
+		if ep.Network == "unix" {
+			t.Fatalf("-pipe 失败时不得退回 Unix 端点: %+v", ep)
+		}
+	} else if ep.Network != "pipe" || ep.Address == "" {
+		t.Fatalf("-pipe 端点错误: %+v", ep)
 	}
-	if _, err := resolveEndpoint("", "127.0.0.1:7949", true); err == nil {
-		t.Fatal("-pipe 与 -tcp 同时指定应报错")
+	// -pipe 与 -socket 互斥：同时给出必须报用法错误，不能静默按其中一个启动。
+	if _, err := resolveEndpoint("/tmp/chaoset.sock", true); err == nil {
+		t.Fatal("-pipe 与 -socket 同时指定应报错")
+	}
+}
+
+// TestSocketPathFor：Unix socket 路径只在真正需要 Unix 传输时解析。
+//
+// 回归用例（v0.3.12 Windows 安装版打不出汉字）：Windows 上
+// appdirs.SocketPath() 必定返回错误，而 daemon 在 -pipe 下也调用它并
+// log.Fatal——进程在监听命名管道之前就退出。这里用「一定报错的
+// defaultPath」模拟 Windows，断言 -pipe 不会触碰它。
+func TestSocketPathFor(t *testing.T) {
+	boom := func() (string, error) {
+		return "", errors.New("Windows 使用命名管道，没有 Unix socket 路径")
+	}
+
+	// -pipe：完整端点，不得解析（旧实现在这里退出）。
+	if got, err := socketPathFor("", true, boom); err != nil || got != "" {
+		t.Fatalf("-pipe 不应解析 Unix socket 路径，实际 %q err=%v", got, err)
+	}
+	// 显式 -socket 优先，且不触碰默认值。
+	if got, err := socketPathFor("/tmp/s", false, boom); err != nil || got != "/tmp/s" {
+		t.Fatalf("显式 -socket 应原样返回，实际 %q err=%v", got, err)
+	}
+	// 默认解析路径的错误必须照常上抛（不吞错）。
+	if _, err := socketPathFor("", false, boom); err == nil {
+		t.Fatal("默认路径解析失败时必须返回错误")
+	}
+	// 没有默认解析器时不解析。
+	if got, err := socketPathFor("", false, nil); err != nil || got != "" {
+		t.Fatalf("无默认解析器时应返回空路径，实际 %q err=%v", got, err)
 	}
 }
 
@@ -136,6 +178,29 @@ func TestRunWithContextServesAndShutsDown(t *testing.T) {
 		t.Fatalf("候选不符预期: %+v", comp.Candidates)
 	}
 
+	d.stop(t)
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Fatalf("退出后套接字应被清理，实际 err=%v", err)
+	}
+}
+
+// TestRunWithContextCreatesSocketDir：套接字目录不存在时必须先建目录再拿锁。
+//
+// 回归用例（2026-11-04 实测）：单实例锁文件是 <socket>.lock，acquireSingleton
+// 只 OpenFile 不建目录，而默认 socket 位于 $XDG_RUNTIME_DIR/chaoset（全新登录
+// 会话里不存在）——旧顺序「先拿锁、后建目录」让 daemon 在启动期直接退出
+// （打开锁文件 … no such file or directory）。这里用两级不存在的子目录模拟，
+// 断言 daemon 能正常监听并在退出后清理。
+func TestRunWithContextCreatesSocketDir(t *testing.T) {
+	dir := newDaemonTestDir(t)
+	// 两级都不存在：daemon 必须自己 MkdirAll。
+	sock := filepath.Join(dir, "runtime", "chaoset", "s")
+	dict := writeDict(t, dir, "dict.tsv", daemonTestDict)
+	d := startDaemon(t, sock, dict, filepath.Join(dir, "user.json"))
+
+	if err := d.client.Ping(); err != nil {
+		t.Fatalf("Ping 失败: %v", err)
+	}
 	d.stop(t)
 	if _, err := os.Stat(sock); !os.IsNotExist(err) {
 		t.Fatalf("退出后套接字应被清理，实际 err=%v", err)
@@ -207,11 +272,22 @@ func TestRunWithContextRejectsBadConfig(t *testing.T) {
 			t.Fatalf("空词库应报「没有加载到任何词条」，实际 %v", err)
 		}
 	})
-	t.Run("TCP 端口非法", func(t *testing.T) {
-		err := runWithContext(context.Background(), ipc.Endpoint{Network: "tcp", Address: "127.0.0.1:99999"},
+	t.Run("套接字路径超长", func(t *testing.T) {
+		// 超过内核 sockaddr_un.sun_path 上限（macOS 104 字节 / Linux 108 字节）
+		// 的路径必然 bind 失败，用来覆盖「监听失败必须暴露」的分支——不能静默
+		// 起一个谁也连不上的 daemon。目录先建好（单级名 120 字节，低于文件名
+		// 255 字节上限），这样单实例锁能拿到，失败点确实落在 ipc.Listen 上。
+		longDir := filepath.Join(dir, strings.Repeat("x", 120))
+		if err := os.MkdirAll(longDir, 0o700); err != nil {
+			t.Fatalf("创建长路径目录失败: %v", err)
+		}
+		err := runWithContext(context.Background(), ipc.Endpoint{Network: "unix", Address: filepath.Join(longDir, "s")},
 			[]string{good}, userPath, false, false, "")
-		if err == nil || !strings.Contains(err.Error(), "监听") {
-			t.Fatalf("非法 TCP 端口应报监听错误，实际 %v", err)
+		if err == nil {
+			t.Fatal("套接字路径超长时应报错")
+		}
+		if !strings.Contains(err.Error(), "监听") {
+			t.Fatalf("bind 失败应报监听错误，实际 %v", err)
 		}
 	})
 }

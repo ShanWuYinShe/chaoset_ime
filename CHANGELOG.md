@@ -2,6 +2,48 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.13（2026-11-04）
+
+- **Windows 安装版 daemon 起不来导致只能打英文**（用户反馈；v0.3.0–v0.3.12 的
+  Windows 包都受影响）：`chaosetd` 用命名管道启动时也先去解析 Unix socket
+  默认路径，而 `internal/appdirs.SocketPath()` 在 Windows 上一律返回错误，daemon
+  在建立监听之前就退出——TSF 壳连不上命名管道，按键全部透传成英文、候选窗不出现。
+  现仅在真正需要 Unix 传输时解析，并加回归测试固定「命名管道启动不得因 socket
+  路径解析失败而退出」。
+- Windows README 的排障章节：改用 `chaoset-cli.exe -version` 确认构建
+  （`chaosetd.exe` 是 GUI 子系统，cmd 里 `-version` 无输出），并补齐
+  「装完只能打英文」按 daemon 日志断点/命名管道/CLI 验 IPC 的定位流程。
+- **Linux 全新会话下 daemon 启动失败**：单实例锁在创建套接字目录之前执行，而锁
+  文件是 `<socket>.lock`——`$XDG_RUNTIME_DIR/chaoset` 尚不存在时 daemon 直接以
+  「打开锁文件 … no such file or directory」退出。改为先建目录再拿锁，并加回归测试。
+- **Linux socket 路径两套口径**：原生引擎用 `g_get_user_runtime_dir()`，该函数在
+  `XDG_RUNTIME_DIR` 缺失时会回退到 `~/.cache`，而 Go 的 `appdirs.SocketPath`
+  回退到数据目录——两边算出不同 socket，管理工具连不上且能起两个 daemon。引擎改为
+  直接读 `XDG_RUNTIME_DIR`，与 Go 侧一致（实测修复后两端路径相同）。
+- **macOS GUI 安装会撤销 LaunchAgent 的 QoS 设置**：`setup/main.swift` 与
+  `install.sh` 写同一个 plist，前者漏了 `ProcessType=Interactive`，走 app 内一键
+  安装/更新后高负载下的 IPC 延迟修复被静默回退。两份写入者现已一致。
+- **Windows AppContainer 宿主（开始菜单/搜索框/UWP）现在可正常使用**：命名管道
+  的安全描述符补上强制完整性标签 `S:(ML;;NW;;;LW)`。此前 DACL 已放行
+  ALL APPLICATION PACKAGES，但低完整性的 AppContainer 宿主受 MIC no-write-up
+  限制只能连、写不进——表现为「开始菜单里按了键、daemon 也在、却没有任何候选」。
+  设置标签失败时降级为仅 DACL 并记日志，不会让 daemon 起不来。
+  同时明确 TSF 壳在 AppContainer 宿主里**不发起进程**（`CreateProcessW` 会让子进程
+  继承 AppContainer 身份，写错用户目录、抢同一管道名）：daemon 由登录 Run 项常驻，
+  或由任意普通程序里的首次输入懒启动恢复，AppContainer 宿主只负责连接。
+- **三端懒启动行为对齐**：macOS 壳此前完全没有「发现 daemon 没起来就拉起它」的
+  路径，只依赖 LaunchAgent——plist 缺失、被 `launchctl bootout` 或安装后未重新登录
+  时会永久降级成英文。现在 `EngineClient` 在连接失败时拉起 app 内 daemon（参数与
+  LaunchAgent 完全一致、5 秒节流、不阻塞输入法主线程），与 Windows TSF 壳
+  （`ensureDaemonStarted`）、Linux 引擎（`spawnDaemon`）一致；三端都有静态断言。
+- Windows 上 `chaoset-userdict` 不带 `-pipe` 时的报错补上可操作提示；
+  Windows README 澄清 `chaoset-cli` 本身不会拉起 daemon。
+- **移除 TCP 传输**：daemon/CLI/Windows 壳不再有 `-tcp` 旗标、没有回退传输，
+  只剩 Unix socket（macOS/Linux）与命名管道（Windows）两种。TCP 原是命名管道
+  上线前的迁移期形态，安装器早已切到 `-pipe`，回退代码从未清理；保留它意味着
+  一个无 ACL、本机任意进程可连的端口——输入法 IPC 承载的是击键内容。
+  Windows 壳随之去掉 winsock 依赖，核心层行为测试改用 Unix socket 驱动。
+
 ## v0.3.12（2026-11-03）
 
 - **Windows 设置窗导入词库后不再卡死/杀掉 daemon**（审查发现）：原实现用

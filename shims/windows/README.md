@@ -83,17 +83,20 @@ TSF 懒启动只在尚未连接时尝试，失败后按退避重试，不会每�
 
 ## 传输与安全
 
-- 默认：命名管道 `\\.\pipe\chaoset-<当前用户 SID>`；DLL 与 daemon 用同一 SID 规则。
+- 唯一传输：命名管道 `\\.\pipe\chaoset-<当前用户 SID>`；DLL 与 daemon 用同一 SID 规则。
 - ACL：当前用户 + SYSTEM + ALL APPLICATION PACKAGES 读写；其他本地用户不可连。
-- 兼容：旧版 daemon 只开 TCP 时，壳会回退 `127.0.0.1:7949`；新安装统一使用管道。
-- TCP 回退没有 Unix socket 权限等价物，本机其他用户进程可连，仅用于旧版过渡。
+- 强制完整性标签：低完整性可写（`S:(ML;;NW;;;LW)`）。AppContainer 宿主（开始菜单、
+  搜索框、UWP）是低完整性进程，缺这个标签时 DACL 放行了也只能连不能写，表现就是
+  「按了键、daemon 也在、没有候选」。见 `ipc/pipe_sddl.go`。
+- 没有网络端口、没有 TCP 回退：管道连不上就是连不上，壳按约定降级放行按键。
 
 ## 日志与排障
 
-先确认二进制构建：
+先确认二进制构建。**用 `chaoset-cli.exe -version`**：`chaosetd.exe` 以
+`-H=windowsgui` 构建（不挂控制台），在 cmd 里跑 `-version` 没有任何输出，
+不能据此判断程序坏了。
 
 ```bat
-chaosetd.exe -version
 chaoset-cli.exe -version
 ```
 
@@ -106,21 +109,57 @@ chaoset-cli.exe -version
 - `%LOCALAPPDATA%\Chaoset\crash.log`：宿主未处理异常（异常码/地址/模块/调用栈/
   最后一次 TSF 操作），记录后继续交给 WER。
 
-只有英文候选时：先看 daemon 日志是否启动、`tsf.log` 是否连接失败；用
-`chaoset-cli.exe -pipe` 复验 IPC；只有旧版 daemon 才用 `-tcp 127.0.0.1:7949`。
+### 装完只能打英文、完全没有候选
+
+这是「壳连不上 daemon」的既定降级：连不上时字母原样透传给宿主（绝不吞键），
+候选窗根本不会创建。判断 daemon 有没有起来，按诊断力从强到弱：
+
+1. **daemon 日志断点**（最强）：`%LOCALAPPDATA%\Chaoset\chaosetd.log`
+
+   | 日志内容 | 结论 |
+   | :--- | :--- |
+   | 文件不存在 | daemon 从未启动（CreateProcess 失败/exe 缺失/起在别的账户） |
+   | 有「chaosetd 启动」但**没有**「chaosetd 就绪」 | 起来了但在监听前就退出，末行即退出原因（词库/单实例/端点解析错误；v0.3.0–v0.3.12 是「Windows 使用命名管道…没有 Unix socket 路径」） |
+   | 有「chaosetd 就绪，pipe: \\.\pipe\chaoset-S-1-5-…」 | daemon 正常，问题在壳侧 |
+   | 还有「ipc 连接: network=pipe」 | IPC 已通，转查候选渲染 |
+
+2. **进程与命名管道**：
+
+   ```bat
+   tasklist /FI "IMAGENAME eq chaosetd.exe"
+   powershell -NoProfile -Command "[System.IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -like '*chaoset*' }"
+   ```
+
+   进程活着不代表在监听；管道列表里出现 `chaoset-S-1-5-…` 才说明到了 listen 阶段。
+
+3. **直接验 IPC**（最硬）：
+
+   ```bat
+   chaoset-cli.exe -pipe
+   ```
+
+   能进交互测试台并输入拼音出候选 = daemon + IPC + 引擎全通，问题只在 TSF 壳；
+   立刻报「连接输入法 daemon 失败」= 连不上。
+
+4. **`tsf.log` 关键字**：`daemon lazy start ok=0 err=N`（CreateProcess 失败）、
+   `pipe connect failed err=N`（N=2 管道不存在、N=5 ACL 拒绝）、
+   `daemon request failed op=input connected=0`（连不上）与 `connected=1`
+   （连上了但请求失败/超时，性质不同）。注意 exe 不存在时不会写 lazy start 行，
+   且每进程只有 200 条预算，日志里没有不代表 TIP 没激活。
+
+排查后仍只有英文，用 `chaoset-cli.exe -pipe` 的结果区分「daemon 侧」与「壳侧」，
+再按上表定位。
 
 ## 命令行工具
 
 ```bat
-REM 终端测试台（未运行 daemon 时首次调用会触发懒启动）
+REM 终端测试台（注意：CLI 本身不会拉起 daemon。daemon 未运行时先在任意
+REM 程序里打一次拼音，或在安装目录手动运行 chaosetd.exe -pipe）
 chaoset-cli.exe -pipe
 
-REM 用户词典统计/清空/导出（传输需与 daemon 一致）
+REM 用户词典统计/清空/导出
 chaoset-userdict.exe -pipe stats
 chaoset-userdict.exe -pipe export -o userdict-backup.tsv
-
-REM 旧版 daemon 兼容
-chaoset-cli.exe -tcp 127.0.0.1:7949
 ```
 
 ## 功能与验收

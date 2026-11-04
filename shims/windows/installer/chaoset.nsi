@@ -194,6 +194,12 @@ Section "MainSection" SEC01
     ; 为安装器当前用户刷新可写词库：调用 Go 导入器以 -seed 合并，保留用户
     ; 已导入的词（旧文件由 -backup 备份），不在壳/NSIS 里重复实现合并逻辑。
     ; 其他用户的首次启动仍由 daemon -seeddict 从 $INSTDIR 初始化。
+    ;
+    ; 注意 -backup 是**布尔开关**（无参数），后面紧跟的那个路径是位置参数
+    ; （chaoset-import 要求至少一个输入词库，否则 usage + exit 2）。此前写成
+    ; -backup "$INSTDIR\dict.tsv"，路径被当成输入词库又合并了一遍（结果恰好
+    ; 相同，但语义错了：真正的备份标记生效、额外多读一遍同一文件）。这里把
+    ; 位置参数显式写成种子词库，含义与行为都对得上。
     nsExec::Exec '"$INSTDIR\chaoset-import.exe" -o "$LOCALAPPDATA\Chaoset\dict.tsv" -seed "$INSTDIR\dict.tsv" -backup "$INSTDIR\dict.tsv"'
 
     ; 不再强杀 ctfmon / 系统宿主，也不在提升后的安装器里启动 daemon：

@@ -28,7 +28,13 @@ LinuxPaths defaultLinuxPaths() {
     LinuxPaths p;
     const char* envSocket = g_getenv("CHAOSET_SOCKET");
     const char* dataHome = g_get_user_data_dir();
-    const char* runtime = g_get_user_runtime_dir();
+    // 必须直接读 XDG_RUNTIME_DIR，不能用 g_get_user_runtime_dir()：
+    // GLib 在环境变量缺失时会自动回退到 $XDG_CACHE_HOME（~/.cache），
+    // 而 Go 侧 internal/appdirs.SocketPath 回退到数据目录
+    //（~/.local/share/chaoset）。两边算出不同 socket 路径 = 管理工具连不上
+    // daemon，且单实例锁按路径生效而各锁各的，能同时起两个 daemon
+    //（2026-11-04 实测：GLib 返回 ~/.cache）。
+    const char* runtime = g_getenv("XDG_RUNTIME_DIR");
     const char* configHome = g_get_user_config_dir();
     p.dataDir = gbuild(dataHome, "chaoset");
     if (envSocket != nullptr && envSocket[0] != '\0') {

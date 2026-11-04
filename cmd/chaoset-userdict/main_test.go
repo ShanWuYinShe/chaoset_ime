@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,27 +33,51 @@ func TestPathsJSON(t *testing.T) {
 	}
 }
 
-// TestRunDaemonTCPStats：daemon 模式的 endpoint 连接（TCP）能完成 stats 请求，
-// 覆盖 runDaemon 从 network/address 改为 ipc.Endpoint 后的路径。
-func TestRunDaemonTCPStats(t *testing.T) {
-	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
-	if err != nil {
-		t.Fatalf("加载词库失败: %v", err)
-	}
+// TestRunDaemonStats：daemon 模式的 endpoint 连接（Unix socket）能完成 stats
+// 请求，覆盖 runDaemon 从 network/address 改为 ipc.Endpoint 后的路径。
+func TestRunDaemonStats(t *testing.T) {
+	requireUnixSocket(t)
 	user, _, err := engine.NewUserDictLenient("")
 	if err != nil {
 		t.Fatalf("创建用户词典失败: %v", err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ep := startTestDaemon(t, user)
+	if err := runDaemon(ep, "stats", cmdArgs{}); err != nil {
+		t.Fatalf("runDaemon(stats) 失败: %v", err)
+	}
+}
+
+// requireUnixSocket 跳过 Windows：那里只有命名管道，没有 Unix socket。
+func requireUnixSocket(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket 用例只在 macOS/Linux 上跑")
+	}
+}
+
+// startTestDaemon 在短路径 Unix socket 上起一个真实 ipc.Server，返回可拨号的
+// 端点；连接与清理交给 t.Cleanup。Unix socket 路径上限约 104 字节（macOS），
+// t.TempDir 的目录名含完整测试名，长测试名会 bind: invalid argument。
+func startTestDaemon(t *testing.T, user *engine.UserDict) ipc.Endpoint {
+	t.Helper()
+	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
 	if err != nil {
-		t.Fatalf("监听 TCP 失败: %v", err)
+		t.Fatalf("加载词库失败: %v", err)
+	}
+	dir, err := os.MkdirTemp("", "chaoset-ud")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	ln, err := ipc.Listen(ipc.Endpoint{Network: "unix", Address: sock})
+	if err != nil {
+		t.Fatalf("监听 Unix socket 失败: %v", err)
 	}
 	srv := ipc.NewServer(ln, dict, user)
 	go func() { _ = srv.Serve() }()
-	defer srv.Close()
-	if err := runDaemon(ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}, "stats", cmdArgs{}); err != nil {
-		t.Fatalf("runDaemon(TCP stats) 失败: %v", err)
-	}
+	t.Cleanup(func() { _ = srv.Close() })
+	return ipc.Endpoint{Network: "unix", Address: ln.Addr().String()}
 }
 
 // TestRunLocalStatsClearExport：本地模式的 stats/clear/export 全链路。
@@ -166,10 +190,7 @@ func TestRunLocalDelete(t *testing.T) {
 // TestRunDaemonDelete：daemon 模式 delete 经 IPC 作用于共享 UserDict，
 // 立即生效于 daemon 内存态（无需等待落盘）。
 func TestRunDaemonDelete(t *testing.T) {
-	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
-	if err != nil {
-		t.Fatalf("加载词库失败: %v", err)
-	}
+	requireUnixSocket(t)
 	user, _, err := engine.NewUserDictLenient("")
 	if err != nil {
 		t.Fatalf("创建用户词典失败: %v", err)
@@ -177,14 +198,7 @@ func TestRunDaemonDelete(t *testing.T) {
 	if err := user.BumpWord("今天", []string{"jin", "tian"}); err != nil {
 		t.Fatalf("BumpWord 失败: %v", err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("监听 TCP 失败: %v", err)
-	}
-	srv := ipc.NewServer(ln, dict, user)
-	go func() { _ = srv.Serve() }()
-	defer srv.Close()
-	ep := ipc.Endpoint{Network: "tcp", Address: ln.Addr().String()}
+	ep := startTestDaemon(t, user)
 
 	if err := runDaemon(ep, "delete", cmdArgs{word: "今天", sylls: splitSyllables("jin tian")}); err != nil {
 		t.Fatalf("runDaemon(delete) 失败: %v", err)

@@ -21,8 +21,8 @@ type Client struct {
 	next uint64
 }
 
-// Dial 连接 daemon（兼容旧调用）：network 为 "unix"/"tcp"；命名管道请用
-// DialEndpoint(Endpoint{Network: "pipe", Address: ...})。
+// Dial 连接 daemon 的 Unix socket：network 传 "unix"，address 为套接字路径。
+// 命名管道请用 DialEndpoint(Endpoint{Network: "pipe", Address: ...})。
 func Dial(network, address string) (*Client, error) {
 	return DialEndpoint(Endpoint{Network: network, Address: address})
 }

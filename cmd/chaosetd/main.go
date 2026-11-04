@@ -33,7 +33,6 @@ func (f *repeatFlag) Set(v string) error {
 
 func main() {
 	socket := flag.String("socket", "", "Unix 套接字路径（空=按平台用户数据目录生成）")
-	tcpAddr := flag.String("tcp", "", "监听 TCP 地址（如 127.0.0.1:7949；仅旧壳兼容，建议用 -pipe/-socket）")
 	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
 	var dicts repeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
@@ -108,15 +107,11 @@ func main() {
 		log.Printf("用户词典: %s", resolvedUserPath)
 	}
 
-	socketPath := *socket
-	if socketPath == "" {
-		p, err := appdirs.SocketPath()
-		if err != nil {
-			log.Fatal(err)
-		}
-		socketPath = p
+	socketPath, err := socketPathFor(*socket, *usePipe, appdirs.SocketPath)
+	if err != nil {
+		log.Fatal(err)
 	}
-	ep, err := resolveEndpoint(socketPath, *tcpAddr, *usePipe)
+	ep, err := resolveEndpoint(socketPath, *usePipe)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -208,14 +203,31 @@ func resolveUserDictPath(flagValue string, flagSet bool) (string, error) {
 	return appdirs.UserDictPath()
 }
 
-// resolveEndpoint 把命令行旗标翻译成 IPC 端点。默认 Unix socket；-tcp 保留
-// 一版兼容旧 Windows 壳；-pipe 使用当前用户 SID 自动生成的命名管道名。
-func resolveEndpoint(socket, tcpAddr string, usePipe bool) (ipc.Endpoint, error) {
-	if usePipe && tcpAddr != "" {
-		return ipc.Endpoint{}, fmt.Errorf("-pipe 与 -tcp 只能二选一")
+// socketPathFor 解析 Unix socket 路径：显式 -socket 优先，其次是平台默认。
+//
+// 不能在 -pipe 下也去问平台默认路径：Windows 没有 Unix socket，
+// appdirs.SocketPath() 在 Windows 上一定返回错误（"Windows 使用命名管道…"）。
+// 2026-11-03 的 v0.3.12 就是在这里无条件调用，Windows 安装版 daemon 在
+// 监听之前就 log.Fatal 退出——壳连不上管道，键全部透传成英文（用户反馈
+// 「安装后打不出汉字、没有候选」）。传 nil 的 defaultPath 表示「不解析」。
+func socketPathFor(explicit string, usePipe bool, defaultPath func() (string, error)) (string, error) {
+	if explicit != "" {
+		return explicit, nil
 	}
-	if tcpAddr != "" {
-		return ipc.Endpoint{Network: "tcp", Address: tcpAddr}, nil
+	// -pipe 是完整端点，Unix socket 路径不参与，也不能因为解析失败退出。
+	if usePipe || defaultPath == nil {
+		return "", nil
+	}
+	return defaultPath()
+}
+
+// resolveEndpoint 把命令行旗标翻译成 IPC 端点。默认 Unix socket；-pipe 使用
+// 当前用户 SID 自动生成的命名管道名。两个旗标互斥：同时给出时明确报用法
+// 错误，而不是静默按其中一个启动（socketPathFor 在 -pipe 下会保留显式
+// -socket 路径，正好用来发现冲突）。
+func resolveEndpoint(socket string, usePipe bool) (ipc.Endpoint, error) {
+	if usePipe && socket != "" {
+		return ipc.Endpoint{}, fmt.Errorf("-pipe 与 -socket 只能二选一")
 	}
 	if usePipe {
 		name, err := ipc.DefaultPipeName()
@@ -281,9 +293,25 @@ func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPa
 	// 键后文字不进文档）。
 	user.SetDeferred(true)
 
+	// 套接字目录必须先建好，再拿单实例锁。
+	//
+	// 顺序反了就是一个新会话必现的启动失败：Unix 锁文件是 <socket>.lock，
+	// acquireSingleton 只 OpenFile 不建目录（singleton_unix.go），而默认
+	// socket 路径位于 $XDG_RUNTIME_DIR/chaoset 或 Application Support——全新
+	// 登录会话里这两层目录都还不存在，daemon 会在「打开锁文件 … no such file
+	// or directory」处直接退出（2026-11-04 实测 exit=1）。
+	var ln net.Listener
+	if ep.Network == "unix" {
+		if dir := filepath.Dir(ep.Address); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return fmt.Errorf("创建套接字目录 %s 失败: %w（检查 XDG_RUNTIME_DIR 是否指向可写目录）", dir, err)
+			}
+		}
+	}
+
 	// 单实例保护：必须在 os.Remove(socket) 之前拿到锁。
-	// Unix 用 socket 旁的 flock；Windows 用会话级命名互斥体（TCP 端口/命名
-	// 管道只是第二道防线，不能保证不同参数启动的实例互斥）。
+	// Unix 用 socket 旁的 flock；Windows 用会话级命名互斥体（不同用户会话的
+	// daemon 互不干扰，同一会话内的重复启动会被拒绝）。
 	// 细节见 singleton_unix.go / singleton_windows.go。
 	if ep.Network == "unix" || runtime.GOOS == "windows" {
 		lock, lerr := acquireSingleton(ep.Address)
@@ -293,14 +321,7 @@ func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPa
 		defer lock.release()
 	}
 
-	var ln net.Listener
 	if ep.Network == "unix" {
-		// 默认路径可能位于尚未创建的用户目录（XDG_RUNTIME_DIR/Application Support）。
-		if dir := filepath.Dir(ep.Address); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return fmt.Errorf("创建套接字目录 %s 失败: %w", dir, err)
-			}
-		}
 		// 拿到锁之后才清理残留套接字：此时可以确定没有其它实例在用这个路径。
 		if err := os.Remove(ep.Address); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("清理旧套接字失败: %w", err)

@@ -4,7 +4,8 @@ import os
 // EngineClient 是 chaosetd 的最小 IPC 客户端。
 // 协议与 Go 侧 ipc 包一致：4 字节大端长度 + JSON 载荷，
 // 请求 {"id","method","params"}，响应 {"id","result","error"}。
-// daemon 不可达时调用返回 nil，壳层据此降级为按键透传。
+// daemon 不可达时先尝试懒启动一次（见 spawnDaemonIfNeeded），仍不可达则调用
+// 返回 nil，壳层据此降级为按键透传。
 struct Candidate {
     let text: String
     let syllables: String  // ' 连接的音节序列（联想上屏回传 daemon 学习用）
@@ -44,6 +45,12 @@ final class EngineClient {
     private(set) var doublePinyinScheme: String = ""
     private var lastFailAt: TimeInterval = 0
     private let cooldown: TimeInterval = 1.0 // 连不上时的重试冷却，避免每次击键都白连
+    // 懒启动 daemon 的节流时间戳与间隔。必须与 lastFailAt 的 1s 连接冷却分开：
+    // daemon 缺失时每次击键都会连接失败，若复用同一时间戳就会每键 fork 一个
+    // 进程。5s 足够让刚拉起的 daemon 加载完词库（实测约 100ms）并被下一次
+    // 按键连上，又不会在 daemon 永久不可用时频繁产生进程。
+    private var lastSpawnAt: TimeInterval = 0
+    private let spawnCooldown: TimeInterval = 5.0
     private let socketPath: String
 
     // 壳侧 IPC 失败日志：macOS 输入法进程没有控制台，daemon 日志也看不到
@@ -79,6 +86,17 @@ final class EngineClient {
         if fd >= 0 { return true }
         let now = Date().timeIntervalSince1970
         if now - lastFailAt < cooldown { return false }
+        if connectOnce(now: now) { return true }
+        // 确实没连上：daemon 可能根本没在运行（LaunchAgent 缺失 / 被 bootout /
+        // 崩溃后没人拉起）。补一次懒启动；本次按键仍按英文透传，下次按键在
+        // 1s 冷却后重连，自然接上刚拉起的 daemon。
+        spawnDaemonIfNeeded()
+        return false
+    }
+
+    // connectOnce 执行一次真实的非阻塞连接尝试：成功时把 fd 置为已连接的
+    // 套接字，失败时更新 lastFailAt 并记日志。任何路径都不等待 daemon 就绪。
+    private func connectOnce(now: TimeInterval) -> Bool {
         let sock = socket(AF_UNIX, SOCK_STREAM, 0)
         guard sock >= 0 else {
             lastFailAt = now
@@ -170,6 +188,57 @@ final class EngineClient {
             lastFailureLogAt = 0
         }
         return true
+    }
+
+    // 懒启动 daemon：macOS 壳此前只依赖 LaunchAgent（ime.chaoset.daemon），
+    // plist 缺失、被 launchctl bootout 或没被 launchd 加载时，输入法会永久
+    // 降级成英文透传。Windows TSF 壳（win32.cpp 的 ensureDaemonStarted）与
+    // Linux 引擎（daemon.cpp 的 Daemon::spawnDaemon）都会在发现 daemon 不可达
+    // 时自行拉起；这里补上同一语义，做到三端行为对齐。
+    //
+    // 参数与 install.sh 写入 LaunchAgent 的 ProgramArguments 完全一致（同一份
+    // 词库/用户词典/日志/套接字），不额外加旗标，保证两种启动方式读写同一份
+    // 状态。启动后立即返回、绝不 waitUntilExit：输入法主线程不能为等 daemon
+    // 加载词库而阻塞，本次按键继续英文透传，下次按键由 connectIfNeeded 重连；
+    // daemon 之后若崩溃，也会由下一次按键的懒启动重新拉起。
+    //
+    // 与 LaunchAgent 共存时可能多起一个 daemon：若 launchd 已拉起实例，我们
+    // 拉起的第二个实例会因 <socket>.lock 的 flock 单实例检测失败而立刻退出
+    // （cmd/chaosetd/singleton_unix.go）。不会出现两个常驻 daemon，属正常且
+    // 无害，不要当 bug 修。
+    private func spawnDaemonIfNeeded() {
+        let now = Date().timeIntervalSince1970
+        guard now - lastSpawnAt >= spawnCooldown else { return }
+        // 先记账再启动：即使 run() 抛错（chaosetd 缺失/无执行权限）也照样节流，
+        // 避免 daemon 没部署时每个按键都尝试 fork 一次。
+        lastSpawnAt = now
+        guard let resourcePath = Bundle.main.resourcePath else {
+            logFailure("懒启动 daemon 失败：Bundle.main.resourcePath 不可用")
+            return
+        }
+        // 用户数据目录与 LaunchAgent 的 SUPPORT 同一口径（install.sh 里
+        // SUPPORT="$HOME/Library/Application Support/chaoset"）：两种启动方式
+        // 必须读写同一份词库/用户词典/日志，否则会各写一套。套接字不另算，
+        // 复用 EngineClient 的 socketPath（支持 CHAOSET_SOCKET 覆盖）。
+        let support = NSHomeDirectory() + "/Library/Application Support/chaoset"
+        let daemon = resourcePath + "/chaosetd"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: daemon)
+        // 参数顺序与 LaunchAgent 的 ProgramArguments 保持一致。
+        process.arguments = [
+            "-socket", socketPath,
+            "-dict", support + "/dict.tsv",
+            "-userdict", support + "/userdict.json",
+            "-log", support + "/chaosetd.log",
+        ]
+        do {
+            try process.run()
+            // OSLog 的 \(值, privacy: .public) 是 autoclosure，闭包内引用实例属性
+            // 必须显式写 self.，否则 swiftc 报「requires explicit use of 'self'」。
+            logger.info("chaosetd 懒启动已发起 path=\(daemon, privacy: .public) socket=\(self.socketPath, privacy: .public)")
+        } catch {
+            logFailure("懒启动 daemon 失败 path=\(daemon) error=\(error.localizedDescription)")
+        }
     }
 
     private func writeAll(_ bytes: [UInt8]) -> Bool {

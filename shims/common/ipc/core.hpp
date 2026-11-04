@@ -1,8 +1,8 @@
 // chaoset TSF 壳的可移植 IPC 核心：
 // 协议帧（4 字节大端长度 + JSON）、极小 JSON 解析、会话控制逻辑。
-// 本文件不依赖任何 OS API——同一份代码在 Windows DLL（TCP 回环传输）
-// 与 macOS 测试台（Unix socket / TCP）下编译运行，行为级测试在 macOS
-// 上对着真实 chaosetd 完成。
+// 本文件不依赖任何 OS API——同一份代码在 Windows DLL（命名管道传输）、
+// Linux 核心层行为测试（Unix socket 传输）下编译运行，行为级测试对着
+// 真实 chaosetd 完成。
 #pragma once
 
 #include <cstddef>
@@ -37,8 +37,8 @@ struct Comp {
     std::string shuangpin;
 };
 
-// 传输抽象：Windows 下是 TCP 回环（与 daemon -tcp 配对），
-// macOS 测试台下是 Unix socket / TCP 皆可。
+// 传输抽象：平台壳各自提供实现——Windows 是命名管道，Linux 测试台是
+// Unix socket，两者协议与帧格式完全相同。
 class Transport {
 public:
     virtual ~Transport() = default;

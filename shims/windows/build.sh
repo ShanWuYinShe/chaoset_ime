@@ -1,6 +1,7 @@
 #!/bin/sh
 # chaoset TSF 壳构建与验证：
-#   1) 原生编译核心层行为测试，并用真实 chaosetd（TCP 回环）跑通
+#   1) 原生编译核心层行为测试，并用真实 chaosetd（Unix socket，与 Windows
+#      命名管道同为 ipc.Endpoint 本机传输，协议/帧格式一致）跑通
 #   2) mingw-w64 交叉编译 ChaosetIME.dll，检查导出表
 # 前置：Go 工具链；brew install mingw-w64
 set -e
@@ -12,20 +13,35 @@ CXX=${CXX:-clang++}
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Isrc -I../common/ipc \
   tests/core_test.cpp ../common/ipc/core.cpp -o build/core_test
 
-echo "[2/3] 启动真实 daemon（TCP 回环）并跑行为测试..."
+echo "[2/3] 启动真实 daemon（Unix socket）并跑行为测试..."
 (cd ../.. && go build -o shims/windows/build/chaosetd ./cmd/chaosetd)
-PORT=${PORT:-7949}
+# 测试台用 Unix socket 连 daemon：Windows 壳本身只走命名管道（本机没有管道
+# API），但两者同属 ipc.Endpoint 的本机传输，帧格式与协议完全一致。
+# 路径必须短——macOS 的 sockaddr_un 上限 104 字节，长路径会连不上。
+SOCKDIR=$(mktemp -d "${TMPDIR:-/tmp}/chaoset.XXXXXX")
+SOCK="$SOCKDIR/core.sock"
 # 必须用**发版词库** dict_common.tsv：打包时随包携带的是它，用它测才等于测
 # 用户实际拿到的行为。此前这里用 558 条的 dict_seed.tsv，测试环境与发行环境
 # 不一致（2026-10-26 审查指出；core_test 的断言曾对词库敏感而误报）。
-./build/chaosetd -tcp "127.0.0.1:$PORT" -dict ../../data/dict_common.tsv -userdict "" &
+./build/chaosetd -socket "$SOCK" -dict ../../data/dict_common.tsv -userdict "" &
 DPID=$!
-trap 'kill -INT $DPID 2>/dev/null || true' EXIT
-sleep 1
-./build/core_test "127.0.0.1:$PORT"
+trap 'kill -INT $DPID 2>/dev/null || true; rm -rf "$SOCKDIR"' EXIT
+# 等 daemon 真正监听（socket 文件出现），而不是盲等固定时长；
+# 不重试 core_test：断言失败必须让脚本立刻红，重跑会掩盖真实回归。
+i=0
+while [ ! -S "$SOCK" ] && [ "$i" -lt 50 ]; do
+  sleep 0.2
+  i=$((i + 1))
+done
+if [ ! -S "$SOCK" ]; then
+  echo "daemon 未在 10 秒内监听 $SOCK" >&2
+  exit 1
+fi
+./build/core_test "$SOCK"
 kill -INT $DPID 2>/dev/null || true
 wait $DPID 2>/dev/null || true
 trap - EXIT
+rm -rf "$SOCKDIR"
 
 echo "[3/3] mingw-w64 交叉编译 ChaosetIME.dll..."
 VERSION=${VERSION:-dev}
@@ -39,7 +55,7 @@ WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
   -DCHAOSET_VERSION="\"$VERSION\"" \
   -o build/ChaosetIME.dll \
   src/win32.cpp ../common/ipc/core.cpp build/chaoset_rc.o \
-  -lole32 -luuid -lws2_32 -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
+  -lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
   echo "  图标资源已嵌入（.rsrc 段存在）"
 else

@@ -54,7 +54,7 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 ```
 ┌──────────────── chaosetd (Go，一份代码) ────────────────┐
 │  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
-│  ipc  ：length-prefixed JSON（Unix socket / 命名管道 / TCP）│
+│  ipc  ：length-prefixed JSON（Unix socket / 命名管道）      │
 └───────┬───────────────────┬───────────────────┬────────┘
         │ macOS             │ Windows           │ Linux
         │ Swift IMK 薄壳    │ C++ TSF 薄壳      │ C++/libibus 薄壳
@@ -117,7 +117,7 @@ data/
   NOTICE.md          词库数据许可与署名说明（数据 CC BY-SA 4.0，代码 MIT）
 shims/
   macos/             InputMethodKit 薄壳（Swift；候选窗为壳内 AppKit 原生自绘，见其 README）
-  windows/           TSF COM 薄壳（C++；命名管道优先、TCP 回退；壳内 GDI 自绘候选窗）
+  windows/           TSF COM 薄壳（C++；命名管道；壳内 GDI 自绘候选窗）
   linux/             原生 C++/libibus 薄壳（Unix socket 连 daemon；候选窗为 ibus 原生面板）
 ```
 
@@ -485,10 +485,6 @@ go run ./cmd/chaosetd &
 go run ./cmd/chaosetd -pipe &
 go run ./cmd/chaoset-cli -pipe
 
-# Windows 迁移期 TCP 形态（旧安装器兼容）
-go run ./cmd/chaosetd -tcp 127.0.0.1:7949 &
-go run ./cmd/chaoset-cli -tcp 127.0.0.1:7949
-
 # 构建信息（提交号/构建时间）：真机排障第一步，确认装的是不是新构建
 go run ./cmd/chaosetd -version
 go run ./cmd/chaoset-cli -version
@@ -836,8 +832,11 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 
 传输形态：macOS 用 Unix socket；Linux 用 Unix socket（`$XDG_RUNTIME_DIR/chaoset/chaoset.sock`）；
 Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL 限当前用户）；
-安装器 Run 项与 TSF 懒启动均用命名管道，TCP 回环（`-tcp 127.0.0.1:7949`）仅兼容
-旧版 daemon/旧壳。
+安装器 Run 项与 TSF 懒启动均用命名管道。没有网络端口，也没有回退传输。
+命名管道的安全描述符除 DACL（当前用户 + SYSTEM + ALL APPLICATION PACKAGES）外
+还带低完整性标签 `S:(ML;;NW;;;LW)`：Windows 11 的开始菜单/搜索框/UWP 是
+AppContainer（低完整性）进程，缺这个标签时它们只能连、写不进，表现为「按了键、
+daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，只连已在运行的 daemon。
 
 ## 下载与安装（GitHub Release）
 
@@ -865,7 +864,7 @@ Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL �
 |---|---|---|
 | Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 容器内端到端验证；真机桌面闭环待环境 |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon（TCP 仅兼容旧版）；壳内 GDI 原生自绘候选窗 + 合成内预编辑 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
 
 ### 渐进上屏的跨程序兼容模型
 
@@ -898,10 +897,11 @@ Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部�
 
 Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
 行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输优先命名管道
-（无端口、ACL 限当前用户），安装版 Run 项与 TSF 懒启动均用 `-pipe`，仅旧版
-daemon 兼容 TCP 回退；daemon 未运行时 TSF 在首次输入以当前用户身份懒启动
+（无端口、ACL 限当前用户 + 低完整性标签），安装版 Run 项与 TSF 懒启动均用
+`-pipe`，没有回退传输；daemon 未运行时 TSF 在首次输入以当前用户身份懒启动
 （`-seeddict` 首次初始化用户词库），不再由管理员安装器启动；安装/升级不关闭
-用户程序。自绘候选窗与 UWP/AppContainer 场景待真机。逐项状态见
+用户程序。AppContainer 宿主（开始菜单/搜索框/UWP）只连接已运行的 daemon、不发起
+进程，靠 DACL + 低完整性标签互通；该链路的候选窗显示**待真机验证**。逐项状态见
 shims/windows/README。
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
@@ -995,9 +995,9 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 # bin/chaoset-userdict -pipe export -o userdict-backup.tsv
 ```
 
-> **平台限制**：`chaoset-cli` / `chaoset-userdict` 支持 Unix socket（macOS/Linux）、
-> Windows 命名管道（`-pipe`）与迁移期 `-tcp`；Windows 包里的同名 exe 连接 daemon 时
-> 传输需与 daemon 一致（`-pipe` 或 `-tcp`）。daemon 未运行时只能加 `-userdict` 走本地
+> **平台限制**：`chaoset-cli` / `chaoset-userdict` 支持 Unix socket（macOS/Linux）与
+> Windows 命名管道（`-pipe`）；Windows 包里的同名 exe 连接 daemon 时传输需与 daemon
+> 一致（`-pipe`）。daemon 未运行时只能加 `-userdict` 走本地
 > 文件模式（daemon 运行时会被其内存态覆盖，建议先停 daemon）。
 >
 > 导出经 IPC 分页传输（客户端自动拼接），学习数据再大也不会撞 1 MiB 单帧上限。

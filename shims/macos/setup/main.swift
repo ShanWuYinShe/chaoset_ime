@@ -236,9 +236,14 @@ func installDaemonLaunchAgent(support: String) -> String {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
 </dict>
 </plist>
 """
+        // ProcessType 必须与 install.sh 写入的 plist 一致：两份写入者写同一个
+        // 路径（~/Library/LaunchAgents/ime.chaoset.daemon.plist），这里漏掉就会
+        // 在「Chaoset.app 一键安装/更新」路径上静默撤销高负载 QoS 修复
+        //（install.sh 实测：缺该 key 时满载下 IPC p99 452ms，补上后 17ms）。
         try plist.write(toFile: path, atomically: true, encoding: .utf8)
         let lint = runTool("/usr/bin/plutil", ["-lint", path])
         if lint.status != 0 { return "⚠ LaunchAgent 校验失败：\(lint.output)\n" }

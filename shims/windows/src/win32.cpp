@@ -2,8 +2,8 @@
 //
 // 职责：COM TIP 注册与激活、按键拦截（ITfKeyEventSink + ITfKeystrokeMgr）、
 // 预编辑合成（ITfContextComposition）、候选上屏；引擎逻辑全部经
-// core::Session 与 chaosetd 通信：优先 Windows 命名管道（无端口、ACL 限当前
-// 用户），旧安装器仍用 TCP 回环时自动回退（迁移期兼容）。
+// core::Session 与 chaosetd 通信，传输只有 Windows 命名管道一种
+// （\\.\pipe\chaoset-<SID>：无端口、ACL 限当前用户，无任何回退通道）。
 // daemon 不可达时所有按键原样透传（降级策略，见 README）。
 //
 // 验证等级：mingw-w64 编译级 + 核心层行为级（macOS 上对真实 daemon，
@@ -16,8 +16,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <windows.h>
 #include <wingdi.h>
 #include <appmodel.h>
@@ -116,7 +114,6 @@ const GUID kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT = {
 const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
     0x25504fb4, 0x7bab, 0x4bc1, {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x0e, 0xf5}};
 
-constexpr char kDefaultTcpAddr[] = "127.0.0.1:7949";
 constexpr DWORD kVkShift = 0x10;
 constexpr DWORD kVkBackspace = 0x08;
 constexpr DWORD kVkDelete = 0x2E;  // VK_DELETE：组词中与 Backspace 同语义（对齐 mac）
@@ -188,13 +185,6 @@ static bool isFullscreenAppActive() {
     QUERY_USER_NOTIFICATION_STATE state = QUNS_ACCEPTS_NOTIFICATIONS;
     if (FAILED(SHQueryUserNotificationState(&state))) return false;
     return state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE;
-}
-
-std::string envOr(const char* name, const std::string& fallback) {
-    char buf[256] = {0};
-    DWORD n = GetEnvironmentVariableA(name, buf, sizeof(buf));
-    if (n > 0 && n < sizeof(buf)) return std::string(buf);
-    return fallback;
 }
 
 std::wstring toWide(const std::string& utf8) {
@@ -1558,258 +1548,25 @@ private:
     RECT settingsRect_{}; // 设置齿轮命中区
 };
 
-// ---- 传输：TCP 回环（与 daemon -tcp 127.0.0.1:7949 配对） ----
-
-class TcpTransport : public chaoset::Transport {
-public:
-    TcpTransport() {
-        WSADATA data{};
-        WSAStartup(MAKEWORD(2, 2), &data);
-        parseAddr();
-    }
-    ~TcpTransport() override {
-        closeConn();
-        WSACleanup();
-    }
-
-    bool isConnected() const { return sock_ != INVALID_SOCKET; }
-
-    bool ensureConnected() {
-        if (sock_ != INVALID_SOCKET) return true;
-        // AppContainer 宿主（开始菜单 / 搜索框等）默认禁止回环连接，连接会
-        // 被立即拒绝 → 走下方失败冷却 2 秒后放行降级，绝不阻塞系统 UI 线程；
-        // 安装器已对这些宿主授予 CheckNetIsolation 回环豁免，豁免后这里就是
-        // 普通连接路径，拼音在开始菜单里即可正常转换（2026-10-29 实机反馈）。
-        DWORD now = GetTickCount();
-        if (now - lastFail_ < 2000) return false;  // 失败冷却 2 秒，避免频繁重试阻塞
-
-        SOCKET s = INVALID_SOCKET;
-        unsigned long ip = inet_addr(host_.c_str());
-        if (ip != INADDR_NONE) {
-            s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (s != INVALID_SOCKET) {
-                // 设置为非阻塞模式，确保 connect 绝不在 UI 线程上死等挂起
-                u_long nonblocking = 1;
-                ::ioctlsocket(s, FIONBIO, &nonblocking);
-
-                int nodelay = 1;
-                ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
-
-                sockaddr_in sa{};
-                sa.sin_family = AF_INET;
-                sa.sin_port = htons(static_cast<u_short>(port_));
-                sa.sin_addr.s_addr = ip;
-
-                int res = ::connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
-                if (res == SOCKET_ERROR) {
-                    int err = WSAGetLastError();
-                    if (err == WSAEWOULDBLOCK) {
-                        fd_set writefds, exceptfds;
-                        FD_ZERO(&writefds);
-                        FD_ZERO(&exceptfds);
-                        FD_SET(s, &writefds);
-                        FD_SET(s, &exceptfds);
-
-                        // 本地回环连接通常 < 0.1ms；设置 20ms 超短超时，绝不卡顿系统输入法切换或窗口事件
-                        timeval tv{0, 20000};
-                        int sel = ::select(0, nullptr, &writefds, &exceptfds, &tv);
-                        if (sel > 0 && FD_ISSET(s, &writefds) && !FD_ISSET(s, &exceptfds)) {
-                            int sockErr = 0;
-                            int optLen = sizeof(sockErr);
-                            if (::getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sockErr), &optLen) == 0 && sockErr == 0) {
-                                // 连上：恢复阻塞模式，设置 200ms 的收发超时
-                                u_long blocking = 0;
-                                ::ioctlsocket(s, FIONBIO, &blocking);
-                                DWORD timeout = 200;
-                                ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                                ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                                sock_ = s;
-                                return true;
-                            }
-                        }
-                    }
-                    ::closesocket(s);
-                    s = INVALID_SOCKET;
-                } else if (res == 0) {
-                    u_long blocking = 0;
-                    ::ioctlsocket(s, FIONBIO, &blocking);
-                    DWORD timeout = 200;
-                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                    sock_ = s;
-                    return true;
-                }
-            }
-        } else {
-            // 域名回退路径（如 localhost 等）
-            addrinfoW hints{};
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_STREAM;
-            addrinfoW* res = nullptr;
-            std::wstring hostW = toWide(host_);
-            std::wstring portW = toWide(std::to_string(port_));
-            if (GetAddrInfoW(hostW.c_str(), portW.c_str(), &hints, &res) == 0) {
-                for (addrinfoW* p = res; p != nullptr; p = p->ai_next) {
-                    s = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-                    if (s == INVALID_SOCKET) continue;
-
-                    u_long nonblocking = 1;
-                    ::ioctlsocket(s, FIONBIO, &nonblocking);
-
-                    int nodelay = 1;
-                    ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
-
-                    int cRes = ::connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen));
-                    if (cRes == SOCKET_ERROR) {
-                        int err = WSAGetLastError();
-                        if (err == WSAEWOULDBLOCK) {
-                            fd_set writefds, exceptfds;
-                            FD_ZERO(&writefds);
-                            FD_ZERO(&exceptfds);
-                            FD_SET(s, &writefds);
-                            FD_SET(s, &exceptfds);
-
-                            timeval tv{0, 20000};
-                            int sel = ::select(0, nullptr, &writefds, &exceptfds, &tv);
-                            if (sel > 0 && FD_ISSET(s, &writefds) && !FD_ISSET(s, &exceptfds)) {
-                                int sockErr = 0;
-                                int optLen = sizeof(sockErr);
-                                if (::getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sockErr), &optLen) == 0 && sockErr == 0) {
-                                    u_long blocking = 0;
-                                    ::ioctlsocket(s, FIONBIO, &blocking);
-                                    DWORD timeout = 200;
-                                    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                                    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                                    break;
-                                }
-                            }
-                        }
-                        ::closesocket(s);
-                        s = INVALID_SOCKET;
-                    } else if (cRes == 0) {
-                        u_long blocking = 0;
-                        ::ioctlsocket(s, FIONBIO, &blocking);
-                        DWORD timeout = 200;
-                        ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                        ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-                        break;
-                    }
-                }
-                FreeAddrInfoW(res);
-            }
-        }
-
-        if (s == INVALID_SOCKET) {
-            lastFail_ = now;
-            // 每进程只记一次：区分「宿主没激活 TIP」（无任何日志）与
-            // 「激活了但连不上 daemon」（回环豁免未生效 / LPAC 拒绝）
-            static volatile LONG failLogged = 0;
-            if (InterlockedCompareExchange(&failLogged, 1, 0) == 0 && diagBudget()) {
-                char host[260];
-                diagHostName(host, static_cast<int>(sizeof(host)));
-                diagPrintf(L"tsf.log", "connect failed host=%s addr=%s:%d appcontainer=%d\n",
-                           host, host_.c_str(), port_, isAppContainer() ? 1 : 0);
-            }
-            return false;
-        }
-        sock_ = s;
-        return true;
-    }
-
-    bool writeAll(const std::uint8_t* data, std::size_t len) override {
-        if (!ensureConnected()) return false;
-        std::size_t off = 0;
-        while (off < len) {
-            int n = ::send(sock_, reinterpret_cast<const char*>(data + off),
-                           static_cast<int>(len - off), 0);
-            if (n <= 0) {
-                failConn();
-                return false;
-            }
-            off += static_cast<std::size_t>(n);
-        }
-        return true;
-    }
-
-    bool readAll(std::uint8_t* buf, std::size_t len) override {
-        std::size_t off = 0;
-        while (off < len) {
-            int n = ::recv(sock_, reinterpret_cast<char*>(buf + off),
-                           static_cast<int>(len - off), 0);
-            if (n <= 0) {
-                failConn();
-                return false;
-            }
-            off += static_cast<std::size_t>(n);
-        }
-        return true;
-    }
-
-    void closeConn() override {
-        if (sock_ != INVALID_SOCKET) {
-            ::closesocket(sock_);
-            sock_ = INVALID_SOCKET;
-        }
-        lastFail_ = 0;  // 主动断开（非失败）不进入冷却
-    }
-
-private:
-    // 收发失败断开：与主动断开不同，进入 2s 冷却——daemon 半死（连接可建
-    // 但响应超时）时，此前每次失败都清零冷却，下一键又全量重连+超时，宿主
-    // UI 线程每键被阻塞最多 ~400ms；进入冷却后后续按键直接降级放行，
-    // 只有下一轮冷却过期才重试（2026-10-27 审查发现）。
-    void failConn() {
-        if (sock_ != INVALID_SOCKET) {
-            ::closesocket(sock_);
-            sock_ = INVALID_SOCKET;
-        }
-        lastFail_ = GetTickCount();
-    }
-
-    void parseAddr() {
-        std::string a = envOr("CHAOSET_TCP", kDefaultTcpAddr);
-        auto pos = a.rfind(':');
-        if (pos != std::string::npos) {
-            host_ = a.substr(0, pos);
-            try {
-                port_ = std::stoi(a.substr(pos + 1));
-            } catch (...) {
-                port_ = 7949;
-            }
-        } else {
-            host_ = a;
-            port_ = 7949;
-        }
-    }
-
-    SOCKET sock_ = INVALID_SOCKET;
-    DWORD lastFail_ = 0;
-    std::string host_ = "127.0.0.1";
-    int port_ = 7949;
-};
-
-
-// ---- 传输：Windows 命名管道（优先）→ TCP 回环（迁移期回退） ----
+// ---- 传输：Windows 命名管道 ----
 //
-// 命名管道无端口、ACL 限当前用户 + AppContainer 包；daemon 用 `-pipe` 启动。
-// 旧安装器仍以 `-tcp` 启动 daemon 时，管道连接失败会自动回退 TCP，保证升级
-// 期可用；真机验证通过后再把安装器切到 `-pipe`。
+// 壳与 daemon 之间唯一的通道：\\.\pipe\chaoset-<SID>（daemon 用 `-pipe` 启动，
+// 管道名按当前用户 SID 生成）。命名管道无端口、ACL 限当前用户 + AppContainer
+// 包；没有第二传输、没有回退——管道连不上即 daemon 不可达，按键原样放行。
 class PipeTransport : public chaoset::Transport {
 public:
     PipeTransport() : pipeName_(currentUserPipeName()) {}
     ~PipeTransport() override { closeConn(); }
 
-    // TCP 回退已连上也算“已连接”：升级期旧 daemon 只开 TCP 时，避免
-    // Activate/OnSetFocus 误判未连接而反复尝试拉起新的 pipe daemon。
-    bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE || fallback_.isConnected(); }
+    bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
 
     bool ensureConnected() {
         if (pipe_ != INVALID_HANDLE_VALUE) return true;
         DWORD now = GetTickCount();
-        if (now - lastFail_ < 2000) return fallback_.ensureConnected();
+        if (now - lastFail_ < 2000) return false;  // 失败冷却 2 秒，避免频繁重试阻塞
         if (pipeName_.empty()) {
             lastFail_ = now;
-            return fallback_.ensureConnected();
+            return false;
         }
         HANDLE h = INVALID_HANDLE_VALUE;
         // daemon 可能尚未创建管道实例：最多等 3×20ms，绝不在 UI 线程长等。
@@ -1826,23 +1583,23 @@ public:
             static volatile LONG pipeFailLogged = 0;
             if (InterlockedCompareExchange(&pipeFailLogged, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log",
-                           "pipe connect failed err=%lu appcontainer=%d fallback=tcp\n",
+                           "pipe connect failed err=%lu appcontainer=%d\n",
                            GetLastError(), isAppContainer() ? 1 : 0);
             }
-            return fallback_.ensureConnected();
+            return false;
         }
         pipe_ = h;
         return true;
     }
 
     bool writeAll(const std::uint8_t* data, std::size_t len) override {
-        if (pipe_ != INVALID_HANDLE_VALUE) return pipeIo(true, data, len);
-        return fallback_.writeAll(data, len);
+        if (pipe_ == INVALID_HANDLE_VALUE && !ensureConnected()) return false;
+        return pipeIo(true, data, len);
     }
 
     bool readAll(std::uint8_t* buf, std::size_t len) override {
-        if (pipe_ != INVALID_HANDLE_VALUE) return pipeIo(false, buf, len);
-        return fallback_.readAll(buf, len);
+        if (pipe_ == INVALID_HANDLE_VALUE) return false;
+        return pipeIo(false, buf, len);
     }
 
     void closeConn() override {
@@ -1850,7 +1607,6 @@ public:
             ::CloseHandle(pipe_);
             pipe_ = INVALID_HANDLE_VALUE;
         }
-        fallback_.closeConn();
         lastFail_ = 0;
     }
 
@@ -1884,7 +1640,7 @@ private:
         return name;
     }
 
-    // 同步读写 + 200ms 超时：与 TCP 壳的 SO_RCVTIMEO/SO_SNDTIMEO 同量级，
+    // 同步读写 + 200ms 超时：单次等待上限 200ms，
     // daemon 半死时不会永久阻塞宿主 UI 线程。
     bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len) {
         std::size_t off = 0;
@@ -1936,7 +1692,6 @@ private:
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
     DWORD lastFail_ = 0;
     std::wstring pipeName_;
-    TcpTransport fallback_;
 };
 
 // ---- 同步编辑会话：TSF 规定文本操作必须经 RequestEditSession ----
@@ -2000,6 +1755,20 @@ static volatile DWORD g_daemonStartOkAt = 0;
 // 返回 true 表示本次确实发起了 daemon 进程（CreateProcess 成功）；被 3s 节流
 // 或找不到 exe 时返回 false，调用方据此避免每键都长时间等待。
 static bool ensureDaemonStarted() {
+    // AppContainer 宿主（Windows 11 开始菜单、搜索框等）里不发起进程。
+    //
+    // CreateProcessW 让子进程运行在**调用者的安全上下文**里（CreateProcessAsUser
+    // 才能换 token）。从 AppContainer 进程拉起的 chaosetd 会继承 AppContainer
+    // 身份：%LOCALAPPDATA% 被重定向到包私有目录（词库/学习数据/日志写进用户
+    // 正常程序看不到的地方），更糟时读不到旧 userdict 会走 log.Fatal，在监听
+    // 管道之前就退出，还会跟正常会话的 daemon 抢同一个按用户 SID 命名的管道。
+    //
+    // 这不影响 AppContainer 宿主使用输入法：daemon 由登录 Run 项常驻拉起、
+    // 崩溃后由任意普通程序里的首次输入懒启动恢复；AppContainer 宿主只需连
+    // 已在运行的管道（DACL 含 ALL APPLICATION PACKAGES，且带低完整性标签，
+    // 见 ipc/pipe_sddl.go）。因此这里不做无用的 spawn，只如实记录日志。
+    if (isAppContainer()) return false;
+
     static volatile LONG lastAttempt = 0;
     const DWORD now = GetTickCount();
     const LONG prev = lastAttempt;
@@ -2084,7 +1853,7 @@ static bool ensureDaemonConnected(PipeTransport& transport) {
 }
 
 // daemon 请求失败（连接还在但 session 方法返回 !ok）：每条 2s 最多记一次，
-// 不随每个按键写日志。配合 Pipe/TCP 连接失败日志，可区分「根本没连上」与
+// 不随每个按键写日志。配合管道连接失败日志，可区分「根本没连上」与
 // 「连上了但请求失败（超时/daemon 业务错误）」。
 static void diagDaemonRequestFailure(PipeTransport& transport, const char* op) {
     static DWORD last = 0;
@@ -4135,7 +3904,7 @@ void CandidateWindow::onAssociateChanged() {
 //
 // 2026-10-31：新增「学习数据」区（统计 / 清空 / 导出）——普通用户不再需要
 // 命令行（`chaoset-userdict` 降级为高级/排障兜底）。设置窗口不持有 TIP 指针，
-// 数据管理直接用独立的 PipeTransport（命名管道优先/TCP 回退）+ core::Session 连 daemon，与输入法
+// 数据管理直接用独立的 PipeTransport（命名管道）+ core::Session 连 daemon，与输入法
 // 主连接互不影响（daemon 支持多连接，每个连接独立组词会话）。
 //
 // 2026-10-31 视觉对齐（编译级，需 Windows 真机验收）：

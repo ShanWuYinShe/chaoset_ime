@@ -6,7 +6,7 @@ REM        Uninstall: install.bat uninstall
 REM
 REM TSF input methods must be registered via COM (regsvr32), hence admin rights.
 REM The daemon is started per interactive user (login Run item or TSF first-use
-REM lazy start); shell <-> daemon use the current user's named pipe (no TCP port).
+REM lazy start); shell <-> daemon use the current user's named pipe only.
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
@@ -72,7 +72,7 @@ if exist "%WINDIR%\SysWOW64\regsvr32.exe" (
 echo ==^> Enabling Chaoset in user language list
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$tip = '0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}'; $l = Get-WinUserLanguageList; $z = $l | Where-Object { $_.LanguageTag -like 'zh*' }; if ($z) { if (-not ($z.InputMethodTips -contains $tip)) { $z.InputMethodTips.Add($tip) } } else { $z = New-WinUserLanguageList zh-CN; $z[0].InputMethodTips.Add($tip); $l += $z[0] }; Set-WinUserLanguageList $l -Force" >nul 2>&1
 REM 不重启 ctfmon / 系统宿主；语言列表由下一次正常切换/注销完成刷新。
-REM 不授予回环豁免：daemon 改用当前用户命名管道（-pipe），不再开 TCP 端口。
+REM 不授予回环豁免：daemon 只用当前用户命名管道（-pipe），不监听任何网络端口。
 
 REM 先清掉本输入法自己的旧 daemon；新 daemon 由 TSF 首次输入时以当前用户
 REM 身份懒启动（-pipe + -seeddict），避免提升后的管理员与交互用户不一致。

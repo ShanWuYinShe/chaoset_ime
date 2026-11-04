@@ -118,6 +118,13 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 
 - **LaunchAgent 必须由 install.sh 写入**：反例是只 kickstart 已存在的 plist——全新机器
   没有该 plist，打不出中文。检查：`launchctl print gui/$(id -u)/ime.chaoset.daemon`。
+- **三端都有懒启动兜底**：LaunchAgent 缺失/被 bootout/安装后未重新登录时，
+  `EngineClient.spawnDaemonIfNeeded` 会在连接失败后拉起 app 内 daemon（5 秒节流、
+  不阻塞主线程），与 Windows TSF、Linux 引擎一致。排查时看
+  `log show --predicate 'subsystem == "ime.chaoset.inputmethod"' --last 5m`：
+  出现「chaosetd 懒启动已发起」说明是兜底路径在起作用，应回头查 LaunchAgent；
+  出现「懒启动 daemon 失败」是 app 内 `Contents/Resources/chaosetd` 缺失或不可执行。
+  launchd 已在跑时多起的实例会因 `<socket>.lock` flock 失败立刻退出，属正常。
 - `bootout → bootstrap → kickstart` 三层有竞争：bootout 是异步的，要等它在域里
   真正消失再 bootstrap，且不要紧跟 kickstart（会杀掉刚拉起的进程）。
 - 就绪判定**必须用真实 IPC 往返**（`build/smoke`），不能只看套接字文件存在
@@ -129,12 +136,22 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 `HKLM\...\Run` 值（REG_EXPAND_SZ，按用户展开 `%LOCALAPPDATA%`）与 TSF 首次
 激活/首键的懒启动；都传 `-pipe -seeddict`。
 
-- 管道名 `\\.\pipe\chaoset-<当前用户 SID>`；ACL 当前用户 + SYSTEM +
-  ALL APPLICATION PACKAGES。TCP 回退只用于旧版 daemon。
-- 候选只有英文：先看 `%LOCALAPPDATA%\Chaoset\chaosetd.log` 是否启动、是否
-  有 `ipc 连接 network=pipe`；再看 `tsf.log` 的 `daemon lazy start`、
-  `pipe connect failed`、`daemon request failed`。AppContainer 宿主日志可能在
-  `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
+- 管道名 `\\.\pipe\chaoset-<当前用户 SID>`；安全描述符 = DACL（当前用户 +
+  SYSTEM + ALL APPLICATION PACKAGES）+ 低完整性标签 `S:(ML;;NW;;;LW)`。
+  只有命名管道，没有 TCP 传输/端口。
+- **AppContainer 宿主（Windows 11 开始菜单、搜索框、UWP）**：壳在
+  AppContainer 里**不发起进程**（`CreateProcessW` 会让子进程继承 AppContainer
+  身份，写错用户目录、抢同一管道名），只负责连已在运行的 daemon。所以：
+  - 「开始菜单/搜索框里打不出中文、普通程序里正常」= AppContainer 连不上或写不进。
+    查点按顺序：① daemon 在不在（`%LOCALAPPDATA%\Chaoset\chaosetd.log`）；
+    ② 管道安全描述符是否含低完整性标签（缺了就是「能连不能写」，见
+    `ipc/pipe_sddl.go`）；③ AppContainer 宿主日志（可能在
+    `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）。
+  - 恢复手段：在任意**普通程序**（记事本、浏览器）里打一次字触发懒启动，
+    之后 AppContainer 宿主即可用。
+- 候选只有英文：先看 daemon 日志是否启动、是否有 `ipc 连接 network=pipe`；
+  再看 `tsf.log` 的 `daemon lazy start`、`pipe connect failed`、
+  `daemon request failed`。
 - 手动复现：`chaosetd.exe -pipe -dict ... -seeddict ... -userdict ... -log ...`，
   再用 `chaoset-cli.exe -pipe` 验 IPC；不要以管理员身份启动 daemon。
 - 安装/升级不得强杀用户程序或系统输入宿主；被占用 DLL 由改名/重启替换。

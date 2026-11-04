@@ -206,26 +206,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
 
-      # 核心层行为测试：用真实 chaosetd 的 TCP 回环测试台驱动 core.cpp 的
-      # 协议与会话逻辑；安装版壳实际走命名管道。测试必须在 CI 常跑，
+      # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
+      # 协议与会话逻辑（Windows 壳本身走命名管道，CI 在 Linux 上没有管道 API，
+      # 但同为 ipc.Endpoint 本机传输，帧格式与协议一致）。测试必须在 CI 常跑，
       # 否则引擎/协议断言漂移不会被发现。
-      - name: 核心层行为测试（真实 daemon + TCP 回环）
+      - name: 核心层行为测试（真实 daemon + Unix socket）
         run: |
           set -e
           g++ -std=c++17 -O2 -Wall -Wextra -Ishims/windows/src -Ishims/common/ipc \
               shims/windows/tests/core_test.cpp shims/common/ipc/core.cpp \
               -o /tmp/core_test
           make build
-          ./bin/chaosetd -tcp 127.0.0.1:17949 \
+          # 路径必须短（sockaddr_un 上限 108 字节，macOS 104）
+          SOCKDIR=$(mktemp -d /tmp/chaoset.XXXXXX)
+          SOCK="$SOCKDIR/core.sock"
+          ./bin/chaosetd -socket "$SOCK" \
               -dict data/dict_common.tsv -userdict "" > /tmp/win-daemon.log 2>&1 &
           DPID=$!
-          trap 'kill -TERM $DPID 2>/dev/null || true' EXIT
-          # 等 daemon 真正就绪（套接字可连），而不是盲等
+          trap 'kill -TERM $DPID 2>/dev/null || true; rm -rf "$SOCKDIR"' EXIT
+          # 等 daemon 真正就绪（socket 文件出现即已监听），而不是盲等
           for i in $(seq 1 50); do
-            if (exec 3<>/dev/tcp/127.0.0.1/17949) 2>/dev/null; then exec 3<&- 3>&-; break; fi
+            if [ -S "$SOCK" ]; then break; fi
             sleep 0.2
           done
-          /tmp/core_test "127.0.0.1:17949"
+          /tmp/core_test "$SOCK"
 
       - name: 编译与打包
         run: |

@@ -64,7 +64,7 @@ func (s *Server) Serve() error {
 		}
 		// 每条持久连接记录一行（每个壳进程一条，不会按键刷屏）：排查「壳是否
 		// 真正到达 daemon」时，与壳侧日志对读即可区分未连接 / ACL 拒绝 / 连上后
-		// 业务错误。命名管道与 Unix socket 同样记录，不能只记 TCP。
+		// 业务错误。Unix socket 与命名管道两种传输用同一行格式记录，便于对读。
 		remote := conn.RemoteAddr()
 		network, addr := "unknown", ""
 		if remote != nil {

@@ -1,20 +1,20 @@
 // chaoset TSF 壳核心层行为测试（原生运行，非交叉编译）：
-// 用真实的 chaosetd（TCP 回环）驱动 core.cpp 的全部协议与会话逻辑，
-// 另含 JSON 解析单元断言。全过打印 PASS，任一失败非零退出。
-// 用法：core_test <host:port>
+// 用真实的 chaosetd（Unix socket；Windows 壳本身走命名管道，测试台无管道
+// API 时用同协议同帧格式的 Unix socket 驱动）驱动 core.cpp 的全部协议与会话
+// 逻辑，另含 JSON 解析单元断言。全过打印 PASS，任一失败非零退出。
+// 用法：core_test <socket-path>
 #include "candidate_layout.hpp"
 #include "core.hpp"
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <utility>
 
 using namespace chaoset;
 
@@ -47,38 +47,31 @@ std::vector<std::string> splitSylls(const std::string& syllables) {
     return out;
 }
 
-// TCP 回环传输——与 Windows 壳的 TcpTransport 语义一致
-// （有连接、有序字节流、断线由传输层负责重连）。
-class TcpTransport : public Transport {
+// Unix socket 传输——与 Windows 壳的 PipeTransport 语义一致
+// （有连接、有序字节流、断线由传输层负责重连）；阻塞式 connect 即可，
+// 测试进程没有 UI 线程要保护。
+class UnixTransport : public Transport {
 public:
-    explicit TcpTransport(const std::string& hostPort) {
-        auto colon = hostPort.rfind(':');
-        host_ = hostPort.substr(0, colon);
-        port_ = hostPort.substr(colon + 1);
-    }
-    ~TcpTransport() override { closeConn(); }
+    explicit UnixTransport(std::string path) : path_(std::move(path)) {}
+    ~UnixTransport() override { closeConn(); }
 
     bool ensureConnected() {
         if (fd_ >= 0) return true;
         if (lastFailAt_ > 0 && time(nullptr) - lastFailAt_ < 1) return false;  // 1 秒冷却
-        struct addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        struct addrinfo* res = nullptr;
-        if (getaddrinfo(host_.c_str(), port_.c_str(), &hints, &res) != 0) {
+        struct sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        if (path_.size() >= sizeof(addr.sun_path)) {
+            lastFailAt_ = time(nullptr);
+            return false;  // 路径装不进 sockaddr_un（macOS 上限 104 字节）
+        }
+        std::memcpy(addr.sun_path, path_.c_str(), path_.size() + 1);
+        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
             lastFailAt_ = time(nullptr);
             return false;
         }
-        int fd = -1;
-        for (struct addrinfo* p = res; p != nullptr; p = p->ai_next) {
-            fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-            if (fd < 0) continue;
-            if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) break;
+        if (connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
             ::close(fd);
-            fd = -1;
-        }
-        freeaddrinfo(res);
-        if (fd < 0) {
             lastFailAt_ = time(nullptr);
             return false;
         }
@@ -122,7 +115,7 @@ public:
     }
 
 private:
-    std::string host_, port_;
+    std::string path_;
     int fd_ = -1;
     time_t lastFailAt_ = 0;
 };
@@ -132,7 +125,7 @@ private:
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc < 2) {
-        std::fprintf(stderr, "用法: core_test <host:port>\n");
+        std::fprintf(stderr, "用法: core_test <socket-path>\n");
         return 2;
     }
 
@@ -202,11 +195,11 @@ int main(int argc, char** argv) {
     }
 
     // ---- 与真实 daemon 的会话流程 ----
-    TcpTransport transport(argv[1]);
+    UnixTransport transport(argv[1]);
     Session session(transport);
 
     Comp c1 = session.input("n");
-    check(c1.ok, "连接 daemon（TCP，input 有响应）");
+    check(c1.ok, "连接 daemon（Unix socket，input 有响应）");
     Comp c2 = session.input("ihao");
     check(c2.ok && c2.preedit == "ni'hao", "预编辑 ni'hao");
     check(c2.candidates.size() >= 1 && c2.candidates[0].text == "你好", "第一候选 你好");
