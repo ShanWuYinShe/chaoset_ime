@@ -228,3 +228,19 @@ macOS 的**安全键盘输入（Secure Event Input）**，第三方输入法会�
   `TISSelectInputSource` 成功且 TIS 属性 `selected=true`，说明系统层已允许选中，
   菜单灰色通常只是 `TextInputMenuAgent` 的陈旧缓存；必要时用 AX 检查状态菜单项
   `enabled` 是否为 true。
+
+### 第三方输入源启用记录被清空
+
+如果 TIS 表里仍有父容器 + Pinyin 两条、但输入菜单整条消失或 Chaoset 菜单项
+enabled=false，检查第三方输入源启用记录：
+
+    defaults read com.apple.inputsources AppleEnabledThirdPartyInputSources
+
+- 返回空数组（或没有 Chaoset）时，菜单不会真正选中本输入法。父容器被
+  disable、安装/刷新竞态或系统设置重写都可能清空该列表。
+- 仅靠 TIS 命令不够：install.sh / reregister.sh 可以把 TIS 表恢复到 2 条并
+  把菜单项画出来，但不负责把条目重新加入这个系统列表。完成修复必须在
+  **系统设置 → 键盘 → 输入法 → 编辑 → +** 里重新添加 Chaoset，或注销重登让
+  登录扫描重建。
+- 此时 tis select 可能返回 0 或 -50，但 selected 仍为 false；不能用它证明
+  已恢复。以系统设置添加后，菜单里能实际切换为准。
