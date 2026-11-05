@@ -4,6 +4,16 @@
 
 ## 未发布
 
+- **开始菜单失焦重开后仍残留上一轮拼音**：`stale state dropped` 已在触发，但
+  清理只复位了本地状态，**没有结束 TSF 合成**——宿主文档里的预编辑文本还在，
+  重开后自然又出现。现在清理第一步就 `endComposition()` 把预编辑从文档里删掉，
+  并在 `Activate`（TSF 对这类宿主会重复调用）也执行一次。
+- **任务栏「中/英」模式指示器**：实机确认线程隔间写入成功
+（`set_hr=0 get_hr=0 read=1/0`，AppContainer 宿主里也成功），但 Windows 并**不**
+  为第三方 TIP 绘制任务栏输入指示器。改为自建托盘图标：`ModeTray` 用 GDI 画
+  16×16 圆角底 + 白色「中」/「英」，只在本地输入上下文有焦点期间显示，
+  `TaskbarCreated` 后自动重加，窗口计数纳入 `DllCanUnloadNow` 防卸载。
+  AppContainer 宿主（开始菜单/搜索）无托盘权限，添加失败只记一次日志。
 - **按 Shift 时另一个窗口被顶到前面（Chrome/Firefox 多窗口，实机复现）**：
   根因是候选窗创建时的一行兜底——`popupOwner()` 对普通宿主返回 `nullptr`，
   但紧接着 `if (owner == nullptr) owner = GetForegroundWindow();` 又把前台窗口

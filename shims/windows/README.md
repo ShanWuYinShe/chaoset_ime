@@ -191,6 +191,12 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
+- **任务栏模式指示器是自建的托盘图标**（`ModeTray`）。Windows 只对系统输入法
+  绘制输入指示器：即使把 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 写成功并回读
+  一致，第三方 TIP 仍不会有「中/英」。图标只在本地上下文有焦点期间显示；
+  AppContainer 宿主（开始菜单/搜索）没有托盘权限，添加会失败（属预期）。
+- **陈旧组词清理必须先 `endComposition()`**：只清本地状态不结束合成，宿主文档里
+  的预编辑文本会留着，重开窗口后又出现（开始菜单实机问题）。
 - **开始菜单/搜索不投递 `OnSetFocus(FALSE)`**（实机 2026-11-05）：关闭开始菜单后
   重开，上一轮拼音与候选窗仍在。因此焦点清理不能只依赖 TSF 焦点事件，必须有
   `EVENT_SYSTEM_FOREGROUND` 钩子兜底；回调里**不得触碰 TSF**（旧上下文可能已销毁），

@@ -523,6 +523,16 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 		"IID_ITfCompartmentMgr",
 		"VT_I4", // 隔间值类型（非零 = 键盘打开/中文）
 	)
+	// 隔间写成功但 Windows 不为第三方 TIP 绘制输入指示器（实机 2026-11-05：
+	// set_hr=0 get_hr=0 read=1/0，任务栏仍无「中/英」），因此必须自建托盘图标。
+	checkContains(fsys, problems, group, winShell,
+		"class ModeTray",
+		"Shell_NotifyIconW",
+		"makeGlyphIcon",
+		"modeTray_.show(enMode_)",
+		"TaskbarCreated",    // explorer 重启后要重新添加
+		"g_liveTrayWindows", // 托盘窗口过程在 DLL 内，必须防卸载
+	)
 	// 切换与获得焦点时都必须刷新，否则指示器会停在旧模式。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		if n := strings.Count(string(data), "syncModeCompartment();"); n < 3 {

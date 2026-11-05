@@ -169,6 +169,8 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 计数（漏了防卸载保护），且 owner 为空时不会被宿主连带销毁。2026-10-31
 // 审计 A4 补计数 + owner 后统一纳入 DllCanUnloadNow。
  volatile LONG g_liveToastWindows = 0;
+// 任务栏模式指示器窗口：窗口过程同样指向本 DLL，必须纳入防卸载保护。
+volatile LONG g_liveTrayWindows = 0;
 
 // 全屏免打扰（2026-10-31 审计 A7）：D3D 全屏游戏/演示模式下不弹候选窗——
 // 置顶候选窗盖在全屏游戏上会闪屏、干扰焦点，用户明确要求游戏场景不能被
@@ -2184,6 +2186,198 @@ struct ITfTextInputProcessorEx : public ITfTextInputProcessor {
                                                  DWORD dwFlags) = 0;
 };
 
+
+// ---- 任务栏「中/英」模式指示器（2026-11-05）----
+//
+// 为什么自建：中英模式已写进 TSF 线程隔间 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
+// 并回读成功（实机 set_hr=0 get_hr=0 read=1/0），但 Windows 并没有为第三方 TIP
+// 绘制任务栏「中/英」。搜狗等输入法同样是自建托盘图标。
+//
+// 生命周期：只在**本进程的输入上下文有焦点期间**显示（获得焦点建、失去焦点删）。
+// 同一时刻只有一个应用有焦点，所以不会出现多个图标；切到不使用本输入法的应用
+// 时图标消失，这与「当前输入法的模式」语义一致。
+//
+// AppContainer 宿主（开始菜单/搜索）没有托盘访问权限，Shell_NotifyIcon 会失败，
+// 记一次日志即可，不影响输入。
+class ModeTray {
+public:
+    ModeTray() = default;
+    ModeTray(const ModeTray&) = delete;
+    ModeTray& operator=(const ModeTray&) = delete;
+    ~ModeTray() { destroy(); }
+
+    void show(bool english) {
+        if (!ensureWindow()) return;
+        if (icon_ == nullptr || english_ != english) {
+            if (icon_ != nullptr) DestroyIcon(icon_);
+            icon_ = makeGlyphIcon(english);
+            english_ = english;
+        }
+        if (icon_ == nullptr) return;
+        NOTIFYICONDATAW nid{};
+        nid.cbSize = sizeof(nid);
+        nid.hWnd = hwnd_;
+        nid.uID = kIconId;
+        nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+        nid.uCallbackMessage = kCallbackMsg;
+        nid.hIcon = icon_;
+        wcscpy_s(nid.szTip, english ? L"Chaoset 输入法：英文" : L"Chaoset 输入法：中文");
+        if (!Shell_NotifyIconW(shown_ ? NIM_MODIFY : NIM_ADD, &nid)) {
+            shown_ = false;
+            logOnce();
+            return;
+        }
+        shown_ = true;
+        english_ = english;
+    }
+
+    void hide() {
+        if (!shown_) return;
+        NOTIFYICONDATAW nid{};
+        nid.cbSize = sizeof(nid);
+        nid.hWnd = hwnd_;
+        nid.uID = kIconId;
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+        shown_ = false;
+    }
+
+private:
+    static constexpr UINT kIconId = 1;
+    static constexpr UINT kCallbackMsg = WM_APP + 19;
+    HWND hwnd_ = nullptr;
+    HICON icon_ = nullptr;
+    bool shown_ = false;
+    bool english_ = false;
+    volatile LONG loggedFail_ = 0;
+
+    static void logOnce() {
+        // AppContainer 宿主无法访问通知区域：只记一次，别刷屏。
+        if (diagBudget()) diagPrintf(L"tsf.log", "tray icon unavailable (AppContainer?)\n");
+    }
+
+    static UINT taskbarCreatedMsg() {
+        static const UINT msg = RegisterWindowMessageW(L"TaskbarCreated");
+        return msg;
+    }
+
+    static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+        ModeTray* self = reinterpret_cast<ModeTray*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (msg == taskbarCreatedMsg()) {
+            // explorer 重启后托盘被清空，需要重新添加。
+            if (self != nullptr && self->icon_ != nullptr) {
+                self->shown_ = false;
+                self->show(self->english_);
+            }
+            return 0;
+        }
+        if (msg == WM_NCDESTROY) {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            if (self != nullptr) self->hwnd_ = nullptr;
+            InterlockedDecrement(&g_liveTrayWindows);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+
+    bool ensureWindow() {
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) return true;
+        hwnd_ = nullptr;
+        const std::wstring cls = windowClassName(L"ChaosetTrayWndClass", g_hInst);
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ModeTray::wndProc;
+        wc.hInstance = g_hInst;
+        wc.lpszClassName = cls.c_str();
+        RegisterClassExW(&wc);
+        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, cls.c_str(),
+                                L"ChaosetTray", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
+                                g_hInst, nullptr);
+        if (hwnd_ == nullptr) return false;
+        SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        InterlockedIncrement(&g_liveTrayWindows);
+        return true;
+    }
+
+    // 画一个 16×16 的小图标：深色圆角底 + 白色「中」/「英」。
+    static HICON makeGlyphIcon(bool english) {
+        const int sz = GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16;
+        BITMAPV5HEADER bi{};
+        bi.bV5Size = sizeof(bi);
+        bi.bV5Width = sz;
+        bi.bV5Height = -sz;  // 自上而下
+        bi.bV5Planes = 1;
+        bi.bV5BitCount = 32;
+        bi.bV5Compression = BI_BITFIELDS;
+        bi.bV5RedMask = 0x00FF0000;
+        bi.bV5GreenMask = 0x0000FF00;
+        bi.bV5BlueMask = 0x000000FF;
+        bi.bV5AlphaMask = 0xFF000000;
+        HDC screen = GetDC(nullptr);
+        if (screen == nullptr) return nullptr;
+        HDC dc = CreateCompatibleDC(screen);
+        ReleaseDC(nullptr, screen);
+        if (dc == nullptr) return nullptr;
+        void* bits = nullptr;
+        HBITMAP color = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi),
+                                         DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (color == nullptr || bits == nullptr) {
+            if (color != nullptr) DeleteObject(color);
+            DeleteDC(dc);
+            return nullptr;
+        }
+        HGDIOBJ old = SelectObject(dc, color);
+        ZeroMemory(bits, static_cast<size_t>(sz) * sz * 4);
+        HBRUSH bg = CreateSolidBrush(RGB(24, 24, 24));
+        HBRUSH oldBrush = static_cast<HBRUSH>(SelectObject(dc, bg));
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(24, 24, 24));
+        HPEN oldPen = static_cast<HPEN>(SelectObject(dc, pen));
+        RoundRect(dc, 0, 0, sz, sz, sz / 3, sz / 3);
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(bg);
+        DeleteObject(pen);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(255, 255, 255));
+        LOGFONTW lf{};
+        lf.lfHeight = -MulDiv(sz, 72, 96) * 9 / 10;
+        lf.lfWeight = FW_SEMIBOLD;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        wcscpy_s(lf.lfFaceName, L"Microsoft YaHei");
+        HFONT font = CreateFontIndirectW(&lf);
+        HGDIOBJ oldFont = SelectObject(dc, font);
+        RECT rc{0, 0, sz, sz};
+        DrawTextW(dc, english ? L"英" : L"中", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, oldFont);
+        DeleteObject(font);
+        SelectObject(dc, old);
+        // 把「近黑 = 背景透明」转成 alpha：GDI 绘制不写 alpha 通道。
+        auto* px = static_cast<unsigned char*>(bits);
+        for (int i = 0; i < sz * sz; ++i) {
+            unsigned char* p = px + i * 4;
+            const bool transparent = (p[0] == 0 && p[1] == 0 && p[2] == 0);
+            p[3] = transparent ? 0 : 255;
+        }
+        DeleteDC(dc);
+        ICONINFO ii{};
+        ii.fIcon = TRUE;
+        ii.hbmColor = color;
+        ii.hbmMask = nullptr;
+        HICON icon = CreateIconIndirect(&ii);
+        DeleteObject(color);
+        return icon;
+    }
+
+    void destroy() {
+        hide();
+        if (icon_ != nullptr) {
+            DestroyIcon(icon_);
+            icon_ = nullptr;
+        }
+        if (hwnd_ != nullptr && IsWindow(hwnd_)) DestroyWindow(hwnd_);
+        hwnd_ = nullptr;
+    }
+};
+
 class ChaosetTIP : public ITfTextInputProcessorEx,
                   public ITfKeyEventSink,
                   public ITfCompositionSink {
@@ -2222,6 +2416,9 @@ public:
 
     // ITfTextInputProcessor
     HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override {
+        // AppContainer/沉浸式宿主（开始菜单、搜索）不投递 OnSetFocus(FALSE)，
+        // 但会重复调用 Activate——这是把上一轮残留清干净的最早可靠时机。
+        applyPendingStaleReset();
         g_lastOp = kOpActivate;
         ensureCrashHandler();
         // 每个宿主进程只记一次 Activate：字段统一不变，同时避免反复聚焦耗尽
@@ -2278,6 +2475,8 @@ public:
             }
         }
         syncModeCompartment();
+        // 托盘图标只在有焦点期间显示（AppContainer 宿主会失败，无副作用）。
+        modeTray_.show(enMode_);
         // 前台切换兜底：部分宿主（开始菜单/搜索）不投递 OnSetFocus(FALSE)，
         // 只有系统级前台事件能把「用户已经离开」如实告诉我们。
         if (fgHook_ == nullptr) {
@@ -2328,6 +2527,7 @@ public:
         }
         if (hookSelf_ == this) hookSelf_ = nullptr;
         pendingStaleReset_ = false;
+        modeTray_.hide();
         if (modeCompartment_ != nullptr) {
             modeCompartment_->Release();
             modeCompartment_ = nullptr;
@@ -2376,6 +2576,7 @@ public:
         if (!fForeground) {
             candidateWnd_.hide();
             toast_.hide();
+            modeTray_.hide();
             clearAssociate();
             // 焦点离开：**挂起**而不是直接丢弃按住状态。
             //
@@ -2813,6 +3014,8 @@ private:
     // 线程级隔间（GUID_COMPARTMENT_KEYBOARD_OPENCLOSE）：把中英模式同步给
     // Windows 输入指示器，任务栏「中/英」随模式变化（与微软拼音/搜狗一致）。
     ITfCompartment* modeCompartment_ = nullptr;
+    // 自建任务栏「中/英」图标（Windows 不为第三方 TIP 绘制输入指示器）。
+    ModeTray modeTray_;
     static thread_local ChaosetTIP* hookSelf_;
 
     static void CALLBACK fgHookProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DWORD,
@@ -2841,6 +3044,11 @@ private:
     void applyPendingStaleReset() {
         if (!pendingStaleReset_) return;
         pendingStaleReset_ = false;
+        // **必须先结束 TSF 合成本身**（2026-11-05 实机）：只清本地状态的话，
+        // 宿主文档里的预编辑文本会原样留着——开始菜单失焦重开后旧拼音还在，
+        // 原因就在这里。endComposition 会对合成所属上下文发编辑会话，
+        // 把预编辑文本从文档里删掉。
+        endComposition();
         resetSession();
         comp_ = chaoset::Comp();
         confirmedPreedit_.clear();
@@ -2954,7 +3162,8 @@ private:
 
     void toggleEnMode(ITfContext* pic) {
         enMode_ = !enMode_;
-        syncModeCompartment();  // 立刻反映到任务栏「中/英」指示器
+        syncModeCompartment();  // 立刻反映到线程隔间（其他应用可读）
+        modeTray_.show(enMode_);  // 任务栏「中/英」图标随之更新
         if (diagBudget()) {
             // 诊断补前台信息：Firefox/Chrome 的「安装应用」(PWA) 窗口是独立
             // 进程/窗口，若 fgpid != selfpid 说明本 TIP 并不在拥有焦点的那个
@@ -5236,6 +5445,7 @@ STDAPI DllCanUnloadNow() {
     if (g_liveCandidateWindows != 0) return S_FALSE;
     if (g_liveSettingsWindows != 0) return S_FALSE;
     if (g_liveToastWindows != 0) return S_FALSE;
+    if (g_liveTrayWindows != 0) return S_FALSE;
     return S_OK;
 }
 
