@@ -65,6 +65,16 @@ go build ./...                    # 秒级
 
 6 个并行 job 的覆盖范围、本地复跑方式与 CI 相关陷阱见 skill `ime-daemon-lifecycle`「五、CI 相关」。
 
+### 发布必须由用户触发（禁止代理自行发版）
+
+推 `v*` tag 会直接触发 `.github/workflows/release.yml` 并产出对外发布包。
+代理**不得**自行 `git tag` / `git push origin v*` / `gh release create`——
+未经验证的修复一旦打 tag 就变成用户可见的正式版本，问题代码会被当成发布版扩散。
+
+- 修完只做：提交 → 合并到 `main` → `git push origin main`（只跑 CI，不发版）。
+- 版本号、tag、Release 由用户决定并发起；需要发版时按用户指示操作。
+- CHANGELOG 的 `## 未发布` 段落可以持续累积多条，等用户发版时再改成 `## vX.Y.Z（日期）`。
+
 ## 候选质量（拼音匹配 / 输入预测）
 
 改动 `engine/` 里任何「输入串 → 候选列表」的逻辑（切分、匹配层级、排序打分、
