@@ -511,6 +511,27 @@ func checkForegroundFallback(fsys fs.FS, problems *[]string) {
 	)
 }
 
+// 输入法激活判据契约（2026-11-05 用户反馈「选定的输入法不是 chaoset 时按 Shift
+// 仍有中英提示」）：TSF 在某些宿主里会把按键继续投给未激活的 TIP，因此必须在
+// 按键入口查询「本线程激活的输入处理器是不是我们」（
+// ITfInputProcessorProfileMgr::GetActiveProfile），不是就整键放行。
+// 四个按键入口（Test/Key × 按下/抬起）都要有这道闸门。
+func checkActiveProfileGate(fsys fs.FS, problems *[]string) {
+	const group = "输入法激活判据"
+	checkContains(fsys, problems, group, winShell,
+		"ITfInputProcessorProfileMgr", "GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD",
+		"bool isActiveTip()", "bailOutIfInactive",
+		"TF_PROFILETYPE_INPUTPROCESSOR", "CLSID_ChaosetTIP",
+	)
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if n := strings.Count(string(data), "if (bailOutIfInactive())"); n < 4 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：bailOutIfInactive() 闸门只有 %d 处，应为 4 处"+
+					"（OnTestKeyDown/OnTestKeyUp/OnKeyDown/OnKeyUp）", group, n))
+		}
+	}
+}
+
 // 崩溃日志契约（2026-11-05）：crash.log 只允许记录**错误级**异常。
 // 曾经什么都记，结果 AppContainer 宿主里堆了 197 条「崩溃」，实际全是宿主
 // 自己抛出又接住的 COM/RPC 首次异常（pid 一直没变、进程一直活着）。
@@ -783,6 +804,9 @@ func Run(fsys fs.FS) []string {
 
 	// 4l. 崩溃日志只记错误级异常（2026-11-05）：RPC/COM 首次异常不算崩溃。
 	checkCrashLogFilter(fsys, &problems)
+
+	// 4m. 输入法激活判据（2026-11-05）：非激活时必须整键放行。
+	checkActiveProfileGate(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")

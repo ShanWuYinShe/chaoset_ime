@@ -2501,6 +2501,12 @@ public:
         tm_ = ptim;
         if (tm_ != nullptr) tm_->AddRef();
         clientId_ = tid;
+        // 激活档案查询器（判断「当前激活的输入法是不是我们」）。
+        if (profileMgr_ == nullptr) {
+            CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+                             IID_ITfInputProcessorProfileMgr,
+                             reinterpret_cast<void**>(&profileMgr_));
+        }
         // 线程级隔间：把中英模式交给 Windows 输入指示器（任务栏「中/英」）。
         if (tm_ != nullptr && modeCompartment_ == nullptr) {
             ITfCompartmentMgr* compMgr = nullptr;
@@ -2566,6 +2572,10 @@ public:
         if (hookSelf_ == this) hookSelf_ = nullptr;
         pendingStaleReset_ = false;
         modeTray_.hide();
+        if (profileMgr_ != nullptr) {
+            profileMgr_->Release();
+            profileMgr_ = nullptr;
+        }
         if (modeCompartment_ != nullptr) {
             modeCompartment_->Release();
             modeCompartment_ = nullptr;
@@ -2672,6 +2682,10 @@ public:
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
         g_lastOp = kOpTestKeyDown;
+        if (bailOutIfInactive()) {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
         applyPendingStaleReset();  // 前台已离开过：先丢掉上一轮的残留组词
         // Shift 记账自愈必须覆盖所有按键（含修饰键）：若上一次按住的 KeyUp
         // 丢了，这里先复位，随后的 Shift 按下才能重新开一次干净的会话。
@@ -2759,6 +2773,10 @@ public:
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                         BOOL* pfEaten) override {
         g_lastOp = kOpKeyDown;
+        if (bailOutIfInactive()) {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
         applyPendingStaleReset();
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             // **第二跟踪点**（2026-11-05 实机日志实证，必须有）。
@@ -2790,6 +2808,10 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                           BOOL* pfEaten) override {
+        if (bailOutIfInactive()) {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
         if (isModifierKey(wParam)) {
             static volatile LONG loggedTestUpModifier = 0;
             if (InterlockedCompareExchange(&loggedTestUpModifier, 1, 0) == 0 && diagBudget()) {
@@ -2814,6 +2836,10 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
+        if (bailOutIfInactive()) {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             // **第二跟踪点**（与 OnKeyDown 对称，见那里的日志实证说明）。
             static volatile LONG loggedUpModifier = 0;
@@ -3054,6 +3080,23 @@ private:
     ITfCompartment* modeCompartment_ = nullptr;
     // 自建任务栏「中/英」图标（Windows 不为第三方 TIP 绘制输入指示器）。
     ModeTray modeTray_;
+
+    // **当前激活的输入法是不是我们**（2026-11-05 用户反馈：选定的输入法不是
+    // chaoset 时按 Shift 仍会出中英提示）。
+    //
+    // 实测：切到其它输入法/英文键盘布局后，TSF 仍会把按键投给本 TIP 的按键
+    // 下沉（我们的 Deactivate 未被调用或不及时），于是 Shift 照样触发切换。
+    // 正确判据是查询本线程的**激活输入处理器档案**：
+    //   ITfInputProcessorProfileMgr::GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD)
+    // 返回的 clsid 不是我们 → 直接放行所有按键，绝不参与输入。
+    ITfInputProcessorProfileMgr* profileMgr_ = nullptr;
+
+    bool isActiveTip() {
+        if (profileMgr_ == nullptr) return true;  // 查询不可用：退回旧行为，别把输入搞坏
+        TF_INPUTPROCESSORPROFILE prof{};
+        if (FAILED(profileMgr_->GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD, &prof))) return true;
+        return prof.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR && prof.clsid == CLSID_ChaosetTIP;
+    }
     static thread_local ChaosetTIP* hookSelf_;
 
     static void CALLBACK fgHookProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DWORD,
@@ -3079,6 +3122,21 @@ private:
     }
 
     // 下一次按键时在 TIP 线程上清掉残留（不使用编辑会话：旧上下文可能已销毁）。
+    // 当前激活的输入法不是我们 → 所有按键立即放行，收掉一切 UI。
+    // 返回 true 表示调用方应直接返回 S_OK（pfEaten=FALSE）。
+    bool bailOutIfInactive() {
+        if (isActiveTip()) return false;
+        static volatile LONG loggedInactive = 0;
+        if (InterlockedCompareExchange(&loggedInactive, 1, 0) == 0) {
+            diagPrintf(L"tsf.log", "inactive profile: keys passed through\n");
+        }
+        candidateWnd_.hide();
+        toast_.hide();
+        modeTray_.hide();
+        resetShiftTracking();
+        return true;
+    }
+
     void applyPendingStaleReset() {
         if (!pendingStaleReset_) return;
         pendingStaleReset_ = false;

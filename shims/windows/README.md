@@ -191,6 +191,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
+- **非激活时必须整键放行**（2026-11-05）：TSF 在某些宿主里会把按键继续投给未激活
+  的 TIP 按键下沉，导致「选定的输入法不是 chaoset 时按 Shift 仍出中英提示」。
+  四个按键入口都要先查 `ITfInputProcessorProfileMgr::GetActiveProfile
+  (GUID_TFCAT_TIP_KEYBOARD)` 的 clsid 是否为 `CLSID_ChaosetTIP`，不是则 `pfEaten=FALSE`。
 - **托盘图标的 `ICONINFO.hbmMask` 必须非空**（2026-11-05）：传 NULL 时
   `CreateIconIndirect` 在部分系统上直接失败，图标永远建不出来，只能一直退回
   浮动提示。另：`diagBudget()` 每进程仅 200 次，高频日志会把它烧光并吞掉

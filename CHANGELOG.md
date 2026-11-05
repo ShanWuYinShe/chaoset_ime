@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **选定的输入法不是 chaoset 时，按 Shift 仍出中英提示**（2026-11-05 用户反馈）：
+  实机日志里能看到这种情况下我们的 `shift toggle` 仍在触发——TSF 在某些宿主里
+  会把按键继续投给未激活的 TIP 按键下沉（`Deactivate` 未被调用或不及时）。
+  现在四个按键入口（Test/Key × 按下/抬起）都先查「本线程激活的输入处理器
+  是不是我们」：`ITfInputProcessorProfileMgr::GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD)`
+  返回的 clsid 不是 `CLSID_ChaosetTIP`（或类型不是输入处理器）→ **整键放行**，
+  同时收掉候选窗/提示条/托盘图标并复位 Shift 记账。
+  `checkuiparity` 新增「输入法激活判据」断言，锁死 4 处闸门。
 - **任务栏中英图标一直没出现：`CreateIconIndirect` 收到 NULL 掩码而失败**
   （2026-11-05 实机定位）。托盘图标的 `ICONINFO.hbmMask` 不能为 NULL，部分系统
   上会直接失败，于是图标永远建不出来、只能一直退回浮动提示——这正是用户看到
