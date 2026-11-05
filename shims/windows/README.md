@@ -197,6 +197,13 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
      成空按）。与事件路径共用同一套状态，任一路径先结算另一条都会自然跳过。
      排障证据：`tsf.log` 里的 `shift poll:` 行——出现 `宿主未投递 Shift 按下`
      说明该宿主完全不送修饰键；出现 `释放事件缺失` 说明只缺 KeyUp。
+- **PWA / 「安装应用」窗口（Chrome app 窗口、Firefox 装到任务栏的独立窗口）**：
+  这类窗口是宿主自己的独立顶层窗口，TSF 上下文与焦点归属都可能和主窗口不同。
+  排障看 `tsf.log` 的 `fgpid`/`selfpid`：`activate` 与 `shift toggle` 两行现在都带
+  这两个字段——`fgpid != selfpid` 说明本 TIP 不在拥有焦点的那个进程里，那就不是
+  按键记账的问题，而是宿主没在这个进程加载 TIP（需要宿主侧或 IMM32 方案）。
+  另外候选窗在拿不到 `GetTextExt` 光标矩形时会退回鼠标位置，此时锚点已下移一行，
+  避免候选窗盖住正在输入的文字。
 - **console（cmd/旧 PowerShell）走的是 IMM32，不是 TSF**：本壳是纯 TSF TIP，
   没有 IMM32 入口（`ImeInquire`/`ImeProcessKey`），若 `tsf.log` 里完全没有
   `activate ... host=conhost.exe`，说明 TIP 根本没被加载——那不是本 Bug，

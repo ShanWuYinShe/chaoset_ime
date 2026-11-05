@@ -2116,8 +2116,14 @@ public:
         if (InterlockedCompareExchange(&activateLogged, 1, 0) == 0 && diagBudget()) {
             char host[260];
             diagHostName(host, static_cast<int>(sizeof(host)));
-            diagPrintf(L"tsf.log", "activate pid=%lu host=%s appcontainer=%d build=%s %s\n",
-                       static_cast<unsigned long>(GetCurrentProcessId()), host,
+            // fgpid：前台窗口所属进程。与 pid 不同即说明本 TIP 不在前台进程
+            // 里（PWA 独立窗口/多进程宿主的排查关键，2026-11-05）。
+            const HWND fg = GetForegroundWindow();
+            DWORD fgPid = 0;
+            if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
+            diagPrintf(L"tsf.log", "activate pid=%lu fgpid=%lu host=%s appcontainer=%d build=%s %s\n",
+                       static_cast<unsigned long>(GetCurrentProcessId()),
+                       static_cast<unsigned long>(fgPid), host,
                        isAppContainer() ? 1 : 0, __DATE__, __TIME__);
         }
         // UILess 模式探测（2026-10-30 开始菜单候选窗排障）：
@@ -2624,19 +2630,40 @@ private:
     void toggleEnMode(ITfContext* pic) {
         enMode_ = !enMode_;
         if (diagBudget()) {
-            diagPrintf(L"tsf.log", "shift toggle enMode=%d\n", enMode_ ? 1 : 0);
+            // 诊断补前台信息：Firefox/Chrome 的「安装应用」(PWA) 窗口是独立
+            // 进程/窗口，若 fgpid != selfpid 说明本 TIP 并不在拥有焦点的那个
+            // 进程里——这是判断「PWA 里切不了」到底卡在哪一层的直接证据。
+            const HWND fg = GetForegroundWindow();
+            DWORD fgPid = 0;
+            if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
+            diagPrintf(L"tsf.log", "shift toggle enMode=%d fgpid=%lu selfpid=%lu\n",
+                       enMode_ ? 1 : 0, static_cast<unsigned long>(fgPid),
+                       static_cast<unsigned long>(GetCurrentProcessId()));
         }
         // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），纯拼音仍按
         // 旧语义丢弃；此前直接 endComposition 会清空 confirmedPreedit_
         // （审计 P1-3）。
         //
-        // 关于「能不能跳过这次收尾」：flushOrCancel → resetSession 会发一次
-        // daemon reset 请求。看着像是空转（切中英确实只是壳本地状态 enMode_），
-        // 但 reset 还清引擎的 prev/history/dpPending，若跳过，下一轮组词的
-        // 联想与调频打分就会带着上一轮的上下文（prev 参与 Score 与续接）。
-        // 这几项壳侧看不见，无法可靠判断是否为空，故此处保持无条件收尾——
-        // 行为与修复前一致，不拿候选质量换这点延迟。
-        flushOrCancel(pic);
+        // 收尾按「有没有未上屏内容」分流（2026-11-05 三审）：
+        //
+        // 切中英本身是纯壳本地状态，唯一需要通知 daemon 的理由是丢弃当前组词。
+        // 没有未上屏内容时这次 IPC 纯属空转（同步往返，daemon 忙时可达 250ms），
+        // 而且它发生在按键回调里——PWA/独立窗口这类宿主对 TSF 编辑会话更敏感，
+        // 少做一次无意义往返就少一类干扰源。
+        //
+        // 保留 resetComposition 语义：只丢组词、**保留** prev/history，
+        // 所以「切模式把刚上屏的词也忘掉」的问题不会回来。
+        const bool pending = isComposing() || !confirmedPreedit_.empty();
+        if (pending) {
+            flushOrCancel(pic);
+        } else if (!dpScheme_.empty()) {
+            // 双拼例外：引擎可能持有「暂存首键」(dpPending)，壳侧 comp_ 为空
+            // 也看不见它，必须让 daemon 清一次，否则下一轮会拿旧首键解码。
+            resetComposition();
+            comp_ = chaoset::Comp();
+        } else {
+            comp_ = chaoset::Comp();  // 全拼且无未上屏内容：零 IPC
+        }
         candidateWnd_.hide();
         showModeToast(enMode_ ? L"英文模式" : L"中文模式");
     }
@@ -3640,8 +3667,16 @@ private:
                 caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
                 caretFound_ = true;
             } else {
+                // 鼠标兜底：**锚点要下移一行**。
+                //
+                // 鼠标通常正停在用户正在输入的那一行上，而候选窗是从锚点
+                // 再往下 6pt 起画的——直接用鼠标坐标会把候选窗画在输入行
+                // 上面，正好挡住正在打的字（Firefox 装到任务栏后的独立窗口
+                // 实测「候选框遮挡输入」，2026-11-05）。下移一行后候选窗
+                // 落在输入行下方，与有真实光标时的观感一致。
                 GetCursorPos(&caretPos_);
                 caretLineHeight_ = 20;
+                caretPos_.y += caretLineHeight_;
             }
         }
         // 候选窗 owner = 宿主窗口（2026-10-30 开始菜单排障）。
