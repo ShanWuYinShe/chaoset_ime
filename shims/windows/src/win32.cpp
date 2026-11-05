@@ -2169,6 +2169,9 @@ public:
         endComposition();
         resetSession();
         comp_ = chaoset::Comp();
+        // 停用期间发生的按键收不到任何 Test 回调，Shift 记账必须归零，
+        // 否则重新激活后第一次 Shift 空按会被「上一轮的孤儿按住」吃掉。
+        resetShiftTracking();
         // TIP 重新激活时可能连的是另一套 daemon 配置：方案名丢弃重新缓存，
         // 否则旧方案会让 ';' 错路由（见 syncDpScheme）。
         dpScheme_.clear();
@@ -2198,6 +2201,11 @@ public:
             candidateWnd_.hide();
             toast_.hide();
             clearAssociate();
+            // Shift 记账复位（2026-11-05）：按住 Shift 切走窗口时，KeyUp 会交给
+            // 新前台窗口、本线程永远收不到——不复位就会留下一次「孤儿按住」
+            // 把后续 Shift 空按全部吃掉。Linux 壳在 focusOut 调 shift_.reset()
+            // （shims/linux/engine/main.cpp:386-389），这里对齐同一语义。
+            resetShiftTracking();
             // 失去焦点：已确认段先落盘（用户确认过的字不能丢；旧实现里这些
             // 段早已在文档，净效果一致），纯拼音预编辑维持「清空」旧语义——
             // 防止跨窗口残留组词状态导致后续窗口吃键。落盘必须对**合成所属
@@ -2225,6 +2233,9 @@ public:
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
         g_lastOp = kOpTestKeyDown;
+        // Shift 记账自愈必须覆盖所有按键（含修饰键）：若上一次按住的 KeyUp
+        // 丢了，这里先复位，随后的 Shift 按下才能重新开一次干净的会话。
+        reconcileShiftState();
         if (isModifierKey(wParam)) {
             // Shift 空按切换中英的跟踪点（2026-10-31 修复）。
             //
@@ -2245,8 +2256,8 @@ public:
             // sinceShift）都是这个语义；此前 Windows 漏了这一步，
             // Shift→Ctrl→松 Shift 会误切换中英（2026-10-31 三端复核发现）。
             if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-                onShiftEvent(false, pic);
-            } else {
+                onShiftEvent(false, wParam, pic);
+            } else if (shiftHeld_ != 0) {
                 sinceShift_ = true;
             }
             *pfEaten = FALSE;  // 修饰键始终放行
@@ -2311,7 +2322,7 @@ public:
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             // 诊断保留：若这行出现，说明本宿主会走到 Key 阶段；跟踪已移到
             // OnTestKeyDown/OnTestKeyUp（2026-10-31），这里不能再调
-            // onShiftEvent——否则两个阶段各计一次，shiftDown_ 失衡。
+            // onShiftEvent——否则两个阶段各计一次，Shift 记账失衡。
             static volatile LONG loggedDownModifier = 0;
             if (InterlockedCompareExchange(&loggedDownModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnKeyDown vk=0x%02lX\n",
@@ -2336,8 +2347,8 @@ public:
             if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
                 // 与 OnTestKeyDown 对称：Key 阶段收不到修饰键时，这里也收不到；
                 // 跟踪必须放在 Test 阶段（见 OnTestKeyDown 注释）。
-                onShiftEvent(true, pic);
-            } else {
+                onShiftEvent(true, wParam, pic);
+            } else if (shiftHeld_ != 0) {
                 // 其它修饰键的释放同样关闭空按窗口：mac 在 flagsChanged（按下
                 // 与释放都触发）清 shiftArmed，Linux 在任何非 Shift 事件清
                 // sinceShift。典型场景：Ctrl 先按住 → 按 Shift → 松 Ctrl →
@@ -2544,37 +2555,115 @@ private:
     bool hasCandidates() const { return !comp_.candidates.empty(); }
 
     // ---- 中英切换：Shift 空按（按下后未按其他键即释放）----
-    // 语义与 ibus 壳的 shiftTracker 一致；事件路径见 OnTestKeyDown 等分流。
+    // 语义与 ibus 壳的 shiftTracker（shims/linux/engine/main.cpp:50-72）一致；
+    // 事件路径见 OnTestKeyDown 等分流。
+    //
+    // **记账方式 2026-11-05 重写：按「一次按住会话」记账，不再按事件累加。**
+    // 旧实现用 shiftDown_++/--：每收到一次 Shift 按下就 +1、每收到一次释放才 -1，
+    // 只有计数回到 0 才结算。只要丢失**任意一次** KeyUp，计数就只增不减、永远
+    // 回不到 0 —— 该进程内 Shift 空按**永久失效**，只能重启应用恢复。
+    // 丢失 KeyUp 的典型场景（都不是宿主 bug，而是 Windows 的既定行为）：
+    //   1. 按住 Shift 时切换窗口（Alt+Tab / 点别的窗口）：KeyUp 交给**新前台
+    //      窗口**，本线程永远收不到；
+    //   2. TIP 被 TSF 停用期间发生的按键（Deactivate → 再 Activate）；
+    //   3. 宿主重复投递同一次按下（auto-repeat / TSF 与宿主各投递一次）。
+    // 这正好解释实机症状：Terminal / 开始菜单 / Chrome（长驻进程 + 频繁切走
+    // 窗口）切不了，Firefox（同一会话里连续空按）可以。
     bool enMode_ = false;
-    int shiftDown_ = 0;      // 仍按着的 Shift 键数（左右）
-    bool sinceShift_ = true; // 窗口外初始值：防止首个 Shift 释放误触发
+    // 当前按住的 Shift 物理键位掩码（bit0=左、bit1=右、bit2=泛化 VK_SHIFT）。
+    // 用**掩码**而不是计数器：置位/清位天然幂等，键盘 auto-repeat 或宿主重复
+    // 投递同一次按下都不会把它推到「永远回不到 0」——这正是旧实现 ++/-- 的
+    // 致命缺陷。同时掩码能正确区分左右 Shift 同时按住的场景。
+    unsigned shiftHeld_ = 0;
+    bool sinceShift_ = true;    // 按住期间是否出现过其它键（true = 不是空按）
 
-    void onShiftEvent(bool release, ITfContext* pic) {
+    static unsigned shiftBit(WPARAM vk) {
+        if (vk == VK_LSHIFT) return 1u;
+        if (vk == VK_RSHIFT) return 2u;
+        return 4u;  // 泛化 VK_SHIFT：多数宿主只投递这个
+    }
+
+    // 系统层面是否仍有任一 Shift 物理按下。只在持有按住会话时才查询
+    // （唯一调用点 reconcileShiftState 已先判 shiftHeld_），正常打字路径零额外开销。
+    // 用来兜住上下文切换/焦点变化造成的 KeyUp 丢失。
+    static bool shiftPhysicallyDown() {
+        return (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
+               (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    }
+
+    // 焦点/停用复位。Linux 壳在 focusIn/focusOut 调 shift_.reset()
+    // （shims/linux/engine/main.cpp:385-389），Windows 此前完全没有这一步：
+    // 按住 Shift 切走窗口时 KeyUp 不会回来，复位是唯一能保证不卡死的时机。
+    void resetShiftTracking() {
+        shiftHeld_ = 0;
+        sinceShift_ = true;  // 复位后首个释放不得触发切换
+    }
+
+    void toggleEnMode(ITfContext* pic) {
+        enMode_ = !enMode_;
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "shift toggle enMode=%d\n", enMode_ ? 1 : 0);
+        }
+        // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），纯拼音仍按
+        // 旧语义丢弃；此前直接 endComposition 会清空 confirmedPreedit_
+        // （审计 P1-3）。
+        //
+        // 关于「能不能跳过这次收尾」：flushOrCancel → resetSession 会发一次
+        // daemon reset 请求。看着像是空转（切中英确实只是壳本地状态 enMode_），
+        // 但 reset 还清引擎的 prev/history/dpPending，若跳过，下一轮组词的
+        // 联想与调频打分就会带着上一轮的上下文（prev 参与 Score 与续接）。
+        // 这几项壳侧看不见，无法可靠判断是否为空，故此处保持无条件收尾——
+        // 行为与修复前一致，不拿候选质量换这点延迟。
+        flushOrCancel(pic);
+        candidateWnd_.hide();
+        showModeToast(enMode_ ? L"英文模式" : L"中文模式");
+    }
+
+    // vk 必须是原始 WPARAM（VK_SHIFT / VK_LSHIFT / VK_RSHIFT），
+    // 据此决定置/清哪一位——左右 Shift 同时按住时各自记一位。
+    void onShiftEvent(bool release, WPARAM vk, ITfContext* pic) {
+        const unsigned bit = shiftBit(vk);
         if (!release) {
-            ++shiftDown_;
-            sinceShift_ = false;
+            // 位运算天然幂等：auto-repeat / 重复投递不会累积。
+            if ((shiftHeld_ & bit) != 0) return;  // 同一次按住的重复按下
+            // 只有「从完全没按住 → 开始按住」才开启新的空按窗口。
+            // 不能用 shiftHeld_ == bit 判断：先按左 Shift（bit0）再补按右 Shift
+            // （bit1）时 shiftHeld_==3，会把窗口重新打开，之后夹带的按键就被漏掉。
+            if (shiftHeld_ == 0) sinceShift_ = false;
+            shiftHeld_ |= bit;
             return;
         }
-        if (shiftDown_ == 0) return;  // 无按下的孤立释放
-        --shiftDown_;
-        if (shiftDown_ == 0) {
-            if (!sinceShift_) {
-                enMode_ = !enMode_;
-                // 真机诊断（A8）：看到这条 = Shift 空按在 OnKeyDown/OnKeyUp
-                // 阶段成功跟踪到；看不到而上面 OnTestKeyDown 日志出现，说明
-                // OnKeyDown/OnKeyUp 根本没被调用（TSF 两阶段模型问题）。
-                if (diagBudget()) {
-                    diagPrintf(L"tsf.log", "shift toggle enMode=%d\n", enMode_ ? 1 : 0);
-                }
-                // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），
-                // 纯拼音仍按旧语义丢弃；随后收起候选窗/提示条并弹模式提示。
-                // 此前直接 endComposition 会清空 confirmedPreedit_（审计 P1-3）。
-                flushOrCancel(pic);
-                candidateWnd_.hide();
-                showModeToast(enMode_ ? L"英文模式" : L"中文模式");
-            }
-            sinceShift_ = false;
+        if ((shiftHeld_ & bit) == 0) {
+            // 无按下的孤立释放。宿主混用键码时（按下投递 VK_LSHIFT、释放
+            // 投递 VK_SHIFT 或反之）位置对不上——若 Shift 确已不在物理按下
+            // 状态就整体结算，否则会留下一位永远挂着（下一键虽能自愈，但
+            // 会吞掉本次该有的切换）。真的没按住就直接返回。
+            if (shiftHeld_ == 0 || shiftPhysicallyDown()) return;
+            shiftHeld_ = 0;
+        } else {
+            shiftHeld_ &= ~bit;
         }
+        // 只有「最后一次抬起」才结算：左右 Shift 同时按住时，
+        // 先松一侧不切换（与 macOS 双 Shift 行为一致）。
+        if (shiftHeld_ != 0) return;
+        if (!sinceShift_) toggleEnMode(pic);
+        sinceShift_ = true;  // 本次会话结束；下一次按下重新开窗
+    }
+
+    // 事件驱动的自愈：按键前先与系统物理状态对齐，处理丢失的 Shift KeyUp。
+    //
+    // **只复位、不结算**：丢失 KeyUp 时我们无法判断这次按住是否算「空按」
+    //（可能按住 Shift 点了别的窗口，其实按过鼠标），凭空切一次中英比少切
+    // 一次更糟——而且用户下一次空按就能正常切换，代价极小。
+    //
+    // 为什么是事件驱动而不是定时器：README 原承诺「宿主不投递 Test 阶段就
+    // 退回 GetKeyState 轮询」，但常驻定时器要求宿主有可靠的消息泵（候选窗
+    // 宿主不保证），且空闲时白耗 CPU。这里挂在按键路径上，正常打字开销为零。
+    void reconcileShiftState() {
+        if (shiftHeld_ == 0) return;  // 绝大多数按键在这里直接返回
+        if (shiftPhysicallyDown()) return;
+        shiftHeld_ = 0;  // 丢了 KeyUp：复位，避免永久卡死
+        sinceShift_ = true;
     }
 
     // 按键 → 产生的 ASCII 字符（US 布局直映，含 Shift 变体），只返回

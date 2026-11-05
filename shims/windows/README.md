@@ -170,7 +170,7 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | 命名管道、当前用户按需启动、AppContainer ACL | 已实现；Windows 真机需验收 |
 | 原生 GDI 候选窗、学习标记、鼠标点选、翻页 | 已实现；视觉静态契约由 `checkuiparity` 校验 |
 | 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 编译级实现；交互需真机验收 |
-| Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 投递需真机验收 |
+| Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
 | 游戏/全屏、UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
@@ -183,8 +183,11 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
-- Shift 跟踪依赖 TSF Test 阶段；若宿主连 `OnTestKeyUp` 都不调用，需要退回
-  `GetKeyState` 轮询。
+- Shift 跟踪依赖 TSF Test 阶段。**2026-11-05 已补上记账健壮性**：内部状态改用
+  幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`、
+  `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
+  此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台
+  窗口），计数器永远回不到 0，该进程内 Shift 空按会**永久失效**直到重启应用。
 - 中文标点按 US 布局字符级映射；其他键盘布局未接入 `ToAscii`。
 - `GUID_TFCAT_CATEGORY_OF_TIP` 在 mingw uuid 库缺失，当前只登记键盘类。
 - 多会话（RDP/快速用户切换）与同一用户多会话的管道命名仍待验证。

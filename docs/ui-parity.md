@@ -158,7 +158,7 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 | 空格 | 组词态选首选并渐进上屏；有已确认段时拼接确认段+原始拼音上屏；联想态选第一个联想词 |
 | 回车 | 确认段按文本 + 剩余按原始拼音一次上屏 |
 | - = [ ] PageUp/PageDown | 候选/联想翻页；无候选时 [ ] 输出【】 |
-| Shift 空按 | 切中英；已确认段先落盘；释放事件放行给宿主 |
+| Shift 空按 | 切中英；已确认段先落盘；释放事件放行给宿主。记账必须是**幂等**的（Windows 用 `shiftHeld_` 位掩码，Linux 用 `shiftDown` 计数但 focusIn/focusOut 复位），任一端丢 KeyUp 都不得永久失效 |
 | Shift+空格 | 组词态切全/半角标点；联想态选词不切 |
 | 双拼 ; | mspy 下作为 ing 韵母键；其他模式/Shift+; 输出标点 |
 | 标点键 | 组词中先上屏首选，再输出中文标点；组词中的撇号是音节分隔符 |

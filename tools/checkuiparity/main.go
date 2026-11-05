@@ -639,6 +639,15 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "修饰键映射", linuxEngine,
 		"IBUS_CONTROL_MASK", "IBUS_MOD1_MASK", "IBUS_MOD4_MASK")
 	checkContains(fsys, &problems, "修饰键映射", uiParityDoc, "修饰键映射", "Command")
+
+	// 4f. Shift 空按切中英的记账契约（2026-11-05）：
+	// 三端都必须是「按住会话」语义，且必须能在焦点切换时复位——否则任何一次
+	// 丢失的 Shift KeyUp（按住 Shift 切窗口时 KeyUp 交给新前台窗口，本线程
+	// 收不到）都会让状态机永久卡死。Windows 曾用 ++/-- 计数器、且
+	// Deactivate/OnSetFocus 完全不复位，实机表现为 Terminal/Chrome/开始菜单
+	// 里 Shift 永久失效（只能重启应用恢复）。
+	checkShiftToggleAccounting(fsys, &problems)
+
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
 	checkContains(fsys, &problems, "打包安装", installSh, "chaoset-setup")
@@ -725,6 +734,39 @@ func Run(fsys fs.FS) []string {
 		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
 
 	return problems
+}
+
+// checkShiftToggleAccounting 锁住三端 Shift 空按的「记账」契约：
+//   - Windows 必须用幂等位掩码（shiftHeld_）而不是 ++/-- 计数器；
+//   - Windows 的 Deactivate 与 OnSetFocus(FALSE) 必须调 resetShiftTracking；
+//   - 必须有物理状态自愈（GetAsyncKeyState），兑现 README 承诺的兜底；
+//   - Linux 必须保留 shift_.reset() 的 focusIn/focusOut 复位；
+//   - macOS 必须保留 shiftArmed 复位路径；
+//   - ui-parity 必须保留「Shift 空按」行。
+//
+// 这些断言都对应真实发生过的缺陷（Windows 计数器只增不减 → 永久失效）。
+func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
+	const group = "Shift 记账"
+	// Windows：必须是幂等位掩码 + 焦点/停用复位 + 物理状态自愈。
+	checkContains(fsys, problems, group, winShell,
+		"shiftHeld_",
+		"resetShiftTracking",
+		"shiftPhysicallyDown",
+		"GetAsyncKeyState",
+		"reconcileShiftState",
+	)
+	// 旧实现的致命写法不得回归：按事件累加的计数器。
+	checkExcludes(fsys, problems, group, winShell,
+		"++shiftDown_", "--shiftDown_")
+	// Linux：焦点进出必须复位 Shift 跟踪状态。
+	checkContains(fsys, problems, group, linuxEngine,
+		"void reset() { shiftDown = 0; sinceShift = false; }",
+		"void focusIn() { shift_.reset(); }")
+	// macOS：出现其它按键必须清 shiftArmed（否则 Shift+字母会误切换）。
+	checkContains(fsys, problems, group, "shims/macos/src/ChaosetController.swift",
+		"shiftArmed = false", "shiftArmed = true")
+	// 文档基准行不得被删。
+	checkContains(fsys, problems, group, uiParityDoc, "Shift 空按")
 }
 
 func main() {
