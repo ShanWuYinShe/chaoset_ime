@@ -141,6 +141,12 @@ public:
     // 这里按 offset/limit 循环拼接，重度用户的大数据也能完整导出。
     bool userExportAll(bool phrasesOnly, std::string* out);
 
+    // 请求 daemon 代拉起单例 UI 宿主（chaoset-ui.exe，Windows 专用兜底）：
+    // AppContainer 宿主（开始菜单/搜索）内 TIP 不能 CreateProcess，daemon 以
+    // 同一用户、普通完整性运行，创建的子进程不会继承 AC 身份。
+    // 返回 true 表示 daemon 已成功发起；非 Windows 平台恒 false（无壳调用）。
+    bool ensureUiHost();
+
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);
     Transport& t_;

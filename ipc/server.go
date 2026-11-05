@@ -310,6 +310,15 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 			return nil, err
 		}
 		return map[string]bool{"deleted": deleted}, nil
+	case "ui":
+		// 由 daemon 代 AppContainer 宿主拉起单例 UI 宿主（chaoset-ui.exe）。
+		// 仅 Windows 有实现；其它平台返回错误（不会有壳调用该方法）。
+		// daemon 以当前交互用户、普通完整性运行，CreateProcess 创建的子进程
+		// 不会继承 AC 身份，因此开始菜单/搜索里也能打开设置窗。
+		if err := ensureUIHost(); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"started": true}, nil
 	case "userExport":
 		if s.user == nil {
 			return nil, fmt.Errorf("未启用用户词典")

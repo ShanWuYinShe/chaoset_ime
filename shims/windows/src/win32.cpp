@@ -291,29 +291,6 @@ void diagStamp(char* out, int cap) {
              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 }
 
-// 本进程所属包的日志目录（仅打包进程有包身份）：
-// %LOCALAPPDATA%\Packages\<Family>\LocalState\Chaoset
-// AppContainer 宿主里这是唯一保证可写的位置（2026-10-29 开始菜单排障：
-// 此前 tsf.log 对这些宿主完全静默，无法区分「没激活」和「写了但被拒」）。
-static bool diagPackageLogDir(wchar_t* out, int cap) {
-    UINT32 len = 0;
-    const LONG rc = GetCurrentPackageFullName(&len, nullptr);
-    if (rc != ERROR_INSUFFICIENT_BUFFER) return false;  // 非打包进程 / 无包身份
-    std::wstring full(len, L'\0');
-    if (GetCurrentPackageFullName(&len, full.data()) != ERROR_SUCCESS) return false;
-    full.resize(len);
-    // FullName: Name_Version_Arch_ResourceId_PublisherHash → Family: Name_PublisherHash
-    const size_t first = full.find(L'_');
-    const size_t last = full.rfind(L'_');
-    if (first == std::wstring::npos || last == std::wstring::npos || last <= first) return false;
-    wchar_t base[MAX_PATH];
-    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return false;
-    const std::wstring family = full.substr(0, first) + L"_" + full.substr(last + 1);
-    const int wr = swprintf(out, cap, L"%s\\Packages\\%s\\LocalState\\Chaoset", base, family.c_str());
-    return wr > 0 && wr < cap;
-}
-
 void diagWrite(const wchar_t* name, const char* text, int len) {
     if (text == nullptr || len <= 0) return;
     wchar_t path[MAX_PATH];
@@ -338,17 +315,13 @@ void diagWrite(const wchar_t* name, const char* text, int len) {
     HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        // AppContainer 宿主（开始菜单/搜索框）对 %LOCALAPPDATA% 无写权限，
-        // 回退到本进程所属包的 LocalState——打包应用唯一保证可写的目录。
-        // 日志会分散在各宿主的包目录下：\Packages\<Family>\LocalState\Chaoset
-        wchar_t pkg[MAX_PATH];
-        if (!diagPackageLogDir(pkg, MAX_PATH)) return;
-        CreateDirectoryW(pkg, nullptr);
-        wchar_t p2[MAX_PATH];
-        if (swprintf(p2, MAX_PATH, L"%s\\%s", pkg, name) <= 0) return;
-        h = CreateFileW(p2, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) {
+        // AppContainer 宿主（开始菜单/搜索）里 %LOCALAPPDATA% 被系统重定向到
+        // 包私有目录 \Packages\<Family>\AC，所以**第一条路径本来就落在包内**，
+        // 实测 SearchApp 写的就是
+        //   ...\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AC\Chaoset\tsf.log
+        // 旧实现在这里再拼 \Packages\<Family>\LocalState 是错的（AC 下会得到
+        // ...\AC\Packages\...），已删除；直接回退 TEMP（打包进程同样保证可写）。
+        {
             // 第三兜底：TEMP。AppContainer 进程的 TEMP 被系统重定向到
             // \Packages\<Family>\LocalCache\Local\Temp，是**任何**打包进程
             // 都保证可写的少数位置之一（2026-10-30 开始菜单排障：前两条
@@ -525,8 +498,11 @@ class ChaosetTIP;
 // 宿主进程直接退出（2026-10-29 审查发现，与「输入拼音后进程消失」的
 // 候选窗首帧时序一致）。
 //
-// 类名带上模块基址：基址相同 → 旧类 WndProc 地址与新映射完全一致，复用
-// 安全；基址不同 → 注册出新类，绝不复用旧映射里的函数指针。
+// 类名带上模块基址只是**第二道防线**，不能单独作为安全依据：跨版本重载时
+// 同一基址下函数偏移可能不同（「基址相同 = 同地址」不成立）。真正的保护是
+// DllMain（DLL_PROCESS_DETACH）里主动 UnregisterClassW 所有本 DLL 注册的
+// 窗口类；新增窗口类必须同时加到 DllMain 的注销列表（2026-11-05 回归审计
+// P1-4/P3-4：ChaosetTrayWndClass 曾漏注销）。
 std::wstring windowClassName(const wchar_t* base, HINSTANCE inst) {
     wchar_t buf[96] = {0};
     wsprintfW(buf, L"%s-%p", base, static_cast<void*>(inst));
@@ -1957,6 +1933,223 @@ static void diagDaemonRequestFailure(PipeTransport& transport, const char* op) {
     }
 }
 
+// ---- 单例 UI 宿主进程通信（chaoset-ui.exe）----
+//
+// 为什么托盘指示器与设置窗必须放进独立进程（2026-11-05 用户反馈的根因）：
+//   1) TSF TIP 由系统加载进**每个宿主进程**——实测 explorer.exe 一个进程就有 4 个
+//      TIP 实例（4 个按钮窗口）。进程内自绘托盘 = 每个实例一个图标，而且各实例
+//      enMode_ 互相独立，任务栏会同时出现「中 英 中 英」多个图标；
+//   2) 设置窗若由宿主进程创建：开始菜单/搜索（SearchApp.exe 等 Low IL
+//      AppContainer）里会被沉浸式 z 序 band 压住，且文件对话框、导入器进程、
+//      重启 daemon 在 AC 里都不可用；宿主退出还会带走设置窗。
+// 因此任务栏中英指示器与设置窗统一交给「每用户会话唯一」的后台 UI 进程
+// （chaoset-ui.exe，登录 Run 项常驻 + TIP 按需拉起）。TIP 只通过命名管道上报
+// 模式、请求打开设置，不持有任何 UI。
+//
+// 管道安全描述符与 daemon 完全同规则：DACL 当前用户 + SYSTEM +
+// ALL APPLICATION PACKAGES(S-1-15-2-1)，SACL 低完整性标签 ML;;NW;;;LW。
+// 这是 AppContainer 宿主（开始菜单/搜索）能「连上并写入」的前提；设置 SACL
+// 失败时降级为仅 DACL（与 ipc/pipe_sddl.go 的降级策略一致）。
+static std::wstring currentUserSid() {
+    static std::wstring cached;
+    static bool tried = false;
+    if (tried) return cached;
+    tried = true;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return cached;
+    DWORD len = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &len);
+    if (len > 0) {
+        std::vector<BYTE> buf(len);
+        if (GetTokenInformation(token, TokenUser, buf.data(), len, &len)) {
+            auto* user = reinterpret_cast<TOKEN_USER*>(buf.data());
+            LPWSTR sid = nullptr;
+            if (ConvertSidToStringSidW(user->User.Sid, &sid) && sid != nullptr) {
+                cached = sid;
+                LocalFree(sid);
+            }
+        }
+    }
+    CloseHandle(token);
+    return cached;
+}
+
+// UI 宿主命名空间：管道与互斥体都带「当前用户 SID + 会话 ID」。
+// 只用 SID 不够：RDP/快速用户切换时同一用户的两个会话各有自己的 explorer 与
+// UI 宿主，共用一个管道名会让 mode/settings 落到另一个会话（2026-11-05 评审 P1）。
+static DWORD currentSessionId() {
+    DWORD id = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &id);
+    return id;
+}
+
+// UI 宿主命令管道名。SID 拿不到时返回空串：调用方按「UI 不可用」降级。
+static const std::wstring& uiPipeName() {
+    static const std::wstring name = []() {
+        const std::wstring sid = currentUserSid();
+        if (sid.empty()) return std::wstring();
+        wchar_t buf[256] = {0};
+        wsprintfW(buf, L"\\\\.\\pipe\\chaoset-ui-%s-%lu", sid.c_str(),
+                  static_cast<unsigned long>(currentSessionId()));
+        return std::wstring(buf);
+    }();
+    return name;
+}
+
+// UI 宿主单实例互斥体名（同样带会话 ID，见 uiPipeName 注释）。
+static std::wstring uiMutexName() {
+    const std::wstring sid = currentUserSid();
+    if (sid.empty()) return std::wstring();
+    wchar_t buf[256] = {0};
+    wsprintfW(buf, L"Local\\ChaosetUi-%s-%lu", sid.c_str(),
+              static_cast<unsigned long>(currentSessionId()));
+    return std::wstring(buf);
+}
+
+// 发一条命令（每次短连接，几十字节）。服务端同一时刻只有一个实例在监听，
+// 多个 TIP 实例并发上报可能拿到 ERROR_PIPE_BUSY，因此短重试；写失败也重试
+// （服务端 DisconnectNamedPipe/CloseHandle 之间有极短窗口）。
+static bool uiSendCommandOnce(const char* command) {
+    const std::wstring& name = uiPipeName();
+    if (name.empty() || command == nullptr) return false;
+    HANDLE pipe = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        if (GetLastError() == ERROR_PIPE_BUSY) WaitNamedPipeW(name.c_str(), 50);
+        return false;
+    }
+    std::string payload(command);
+    payload.push_back('\n');
+    DWORD written = 0;
+    const BOOL ok = WriteFile(pipe, payload.data(), static_cast<DWORD>(payload.size()),
+                              &written, nullptr);
+    CloseHandle(pipe);
+    return ok != FALSE && written == payload.size();
+}
+
+// attempts=4（≈40ms）用于按键路径；设置窗点击路径用更多次（≈200ms）。
+static bool uiSendCommand(const char* command, int attempts = 4) {
+    for (int i = 0; i < attempts; ++i) {
+        if (uiSendCommandOnce(command)) return true;
+        Sleep(10);
+    }
+    return false;
+}
+
+// 与 DLL 同目录的 chaoset-ui.exe（安装包/便携包都把它放在 DLL 旁边）。
+static std::wstring uiHostExePath() {
+    wchar_t module[MAX_PATH] = {0};
+    if (g_hInst == nullptr || GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0) return std::wstring();
+    std::wstring dir(module);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return std::wstring();
+    dir.resize(slash);
+    return dir + L"\\chaoset-ui.exe";
+}
+
+// 当前进程是否提升后的管理员。提升进程懒启动 UI 宿主会得到一个 elevated 的
+// UI 进程（托盘/设置窗落在错误完整性级别，且它与普通 daemon 管道/用户数据可能
+// 不一致）；因此只允许非提升进程懒启动，提升宿主依赖登录 Run 项的实例。
+static bool isProcessElevated() {
+    static int cached = -1;
+    if (cached >= 0) return cached == 1;
+    cached = 0;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD len = 0;
+    if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &len)) {
+        cached = elevation.TokenIsElevated ? 1 : 0;
+    }
+    CloseHandle(token);
+    return cached == 1;
+}
+
+// 拉起 UI 宿主（detached，不等待退出）。AppContainer 宿主里 CreateProcessW 会让
+// 子进程继承 AC 身份（写错用户目录、连不上同名管道），一律不发起进程。
+static bool uiSpawnHost(const wchar_t* args) {
+    if (isAppContainer()) return false;
+    if (isProcessElevated()) {
+        static volatile LONG loggedElevated = 0;
+        if (InterlockedCompareExchange(&loggedElevated, 1, 0) == 0) {
+            diagPrintf(L"tsf.log", "ui host spawn skipped: caller elevated\n");
+        }
+        return false;
+    }
+    const std::wstring exe = uiHostExePath();
+    if (exe.empty() || GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    std::wstring cmd = L"\"" + exe + L"\"";
+    if (args != nullptr && *args != L'\0') {
+        cmd += L" ";
+        cmd += args;
+    }
+    std::wstring mutableCmd = cmd;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                             CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr,
+                             &si, &pi);
+    if (!ok && GetLastError() == ERROR_ACCESS_DENIED) {
+        ok = CreateProcessW(exe.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    }
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    return ok != FALSE;
+}
+
+// 按需拉起 UI 宿主（5s 节流）：托盘指示器 / 设置窗都靠它。只在管道连不上时调用。
+static void ensureUiHostStarted() {
+    static DWORD lastAttempt = 0;
+    const DWORD now = GetTickCount();
+    if (lastAttempt != 0 && now - lastAttempt < 5000) return;
+    lastAttempt = now;
+    if (!uiSpawnHost(nullptr)) {
+        static volatile LONG logged = 0;
+        if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
+            diagPrintf(L"tsf.log", "ui host spawn failed appcontainer=%d elevated=%d\n",
+                       isAppContainer() ? 1 : 0, isProcessElevated() ? 1 : 0);
+        }
+    }
+}
+
+// 打开设置窗：优先请求已在运行的 UI 宿主；没有就让 UI 宿主带 --settings 启动
+// （首实例会直接弹出设置窗，第二实例把请求转给首实例后退出）。AppContainer
+// 宿主不能发起进程，只能走已运行实例（登录 Run 项负责常驻），失败时由调用方
+// 通过 daemon 代拉起（见 ChaosetTIP::showSettingsWindow）。
+static bool openSettingsViaUi() {
+    // TIP 所在宿主进程通常就是前台进程：显式授权 UI 宿主把设置窗切到前台，
+    // 否则从开始菜单点齿轮时设置窗可能被 Start 的 z 序 band 挡在后面。
+    // 返回 FALSE 不一定致命（UI 宿主自己的 SetForegroundWindow 仍可能被系统
+    // 允许），记录下来供 AC 前台问题排障。
+    const BOOL allowFg = AllowSetForegroundWindow(ASFW_ANY);
+    static volatile LONG loggedAllowFg = 0;
+    if (InterlockedCompareExchange(&loggedAllowFg, 1, 0) == 0) {
+        diagPrintf(L"tsf.log", "allow set foreground ok=%d appcontainer=%d\n",
+                   allowFg ? 1 : 0, isAppContainer() ? 1 : 0);
+    }
+    if (uiSendCommand("settings", 20)) return true;  // ≈200ms，覆盖 UI 刚启动的竞态
+    if (isAppContainer()) return false;              // AC：调用方走 daemon 代拉起
+    return uiSpawnHost(L"--settings");
+}
+
+// 把当前中英模式上报给 UI 宿主（0=中文 1=英文）。每次事件一次短连接，
+// 正常路径 <1ms。
+//
+// allowSpawn：只有「本进程就是前台、确实在接收用户输入」时才允许懒启动 UI
+// 宿主。后台 TIP 实例（explorer 单进程 4 个、被 TSF 提前激活的进程）不能
+// 因为一次无关的 Activate 就拉起进程或改写托盘模式（2026-11-05 评审 P0）。
+// 上报失败不重发本次模式：下一轮焦点/切换事件会再上报，UI 宿主启动后还有
+// HKCU 记忆的上次模式兜底。
+static bool reportModeToUi(bool english, bool allowSpawn) {
+    const char* command = english ? "mode 1" : "mode 0";
+    if (uiSendCommand(command, 4)) return true;
+    if (allowSpawn) ensureUiHostStarted();
+    return false;
+}
+
 // ---- TIP 主体 ----
 
 // ---- 模式切换提示（短暂 toast）----
@@ -1976,6 +2169,14 @@ public:
     // 的 clampTopLeft；Windows 此前完全不钳制，贴近屏幕边缘时提示会被截掉）。
     void show(HINSTANCE hinst, const std::wstring& text, int x, int y) {
         if (!ensureWindow(hinst)) return;
+        // owner 跟随当前前台窗口刷新：窗口在 TIP 生命周期内复用，只在首次
+        // 创建时取 owner 会让后续（尤其 shell 宿主）提示条永远无 owner，
+        // 被沉浸式 z 序 band 压住（2026-11-05 回归审计 P2-10）。
+        const HWND wantOwner = popupOwner();
+        if (wantOwner != nullptr && GetWindow(hwnd_, GW_OWNER) != wantOwner) {
+            SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT,
+                              reinterpret_cast<LONG_PTR>(wantOwner));
+        }
         text_ = text;
         // 提示条跟随所在显示器的 DPI（混合 DPI 多屏）
         dpi_ = dpiForPoint(POINT{x, y});
@@ -2199,24 +2400,27 @@ struct ITfTextInputProcessorEx : public ITfTextInputProcessor {
 };
 
 
-// ---- 任务栏「中/英」模式指示器（2026-11-05）----
+// 托盘左键单击 → 打开设置窗（实现在 UI 宿主段；这里只需前向声明）。
+static void onUiTrayIconClicked();
+
+// ---- 任务栏「中/英」模式指示器（只有 chaoset-ui.exe 使用）----
 //
-// 为什么自建：中英模式已写进 TSF 线程隔间 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
-// 并回读成功（实机 set_hr=0 get_hr=0 read=1/0），但 Windows 并没有为第三方 TIP
-// 绘制任务栏「中/英」。搜狗等输入法同样是自建托盘图标。
+// 为什么是独立进程的自绘托盘图标：中英模式虽已写进 TSF 线程隔间
+// GUID_COMPARTMENT_KEYBOARD_OPENCLOSE（回读成功），但 Windows 不会为第三方
+// TIP 绘制任务栏「中/英」（任务栏输入指示器只显示 profile 图标，实测是蓝色 C）。
+// 搜狗等输入法同样是自建托盘图标。
 //
-// 生命周期：只在**本进程的输入上下文有焦点期间**显示（获得焦点建、失去焦点删）。
-// 同一时刻只有一个应用有焦点，所以不会出现多个图标；切到不使用本输入法的应用
-// 时图标消失，这与「当前输入法的模式」语义一致。
-//
-// AppContainer 宿主（开始菜单/搜索）没有托盘访问权限，Shell_NotifyIcon 会失败，
-// 记一次日志即可，不影响输入。
-class ModeTray {
+// **绝不能在 TIP 进程里创建**：TSF 把 TIP 加载进每个宿主进程，explorer.exe 单进程
+// 实测就有 4 个 TIP 实例；每个实例各画一个图标就是用户看到的任务栏
+// 「中 英 中 英」。因此 UiTray 只由单例 UI 进程（chaoset-ui.exe）持有，
+// TIP 经命名管道上报模式。UI 进程是普通用户会话进程（中等完整性），
+// 托盘图标在 AppContainer 宿主里也能正常显示。
+class UiTray {
 public:
-    ModeTray() = default;
-    ModeTray(const ModeTray&) = delete;
-    ModeTray& operator=(const ModeTray&) = delete;
-    ~ModeTray() { destroy(); }
+    UiTray() = default;
+    UiTray(const UiTray&) = delete;
+    UiTray& operator=(const UiTray&) = delete;
+    ~UiTray() { destroy(); }
 
     void show(bool english) {
         if (!ensureWindow()) {
@@ -2243,10 +2447,14 @@ public:
         if (!Shell_NotifyIconW(shown_ ? NIM_MODIFY : NIM_ADD, &nid)) {
             shown_ = false;
             logFailure("Shell_NotifyIcon", GetLastError());
+            // explorer/taskbar 未就绪时（登录早期实测 1460/1008）1.5s 后重试，
+            // 否则本次会话可能整场没有托盘图标；成功后由 show() 取消定时器。
+            if (hwnd_ != nullptr) SetTimer(hwnd_, kRetryTimerId, 1500, nullptr);
             return;
         }
         shown_ = true;
         english_ = english;
+        KillTimer(hwnd_, kRetryTimerId);
     }
 
     // 托盘图标当前是否真的在显示。调用方据此决定要不要再用浮动提示兜底
@@ -2254,6 +2462,7 @@ public:
     bool isShown() const { return shown_; }
 
     void hide() {
+        if (hwnd_ != nullptr) KillTimer(hwnd_, kRetryTimerId);
         if (!shown_) return;
         NOTIFYICONDATAW nid{};
         nid.cbSize = sizeof(nid);
@@ -2266,10 +2475,14 @@ public:
 private:
     static constexpr UINT kIconId = 1;
     static constexpr UINT kCallbackMsg = WM_APP + 19;
+    static constexpr UINT kRetryTimerId = 2;
     HWND hwnd_ = nullptr;
     HICON icon_ = nullptr;
     bool shown_ = false;
     bool english_ = false;
+    // 是否已把本窗口计入 g_liveTrayWindows（WM_NCDESTROY 里按此判断是否归还，
+    // 避免窗口创建失败路径把计数减成负数→ DllCanUnloadNow 恒 S_FALSE）。
+    bool counted_ = false;
     volatile LONG loggedFail_ = 0;
 
     // 托盘失败必须**绕开 diagBudget**：预算只有 200 次，会被每键日志烧光，
@@ -2286,19 +2499,39 @@ private:
     }
 
     static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-        ModeTray* self = reinterpret_cast<ModeTray*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        UiTray* self = reinterpret_cast<UiTray*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (msg == taskbarCreatedMsg()) {
-            // explorer 重启后托盘被清空，需要重新添加。
-            if (self != nullptr && self->icon_ != nullptr) {
+            // explorer 重启后托盘被清空，无条件重新添加：旧实现只在
+            // icon_ != nullptr 时才重加，若首次 NIM_ADD 就失败（登录早期）
+            // 会整场没有图标（2026-11-05 评审 P1）。
+            if (self != nullptr) {
                 self->shown_ = false;
                 self->show(self->english_);
             }
             return 0;
         }
+        if (msg == WM_TIMER) {
+            if (self != nullptr && wp == kRetryTimerId) {
+                self->show(self->english_);
+                return 0;
+            }
+        }
+        if (msg == kCallbackMsg) {
+            // 左键单击托盘图标 = 打开设置窗（与候选栏齿轮同一入口；右键菜单
+            // 暂不提供）。kCallbackMsg 此前没有任何分支，NIF_MESSAGE 白设
+            //（2026-11-05 回归审计 P3-2）。
+            if (LOWORD(lp) == WM_LBUTTONUP) onUiTrayIconClicked();
+            return 0;
+        }
         if (msg == WM_NCDESTROY) {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            if (self != nullptr) self->hwnd_ = nullptr;
-            InterlockedDecrement(&g_liveTrayWindows);
+            if (self != nullptr) {
+                self->hwnd_ = nullptr;
+                if (self->counted_) {
+                    self->counted_ = false;
+                    InterlockedDecrement(&g_liveTrayWindows);
+                }
+            }
             return 0;
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
@@ -2310,7 +2543,7 @@ private:
         const std::wstring cls = windowClassName(L"ChaosetTrayWndClass", g_hInst);
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = ModeTray::wndProc;
+        wc.lpfnWndProc = UiTray::wndProc;
         wc.hInstance = g_hInst;
         wc.lpszClassName = cls.c_str();
         RegisterClassExW(&wc);
@@ -2319,6 +2552,7 @@ private:
                                 g_hInst, nullptr);
         if (hwnd_ == nullptr) return false;
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        counted_ = true;
         InterlockedIncrement(&g_liveTrayWindows);
         return true;
     }
@@ -2387,14 +2621,13 @@ private:
         // 直接失败，导致图标永远建不出来、只能一直用浮动提示兜底
         //（2026-11-05 实机：0 条失败日志、任务栏始终没有图标）。
         // 32bpp 图标实际由 alpha 通道决定透明，掩码全 0（不透明）即可。
-        unsigned char maskBits[256] = {};  // 足够覆盖 16/24/32 像素的 1bpp 掩码
+        //
+        // 掩码按 1bpp WORD 对齐动态分配：SM_CXSMICON 随系统 DPI 变大
+        //（250% → 40、300% → 48），旧实现固定 256 字节，sz≥44 时直接
+        // 返回 nullptr，高 DPI 机器托盘永远没有图标（2026-11-05 回归审计 P2-2）。
         const int maskStride = ((sz + 15) / 16) * 2;
-        if (maskStride * sz > static_cast<int>(sizeof(maskBits))) {
-            DeleteObject(color);
-            DeleteDC(dc);
-            return nullptr;
-        }
-        HBITMAP mask = CreateBitmap(sz, sz, 1, 1, maskBits);
+        std::vector<unsigned char> maskBits(static_cast<size_t>(maskStride) * sz, 0);
+        HBITMAP mask = CreateBitmap(sz, sz, 1, 1, maskBits.data());
         ICONINFO ii{};
         ii.fIcon = TRUE;
         ii.hbmColor = color;
@@ -2422,7 +2655,17 @@ class ChaosetTIP : public ITfTextInputProcessorEx,
 public:
     ChaosetTIP() { InterlockedIncrement(&g_liveObjects); }
     virtual ~ChaosetTIP() {
-        if (tm_ != nullptr) tm_->Release();
+        // 防御性收尾：正常路径由 Deactivate 清理，但宿主也可能在未调用
+        // Deactivate 的情况下直接释放 TIP（TSF 不保证成对）。窗口过程与
+        // SetWinEventHook 钩子都指向本 DLL 内的代码，不撤会让下次
+        // WM_PAINT / 前台事件跳到已卸载内存（宿主进程崩溃）。
+        if (fgHook_ != nullptr) {
+            UnhookWinEvent(fgHook_);
+            removeHookEntry(fgHook_);
+            fgHook_ = nullptr;
+        }
+        candidateWnd_.destroy();
+        if (tm_ != nullptr) { tm_->Release(); tm_ = nullptr; }
         InterlockedDecrement(&g_liveObjects);
     }
 
@@ -2498,14 +2741,31 @@ public:
                        static_cast<unsigned long>(flags),
                        (SUCCEEDED(hrFlags) && (flags & 0x4)) ? 1 : 0);
         }
-        tm_ = ptim;
-        if (tm_ != nullptr) tm_->AddRef();
+        // 部分宿主会重复调用 Activate（实机 tsf.log 同一 pid 多次 activate）。
+        // 重复初始化必须幂等：旧的 thread manager 引用先释放，否则每次重复
+        // Activate 泄漏一个 ITfThreadMgr；按键下沉也不能重复 Advise（否则
+        // 每个按键会被投递两次，组词/上屏双份执行）。
+        if (tm_ != nullptr && tm_ != ptim) {
+            tm_->Release();
+            tm_ = nullptr;
+        }
+        if (tm_ == nullptr) {
+            tm_ = ptim;
+            if (tm_ != nullptr) tm_->AddRef();
+        }
         clientId_ = tid;
-        // 激活档案查询器（判断「当前激活的输入法是不是我们」）。
+        // 激活档案查询器（判断「当前激活的输入法是不是我们」）。创建失败
+        // 不能让「非激活整键放行」静默退化成旧行为：留一条绕开每键预算的日志，
+        // 排障时能区分「闸门没生效」与「真的没有切走」（2026-11-05 审计 P2-5）。
         if (profileMgr_ == nullptr) {
-            CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-                             IID_ITfInputProcessorProfileMgr,
-                             reinterpret_cast<void**>(&profileMgr_));
+            const HRESULT hrProfile = CoCreateInstance(
+                kCLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+                IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&profileMgr_));
+            static volatile LONG loggedProfileMgr = 0;
+            if (InterlockedCompareExchange(&loggedProfileMgr, 1, 0) == 0) {
+                diagPrintf(L"tsf.log", "activetip profile mgr hr=0x%08lX\n",
+                           static_cast<unsigned long>(hrProfile));
+            }
         }
         // 线程级隔间：把中英模式交给 Windows 输入指示器（任务栏「中/英」）。
         if (tm_ != nullptr && modeCompartment_ == nullptr) {
@@ -2519,20 +2779,33 @@ public:
             }
         }
         syncModeCompartment();
-        // 托盘图标只在有焦点期间显示（AppContainer 宿主会失败，无副作用）。
-        modeTray_.show(enMode_);
+        // 模式指示器归单例 UI 进程所有（chaoset-ui.exe 托盘图标唯一）；
+        // TIP 只上报状态，绝不自己画托盘（每进程一个 = 任务栏多个图标）。
+        //
+        // 只有**本进程就是前台**时才上报/允许懒启动：TSF 会提前 Activate 后台
+        // 进程的 TIP（实机 tsf.log 有 activate pid=2872 fgpid=12156、fgpid=0），
+        // 后台实例上报会把用户当前的托盘模式改回自己的 enMode_（2026-11-05
+        // 评审 P0）。
+        const HWND fgOnActivate = GetForegroundWindow();
+        DWORD fgPidOnActivate = 0;
+        if (fgOnActivate != nullptr) GetWindowThreadProcessId(fgOnActivate, &fgPidOnActivate);
+        reportModeToUi(enMode_, fgPidOnActivate == GetCurrentProcessId());
+        caretFound_ = false;
+        caretFromMouse_ = false;
         // 前台切换兜底：部分宿主（开始菜单/搜索）不投递 OnSetFocus(FALSE)，
         // 只有系统级前台事件能把「用户已经离开」如实告诉我们。
         if (fgHook_ == nullptr) {
-            hookSelf_ = this;
             fgHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                       nullptr, fgHookProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+            if (fgHook_ != nullptr) hookRegistry_.push_back(HookEntry{fgHook_, this});
         }
 
-        ITfKeystrokeMgr* mgr = nullptr;
-        if (SUCCEEDED(tm_->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&mgr)))) {
-            keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
-            mgr->Release();
+        if (!keySinkAdvised_) {
+            ITfKeystrokeMgr* mgr = nullptr;
+            if (SUCCEEDED(tm_->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&mgr)))) {
+                keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
+                mgr->Release();
+            }
         }
         // 非阻塞预热：只在尚未连上时尝试启动，已连接则直接复用；首次输入的
         // 等待在 OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
@@ -2561,17 +2834,25 @@ public:
                        (dwFlags & TF_TMAE_UIELEMENTENABLEDONLY) ? 1 : 0,
                        static_cast<unsigned long>(GetCurrentProcessId()));
         }
+        if ((dwFlags & TF_TMAE_UIELEMENTENABLEDONLY) != 0) {
+            // UILess 线程：本壳尚未实现 ITfUIElementMgr，若在这里激活，只能
+            // 用自绘 GDI 窗口（宿主不会渲染、且可能盖住游戏/吃掉按键）。
+            // 选择**不激活**，等价于旧行为（不实现该接口的 TIP 在此类线程
+            // 根本不会被激活），避免 2026-10-30「开始菜单候选窗消失」的
+            // 同类事故。真正支持 UILess 需要 ITfUIElementMgr + 候选元素实现。
+            diagPrintf(L"tsf.log", "activateEx refused: UIElementOnly thread, not activating\n");
+            return S_OK;
+        }
         return Activate(ptim, tid);
     }
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
         if (fgHook_ != nullptr) {
             UnhookWinEvent(fgHook_);
+            removeHookEntry(fgHook_);
             fgHook_ = nullptr;
         }
-        if (hookSelf_ == this) hookSelf_ = nullptr;
         pendingStaleReset_ = false;
-        modeTray_.hide();
         if (profileMgr_ != nullptr) {
             profileMgr_->Release();
             profileMgr_ = nullptr;
@@ -2624,7 +2905,10 @@ public:
         if (!fForeground) {
             candidateWnd_.hide();
             toast_.hide();
-            modeTray_.hide();
+            // 光标锚点属于上一个窗口：失焦后不能继续用于提示条定位
+            //（否则半/全角提示会出现在旧光标处；2026-11-05 评审 P1）。
+            caretFound_ = false;
+            caretFromMouse_ = false;
             clearAssociate();
             // 焦点离开：**挂起**而不是直接丢弃按住状态。
             //
@@ -2673,9 +2957,16 @@ public:
             }
         }
         // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
-        shiftHoldSuspended_ = false;
-        // 指示器按当前上下文刷新（不同窗口可能是不同模式）。
-        if (fForeground != FALSE) syncModeCompartment();
+        //
+        // **只在获得焦点时清** shiftHoldSuspended_：失焦分支刚由
+        // suspendShiftHoldOnFocusLost() 置位，若无条件清，就会让
+        // 「按住 Shift 切窗口 / Shift+点击开新窗口，再松开」误切换中英
+        //（2026-11-05 回归审计 P1-1，与 docs/ui-parity 的「挂起」语义矛盾）。
+        if (fForeground != FALSE) {
+            shiftHoldSuspended_ = false;
+            syncModeCompartment();
+            reportModeToUi(enMode_, true);  // 焦点落在本 app：托盘显示本 app 的中英模式
+        }
         return S_OK;
     }
 
@@ -2778,6 +3069,10 @@ public:
             return S_OK;
         }
         applyPendingStaleReset();
+        // Shift 记账自愈也必须覆盖 Key 阶段：Chrome/conhost/Windows Terminal
+        // 等宿主的内容键只进 Key 阶段（Test 阶段收不到修饰键），只挂 Test
+        // 会让这些宿主丢 KeyUp 后没有收口路径（2026-11-05 回归审计 P2-11）。
+        reconcileShiftState();
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             // **第二跟踪点**（2026-11-05 实机日志实证，必须有）。
             //
@@ -2951,11 +3246,11 @@ public:
             const chaoset::Candidate pick = assoc_.candidates[global];
             bool deleted = false;
             if (!session_.userDelete(pick.text, splitSyllables(pick.syllables), &deleted)) {
-                showModeToast(L"删除失败：daemon 不可达");
+                showToast(L"删除失败：daemon 不可达", true);
                 return;
             }
             if (!deleted) {
-                showModeToast(L"未找到该词的学习记录");
+                showToast(L"未找到该词的学习记录", true);
                 return;
             }
             const std::string src = assocSylls_;
@@ -2972,7 +3267,7 @@ public:
             } else {
                 candidateWnd_.hide();
             }
-            showModeToast(L"已删除该词");
+            showToast(L"已删除该词", true);
             return;
         }
         if (!hasCandidates()) return;
@@ -2980,11 +3275,11 @@ public:
         const chaoset::Candidate pick = comp_.candidates[index];
         bool deleted = false;
         if (!session_.userDelete(pick.text, splitSyllables(pick.syllables), &deleted)) {
-            showModeToast(L"删除失败：daemon 不可达");
+            showToast(L"删除失败：daemon 不可达", true);
             return;
         }
         if (!deleted) {
-            showModeToast(L"未找到该词的学习记录");
+            showToast(L"未找到该词的学习记录", true);
             return;
         }
         // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
@@ -3001,14 +3296,14 @@ public:
                 diagDaemonRequestFailure(transport_, "input(refresh)");
                 comp_ = chaoset::Comp();
                 flushOrCancel(ctx.get());
-                showModeToast(L"删除后刷新候选失败");
+                showToast(L"删除后刷新候选失败", true);
                 return;
             }
             syncDpScheme(rest);
             comp_ = std::move(rest);
             render(ctx.get());
         }
-        showModeToast(L"已删除该词");
+        showToast(L"已删除该词", true);
     }
 
     void flipPage(bool next) {
@@ -3075,11 +3370,10 @@ private:
     HWINEVENTHOOK fgHook_ = nullptr;
     bool pendingStaleReset_ = false;
 
-    // 线程级隔间（GUID_COMPARTMENT_KEYBOARD_OPENCLOSE）：把中英模式同步给
-    // Windows 输入指示器，任务栏「中/英」随模式变化（与微软拼音/搜狗一致）。
+    // 线程级隔间（GUID_COMPARTMENT_KEYBOARD_OPENCLOSE）：把中英模式写进 TSF
+    // 线程隔间（其他 TSF 客户端可读，语义与微软拼音一致）。任务栏「中/英」
+    // 指示器由单例 UI 进程绘制，TIP 不再持有任何托盘状态。
     ITfCompartment* modeCompartment_ = nullptr;
-    // 自建任务栏「中/英」图标（Windows 不为第三方 TIP 绘制输入指示器）。
-    ModeTray modeTray_;
 
     // **当前激活的输入法是不是我们**（2026-11-05 用户反馈：选定的输入法不是
     // chaoset 时按 Shift 仍会出中英提示）。
@@ -3094,22 +3388,60 @@ private:
     bool isActiveTip() {
         if (profileMgr_ == nullptr) return true;  // 查询不可用：退回旧行为，别把输入搞坏
         TF_INPUTPROCESSORPROFILE prof{};
-        if (FAILED(profileMgr_->GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD, &prof))) return true;
+        const HRESULT hr = profileMgr_->GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD, &prof);
+        // 首次查询结果留一条日志：否则「非激活整键放行」是否生效只能靠猜
+        //（2026-11-05 回归审计 P2-5：全量日志 0 条 inactive 无法自证）。
+        static volatile LONG loggedQuery = 0;
+        if (InterlockedCompareExchange(&loggedQuery, 1, 0) == 0) {
+            diagPrintf(L"tsf.log", "activetip query hr=0x%08lX type=%lu match=%d\n",
+                       static_cast<unsigned long>(hr),
+                       static_cast<unsigned long>(prof.dwProfileType),
+                       prof.clsid == CLSID_ChaosetTIP ? 1 : 0);
+        }
+        if (FAILED(hr)) return true;
         return prof.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR && prof.clsid == CLSID_ChaosetTIP;
     }
-    static thread_local ChaosetTIP* hookSelf_;
+    // 前台钩子回调 → TIP 实例的映射。SetWinEventHook 没有 user data，但回调
+    // 第一个参数就是 hook 句柄，可以据此找回实例。
+    //
+    // **不能用单个 thread_local 指针**：同一线程理论上可能有多个 TIP 实例
+    // （重复激活、宿主自建线程管理器），后注册的会覆盖前者，回调就派发给
+    // 错误实例（隐藏别人的浮窗、清错状态）。WINEVENT_OUTOFCONTEXT 的回调在
+    // 注册线程上派发，所以 thread_local 容器是正确的线程安全边界。
+    struct HookEntry {
+        HWINEVENTHOOK hook;
+        ChaosetTIP* tip;
+    };
+    static thread_local std::vector<HookEntry> hookRegistry_;
 
-    static void CALLBACK fgHookProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DWORD,
-                                    DWORD) {
+    static void removeHookEntry(HWINEVENTHOOK hook) {
+        for (auto it = hookRegistry_.begin(); it != hookRegistry_.end(); ++it) {
+            if (it->hook == hook) {
+                hookRegistry_.erase(it);
+                return;
+            }
+        }
+    }
+
+    static void CALLBACK fgHookProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG, LONG,
+                                    DWORD, DWORD) {
         if (event != EVENT_SYSTEM_FOREGROUND) return;
-        if (hookSelf_ != nullptr) hookSelf_->onForegroundChanged(hwnd);
+        for (const HookEntry& entry : hookRegistry_) {
+            if (entry.hook == hook && entry.tip != nullptr) {
+                entry.tip->onForegroundChanged(hwnd);
+                return;
+            }
+        }
     }
 
     void onForegroundChanged(HWND fg) {
         if (fg == nullptr) return;
         // 前台仍停在我们自己正组词的那个窗口上：不是「离开」，不动状态。
-        HWND composeWnd = compCtx_ != nullptr ? hostWindowOf(compCtx_) : nullptr;
-        if (composeWnd != nullptr && fg == composeWnd) return;
+        //
+        // **回调里绝不碰 TSF**（旧实现这里调 hostWindowOf(compCtx_) → COM，
+        // 与「前台回调只 hide + 置位」的契约矛盾，且旧上下文可能已失效）。
+        // 合成窗口 HWND 在 render() 里用 TSF 线程缓存好，这里只读。
+        if (composeHostWnd_ != nullptr && fg == composeHostWnd_) return;
         candidateWnd_.hide();
         toast_.hide();
         if (isComposing() || !confirmedPreedit_.empty() || !assoc_.candidates.empty()) {
@@ -3132,7 +3464,10 @@ private:
         }
         candidateWnd_.hide();
         toast_.hide();
-        modeTray_.hide();
+        // 联想态也要清：否则切到别的输入法再切回来，数字/空格会继续用
+        // 上一次的联想列表选词（2026-11-05 回归审计 P2-6）。
+        clearAssociate();
+        pendingStaleReset_ = false;
         resetShiftTracking();
         return true;
     }
@@ -3140,6 +3475,13 @@ private:
     void applyPendingStaleReset() {
         if (!pendingStaleReset_) return;
         pendingStaleReset_ = false;
+        // 用户用数字键确认过的段不能丢：与 OnSetFocus(FALSE) 同语义，先落盘
+        //（挂起清理只该丢未确认的拼音，不该丢已确认文本）。
+        if (!confirmedPreedit_.empty() && composition_ != nullptr) {
+            const std::string all = confirmedPreedit_;
+            confirmedPreedit_.clear();
+            commit(compCtx_, all);
+        }
         // **必须先结束 TSF 合成本身**（2026-11-05 实机）：只清本地状态的话，
         // 宿主文档里的预编辑文本会原样留着——开始菜单失焦重开后旧拼音还在，
         // 原因就在这里。endComposition 会对合成所属上下文发编辑会话，
@@ -3150,6 +3492,14 @@ private:
         confirmedPreedit_.clear();
         clearAssociate();
         candidateWnd_.hide();
+    }
+
+    // AppContainer 宿主不能 CreateProcess：请求 daemon（普通用户完整性、运行在
+    // 同一用户会话）代拉起同目录的 chaoset-ui.exe（IPC 方法 "ui"）。
+    // daemon 不可达时返回 false，调用方按失败降级。
+    bool ensureUiHostStartedByDaemon() {
+        if (!transport_.isConnected() && !ensureDaemonConnected(transport_)) return false;
+        return session_.ensureUiHost();
     }
 
 
@@ -3260,7 +3610,6 @@ private:
     void toggleEnMode(ITfContext* pic) {
         enMode_ = !enMode_;
         syncModeCompartment();  // 立刻反映到线程隔间（其他应用可读）
-        modeTray_.show(enMode_);  // 任务栏「中/英」图标随之更新
         if (diagBudget()) {
             // 诊断补前台信息：Firefox/Chrome 的「安装应用」(PWA) 窗口是独立
             // 进程/窗口，若 fgpid != selfpid 说明本 TIP 并不在拥有焦点的那个
@@ -3312,13 +3661,10 @@ private:
             comp_ = chaoset::Comp();  // 全拼且无未上屏内容：零 IPC
         }
         candidateWnd_.hide();
-        // 模式提示只出一处：托盘图标可用时就用它（常驻、不挡输入），
-        // 只有托盘不可用（AppContainer 宿主，如开始菜单/搜索）才退回浮动提示。
-        // 两处同时提示既重复又干扰（2026-11-05 用户反馈）。
-        modeTray_.show(enMode_);
-        if (!modeTray_.isShown()) {
-            showModeToast(enMode_ ? L"英文模式" : L"中文模式");
-        }
+        // 模式提示只有一个出口：单例 UI 进程的任务栏指示器。不再有浮动 toast
+        // 兜底——那正是用户看到的「输入光标附近 / 鼠标附近也在提示」的来源
+        //（2026-11-05 用户反馈：三处同时提示 + 任务栏多个图标）。
+        reportModeToUi(enMode_, true);
     }
 
     // vk 必须是原始 WPARAM（VK_SHIFT / VK_LSHIFT / VK_RSHIFT），
@@ -3339,47 +3685,6 @@ private:
         if (shiftHeld_ == 0 || shiftPhysicallyDown()) return;
         settleAllShiftHolds();
     }
-
-    // 按住 Shift 期间，系统里是否还有**别的输入**按下（键或鼠标）。
-    //
-    // 用途：只在 Shift 的按下/释放事件不完整、需要靠物理状态推断时才查，
-    // 判断这次按住到底算不算「空按」。键盘用 GetKeyboardState（一次取 256
-    // 字节，比 256 次 GetAsyncKeyState 便宜）；鼠标单独查——按住 Shift 点击
-    // 属于「用过 Shift」，不能算空按，这正是之前不敢凭物理状态结算的原因。
-    //
-    // 修饰键自身不算（Ctrl/Alt/Win 的按下由 OnTestKeyDown 单独标记 sinceShift_，
-    // 这里重复检查没有坏处但也无意义）。
-    static bool shiftOtherInputDown() {
-        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0) {
-            return true;
-        }
-        BYTE ks[256] = {0};
-        if (GetKeyboardState(ks) == FALSE) return false;
-        for (int vk = 0x08; vk < 0xFE; ++vk) {
-            switch (vk) {
-                case VK_SHIFT:
-                case VK_LSHIFT:
-                case VK_RSHIFT:
-                case VK_CONTROL:
-                case VK_LCONTROL:
-                case VK_RCONTROL:
-                case VK_MENU:
-                case VK_LMENU:
-                case VK_RMENU:
-                case VK_LWIN:
-                case VK_RWIN:
-                    continue;
-                default:
-                    break;
-            }
-            if ((ks[vk] & 0x80) != 0) return true;
-        }
-        return false;
-    }
-
-
 
     // 结算一次已经松开的 Shift 按住会话。
     //
@@ -3878,7 +4183,7 @@ private:
             // 全/半角开关归壳本地持有（2026-10-29 起）：快捷键切换不再与
             // daemon 往返，状态随 punct 请求下发（daemon 只按状态产出文本）
             halfWidth_ = !halfWidth_;
-            showModeToast(halfWidth_ ? L"半角标点" : L"全角标点");
+            showToast(halfWidth_ ? L"半角标点" : L"全角标点");
             return true;
         }
 
@@ -4153,12 +4458,16 @@ private:
             ctx->AddRef();
         }
         caretFound_ = false;
+        caretFromMouse_ = false;
         EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
             static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
         });
         const HRESULT hr = es.run(tm_, clientId_);
         es.Release();
         if (FAILED(hr)) diagTsfFail("RequestEditSession(render)", hr);
+
+        // 缓存承载本合成的宿主窗口（供前台事件回调做无 COM 的比较）。
+        composeHostWnd_ = contextHostWindow(ctx);
 
         if (comp_.candidates.empty()) {
             candidateWnd_.hide();
@@ -4179,6 +4488,7 @@ private:
                 caretPos_ = pt;
                 caretLineHeight_ = (gti.rcCaret.bottom > gti.rcCaret.top) ? (gti.rcCaret.bottom - gti.rcCaret.top) : 20;
                 caretFound_ = true;
+                caretFromMouse_ = false;
             } else {
                 // 鼠标兜底：**锚点要下移一行**。
                 //
@@ -4190,6 +4500,7 @@ private:
                 GetCursorPos(&caretPos_);
                 caretLineHeight_ = 20;
                 caretPos_.y += caretLineHeight_;
+                caretFromMouse_ = true;
             }
         }
         // 候选窗 owner = 宿主窗口（2026-10-30 开始菜单排障）。
@@ -4201,6 +4512,19 @@ private:
         // 表现为「候选窗一出现就把别的窗口顶上来」（2026-11-05 用户反馈）。
         candidateWnd_.setOwner(popupOwner());
         candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
+    }
+
+    // 取上下文宿主窗口（**只在 TSF 线程调用**）：与 hostWindowOf 的区别是
+    // 不回退到前台窗口，供前台事件回调缓存后做纯 Win32 比较。
+    static HWND contextHostWindow(ITfContext* ctx) {
+        if (ctx == nullptr) return nullptr;
+        ITfContextView* view = nullptr;
+        if (FAILED(ctx->GetActiveView(&view)) || view == nullptr) return nullptr;
+        HWND wnd = nullptr;
+        const HRESULT hr = view->GetWnd(&wnd);
+        view->Release();
+        if (FAILED(hr) || wnd == nullptr || !IsWindow(wnd)) return nullptr;
+        return wnd;
     }
 
     // 取上下文宿主窗口：优先 ITfContextView::GetWnd（TSF 标准途径，
@@ -4233,6 +4557,7 @@ private:
             caretPos_.y = rc.bottom;
             caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
             caretFound_ = true;
+            caretFromMouse_ = false;
         }
         view->Release();
     }
@@ -4522,11 +4847,16 @@ private:
     CandidateWindow candidateWnd_;
     ModeToast toast_;
 
-    // 模式提示：放光标行下方（caretPos_ 是最后已知光标行底边的屏幕坐标）；
-    // 没有历史位置时退回鼠标。
-    void showModeToast(const wchar_t* text) {
-        // **不在鼠标位置显示**（2026-11-05 用户反馈「鼠标和光标两个地方都提示」）：
-        // 光标坐标未知时直接不显示，回退到鼠标只会造成「提示跟着鼠标跑」的干扰。
+    // 短暂提示（半/全角、删除候选结果）：放光标行底边下方，与候选窗同锚点。
+    //
+    // **真实光标未知时不显示**，除非调用方明确允许鼠标锚点（删除候选是鼠标
+    // 触发的操作，提示落在鼠标附近符合预期）。2026-11-05 用户反馈「中英文
+    // 提示在光标和鼠标两处都出现」——模式提示已改由单例托盘承担；这里也
+    // 不能再把鼠标兜底坐标当成光标，否则提示又会跟着鼠标跑。
+    void showToast(const wchar_t* text, bool allowMouseAnchor = false) {
+        if (!allowMouseAnchor) {
+            if (!caretFound_ || caretFromMouse_) return;
+        }
         POINT anchor = caretPos_;
         if (anchor.x == 0 && anchor.y == 0) return;
         // 与候选窗同锚点：光标行底边下方 6pt（mac showToast 复用
@@ -4538,7 +4868,11 @@ private:
     }
     POINT caretPos_{0, 0};
     int caretLineHeight_ = 20;
+    // 本次渲染是否拿到了**真实** GDI 光标矩形（caretPos_ 可信）。
     bool caretFound_ = false;
+    // caretPos_ 是否来自鼠标兜底（宿主没有真实光标时）。提示条据此拒绝
+    // 在鼠标位置显示，避免「提示跟着鼠标跑」（2026-11-05 用户反馈）。
+    bool caretFromMouse_ = false;
 
     PipeTransport transport_;
     chaoset::Session session_{transport_};
@@ -4573,6 +4907,8 @@ private:
     // 词组，保证删除刷新不改变联想链（与 macOS associateSylls 同语义）。
     std::string assocSylls_;
     ITfComposition* composition_ = nullptr;
+    // 合成所属宿主窗口（render 时缓存；前台事件回调只读，避免回调里碰 TSF）。
+    HWND composeHostWnd_ = nullptr;
     ITfComposition* endTarget_ = nullptr;  // endComposition 编辑会话内的目标
     std::string committed_;
     bool commitWritten_ = false;
@@ -4585,6 +4921,7 @@ private:
             compCtx_->Release();
             compCtx_ = nullptr;
         }
+        composeHostWnd_ = nullptr;
         preeditWritten_ = false;
     }
 
@@ -5382,7 +5719,12 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-void ChaosetTIP::showSettingsWindow() {
+// 设置窗的真正创建入口：只在单例 UI 宿主进程（chaoset-ui.exe）里调用。
+// 从「TIP 宿主进程内创建」改为外部 UI 进程后：
+//   - 开始菜单/搜索（Low IL AppContainer）里点齿轮也能弹出：不再被沉浸式
+//     z 序 band 压住，也不再受 AC 的文件对话框/子进程限制；
+//   - 宿主应用退出不会带走设置窗，宿主也不会因为设置窗存活而无法卸载 DLL。
+static void openSettingsWindowStandalone() {
     // 单例：已打开则前置（macOS makeKeyAndOrderFront 同语义）
     if (g_settingsWnd != nullptr && IsWindow(g_settingsWnd)) {
         SetForegroundWindow(g_settingsWnd);
@@ -5399,9 +5741,10 @@ void ChaosetTIP::showSettingsWindow() {
     wc.lpszClassName = cls.c_str();
     RegisterClassExW(&wc);
 
-    // per-monitor DPI：按光标（候选窗锚点）所在显示器取 DPI，副屏打开也正确。
-    POINT anchor = caretPos_;
-    if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
+    // per-monitor DPI：按鼠标所在显示器取 DPI（UI 进程没有 TIP 的 caretPos_），
+    // 副屏/混合 DPI 下也能开在正确显示器。
+    POINT anchor{};
+    GetCursorPos(&anchor);
     g_settingsDpi = dpiForPoint(anchor);
     g_settingsDark = isSystemDarkTheme();
     g_settingsAssociate = RegGetAssociate();
@@ -5471,7 +5814,333 @@ void ChaosetTIP::showSettingsWindow() {
     // 窗口先显示再读统计：daemon 不可达时连接最多 20ms 超时+冷却，不能让
     // 设置窗的首次出现被它拖慢（标签先显示「读取中…」，随后刷新）。
     SettingsRefreshStats(wnd);
+    // 前台激活：从开始菜单/搜索（AC）里点齿轮时，UI 宿主所在的普通进程要
+    // 把窗口切到前台，否则可能被 Start 的 z 序 band 压住看不到。TIP 侧已调用
+    // AllowSetForegroundWindow；仍失败时用一次 TOPMOST 切换强制置顶（随后恢复
+    // 非 topmost，避免长期遮挡），再前台化并闪烁任务栏按钮。
     SetForegroundWindow(wnd);
+    if (GetForegroundWindow() != wnd) {
+        SetWindowPos(wnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(wnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(wnd);
+        FLASHWINFO flash{};
+        flash.cbSize = sizeof(flash);
+        flash.hwnd = wnd;
+        flash.dwFlags = FLASHW_ALL;
+        flash.uCount = 3;
+        FlashWindowEx(&flash);
+    }
+    if (diagBudget()) {
+        diagPrintf(L"tsf.log", "settings shown foreground=%d selfpid=%lu\n",
+                   GetForegroundWindow() == wnd ? 1 : 0,
+                   static_cast<unsigned long>(GetCurrentProcessId()));
+    }
+}
+
+// 候选栏齿轮：设置窗由单例 UI 进程（chaoset-ui.exe）创建，TIP 只发管道请求。
+// 优先请求已在运行的 UI 宿主；没有宿主时由 UI 宿主带 --settings 启动自己
+// （首实例直接弹设置窗，第二个实例把请求转给首实例后退出）。AppContainer
+// 宿主不能发起进程，只能连接登录 Run 项常驻的 UI 宿主。
+void ChaosetTIP::showSettingsWindow() {
+    if (openSettingsViaUi()) return;
+    // AppContainer 宿主（开始菜单/搜索）不能 CreateProcess：让 daemon 代拉起
+    // UI 宿主后重试（daemon 与本 TIP 同一用户会话，CreateProcess 不会继承 AC
+    // 身份）。覆盖「升级安装结束旧 UI 进程后、下次登录 Run 项生效前」的窗口期。
+    if (isAppContainer() && ensureUiHostStartedByDaemon()) {
+        for (int i = 0; i < 50; ++i) {
+            if (uiSendCommand("settings", 1)) return;
+            Sleep(20);
+        }
+    }
+    static volatile LONG logged = 0;
+    if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
+        diagPrintf(L"tsf.log", "open settings failed: ui host unavailable appcontainer=%d\n",
+                   isAppContainer() ? 1 : 0);
+    }
+    // 点击齿轮是最明确的「用户想要设置」信号：失败不能静默（用户会点两次、
+    // 三次都没有反应）。候选窗提示条用鼠标锚点（当前操作就是鼠标点击）。
+    showToast(L"设置窗口打不开：chaoset-ui.exe 未运行", true);
+}
+
+// ---- UI 宿主进程（chaoset-ui.exe）----
+//
+// 进程模型：chaoset-ui.exe 只有几十行（LoadLibrary 本 DLL + 调用导出
+// ChaosetRunUi），托盘绘制/设置窗/命名管道全部复用本文件代码，不存在第二套
+// UI 实现。这样做的原因见文件开头「单例 UI 宿主进程通信」的说明。
+//
+// 单实例：Local\ChaosetUi-<SID>-<session> 互斥体。第二个实例若带 --settings，
+// 就把 "settings" 命令转发给首实例后退出（连点齿轮不会开多个设置窗）。
+//
+// 生命周期：登录 Run 项常驻；TIP 在托盘/设置窗需要时按需拉起
+// （ensureUiHostStarted / openSettingsViaUi / daemon 代拉起）。退出只由本输入法
+// 自己的维护动作触发（安装器 taskkill，或向隐藏窗口 PostMessage(WM_CLOSE) 做
+// 测试）——命令管道**不接受 quit**：DACL 对 ALL APPLICATION PACKAGES 开放，
+// 任意低完整性进程都能连接，不能让它关掉会话级 UI。
+//
+// 退出顺序（2026-11-05 评审 P0，必须保持）：置 stopping → SetEvent → 打断并
+// **join 管道线程**（CancelSynchronousIo + WaitForSingleObject）→ 再销毁托盘/
+// 隐藏窗口 → 返回（ui_main.cpp 之后才 FreeLibrary）。否则管道线程可能正阻塞在
+// ConnectNamedPipe/ReadFile，DLL 卸载后它会在已卸载代码里恢复并解引用已释放的
+// g_uiTray。
+static constexpr UINT kUiOpenSettingsMsg = WM_APP + 71;
+static constexpr UINT kUiSetModeMsg = WM_APP + 72;
+static HWND g_uiHostWnd = nullptr;
+static UiTray* g_uiTray = nullptr;  // 进程生命周期内唯一托盘实例（仅 UI 主线程使用）
+static HANDLE g_uiStopEvent = nullptr;
+static volatile LONG g_uiStopping = 0;
+
+// UiTray 左键单击入口（UiTray::wndProc 里调用；只投递消息，不直接建窗）。
+static void onUiTrayIconClicked() {
+    if (g_uiHostWnd != nullptr) PostMessageW(g_uiHostWnd, kUiOpenSettingsMsg, 0, 0);
+}
+
+// 上次中英模式的持久化：UI 宿主是中等完整性进程，可写 HKCU；TIP 在
+// AppContainer 里写不了。宿主被杀/升级重启后靠它恢复「英」而不是跳回「中」。
+static bool uiLoadSavedEnglish() {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"UiEnglish",
+                     RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS) {
+        return value != 0;
+    }
+    return false;
+}
+
+static void uiSaveEnglish(bool english) {
+    const DWORD value = english ? 1 : 0;
+    RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"UiEnglish",
+                    REG_DWORD, &value, sizeof(value));
+}
+
+// 管道线程只解析命令并 PostMessage 到 UI 主线程：托盘图标（icon_/shown_/窗口）
+// 只能由拥有消息循环的主线程操作，否则与 TaskbarCreated/初始 show 竞争。
+static void uiHandleCommand(const char* command, DWORD len) {
+    if (len >= 6 && strncmp(command, "mode ", 5) == 0) {
+        if (g_uiHostWnd != nullptr) {
+            PostMessageW(g_uiHostWnd, kUiSetModeMsg, command[5] == '1' ? 1 : 0, 0);
+        }
+        return;
+    }
+    if (len >= 8 && strncmp(command, "settings", 8) == 0) {
+        if (g_uiHostWnd != nullptr) PostMessageW(g_uiHostWnd, kUiOpenSettingsMsg, 0, 0);
+    }
+    // 其它命令（含 quit）一律忽略：管道对低完整性进程开放，不能提供关闭 UI 的入口。
+}
+
+static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case kUiSetModeMsg:
+            if (g_uiTray != nullptr) {
+                const bool english = wParam != 0;
+                g_uiTray->show(english);  // 只在 UI 主线程碰托盘
+                if (g_uiTray->isShown()) uiSaveEnglish(english);
+            }
+            return 0;
+        case kUiOpenSettingsMsg:
+            openSettingsWindowStandalone();
+            return 0;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            g_uiHostWnd = nullptr;
+            PostQuitMessage(0);
+            return 0;
+        default:
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// 管道安全描述符：与 daemon 的 ipc/pipe_sddl.go 完全同规则。
+//   D:P(A;;GA;;;SY)                         SYSTEM 完全控制
+//       (A;;GA;;;<当前用户 SID>)             当前用户完全控制
+//       (A;;GRGW;;;S-1-15-2-1)              ALL APPLICATION PACKAGES 读写
+//   S:(ML;;NW;;;LW)                         低完整性 NO_WRITE_UP
+// 后两者缺一不可：AppContainer 宿主（开始菜单/搜索）是低完整性，缺标签会
+// 「能连不能写」。设置 SACL 失败时降级为仅 DACL（daemon 同样降级并记录）。
+static PSECURITY_DESCRIPTOR uiPipeSecurityDescriptor() {
+    const std::wstring sid = currentUserSid();
+    if (sid.empty()) return nullptr;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    const std::wstring withLabel = L"D:P(A;;GA;;;SY)(A;;GA;;;" + sid +
+                                   L")(A;;GRGW;;;S-1-15-2-1)S:(ML;;NW;;;LW)";
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(withLabel.c_str(), SDDL_REVISION_1,
+                                                            &sd, nullptr)) {
+        return sd;
+    }
+    const std::wstring daclOnly =
+        L"D:P(A;;GA;;;SY)(A;;GA;;;" + sid + L")(A;;GRGW;;;S-1-15-2-1)";
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(daclOnly.c_str(), SDDL_REVISION_1,
+                                                            &sd, nullptr)) {
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log",
+                       "ui pipe: integrity label failed, AppContainer hosts may be unable to write\\n");
+        }
+        return sd;
+    }
+    return nullptr;
+}
+
+// 命令管道服务线程：命令都是几十字节的短连接（TIP → "mode 0/1"、"settings"）。
+static DWORD WINAPI uiPipeThreadProc(LPVOID) {
+    const std::wstring& name = uiPipeName();
+    if (name.empty()) return 1;
+    PSECURITY_DESCRIPTOR sd = uiPipeSecurityDescriptor();
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    for (;;) {
+        if (WaitForSingleObject(g_uiStopEvent, 0) == WAIT_OBJECT_0) break;
+        HANDLE pipe = CreateNamedPipeW(
+            name.c_str(), PIPE_ACCESS_INBOUND,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_UNLIMITED_INSTANCES, 1024, 1024, 0, sd != nullptr ? &sa : nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            Sleep(500);
+            continue;
+        }
+        // 阻塞等待连接；退出时主线程用 CancelSynchronousIo 打断本线程的同步 I/O。
+        const BOOL connected = ConnectNamedPipe(pipe, nullptr);
+        if (WaitForSingleObject(g_uiStopEvent, 0) == WAIT_OBJECT_0) {
+            CloseHandle(pipe);
+            break;
+        }
+        if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(pipe);
+            Sleep(50);
+            continue;
+        }
+        // 读命令：客户端必须在 ~1.5s 内发完，防止「连上不发数据」长期占住
+        // 单线程服务（管道名可猜，任意本机进程都能连）。
+        char buffer[512];
+        DWORD read = 0;
+        const DWORD deadline = GetTickCount() + 1500;
+        for (;;) {
+            if (WaitForSingleObject(g_uiStopEvent, 0) == WAIT_OBJECT_0) break;
+            DWORD available = 0;
+            if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) break;
+            if (available > 0) {
+                if (ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) && read > 0) {
+                    buffer[read] = '\0';
+                    uiHandleCommand(buffer, read);
+                }
+                break;
+            }
+            if (GetTickCount() > deadline) break;
+            Sleep(10);
+        }
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
+    }
+    if (sd != nullptr) LocalFree(sd);
+    return 0;
+}
+
+// UI 宿主主函数（由导出 ChaosetRunUi 调用，运行在 chaoset-ui.exe 进程里）。
+static int runUiHost(LPCWSTR cmdLine) {
+    const std::wstring sid = currentUserSid();
+    // 文件对话框（词库导入/学习数据导出）与主题查询需要 Apartment；
+    // 失败不影响托盘指示器与设置窗主体。
+    const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    // UI 宿主也是进程：崩溃同样要留下 crash.log（此前只有 TIP 的 Activate 装 VEH）。
+    ensureCrashHandler();
+    g_uiStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+    // 单实例互斥体（名字带会话 ID，见 uiPipeName 注释）。
+    HANDLE mutex = nullptr;
+    const std::wstring mutexName = uiMutexName();
+    if (!mutexName.empty()) {
+        mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+        if (mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
+            // 已有实例：带 --settings 时把请求转发给首实例。首实例可能还没开始
+            // 监听管道（互斥体在管道线程之前创建），这里做 ~2s 的短重试。
+            const bool wantSettings =
+                cmdLine != nullptr && wcsstr(cmdLine, L"--settings") != nullptr;
+            if (wantSettings) {
+                bool sent = false;
+                for (int i = 0; i < 100 && !sent; ++i) {
+                    sent = uiSendCommand("settings", 1);
+                    if (!sent) Sleep(20);
+                }
+                if (!sent) {
+                    diagPrintf(L"tsf.log", "ui host: forward settings failed after retry\\n");
+                }
+            }
+            CloseHandle(mutex);
+            if (g_uiStopEvent != nullptr) CloseHandle(g_uiStopEvent);
+            if (SUCCEEDED(hrCo)) CoUninitialize();
+            return 0;
+        }
+    }
+
+    // 隐藏消息窗口：托盘回调、模式更新、打开设置请求、退出都走这里。
+    const std::wstring cls = windowClassName(L"ChaosetUiHostWndClass", g_hInst);
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = uiHostWndProc;
+    wc.hInstance = g_hInst;
+    wc.lpszClassName = cls.c_str();
+    RegisterClassExW(&wc);
+    g_uiHostWnd = CreateWindowExW(0, cls.c_str(), L"ChaosetUiHost", WS_POPUP, 0, 0, 0, 0,
+                                  nullptr, nullptr, g_hInst, nullptr);
+    if (g_uiHostWnd == nullptr) {
+        if (mutex != nullptr) CloseHandle(mutex);
+        if (g_uiStopEvent != nullptr) CloseHandle(g_uiStopEvent);
+        if (SUCCEEDED(hrCo)) CoUninitialize();
+        return 1;
+    }
+
+    // 托盘中英指示器：整个用户会话唯一。恢复上次模式；TIP 焦点/切换时上报。
+    g_uiTray = new UiTray();
+    g_uiTray->show(uiLoadSavedEnglish());
+
+    // 先启动管道线程，再处理 --settings：否则二次实例的转发请求会赶在监听前
+    // 到达（虽然它自身有重试，这里尽量避免）。
+    HANDLE pipeThread = CreateThread(nullptr, 0, uiPipeThreadProc, nullptr, 0, nullptr);
+    if (pipeThread == nullptr) {
+        diagPrintf(L"tsf.log", "ui host: create pipe thread FAILED\\n");
+        delete g_uiTray;
+        g_uiTray = nullptr;
+        DestroyWindow(g_uiHostWnd);
+        if (mutex != nullptr) CloseHandle(mutex);
+        if (g_uiStopEvent != nullptr) CloseHandle(g_uiStopEvent);
+        if (SUCCEEDED(hrCo)) CoUninitialize();
+        return 1;
+    }
+
+    // 首次带 --settings 启动（TIP 侧连不上管道时的拉起路径）：直接弹设置窗。
+    if (cmdLine != nullptr && wcsstr(cmdLine, L"--settings") != nullptr) {
+        Sleep(30);  // 给管道线程一个创建实例的机会
+        openSettingsWindowStandalone();
+    }
+
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    // 退出顺序（评审 P0）：先停管道线程并 join，再销毁托盘/窗口。
+    InterlockedExchange(&g_uiStopping, 1);
+    if (g_uiStopEvent != nullptr) SetEvent(g_uiStopEvent);
+    CancelSynchronousIo(pipeThread);
+    WaitForSingleObject(pipeThread, 3000);  // 阻塞在 ConnectNamedPipe 时由 Cancel 打断
+    CloseHandle(pipeThread);
+    g_uiHostWnd = nullptr;
+    if (g_uiTray != nullptr) {
+        delete g_uiTray;
+        g_uiTray = nullptr;
+    }
+    if (g_uiStopEvent != nullptr) {
+        CloseHandle(g_uiStopEvent);
+        g_uiStopEvent = nullptr;
+    }
+    if (mutex != nullptr) CloseHandle(mutex);
+    if (SUCCEEDED(hrCo)) CoUninitialize();
+    return 0;
 }
 
 // ---- 类厂 ----
@@ -5501,11 +6170,18 @@ public:
 
 // 前台钩子回调需要拿到「发起注册的 TIP 实例」：OUTOFCONTEXT 钩子的回调在
 // 注册它的线程上派发，所以用 thread_local 传递即可，无需加锁或全局容器。
-thread_local ChaosetTIP* ChaosetTIP::hookSelf_ = nullptr;
+thread_local std::vector<ChaosetTIP::HookEntry> ChaosetTIP::hookRegistry_;
 
 }  // namespace
 
 // ---- 导出 ----
+
+// chaoset-ui.exe 的唯一入口：宿主托盘中英指示器 + 设置窗 + 命名管道服务。
+// 实现全部在本 DLL 内（设置窗代码/托盘绘制/管道），exe 只是 LoadLibrary 壳。
+extern "C" __declspec(dllexport) int WINAPI ChaosetRunUi(HINSTANCE /*exeInst*/,
+                                                         LPCWSTR cmdLine) {
+    return runUiHost(cmdLine);
+}
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
@@ -5518,6 +6194,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
         UnregisterClassW(windowClassName(L"ChaosetCandidateWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetModeToastWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetSettingsWndClass", hinstDLL).c_str(), hinstDLL);
+        UnregisterClassW(windowClassName(L"ChaosetTrayWndClass", hinstDLL).c_str(), hinstDLL);
+        UnregisterClassW(windowClassName(L"ChaosetUiHostWndClass", hinstDLL).c_str(), hinstDLL);
     }
     return TRUE;
 }

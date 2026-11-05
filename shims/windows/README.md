@@ -8,9 +8,12 @@
 ```
 ../common/ipc/core.hpp|cpp  跨平台 IPC 核心：4 字节大端长度 + JSON、会话控制；
                              Windows/Linux 原生壳共用。
-src/win32.cpp               TSF COM、键盘/文本编辑会话、候选窗、传输、设置窗。
+src/win32.cpp               TSF COM、键盘/文本编辑会话、候选窗、传输、设置窗实现，
+                             以及单例 UI 宿主（托盘状态 + 设置窗 + 命令管道）的实现。
+src/ui_main.cpp              chaoset-ui.exe 入口：几十行 LoadLibrary 壳，调用
+                              ChaosetIME.dll 导出 ChaosetRunUi（无第二套 UI 代码）。
 tests/core_test.cpp         核心层行为测试（Linux/CI 原生编译，真实 daemon）。
-build.sh                    核心行为测试 + mingw 交叉编译（64/32 位 DLL）。
+build.sh                    核心行为测试 + mingw 交叉编译（64/32 位 DLL + UI 宿主）。
 installer/chaoset.nsi       NSIS 安装器。
 install.bat                 便携 ZIP 安装/卸载脚本。
 ```
@@ -19,7 +22,8 @@ install.bat                 便携 ZIP 安装/卸载脚本。
 
 ```sh
 # macOS 上交叉编译（需要 brew install mingw-w64）。
-# 产物：build/ChaosetIME.dll、build/ChaosetIME32.dll、build/core_test。
+# 产物：build/ChaosetIME.dll、build/chaoset-ui.exe、build/core_test（make package-windows
+# 另出 32 位 ChaosetIME32.dll）。
 ./shims/windows/build.sh
 
 # 完整 Windows 分发包与 NSIS 安装包（需要 mingw-w64 + makensis）。
@@ -27,8 +31,8 @@ make package-windows
 ```
 
 `make package-windows` 生成 `dist/chaoset-windows-x64.zip` 与 `dist/ChaosetSetup.exe`。
-ZIP 内含 64/32 位 DLL、`chaosetd.exe`、`chaoset-cli.exe`、`chaoset-import.exe`、
-`chaoset-userdict.exe`、`dict.tsv`、`install.bat` 和本 README。
+ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.exe`、`chaoset-cli.exe`、
+`chaoset-import.exe`、`chaoset-userdict.exe`、`dict.tsv`、`install.bat` 和本 README。
 
 ## 安装
 
@@ -38,7 +42,9 @@ ZIP 内含 64/32 位 DLL、`chaosetd.exe`、`chaoset-cli.exe`、`chaoset-import.
 
 - 把程序安装到 `C:\Program Files\Chaoset`；
 - 注册 64 位与 32 位 TSF COM 组件；
-- 写 HKLM `Run` 项（`REG_EXPAND_SZ`，`%LOCALAPPDATA%` 由每个登录用户展开）；
+- 写两条 HKLM `Run` 项：`ChaosetDaemon`（daemon，`REG_EXPAND_SZ`，`%LOCALAPPDATA%`
+  由每个登录用户展开）与 `ChaosetUi`（`chaoset-ui.exe`，单例 UI 宿主：托盘中英状态
+  + 设置窗）；
 - 用 Go 导入器把随包底库合并到当前用户 `%LOCALAPPDATA%\Chaoset\dict.tsv`
   （保留已导入词，旧文件备份）；
 - 写入标准卸载信息。
@@ -50,6 +56,18 @@ ZIP 内含 64/32 位 DLL、`chaosetd.exe`、`chaoset-cli.exe`、`chaoset-import.
 
 解压后以管理员身份运行 `install.bat`；卸载运行 `install.bat uninstall`。
 便携脚本不写 Run 项，daemon 在首次输入时懒启动；卸载会清理 HKLM/HKCU 的 Run 项。
+
+便携包不注册 `chaoset-ui.exe` 的登录 Run 项：托盘指示器与设置窗由 TIP 首次在
+**普通程序**里激活时懒启动。若只在开始菜单/搜索里用（AppContainer 宿主不能
+CreateProcess），先在记事本等普通程序里打一次字，或手动运行一次安装目录里的
+`chaoset-ui.exe`。
+
+### 升级后的残留提示
+
+升级/替换 DLL 后，**已打开的程序仍加载旧版 DLL**：旧版 TIP 进程里的多余托盘图标
+会一直留到那些进程重启。升级后请注销/重启一次（或至少重启资源管理器与相关
+应用），任务栏中英图标才会回到「每会话唯一」。旧 UI 进程由安装器在升级时结束，
+新 UI 宿主随登录 Run 项或下一次普通程序输入启动。
 
 ### 从源码手动注册
 
@@ -81,6 +99,36 @@ daemon 参数：
 `-seeddict` 只在目标词库不存在或为 0 字节时复制安装目录底库，不覆盖用户导入词。
 TSF 懒启动只在尚未连接时尝试，失败后按退避重试，不会每个按键长时间阻塞宿主。
 
+## 单例 UI 宿主（托盘中英状态 + 设置窗）
+
+Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的宿主进程里**：
+
+- TSF 会把 TIP 加载进每个宿主进程（实测 explorer.exe 单进程就有 4 个 TIP 实例）。
+  TIP 自己加托盘图标 → 任务栏同时出现多个「中/英」，且各实例 enMode_ 互相独立
+  （中/英混显）——2026-11-05 用户反馈的截图正是这个原因。
+- 设置窗由宿主进程创建时，开始菜单/搜索（SearchApp.exe，Low IL AppContainer）
+  里窗口会被沉浸式 z 序 band 压住；且 AC 中文件对话框、CreateProcess、HKCU
+  注册表都不可用。
+
+因此 `chaoset-ui.exe` 是**每用户会话唯一**的后台 UI 进程：
+
+- 登录 `Run` 项常驻；TIP 需要时按需拉起（AppContainer 宿主不能 CreateProcess，
+  只连接已运行实例）。
+- 持有唯一托盘图标（中/英），并创建设置窗（候选栏齿轮或托盘图标左键单击都打开它）。
+- TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>` 上报模式（`mode 0/1`）或请求
+  设置窗（`settings`）。管道安全描述符与 daemon 完全同规则（当前用户 + SYSTEM +
+  ALL APPLICATION PACKAGES + 低完整性标签 `S:(ML;;NW;;;LW)`），否则开始菜单/
+  搜索框（低完整性）能连不能写。
+- 设置窗/托盘实现全部在 `ChaosetIME.dll` 内（导出 `ChaosetRunUi`），
+  `chaoset-ui.exe` 只是 LoadLibrary 壳——不存在第二套 UI 代码。
+- 单实例用 `Local\ChaosetUi-<SID>` 互斥体；第二个实例带 `--settings` 时把请求
+  转发给首实例后退出。升级/卸载由安装器结束旧 UI 进程（它是本输入法自己的
+  后台程序，不是用户程序）。
+
+排障：任务栏没有中/英状态先看 `chaoset-ui.exe` 是否在跑；设置窗打不开时查
+`tsf.log` 的 `open settings failed: ui host unavailable` 以及管道
+`chaoset-ui-<SID>` 是否存在（AC 宿主的 tsf.log 在包私有目录，见「日志与排障」）。
+
 ## 传输与安全
 
 - 唯一传输：命名管道 `\\.\pipe\chaoset-<当前用户 SID>`；DLL 与 daemon 用同一 SID 规则。
@@ -103,9 +151,11 @@ chaoset-cli.exe -version
 - `%LOCALAPPDATA%\Chaoset\chaosetd.log`：daemon 启动构建、用户词典路径、词库加载、
   每条 IPC 连接（`network=pipe`）与请求错误。
 - `%LOCALAPPDATA%\Chaoset\tsf.log`：TIP 生命周期、宿主/AppContainer 标志、
-  TSF 调用 HRESULT、候选窗失败、全屏抑制、Shift 跟踪、`daemon request failed`。
-  AppContainer 宿主可能写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
-  每个进程最多 200 条。
+  TSF 调用 HRESULT、候选窗失败、全屏抑制、Shift 跟踪、`daemon request failed`，
+  以及 UI 宿主的托盘失败/管道失败。每个进程最多 200 条。
+  **AppContainer 宿主（开始菜单/搜索）的日志不在这个路径**：实测 SearchApp 写到
+  `%LOCALAPPDATA%\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AC\Chaoset\tsf.log`
+  （`appcontainer=1`）；排查开始菜单问题必须去包私有 `AC\Chaoset` 目录找。
 - `%LOCALAPPDATA%\Chaoset\crash.log`：宿主未处理异常（异常码/地址/模块/调用栈/
   最后一次 TSF 操作），记录后继续交给 WER。
 
@@ -169,14 +219,15 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | 64/32 位 TSF COM，注册/卸载/类别配置 | 已实现；CI 校验导出 |
 | 命名管道、当前用户按需启动、AppContainer ACL | 已实现；Windows 真机需验收 |
 | 原生 GDI 候选窗、学习标记、鼠标点选、翻页 | 已实现；视觉静态契约由 `checkuiparity` 校验 |
-| 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 编译级实现；交互需真机验收 |
+| 中英状态指示器（任务栏「中/英」） | 单例 UI 宿主 `chaoset-ui.exe` 的唯一托盘图标；TIP 经命名管道上报；无浮动提示兜底 |
+| 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 由单例 UI 宿主创建（开始菜单/搜索等 AC 宿主里也能打开）；交互需真机验收 |
 | Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
 | 游戏/全屏、UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
 候选窗默认全屏抑制由 `HKCU\Software\Chaoset\FullscreenSuppress` 控制（DWORD，缺省 1）。
-设置窗唯一入口是候选栏齿轮，语言栏/托盘菜单未实现；设置项存
-`HKCU\Software\Chaoset`。
+设置窗入口：候选栏齿轮，或左键单击托盘「中/英」图标（由 `chaoset-ui.exe` 打开）；
+设置项存 `HKCU\Software\Chaoset`。
 
 ## 已知限制
 
@@ -195,26 +246,32 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   的 TIP 按键下沉，导致「选定的输入法不是 chaoset 时按 Shift 仍出中英提示」。
   四个按键入口都要先查 `ITfInputProcessorProfileMgr::GetActiveProfile
   (GUID_TFCAT_TIP_KEYBOARD)` 的 clsid 是否为 `CLSID_ChaosetTIP`，不是则 `pfEaten=FALSE`。
-- **托盘图标的 `ICONINFO.hbmMask` 必须非空**（2026-11-05）：传 NULL 时
-  `CreateIconIndirect` 在部分系统上直接失败，图标永远建不出来，只能一直退回
-  浮动提示。另：`diagBudget()` 每进程仅 200 次，高频日志会把它烧光并吞掉
-  失败原因——关键失败路径的日志必须绕开预算。
+- **中英状态指示器由单例 UI 宿主持有**（`UiTray`）：TIP 绝不能自绘托盘——TSF
+  会为一个进程的多个线程各创建一个 TIP 实例（实测 explorer 单进程 4 个），
+  每实例一个图标就是任务栏多个「中/英」。`Shell_NotifyIconW` 必须在 UI 宿主
+  自己的消息循环线程调用（在 TSF 按键/激活回调里同步调用曾实测阻塞宿主
+  ~7 秒）；`ICONINFO.hbmMask` 必须非空，且掩码缓冲按 DPI 动态分配（250%/300%
+  缩放下 `SM_CXSMICON` 会到 40/48 像素）。`diagBudget()` 每进程仅 200 次，
+  高频日志会把预算烧光并吞掉失败原因——关键失败路径的日志必须绕开预算。
+- **设置窗由 UI 宿主创建**（`openSettingsWindowStandalone` 在 `ChaosetRunUi` 的
+  消息循环线程调用）：TIP 内只许发管道请求，不要退回「宿主进程内建设置窗」——
+  AC 宿主里既会被 z 序 band 压住，也无法启动导入器/文件对话框/重启 daemon。
+- **系统输入指示器只显示 profile 图标**（蓝色 C），不会显示中/英：第三方 TIP 要让
+  系统输入指示器显示中/英，必须实现 `ITfLangBarItemButton` +
+  `GUID_LBI_INPUTMODE`（2026-11-05 调研结论）。当前由 UI 宿主的托盘图标承担，
+  不依赖该通道；将来若替换，需同步改 `checkuiparity` 与本文档。
 - **crash.log 只记错误级异常**：VEH 里按 NTSTATUS 严重性位过滤，只有 `0xC0000000`
   档（访问违例/栈溢出/fail-fast/页内错误）才写。宿主的 COM/RPC 首次异常
 （`0x80040155`、`0x800706BA`、`EPT_S_NOT_REGISTERED` 等）是正常控制流，不再记录——
   否则真正的崩溃会被淹没（2026-11-05 实机：AC 目录 197 条全为误报）。
-- **任务栏模式指示器是自建的托盘图标**（`ModeTray`）。Windows 只对系统输入法
-  绘制输入指示器：即使把 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 写成功并回读
-  一致，第三方 TIP 仍不会有「中/英」。图标只在本地上下文有焦点期间显示；
-  AppContainer 宿主（开始菜单/搜索）没有托盘权限，添加会失败（属预期）。
+- **中英模式仍写线程级隔间** `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`（非零 = 中文），
+  供其他 TSF 客户端读取；但显示只由单例 UI 宿主的托盘图标负责。
 - **陈旧组词清理必须先 `endComposition()`**：只清本地状态不结束合成，宿主文档里
   的预编辑文本会留着，重开窗口后又出现（开始菜单实机问题）。
 - **开始菜单/搜索不投递 `OnSetFocus(FALSE)`**（实机 2026-11-05）：关闭开始菜单后
   重开，上一轮拼音与候选窗仍在。因此焦点清理不能只依赖 TSF 焦点事件，必须有
   `EVENT_SYSTEM_FOREGROUND` 钩子兜底；回调里**不得触碰 TSF**（旧上下文可能已销毁），
   只收浮窗 + 打标记，状态清理由下一次按键在 TIP 线程完成。
-- **模式指示器**：中英模式写进线程级隔间 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`
-  （非零 = 中文），由 Windows 输入指示器显示「中/英」，不自建托盘图标。
 - **UILess 模式现状**：已实现 `ITfTextInputProcessorEx::ActivateEx`（微软文档要求，
   否则 UILess 线程里 TIP 不被激活），但**尚未**实现 `ITfUIElementMgr` 与
   `ITfCandidateListUIElement`，因此：
@@ -222,14 +279,17 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
     UI 走 UI 元素管理器，否则候选窗会在部分宿主整体消失，见 2026-10-30 事故）；
   - 候选窗仍是进程内自绘 GDI 弹窗；
   - `tsf.log` 里 `activateEx ... uielementonly=1` 是「真的遇到了 UILess 宿主」
-    的唯一证据，出现后再评估是否补 UI 元素渲染路径。
+    的唯一证据；`ActivateEx` 遇到 `TF_TMAE_UIELEMENTENABLEDONLY` 线程会**拒绝
+    激活**（`activateEx refused`），宁可让宿主走自己的输入路径，也不在 UILess
+    线程里创建自绘候选窗/吃键——这是 2026-10-30 事故的同款风险边界。
 - **Shift 跟踪必须同时挂在 Test 与 Key 两个按键阶段**（2026-11-05 实机日志结论）：
   宿主分两类——Firefox 把修饰键送进 OnTestKeyDown/OnTestKeyUp；Chrome、conhost、
   Windows Terminal **只**送 OnKeyDown/OnKeyUp（同一进程里前者无日志、后者有）。
   只挂一边会让另一类宿主彻底切不了中英。两阶段各投递一次不会双计（状态机幂等）。
 - Shift 跟踪同时依赖 TSF Test 阶段。**2026-11-05 已补两层兜底**：
-  1. 记账改用幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`、
-     `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
+  1. 记账改用幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`
+     复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp；失焦时只**挂起**
+     （`shiftHoldSuspended_`，且只在获得焦点分支清除），不丢弃按住状态。
      此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台
      窗口），计数器永远回不到 0，该进程内 Shift 空按会**永久失效**直到重启应用。
   2. **事件驱动的自愈（无常驻定时器）**：每次按键到达时，若发现物理 Shift 已经
@@ -248,7 +308,8 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   这两个字段——`fgpid != selfpid` 说明本 TIP 不在拥有焦点的那个进程里，那就不是
   按键记账的问题，而是宿主没在这个进程加载 TIP（需要宿主侧或 IMM32 方案）。
   另外候选窗在拿不到 `GetTextExt` 光标矩形时会退回鼠标位置，此时锚点已下移一行，
-  避免候选窗盖住正在输入的文字。
+  避免候选窗盖住正在输入的文字；`caretFromMouse_` 会标记这是鼠标兜底，短暂提示
+  （半/全角等）不会因此跑到鼠标位置，只有鼠标触发的「删除该词」结果提示允许鼠标锚点。
 - **console（cmd/旧 PowerShell）走的是 IMM32，不是 TSF**：本壳是纯 TSF TIP，
   没有 IMM32 入口（`ImeInquire`/`ImeProcessKey`），若 `tsf.log` 里完全没有
   `activate ... host=conhost.exe`，说明 TIP 根本没被加载——那不是本 Bug，
@@ -260,9 +321,14 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 ## 测试
 
 ```sh
-./shims/windows/build.sh      # core_test + 交叉编译 + 导出检查
-make package-windows          # ZIP + NSIS 安装器
+./shims/windows/build.sh      # core_test + 交叉编译（DLL/UI 宿主）+ 导出检查
+make package-windows          # ZIP + NSIS 安装器（含 chaoset-ui.exe 自检）
 ```
+
+单例 UI 宿主可脱离 TSF 单独冒烟：把 `ChaosetIME.dll` + `chaoset-ui.exe` 放同一目录，
+运行 `chaoset-ui.exe`；应出现唯一托盘「中/英」图标，向管道
+`\\.\pipe\chaoset-ui-<SID>` 写 `mode 1\n` 图标应变为「英」，写 `settings\n`
+应弹出设置窗，再运行一次 `chaoset-ui.exe --settings` 不应产生第二个进程/窗口。
 
 CI 的 `windows-build` 每次 push/PR 运行上述构建与包内容自检；Release 工作流在打 tag 时
 重新构建并上传 `ChaosetSetup.exe` / `chaoset-windows-x64.zip`。

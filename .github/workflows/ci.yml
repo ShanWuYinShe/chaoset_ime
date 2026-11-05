@@ -299,11 +299,11 @@ jobs:
             gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 \
             nsis zip
 
-      - name: Windows 壳构建（DLL 交叉编译 + 核心行为测试）
+      - name: Windows 壳构建（DLL + 单例 UI 宿主交叉编译 + 核心行为测试）
         run: |
           make build
           chmod +x shims/windows/build.sh
           ./shims/windows/build.sh
 
-      - name: Windows 安装包（NSIS 脚本 + ZIP 内容自检）
+      - name: Windows 安装包（NSIS 脚本 + ZIP/UI 宿主内容自检）
         run: make package-windows

@@ -30,6 +30,7 @@ echo ==^> Checking required files
 if not exist "%DLL%"    ( echo ERROR: %DLL% missing & pause & exit /b 1 )
 if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
+if not exist "chaoset-ui.exe" ( echo WARN: chaoset-ui.exe missing; tray indicator/settings window in Start menu will not work & pause )
 
 echo ==^> Refreshing user dictionary (preserve imported words)
 REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps
@@ -52,8 +53,11 @@ reg delete "HKLM\Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1
 echo ==^> Registering components (running programs are not closed)
 REM 与 NSIS 安装器同一策略：不枚举/强杀加载旧 DLL 的用户程序与系统宿主。
 REM 被占用的 DLL 由安装包复制/重启替换处理；已打开程序继续用旧版，
-REM 重新打开后加载新版。只终止本输入法自己的旧 daemon（见下方）。
+REM 重新打开后加载新版。只终止本输入法自己的后台进程（daemon + UI 宿主）。
 taskkill /IM %DAEMON% /F >nul 2>&1
+REM UI 宿主 chaoset-ui.exe 是托盘「中/英」与设置窗的唯一进程，属于本输入法
+REM 自己的后台程序；升级时结束它，避免旧进程继续加载旧 DLL 并占着单例互斥体。
+taskkill /IM chaoset-ui.exe /F >nul 2>&1
 
 echo ==^> Registering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe
@@ -92,10 +96,14 @@ pause
 exit /b 0
 
 :uninstall
-echo ==^> Stopping daemon and removing autostart entry
+echo ==^> Stopping daemon/UI host and removing autostart entries
 taskkill /IM %DAEMON% /F >nul 2>&1
+taskkill /IM chaoset-ui.exe /F >nul 2>&1
 reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
+REM 旧版 NSIS 安装器写入的 UI 宿主 Run 项（便携包本身不写，但升级路径要清干净）。
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetUi /f /reg:64 >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetUi /f /reg:64 >nul 2>&1
 echo ==^> Unregistering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe
 if exist "%WINDIR%\Sysnative\regsvr32.exe" set REGSVR=%WINDIR%\Sysnative\regsvr32.exe

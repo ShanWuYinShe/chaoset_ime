@@ -42,6 +42,12 @@
 //     / Go UserDict.DeleteWord + IPC userDelete + CLI delete 各层入口必须在位，
 //     三端 toast 文案逐字一致；Linux ibus 面板不适用并记录替代入口；
 //     ui-parity 必须保留「学习数据按词删除」语义与入口。
+//  15. 中英状态指示器/设置窗只能在单例 UI 宿主进程（chaoset-ui.exe）里实现
+//     （2026-11-05 用户反馈定稿）：TSF 把 TIP 加载进每个宿主进程，TIP 自绘托盘
+//     = 任务栏多个图标且各实例模式不一致；设置窗在 AC 宿主（开始菜单/搜索）
+//     内创建会被 z 序 band 压住且无法启动子进程。TIP 只许经命名管道上报模式/
+//     请求设置；构建（build.sh/Makefile）、安装器（Run 项 + 文件）与发行包
+//     必须包含 chaoset-ui.exe，DLL 必须导出 ChaosetRunUi。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -544,45 +550,91 @@ func checkCrashLogFilter(fsys fs.FS, problems *[]string) {
 	)
 }
 
-// 模式指示器契约（2026-11-05 用户要求「像其他输入法那样提示当前中英文模式」）：
-// 正确做法是把模式写进线程级隔间 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE，
-// 由 Windows 自带的输入指示器显示「中/英」——微软拼音、搜狗都是这个机制，
-// 不需要自建托盘图标，也不需要额外进程。
+// 中英状态指示器 / 设置窗宿主契约（2026-11-05 用户反馈后的架构定稿）：
+//
+// 用户反馈「中英文模式提示完全乱套：输入光标、鼠标附近、任务栏都在显示，
+// 任务栏甚至同时多个；开始菜单里点设置齿轮没反应」。根因：
+//   - TSF 把 TIP 加载进每个宿主进程（实机 explorer.exe 单进程 4 个实例），
+//     TIP 进程内自绘托盘 = 每个实例一个图标，且 enMode_ 每实例独立（中/英混显）；
+//   - 托盘不可用时的浮动 toast 兜底，加上候选窗锚点会退化成鼠标坐标，
+//     就成了「光标附近 + 鼠标附近」两处提示。
+//
+// 定稿架构：中英模式仍写 TSF 线程隔间（语义/兼容），但**显示只由每用户会话
+// 唯一的 UI 宿主进程（chaoset-ui.exe）负责**——它持有唯一托盘图标，TIP 只通过
+// 命名管道上报模式；设置窗也由它创建（开始菜单/搜索是 Low IL AppContainer，
+// TIP 自己创建窗口会被 z 序 band 压住、也无法 CreateProcess/文件对话框）。
+// 不许回退成 TIP 自绘托盘或 toast 兜底。
 func checkModeIndicator(fsys fs.FS, problems *[]string) {
-	const group = "模式指示器"
+	const group = "模式指示器/UI 宿主"
 	checkContains(fsys, problems, group, winShell,
 		"kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE",
 		"syncModeCompartment",
 		"IID_ITfCompartmentMgr",
 		"VT_I4", // 隔间值类型（非零 = 键盘打开/中文）
 	)
-	// 隔间写成功但 Windows 不为第三方 TIP 绘制输入指示器（实机 2026-11-05：
-	// set_hr=0 get_hr=0 read=1/0，任务栏仍无「中/英」），因此必须自建托盘图标。
-	// 模式提示一次只能出一处：托盘可用就用托盘，托盘不可用（AppContainer）
-	// 才退回浮动提示；浮动提示不得回退到鼠标位置（2026-11-05 用户反馈重复干扰）。
-	checkContains(fsys, problems, group, winShell,
-		"modeTray_.isShown()",                         // 托盘优先
-		"if (anchor.x == 0 && anchor.y == 0) return;", // 不再跟着鼠标跑
+	// TIP 侧只上报，不持有任何托盘/浮窗兜底。
+	checkExcludes(fsys, problems, group, winShell,
+		"modeTray_", "ModeTray", "showModeToast(",
 	)
 	checkContains(fsys, problems, group, winShell,
-		"class ModeTray",
-		"Shell_NotifyIconW",
-		"makeGlyphIcon",
-		"modeTray_.show(enMode_)",
-		"TaskbarCreated",    // explorer 重启后要重新添加
+		"reportModeToUi", "uiSendCommand", "chaoset-ui.exe",
+		"openSettingsViaUi", "openSettingsWindowStandalone",
+	)
+	// UI 宿主实现（在 DLL 内）：唯一托盘、命令管道、单实例、设置窗入口。
+	checkContains(fsys, problems, group, winShell,
+		"class UiTray", "Shell_NotifyIconW", "makeGlyphIcon", "TaskbarCreated",
 		"g_liveTrayWindows", // 托盘窗口过程在 DLL 内，必须防卸载
+		"runUiHost", "ChaosetRunUi", "ChaosetUi-", "ALL APPLICATION PACKAGES",
+		"S-1-15-2-1",  // DACL: ALL APPLICATION PACKAGES（AC 宿主才能写）
+		"ML;;NW;;;LW", // SACL: 低完整性 NO_WRITE_UP
+		"openSettingsWindowStandalone",
 	)
-	// 切换与获得焦点时都必须刷新，否则指示器会停在旧模式。
+	// 初始化/切换/焦点回来都必须上报，否则托盘会停在旧模式。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
-		if n := strings.Count(string(data), "syncModeCompartment();"); n < 3 {
+		if n := strings.Count(string(data), "reportModeToUi(enMode_"); n < 3 {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：syncModeCompartment() 调用点只有 %d 处，应至少 3 处"+
+				"%s：reportModeToUi(enMode_) 只有 %d 处，应至少 3 处"+
 					"（Activate / 切换模式 / 焦点回来）", group, n))
 		}
+		// 设置窗创建入口只允许出现在 UI 宿主路径里（定义 + 消息处理 + 首启），
+		// 且候选栏齿轮只发管道请求。
+		if n := strings.Count(string(data), "openSettingsWindowStandalone()"); n < 3 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：openSettingsWindowStandalone() 只有 %d 处，应至少 3 处"+
+					"（定义 / UI 宿主消息 / 首启 --settings）", group, n))
+		}
 	}
+	// TIP 的齿轮入口必须走管道（AC 宿主内 TIP 不能 CreateProcess）。
+	checkContains(fsys, problems, group, winShell,
+		"void ChaosetTIP::showSettingsWindow() {", "if (openSettingsViaUi()) return;")
+	// UI 宿主退出必须 join 管道线程后才能返回（ui_main 随后 FreeLibrary；
+	// 线程若还阻塞在 ConnectNamedPipe/ReadFile 会进已卸载代码——2026-11-05 评审 P0）。
+	checkContains(fsys, problems, group, winShell,
+		"g_uiStopEvent", "CancelSynchronousIo(", "WaitForSingleObject(pipeThread")
+	// 命令管道必须加 PIPE_REJECT_REMOTE_CLIENTS，且服务端读命令有超时
+	// （连上不发数据不能永久占住单线程服务）。
+	checkContains(fsys, problems, group, winShell,
+		"PIPE_REJECT_REMOTE_CLIENTS", "PeekNamedPipe(", "deadline")
+	// 设置失败不得静默：必须留日志并给用户可见反馈（否则回归无人发现）。
+	checkContains(fsys, problems, group, winShell,
+		"open settings failed", "设置窗口打不开：chaoset-ui.exe 未运行")
+	// AppContainer 内 UI 未运行时由 daemon 代拉起（IPC "ui"），不能静默失败。
+	checkContains(fsys, problems, group, winShell,
+		"ensureUiHostStartedByDaemon", "session_.ensureUiHost()")
+	checkContains(fsys, problems, group, ipcServer, "case \"ui\":")
+	checkContains(fsys, problems, group, "ipc/ui_windows.go", "chaoset-ui.exe")
+	checkContains(fsys, problems, group, "ipc/ui_other.go", "ensureUIHost")
+	// 构建/打包/安装三条链路都必须带上 UI 宿主，否则托盘与设置窗整体不可用。
+	checkContains(fsys, problems, group, winBuild,
+		"chaoset-ui.exe", "ui_main.cpp", "ChaosetRunUi")
+	checkContains(fsys, problems, group, "Makefile",
+		"chaoset-ui.exe", "ChaosetRunUi")
+	checkContains(fsys, problems, group, winInstaller,
+		"chaoset-ui.exe", "ChaosetUi")
+	checkContains(fsys, problems, group, ".github/workflows/release.yml",
+		"chaoset-ui.exe", "ChaosetRunUi")
 }
 
-// 浮窗 owner 契约（2026-11-05 用户反馈「候选窗/提示条一出现就把别的窗口顶到前面」）：
 // 带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，所以 owner
 // 必须是**当前前台窗口且属于本进程**，不得用 TSF 上下文推出来的窗口
 // （那可能是另一个窗口的，用户会看到「弹窗但焦点不动」）。
@@ -602,6 +654,12 @@ func checkPopupOwner(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"static bool shellHostNeedsOwner()", "if (!shellHostNeedsOwner()) return nullptr;",
 		"startmenuexperiencehost.exe", "searchapp.exe")
+	// 前台事件回调里不得碰 TSF（ITfContext::GetActiveView 等 COM）：合成窗口
+	// HWND 必须在 TSF 线程缓存（composeHostWnd_），回调只做纯 Win32 比较。
+	//（2026-11-05 回归审计 P2-3）
+	checkContains(fsys, problems, group, winShell, "composeHostWnd_")
+	checkExcludes(fsys, problems, group, winShell,
+		"compCtx_ != nullptr ? hostWindowOf(compCtx_) : nullptr")
 }
 
 // checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数
@@ -668,6 +726,13 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	// 安装器不得自己启动 daemon（管理员上下文会写错用户数据/管道）。
 	checkExcludes(fsys, problems, group, winInstaller,
 		`Exec '"$INSTDIR\chaosetd.exe"`)
+	// UI 宿主（托盘/设置窗）同样不能在提升后的安装器里启动：它必须是当前登录
+	// 用户的普通完整性进程，否则托盘图标与设置窗落在错误的会话/权限上下文。
+	checkExcludes(fsys, problems, group, winInstaller,
+		`Exec '"$INSTDIR\chaoset-ui.exe"`)
+	// 升级/卸载必须结束本输入法自己的旧 UI 宿主，否则单例互斥体与命令管道
+	// 仍被旧进程占用，新版本托盘/设置窗行为不生效。
+	checkContains(fsys, problems, group, winInstaller, "taskkill /IM chaoset-ui.exe")
 
 	// 三端都必须有「发现 daemon 没起来就拉起它」的懒启动路径：自启动（Run 项 /
 	// LaunchAgent）是常态，但被用户关掉、被安全软件拦截、安装后未重新登录等
@@ -925,9 +990,21 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"suspendShiftHoldOnFocusLost",
 		"shiftHoldSuspended_",
-		"shiftOtherInputDown",
 		"beginShiftHold", "endShiftHold", "finishShiftHold",
 	)
+	// 失焦「挂起」不得被焦点分支末尾无条件清掉：必须在获得焦点分支里清
+	//（2026-11-05 回归审计 P1-1：把 2676 行的无条件下移进 TRUE 分支）。
+	checkContains(fsys, problems, group, winShell,
+		"if (fForeground != FALSE) {\n            shiftHoldSuspended_ = false;")
+	// 丢 KeyUp 的自愈必须在 Test 与 Key 两个阶段都可达（Chrome/conhost 等内容键
+	// 只进 Key 阶段；2026-11-05 回归审计 P2-11）。定义 1 + 调用 2 = 3 处。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if n := strings.Count(string(data), "reconcileShiftState("); n < 3 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：reconcileShiftState( 只有 %d 处（含定义），应在 Test 与 Key 两个阶段都调用",
+				group, n))
+		}
+	}
 	// 旧实现的致命写法不得回归：按事件累加的计数器。
 	checkExcludes(fsys, problems, group, winShell,
 		"++shiftDown_", "--shiftDown_")
@@ -1005,5 +1082,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

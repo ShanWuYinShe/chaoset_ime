@@ -203,12 +203,16 @@ package-linux:
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
-# package-windows：交叉编译到 windows/amd64（Go）与 mingw-w64（DLL）。
+# package-windows：交叉编译到 windows/amd64（Go）与 mingw-w64（DLL + UI 宿主）。
 #
 # 与 Linux 同理，必须显式指定 GOOS/GOARCH：裸 go build 会把开发机的
 # Mach-O/ELF 二进制塞进 Windows 包。包内自带 install.bat，
 # 用户右键「以管理员身份运行」即可完成 regsvr32 注册 + daemon 启动，
 # 不必再手工敲命令。同时编译 64 位与 32 位两个 TSF DLL，实现合体安装包全面支持。
+#
+# chaoset-ui.exe：单例 UI 宿主（托盘中英指示器 + 设置窗）。只有 64 位一份——
+# 它是独立进程，与宿主进程位数无关；必须与 ChaosetIME.dll 同目录（LoadLibrary
+# 同目录 DLL 后调用导出 ChaosetRunUi）。
 WIN_GOENV = GOOS=windows GOARCH=amd64 CGO_ENABLED=0
 
 package-windows:
@@ -235,6 +239,10 @@ package-windows:
 		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o
+	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
+	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。
+	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
+		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
 	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
 	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
@@ -248,6 +256,12 @@ package-windows:
 	done
 	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }
 	@file dist/chaoset-windows-x64/ChaosetIME32.dll | grep -q 'PE32 ' || { echo "错误：ChaosetIME32.dll 不是 32 位 PE："; file dist/chaoset-windows-x64/ChaosetIME32.dll; exit 1; }
+	@file dist/chaoset-windows-x64/chaoset-ui.exe | grep -q 'PE32+' || { echo "错误：chaoset-ui.exe 不是 64 位 PE："; file dist/chaoset-windows-x64/chaoset-ui.exe; exit 1; }
+	@# UI 宿主必须靠导出复用 DLL 实现；缺导出/被静态链接都会让托盘与设置窗整体失效
+	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
+		| grep -q ChaosetRunUi || { echo "错误：ChaosetIME.dll 缺少 ChaosetRunUi 导出（chaoset-ui.exe 无法工作）"; exit 1; }
+	@if x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/chaoset-ui.exe | grep -qi 'DLL Name:.*ChaosetIME'; then \
+		echo "错误：chaoset-ui.exe 静态导入了 ChaosetIME.dll（必须 LoadLibrary 动态加载）"; exit 1; fi
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
 		| grep -q DllRegisterServer || { echo "错误：ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
 	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \

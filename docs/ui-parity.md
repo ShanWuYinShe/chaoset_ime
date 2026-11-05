@@ -119,7 +119,9 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 
 | 能力 | macOS | Windows | Linux | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| 设置入口 | 候选栏齿轮 → AppKit 设置窗 | 候选栏齿轮 → Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例 |
+| 设置入口 | 候选栏齿轮 → AppKit 设置窗 | 候选栏齿轮 / 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开） |
+| 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标；TIP 经命名管道上报模式，不在光标/鼠标旁弹提示 | 由 ibus/桌面环境指示 | 2026-11-05 用户反馈定稿：每用户会话只许一个状态指示器 |
+| Windows UI 宿主 | — | `chaoset-ui.exe`（登录 Run 项 + TIP 懒启动；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标 |
 | 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
 | 词库导入 | Setup.app：选择文件 → chaoset-import -o -seed -backup → 重启 daemon | 设置窗同样调用 chaoset-import → 重启 daemon | 设置窗调用 chaoset-import → 重启 ibus | 合并在 Go 工具中完成 |
@@ -173,7 +175,8 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 - shims/macos/tests/equivalence.sh：图标 keycap 契约、universal 架构、TIS 图标键。
 - tools/checkuiparity：三端设置窗文案/单例、学习数据 GUI、词库导入安全、
   联想即时性、退格/修饰键语义、候选窗几何/配色字段、候选点选/右键删除、
-  打包安装、CI 覆盖、shell 转义与文档对照。
+  单例 UI 宿主与模式指示器（不许回退为 TIP 自绘托盘/toast）、打包安装、
+  CI 覆盖、shell 转义与文档对照。
 - Windows 候选窗常量由上述静态工具校验；像素级渲染仍需真机观察，不能把
   编译级验证写成“双端已验证”。
 

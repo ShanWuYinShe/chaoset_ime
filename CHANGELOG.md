@@ -4,6 +4,40 @@
 
 ## 未发布
 
+- **Windows 中英文模式提示/任务栏图标乱套、开始菜单里设置窗打不开（2026-11-05
+  用户反馈）**：两个用户可见问题的根因是同一类架构错误——把「每用户会话唯一」
+  的 UI 放进了会被 TSF 加载进每个宿主进程的 TIP 里。
+  1. 模式指示器：`ModeTray` 是 `ChaosetTIP` 成员，TSF 每个线程/TIP 实例各一份
+     （实机 explorer.exe 单进程 4 个实例、4 个托盘窗口），且 `enMode_` 每实例
+     独立 → 任务栏同时出现「中 英 中 英」；托盘不可用时的浮层兜底加上候选窗
+     锚点的鼠标兜底 → 用户看到「光标附近 + 鼠标附近」两处提示。
+  2. 设置窗由 TIP 所在宿主进程创建：开始菜单/搜索（SearchApp.exe，Low IL
+     AppContainer）里被沉浸式 z 序 band 压住，且 AC 中文件对话框、子进程与
+     HKCU 注册表都不可用，表现为点齿轮无反应。
+  修复：新增每用户会话唯一的 UI 宿主 `chaoset-ui.exe`（`ChaosetRunUi` 导出；
+  exe 只是 LoadLibrary 壳，设置窗/托盘实现仍在 `win32.cpp` 一份）：
+  - 唯一托盘「中/英」图标；TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>`
+    上报模式（DACL/SACL 与 daemon 完全同规则，AC 宿主可写）。删除 TIP 内的
+    `ModeTray` 与模式 toast 兜底，模式提示只剩任务栏一处。
+  - 设置窗改由 UI 宿主创建（候选栏齿轮或托盘图标左键单击均可），TIP 内只发
+    管道请求；AC 宿主里能打开，宿主退出也不再带走设置窗。
+  - 登录 Run 项 + TIP 懒启动 + `Local\ChaosetUi-<SID>` 单例 + 第二实例
+    `--settings` 转发；安装器/便携脚本升级与卸载结束后台旧 UI 进程。
+  同批回归审计修复（P1/P2）：失焦时「挂起 Shift」被无条件清除（切窗口/
+  Shift+点击后误切中英）；SetWinEventHook 改为按 hook 句柄映射实例（回调不再
+  触碰 TSF，缓存 `composeHostWnd_`）；陈旧组词清理先落盘已确认段；
+  高 DPI 托盘掩码缓冲动态分配并修掉双重 `DeleteDC`；提示条拒绝鼠标兜底锚点
+  （`caretFromMouse_`）；`bailOutIfInactive` 清理联想态；`reconcileShiftState`
+  覆盖 Key 阶段；`ActivateEx` 拒绝 UIElementOnly 线程；DllMain 注销新增窗口类；
+  删除死代码 `shiftOtherInputDown`。`checkuiparity` 新增「单例 UI 宿主/模式
+  指示器」契约组（禁止回退为 TIP 自绘托盘或 toast 兜底），构建/安装器/发行包
+  自检都必须带 `chaoset-ui.exe` 与 `ChaosetRunUi` 导出。
+  已在用户的 Windows 10 22H2 上对 `chaoset-ui.exe` 做过独立冒烟：单例唯一托盘
+  图标、管道 `mode` 更新图标、托盘左键打开设置窗、第二实例 `--settings` 转发
+  不重复、管道 `quit` 被忽略、关闭走「停管道线程 → join → 销毁窗口」后进程
+  干净退出且无 crash.log 记录；TSF 内完整链路需安装后真机验收（重点：开始菜单
+  搜索框里点齿轮、任务栏是否只剩一个中英图标）。
+
 - **选定的输入法不是 chaoset 时，按 Shift 仍出中英提示**（2026-11-05 用户反馈）：
   实机日志里能看到这种情况下我们的 `shift toggle` 仍在触发——TSF 在某些宿主里
   会把按键继续投给未激活的 TIP 按键下沉（`Deactivate` 未被调用或不及时）。

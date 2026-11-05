@@ -2,18 +2,19 @@
 # chaoset TSF 壳构建与验证：
 #   1) 原生编译核心层行为测试，并用真实 chaosetd（Unix socket，与 Windows
 #      命名管道同为 ipc.Endpoint 本机传输，协议/帧格式一致）跑通
-#   2) mingw-w64 交叉编译 ChaosetIME.dll，检查导出表
+#   2) mingw-w64 交叉编译 ChaosetIME.dll，检查导出表（含 ChaosetRunUi）
+#   3) mingw-w64 交叉编译 chaoset-ui.exe（单例 UI 宿主：托盘状态 + 设置窗）
 # 前置：Go 工具链；brew install mingw-w64
 set -e
 cd "$(dirname "$0")"
 
 mkdir -p build
-echo "[1/3] 原生编译核心层测试..."
+echo "[1/4] 原生编译核心层测试..."
 CXX=${CXX:-clang++}
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Isrc -I../common/ipc \
   tests/core_test.cpp ../common/ipc/core.cpp -o build/core_test
 
-echo "[2/3] 启动真实 daemon（Unix socket）并跑行为测试..."
+echo "[2/4] 启动真实 daemon（Unix socket）并跑行为测试..."
 (cd ../.. && go build -o shims/windows/build/chaosetd ./cmd/chaosetd)
 # 测试台用 Unix socket 连 daemon：Windows 壳本身只走命名管道（本机没有管道
 # API），但两者同属 ipc.Endpoint 的本机传输，帧格式与协议完全一致。
@@ -43,7 +44,7 @@ wait $DPID 2>/dev/null || true
 trap - EXIT
 rm -rf "$SOCKDIR"
 
-echo "[3/3] mingw-w64 交叉编译 ChaosetIME.dll..."
+echo "[3/4] mingw-w64 交叉编译 ChaosetIME.dll..."
 VERSION=${VERSION:-dev}
 CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
 # 图标资源必须链进 DLL：注册表 IconFile 指向本 DLL（win32.cpp RegisterProfile），
@@ -62,9 +63,15 @@ else
   echo "  警告：.rsrc 段缺失，语言栏将没有图标" >&2
   exit 1
 fi
-x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -E "DllRegisterServer|DllGetClassObject|DllCanUnloadNow|DllUninstallServer" | while read -r line; do
+x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -E "DllRegisterServer|DllGetClassObject|DllCanUnloadNow|DllUninstallServer|ChaosetRunUi" | while read -r line; do
   echo "  导出: $line"
 done
+# 单例 UI 宿主入口必须导出：chaoset-ui.exe 靠 LoadLibrary + ChaosetRunUi 复用
+# 本 DLL 的设置窗/托盘/管道实现。缺了这个导出，设置窗与中英指示器整体不可用。
+if ! x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -q "ChaosetRunUi"; then
+  echo "错误：ChaosetIME.dll 缺少 ChaosetRunUi 导出（chaoset-ui.exe 无法工作）" >&2
+  exit 1
+fi
 
 # 无障碍 UIA 必须动态加载（LoadLibrary/GetProcAddress），不能给 DLL 增加
 # uiautomationcore.dll 静态导入依赖：旧/精简系统没有该 DLL 时输入法仍要能跑。
@@ -75,4 +82,20 @@ if x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -qi 'DLL Na
 fi
 echo "  UIA 动态加载自检通过（无 uiautomationcore 静态导入）"
 
-echo "完成：build/ChaosetIME.dll（编译级验证）、build/core_test（行为级验证）"
+echo "[4/4] 交叉编译单例 UI 宿主 chaoset-ui.exe..."
+# 托盘指示器 + 设置窗的唯一宿主。exe 本身只有几十行：LoadLibrary 同目录的
+# ChaosetIME.dll 后调用导出 ChaosetRunUi，UI 实现全部在 DLL 里（无第二套 UI）。
+"$CXXWIN" -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
+  -o build/chaoset-ui.exe src/ui_main.cpp
+# 不得静态导入 ChaosetIME.dll：必须 LoadLibrary，否则 DLL 与 exe 版本/路径
+# 不一致时整个 UI 宿主起不来（且无法给出可读错误）。
+if x86_64-w64-mingw32-objdump -p build/chaoset-ui.exe | command grep -qi 'DLL Name:.*ChaosetIME'; then
+  echo "错误：chaoset-ui.exe 静态导入了 ChaosetIME.dll（必须 LoadLibrary 动态加载）" >&2
+  exit 1
+fi
+if x86_64-w64-mingw32-objdump -p build/chaoset-ui.exe | command grep -qi 'ChaosetRunUi'; then
+  echo "  警告：chaoset-ui.exe 不应静态引用 ChaosetRunUi 符号" >&2
+fi
+echo "  UI 宿主静态链接自检通过（未静态导入 ChaosetIME.dll）"
+
+echo "完成：build/ChaosetIME.dll（编译级验证）、build/chaoset-ui.exe、build/core_test（行为级验证）"

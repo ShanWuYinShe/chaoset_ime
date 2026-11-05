@@ -97,6 +97,10 @@ Section "MainSection" SEC01
     ; 新文件（或预约重启替换）；已打开的旧程序继续用旧版 DLL，重新打开后加载新
     ; 版，绝不以关闭用户程序为代价追求「立即全面生效」。
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
+    ; chaoset-ui.exe 是本输入法自己的后台 UI 宿主（托盘中英指示器 + 设置窗），
+    ; 不是用户程序：升级时必须结束，否则旧进程会继续加载旧 DLL 并占着单例
+    ; 互斥体与命令管道，新版本的托盘/设置窗行为不会生效。
+    nsExec::Exec 'taskkill /IM chaoset-ui.exe /F'
     Sleep 300
 
     ; 安全写入二进制文件与资源（支持热替换）
@@ -105,6 +109,7 @@ Section "MainSection" SEC01
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetd.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-cli.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-import.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-ui.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
     ; 图标非关键文件：同样不因占用中止
     SetOverwrite try
@@ -212,6 +217,12 @@ Section "MainSection" SEC01
     ; 当前用户的 LOCALAPPDATA（不覆盖用户已导入的词库）。
     WriteRegExpandStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "$INSTDIR\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"'
 
+    ; UI 宿主：托盘中英指示器 + 设置窗的唯一进程（每用户会话一个）。
+    ; 它必须以**当前登录用户**身份在正常完整性下运行（安装器是提升后的管理员，
+    ; 不能在这里启动），所以只写 Run 项；也由 TSF 首键/点齿轮时懒启动兜底
+    ;（AppContainer 宿主内不能 CreateProcess，必须已有实例才能打开设置窗）。
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi" '"$INSTDIR\chaoset-ui.exe"'
+
     ; 写入系统“已安装的应用/控制面板”标准卸载信息
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayName" "Chaoset 拼音输入法"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -241,8 +252,9 @@ Section "Uninstall"
         SetRegView 64
     ${EndIf}
 
-    ; 终止后台服务并等待句柄完全释放
+    ; 终止后台服务/UI 宿主并等待句柄完全释放（都是本输入法自己的进程）
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
+    nsExec::Exec 'taskkill /IM chaoset-ui.exe /F'
     Sleep 300
 
     ; 从用户语言列表中移除输入法（同样用 64 位 PowerShell，避免 WOW64 重定向）
@@ -279,6 +291,7 @@ Section "Uninstall"
 
     ; 删除注册表启动项与卸载项
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset"
     DeleteRegKey HKLM "Software\Chaoset"
     DeleteRegKey HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}"
@@ -287,6 +300,7 @@ Section "Uninstall"
     Delete "$INSTDIR\chaosetd.exe"
     Delete "$INSTDIR\chaoset-cli.exe"
     Delete "$INSTDIR\chaoset-import.exe"
+    Delete "$INSTDIR\chaoset-ui.exe"
     Delete "$INSTDIR\dict.tsv"
     Delete "$INSTDIR\chaoset.ico"
     Delete "$INSTDIR\uninstall.exe"
@@ -297,6 +311,8 @@ Section "Uninstall"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME.dll.old2"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old2"
+    Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old"
+    Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old2"
     RMDir /REBOOTOK "$INSTDIR"
 
     ; 清理用户数据目录（词库副本 + 用户学习数据 + 日志）。

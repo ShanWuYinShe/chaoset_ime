@@ -867,7 +867,7 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 |---|---|---|
 | Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 容器内端到端验证；真机桌面闭环待环境 |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态与设置窗 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
 
 ### 渐进上屏的跨程序兼容模型
 
@@ -918,8 +918,10 @@ shims/windows/README。
 ## 日志
 
 - Windows：daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`，TSF 连接/渲染/
-  请求诊断 `tsf.log`，宿主崩溃 `crash.log`；AppContainer 宿主的 TSF 日志可能
-  写到 `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`。
+  请求诊断 `tsf.log`，宿主崩溃 `crash.log`；AppContainer 宿主的 TSF 日志实测写到
+  `%LOCALAPPDATA%\Packages\<包族>\AC\Chaoset\tsf.log`（如 SearchApp 的
+  `Microsoft.Windows.Search_cw5n1h2txyewy\AC\Chaoset\tsf.log`）。托盘/设置窗问题
+  同时看单例 UI 宿主 `chaoset-ui.exe` 是否在运行。
 - macOS：daemon 日志 `~/Library/Application Support/chaoset/chaosetd.log`；
   壳侧 IPC/候选窗失败写 macOS 统一日志：
   `log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"'`。
