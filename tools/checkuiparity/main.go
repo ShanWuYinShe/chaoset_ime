@@ -648,6 +648,18 @@ func Run(fsys fs.FS) []string {
 	// 里 Shift 永久失效（只能重启应用恢复）。
 	checkShiftToggleAccounting(fsys, &problems)
 
+	// 4g. reset 语义分层（2026-11-05）：三端壳都必须区分「继续打字」与
+	// 「会话结束」两种收尾。用错会让引擎忘记刚上屏的词，后续候选失去
+	// bigram 上下文加成（实测：学过「我们→时」后输入 shi，带 prev 首候选
+	// 是「时」，清掉后退回「是」）。
+	checkResetSemantics(fsys, &problems)
+
+	// 4g. reset 语义分层（2026-11-05）：三端壳都必须区分「继续打字」与
+	// 「会话结束」两种收尾。用错会让引擎忘记刚上屏的词，后续候选失去
+	// bigram 上下文加成（实测：学过「我们→时」后输入 shi，带 prev 首候选
+	// 是「时」，清掉后退回「是」）。
+	checkResetSemantics(fsys, &problems)
+
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
 	checkContains(fsys, &problems, "打包安装", installSh, "chaoset-setup")
@@ -767,6 +779,33 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 		"shiftArmed = false", "shiftArmed = true")
 	// 文档基准行不得被删。
 	checkContains(fsys, problems, group, uiParityDoc, "Shift 空按")
+}
+
+// checkResetSemantics 锁住「继续打字」与「会话结束」两类收尾在三端的分层：
+//   - daemon 必须同时提供 reset（清上下文）与 resetComposition（保留）；
+//   - 三端壳在切中英/透传等继续打字的路径必须能走到轻量版；
+//   - 会话结束（失焦/停用/focusOut）仍必须用完整 reset。
+func checkResetSemantics(fsys fs.FS, problems *[]string) {
+	const group = "reset 语义"
+	// daemon 侧两条链路都要在。
+	checkContains(fsys, problems, group, ipcServer,
+		"case \"reset\":", "case \"resetComposition\":")
+	// Windows：两个入口都在，轻量版被真正调用。
+	checkContains(fsys, problems, group, winShell,
+		"void resetSession()", "void resetComposition()",
+		"session_.resetComposition()")
+	// macOS：EngineClient 暴露两个方法，控制器在继续打字路径用轻量版。
+	checkContains(fsys, problems, group, "shims/macos/src/EngineClient.swift",
+		"func reset()", "func resetComposition()", "\"resetComposition\"")
+	checkContains(fsys, problems, group, "shims/macos/src/ChaosetController.swift",
+		"engine.resetComposition()")
+	// Linux：同样两个入口。
+	checkContains(fsys, problems, group, linuxEngine,
+		"void sessionReset()", "void sessionResetComposition()",
+		"resetComposition()")
+	// 文档必须记录这个区别，否则后来者会误用。
+	checkContains(fsys, problems, group, readmeDoc, "resetComposition")
+	checkContains(fsys, problems, group, uiParityDoc, "resetComposition")
 }
 
 func main() {

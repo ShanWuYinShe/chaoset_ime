@@ -170,7 +170,7 @@ public:
             enMode_ = !enMode_;
             if (!confirmed_.empty()) commit(confirmed_);
             exitAssociate();
-            sessionReset();
+            sessionResetComposition();
             hidePreedit();
             hideLookupTable();
             showToast(enMode_ ? "英文模式" : "中文模式");
@@ -182,7 +182,7 @@ public:
         if ((state & IBUS_MOD4_MASK) != 0) {
             if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -194,7 +194,7 @@ public:
             if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 if ((state & (IBUS_CONTROL_MASK | IBUS_SHIFT_MASK)) != 0) {
                     confirmed_.clear();
-                    sessionReset();
+                    sessionResetComposition();
                     hidePreedit();
                     hideLookupTable();
                     return true;
@@ -202,7 +202,7 @@ public:
                 chaoset::Comp comp = callComp([&] { return daemon_.session().backspaceWord(); });
                 if (comp.input.empty() && !confirmed_.empty()) {
                     commit(confirmed_);
-                    sessionReset();
+                    sessionResetComposition();
                     return true;
                 }
                 refresh(std::move(comp));
@@ -210,7 +210,7 @@ public:
             }
             if ((state & IBUS_CONTROL_MASK) != 0 && isComposing() && keyval == 'u') {
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -268,7 +268,7 @@ public:
             if (!isComposing()) return false;
             if ((state & IBUS_SHIFT_MASK) != 0) {
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -276,7 +276,7 @@ public:
             chaoset::Comp comp = callComp([&] { return daemon_.session().backspace(); });
             if (comp.input.empty() && !confirmed_.empty()) {
                 commit(confirmed_);
-                sessionReset();
+                sessionResetComposition();
                 return true;
             }
             refresh(std::move(comp));
@@ -285,7 +285,7 @@ public:
         if (keyval == kKeysymEscape) {
             if (isComposing() || !confirmed_.empty()) {
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -301,7 +301,7 @@ public:
             if (isComposing() || !confirmed_.empty()) {
                 const std::string raw = confirmed_ + last_.input;
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 commit(raw);
@@ -322,7 +322,7 @@ public:
                 const std::string raw = last_.input;
                 const std::string conf = confirmed_;
                 confirmed_.clear();
-                sessionReset();
+                sessionResetComposition();
                 hidePreedit();
                 hideLookupTable();
                 commit(conf + raw);
@@ -331,7 +331,7 @@ public:
             const std::string raw = last_.input;
             const std::string conf = confirmed_;
             confirmed_.clear();
-            sessionReset();
+            sessionResetComposition();
             hidePreedit();
             hideLookupTable();
             commit(conf + raw);
@@ -460,6 +460,15 @@ private:
         last_ = chaoset::Comp();
     }
 
+    // 只丢弃当前组词、保留学习上下文（prev/history）。
+    // 「用户还会继续打字」的场景走这个（切中英、退格删空、Esc、全部删除、
+    // 顶屏、候选越界等）；reset 只留给会话真正结束（focusOut）的场景。
+    // 用 reset 会让引擎忘记刚上屏的字，后续候选失去 bigram 加成（2026-11-05）。
+    void sessionResetComposition() {
+        if (ensure()) (void)daemon_.session().resetComposition();
+        last_ = chaoset::Comp();
+    }
+
     void refresh(chaoset::Comp comp) {
         last_ = std::move(comp);
         const std::string preedit = confirmed_ + last_.preedit;
@@ -530,7 +539,7 @@ private:
         if (!isComposing() && confirmed_.empty() && assoc_.empty()) return;
         if (!confirmed_.empty()) commit(confirmed_);
         else { hidePreedit(); hideLookupTable(); }
-        sessionReset();
+        sessionResetComposition();
         exitAssociate();
     }
 

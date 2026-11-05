@@ -164,6 +164,7 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 | 标点键 | 组词中先上屏首选，再输出中文标点；组词中的撇号是音节分隔符 |
 | 退格/Delete | 逐字符；删空剩余拼音立即落盘已确认段 |
 | Esc | 取消整条组词（含未落盘确认段） |
+| 收尾语义分层 | **继续打字**（切中英/透传/退格删空/Esc/顶屏/候选越界）走 `resetComposition`，只丢组词、**保留** prev/history；**会话结束**（失焦/停用/focusOut/activateServer）走 `reset`，连学习上下文一起清——清掉 prev 会让下一轮候选丢失 bigram 加成（三端壳与 daemon 都必须遵守） |
 
 ## 机器检查
 

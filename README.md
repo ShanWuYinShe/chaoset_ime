@@ -801,8 +801,10 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
   否则会有 1 键瞬态；2026-11-05 起改为纯传参后，这种不同步在结构上不可能发生。）
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
-方法（16 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
-`reset` / `commitRaw`（回车：返回原始拼音并清空组词）/ `select`（`{"index":0}`，
+方法（17 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
+`reset`（清组词**与**学习上下文：Esc/失焦/新会话）/ `resetComposition`（只清组词、
+**保留** prev/history：切中英、透传等「用户还会继续打字」的场景）/ `commitRaw`
+（回车：返回原始拼音并清空组词）/ `select`（`{"index":0}`，
 返回 `{"committed":"你好"}`）/ `selectPrefix`（`{"index":0}`，**渐进上屏**：只消耗
 候选音节对应的 input 前缀，返回剩余组词状态 + `committed`，壳据此上屏前缀段并
 用剩余 `preedit` 继续组词——三端选词走此路径）/ `nextPage` / `prevPage`（候选翻页，

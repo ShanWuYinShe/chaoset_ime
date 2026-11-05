@@ -103,7 +103,7 @@ final class ChaosetController: IMKInputController {
                     exitAssociate()
                 }
                 if current?.input.isEmpty == false {
-                    current = engine.reset()
+                    current = engine.resetComposition()
                 } else {
                     current = nil
                 }
@@ -138,7 +138,7 @@ final class ChaosetController: IMKInputController {
                 // 一致：合成内已转换但未上屏的内容一并丢弃（2026-10-30 起
                 // 已确认段住在预编辑里，必须显式丢弃而不是留在文档里）
                 confirmedText = ""
-                current = engine.reset()
+                current = engine.resetComposition()
                 refresh(client)
                 return true
             }
@@ -169,7 +169,7 @@ final class ChaosetController: IMKInputController {
             // A. 直接全部删除（清空全部拼音）：Cmd+Delete / Ctrl+Delete / Shift+Delete
             if mods.contains(.command) || mods.contains(.control) || mods.contains(.shift) {
                 confirmedText = "" // 全部删除：未落盘的已确认段一并取消（与 Esc 一致）
-                current = engine.reset()
+                current = engine.resetComposition()
                 refresh(client)
                 return true // 必须消费，绝不让快捷删除穿透到宿主应用误删文档内容
             }
@@ -200,7 +200,7 @@ final class ChaosetController: IMKInputController {
         // Ctrl+U：类终端整行清空，组词中直接全部删除
         if isComposing, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
-            current = engine.reset()
+            current = engine.resetComposition()
             refresh(client)
             return true
         }
@@ -211,7 +211,7 @@ final class ChaosetController: IMKInputController {
         if isComposing, mods.contains(.control),
            event.keyCode == 51 || event.keyCode == 117 {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
-            current = engine.reset()
+            current = engine.resetComposition()
             refresh(client)
             return true
         }
@@ -471,7 +471,7 @@ final class ChaosetController: IMKInputController {
     // 早已写入文档，此处保持净效果一致）。
     private func passThrough(_ client: (any IMKTextInput)?) -> Bool {
         if current?.input.isEmpty == false || !confirmedText.isEmpty {
-            current = engine.reset()
+            current = engine.resetComposition()
             flushConfirmed(client)
             refresh(client)
         }
@@ -633,7 +633,7 @@ final class ChaosetController: IMKInputController {
             return
         }
         let raw = cur.input
-        _ = engine.reset()
+        _ = engine.resetComposition()
         if raw.isEmpty {
             current = nil
         } else {

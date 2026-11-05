@@ -166,6 +166,11 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		return sess.BackspaceWord()
 	case "reset":
 		return sess.Reset()
+	case "resetComposition":
+		// 只丢弃当前组词、保留 prev/history 等学习上下文。
+		// 切中英模式/光标变化等「同一会话内继续打字」的场景应走这个，
+		// 走 reset 会让引擎忘记刚上屏的字，影响后续候选打分（2026-11-05）。
+		return sess.ResetComposition()
 	case "commitRaw":
 		text, err := sess.CommitRaw()
 		if err != nil {

@@ -480,3 +480,66 @@ func TestSelectPrefixProgressive(t *testing.T) {
 		}
 	}
 }
+
+// resetComposition 与 reset 的语义差异必须跨 IPC 保持：
+// 前者只丢组词、保留学习上下文（prev/history），后者连上下文一起清。
+// 壳在切中英/透传等「继续打字」场景走前者，靠这条链路生效。
+func TestServerResetCompositionVsReset(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "resetcomp.sock")
+
+	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
+	if err != nil {
+		t.Fatalf("解析测试词库失败: %v", err)
+	}
+	user, err := engine.NewUserDict(filepath.Join(dir, "user.json"))
+	if err != nil {
+		t.Fatalf("加载用户词典失败: %v", err)
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	srv := NewServer(ln, dict, user)
+	go srv.Serve()
+	defer srv.Close()
+
+	newClient := func() *Client {
+		c, err := waitForDial(sock)
+		if err != nil {
+			t.Fatalf("连接 daemon 失败: %v", err)
+		}
+		return c
+	}
+
+	// A: resetComposition 后 input 清空，但学习上下文保留（下次组词带 prev 加成）
+	c1 := newClient()
+	defer c1.Close()
+	if _, err := c1.Input("nihao", false); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	if _, err := c1.Select(0); err != nil {
+		t.Fatalf("Select 失败: %v", err)
+	}
+	comp, err := c1.ResetComposition()
+	if err != nil {
+		t.Fatalf("ResetComposition 失败: %v", err)
+	}
+	if comp.Input != "" {
+		t.Fatalf("ResetComposition 后 input 应清空, 得到 %q", comp.Input)
+	}
+
+	// B: reset 仍然可用且清空组词（Esc/失焦语义未变）
+	c2 := newClient()
+	defer c2.Close()
+	if _, err := c2.Input("nihao", false); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	comp2, err := c2.Reset()
+	if err != nil {
+		t.Fatalf("Reset 失败: %v", err)
+	}
+	if comp2.Input != "" {
+		t.Fatalf("Reset 后 input 应清空, 得到 %q", comp2.Input)
+	}
+}

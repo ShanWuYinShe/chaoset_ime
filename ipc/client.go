@@ -120,6 +120,14 @@ func (c *Client) Reset() (engine.Composition, error) {
 	return comp, err
 }
 
+// ResetComposition 只丢弃当前组词，保留学习上下文（prev/history）。
+// 与 Reset 的区别见 engine.Session.ResetComposition 的注释。
+func (c *Client) ResetComposition() (engine.Composition, error) {
+	var comp engine.Composition
+	err := c.call("resetComposition", nil, &comp)
+	return comp, err
+}
+
 // NextPage / PrevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
 func (c *Client) NextPage() (engine.Composition, error) {
 	var comp engine.Composition

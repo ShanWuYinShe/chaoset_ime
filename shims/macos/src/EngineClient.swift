@@ -384,6 +384,16 @@ final class EngineClient {
         parseComp(call(method: "reset", params: [:]))
     }
 
+    /// 只丢弃当前组词、保留学习上下文（prev/history）。
+    ///
+    /// 「用户还会继续打字」的场景走这个：切中英、Esc 取消、全部删除、
+    /// passThrough、重新组词。用 reset 会让引擎忘记刚上屏的字，紧接着的
+    /// 候选失去 bigram 上下文加成（2026-11-05）。
+    /// reset 只留给会话真正结束的场景（activateServer/deactivateServer）。
+    func resetComposition() -> Comp? {
+        parseComp(call(method: "resetComposition", params: [:]))
+    }
+
     func commitRaw() -> String? {
         guard let result = call(method: "commitRaw", params: [:]) else { return nil }
         return result["committed"] as? String

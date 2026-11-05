@@ -369,6 +369,13 @@ Comp Session::reset() {
     return parseComposition(result);
 }
 
+Comp Session::resetComposition() {
+    bool ok = false;
+    JsonValue result = call("resetComposition", "", &ok);
+    if (!ok) return Comp();
+    return parseComposition(result);
+}
+
 Comp Session::nextPage() {
     bool ok = false;
     JsonValue result = call("nextPage", "", &ok);

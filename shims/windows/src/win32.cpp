@@ -2511,7 +2511,7 @@ public:
         // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
         ContextRef ctx(focusContext());
         const std::string raw = comp_.input;
-        resetSession();
+        resetComposition();
         if (raw.empty()) {
             comp_ = chaoset::Comp();
             render(ctx.get());
@@ -2912,7 +2912,7 @@ private:
         if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) {
             const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             if (win || ctrl || shift) {
-                resetSession();
+                resetComposition();
                 comp_ = chaoset::Comp();
                 confirmedPreedit_.clear();
                 endComposition();
@@ -2959,7 +2959,7 @@ private:
             // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）；
             // Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），不在此列。
             if (vk == 'U' && isComposing() && !shiftActive()) {
-                resetSession();
+                resetComposition();
                 endComposition();
                 comp_ = chaoset::Comp();
                 return true;
@@ -3163,7 +3163,7 @@ private:
             // Esc：直接全部删除（清空全部拼音）。含未落盘的已确认段一并取消
             //——与 macOS 壳/系统拼音语义一致：合成内已转换但未上屏的内容
             // 随整条组词一起丢弃。
-            resetSession();
+            resetComposition();
             comp_ = chaoset::Comp();
             confirmedPreedit_.clear();
             endComposition();
@@ -3222,7 +3222,7 @@ private:
             //（与 macOS 壳一致：已转换部分保留转换结果）
             std::string raw = confirmedPreedit_ + comp_.input;
             confirmedPreedit_.clear();
-            resetSession();
+            resetComposition();
             commit(pic, raw);
             return true;
         }
@@ -3265,7 +3265,7 @@ private:
             // 审计 P1-3）。先取出拼接再清缓冲，顺序与 flush 型收尾一致。
             std::string raw = confirmedPreedit_ + comp_.input;
             confirmedPreedit_.clear();
-            resetSession();
+            resetComposition();
             commit(pic, raw);
             return true;
         }
@@ -3372,7 +3372,7 @@ private:
             diagPrintf(L"tsf.log", "no composition after render host=%s preedit_len=%lu\n",
                        host, static_cast<unsigned long>(comp_.preedit.size()));
         }
-        resetSession();
+        resetComposition();
         comp_ = chaoset::Comp();
         confirmedPreedit_.clear(); // 上下文已不可写：缓冲一并放弃，绝不串进下轮组词
         candidateWnd_.hide();
@@ -3659,11 +3659,28 @@ private:
     // 这里统一缓存方案名——所有调用点替换 session_.reset() 以免漏掉。
     void resetSession() { syncDpScheme(session_.reset()); }
 
+    // 只丢弃当前组词、保留学习上下文（prev/history）的收尾。
+    //
+    // 用途判定（2026-11-05）：**用户还会继续打字**的场景一律走这里——
+    // 切中英模式、退格删空、Esc 取消、回车/空格顶屏、宿主拒建合成兜底、
+    // 传给宿主后清本地状态。这些情况下用户只是「打断了这一轮组词」，
+    // 上一轮上屏的 prev/bigram 依然有效；用 reset 会让引擎忘记刚打的字，
+    // 紧接着的候选失去上下文加成（实测：学过「我们→时」后输入 shi，
+    // 带 prev 首候选是「时」，清掉后变成「是」）。
+    //
+    // reset 只保留给**会话真的结束**的场景：失焦（OnSetFocus(FALSE)）、
+    // TIP 停用（Deactivate）、合成被宿主终止（OnCompositionTerminated）。
+    void resetComposition() { syncDpScheme(session_.resetComposition()); }
+
     // 透传/故障型收尾（对齐 macOS 壳 passThrough）：已确认段先落盘——用户
     // 确认过的字不能随透传（Ctrl+C 等）或 daemon 故障消失；纯拼音维持
     // 「清空」旧语义。显式取消（Esc / 全部删除）不走这里，直接 endComposition。
+    //
+    // 用 resetComposition（不是 reset）：这条路径的全部调用方（切中英、
+    // 方向键/功能键透传、daemon 故障降级、翻页失败）都意味着**用户还会
+    // 继续输入**，不该把刚上屏的 prev/bigram 一起忘掉（2026-11-05）。
     void flushOrCancel(ITfContext* pic) {
-        resetSession();
+        resetComposition();
         comp_ = chaoset::Comp();
         if (!confirmedPreedit_.empty()) {
             const std::string all = confirmedPreedit_;

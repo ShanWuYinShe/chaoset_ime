@@ -63,7 +63,11 @@ type Controller interface {
 	Backspace() (Composition, error)
 	// BackspaceWord 逐词/逐音节回退：删除末尾的一个音节或词段。
 	BackspaceWord() (Composition, error)
+	// Reset 清空组词**与**学习上下文（prev/history），对应 Esc/失焦/新会话。
 	Reset() (Composition, error)
+	// ResetComposition 只丢弃当前组词、保留学习上下文：
+	// 切中英/透传等「用户还会继续打字」的场景用它。
+	ResetComposition() (Composition, error)
 	Select(index int) (string, error)
 	// SelectPrefix 渐进上屏：选中候选并只消耗其音节对应的输入前缀，
 	// 剩余输入回灌继续组词（Composition.Committed 为本次上屏文本）。
@@ -380,19 +384,37 @@ func (s *Session) resetPunctCycle() {
 	s.lastPunctIdx = 0
 }
 
-func (s *Session) Reset() (Composition, error) {
+// ResetComposition 只丢弃**当前组词**，保留学习上下文（prev/history）。
+//
+// 这是壳在「输入流被打断但会话仍在继续」时应当调用的方法：
+//   - 切换中英模式：用户要继续打字，上一轮上屏的 prev/bigram 仍然有效，
+//     清掉会让紧接着的候选打分丢失上下文（实测可选：学习过「我们→时」后
+//     输入 shi，带 prev 首候选是「时」，清掉后退回「是」）；
+//   - 光标/文档变化等在**同一会话内**的收尾。
+//
+// 与 Reset 的区别只有一条：不清 prev/prevSylls/history/seqSegs。
+// 清掉它们等于让引擎“忘记”用户刚打的字，那是失焦/新会话才该发生的事。
+func (s *Session) ResetComposition() (Composition, error) {
 	s.input = ""
 	s.composeMemoKey = ""
 	s.composeMemo = Composition{}
-	s.prev = ""
-	s.prevSylls = nil
-	s.history = nil
-	s.seqSegs = nil
 	s.page = 0
 	s.resetPunctCycle()
 	s.dpPending = 0
 	s.dpLens = nil
 	return s.Compose(), nil
+}
+
+// Reset 清空当前组词**与**学习上下文（对应 Esc / 失焦：输入流被切断后，
+// 相邻共现关系不再成立，prev/bigram 不应再影响后续打分）。
+//
+// 只想丢弃组词、保留上下文请用 ResetComposition。
+func (s *Session) Reset() (Composition, error) {
+	s.prev = ""
+	s.prevSylls = nil
+	s.history = nil
+	s.seqSegs = nil
+	return s.ResetComposition()
 }
 
 // CommitRaw 清空当前组词并返回用户输入的原始拼音（供回车直接上屏使用）。

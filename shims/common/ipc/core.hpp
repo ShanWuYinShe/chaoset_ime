@@ -103,7 +103,11 @@ public:
     Comp backspace();
     // 按音节回退（Alt+Backspace，对齐 macOS ⌥⌫ 与引擎 BackspaceWord，2026-10-31）。
     Comp backspaceWord();
+    // reset 清空组词**与**学习上下文（prev/history）——对应 Esc/失焦/新会话。
     Comp reset();
+    // resetComposition 只丢弃当前组词、保留 prev/history：切中英模式、
+    // 同一会话内的输入流打断走这个，避免引擎忘记刚上屏的字影响打分。
+    Comp resetComposition();
     // 候选翻页：daemon 钳制边界；通信失败返回 ok=false。
     Comp nextPage();
     Comp prevPage();

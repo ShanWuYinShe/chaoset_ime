@@ -2,6 +2,24 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **reset 语义分层：区分「继续打字」与「会话结束」两类收尾**：
+  原先只有一个 `reset`，它同时清组词**和**学习上下文（prev/prevSylls/
+  history/seqSegs）。壳在切中英、Esc、透传、退格删空、顶屏等「用户还会继续
+  打字」的场景全都复用它，于是每次收尾都把引擎刚记住的上屏词一起抹掉，
+  紧接着的候选失去 bigram 上下文加成（实测：学习过「我们→时」后输入 `shi`，
+  带 prev 的首候选是「时」，清掉后退回「是」）。
+  现拆成两条链路：`ResetComposition` 只丢弃当前组词、保留学习上下文；
+  `Reset` 保持原语义（连上下文一起清），只用于**会话真的结束**的场景——
+  Windows `Deactivate`/`OnSetFocus(FALSE)`/`OnCompositionTerminated`、
+  macOS `commitComposition`/`deactivateServer`、Linux `focusOut`/IBus `reset`。
+  IPC 新增 `resetComposition` 方法，C++ 核心层与三端壳同步；Windows 侧新增
+  `resetComposition()` 收尾入口并把 8 处「继续打字」调用点迁过去。
+  新增三向回归：`ResetComposition` 保留 prev、`Reset` 仍清空 prev/history、
+  保留的 prev 确实抬高候选分数（证明不是形式上的保留）；`checkuiparity`
+  新增「reset 语义」断言，防止三端误用。
+
 ## v0.3.14（2026-11-05）
 
 - **全/半角标点宽度改为显式参数，daemon 彻底不保存该状态**（架构收敛）：
