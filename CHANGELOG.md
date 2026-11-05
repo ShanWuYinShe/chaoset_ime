@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **按 Shift 时另一个窗口被顶到前面（Chrome/Firefox 多窗口，实机复现）**：
+  根因是候选窗创建时的一行兜底——`popupOwner()` 对普通宿主返回 `nullptr`，
+  但紧接着 `if (owner == nullptr) owner = GetForegroundWindow();` 又把前台窗口
+  设成了 owner，绕过了「只给沉浸式 shell 宿主设 owner」的规则。带 owner 的
+  TOPMOST 窗口一显示就把 owner 所在窗口组抬到前面，表现为「弹到别的窗口、
+  键盘焦点却不动」。实机证据：chrome pid=5372 `candidate shown ownpid=5372`
+（本进程窗口）而同一进程 `toast shown ownpid=0`（提示条没这条兜底，所以不弹）。
+  现在改为只在 `popupOwner()` 允许时才设 owner；`checkuiparity` 增加排除断言。
 - **诊断：中英隔间写入结果可验证**：`mode compartment en=... set_hr=... get_hr=... read=...`
   回读确认 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 是否真的写进去，用于判断
   「任务栏中/英不显示」是写入失败还是系统未绘制。

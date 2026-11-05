@@ -543,6 +543,9 @@ func checkPopupOwner(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell, "static HWND popupOwner()", "candidateWnd_.setOwner(popupOwner());")
 	// 不得回退为用上下文窗口当 owner。
 	checkExcludes(fsys, problems, group, winShell, "setOwner(hostWindowOf(ctx))")
+	// 候选窗创建时不得再兜底取前台窗口当 owner——那会绕过「只给 shell 宿主
+	// 设 owner」的规则，让 Chrome/Firefox 多窗口互相顶到前面（实机 2026-11-05）。
+	checkExcludes(fsys, problems, group, winShell, "owner = GetForegroundWindow();")
 	// 跨进程 owner 必须被排除（否则会把别人进程的窗口带上来）。
 	checkContains(fsys, problems, group, winShell, "pid != GetCurrentProcessId()")
 	// **只有沉浸式 shell 宿主才需要 owner**：普通桌面宿主带 owner 会让同进程的

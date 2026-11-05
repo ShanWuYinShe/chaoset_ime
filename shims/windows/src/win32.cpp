@@ -1009,8 +1009,15 @@ private:
         // 「只有沉浸式宿主看不到」高度相关。
         // owner 设为宿主窗口后，owned window 恒在其 owner 之上，可跨 band 显示
         //（微软拼音与搜狗候选窗同样以宿主窗口为 owner）。
+        // **不要**在这里兜底取 GetForegroundWindow()（2026-11-05 实机根因）：
+        // 对普通宿主 popupOwner() 返回 nullptr，旧代码这里又回退到前台窗口，
+        // 等于绕过了「只给沉浸式 shell 宿主设 owner」的规则。带 owner 的
+        // TOPMOST 窗口一显示就会把 owner 所在窗口组抬到前面——Chrome/Firefox
+        // 多窗口时表现为「按 Shift 后另一个窗口弹上来，焦点却不变」。
+        // 实机证据：chrome pid=5372 的 candidate shown ownpid=5372（本进程窗口），
+        // 而同进程的 toast shown ownpid=0（提示条没有这条兜底，所以不弹）。
         HWND owner = ownerHwnd_;
-        if (owner == nullptr || !IsWindow(owner)) owner = GetForegroundWindow();
+        if (owner == nullptr || !IsWindow(owner)) owner = popupOwner();
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             cls.c_str(),
