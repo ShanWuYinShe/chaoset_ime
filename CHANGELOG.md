@@ -4,6 +4,13 @@
 
 ## 未发布
 
+- **诊断：候选窗/模式提示条记录 owner 与前台窗口的 pid**
+  用户反馈按 Shift 切中英时会「弹到另一个窗口、但焦点仍在原输入框」。
+  这类现象只有两种可能：带 owner 的 TOPMOST 窗口显示时把 owner 所在窗口组
+  抬到前面，或 owner 指向了另一个进程的窗口。为定位，`candidate shown` 与
+  新增的 `toast shown` 两行现在带 `ownpid` / `fgpid` / `selfpid`：
+  若 `ownpid` 与 `selfpid` 不同，说明 owner 指到了别的进程的窗口。
+
 - **切到英文模式后仍继续出拼音候选（Chrome / 终端 / 命令行 / 开始菜单）**：
   英文模式的放行判断此前只写在 OnTestKeyDown（预告点），而实测这些宿主连
   内容键也走 Key 阶段（预告点根本不执行），于是 enMode_ 虽然已翻转、

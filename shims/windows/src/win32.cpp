@@ -781,12 +781,24 @@ public:
             RECT wr{};
             GetWindowRect(hwnd_, &wr);
             HMONITOR hMon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONULL);
+            // ownerpid / fgpid：定位「打字窗口与 owner 窗口不是同一个」时
+            // 带 owner 的 TOPMOST 窗口会把 owner 所在窗口组抬到前面
+            //（用户反馈 2026-11-05：按 Shift 后弹到另一个窗口而焦点仍在输入框）。
+            const HWND own = GetWindow(hwnd_, GW_OWNER);
+            DWORD ownPid = 0;
+            if (own != nullptr) GetWindowThreadProcessId(own, &ownPid);
+            const HWND fg = GetForegroundWindow();
+            DWORD fgPid = 0;
+            if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
             diagPrintf(L"tsf.log",
-                       "candidate shown pos=%ld,%ld size=%ldx%ld visible=%d monitor=%d anchor=%ld,%ld\n",
+                       "candidate shown pos=%ld,%ld size=%ldx%ld visible=%d monitor=%d "
+                       "anchor=%ld,%ld ownpid=%lu fgpid=%lu selfpid=%lu\n",
                        static_cast<long>(wr.left), static_cast<long>(wr.top),
                        static_cast<long>(wr.right - wr.left), static_cast<long>(wr.bottom - wr.top),
                        IsWindowVisible(hwnd_) ? 1 : 0, hMon != nullptr ? 1 : 0,
-                       static_cast<long>(pt.x), static_cast<long>(pt.y));
+                       static_cast<long>(pt.x), static_cast<long>(pt.y),
+                       static_cast<unsigned long>(ownPid), static_cast<unsigned long>(fgPid),
+                       static_cast<unsigned long>(GetCurrentProcessId()));
         }
     }
 
@@ -1901,6 +1913,18 @@ public:
         }
         SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w_, h_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, pt(10) * 2, pt(10) * 2), TRUE);
+        if (diagBudget()) {
+            // 同候选窗：owner / 前台窗口 pid 用于定位「窗口被抬到前面」。
+            const HWND own = GetWindow(hwnd_, GW_OWNER);
+            DWORD ownPid = 0;
+            if (own != nullptr) GetWindowThreadProcessId(own, &ownPid);
+            const HWND fg = GetForegroundWindow();
+            DWORD fgPid = 0;
+            if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
+            diagPrintf(L"tsf.log", "toast shown ownpid=%lu fgpid=%lu selfpid=%lu\n",
+                       static_cast<unsigned long>(ownPid), static_cast<unsigned long>(fgPid),
+                       static_cast<unsigned long>(GetCurrentProcessId()));
+        }
         InvalidateRect(hwnd_, nullptr, TRUE);
         SetTimer(hwnd_, kTimerId, kDurationMs, nullptr);
     }
