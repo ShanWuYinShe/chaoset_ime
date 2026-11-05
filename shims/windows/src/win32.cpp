@@ -708,6 +708,25 @@ HPEN createRoundCapPen(int width, COLORREF color) {
     return pen;
 }
 
+// 浮窗（候选窗/模式提示条）的 owner：**必须是当前前台窗口，且必须是本进程的**。
+//
+// 2026-11-05 实机问题：只按 hostWindowOf(ctx) 设 owner 时，若 TSF 给的上下文
+// 还停留在**另一个窗口**（用户先在别的窗口打过字、或窗口内部焦点抖动），
+// owner 就指向了那个窗口。带 owner 的 TOPMOST 窗口显示时会把 owner 所在的
+// 窗口组抬到前面，表现为「按 Shift 后弹到另一个窗口，但键盘焦点仍在原输入框」。
+// 跨进程 owner 更糟（会把别人进程的窗口带上来），因此一并排除。
+//
+// 保留 owner 本身是必需的：Windows 11 开始菜单/搜索是沉浸式 z 序 band，
+// 无主 topmost 窗口会被压在整个 band 之下（2026-10-30 实机取证）。
+static HWND popupOwner() {
+    const HWND fg = GetForegroundWindow();
+    if (fg == nullptr) return nullptr;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid != GetCurrentProcessId()) return nullptr;
+    return fg;
+}
+
 class CandidateWindow {
 public:
     CandidateWindow() = default;
@@ -1966,7 +1985,7 @@ private:
         // owner 设为前台窗口：提示条与候选窗一样，无主 TOPMOST 窗口会被
         // Windows 11 开始菜单/搜索的沉浸式 z 序 band 压住，模式切换就看不到
         // 反馈（2026-10-31 审计 A4）。前台窗口拿不到时退回 nullptr（旧行为）。
-        HWND owner = GetForegroundWindow();
+        HWND owner = popupOwner();
         hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
             cls.c_str(), L"ChaosetModeToast",
@@ -3640,7 +3659,10 @@ private:
         // ITfContextView::GetWnd 返回承载本上下文的宿主 HWND；拿不到时退回
         // 前台窗口。owner 关系让候选窗恒在其宿主之上，可跨 Windows 11
         // 开始菜单/搜索的沉浸式 z 序 band——无主 topmost 窗口会被压住。
-        candidateWnd_.setOwner(hostWindowOf(ctx));
+        // owner 用**当前前台窗口**（且限定本进程），不要用 hostWindowOf(ctx)——
+        // 后者可能是另一个窗口的上下文，带 owner 显示时会把它抬到前面，
+        // 表现为「候选窗一出现就把别的窗口顶上来」（2026-11-05 用户反馈）。
+        candidateWnd_.setOwner(popupOwner());
         candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
     }
 

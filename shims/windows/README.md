@@ -183,6 +183,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
+- **浮窗 owner 必须取前台窗口（且限本进程）**，不要用 TSF 上下文推出的窗口：
+  带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
+  当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
+  owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
 - **Shift 跟踪必须同时挂在 Test 与 Key 两个按键阶段**（2026-11-05 实机日志结论）：
   宿主分两类——Firefox 把修饰键送进 OnTestKeyDown/OnTestKeyUp；Chrome、conhost、
   Windows Terminal **只**送 OnKeyDown/OnKeyUp（同一进程里前者无日志、后者有）。

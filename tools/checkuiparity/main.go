@@ -474,6 +474,20 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 		"学习数据按词删除", "右键删除", "删除该词", "chaoset-userdict delete")
 }
 
+// 浮窗 owner 契约（2026-11-05 用户反馈「候选窗/提示条一出现就把别的窗口顶到前面」）：
+// 带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，所以 owner
+// 必须是**当前前台窗口且属于本进程**，不得用 TSF 上下文推出来的窗口
+// （那可能是另一个窗口的，用户会看到「弹窗但焦点不动」）。
+func checkPopupOwner(fsys fs.FS, problems *[]string) {
+	const group = "浮窗 owner"
+	// Windows：统一经 popupOwner() 取 owner。
+	checkContains(fsys, problems, group, winShell, "static HWND popupOwner()", "candidateWnd_.setOwner(popupOwner());")
+	// 不得回退为用上下文窗口当 owner。
+	checkExcludes(fsys, problems, group, winShell, "setOwner(hostWindowOf(ctx))")
+	// 跨进程 owner 必须被排除（否则会把别人进程的窗口带上来）。
+	checkContains(fsys, problems, group, winShell, "pid != GetCurrentProcessId()")
+}
+
 // checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数
 // 一致：加/删断言却忘了同步 expectedChecks 时，静态检查先 FAIL（运行时守卫是
 // 第二道，两道都保留）。
@@ -654,11 +668,10 @@ func Run(fsys fs.FS) []string {
 	// 是「时」，清掉后退回「是」）。
 	checkResetSemantics(fsys, &problems)
 
-	// 4g. reset 语义分层（2026-11-05）：三端壳都必须区分「继续打字」与
-	// 「会话结束」两种收尾。用错会让引擎忘记刚上屏的词，后续候选失去
-	// bigram 上下文加成（实测：学过「我们→时」后输入 shi，带 prev 首候选
-	// 是「时」，清掉后退回「是」）。
-	checkResetSemantics(fsys, &problems)
+	// 4h. 浮窗 owner 契约（2026-11-05）：候选窗/提示条只能以**本进程的前台窗口**
+	// 为 owner。带 owner 的 TOPMOST 窗口会把 owner 所在窗口组抬到前面，用
+	// TSF 上下文推出来的窗口当 owner 时，用户会看到「弹到别的窗口但焦点不动」。
+	checkPopupOwner(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
