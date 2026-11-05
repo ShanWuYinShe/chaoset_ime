@@ -537,6 +537,12 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	)
 	// 隔间写成功但 Windows 不为第三方 TIP 绘制输入指示器（实机 2026-11-05：
 	// set_hr=0 get_hr=0 read=1/0，任务栏仍无「中/英」），因此必须自建托盘图标。
+	// 模式提示一次只能出一处：托盘可用就用托盘，托盘不可用（AppContainer）
+	// 才退回浮动提示；浮动提示不得回退到鼠标位置（2026-11-05 用户反馈重复干扰）。
+	checkContains(fsys, problems, group, winShell,
+		"modeTray_.isShown()",                         // 托盘优先
+		"if (anchor.x == 0 && anchor.y == 0) return;", // 不再跟着鼠标跑
+	)
 	checkContains(fsys, problems, group, winShell,
 		"class ModeTray",
 		"Shell_NotifyIconW",

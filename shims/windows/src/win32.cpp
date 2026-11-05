@@ -2243,6 +2243,10 @@ public:
         english_ = english;
     }
 
+    // 托盘图标当前是否真的在显示。调用方据此决定要不要再用浮动提示兜底
+    //（两个地方同时提示中英文模式既重复又干扰，2026-11-05 用户反馈）。
+    bool isShown() const { return shown_; }
+
     void hide() {
         if (!shown_) return;
         NOTIFYICONDATAW nid{};
@@ -3227,7 +3231,13 @@ private:
             comp_ = chaoset::Comp();  // 全拼且无未上屏内容：零 IPC
         }
         candidateWnd_.hide();
-        showModeToast(enMode_ ? L"英文模式" : L"中文模式");
+        // 模式提示只出一处：托盘图标可用时就用它（常驻、不挡输入），
+        // 只有托盘不可用（AppContainer 宿主，如开始菜单/搜索）才退回浮动提示。
+        // 两处同时提示既重复又干扰（2026-11-05 用户反馈）。
+        modeTray_.show(enMode_);
+        if (!modeTray_.isShown()) {
+            showModeToast(enMode_ ? L"英文模式" : L"中文模式");
+        }
     }
 
     // vk 必须是原始 WPARAM（VK_SHIFT / VK_LSHIFT / VK_RSHIFT），
@@ -4434,8 +4444,10 @@ private:
     // 模式提示：放光标行下方（caretPos_ 是最后已知光标行底边的屏幕坐标）；
     // 没有历史位置时退回鼠标。
     void showModeToast(const wchar_t* text) {
+        // **不在鼠标位置显示**（2026-11-05 用户反馈「鼠标和光标两个地方都提示」）：
+        // 光标坐标未知时直接不显示，回退到鼠标只会造成「提示跟着鼠标跑」的干扰。
         POINT anchor = caretPos_;
-        if (anchor.x == 0 && anchor.y == 0) GetCursorPos(&anchor);
+        if (anchor.x == 0 && anchor.y == 0) return;
         // 与候选窗同锚点：光标行底边下方 6pt（mac showToast 复用
         // candidateOrigin，候选窗与提示条位置一致）。2026-10-30 审计 A12：
         // 此前是「光标行底 + 整行高 + 6px」，比候选窗低约一行且随 DPI 偏
