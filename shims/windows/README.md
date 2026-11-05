@@ -188,19 +188,16 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
      `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
      此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台
      窗口），计数器永远回不到 0，该进程内 Shift 空按会**永久失效**直到重启应用。
-  2. **物理状态轮询兜底**（`onShiftPollTick`，40ms 的 message-only 窗口计时器）：
-     Windows Terminal、cmd/conhost、Windows 11 开始菜单等宿主对修饰键的按下/释放
-     投递不完整（只给按下不给释放，或干脆不送进按键下沉），光靠
-     `OnTestKeyDown`+`OnTestKeyUp` 成对到达无法结算。轮询按
-     `GetAsyncKeyState` 的物理状态自行推断「按住→松开」，并在结算前用
-     `GetKeyboardState` + 鼠标键状态确认期间没有别的输入（避免 Shift+点击被误判
-     成空按）。与事件路径共用同一套状态，任一路径先结算另一条都会自然跳过。
-     排障证据：`tsf.log` 里的 `shift poll:` 行——出现 `宿主未投递 Shift 按下`
-     说明该宿主完全不送修饰键；出现 `释放事件缺失` 说明只缺 KeyUp。
+  2. **事件驱动的自愈（无常驻定时器）**：每次按键到达时，若发现物理 Shift 已经
+     松开、但按住状态还挂着（宿主丢了 KeyUp），就地收口并留一条一次性证据
+     `tsf.log: shift: 宿主丢弃了 Shift 释放事件`。不引入定时器——输入法由按键
+     触发，常驻轮询在每个宿主进程里都是白耗 CPU，且 40ms 采样判断不了
+     「快速轻按」与「Shift+点击」，有误切换风险（v0.3.16 曾加过轮询，确认
+     真因后已撤除，见 CHANGELOG）。
 - **焦点抖动不得吃掉 Shift 按住状态**：浏览器会在窗口内部把焦点在地址栏 /
   页面元素之间搬动，同样触发 `OnSetFocus(FALSE)`。失焦时若 Shift 仍物理按下，
-  只能**挂起**（松开前焦点回来照常切换），不能直接复位；轮询也不得因焦点门控
-  清状态。否则表现为「能打字但 Shift 切不了中英」（2026-11-05 用户反馈）。
+  只能**挂起**（松开前焦点回来照常切换），不能直接复位。否则表现为
+  「能打字但 Shift 切不了中英」（2026-11-05 用户反馈，根因即此）。
 - **PWA / 「安装应用」窗口（Chrome app 窗口、Firefox 装到任务栏的独立窗口）**：
   这类窗口是宿主自己的独立顶层窗口，TSF 上下文与焦点归属都可能和主窗口不同。
   排障看 `tsf.log` 的 `fgpid`/`selfpid`：`activate` 与 `shift toggle` 两行现在都带

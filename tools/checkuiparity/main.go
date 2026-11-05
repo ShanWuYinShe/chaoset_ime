@@ -767,17 +767,19 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 		"GetAsyncKeyState",
 		"reconcileShiftState",
 	)
-	// Windows 物理状态轮询兜底（2026-11-05）：Windows Terminal / conhost /
-	// 开始菜单等宿主对修饰键按下/释放的投递不完整，必须有不依赖成对事件的路径。
+	// 必须**纯事件驱动**：输入法不该靠常驻定时器轮询键盘状态。每个宿主进程
+	// 一个 40ms 定时器开销实打实，还会误判快速轻按与 Shift+点击。
+	// 2026-11-05：曾加过 GetKeyState 轮询兜底，确认真因是「焦点抖动吃掉按住
+	// 状态」后已撤除，这里锁死不得回归。
+	checkExcludes(fsys, problems, group, winShell,
+		"onShiftPollTick", "ensureShiftPollWindow", "g_livePollWindows")
+	// 焦点抖动只能挂起、不能丢弃按住状态（否则浏览器里 Shift 永远切不了）。
 	checkContains(fsys, problems, group, winShell,
-		"self->onShiftPollTick();", // 必须是真的被 WM_TIMER 调用，不能只定义
-		"ensureShiftPollWindow",
-		"shiftOtherInputDown", // 结算前排除 Shift+点击
-		"shiftPollEnabled",    // 用 TSF 焦点而非前台 PID 做门控
-		"HWND_MESSAGE",
+		"suspendShiftHoldOnFocusLost",
+		"shiftHoldSuspended_",
+		"shiftOtherInputDown",
+		"beginShiftHold", "endShiftHold", "finishShiftHold",
 	)
-	// 轮询窗是为了不重复造第二个（漏了防卸载会崩宿主）。
-	checkContains(fsys, problems, group, winShell, "g_livePollWindows")
 	// 旧实现的致命写法不得回归：按事件累加的计数器。
 	checkExcludes(fsys, problems, group, winShell,
 		"++shiftDown_", "--shiftDown_")

@@ -163,11 +163,6 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 审计 A4 补计数 + owner 后统一纳入 DllCanUnloadNow。
  volatile LONG g_liveToastWindows = 0;
 
-// 存活中的「Shift 物理状态轮询窗」数量。轮询窗是隐藏的 message-only 窗口，
-// 窗口过程同样指向本 DLL 代码，必须纳入防卸载保护（同候选窗/提示窗）：
-// 宿主 FreeLibrary 后若还有 WM_TIMER 投递进来，就是跳已卸载内存。
- volatile LONG g_livePollWindows = 0;
-
 // 全屏免打扰（2026-10-31 审计 A7）：D3D 全屏游戏/演示模式下不弹候选窗——
 // 置顶候选窗盖在全屏游戏上会闪屏、干扰焦点，用户明确要求游戏场景不能被
 // 输入法打扰。只抑制候选窗显示，不改变按键/组词逻辑（WASD 仍会被组词，
@@ -2077,7 +2072,6 @@ class ChaosetTIP : public ITfTextInputProcessor, public ITfKeyEventSink, public 
 public:
     ChaosetTIP() { InterlockedIncrement(&g_liveObjects); }
     virtual ~ChaosetTIP() {
-        destroyShiftPoll();  // 窗口过程在本 DLL 内，析构时必须先撤
         if (tm_ != nullptr) tm_->Release();
         InterlockedDecrement(&g_liveObjects);
     }
@@ -2158,12 +2152,6 @@ public:
             keySinkAdvised_ = SUCCEEDED(mgr->AdviseKeyEventSink(clientId_, keySink(), TRUE));
             mgr->Release();
         }
-        // Shift 物理状态轮询（2026-11-05）：Windows Terminal / conhost /
-        // 开始菜单等宿主对修饰键的按下/释放投递不完整，光靠 OnTestKeyDown
-        // 与 OnTestKeyUp 成对到达无法结算中英切换。这里在激活后常驻一个
-        // 60ms 的 message-only 窗口计时器做兜底（见 onShiftPollTick）。
-        tipFocused_ = true;  // 激活即认为有焦点；OnSetFocus 会随后校正
-        ensureShiftPollWindow();
         // 非阻塞预热：只在尚未连上时尝试启动，已连接则直接复用；首次输入的
         // 等待在 OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
         if (!transport_.isConnected()) {
@@ -2175,11 +2163,6 @@ public:
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
         candidateWnd_.destroy();
-        tipFocused_ = false;
-        // 轮询窗必须随停用一起销毁：窗口过程指向本 DLL，留着会阻止宿主
-        // FreeLibrary（DllCanUnloadNow 会一直 S_FALSE），也会让计时器在
-        // 本 TIP 已停用的上下文里继续空转。
-        destroyShiftPoll();
         // 已确认段先落盘（与 macOS deactivateServer → flushConfirmed 同语义）：
         // TSF 停用本 TIP 时会销毁合成，若直接 endComposition 会连用户确认过的
         // 字一起丢掉。正常失焦路径 OnSetFocus(FALSE) 已先行落盘，这里是
@@ -2220,10 +2203,6 @@ public:
 
     // ITfKeyEventSink
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
-        // TSF 焦点是本壳判断「该不该响应 Shift」的主判据（见 shiftPollEnabled）：
-        // conhost 这类宿主的前台窗口属于另一个进程，只看 GetForegroundWindow
-        // 的 PID 会把控制台误判成后台、导致轮询永不结算。
-        tipFocused_ = (fForeground != FALSE);
         if (!fForeground) {
             candidateWnd_.hide();
             toast_.hide();
@@ -2261,7 +2240,6 @@ public:
         }
         // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
         shiftHoldSuspended_ = false;
-        ensureShiftPollWindow();  // 焦点回到本 TIP：确保轮询在跑
         return S_OK;
     }
 
@@ -2617,12 +2595,7 @@ private:
     // 改为挂起：松开前焦点回来就照常切换，否则松开时只清状态不切换
     // （真·切走应用时不该切模式）。
     bool shiftHoldSuspended_ = false;
-    // 上一拍物理 Shift 状态（轮询做边沿检测）。
-    bool prevPhysDown_ = false;
-    // 本次按住是由轮询（而非 TSF 事件）发起的。事件来的按住说明本 TIP 当时
-    // 就在接收输入，不需要再按焦点门控；轮询发起的才可能是「别的应用在按 Shift」，
-    // 必须门控，否则后台进程会跟着乱切。
-    bool holdFromPoll_ = false;
+
 
     static unsigned shiftBit(WPARAM vk) {
         if (vk == VK_LSHIFT) return 1u;
@@ -2645,8 +2618,6 @@ private:
         shiftHeld_ = 0;
         sinceShift_ = true;  // 复位后首个释放不得触发切换
         shiftHoldSuspended_ = false;
-        holdFromPoll_ = false;
-        prevPhysDown_ = shiftPhysicallyDown();
     }
 
     // 焦点暂时离开（仍在同一进程/同一窗口族）：不丢按住状态，只挂起。
@@ -2658,27 +2629,23 @@ private:
         }
     }
 
-    // 开始一次「按住会话」：位运算幂等，事件与轮询都可以调。
-    void beginShiftHold(unsigned bit, bool fromPoll = false) {
+    // 开始一次「按住会话」：位运算幂等（auto-repeat / 重复投递都不累积）。
+    void beginShiftHold(unsigned bit) {
         if ((shiftHeld_ & bit) != 0) return;
         if (shiftHeld_ == 0) {
             sinceShift_ = false;
             shiftHoldSuspended_ = false;
-            holdFromPoll_ = fromPoll;
         }
         shiftHeld_ |= bit;
     }
 
-    // 空按判定 + 切换。pic 为事件路径带来的上下文；轮询路径传 nullptr，
+    // 空按判定 + 切换。pic 为事件路径带来的上下文；自愈收口时传 nullptr，
     // 内部再取 focusContext()（必须用 ContextRef 释放）。
     void finishShiftHold(ITfContext* pic) {
         const bool suspended = shiftHoldSuspended_;
-        const bool fromPoll = holdFromPoll_;
         shiftHoldSuspended_ = false;
-        holdFromPoll_ = false;
-        // 只有「轮询发起」的按住才需要焦点门控（防止后台进程跟着别的应用切）。
-        // 事件发起的按住本身就证明本 TIP 当时在收键，不该被门控误挡。
-        if (!sinceShift_ && !suspended && !(fromPoll && !shiftPollEnabled())) {
+        // 纯事件驱动：按键只会在本 TIP 有焦点时到达，不需要额外的前台门控。
+        if (!sinceShift_ && !suspended) {
             if (pic != nullptr) {
                 toggleEnMode(pic);
             } else {
@@ -2699,7 +2666,7 @@ private:
     }
 
     // 无条件收口：事件路径留下的按住位（左右/泛化位混用）在物理松开后
-    // 由轮询或下一次按键统一结算，避免任何一位永远挂着。
+    // 由下一次按键统一结算，避免任何一位永远挂着。
     void settleAllShiftHolds() {
         if (shiftHeld_ == 0) return;
         shiftHeld_ = 0;
@@ -2805,159 +2772,29 @@ private:
         return false;
     }
 
-    // 本进程当前是否前台。仅作为 TSF 焦点信号的补充：
-    //
-    // **不能只用它做门控**：cmd/conhost 这类控制台的前台窗口属于 conhost.exe，
-    // 而 TIP 可能加载在客户端进程里，PID 对不上 → 会被永远判成"后台" →
-    // 轮询永不结算，控制台里依旧切不了中英。所以主判据是 TSF 的焦点事件，
-    // 这里只兜住「宿主从不调 OnSetFocus」的情况。
-    static bool ourProcessForeground() {
-        const HWND fg = GetForegroundWindow();
-        if (fg == nullptr) return false;
-        DWORD pid = 0;
-        GetWindowThreadProcessId(fg, &pid);
-        return pid == GetCurrentProcessId();
-    }
 
-    // 本 TIP 当前是否处于可响应按键的状态。
-    // 主判据 tipFocused_ 由 OnSetFocus/Activate 维护（TSF 视角），
-    // 前台 PID 只做兜底——见上面 why。
-    bool shiftPollEnabled() const { return tipFocused_ || ourProcessForeground(); }
-
-    bool tipFocused_ = false;
 
     // 结算一次已经松开的 Shift 按住会话。
     //
-    // 事件路径（OnTestKeyUp）与轮询路径共用这一个出口，保证两条来源的
+    // 事件路径（OnTestKeyUp）与按键自愈共用这一个出口，保证两条来源的
     // 判定规则完全一致：只有「期间没按过任何别的键/鼠标」才切换中英。
-    // ---- Shift 物理状态轮询兜底（2026-11-05）----
-    //
-    // 为什么需要：Shift 空按的结算依赖 OnTestKeyUp 与按下**成对**到达。
-    // 实机反馈 Windows Terminal、cmd/conhost、Windows 11 开始菜单里
-    // Shift 切不了中英，而 Firefox/记事本可以——差别就在这些宿主把修饰键
-    // 送进 TSF 按键下沉的方式不完整（只给按下、不给释放，或干脆不给）。
-    // README 早先承诺「宿主不投递 Test 阶段就退回 GetKeyState 轮询」，
-    // 这里兑现：焦点期间用 60ms 计时器比对 GetAsyncKeyState 的物理状态，
-    // 事件缺失时也能把「按住 → 松开」这次会话完整结算掉。
-    //
-    // 与事件路径共用同一套状态，天然幂等：
-    //   - 事件正常时，KeyUp 会先把 shiftHeld_ 清零，轮询看到 0 就不再动作；
-    //   - 轮询先结算时，随后到达的 KeyUp 在 onShiftEvent 里被「孤立释放」拦住；
-    //   - 完全收不到事件时，轮询自己把按下/释放都推断出来。
-    //
-    // 为什么用窗口计时器而不是 SetTimer(nullptr, ...)：后者要靠宿主消息循环
-    // 转发 WM_TIMER，我们无法安装处理函数；自己建一个 message-only 窗口最稳妥，
-    // 且它的窗口过程在本 DLL 内，已纳入 DllCanUnloadNow 的防卸载计数。
-    HWND pollWnd_ = nullptr;
-    static constexpr UINT kPollTimerId = 3;
-    // 40ms：足以捕捉正常速度的 Shift 轻按（一次轻按通常 60–150ms），
-    // 又不会让空闲进程有明显开销（每拍只有 2~3 次系统调用）。
-    static constexpr UINT kPollMs = 40;
-    // 泛化 VK_SHIFT 对应的位（与 shiftBit(VK_SHIFT) 一致）。轮询推断出的
-    // 按住用这一位，因为物理状态只能区分「有没有 Shift」，分不出左右。
-    static constexpr unsigned kPollShiftBit = 4u;
-
-    static LRESULT CALLBACK shiftPollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-        ChaosetTIP* self = reinterpret_cast<ChaosetTIP*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-        switch (msg) {
-            case WM_TIMER:
-                if (wParam == kPollTimerId && self != nullptr) {
-                    self->onShiftPollTick();
-                    return 0;
-                }
-                break;
-            case WM_NCDESTROY:
-                if (self != nullptr && self->pollWnd_ == hwnd) self->pollWnd_ = nullptr;
-                InterlockedDecrement(&g_livePollWindows);
-                return 0;
-            default:
-                break;
-        }
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
-
-    bool ensureShiftPollWindow() {
-        if (pollWnd_ != nullptr && IsWindow(pollWnd_)) return true;
-        pollWnd_ = nullptr;
-        if (g_hInst == nullptr) return false;
-        const std::wstring cls = windowClassName(L"ChaosetShiftPollWndClass", g_hInst);
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = shiftPollProc;
-        wc.hInstance = g_hInst;
-        wc.lpszClassName = cls.c_str();
-        RegisterClassExW(&wc);
-        pollWnd_ = CreateWindowExW(0, cls.c_str(), L"ChaosetShiftPoll", WS_POPUP, 0, 0, 0, 0,
-                                   HWND_MESSAGE, nullptr, g_hInst, nullptr);
-        if (pollWnd_ == nullptr) return false;
-        SetWindowLongPtrW(pollWnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-        InterlockedIncrement(&g_livePollWindows);
-        SetTimer(pollWnd_, kPollTimerId, kPollMs, nullptr);
-        return true;
-    }
-
-    void stopShiftPoll() {
-        if (pollWnd_ != nullptr && IsWindow(pollWnd_)) KillTimer(pollWnd_, kPollTimerId);
-    }
-
-    void destroyShiftPoll() {
-        if (pollWnd_ != nullptr && IsWindow(pollWnd_)) {
-            stopShiftPoll();
-            DestroyWindow(pollWnd_);  // WM_NCDESTROY 里清零 + 归还计数
-        }
-        pollWnd_ = nullptr;
-    }
-
-    // 轮询一拍：把「物理 Shift 状态」与「事件记账」对齐。
-    //
-    // 三条铁律（2026-11-05 二次修正，直击「能打字但 Shift 切不了」）：
-    //   1. **绝不因为焦点门控主动清状态**——浏览器会在窗口内把焦点在地址栏/
-    //      页面元素之间搬动，一样触发 OnSetFocus(FALSE)；旧实现在这里把正在
-    //      按的 Shift 清掉，于是松开时永远结算不了。要不要真的切换，放到
-    //      finishShiftHold 里判断。
-    //   2. 边沿检测只认物理状态，与 TSF 是否投递事件无关。
-    //   3. 物理已松开但还有按住位挂着，一律收口。
-    void onShiftPollTick() {
-        if (pollWnd_ == nullptr) return;
-        const bool down = shiftPhysicallyDown();
-        if (down != prevPhysDown_) {
-            prevPhysDown_ = down;
-            if (down) {
-                if (shiftHeld_ == 0) {
-                    logShiftPollOnce(&loggedPollArmed,
-                                     "shift poll: 未收到 Shift 按下事件，改由物理状态跟踪\n");
-                }
-                beginShiftHold(kPollShiftBit, true);
-            } else {
-                endShiftHold(kPollShiftBit);
-            }
-        } else if (down && shiftHeld_ != 0 && shiftOtherInputDown()) {
-            sinceShift_ = true;  // 按住期间按过别的键/鼠标 → 不是空按
-        }
-        if (!down && shiftHeld_ != 0) {
-            if (!sinceShift_) {
-                logShiftPollOnce(&loggedPollSettle,
-                                 "shift poll: 缺释放事件，由物理状态结算\n");
-            }
-            settleAllShiftHolds();
-        }
-    }
-
-    static void logShiftPollOnce(volatile LONG* flag, const char* text) {
-        if (!diagBudget()) return;
-        if (InterlockedCompareExchange(flag, 1, 0) == 0) diagPrintf(L"tsf.log", "%s", text);
-    }
-    volatile LONG loggedPollArmed = 0;
-    volatile LONG loggedPollSettle = 0;
-
-    // 按键前的自愈：事件路径的兜底，确保每次按键前状态与物理一致。
-    // 与轮询共用 settleShiftHold，判定规则完全一致（2026-11-05）。
     void reconcileShiftState() {
         // 只做「物理已松开但状态还挂着」的收口；按住中一律不干预。
         // 旧实现会按焦点门控直接清状态——窗口内焦点抖动时正好把正在按的
         // Shift 吃掉，这是「能打字但 Shift 切不了」的直接原因之一
         //（2026-11-05 修）。
-        if (shiftHeld_ != 0 && !shiftPhysicallyDown()) settleAllShiftHolds();
+        //
+        // 纯事件驱动：不靠定时器，只在**下一次按键**到达时顺手自愈。
+        // 若这里真的收口了，说明宿主丢了 Shift 的释放事件——留一条一次性
+        // 证据，排障时能直接看出「哪个宿主不投递 KeyUp」，零常驻开销。
+        if (shiftHeld_ != 0 && !shiftPhysicallyDown()) {
+            static volatile LONG loggedLostKeyUp = 0;
+            if (!sinceShift_ && InterlockedCompareExchange(&loggedLostKeyUp, 1, 0) == 0 &&
+                diagBudget()) {
+                diagPrintf(L"tsf.log", "shift: 宿主丢弃了 Shift 释放事件，已按物理状态收口\n");
+            }
+            settleAllShiftHolds();
+        }
     }
 
     // 按键 → 产生的 ASCII 字符（US 布局直映，含 Shift 变体），只返回
@@ -5083,7 +4920,6 @@ STDAPI DllCanUnloadNow() {
     if (g_liveCandidateWindows != 0) return S_FALSE;
     if (g_liveSettingsWindows != 0) return S_FALSE;
     if (g_liveToastWindows != 0) return S_FALSE;
-    if (g_livePollWindows != 0) return S_FALSE;
     return S_OK;
 }
 
