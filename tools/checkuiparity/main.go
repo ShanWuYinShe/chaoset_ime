@@ -486,6 +486,11 @@ func checkPopupOwner(fsys fs.FS, problems *[]string) {
 	checkExcludes(fsys, problems, group, winShell, "setOwner(hostWindowOf(ctx))")
 	// 跨进程 owner 必须被排除（否则会把别人进程的窗口带上来）。
 	checkContains(fsys, problems, group, winShell, "pid != GetCurrentProcessId()")
+	// **只有沉浸式 shell 宿主才需要 owner**：普通桌面宿主带 owner 会让同进程的
+	// 另一个窗口被抬到前面（Firefox 多窗口实机复现）。判定必须集中在一处。
+	checkContains(fsys, problems, group, winShell,
+		"static bool shellHostNeedsOwner()", "if (!shellHostNeedsOwner()) return nullptr;",
+		"startmenuexperiencehost.exe", "searchapp.exe")
 }
 
 // checkKeyRoutingCount 校验 key_routing 的 expectedChecks 与实际 check( 断言数

@@ -718,7 +718,39 @@ HPEN createRoundCapPen(int width, COLORREF color) {
 //
 // 保留 owner 本身是必需的：Windows 11 开始菜单/搜索是沉浸式 z 序 band，
 // 无主 topmost 窗口会被压在整个 band 之下（2026-10-30 实机取证）。
+// 当前宿主进程是否属于「沉浸式 shell」（开始菜单/搜索/任务栏/文本服务）。
+//
+// 只有这一类宿主需要 owner：它们自带独立 z 序 band，无主 topmost 窗口会被压在
+// 整个 band 之下（2026-10-30 实机取证：SearchApp 里候选窗根本不存在）。
+// 普通桌面宿主**不需要** owner，而带 owner 的 TOPMOST 窗口显示时会调整 owner
+// 所在窗口组的 z 序——同一进程里有多个窗口时（浏览器多窗口/PWA），用户会看到
+// 「按 Shift 后另一个窗口弹到前面」（2026-11-05 用户实机复现：Firefox 两个窗口
+// 之间来回切，ownpid==fgpid==selfpid 仍然弹窗）。
+static bool shellHostNeedsOwner() {
+    static int cached = -1;  // -1 未判定，0 不需要，1 需要
+    if (cached >= 0) return cached != 0;
+    wchar_t path[MAX_PATH]{};
+    bool need = false;
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
+        const wchar_t* base = wcsrchr(path, L'\\');
+        const wchar_t* name = base != nullptr ? base + 1 : path;
+        static const wchar_t* const kShellHosts[] = {
+            L"explorer.exe", L"searchapp.exe", L"startmenuexperiencehost.exe",
+            L"shellexperiencehost.exe", L"textinputhost.exe", L"applicationframehost.exe",
+        };
+        for (const wchar_t* host : kShellHosts) {
+            if (_wcsicmp(name, host) == 0) {
+                need = true;
+                break;
+            }
+        }
+    }
+    cached = need ? 1 : 0;
+    return need;
+}
+
 static HWND popupOwner() {
+    if (!shellHostNeedsOwner()) return nullptr;
     const HWND fg = GetForegroundWindow();
     if (fg == nullptr) return nullptr;
     DWORD pid = 0;

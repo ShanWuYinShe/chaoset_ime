@@ -183,6 +183,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
+- **浮窗 owner 只给沉浸式 shell 宿主**（explorer/SearchApp/开始菜单/搜索/文本服务）：
+  这些宿主自带独立 z 序 band，无主 topmost 会被压住。普通桌面宿主（浏览器/编辑器/
+  终端）一律不设 owner——带 owner 的 TOPMOST 窗口显示时会调整 owner 所在窗口组
+  的 z 序，同进程多个窗口时会让用户看到「另一个窗口弹到前面」（2026-11-05 实机）。
 - **浮窗 owner 必须取前台窗口（且限本进程）**，不要用 TSF 上下文推出的窗口：
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。

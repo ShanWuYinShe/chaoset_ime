@@ -4,6 +4,16 @@
 
 ## 未发布
 
+- **按 Shift 仍会把同进程的另一个窗口弹到前面（Firefox 多窗口/PWA）**：
+  加了 `ownpid`/`fgpid`/`selfpid` 诊断后实机确认三者相等，说明 owner 既不是
+  跨进程也不是陈旧上下文——问题在更基础的一层：**带 owner 的 TOPMOST 窗口
+  一显示就会调整 owner 所在窗口组的 z 序**，同进程有多个窗口时另一个窗口被抬
+  上来。owner 本来只为 Windows 11 开始菜单/搜索的沉浸式 z 序 band 而设
+（2026-10-30 实机取证），普通桌面宿主不需要。现按宿主类型区分：
+  只有 explorer / SearchApp / StartMenuExperienceHost / ShellExperienceHost /
+  TextInputHost / ApplicationFrameHost 这类沉浸式 shell 宿主才设 owner，
+  其余宿主一律无 owner 的 topmost 浮窗，不再动别人的 z 序。
+  checkuiparity 增加 `shellHostNeedsOwner` 契约断言。
 - **候选窗/模式提示条一出现就把别的窗口顶到前面**：这两个浮窗都以 TSF
   上下文推出的窗口为 owner（`hostWindowOf(ctx)`）。若上下文停留在**另一个
   窗口**（用户先在别处打过字、或窗口内部焦点抖动），带 owner 的 TOPMOST 窗口
