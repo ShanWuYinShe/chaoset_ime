@@ -191,6 +191,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
+- **托盘图标的 `ICONINFO.hbmMask` 必须非空**（2026-11-05）：传 NULL 时
+  `CreateIconIndirect` 在部分系统上直接失败，图标永远建不出来，只能一直退回
+  浮动提示。另：`diagBudget()` 每进程仅 200 次，高频日志会把它烧光并吞掉
+  失败原因——关键失败路径的日志必须绕开预算。
 - **crash.log 只记错误级异常**：VEH 里按 NTSTATUS 严重性位过滤，只有 `0xC0000000`
   档（访问违例/栈溢出/fail-fast/页内错误）才写。宿主的 COM/RPC 首次异常
 （`0x80040155`、`0x800706BA`、`EPT_S_NOT_REGISTERED` 等）是正常控制流，不再记录——

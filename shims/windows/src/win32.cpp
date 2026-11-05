@@ -2219,13 +2219,19 @@ public:
     ~ModeTray() { destroy(); }
 
     void show(bool english) {
-        if (!ensureWindow()) return;
+        if (!ensureWindow()) {
+            logFailure("window", GetLastError());
+            return;
+        }
         if (icon_ == nullptr || english_ != english) {
             if (icon_ != nullptr) DestroyIcon(icon_);
             icon_ = makeGlyphIcon(english);
             english_ = english;
         }
-        if (icon_ == nullptr) return;
+        if (icon_ == nullptr) {
+            logFailure("icon", GetLastError());
+            return;
+        }
         NOTIFYICONDATAW nid{};
         nid.cbSize = sizeof(nid);
         nid.hWnd = hwnd_;
@@ -2236,7 +2242,7 @@ public:
         wcscpy_s(nid.szTip, english ? L"Chaoset 输入法：英文" : L"Chaoset 输入法：中文");
         if (!Shell_NotifyIconW(shown_ ? NIM_MODIFY : NIM_ADD, &nid)) {
             shown_ = false;
-            logOnce();
+            logFailure("Shell_NotifyIcon", GetLastError());
             return;
         }
         shown_ = true;
@@ -2266,9 +2272,12 @@ private:
     bool english_ = false;
     volatile LONG loggedFail_ = 0;
 
-    static void logOnce() {
-        // AppContainer 宿主无法访问通知区域：只记一次，别刷屏。
-        if (diagBudget()) diagPrintf(L"tsf.log", "tray icon unavailable (AppContainer?)\n");
+    // 托盘失败必须**绕开 diagBudget**：预算只有 200 次，会被每键日志烧光，
+    // 正好把失败原因吞掉（2026-11-05 实机：0 条失败日志但图标没出现）。
+    static void logFailure(const char* what, unsigned long err) {
+        static volatile LONG logged = 0;
+        if (InterlockedCompareExchange(&logged, 1, 0) != 0) return;
+        diagPrintf(L"tsf.log", "tray icon FAILED: %s err=%lu\n", what, err);
     }
 
     static UINT taskbarCreatedMsg() {
@@ -2374,11 +2383,24 @@ private:
             p[3] = transparent ? 0 : 255;
         }
         DeleteDC(dc);
+        // ICONINFO 的 hbmMask **不能是 NULL**：CreateIconIndirect 在部分系统上会
+        // 直接失败，导致图标永远建不出来、只能一直用浮动提示兜底
+        //（2026-11-05 实机：0 条失败日志、任务栏始终没有图标）。
+        // 32bpp 图标实际由 alpha 通道决定透明，掩码全 0（不透明）即可。
+        unsigned char maskBits[256] = {};  // 足够覆盖 16/24/32 像素的 1bpp 掩码
+        const int maskStride = ((sz + 15) / 16) * 2;
+        if (maskStride * sz > static_cast<int>(sizeof(maskBits))) {
+            DeleteObject(color);
+            DeleteDC(dc);
+            return nullptr;
+        }
+        HBITMAP mask = CreateBitmap(sz, sz, 1, 1, maskBits);
         ICONINFO ii{};
         ii.fIcon = TRUE;
         ii.hbmColor = color;
-        ii.hbmMask = nullptr;
+        ii.hbmMask = mask;
         HICON icon = CreateIconIndirect(&ii);
+        if (mask != nullptr) DeleteObject(mask);
         DeleteObject(color);
         return icon;
     }
@@ -3164,15 +3186,16 @@ private:
         VARIANT back;
         ZeroMemory(&back, sizeof(back));
         const HRESULT hrGet = modeCompartment_->GetValue(&back);
-        if (diagBudget()) {
-            static volatile LONG modeLogBudget = 40;  // 切换很频繁，限量
-            if (InterlockedDecrement(&modeLogBudget) > 0) {
-                diagPrintf(L"tsf.log",
-                           "mode compartment en=%d set_hr=0x%08lX get_hr=0x%08lX read=%ld\n",
-                           enMode_ ? 1 : 0, static_cast<unsigned long>(hr),
-                           static_cast<unsigned long>(hrGet),
-                           static_cast<long>(SUCCEEDED(hrGet) ? back.lVal : -1));
-            }
+        // 日志节制：成功后只记一次，失败每次都记（不受 diagBudget 限制——
+        // 每键日志会把 200 次预算烧光，正好吞掉失败原因）。
+        static volatile LONG loggedOnce = 0;
+        const bool failed = FAILED(hr) || FAILED(hrGet);
+        if (failed || InterlockedCompareExchange(&loggedOnce, 1, 0) == 0) {
+            diagPrintf(L"tsf.log",
+                       "mode compartment en=%d set_hr=0x%08lX get_hr=0x%08lX read=%ld\n",
+                       enMode_ ? 1 : 0, static_cast<unsigned long>(hr),
+                       static_cast<unsigned long>(hrGet),
+                       static_cast<long>(SUCCEEDED(hrGet) ? back.lVal : -1));
         }
     }
 
