@@ -2234,9 +2234,24 @@ public:
                     endComposition();
                 }
             }
-        } else if (!transport_.isConnected()) {
-            ensureDaemonStarted();
-            transport_.ensureConnected();
+        } else {
+            // 焦点回到本 TIP：清掉「没有活合成、但本地还挂着组词」的陈旧状态。
+            //
+            // 典型场景（2026-11-05 用户反馈）：Windows 11 开始菜单宿主关闭时
+            // 可能不投递 OnSetFocus(FALSE)，本地 comp_ 与合成文本就留了下来；
+            // 重新打开开始菜单后旧的拼音又冒出来。这里以「有没有活合成」为准：
+            // composition_ 非空说明合成仍在（正常聚焦），保持不动；为空则说明
+            // 上一轮合成已随宿主销毁，本地残留必须丢弃。
+            if (composition_ == nullptr && (isComposing() || !confirmedPreedit_.empty())) {
+                resetComposition();
+                comp_ = chaoset::Comp();
+                confirmedPreedit_.clear();
+                candidateWnd_.hide();
+            }
+            if (!transport_.isConnected()) {
+                ensureDaemonStarted();
+                transport_.ensureConnected();
+            }
         }
         // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
         shiftHoldSuspended_ = false;
@@ -2967,6 +2982,20 @@ private:
 
     bool handleKey(WPARAM vk, ITfContext* pic) {
         if (isModifierKey(vk)) return false;
+
+        // 英文模式：内容键一律放行。**必须在实际处理点判断**，不能只靠
+        // OnTestKeyDown 的预告分支——实测 Chrome / conhost / Windows Terminal
+        // 连内容键也走 Key 阶段（Test 阶段收不到修饰键，同理收不到这些键），
+        // 预告分支根本不执行，于是「提示切到英文、打字仍出拼音候选」。
+        // 实机日志：16:13:42 shift toggle enMode=1 之后 16:13:43 仍在
+        // candidate shown（2026-11-05）。
+        if (enMode_) {
+            clearAssociate();
+            if (isComposing() || !confirmedPreedit_.empty()) {
+                flushOrCancel(pic);  // 切换瞬间没收干净的残留，这里兜底清理
+            }
+            return false;  // 放行给宿主
+        }
 
         // 词组联想分支（对齐 macOS 壳，2026-10-27 接入 Windows）：
         //   数字（有对应项）→ 联想词直接上屏并继续联想；

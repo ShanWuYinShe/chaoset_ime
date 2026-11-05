@@ -4,6 +4,17 @@
 
 ## 未发布
 
+- **切到英文模式后仍继续出拼音候选（Chrome / 终端 / 命令行 / 开始菜单）**：
+  英文模式的放行判断此前只写在 OnTestKeyDown（预告点），而实测这些宿主连
+  内容键也走 Key 阶段（预告点根本不执行），于是 enMode_ 虽然已翻转、
+  handleKey 仍照常组词。实机日志：16:13:42 shift toggle enMode=1 之后
+  16:13:43 仍在 candidate shown。现于 handleKey（真正的处理点）也判断
+  enMode_ 并放行，checkuiparity 增加「两处判断」断言。
+- **开始菜单重开后残留上一轮拼音**：宿主关闭时可能不投递 OnSetFocus(FALSE)，
+  本地 comp_ 与合成文本就留下来，重新打开开始菜单后旧拼音又冒出来。
+  现于 OnSetFocus(TRUE) 以「有没有活合成」为准清理：composition_ 为空而
+  本地还有组词时丢弃残留（合成仍在则保持不动）。
+
 - **Chrome / conhost / Windows Terminal 里 Shift 完全无法切换（实机日志定位）**：
   2026-10-31 曾把 Shift 跟踪从 OnKeyDown/OnKeyUp 整体移到
   OnTestKeyDown/OnTestKeyUp，依据是「Test 返回 FALSE 的按键不会再进 Key 阶段」。

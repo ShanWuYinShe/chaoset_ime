@@ -788,6 +788,16 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	// Key 阶段（OnKeyDown/OnKeyUp 有、OnTestKeyDown 无）。只挂一边等于对
 	// 另一类宿主彻底失效，表现为「能打字但 Shift 切不了中英」。
 	// 状态机幂等，两阶段各投递一次不会双计。
+	// 英文模式的放行判断必须同时出现在**预告点**（OnTestKeyDown）与
+	// **实际处理点**（handleKey）：Chrome/conhost 等宿主的内容键也走 Key 阶段，
+	// 只写预告点等于英文模式对它们无效（实机：切换后仍在出拼音候选）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if n := strings.Count(string(data), "if (enMode_)"); n < 2 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 中 if (enMode_) 只有 %d 处，应在 OnTestKeyDown 与 handleKey 各一处",
+				group, winShell, n))
+		}
+	}
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		// 4 处调用（Test/Key × 按下/释放）+ 1 处函数定义
 		if n := strings.Count(string(data), "onShiftEvent("); n < 5 {
