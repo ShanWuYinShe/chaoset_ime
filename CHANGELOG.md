@@ -2,7 +2,7 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.3.14（2026-11-05）
 
 - **全/半角标点宽度改为显式参数，daemon 彻底不保存该状态**（架构收敛）：
   全/半角开关的唯一真源是壳（macOS `halfWidth`、Windows/Linux `halfWidth_`），
@@ -58,8 +58,6 @@
   Windows 此前完全没有这一步）；新增 `reconcileShiftState` 在每次按键前用
   `GetAsyncKeyState` 自愈丢失的 KeyUp（**只复位不结算**——丢失时无法判断是否
   空按，凭空切换比少切一次更糟），兑现 README 原承诺的兜底且不引入常驻定时器。
-  顺带把切换副作用从 Test 阶段瘦身：无未上屏状态时跳过 `flushOrCancel` 的
-  daemon IPC 往返（空按 Shift 不再阻塞 250ms）。
   `checkuiparity` 新增「Shift 记账」检查组锁死契约（含禁止 `++shiftDown_`
   回归），已接入 `make vet` 与 CI。
 
