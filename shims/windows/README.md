@@ -197,6 +197,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
      成空按）。与事件路径共用同一套状态，任一路径先结算另一条都会自然跳过。
      排障证据：`tsf.log` 里的 `shift poll:` 行——出现 `宿主未投递 Shift 按下`
      说明该宿主完全不送修饰键；出现 `释放事件缺失` 说明只缺 KeyUp。
+- **焦点抖动不得吃掉 Shift 按住状态**：浏览器会在窗口内部把焦点在地址栏 /
+  页面元素之间搬动，同样触发 `OnSetFocus(FALSE)`。失焦时若 Shift 仍物理按下，
+  只能**挂起**（松开前焦点回来照常切换），不能直接复位；轮询也不得因焦点门控
+  清状态。否则表现为「能打字但 Shift 切不了中英」（2026-11-05 用户反馈）。
 - **PWA / 「安装应用」窗口（Chrome app 窗口、Firefox 装到任务栏的独立窗口）**：
   这类窗口是宿主自己的独立顶层窗口，TSF 上下文与焦点归属都可能和主窗口不同。
   排障看 `tsf.log` 的 `fgpid`/`selfpid`：`activate` 与 `shift toggle` 两行现在都带

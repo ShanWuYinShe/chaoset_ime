@@ -2228,11 +2228,16 @@ public:
             candidateWnd_.hide();
             toast_.hide();
             clearAssociate();
-            // Shift 记账复位（2026-11-05）：按住 Shift 切走窗口时，KeyUp 会交给
-            // 新前台窗口、本线程永远收不到——不复位就会留下一次「孤儿按住」
-            // 把后续 Shift 空按全部吃掉。Linux 壳在 focusOut 调 shift_.reset()
-            // （shims/linux/engine/main.cpp:386-389），这里对齐同一语义。
-            resetShiftTracking();
+            // 焦点离开：**挂起**而不是直接丢弃按住状态。
+            //
+            // 浏览器（Chrome/Firefox，尤其「安装为应用」的独立窗口）会在
+            // 窗口内部把焦点在地址栏 / 页面元素之间搬动，一样触发
+            // OnSetFocus(FALSE)。旧实现无脑 resetShiftTracking()，于是
+            // 「按下 Shift → 焦点抖一下 → 松开」永远结算不了，表现为
+            // 「能打字但 Shift 切不了中英」。现在：若 Shift 仍物理按下则
+            // 只挂起（松开前焦点回来就照常切换），真的切走应用则松开时
+            // 只清状态不切换。2026-11-05。
+            suspendShiftHoldOnFocusLost();
             // 失去焦点：已确认段先落盘（用户确认过的字不能丢；旧实现里这些
             // 段早已在文档，净效果一致），纯拼音预编辑维持「清空」旧语义——
             // 防止跨窗口残留组词状态导致后续窗口吃键。落盘必须对**合成所属
@@ -2254,6 +2259,8 @@ public:
             ensureDaemonStarted();
             transport_.ensureConnected();
         }
+        // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
+        shiftHoldSuspended_ = false;
         ensureShiftPollWindow();  // 焦点回到本 TIP：确保轮询在跑
         return S_OK;
     }
@@ -2604,6 +2611,18 @@ private:
     // 致命缺陷。同时掩码能正确区分左右 Shift 同时按住的场景。
     unsigned shiftHeld_ = 0;
     bool sinceShift_ = true;    // 按住期间是否出现过其它键（true = 不是空按）
+    // 按住期间焦点离开过。浏览器会在**窗口内部**把焦点在地址栏/页面元素之间
+    // 搬来搬去，一样触发 OnSetFocus(FALSE)——此时不能直接丢弃按住状态，
+    // 否则「按下 Shift → 焦点抖一下 → 松开」就永远切换不了（2026-11-05）。
+    // 改为挂起：松开前焦点回来就照常切换，否则松开时只清状态不切换
+    // （真·切走应用时不该切模式）。
+    bool shiftHoldSuspended_ = false;
+    // 上一拍物理 Shift 状态（轮询做边沿检测）。
+    bool prevPhysDown_ = false;
+    // 本次按住是由轮询（而非 TSF 事件）发起的。事件来的按住说明本 TIP 当时
+    // 就在接收输入，不需要再按焦点门控；轮询发起的才可能是「别的应用在按 Shift」，
+    // 必须门控，否则后台进程会跟着乱切。
+    bool holdFromPoll_ = false;
 
     static unsigned shiftBit(WPARAM vk) {
         if (vk == VK_LSHIFT) return 1u;
@@ -2625,6 +2644,66 @@ private:
     void resetShiftTracking() {
         shiftHeld_ = 0;
         sinceShift_ = true;  // 复位后首个释放不得触发切换
+        shiftHoldSuspended_ = false;
+        holdFromPoll_ = false;
+        prevPhysDown_ = shiftPhysicallyDown();
+    }
+
+    // 焦点暂时离开（仍在同一进程/同一窗口族）：不丢按住状态，只挂起。
+    void suspendShiftHoldOnFocusLost() {
+        if (shiftHeld_ != 0 && shiftPhysicallyDown()) {
+            shiftHoldSuspended_ = true;
+        } else {
+            resetShiftTracking();
+        }
+    }
+
+    // 开始一次「按住会话」：位运算幂等，事件与轮询都可以调。
+    void beginShiftHold(unsigned bit, bool fromPoll = false) {
+        if ((shiftHeld_ & bit) != 0) return;
+        if (shiftHeld_ == 0) {
+            sinceShift_ = false;
+            shiftHoldSuspended_ = false;
+            holdFromPoll_ = fromPoll;
+        }
+        shiftHeld_ |= bit;
+    }
+
+    // 空按判定 + 切换。pic 为事件路径带来的上下文；轮询路径传 nullptr，
+    // 内部再取 focusContext()（必须用 ContextRef 释放）。
+    void finishShiftHold(ITfContext* pic) {
+        const bool suspended = shiftHoldSuspended_;
+        const bool fromPoll = holdFromPoll_;
+        shiftHoldSuspended_ = false;
+        holdFromPoll_ = false;
+        // 只有「轮询发起」的按住才需要焦点门控（防止后台进程跟着别的应用切）。
+        // 事件发起的按住本身就证明本 TIP 当时在收键，不该被门控误挡。
+        if (!sinceShift_ && !suspended && !(fromPoll && !shiftPollEnabled())) {
+            if (pic != nullptr) {
+                toggleEnMode(pic);
+            } else {
+                ContextRef owned(nullptr);
+                owned.ctx = focusContext();
+                toggleEnMode(owned.ctx);
+            }
+        }
+        sinceShift_ = true;
+    }
+
+    // 结束一次「按住会话」：只有最后一次抬起才结算。
+    void endShiftHold(unsigned bit, ITfContext* pic = nullptr) {
+        if ((shiftHeld_ & bit) == 0) return;
+        shiftHeld_ &= ~bit;
+        if (shiftHeld_ != 0) return;  // 另一侧还按着，等它抬起
+        finishShiftHold(pic);
+    }
+
+    // 无条件收口：事件路径留下的按住位（左右/泛化位混用）在物理松开后
+    // 由轮询或下一次按键统一结算，避免任何一位永远挂着。
+    void settleAllShiftHolds() {
+        if (shiftHeld_ == 0) return;
+        shiftHeld_ = 0;
+        finishShiftHold(nullptr);
     }
 
     void toggleEnMode(ITfContext* pic) {
@@ -2673,30 +2752,18 @@ private:
     void onShiftEvent(bool release, WPARAM vk, ITfContext* pic) {
         const unsigned bit = shiftBit(vk);
         if (!release) {
-            // 位运算天然幂等：auto-repeat / 重复投递不会累积。
-            if ((shiftHeld_ & bit) != 0) return;  // 同一次按住的重复按下
-            // 只有「从完全没按住 → 开始按住」才开启新的空按窗口。
-            // 不能用 shiftHeld_ == bit 判断：先按左 Shift（bit0）再补按右 Shift
-            // （bit1）时 shiftHeld_==3，会把窗口重新打开，之后夹带的按键就被漏掉。
-            if (shiftHeld_ == 0) sinceShift_ = false;
-            shiftHeld_ |= bit;
+            beginShiftHold(bit);
             return;
         }
-        if ((shiftHeld_ & bit) == 0) {
-            // 无按下的孤立释放。宿主混用键码时（按下投递 VK_LSHIFT、释放
-            // 投递 VK_SHIFT 或反之）位置对不上——若 Shift 确已不在物理按下
-            // 状态就整体结算，否则会留下一位永远挂着（下一键虽能自愈，但
-            // 会吞掉本次该有的切换）。真的没按住就直接返回。
-            if (shiftHeld_ == 0 || shiftPhysicallyDown()) return;
-            shiftHeld_ = 0;
-        } else {
-            shiftHeld_ &= ~bit;
+        if ((shiftHeld_ & bit) != 0) {
+            endShiftHold(bit, pic);
+            return;
         }
-        // 只有「最后一次抬起」才结算：左右 Shift 同时按住时，
-        // 先松一侧不切换（与 macOS 双 Shift 行为一致）。
-        if (shiftHeld_ != 0) return;
-        if (!sinceShift_) toggleEnMode(pic);
-        sinceShift_ = true;  // 本次会话结束；下一次按下重新开窗
+        // 无按下的孤立释放。宿主混用键码时（按下 VK_LSHIFT、释放 VK_SHIFT 或
+        // 反之）位置对不上——若 Shift 确已不在物理按下状态就整体结算，
+        // 否则会留下一位永远挂着。
+        if (shiftHeld_ == 0 || shiftPhysicallyDown()) return;
+        settleAllShiftHolds();
     }
 
     // 按住 Shift 期间，系统里是否还有**别的输入**按下（键或鼠标）。
@@ -2763,20 +2830,6 @@ private:
     //
     // 事件路径（OnTestKeyUp）与轮询路径共用这一个出口，保证两条来源的
     // 判定规则完全一致：只有「期间没按过任何别的键/鼠标」才切换中英。
-    void settleShiftHold() {
-        if (shiftHeld_ == 0) return;
-        shiftHeld_ = 0;
-        if (!sinceShift_) {
-            // 事件路径有 TSF 给的 pic；轮询路径没有，只能现查 focusContext()。
-            // 它返回的是 AddRef 过的上下文，**必须**用 ContextRef 释放
-            //（见 focusContext 的注释），否则每次切换都漏一个 ITfContext。
-            ContextRef owned(nullptr);
-            owned.ctx = focusContext();
-            toggleEnMode(owned.ctx);
-        }
-        sinceShift_ = true;
-    }
-
     // ---- Shift 物理状态轮询兜底（2026-11-05）----
     //
     // 为什么需要：Shift 空按的结算依赖 OnTestKeyUp 与按下**成对**到达。
@@ -2856,36 +2909,37 @@ private:
     }
 
     // 轮询一拍：把「物理 Shift 状态」与「事件记账」对齐。
+    //
+    // 三条铁律（2026-11-05 二次修正，直击「能打字但 Shift 切不了」）：
+    //   1. **绝不因为焦点门控主动清状态**——浏览器会在窗口内把焦点在地址栏/
+    //      页面元素之间搬动，一样触发 OnSetFocus(FALSE)；旧实现在这里把正在
+    //      按的 Shift 清掉，于是松开时永远结算不了。要不要真的切换，放到
+    //      finishShiftHold 里判断。
+    //   2. 边沿检测只认物理状态，与 TSF 是否投递事件无关。
+    //   3. 物理已松开但还有按住位挂着，一律收口。
     void onShiftPollTick() {
         if (pollWnd_ == nullptr) return;
-        // 只在本 TIP 有焦点（或本进程前台）时结算：
-        // 后台进程跟着别的应用按 Shift 切模式是错的。
-        if (!shiftPollEnabled()) {
-            if (shiftHeld_ != 0) {
-                shiftHeld_ = 0;
-                sinceShift_ = true;
+        const bool down = shiftPhysicallyDown();
+        if (down != prevPhysDown_) {
+            prevPhysDown_ = down;
+            if (down) {
+                if (shiftHeld_ == 0) {
+                    logShiftPollOnce(&loggedPollArmed,
+                                     "shift poll: 未收到 Shift 按下事件，改由物理状态跟踪\n");
+                }
+                beginShiftHold(kPollShiftBit, true);
+            } else {
+                endShiftHold(kPollShiftBit);
             }
-            return;
+        } else if (down && shiftHeld_ != 0 && shiftOtherInputDown()) {
+            sinceShift_ = true;  // 按住期间按过别的键/鼠标 → 不是空按
         }
-        if (shiftPhysicallyDown()) {
-            if (shiftHeld_ == 0) {
-                // 宿主根本没投递修饰键按下事件：按物理状态开一次会话。
-                // 用 one-shot 日志留证——这是判断「哪个宿主不投递」最直接的证据。
-                shiftHeld_ = kPollShiftBit;
-                sinceShift_ = false;
-                logShiftPollOnce(&loggedPollArmed, "shift poll: 宿主未投递 Shift 按下，改由物理状态跟踪\n");
-            } else if (shiftOtherInputDown()) {
-                // 按住期间系统里还有别的输入按下 → 不是空按。
-                sinceShift_ = true;
-            }
-            return;
-        }
-        // 物理上已松开：不管事件有没有投递释放，都在这里结算。
-        if (shiftHeld_ != 0) {
+        if (!down && shiftHeld_ != 0) {
             if (!sinceShift_) {
-                logShiftPollOnce(&loggedPollSettle, "shift poll: 释放事件缺失，由物理状态结算\n");
+                logShiftPollOnce(&loggedPollSettle,
+                                 "shift poll: 缺释放事件，由物理状态结算\n");
             }
-            settleShiftHold();
+            settleAllShiftHolds();
         }
     }
 
@@ -2899,10 +2953,11 @@ private:
     // 按键前的自愈：事件路径的兜底，确保每次按键前状态与物理一致。
     // 与轮询共用 settleShiftHold，判定规则完全一致（2026-11-05）。
     void reconcileShiftState() {
-        if (shiftHeld_ == 0) return;         // 绝大多数按键在这里直接返回
-        if (shiftPhysicallyDown()) return;   // 还按着：交给事件/轮询
-        if (shiftPollEnabled()) settleShiftHold();
-        else resetShiftTracking();
+        // 只做「物理已松开但状态还挂着」的收口；按住中一律不干预。
+        // 旧实现会按焦点门控直接清状态——窗口内焦点抖动时正好把正在按的
+        // Shift 吃掉，这是「能打字但 Shift 切不了」的直接原因之一
+        //（2026-11-05 修）。
+        if (shiftHeld_ != 0 && !shiftPhysicallyDown()) settleAllShiftHolds();
     }
 
     // 按键 → 产生的 ASCII 字符（US 布局直映，含 Shift 变体），只返回
