@@ -25,7 +25,7 @@ func TestCommonMistakeBigramsSingleSyllable(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -53,7 +53,7 @@ func TestCommonMistakeBigramsInWords(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -101,7 +101,7 @@ func TestCommonMistakeDoesNotDisturbNormalInputs(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -119,7 +119,7 @@ func TestCommonMistakeDoesNotDisturbNormalInputs(t *testing.T) {
 		{"nihap", "你好"},
 	} {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -152,7 +152,7 @@ func TestCommonMistakeSoftBigrams(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -168,7 +168,7 @@ func TestCommonMistakeSoftBigrams(t *testing.T) {
 	}
 	for _, c := range normal {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}

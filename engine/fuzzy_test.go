@@ -96,14 +96,14 @@ func TestFuzzySessionToggle(t *testing.T) {
 	for _, tc := range cases {
 		// 关闭：只有精确项
 		s := NewSession(mustFuzzyDict(t), nil)
-		comp, _ := s.Input(tc.input)
+		comp, _ := s.Input(tc.input, false)
 		if !hasCand(comp, tc.exactHit) || hasCand(comp, tc.fuzzyHit) {
 			t.Fatalf("%q 模糊关闭: 期望含 %q 不含 %q, 得到 %v", tc.input, tc.exactHit, tc.fuzzyHit, comp.Candidates)
 		}
 		// 开启：两者都在
 		s2 := NewSession(mustFuzzyDict(t), nil)
 		s2.SetFuzzy(true)
-		comp, _ = s2.Input(tc.input)
+		comp, _ = s2.Input(tc.input, false)
 		if !hasCand(comp, tc.exactHit) || !hasCand(comp, tc.fuzzyHit) {
 			t.Fatalf("%q 模糊开启: 期望同时含 %q 与 %q, 得到 %v", tc.input, tc.exactHit, tc.fuzzyHit, comp.Candidates)
 		}
@@ -114,7 +114,7 @@ func TestFuzzySessionToggle(t *testing.T) {
 func TestFuzzyMultiSyllable(t *testing.T) {
 	s := NewSession(mustFuzzyDict(t), nil)
 	s.SetFuzzy(true)
-	comp, err := s.Input("nili")
+	comp, err := s.Input("nili", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

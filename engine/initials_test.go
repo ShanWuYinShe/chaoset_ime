@@ -22,7 +22,7 @@ func TestInitialsTwoLetters(t *testing.T) {
 
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -49,7 +49,7 @@ func TestInitialsMultiLetters(t *testing.T) {
 
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -79,7 +79,7 @@ func TestMixedPinyin(t *testing.T) {
 
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -94,7 +94,7 @@ func TestMixedPinyin(t *testing.T) {
 	// chifanl 混拼：已完整的「吃饭」可达；但「吃饭了」不在词典里，
 	// 不属于「已存在的词」，不得由引擎拼合出来（2026-11-01 用户要求）。
 	s.Reset()
-	compChifan, err := s.Input("chifanl")
+	compChifan, err := s.Input("chifanl", false)
 	if err != nil {
 		t.Fatalf("Input chifanl 失败: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestInitialsNoComposedSentence(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
 
-	comp, err := s.Input("wmd")
+	comp, err := s.Input("wmd", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestInitialsNoComposedSentence(t *testing.T) {
 func TestFullPinyinOutranksInitials(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 
-	comp, err := s.Input("ba")
+	comp, err := s.Input("ba", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestApostropheWithInitials(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 
 	// x'a -> 西安
-	comp1, _ := s.Input("x'a")
+	comp1, _ := s.Input("x'a", false)
 	foundXian := false
 	for _, c := range comp1.Candidates {
 		if c.Text == "西安" {
@@ -178,7 +178,7 @@ func TestApostropheWithInitials(t *testing.T) {
 
 	// b'a -> 候选应包含 保安 或 备案
 	s.Reset()
-	comp2, _ := s.Input("b'a")
+	comp2, _ := s.Input("b'a", false)
 	foundBaoan := false
 	for _, c := range comp2.Candidates {
 		if c.Text == "保安" || c.Text == "备案" {
@@ -196,7 +196,7 @@ func TestRetroflexInitialMatching(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 
 	// zg 既能出「中国」(zh+g)，也能出「整个」(zh+g)
-	comp, _ := s.Input("zg")
+	comp, _ := s.Input("zg", false)
 	hasZhongguo := false
 	for _, c := range comp.Candidates {
 		if c.Text == "中国" {
@@ -216,7 +216,7 @@ func TestInitialsUserLearning(t *testing.T) {
 	d := mustCommonDict(t)
 
 	s1 := NewSession(d, mustUserDict(t, udPath))
-	comp, _ := s1.Input("zg")
+	comp, _ := s1.Input("zg", false)
 	// 找到「这个」
 	idx := -1
 	for i, c := range comp.Candidates {
@@ -239,7 +239,7 @@ func TestInitialsUserLearning(t *testing.T) {
 
 	// 新会话中，调频后的「这个」应被加权排到第一
 	s2 := NewSession(d, mustUserDict(t, udPath))
-	comp2, _ := s2.Input("zg")
+	comp2, _ := s2.Input("zg", false)
 	if comp2.Candidates[0].Text != "这个" {
 		t.Fatalf("学习后 zg 第一候选应为「这个」，实际得到 %+v", comp2.Candidates)
 	}
@@ -264,7 +264,7 @@ func TestInitialsUserDictSinglesDoNotFragment(t *testing.T) {
 	}
 
 	s := NewSession(d, u)
-	comp, err := s.Input("jsj")
+	comp, err := s.Input("jsj", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestInitialsUserDictPhraseLengthConstraint(t *testing.T) {
 	_ = u.BumpPhrase("如果我", []string{"ru", "guo", "wo"})
 
 	s := NewSession(d, u)
-	comp, err := s.Input("rmb")
+	comp, err := s.Input("rmb", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestSelectPrefixInitialsPartialConsume(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := NewSession(d, nil)
-		if _, err := s.Input(c.input); err != nil {
+		if _, err := s.Input(c.input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		idx := findCandidate(t, s, c.word)
@@ -375,7 +375,7 @@ func TestInitialsLongSingleCharFallback(t *testing.T) {
 	d := mustCommonDict(t)
 	for _, input := range []string{"k'k'd'z", "kkdz"} {
 		s := NewSession(d, nil)
-		comp, err := s.Input(input)
+		comp, err := s.Input(input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", input, err)
 		}
@@ -402,7 +402,7 @@ func TestInitialsLongSingleCharFallback(t *testing.T) {
 
 		// 渐进消费：选「看看」只消耗 k'k，剩余 d'z 继续组词。
 		s2 := NewSession(d, nil)
-		if _, err := s2.Input(input); err != nil {
+		if _, err := s2.Input(input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", input, err)
 		}
 		idx := findCandidate(t, s2, "看看")
@@ -425,7 +425,7 @@ func TestInitialsLongSingleCharFallback(t *testing.T) {
 func TestInitialsNoWordStillInputtable(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	comp, err := s.Input("zxcv")
+	comp, err := s.Input("zxcv", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestInitialsNoWordStillInputtable(t *testing.T) {
 	}
 
 	s2 := NewSession(d, nil)
-	if _, err := s2.Input("zxcv"); err != nil {
+	if _, err := s2.Input("zxcv", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx := findCandidate(t, s2, "在") // z 声母单字（全量兜底可达）
@@ -462,7 +462,7 @@ func TestInitialsNoWordStillInputtable(t *testing.T) {
 func TestShortInitialsAlwaysSingleFallback(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	comp, err := s.Input("zg")
+	comp, err := s.Input("zg", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

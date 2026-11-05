@@ -23,7 +23,7 @@ func TestContinuationPredictsTruncatedLastSyllable(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -53,7 +53,7 @@ func TestContinuationDoesNotOutrankExactMatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, _ := s.Input(c.input)
+		comp, _ := s.Input(c.input, false)
 		if len(comp.Candidates) == 0 {
 			t.Fatalf("%s: 应有候选", c.input)
 		}
@@ -66,7 +66,7 @@ func TestContinuationDoesNotOutrankExactMatch(t *testing.T) {
 	// 压过（新词库下 continuationPenalty=30 不足以抵消词频差，如 yisha：以上 > 一霎）。
 	// 底线是精确匹配词不得被续接逻辑整体丢弃（候选中必须可达）。
 	s.Reset()
-	comp, _ := s.Input("yisha")
+	comp, _ := s.Input("yisha", false)
 	found := false
 	for _, cand := range allCandidates(s, comp) {
 		if cand.Text == "一霎" {
@@ -99,7 +99,7 @@ func TestContinuationKeepsCommonInputs(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, _ := s.Input(c.input)
+		comp, _ := s.Input(c.input, false)
 		if len(comp.Candidates) == 0 {
 			t.Fatalf("%s: 应有候选", c.input)
 		}

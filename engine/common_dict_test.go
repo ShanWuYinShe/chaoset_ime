@@ -21,7 +21,7 @@ func mustCommonDict(t *testing.T) *Dictionary {
 // 旧词库（terra 单字表）里没有这个词，导致该输入完全无候选。
 func TestCommonDictJingchang(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	comp, err := s.Input("jingchang")
+	comp, err := s.Input("jingchang", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestCommonDictJingchang(t *testing.T) {
 // 单音节输入不能被生僻字淹没：jing 的第一候选应是常用字（词频最高者）。
 func TestCommonDictSingleSyllableRanksCommonChar(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	comp, _ := s.Input("jing")
+	comp, _ := s.Input("jing", false)
 	if len(comp.Candidates) == 0 {
 		t.Fatal("jing 应有候选")
 	}
@@ -158,7 +158,7 @@ func TestCommonDictScale(t *testing.T) {
 func TestCommonDictSingleSyllableFullRecall(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	comp, err := s.Input("shi")
+	comp, err := s.Input("shi", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCommonDictInitialsRecall(t *testing.T) {
 	}
 	for _, p := range probe {
 		s.Reset()
-		comp, err := s.Input(p.input)
+		comp, err := s.Input(p.input, false)
 		if err != nil {
 			t.Fatalf("Input(%q) 失败: %v", p.input, err)
 		}
@@ -260,7 +260,7 @@ func TestCommonDictInitialsRecall(t *testing.T) {
 
 	// 反向：全拼首选不受 exact 放开影响
 	s.Reset()
-	comp, _ := s.Input("nihao")
+	comp, _ := s.Input("nihao", false)
 	if got := comp.Candidates[0].Text; got != "你好" {
 		t.Fatalf("nihao 第一候选 = %q, 期望「你好」", got)
 	}
@@ -421,7 +421,7 @@ func TestCommonDictLongPinyinFirstSyllableReachable(t *testing.T) {
 		}
 		// 逐字挑选路径必须可用：选首音节单字只消费首音节，剩余输入继续组词
 		s2 := NewSession(d, nil)
-		if _, err := s2.Input(c.input); err != nil {
+		if _, err := s2.Input(c.input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		idx := findCandidate(t, s2, c.word)

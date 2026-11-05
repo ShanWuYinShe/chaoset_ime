@@ -795,9 +795,10 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 帧格式：4 字节大端长度 + JSON 载荷（上限 1 MiB）。
 
 - 请求：`{"id":1,"method":"input","params":{"text":"nihao","half":false}}`
-  （`half` 可选：壳侧全/半角标点状态，每次 input 下发；省略时保持会话内状态。
-  双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次壳状态，否则会有 1 键
-  瞬态。）
+  （`half` 可选：壳侧全/半角标点状态，**每次请求随参数下发，daemon 不保存**
+  ——壳是该状态的唯一真源。省略时按全角处理（历史默认），不会回落到任何
+  会话残留值。双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次壳状态，
+  否则会有 1 键瞬态；2026-11-05 起改为纯传参后，这种不同步在结构上不可能发生。）
 - 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
 
 方法（16 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /

@@ -26,10 +26,10 @@ func TestUserDictConcurrent(t *testing.T) {
 			defer wg.Done()
 			sess := NewSession(mustDict(t), u)
 			for j := 0; j < 50; j++ {
-				sess.Input("nihao")
+				sess.Input("nihao", false)
 				sess.Select(0)
-				sess.Input("shi")
-				sess.Punct(",")
+				sess.Input("shi", false)
+				sess.Punct(",", false)
 				_ = u.Score("你好", []string{"ni", "hao"}, "")
 				_ = u.QueryPhrases([]string{"ni", "hao"}, "")
 				_ = u.Stats()

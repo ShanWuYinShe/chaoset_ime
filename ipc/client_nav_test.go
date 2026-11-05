@@ -60,7 +60,7 @@ func TestClientNavigationMethods(t *testing.T) {
 	}
 	c := newIPCClient(t, src.String())
 
-	comp, err := c.Input("ni")
+	comp, err := c.Input("ni", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestClientNavigationMethods(t *testing.T) {
 // 新会话生效（此前 WithTraditional 0% 覆盖）。
 func TestServerWithTraditionalOption(t *testing.T) {
 	c := newIPCClient(t, "国\tguo\t99\n", WithTraditional(true))
-	comp, err := c.Input("guo")
+	comp, err := c.Input("guo", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestServerWithTraditionalOption(t *testing.T) {
 // （此前 WithFuzzy 0% 覆盖）。
 func TestServerWithFuzzyOption(t *testing.T) {
 	c := newIPCClient(t, "中国\tzhong guo\t99\n", WithFuzzy(true))
-	comp, err := c.Input("zongguo")
+	comp, err := c.Input("zongguo", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

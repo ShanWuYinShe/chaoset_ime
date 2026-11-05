@@ -24,6 +24,6 @@ func BenchmarkComposeCommonDict(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.Reset()
-		s.Input("jingchang")
+		s.Input("jingchang", false)
 	}
 }

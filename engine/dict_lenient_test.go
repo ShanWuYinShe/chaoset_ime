@@ -158,7 +158,7 @@ func TestLenientThirdPartyDictUsable(t *testing.T) {
 		t.Fatalf("应报告 1 条坏行汇总警告: %v", warnings)
 	}
 	s := NewSession(d, nil)
-	comp, err := s.Input("nihao")
+	comp, err := s.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

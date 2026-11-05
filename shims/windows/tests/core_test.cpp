@@ -198,9 +198,9 @@ int main(int argc, char** argv) {
     UnixTransport transport(argv[1]);
     Session session(transport);
 
-    Comp c1 = session.input("n");
+    Comp c1 = session.input("n", false);
     check(c1.ok, "连接 daemon（Unix socket，input 有响应）");
-    Comp c2 = session.input("ihao");
+    Comp c2 = session.input("ihao", false);
     check(c2.ok && c2.preedit == "ni'hao", "预编辑 ni'hao");
     check(c2.candidates.size() >= 1 && c2.candidates[0].text == "你好", "第一候选 你好");
     std::string committed;
@@ -214,15 +214,15 @@ int main(int argc, char** argv) {
     // （2026-10-26 修复）。
     // 这里改为断言「歧义切分能力本身」：xi'an 带撇号输入必须能命中西安，
     // 与词频无关，且能证明 daemon 支持显式音节分隔。
-    Comp c3 = session.input("xian");
+    Comp c3 = session.input("xian", false);
     check(c3.ok && !c3.candidates.empty(), "xian 有候选");
     session.reset();
-    Comp c3b = session.input("xi'an");
+    Comp c3b = session.input("xi'an", false);
     bool hasXiAn = false;
     for (const auto& cand : c3b.candidates) hasXiAn |= (cand.text == "西安");
     check(c3b.ok && hasXiAn, "xi'an 歧义切分候选含 西安");
     session.reset();
-    session.input("xian");
+    session.input("xian", false);
 
     Comp c4 = session.backspace();
     check(c4.ok && c4.input == "xia", "退格后输入 xia");
@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
     check(c5.ok && c5.input.empty(), "重置后输入为空");
 
     // 按音节回退（Alt+Backspace）：三端统一走引擎 BackspaceWord（2026-10-31）。
-    Comp w1 = session.input("nihao");
+    Comp w1 = session.input("nihao", false);
     check(w1.ok, "回退词用例前组词 nihao");
     Comp w2 = session.backspaceWord();
     check(w2.ok && w2.input == "ni", "按音节回退到 ni（Alt+Backspace）");
@@ -239,12 +239,12 @@ int main(int argc, char** argv) {
     // select 越界：daemon 返回业务 error，调用层应判失败且连接仍可用
     std::string dummy;
     check(!session.select(99, &dummy), "越界 select 判失败");
-    Comp c6 = session.input("ni");
+    Comp c6 = session.input("ni", false);
     check(c6.ok && !c6.candidates.empty(), "业务错误后连接仍可用");
 
     // 中文标点：组词中合并上屏、空组词直映、未知键判失败且连接可用
     session.reset();  // 清掉上文遗留的未上屏组词，保证 nihao 从零开始
-    Comp p1 = session.input("nihao");
+    Comp p1 = session.input("nihao", false);
     check(p1.ok, "标点用例前组词 nihao");
     std::string punctOut;
     // punct 第三参数前还有个 halfWidth（2026-10-29 起全/半角开关由壳下发，
@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
     check(session.punct(",", false, &punctOut) && punctOut == "你好，", "组词中标点 = 你好，");
     check(session.punct(".", false, &punctOut) && punctOut == "。", "空组词标点直映 。");
     check(!session.punct("@", false, &punctOut), "未知标点判失败");
-    Comp p2 = session.input("hao");
+    Comp p2 = session.input("hao", false);
     check(p2.ok && !p2.candidates.empty(), "标点错误后连接仍可用");
 
     // 候选翻页：边界钳制、页内序号选词。
@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
     // 这里写死「9 个候选 / 2 页」，引擎改成 6 后一直失败但没人发现
     // （CI 根本不跑本测试，2026-10-26 修复）。改为从响应里推导页容量。
     session.reset();
-    Comp g1 = session.input("yi");
+    Comp g1 = session.input("yi", false);
     const std::size_t pageSize = g1.candidates.size();  // 首页即页容量
     check(g1.ok && g1.page == 0 && pageSize > 0 && g1.pageCount >= 1,
           "yi 第一页可取到候选");
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
         // 回到首页并验证第二页页内首选可选
         (void)pageSize;
         session.reset();
-        session.input("yi");
+        session.input("yi", false);
         session.nextPage();
         std::string pageSel;
         check(session.select(0, &pageSel) && !pageSel.empty(),
@@ -300,14 +300,14 @@ int main(int argc, char** argv) {
 
     // daemon 断开重连：杀掉的是外部进程，这里验证冷启动重连路径
     // （通过重新连接同一 daemon 即可）
-    Comp c7 = session.input("hao");
+    Comp c7 = session.input("hao", false);
     check(c7.ok, "后续按键继续可用");
 
     // 词组联想（2026-10-27 接入 Windows 壳）：上屏词的音节 → 续接词组 →
     // associateSelect 直接上屏（学习路径与 select 一致）。
     {
         session.reset();
-        Comp n = session.input("ni");
+        Comp n = session.input("ni", false);
         if (n.ok && !n.candidates.empty()) {
             std::string committed;
             const std::string firstSylls = n.candidates[0].syllables;
@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
     // （幂等，不报错）→ 连接仍可用。
     {
         session.reset();
-        Comp u = session.input("nihao");
+        Comp u = session.input("nihao", false);
         bool learned = false;
         if (u.ok && !u.candidates.empty() && u.candidates[0].text == "你好") {
             std::string committed;
@@ -353,7 +353,7 @@ int main(int argc, char** argv) {
         bool repeated = true;
         check(session.userDelete("你好", {"ni", "hao"}, &repeated) && !repeated,
               "userDelete 重复删除 deleted=false（幂等）");
-        Comp after = session.input("nihao");
+        Comp after = session.input("nihao", false);
         check(after.ok && !after.candidates.empty(), "userDelete 后连接仍可用");
         session.reset();
     }

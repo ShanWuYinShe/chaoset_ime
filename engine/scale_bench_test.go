@@ -67,7 +67,7 @@ func BenchmarkCompose100k(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.Reset()
-		s.Input("ni")
+		s.Input("ni", false)
 		s.Compose()
 	}
 }
@@ -91,6 +91,6 @@ func BenchmarkComposeInitials(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.Reset()
-		_, _ = s.Input(inputs[i%len(inputs)])
+		_, _ = s.Input(inputs[i%len(inputs)], false)
 	}
 }

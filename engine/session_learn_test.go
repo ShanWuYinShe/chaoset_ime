@@ -121,7 +121,7 @@ func TestResetClearsContext(t *testing.T) {
 
 func mustInput(t *testing.T, s *Session, text string) Composition {
 	t.Helper()
-	comp, err := s.Input(text)
+	comp, err := s.Input(text, false)
 	if err != nil {
 		t.Fatalf("Input(%q) 失败: %v", text, err)
 	}
@@ -144,7 +144,7 @@ func TestAssociatePagingCap(t *testing.T) {
 	}
 	s := NewSession(d, nil)
 	// 严格按字：先上屏「你」（s.prev），再按 ni 查续接
-	s.Input("ni")
+	s.Input("ni", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAssociateFollowsWord(t *testing.T) {
 
 	// 选「测试」上屏 → 联想首条应是「测试」开头的续接词（测试题），
 	// 而非同音节的「策士团」
-	s.Input("ceshi")
+	s.Input("ceshi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestAssociateFollowsWord(t *testing.T) {
 	// 选「策士」上屏 → 联想首条应是「策士」开头（策士团）——同音节
 	// 不同字，续接跟着字走
 	s.Reset()
-	s.Input("ceshi")
+	s.Input("ceshi", false)
 	for i, c := range s.Compose().Candidates {
 		if c.Text == "策士" {
 			if _, err := s.Select(i); err != nil {
@@ -245,12 +245,12 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 	// 用户上屏「不行」多次（调频），再逐段渐进上屏「不行」+「的话」
 	// （2026-11-01 起没有 DP 整句候选，逐段选择是学习整句短语的唯一路径）
 	for i := 0; i < 3; i++ {
-		s.Input("buxing")
+		s.Input("buxing", false)
 		if _, err := s.Select(0); err != nil {
 			t.Fatalf("Select 失败: %v", err)
 		}
 	}
-	s.Input("buxingdehua")
+	s.Input("buxingdehua", false)
 	idx := findCandidate(t, s, "不行")
 	if _, _, err := s.SelectPrefix(idx); err != nil {
 		t.Fatalf("渐进选「不行」失败: %v", err)
@@ -264,7 +264,7 @@ func TestAssociateShowsUserLearnedWords(t *testing.T) {
 
 	// 新会话（模拟跨应用/重启）：上屏「不行」→ 联想应含「不行的话」
 	s2 := NewSession(d, user)
-	s2.Input("buxing")
+	s2.Input("buxing", false)
 	if _, err := s2.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -299,12 +299,12 @@ func TestAssociateStripsCommittedPrefix(t *testing.T) {
 	}
 	s := NewSession(d, user)
 	// 先上屏「打字测试」（整句学习进用户词库），再上屏「打字」
-	s.Input("daziceshi")
+	s.Input("daziceshi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
 	s.Reset()
-	s.Input("dazi")
+	s.Input("dazi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestAssociateChainContinues(t *testing.T) {
 	}
 	user, _ := NewUserDict(filepath.Join(t.TempDir(), "u.json"))
 	s := NewSession(d, user)
-	s.Input("dazi")
+	s.Input("dazi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestAssociateSyllablesUseEngineRecord(t *testing.T) {
 		t.Fatalf("构造词库失败: %v", err)
 	}
 	s := NewSession(d, nil)
-	s.Input("ceshi")
+	s.Input("ceshi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestAssociateSyllablesUseEngineRecord(t *testing.T) {
 	}
 	// 反向：壳传正确音节数组时结果必须一致（正确路径不被反噬）
 	s.Reset()
-	s.Input("ceshi")
+	s.Input("ceshi", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestSelectPrefixProgressive(t *testing.T) {
 	s := NewSession(d, user)
 
 	// 打长串，选「今天」（ jin'tian 词条，两音节）
-	s.Input("jintianwochi leyidawan")
+	s.Input("jintianwochi leyidawan", false)
 	comp, committed, err := s.SelectPrefix(0)
 	if err != nil {
 		t.Fatalf("SelectPrefix 失败: %v", err)
@@ -436,8 +436,8 @@ func TestSelectPrefixProgressive(t *testing.T) {
 
 	// 剩余串选「吃了一碗」（词组路径或逐段）
 	s.Reset()
-	s.Input("chi leyidawan")
-	comp, _ = s.Input("")
+	s.Input("chi leyidawan", false)
+	comp, _ = s.Input("", false)
 	if len(comp.Candidates) == 0 {
 		t.Fatal("剩余串应有候选")
 	}

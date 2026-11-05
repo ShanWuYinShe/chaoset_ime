@@ -50,7 +50,7 @@ func TestBuildControllerUnixSocket(t *testing.T) {
 	}
 	defer closeFn()
 
-	comp, err := ctrl.Input("nihao")
+	comp, err := ctrl.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("经 Unix socket 组词失败: %v", err)
 	}

@@ -94,11 +94,12 @@ class Session {
 public:
     explicit Session(Transport& t) : t_(t) {}
 
-    // 处理输入。halfWidth 是壳本地持有的全/半角标点状态，随每次 input 下发
-    // （IPC 可选字段 "half"）：双拼 dpPending==0 的 ';' 会走引擎 Punct 语义，
-    // 宽度必须用本次壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点
-    // （1 键瞬态，2026-10-31 修复）。默认 false 仅供核心层测试的旧调用。
-    Comp input(const std::string& text, bool halfWidth = false);
+    // 处理输入。halfWidth 是壳持有的全/半角标点状态，随每次请求下发
+    // （IPC 字段 "half"）：双拼 dpPending==0 的 ';' 会走引擎 Punct 语义，
+    // 宽度必须用本次壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点。
+    // **必填、无默认值**：daemon 不保存该状态（2026-11-05），壳是唯一真源，
+    // 调用方必须显式传宽度，避免漏传时静默退化成全角。
+    Comp input(const std::string& text, bool halfWidth);
     Comp backspace();
     // 按音节回退（Alt+Backspace，对齐 macOS ⌥⌫ 与引擎 BackspaceWord，2026-10-31）。
     Comp backspaceWord();
@@ -112,8 +113,8 @@ public:
     // input/preedit/candidates=剩余），失败（通信/越界）返回 false。
     bool selectPrefix(int index, Comp* out);
     // 标点键：daemon 侧统一映射中文标点（组词中先上屏首选候选）。
-    // 标点键提交；halfWidth 由壳本地持有并随请求下发（2026-10-29 起
-    // 全/半角开关不再经 daemon 往返，daemon 只按状态产出标点文本）。
+    // halfWidth 由壳持有并随每次请求下发，daemon 只按该参数产出文本、
+    // 不保存任何副本（2026-11-05）。
     bool punct(const std::string& key, bool halfWidth, std::string* committed);
     // 词组联想：按上屏词音节查续接词组（响应结构与 Composition 同构，
     // candidates 为联想列表）；通信失败返回 ok=false。

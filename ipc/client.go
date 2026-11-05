@@ -94,16 +94,9 @@ func (c *Client) callLocked(method string, params any, result any) error {
 	return nil
 }
 
-func (c *Client) Input(text string) (engine.Composition, error) {
-	var comp engine.Composition
-	err := c.call("input", map[string]string{"text": text}, &comp)
-	return comp, err
-}
-
-// InputWithHalfWidth 与 engine.Session.InputWithHalfWidth 对应：把壳侧的
-// 全/半角标点状态随 input 一起下发。双拼模式下 ';' 经 input 路径产生标点
-// 时，引擎必须用本次壳状态而不是上一次 punct 请求留下的旧值（2026-10-31）。
-func (c *Client) InputWithHalfWidth(text string, halfWidth bool) (engine.Composition, error) {
+// Input 带全/半角标点状态处理输入（宽度只对本次请求生效，daemon 不保存）。
+// 双拼模式下 ';' 经 input 路径产生标点时，引擎必须用本次壳状态。
+func (c *Client) Input(text string, halfWidth bool) (engine.Composition, error) {
 	var comp engine.Composition
 	err := c.call("input", map[string]any{"text": text, "half": halfWidth}, &comp)
 	return comp, err
@@ -163,11 +156,12 @@ func (c *Client) CommitRaw() (string, error) {
 
 // Punct 提交一个标点键：组词中先上屏首选候选，随后输出映射后的
 // 中文标点；空组词直接输出中文标点（映射规则见 engine.Session.Punct）。
-func (c *Client) Punct(key string) (string, error) {
+// Punct 提交标点键；halfWidth 随请求下发（daemon 不保存该状态）。
+func (c *Client) Punct(key string, halfWidth bool) (string, error) {
 	var out struct {
 		Committed string `json:"committed"`
 	}
-	if err := c.call("punct", map[string]string{"key": key}, &out); err != nil {
+	if err := c.call("punct", map[string]any{"key": key, "half": halfWidth}, &out); err != nil {
 		return "", err
 	}
 	return out.Committed, nil

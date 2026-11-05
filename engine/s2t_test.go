@@ -49,7 +49,7 @@ func TestSessionTraditional(t *testing.T) {
 
 	// 关闭：简体（单段输入只出单字，用完整全拼验证词条转换）
 	s := NewSession(dict, nil)
-	comp, _ := s.Input("zhongguo")
+	comp, _ := s.Input("zhongguo", false)
 	if !hasCand(comp, "中国") {
 		t.Fatalf("关闭繁体应输出 中国, 得到 %v", comp.Candidates)
 	}
@@ -57,7 +57,7 @@ func TestSessionTraditional(t *testing.T) {
 	// 开启：候选与上屏均为繁体
 	s2 := NewSession(dict, nil)
 	s2.SetTraditional(true)
-	comp, err = s2.Input("zhongguo")
+	comp, err = s2.Input("zhongguo", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSessionTraditional(t *testing.T) {
 	// 时光 → 時光（时/光 均无歧义）
 	s3 := NewSession(dict, nil)
 	s3.SetTraditional(true)
-	comp, err = s3.Input("shiguang")
+	comp, err = s3.Input("shiguang", false)
 	if !hasCand(comp, "時光") {
 		t.Fatalf("应输出 時光, 得到 %v", comp.Candidates)
 	}

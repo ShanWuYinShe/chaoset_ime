@@ -18,7 +18,7 @@ func TestPartialTailFallsBackToCompletePrefix(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -46,13 +46,13 @@ func TestPartialTailFallsBackToCompletePrefix(t *testing.T) {
 // 回退候选不能压过正常匹配：完整输入时首选仍是精确匹配的词。
 func TestBackoffDoesNotOutrankExactMatch(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	comp, _ := s.Input("jingchang")
+	comp, _ := s.Input("jingchang", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "经常" {
 		t.Fatalf("jingchang 第一候选应为「经常」，实际 %+v", comp.Candidates)
 	}
 	// 单音节输入不应被回退逻辑影响
 	s.Reset()
-	comp, _ = s.Input("jing")
+	comp, _ = s.Input("jing", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "经" {
 		t.Fatalf("jing 第一候选应为「经」，实际 %+v", comp.Candidates)
 	}
@@ -62,7 +62,7 @@ func TestBackoffDoesNotOutrankExactMatch(t *testing.T) {
 // 引擎侧逐字符回退（一次退一个字母），壳侧据 input 是否为空决定放行与否。
 func TestBackspaceDeletesOneCharAtATime(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	s.Input("jingchang")
+	s.Input("jingchang", false)
 	want := []string{"jingchan", "jingcha", "jingch", "jingc", "jing", "jin", "ji", "j"}
 	for i, exp := range want {
 		comp, err := s.Backspace()
@@ -86,7 +86,7 @@ func TestBackspaceDeletesOneCharAtATime(t *testing.T) {
 // 无候选状态下的组词仍可正常退格（不应残留"冻结"的会话）。
 func TestBackspaceWorksWhenNoCandidates(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	s.Input("zhzxq") // 无候选
+	s.Input("zhzxq", false) // 无候选
 	comp, _ := s.Backspace()
 	if comp.Input != "zhzx" {
 		t.Fatalf("退格后 input = %q, 期望 zhzx", comp.Input)
@@ -101,7 +101,7 @@ func TestBackspaceWordSyllableRollback(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 
 	// 1. 无撇号多音节：nihaoma -> nihao -> ni -> 空
-	s.Input("nihaoma")
+	s.Input("nihaoma", false)
 	comp, err := s.BackspaceWord()
 	if err != nil || comp.Input != "nihao" {
 		t.Fatalf("BackspaceWord 1 期望 nihao, 得到 %q (err=%v)", comp.Input, err)
@@ -117,7 +117,7 @@ func TestBackspaceWordSyllableRollback(t *testing.T) {
 
 	// 2. 显式撇号多音节：wo'men'de -> wo'men -> wo -> 空
 	s.Reset()
-	s.Input("wo'men'de")
+	s.Input("wo'men'de", false)
 	comp, _ = s.BackspaceWord()
 	if comp.Input != "wo'men" {
 		t.Fatalf("BackspaceWord 带撇号 1 期望 wo'men, 得到 %q", comp.Input)
@@ -133,7 +133,7 @@ func TestBackspaceWordSyllableRollback(t *testing.T) {
 
 	// 3. 末段残缺声母：nihaox -> nihao
 	s.Reset()
-	s.Input("nihaox")
+	s.Input("nihaox", false)
 	comp, _ = s.BackspaceWord()
 	if comp.Input != "nihao" {
 		t.Fatalf("BackspaceWord 末段残缺 期望 nihao, 得到 %q", comp.Input)

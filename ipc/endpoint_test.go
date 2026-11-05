@@ -39,7 +39,7 @@ func TestEndpointUnixRoundTrip(t *testing.T) {
 	if err := client.Ping(); err != nil {
 		t.Fatalf("Ping 失败: %v", err)
 	}
-	comp, err := client.Input("nihao")
+	comp, err := client.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

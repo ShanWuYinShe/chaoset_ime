@@ -51,7 +51,7 @@ func TestServerClientRoundTrip(t *testing.T) {
 		t.Fatalf("Ping 失败: %v", err)
 	}
 
-	comp, err := client.Input("nihao")
+	comp, err := client.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -112,10 +112,10 @@ func TestServerPunct(t *testing.T) {
 	}
 	defer client.Close()
 
-	if _, err := client.Input("nihao"); err != nil {
+	if _, err := client.Input("nihao", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
-	committed, err := client.Punct(",")
+	committed, err := client.Punct(",", false)
 	if err != nil {
 		t.Fatalf("Punct 失败: %v", err)
 	}
@@ -123,14 +123,14 @@ func TestServerPunct(t *testing.T) {
 		t.Fatalf("组词中 Punct = %q, 期望 你好，", committed)
 	}
 
-	if committed, err = client.Punct("."); err != nil {
+	if committed, err = client.Punct(".", false); err != nil {
 		t.Fatalf("Punct 失败: %v", err)
 	}
 	if committed != "。" {
 		t.Fatalf("空组词 Punct = %q, 期望 。", committed)
 	}
 
-	if _, err := client.Punct("@"); err == nil {
+	if _, err := client.Punct("@", false); err == nil {
 		t.Fatal("未知标点应返回业务错误")
 	}
 
@@ -167,25 +167,24 @@ func TestServerInputHalfWidth(t *testing.T) {
 	defer client.Close()
 
 	// 半角：'；' 键应原样上屏 ASCII ';'
-	comp, err := client.InputWithHalfWidth(";", true)
+	comp, err := client.Input(";", true)
 	if err != nil {
-		t.Fatalf("InputWithHalfWidth(半角) 失败: %v", err)
+		t.Fatalf("Input(半角) 失败: %v", err)
 	}
 	if comp.Committed != ";" {
 		t.Fatalf("半角模式 ';' 上屏 = %q, 期望 \";\"", comp.Committed)
 	}
 
-	// 全角：应上屏中文「；」
-	comp, err = client.InputWithHalfWidth(";", false)
+	// 全角：应上屏中文「；」——宽度只对本次请求生效，不残留上一次的半角
+	comp, err = client.Input(";", false)
 	if err != nil {
-		t.Fatalf("InputWithHalfWidth(全角) 失败: %v", err)
+		t.Fatalf("Input(全角) 失败: %v", err)
 	}
 	if comp.Committed != "；" {
 		t.Fatalf("全角模式 ';' 上屏 = %q, 期望「；」", comp.Committed)
 	}
 
-	// 旧客户端（不带 half）保持会话内旧状态：上一步刚设为全角，仍出「；」
-	comp, err = client.Input(";")
+	comp, err = client.Input(";", false)
 	if err != nil {
 		t.Fatalf("旧客户端 Input(\";\") 失败: %v", err)
 	}
@@ -298,11 +297,11 @@ func TestServerConcurrentAccess(t *testing.T) {
 		go func(i int, c *Client) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				c.Input("nihao")
+				c.Input("nihao", false)
 				c.Select(0)
-				c.Input("shi")
-				c.Punct(",")
-				c.Input("zhong")
+				c.Input("shi", false)
+				c.Punct(",", false)
+				c.Input("zhong", false)
 				c.Select(0)
 				_, _ = c.UserStats()
 				_, _ = c.UserExport(j%2 == 0)
@@ -343,7 +342,7 @@ func TestCommitRaw(t *testing.T) {
 	}
 	defer client.Close()
 
-	if _, err := client.Input("nizaiganma"); err != nil {
+	if _, err := client.Input("nizaiganma", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 
@@ -379,7 +378,7 @@ func TestBackspaceWord(t *testing.T) {
 	}
 	defer client.Close()
 
-	if _, err := client.Input("nihaoma"); err != nil {
+	if _, err := client.Input("nihaoma", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 
@@ -449,7 +448,7 @@ func TestSelectPrefixProgressive(t *testing.T) {
 
 	// 打长串 jin'tian'wo'chi'le'yi'da'wan，逐段渐进上屏（引擎不做 DP 拼合
 	// 造词，候选只能来自词典已有词；这里逐段选 今天/我/吃/了/一大碗）。
-	comp, err := client.Input("jintianwochi leyidawan")
+	comp, err := client.Input("jintianwochi leyidawan", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

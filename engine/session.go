@@ -57,7 +57,9 @@ type Composition struct {
 // Controller 是会话的统一操作接口。本地 Session 与 IPC Client 都实现它，
 // CLI 与未来的平台壳只面对这一层，切换本地/远端无需改调用方。
 type Controller interface {
-	Input(text string) (Composition, error)
+	// Input 追加输入。halfWidth 是壳的全/半角标点状态，只对本次调用生效
+	// （引擎不保存该状态——壳是唯一真源，见 Session 注释）。
+	Input(text string, halfWidth bool) (Composition, error)
 	Backspace() (Composition, error)
 	// BackspaceWord 逐词/逐音节回退：删除末尾的一个音节或词段。
 	BackspaceWord() (Composition, error)
@@ -68,7 +70,7 @@ type Controller interface {
 	SelectPrefix(index int) (Composition, string, error)
 	// Punct 提交一个标点键：组词中先上屏首选候选（无候选的残缺输入
 	// 丢弃），随后输出映射后的中文标点；空组词直接输出中文标点。
-	Punct(key string) (string, error)
+	Punct(key string, halfWidth bool) (string, error)
 	// NextPage / PrevPage 翻动候选页：组词中移动页码并返回当前页组成
 	// 状态；空组词为无操作。页码在边界钳制，不回绕。
 	NextPage() (Composition, error)
@@ -147,7 +149,15 @@ type Session struct {
 
 	fuzzy bool // 模糊音：查询时展开声母/韵母等价音节（默认关闭）
 
-	halfWidth bool // 半角模式：标点键原样输出（默认全角）
+	// 注意：**没有 halfWidth 字段**。全/半角是壳的 UI 开关，唯一真源在壳
+	// （macOS/Windows/Linux 各自本地持有），引擎每处理一次请求就接收一次该
+	// 参数并按它产出文本，不保存任何副本（2026-11-05 架构收敛）。
+	//
+	// 为什么删干净而不是留镜像：存态就必须“同步”，而同步总有漏的路径——
+	// 旧实现的 SetHalfWidth 只在 punct/input 请求里被调用，任何一次未携带
+	// 该字段的请求都会让 daemon 用上一轮残留值出标点（2026-10-30 记录的
+	// 「刚切全/半角就单按 ';' 按旧宽度出标点」1 键瞬态）。纯参数化后这种
+	// 不同步在结构上不可能发生。
 
 	traditional bool // 繁体输出：候选词经简繁映射（默认关闭，见 s2t.go）
 
@@ -179,40 +189,6 @@ func (s *Session) SetFuzzy(on bool) { s.fuzzy = on }
 // 须在首次查询前设置。
 func (s *Session) SetTraditional(on bool) { s.traditional = on }
 
-// ToggleHalfWidth 切换全角/半角标点模式，返回切换后的状态
-// （true = 半角：标点键原样输出 ASCII）。
-// 2026-10-29 起壳侧改为本地持有开关并经 punct 请求下发（SetHalfWidth），
-// 本方法仅供测试与既有调用方过渡使用。
-func (s *Session) ToggleHalfWidth() bool {
-	s.halfWidth = !s.halfWidth
-	s.resetPunctCycle()
-	return s.halfWidth
-}
-
-// SetHalfWidth 由壳直接下发半角标点状态（2026-10-29 起：全/半角开关归壳
-// 本地持有，快捷键切换不再与 daemon 往返；daemon 只在标点请求里被动接收
-// 该状态，只负责按状态产出标点文本——daemon 不拥有 UI 开关）。
-func (s *Session) SetHalfWidth(on bool) {
-	s.halfWidth = on
-	s.resetPunctCycle()
-}
-
-// HalfWidth 报告当前是否为半角标点模式。
-func (s *Session) HalfWidth() bool { return s.halfWidth }
-
-// InputWithHalfWidth 先同步壳侧的全/半角标点状态，再处理输入。
-//
-// 为什么需要单独一个方法：全/半角开关归壳本地持有，此前壳只在 punct 请求里
-// 下发 halfWidth；双拼模式下 ';' 经 input 路径处理（dpPending==0 时按
-// Punct(";") 语义上屏「首选词+分号」），引擎此时用的是上一次 punct 请求
-// 留下的旧状态——刚切完全/半角就单按 ';'，可能按旧宽度出标点（1 键瞬态，
-// 2026-10-30 记录、2026-10-31 修复）。壳现在每次 input 都带 half 字段，
-// 引擎先同步再处理，三端双拼 ';' 的标点宽度与全/半角开关严格一致。
-func (s *Session) InputWithHalfWidth(text string, halfWidth bool) (Composition, error) {
-	s.halfWidth = halfWidth
-	return s.Input(text)
-}
-
 func NewSession(dict *Dictionary, user *UserDict) *Session {
 	return &Session{dict: dict, user: user}
 }
@@ -228,7 +204,11 @@ func NewSession(dict *Dictionary, user *UserDict) *Session {
 //     文档。壳不得自己把 ';' 当标点，否则组词中的首选词永远上不了屏。
 //
 // 全拼模式行为不变（';' 被过滤，标点由壳走 Punct 请求）。
-func (s *Session) Input(text string) (Composition, error) {
+// Input 追加输入。halfWidth 是壳的全/半角标点状态，只对本次调用生效
+// （2026-11-05：改为显式参数，引擎不再保存该状态——壳是唯一真源）。
+// 原因：双拼模式下 dpPending==0 的 ';' 会走 Punct 语义产生标点，必须用
+// 本次请求的宽度；存态方案在“某次请求没带该字段”时会用残留值出标点。
+func (s *Session) Input(text string, halfWidth bool) (Composition, error) {
 	// 从空组词重新开始：上一轮渐进上屏的未完成分段不能带入本轮组词
 	// （否则退格到空后再打新词，会被拼成伪整句习惯，见 resetSeqIfEmpty）。
 	if s.input == "" {
@@ -246,7 +226,8 @@ func (s *Session) Input(text string) (Composition, error) {
 				// 同键循环与「组词中先上屏首选」），把上屏文本放进 Committed。
 				// 不处理同一 text 中 ';' 之后的字符：Punct 已结束本轮组词，
 				// 壳按单键转发 ';'，批量文本的后续内容不属于本次上屏。
-				out, err := s.Punct(";")
+				// 宽度用本次请求的 halfWidth：双拼 ';' 的标点必须与壳开关一致。
+				out, err := s.Punct(";", halfWidth)
 				if err != nil {
 					return s.Compose(), err
 				}

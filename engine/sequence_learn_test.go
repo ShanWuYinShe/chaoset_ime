@@ -95,7 +95,7 @@ func TestProgressiveSequenceLearned(t *testing.T) {
 	// 输入条件：整串没有整词候选（词库里只有 今天/星期一/今），用户按回退
 	// 前缀「今天」渐进上屏，再选剩余串首选「星期一」——这是 2026-11-01 移除
 	// DP 拼合造词后拼出整句的唯一路径（不存在「一键整句」候选）。
-	s.Input("jintianxingqiyi")
+	s.Input("jintianxingqiyi", false)
 	idx := findCandidate(t, s, "今天")
 	comp, committed, err := s.SelectPrefix(idx)
 	if err != nil || committed != "今天" {
@@ -132,19 +132,19 @@ func TestProgressiveSequenceLearned(t *testing.T) {
 
 	// 下一轮完整输入：整句候选带学习标记排第一（用户习惯被利用）。
 	s2 := NewSession(d, u)
-	comp, _ = s2.Input("jintianxingqiyi")
+	comp, _ = s2.Input("jintianxingqiyi", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天星期一" || !comp.Candidates[0].FromUser {
 		t.Fatalf("学习后完整输入首选应为带 FromUser 的「今天星期一」，实际 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
 	}
 
 	// 反噬防护 1：部分输入不出现整句候选（不能整词贪婪匹配）。
 	s2.Reset()
-	comp, _ = s2.Input("jin")
+	comp, _ = s2.Input("jin", false)
 	if hasCandidate(collectCandidates(s2), "今天星期一") {
 		t.Fatalf("输入 jin 不应出现整句候选「今天星期一」: %+v", collectCandidates(s2))
 	}
 	s2.Reset()
-	comp, _ = s2.Input("jintian")
+	comp, _ = s2.Input("jintian", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天" {
 		t.Fatalf("输入 jintian 首选仍应是「今天」，实际 %+v", comp.Candidates)
 	}
@@ -169,7 +169,7 @@ func TestWholeSentenceSelectionLearnsSegments(t *testing.T) {
 	}
 	s := NewSession(d, u)
 
-	s.Input("jintianxingqiyi")
+	s.Input("jintianxingqiyi", false)
 	comp := s.Compose()
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天星期一" {
 		t.Fatalf("整句候选应为首页第一条，实际 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
@@ -203,14 +203,14 @@ func TestWholeSentenceSelectionLearnsSegments(t *testing.T) {
 
 	// 联想安全：上屏「今」不得剥出整句尾巴；上屏「今天」才续接「星期一」。
 	s2 := NewSession(d, u)
-	s2.Input("jin")
+	s2.Input("jin", false)
 	mustSelectText(t, s2, "今")
 	assoc := s2.Associate([]string{"jin"})
 	if hasCandidate(assoc, "天星期一") {
 		t.Fatalf("上屏「今」后联想不应出现整句尾巴「天星期一」: %+v", assoc)
 	}
 	s2.Reset()
-	s2.Input("jintian")
+	s2.Input("jintian", false)
 	mustSelectText(t, s2, "今天")
 	assoc = s2.Associate([]string{"jin", "tian"})
 	if !hasCandidate(assoc, "星期一") {
@@ -225,9 +225,9 @@ func TestPhraseEvolutionSegmentGating(t *testing.T) {
 	d := mustSeqDict(t)
 	for round := 0; round < 2; round++ {
 		s := NewSession(d, mustUserDict(t, path))
-		s.Input("jintian")
+		s.Input("jintian", false)
 		mustSelectText(t, s, "今天")
-		s.Input("tianqi")
+		s.Input("tianqi", false)
 		mustSelectText(t, s, "天气")
 	}
 	u := mustUserDict(t, path)
@@ -238,27 +238,27 @@ func TestPhraseEvolutionSegmentGating(t *testing.T) {
 
 	// 完整输入：整词候选照常出现（学到的词组要能用）。
 	s := NewSession(d, u)
-	comp, _ := s.Input("jintiantianqi")
+	comp, _ := s.Input("jintiantianqi", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天天气" {
 		t.Fatalf("完整输入 jintiantianqi 首选应为「今天天气」，实际 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
 	}
 	// 部分输入：不出现整词候选（只在完整输入时使用）。
 	s.Reset()
-	comp, _ = s.Input("jintian")
+	comp, _ = s.Input("jintian", false)
 	if hasCandidate(collectCandidates(s), "今天天气") {
 		t.Fatalf("输入 jintian 不应出现整词候选「今天天气」: %+v", collectCandidates(s))
 	}
 
 	// 联想安全：今 → 不弹 天天气；今天 → 弹 天气。
 	s.Reset()
-	s.Input("jin")
+	s.Input("jin", false)
 	mustSelectText(t, s, "今")
 	assoc := s.Associate([]string{"jin"})
 	if hasCandidate(assoc, "天天气") {
 		t.Fatalf("上屏「今」后联想不应出现整词尾巴「天天气」: %+v", assoc)
 	}
 	s.Reset()
-	s.Input("jintian")
+	s.Input("jintian", false)
 	mustSelectText(t, s, "今天")
 	assoc = s.Associate([]string{"jin", "tian"})
 	if !hasCandidate(assoc, "天气") {
@@ -298,26 +298,26 @@ func TestLegacyUserDictSegmentInference(t *testing.T) {
 	s := NewSession(d, u)
 
 	// 完整输入：旧的整句记录仍作为整句候选可用。
-	comp, _ := s.Input("jintianxingqiyi")
+	comp, _ := s.Input("jintianxingqiyi", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "今天星期一" {
 		t.Fatalf("旧整句记录在完整输入时仍应是首选，实际 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
 	}
 	// 部分输入：不出现整句候选。
 	s.Reset()
-	s.Input("jintian")
+	s.Input("jintian", false)
 	if hasCandidate(collectCandidates(s), "今天星期一") || hasCandidate(collectCandidates(s), "今天天气") {
 		t.Fatalf("旧数据在部分输入时也不得整词匹配: %+v", collectCandidates(s))
 	}
 	// 联想：今 → 无尾巴；今天 → 分段边界续接。
 	s.Reset()
-	s.Input("jin")
+	s.Input("jin", false)
 	mustSelectText(t, s, "今")
 	assoc := s.Associate([]string{"jin"})
 	if hasCandidate(assoc, "天星期一") || hasCandidate(assoc, "天天气") {
 		t.Fatalf("旧数据上屏「今」后联想不应出现整词尾巴: %+v", assoc)
 	}
 	s.Reset()
-	s.Input("jintian")
+	s.Input("jintian", false)
 	mustSelectText(t, s, "今天")
 	assoc = s.Associate([]string{"jin", "tian"})
 	if !hasCandidate(assoc, "星期一") {
@@ -335,7 +335,7 @@ func TestLegacyUserDictSegmentInference(t *testing.T) {
 func TestSelectPrefixResetsPage(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	if _, err := s.Input("jintianxingqiyi"); err != nil {
+	if _, err := s.Input("jintianxingqiyi", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	// 长输入的首音节单字兜底有多页：翻到第 2 页再选，才能真正验证「回第 1 页」。
@@ -373,7 +373,7 @@ func TestSelectPrefixResetsPage(t *testing.T) {
 func TestSelectPrefixApostropheInput(t *testing.T) {
 	d := mustSeqDict(t)
 	s := NewSession(d, nil)
-	if _, err := s.Input("jin'tian'xing'qi'yi"); err != nil {
+	if _, err := s.Input("jin'tian'xing'qi'yi", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx := findCandidate(t, s, "今天")
@@ -401,7 +401,7 @@ func TestSelectPrefixApostropheInput(t *testing.T) {
 // 组词也不进入整句学习。
 func TestSelectPrefixAliasInput(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	if _, err := s.Input("xveshengwomen"); err != nil {
+	if _, err := s.Input("xveshengwomen", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx := findCandidate(t, s, "学生")
@@ -420,7 +420,7 @@ func TestSelectPrefixAliasInput(t *testing.T) {
 	}
 	// 反向：标准拼写输入的行为不变（归一匹配不得影响既有路径）
 	s2 := NewSession(mustCommonDict(t), nil)
-	if _, err := s2.Input("xueshengwomen"); err != nil {
+	if _, err := s2.Input("xueshengwomen", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx = findCandidate(t, s2, "学生")
@@ -439,7 +439,7 @@ func TestSelectPrefixAliasInput(t *testing.T) {
 func TestSelectPrefixFuzzyInput(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 	s.SetFuzzy(true)
-	if _, err := s.Input("zhengmewomen"); err != nil {
+	if _, err := s.Input("zhengmewomen", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx := findCandidate(t, s, "怎么")
@@ -460,7 +460,7 @@ func TestSelectPrefixFuzzyInput(t *testing.T) {
 // 匹配不能把不相关输入残留在组词里（保留旧兜底）。
 func TestSelectPrefixInitialsCandidateFallback(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	if _, err := s.Input("yb"); err != nil {
+	if _, err := s.Input("yb", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	idx := findCandidate(t, s, "一百")
@@ -590,7 +590,7 @@ func TestLegacySentenceTailBoundary(t *testing.T) {
 		t.Fatalf("加载旧版用户词典失败: %v", err)
 	}
 	s := NewSession(d, u)
-	s.Input("tian")
+	s.Input("tian", false)
 	mustSelectText(t, s, "天")
 	assoc := s.Associate([]string{"tian"})
 	if !hasCandidate(assoc, "星期一") {
@@ -620,7 +620,7 @@ func TestSeqSegsResetWhenCompositionRestarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "user.json")
 	u := mustUserDict(t, path)
 	s := NewSession(d, u)
-	s.Input("jintianxingqiyi")
+	s.Input("jintianxingqiyi", false)
 	idx := findCandidate(t, s, "今天")
 	if _, _, err := s.SelectPrefix(idx); err != nil {
 		t.Fatalf("渐进选「今天」失败: %v", err)
@@ -636,7 +636,7 @@ func TestSeqSegsResetWhenCompositionRestarts(t *testing.T) {
 	if s.Compose().Input != "" {
 		t.Fatalf("退格后组词应为空，实际 %q", s.Compose().Input)
 	}
-	s.Input("wo")
+	s.Input("wo", false)
 	idx = findCandidate(t, s, "我")
 	if _, committed, err := s.SelectPrefix(idx); err != nil || committed != "我" {
 		t.Fatalf("新组词选「我」失败: committed=%q err=%v", committed, err)
@@ -662,7 +662,7 @@ func TestSeqSegsResetWhenCompositionRestarts(t *testing.T) {
 //   - 页码回到 0（部分选择后的首屏候选可见）。
 func TestSelectPrefixPartialConsumeRecomposes(t *testing.T) {
 	s := NewSession(mustSeqDict(t), nil)
-	comp, err := s.Input("jin'tian'xing'qi'yi")
+	comp, err := s.Input("jin'tian'xing'qi'yi", false)
 	if err != nil {
 		t.Fatalf("输入失败: %v", err)
 	}

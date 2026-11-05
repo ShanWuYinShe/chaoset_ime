@@ -25,7 +25,7 @@ func mustJoinedDict(t *testing.T, rows ...string) *Dictionary {
 // collectAllCandidates 输入后收集全部分页候选。
 func collectAllCandidates(t *testing.T, s *Session, input string) []Candidate {
 	t.Helper()
-	s.Input(input)
+	s.Input(input, false)
 	comp := s.Compose()
 	for comp.Page > 0 {
 		comp, _ = s.PrevPage()

@@ -112,16 +112,16 @@ func TestDoublePinyinSession(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin(DPSchemeZRM)
 
-	comp, _ := s.Input("n")
+	comp, _ := s.Input("n", false)
 	if len(comp.Candidates) != 0 || comp.Input != "" {
 		t.Fatalf("首键暂存应为空组成: %+v", comp)
 	}
-	comp, _ = s.Input("i")
+	comp, _ = s.Input("i", false)
 	if comp.Input != "ni" {
 		t.Fatalf("成对后 Input = %q, 期望 ni", comp.Input)
 	}
-	comp, _ = s.Input("h")
-	comp, _ = s.Input("k")
+	comp, _ = s.Input("h", false)
+	comp, _ = s.Input("k", false)
 	if comp.Input != "nihao" || !hasCand(comp, "你好") {
 		t.Fatalf("nihao 应命中 你好: %+v", comp)
 	}
@@ -132,7 +132,7 @@ func TestDoublePinyinSession(t *testing.T) {
 		t.Fatalf("退格后 Input = %q, 期望 ni", comp.Input)
 	}
 	// 暂存首键的退格：清除暂存
-	s.Input("h")
+	s.Input("h", false)
 	comp, _ = s.Backspace()
 	if comp.Input != "ni" {
 		t.Fatalf("暂存退格后 Input = %q, 期望 ni", comp.Input)
@@ -140,20 +140,20 @@ func TestDoublePinyinSession(t *testing.T) {
 }
 
 // TestDoublePinyinSemicolonHalfWidth：双拼 dpPending==0 时 ';' 走 Punct 语义，
-// 标点宽度必须来自本次 input 下发的壳状态（InputWithHalfWidth），而不是上一次
+// 标点宽度必须来自本次 input 下发的壳状态（Input 的 halfWidth 参数），而不是上一次
 // punct 请求留下的旧值（2026-10-30 记录的 1 键瞬态）。
 func TestDoublePinyinSemicolonHalfWidth(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin(DPSchemeMSPY)
 
-	comp, err := s.InputWithHalfWidth(";", true)
+	comp, err := s.Input(";", true)
 	if err != nil {
 		t.Fatalf("半角 ';' 输入失败: %v", err)
 	}
 	if comp.Committed != ";" {
 		t.Fatalf("半角模式 ';' 应上屏 ASCII ';'，实际 %q", comp.Committed)
 	}
-	comp, err = s.InputWithHalfWidth(";", false)
+	comp, err = s.Input(";", false)
 	if err != nil {
 		t.Fatalf("全角 ';' 输入失败: %v", err)
 	}
@@ -192,12 +192,12 @@ func TestDoublePinyinKnownPairsFLYPY(t *testing.T) {
 func TestDoublePinyinSchemeValidation(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin("xiaohe") // 未知方案名（小鹤的合法名是 flypy）按关闭处理
-	comp, _ := s.Input("n")
+	comp, _ := s.Input("n", false)
 	if comp.Input != "n" {
 		t.Fatalf("未知方案应按关闭处理, Input = %q", comp.Input)
 	}
 	s.SetDoublePinyin("")
-	if comp := func() Composition { c, _ := s.Input("i"); return c }(); comp.Input != "ni" {
+	if comp := func() Composition { c, _ := s.Input("i", false); return c }(); comp.Input != "ni" {
 		t.Fatalf("关闭后应走全拼, Input = %q", comp.Input)
 	}
 }
@@ -207,7 +207,7 @@ func TestDoublePinyinSchemeValidation(t *testing.T) {
 func TestDoublePinyinWholeLineInput(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin(DPSchemeZRM)
-	comp, _ := s.Input("nihk") // 自然码：ni + hk(hao)
+	comp, _ := s.Input("nihk", false) // 自然码：ni + hk(hao)
 	if comp.Input != "nihao" {
 		t.Fatalf("zrm 整行 nihk 应解码为 nihao, Input = %q", comp.Input)
 	}
@@ -216,7 +216,7 @@ func TestDoublePinyinWholeLineInput(t *testing.T) {
 	}
 	f := NewSession(mustDict(t), nil)
 	f.SetDoublePinyin(DPSchemeFLYPY)
-	comp, _ = f.Input("nihc") // 小鹤：ni + hc(hao)，ao 在 c 键
+	comp, _ = f.Input("nihc", false) // 小鹤：ni + hc(hao)，ao 在 c 键
 	if comp.Input != "nihao" {
 		t.Fatalf("flypy 整行 nihc 应解码为 nihao, Input = %q", comp.Input)
 	}
@@ -242,8 +242,8 @@ func TestDoublePinyinInvalidPair(t *testing.T) {
 	}
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin(DPSchemeZRM)
-	s.Input(string(a))
-	comp, _ := s.Input(string(b))
+	s.Input(string(a), false)
+	comp, _ := s.Input(string(b), false)
 	if comp.Input != "" {
 		t.Fatalf("无效键码对 %c%c 应丢弃, Input = %q", a, b, comp.Input)
 	}
@@ -260,9 +260,9 @@ func TestDoublePinyinTruncateBackspaceAlignment(t *testing.T) {
 		keys += "ni"
 	}
 	for _, r := range keys {
-		s.Input(string(r))
+		s.Input(string(r), false)
 	}
-	comp, _ := s.Input("")
+	comp, _ := s.Input("", false)
 	runes := []rune(comp.Input)
 	if len(runes) > maxInputRunes {
 		t.Fatalf("输入应被截断到 %d 字符内, 实际 %d", maxInputRunes, len(runes))
@@ -274,7 +274,7 @@ func TestDoublePinyinTruncateBackspaceAlignment(t *testing.T) {
 			break
 		}
 	}
-	comp, _ = s.Input("")
+	comp, _ = s.Input("", false)
 	if comp.Input != "" {
 		t.Fatalf("连续退格后应清空, Input = %q", comp.Input)
 	}
@@ -312,14 +312,14 @@ func TestDoublePinyinSessionReachability(t *testing.T) {
 					t.Fatalf("%s 键码 %q 首键不是字母", scheme, code)
 				}
 				s.Reset()
-				comp, err := s.Input(string(code[0]))
+				comp, err := s.Input(string(code[0]), false)
 				if err != nil {
 					t.Fatalf("%s 键码 %q 首键输入失败: %v", scheme, code, err)
 				}
 				if comp.Input != "" {
 					t.Fatalf("%s 键码 %q 首键应暂存, Input = %q", scheme, code, comp.Input)
 				}
-				comp, err = s.Input(string(code[1]))
+				comp, err = s.Input(string(code[1]), false)
 				if err != nil {
 					t.Fatalf("%s 键码 %q 第二键输入失败: %v", scheme, code, err)
 				}
@@ -349,10 +349,10 @@ func TestDoublePinyinSessionMSPYIngKeys(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		if _, err := s.Input(string(c.keys[0])); err != nil {
+		if _, err := s.Input(string(c.keys[0]), false); err != nil {
 			t.Fatalf("%s 首键输入失败: %v", c.keys, err)
 		}
-		comp, err := s.Input(";")
+		comp, err := s.Input(";", false)
 		if err != nil {
 			t.Fatalf("%s 输入 ';' 失败: %v", c.keys, err)
 		}
@@ -372,14 +372,14 @@ func TestDoublePinyinSessionMSPYIngKeys(t *testing.T) {
 func TestDoublePinyinSessionSemicolonPunct(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	s.SetDoublePinyin(DPSchemeMSPY)
-	if _, err := s.Input("ni"); err != nil {
+	if _, err := s.Input("ni", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	// 单段输入现在只出单字；补 hk（mspy 的 hao）组成 nihao 再验上屏。
-	if _, err := s.Input("hk"); err != nil {
+	if _, err := s.Input("hk", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
-	comp, err := s.Input(";")
+	comp, err := s.Input(";", false)
 	if err != nil {
 		t.Fatalf("双拼 ';' 输入失败: %v", err)
 	}
@@ -389,18 +389,18 @@ func TestDoublePinyinSessionSemicolonPunct(t *testing.T) {
 	if comp.Input != "" || len(comp.Candidates) != 0 {
 		t.Fatalf("';' 上屏后组词应为空: %+v", comp)
 	}
-	comp, _ = s.Input(";") // 空组词：直接输出「；」
+	comp, _ = s.Input(";", false) // 空组词：直接输出「；」
 	if comp.Committed != "；" {
 		t.Fatalf("空组词 ';' 应上屏「；」, Committed = %q", comp.Committed)
 	}
-	s.SetHalfWidth(true) // 半角模式：原样输出 ASCII ';'
-	comp, _ = s.Input(";")
+	// 半角由**本次请求**携带（壳是唯一真源），不再改会话状态
+	comp, _ = s.Input(";", true)
 	if comp.Committed != ";" {
 		t.Fatalf("半角模式 ';' 应上屏 ASCII ';', Committed = %q", comp.Committed)
 	}
 	// 全拼模式行为不变：';' 仍被过滤，不经 Committed
 	f := NewSession(mustDict(t), nil)
-	comp, _ = f.Input("ni;")
+	comp, _ = f.Input("ni;", false)
 	if comp.Input != "ni" || comp.Committed != "" {
 		t.Fatalf("全拼模式 ';' 应被过滤: Input=%q Committed=%q", comp.Input, comp.Committed)
 	}
@@ -420,10 +420,10 @@ func TestCompositionShuangpinField(t *testing.T) {
 	if comp := s.Compose(); comp.Shuangpin != DPSchemeMSPY {
 		t.Fatalf("空组词路径 Shuangpin = %q, 期望 mspy", comp.Shuangpin)
 	}
-	if _, err := s.Input("n"); err != nil {
+	if _, err := s.Input("n", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
-	comp, err := s.Input("i")
+	comp, err := s.Input("i", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}

@@ -9,7 +9,7 @@ import (
 // 输入 nihao → 预编辑 ni'hao，第一候选「你好」。
 func TestComposeBasic(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, err := s.Input("nihao")
+	comp, err := s.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestComposeBasic(t *testing.T) {
 // xian 作为单段输入只出单字「先」；「西安」只能由显式 xi'an 匹配。
 func TestComposeSegmentationAmbiguity(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, _ := s.Input("xian")
+	comp, _ := s.Input("xian", false)
 	hasXian, hasXian0 := false, false
 	for _, c := range comp.Candidates {
 		switch c.Text {
@@ -42,7 +42,7 @@ func TestComposeSegmentationAmbiguity(t *testing.T) {
 // 撇号是强制音节边界：xi'an 只走 [xi an] 切分，仍应命中「西安」。
 func TestComposeApostropheForcesBoundary(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, _ := s.Input("xi'an")
+	comp, _ := s.Input("xi'an", false)
 	if comp.Preedit != "xi'an" {
 		t.Errorf("预编辑 = %q, 期望 xi'an", comp.Preedit)
 	}
@@ -60,7 +60,7 @@ func TestComposeApostropheForcesBoundary(t *testing.T) {
 // 打到一半（nih）→ 预编辑 ni'h，前缀匹配应命中「你好」。
 func TestComposeFragmentPrefix(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, _ := s.Input("nih")
+	comp, _ := s.Input("nih", false)
 	if comp.Preedit != "ni'h" {
 		t.Errorf("预编辑 = %q, 期望 ni'h", comp.Preedit)
 	}
@@ -78,7 +78,7 @@ func TestComposeFragmentPrefix(t *testing.T) {
 // 非 [a-z'] 字符被过滤，大写归一化。
 func TestInputFiltersNonLetters(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, _ := s.Input("NI1hao!?")
+	comp, _ := s.Input("NI1hao!?", false)
 	if comp.Input != "nihao" {
 		t.Fatalf("过滤后输入 = %q, 期望 nihao", comp.Input)
 	}
@@ -89,7 +89,7 @@ func TestInputFiltersNonLetters(t *testing.T) {
 
 func TestBackspaceAndReset(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	s.Input("nihao")
+	s.Input("nihao", false)
 	comp, _ := s.Backspace()
 	if comp.Input != "niha" {
 		t.Fatalf("退格后输入 = %q, 期望 niha", comp.Input)
@@ -107,7 +107,7 @@ func TestBackspaceAndReset(t *testing.T) {
 // 完全无法切分的输入：无候选、预编辑回退为原始输入。
 func TestComposeUnsegmentable(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
-	comp, _ := s.Input("zzz")
+	comp, _ := s.Input("zzz", false)
 	if len(comp.Candidates) != 0 {
 		t.Fatalf("zzz 不应有候选，得到 %+v", comp.Candidates)
 	}
@@ -122,7 +122,7 @@ func TestSelectLearnsAndReranks(t *testing.T) {
 	d := mustDict(t)
 
 	s1 := NewSession(d, mustUserDict(t, udPath))
-	comp, _ := s1.Input("shishi")
+	comp, _ := s1.Input("shishi", false)
 	if comp.Candidates[0].Text != "实施" {
 		t.Fatalf("首词频排序应「实施」在前，得到 %+v", comp.Candidates)
 	}
@@ -142,7 +142,7 @@ func TestSelectLearnsAndReranks(t *testing.T) {
 
 	// 新会话加载同一份用户词典：试试(10+500) 应超过 实施(60)
 	s2 := NewSession(d, mustUserDict(t, udPath))
-	comp2, _ := s2.Input("shishi")
+	comp2, _ := s2.Input("shishi", false)
 	if comp2.Candidates[0].Text != "试试" {
 		t.Fatalf("学习后「试试」应排第一，得到 %+v", comp2.Candidates)
 	}
@@ -182,7 +182,7 @@ func TestLongPinyinNoExponentialFreeze(t *testing.T) {
 	for _, tc := range testCases {
 		s.Reset()
 		t0 := time.Now()
-		comp, err := s.Input(tc)
+		comp, err := s.Input(tc, false)
 		duration := time.Since(t0)
 		if err != nil {
 			t.Fatalf("Input(%q) 出错: %v", tc, err)
@@ -202,7 +202,7 @@ func TestLongPinyinNoExponentialFreeze(t *testing.T) {
 func TestAssociateSortedByFreq(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	s.Input("hao")
+	s.Input("hao", false)
 	if _, err := s.Select(0); err != nil {
 		t.Fatalf("Select 失败: %v", err)
 	}

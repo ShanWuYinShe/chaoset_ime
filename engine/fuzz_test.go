@@ -41,7 +41,7 @@ func FuzzSessionInputPath(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, text string) {
 		s := NewSession(dict, nil)
-		if _, err := s.Input(text); err != nil {
+		if _, err := s.Input(text, false); err != nil {
 			return // 输入被拒（如含非法字符）是合法行为，不继续
 		}
 		_ = s.Compose()
@@ -57,7 +57,7 @@ func FuzzSessionInputPath(f *testing.F) {
 		_, _ = s.Select(999)
 		_, _, _ = s.SelectPrefix(0)
 		_ = s.Associate([]string{"ni", "hao"})
-		_, _ = s.Punct(",")
+		_, _ = s.Punct(",", false)
 		_, _ = s.Reset()
 	})
 }
@@ -82,13 +82,14 @@ func FuzzSessionModes(f *testing.F) {
 		case 3:
 			s.SetDoublePinyin("flypy")
 		}
-		if _, err := s.Input(text); err != nil {
+		if _, err := s.Input(text, false); err != nil {
 			return
 		}
 		_ = s.Compose()
 		_, _ = s.Backspace()
 		_, _ = s.Select(0)
-		_ = s.ToggleHalfWidth()
-		_, _ = s.Punct(";")
+		// 宽度是纯参数：fuzz 里两种宽度交替调用，锁住「不残留」不被破坏
+		_, _ = s.Punct(";", len(text)%2 == 0)
+		_, _ = s.Punct(";", false)
 	})
 }

@@ -22,7 +22,7 @@ func TestTypoCorrectionFixesCommonMistakes(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -54,7 +54,7 @@ func TestTypoCorrectionQWERTYNeighbors(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -90,7 +90,7 @@ func TestTypoCorrectionDoesNotDisturbNormalInputs(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, _ := s.Input(c.input)
+		comp, _ := s.Input(c.input, false)
 		if len(comp.Candidates) == 0 {
 			t.Fatalf("%s: 应有候选", c.input)
 		}
@@ -136,7 +136,7 @@ func TestTypoCorrectionPrefixConsumesWholeInput(t *testing.T) {
 	d := mustCommonDict(t)
 	for _, c := range cases {
 		s := NewSession(d, nil)
-		if _, err := s.Input(c.input); err != nil {
+		if _, err := s.Input(c.input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		idx := findCandidate(t, s, c.want)
@@ -170,7 +170,7 @@ func TestSelectPrefixKeepsLegitMixedPartialConsumption(t *testing.T) {
 	d := mustCommonDict(t)
 	for _, c := range cases {
 		s := NewSession(d, nil)
-		if _, err := s.Input(c.input); err != nil {
+		if _, err := s.Input(c.input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		idx := findCandidate(t, s, c.want)

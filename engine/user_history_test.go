@@ -82,7 +82,7 @@ func TestUserHistoryPriorityMixed(t *testing.T) {
 	u := mustUserDict(t, filepath.Join(t.TempDir(), "u.json"))
 
 	learn := NewSession(d, u)
-	if _, err := learn.Input("womende"); err != nil {
+	if _, err := learn.Input("womende", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, _, err := learn.SelectPrefix(findCandidate(t, learn, "我们")); err != nil {
@@ -151,7 +151,7 @@ func hasEntryWithWordAndSylls(entries []*Entry, want *Entry) bool {
 func TestAssociateCandidatesNoComposition(t *testing.T) {
 	d := mustCommonDict(t)
 	s := NewSession(d, nil)
-	if _, err := s.Input("hao"); err != nil {
+	if _, err := s.Input("hao", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, err := s.Select(0); err != nil {
@@ -180,7 +180,7 @@ func TestAssociateUserLearnedTailIsAllowed(t *testing.T) {
 		t.Fatalf("BumpWord 失败: %v", err)
 	}
 	s := NewSession(d, u)
-	if _, err := s.Input("da"); err != nil {
+	if _, err := s.Input("da", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, err := s.Select(0); err != nil {

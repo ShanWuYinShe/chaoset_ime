@@ -149,19 +149,17 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "input":
 		var p struct {
 			Text string `json:"text"`
-			// Half 可选：壳侧全/半角标点状态（2026-10-31 起每次 input 下发）。
-			// nil = 旧壳未提供，保持会话内旧状态（向后兼容）；非 nil 时先同步
-			// 再处理——双拼 dpPending==0 的 ';' 走 Punct 语义，宽度必须用本次
-			// 壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点（1 键瞬态）。
+			// Half 可选：壳侧全/半角标点状态，**本次请求内生效，daemon 不保存**
+			// （2026-11-05 起：壳是唯一真源，daemon 不再持有镜像状态）。
+			// nil = 旧壳未携带，按全角处理（历史默认），不回落到会话残留值。
 			Half *bool `json:"half"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, fmt.Errorf("解析 input 参数失败: %w", err)
 		}
-		if p.Half != nil {
-			return sess.InputWithHalfWidth(p.Text, *p.Half)
-		}
-		return sess.Input(p.Text)
+		// 宽度随请求下发（壳是唯一真源）：nil = 旧壳未携带，按全角处理。
+		// 引擎不保存该状态，因此不存在「上次残留」的可能。
+		return sess.Input(p.Text, p.Half != nil && *p.Half)
 	case "backspace":
 		return sess.Backspace()
 	case "backspaceWord":
@@ -248,18 +246,16 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "punct":
 		var p struct {
 			Key string `json:"key"`
-			// Half 由壳随请求下发（壳本地持有全/半角开关，2026-10-29 起
-			// 快捷键切换不再与 daemon 往返）。指针区分「旧壳未携带」与
-			// 显式值：nil 时保持会话现状态。
+			// Half 由壳随请求下发（壳本地持有全/半角开关）。指针区分
+			// 「旧壳未携带」与「显式 false」：nil 时按全角处理（历史默认），
+			// 不再回落到任何会话状态——daemon 不保存该状态（2026-11-05）。
 			Half *bool `json:"half"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, fmt.Errorf("解析 punct 参数失败: %w", err)
 		}
-		if p.Half != nil {
-			sess.SetHalfWidth(*p.Half)
-		}
-		text, err := sess.Punct(p.Key)
+		half := p.Half != nil && *p.Half
+		text, err := sess.Punct(p.Key, half)
 		if err != nil {
 			return nil, err
 		}

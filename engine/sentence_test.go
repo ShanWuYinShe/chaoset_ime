@@ -72,7 +72,7 @@ func TestComposeCandidatesOnlyFromDict(t *testing.T) {
 	s := NewSession(d, nil)
 	for _, in := range inputs {
 		s.Reset()
-		comp, err := s.Input(in)
+		comp, err := s.Input(in, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", in, err)
 		}
@@ -107,7 +107,7 @@ func TestComposedCandidatesStayLowPriority(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -197,7 +197,7 @@ func TestProgressiveSelectionReconstructsLongInput(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := NewSession(d, nil)
-		if _, err := s.Input(c.input); err != nil {
+		if _, err := s.Input(c.input, false); err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
 		var got []string
@@ -243,13 +243,13 @@ func entrySylls(t *testing.T, d *Dictionary, text string) []string {
 func TestSingleWordBeatsCompoundSplit(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
 
-	comp, _ := s.Input("jingchang")
+	comp, _ := s.Input("jingchang", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "经常" {
 		t.Fatalf("jingchang 第一候选应为「经常」，实际 %+v", comp.Candidates)
 	}
 
 	s.Reset()
-	comp, _ = s.Input("jisuanji")
+	comp, _ = s.Input("jisuanji", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "计算机" {
 		t.Fatalf("jisuanji 第一候选应为「计算机」，实际 %+v", comp.Candidates)
 	}
@@ -270,7 +270,7 @@ func TestProgressiveTypingNeverProducesZeroCandidates(t *testing.T) {
 	for _, seq := range streams {
 		s.Reset()
 		for _, in := range seq {
-			comp, err := s.Input(in)
+			comp, err := s.Input(in, false)
 			if err != nil {
 				t.Fatalf("输入 %q 报错: %v", in, err)
 			}
@@ -285,7 +285,7 @@ func TestProgressiveTypingNeverProducesZeroCandidates(t *testing.T) {
 // 回车上屏原始拼音：CommitRaw 清空组词并返回原始拼音字符串
 func TestCommitRaw(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	s.Input("nizaiganma")
+	s.Input("nizaiganma", false)
 	raw, err := s.CommitRaw()
 	if err != nil {
 		t.Fatalf("CommitRaw 失败: %v", err)
@@ -306,7 +306,7 @@ func TestExistingWordSelectionBoostsUserHistory(t *testing.T) {
 	u := mustUserDict(t, path)
 	s := NewSession(mustCommonDict(t), u)
 
-	comp, _ := s.Input("womende")
+	comp, _ := s.Input("womende", false)
 	idx := findCandidate(t, s, "我们")
 	if _, _, err := s.SelectPrefix(idx); err != nil {
 		t.Fatalf("渐进选「我们」失败: %v", err)
@@ -316,7 +316,7 @@ func TestExistingWordSelectionBoostsUserHistory(t *testing.T) {
 	}
 	s.Reset()
 
-	comp, _ = s.Input("womende")
+	comp, _ = s.Input("womende", false)
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "我们" || !comp.Candidates[0].FromUser {
 		t.Fatalf("二次输入 womende 首选应为带 FromUser 的「我们」，得到 %+v", comp.Candidates[:min(3, len(comp.Candidates))])
 	}

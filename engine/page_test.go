@@ -24,7 +24,7 @@ func mustXiDict(t *testing.T) *Dictionary {
 // 分页：候选多于 pageSize 时切成多页，翻页在边界钳制。
 func TestPaginationPages(t *testing.T) {
 	s := NewSession(mustXiDict(t), nil)
-	comp, err := s.Input("xi")
+	comp, err := s.Input("xi", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestPaginationPages(t *testing.T) {
 // 页内序号：Select 按当前页的页内序号选候选。
 func TestPaginationSelectPageRelative(t *testing.T) {
 	s := NewSession(mustXiDict(t), nil)
-	s.Input("xi")
+	s.Input("xi", false)
 	if _, err := s.NextPage(); err != nil {
 		t.Fatalf("NextPage 失败: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPaginationSelectPageRelative(t *testing.T) {
 	if text != "习" {
 		t.Fatalf("第二页选 1 应得 习, 得到 %q", text)
 	}
-	comp, _ := s.Input("")
+	comp, _ := s.Input("", false)
 	if comp.Input != "" {
 		t.Fatalf("选词后组词应清空, 剩余 %q", comp.Input)
 	}
@@ -86,10 +86,10 @@ func TestPaginationSelectPageRelative(t *testing.T) {
 // 输入变化回到第一页；空组词翻页为无操作。
 func TestPaginationResetOnInput(t *testing.T) {
 	s := NewSession(mustXiDict(t), nil)
-	s.Input("xi")
+	s.Input("xi", false)
 	s.NextPage()
 
-	comp, _ := s.Input("i") // 组词变化 → 回第一页
+	comp, _ := s.Input("i", false) // 组词变化 → 回第一页
 	if comp.Page != 0 {
 		t.Fatalf("输入变化后 Page=%d, 期望 0", comp.Page)
 	}
@@ -101,7 +101,7 @@ func TestPaginationResetOnInput(t *testing.T) {
 	}
 
 	// Backspace 同样回到第一页
-	s.Input("xi")
+	s.Input("xi", false)
 	s.NextPage()
 	if comp, _ = s.Backspace(); comp.Page != 0 {
 		t.Fatalf("退格后 Page=%d, 期望 0", comp.Page)
@@ -125,7 +125,7 @@ func allCandidates(s *Session, comp Composition) []Candidate {
 
 // mustComp 输入整串拼音并返回最终组词状态（测试 helper）。
 func mustComp(s *Session, input string) Composition {
-	comp, err := s.Input(input)
+	comp, err := s.Input(input, false)
 	if err != nil {
 		panic(err)
 	}

@@ -170,7 +170,7 @@ func TestRunWithContextServesAndShutsDown(t *testing.T) {
 	if err := d.client.Ping(); err != nil {
 		t.Fatalf("Ping 失败: %v", err)
 	}
-	comp, err := d.client.Input("nihao")
+	comp, err := d.client.Input("nihao", false)
 	if err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRunWithContextPersistsLearningOnShutdown(t *testing.T) {
 	userPath := filepath.Join(dir, "user.json")
 	d := startDaemon(t, sock, dict, userPath)
 
-	if _, err := d.client.Input("nihao"); err != nil {
+	if _, err := d.client.Input("nihao", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, err := d.client.Select(0); err != nil {

@@ -10,7 +10,7 @@ import (
 // dispatch 的联想分支（此前 0% 覆盖）。
 func TestClientAssociateMethods(t *testing.T) {
 	c := newIPCClient(t, "你好\tni hao\t99\n你\tni\t80\n好\thao\t85\n你好吗\tni hao ma\t70\n")
-	if _, err := c.Input("ni"); err != nil {
+	if _, err := c.Input("ni", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, err := c.Select(0); err != nil { // 上屏「你」，进入联想上下文

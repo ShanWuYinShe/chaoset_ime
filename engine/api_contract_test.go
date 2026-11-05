@@ -38,7 +38,7 @@ func TestNormalizePinyinContract(t *testing.T) {
 // TestPrevWordContract：最近一次上屏词（渐进上屏/联想按字前缀查询用）。
 func TestPrevWordContract(t *testing.T) {
 	s := NewSession(mustCommonDict(t), nil)
-	if _, err := s.Input("nihao"); err != nil {
+	if _, err := s.Input("nihao", false); err != nil {
 		t.Fatalf("Input 失败: %v", err)
 	}
 	if _, err := s.Select(0); err != nil {

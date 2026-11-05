@@ -46,8 +46,8 @@ func IsPunctKey(r rune) bool {
 //
 // 组词中的 ' 是音节分隔符，不作为标点，返回错误（调用方应把组词中的
 // ' 送 Input）。映射表见 punctMap；双/单引号各自按开闭交替配对；
-// 句号/逗号支持同键连按循环；半角模式下标点原样输出（ToggleHalfWidth）。
-func (s *Session) Punct(key string) (string, error) {
+// 句号/逗号支持同键连按循环；半角模式下标点原样输出（halfWidth 参数，壳持有）。
+func (s *Session) Punct(key string, halfWidth bool) (string, error) {
 	defer s.resetSeqIfEmpty() // 标点丢弃残缺输入/上屏首选后，本轮渐进段累积作废
 	runes := []rune(key)
 	if len(runes) != 1 {
@@ -60,8 +60,9 @@ func (s *Session) Punct(key string) (string, error) {
 	if s.input != "" && r == '\'' {
 		return "", fmt.Errorf("组词中的 ' 是音节分隔符，不作为标点提交")
 	}
-	// 半角模式：标点原样输出（无循环、引号不配对），组词合并行为不变
-	if s.halfWidth {
+	// 半角模式：标点原样输出（无循环、引号不配对），组词合并行为不变。
+	// 宽度来自**本次调用的参数**，不是会话状态——壳是唯一真源（2026-11-05）。
+	if halfWidth {
 		out := ""
 		if s.input != "" {
 			comp := s.Compose()

@@ -16,7 +16,7 @@ func TestSyllableAliasUE(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}
@@ -43,7 +43,7 @@ func TestSyllableAliasDoesNotBreakUFinals(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, _ := s.Input(c.input)
+		comp, _ := s.Input(c.input, false)
 		if len(comp.Candidates) == 0 {
 			t.Fatalf("%s: 应有候选", c.input)
 		}
@@ -89,7 +89,7 @@ func TestSyllableAliasesPhoneticAndKeyboardConvention(t *testing.T) {
 	}
 	for _, c := range cases {
 		s.Reset()
-		comp, err := s.Input(c.input)
+		comp, err := s.Input(c.input, false)
 		if err != nil {
 			t.Fatalf("%s: Input 失败: %v", c.input, err)
 		}

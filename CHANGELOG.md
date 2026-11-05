@@ -2,6 +2,67 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **全/半角标点宽度改为显式参数，daemon 彻底不保存该状态**（架构收敛）：
+  全/半角开关的唯一真源是壳（macOS `halfWidth`、Windows/Linux `halfWidth_`），
+  引擎此前还存了一份镜像字段，靠 `SetHalfWidth` / `InputWithHalfWidth` 在请求
+  之间“同步”。这是**重复真源**：任何一次未携带 `half` 的请求都会让 daemon 用
+  上一次的残留值产出标点——正是 2026-10-30 记录的「刚切全/半角就单按 `;` 按
+  旧宽度出标点」1 键瞬态的根源。
+  现改为 `Input(text, halfWidth)` / `Punct(key, halfWidth)` 的**必填参数**：
+  宽度只对本次调用生效，不写入任何会话状态，结构上不可能残留。
+  **不保留兼容层**（项目处于快速迭代期）：`ToggleHalfWidth` / `SetHalfWidth` /
+  `HalfWidth` / `InputWithHalfWidth` / `PunctWithHalfWidth` 全部删除，
+  `engine.Controller` 接口与 `ipc.Client` 同步改为新签名，全部调用点（含 165 处
+  测试）一并迁移。新增 `TestHalfWidthNoResidual` 锁死「半角后紧接全角请求必须
+  立即恢复全角」。
+
+> 设计原则（本次确立）：**状态归属按「唯一真源在哪」划分**——词库/用户词典/
+> 组词进度/标点循环等算法状态归 daemon；UI 开关（中英模式、全/半角）归壳；
+> 壳交给 daemon 的状态一律**随请求传参、不在 daemon 存镜像**，且不留向后兼容
+> 包装层（迭代期直接改契约）。
+
+
+- **全/半角标点宽度改为纯参数下发，daemon 不再保存该状态**（架构收敛）：
+  全/半角开关的唯一真源一直是壳（macOS `halfWidth`、Windows `halfWidth_`、
+  Linux `halfWidth_`），但引擎里还存了一份镜像字段，靠 `SetHalfWidth` /
+  `InputWithHalfWidth` 在请求之间“同步”。这属于**重复真源**：任何一次没携带
+  `half` 的请求（旧壳、或只调 `punct` 的路径）都会让 daemon 沿用上一次的
+  残留值产出标点——正是 2026-10-30 记录的「刚切全/半角就单按 `;` 按旧宽度
+  出标点」1 键瞬态的根源。
+  现改为 `PunctWithHalfWidth(key, half)` 与请求内生效的 `reqHalfWidth`：
+  宽度只对本次调用有效，不写入会话状态，**结构上不可能残留**。
+  `ToggleHalfWidth` / `SetHalfWidth` / `HalfWidth` 保留为兼容 API（仅供测试与
+  CLI 回读，不再影响 `Punct` 输出），三端壳无需改动（本来就按参数下发）。
+  新增回归测试 `TestHalfWidthNoResidual` 锁死「半角后紧接全角请求必须立即
+  恢复全角」，并更新 `TestHalfWidthMode` / `TestHalfWidthComposing` /
+  `TestDoublePinyinSessionSemicolonPunct` 到新 API。
+
+> 设计原则（本次确立）：**状态归属按「唯一真源在哪」划分**——词库/用户词典/
+> 组词进度/标点循环等算法状态归 daemon；UI 开关（中英模式、全/半角）归壳；
+> 壳交给 daemon 的状态一律**随请求传参、不在 daemon 存镜像**。`reset` 语义过重
+> （连带清 prev/history）留待后续单独收敛。
+
+- **Windows Shift 空按切中英在部分程序里永久失效**（用户反馈：Terminal、开始
+  菜单、Chrome 里按 Shift 不能切中英；Firefox 可以）：
+  旧实现用 `shiftDown_++/--` 记账，只有计数回到 0 才结算。**只要丢失任意一次
+  Shift KeyUp，计数器就只增不减、永远回不到 0**，该进程内 Shift 空按从此彻底
+  失效，只能重启应用恢复。丢失 KeyUp 不是宿主 bug，而是 Windows 的既定行为：
+  按住 Shift 时切换窗口（Alt+Tab / 点别的窗口），KeyUp 交给**新前台窗口**，
+  原线程永远收不到；TIP 被 TSF 停用期间发生的按键同理。长驻进程 + 频繁切窗口
+  的宿主（Terminal/Chrome/开始菜单宿主）最容易命中，这正是实机症状的分布。
+  改为**幂等位掩码**（`shiftHeld_`：置位/清位天然幂等，auto-repeat 与重复投递
+  不再累积；左右 Shift 各记一位，双 Shift 先松一侧不切换）；补上
+  `Deactivate`/`OnSetFocus(FALSE)` 复位（对齐 Linux `shift_.reset()`，
+  Windows 此前完全没有这一步）；新增 `reconcileShiftState` 在每次按键前用
+  `GetAsyncKeyState` 自愈丢失的 KeyUp（**只复位不结算**——丢失时无法判断是否
+  空按，凭空切换比少切一次更糟），兑现 README 原承诺的兜底且不引入常驻定时器。
+  顺带把切换副作用从 Test 阶段瘦身：无未上屏状态时跳过 `flushOrCancel` 的
+  daemon IPC 往返（空按 Shift 不再阻塞 250ms）。
+  `checkuiparity` 新增「Shift 记账」检查组锁死契约（含禁止 `++shiftDown_`
+  回归），已接入 `make vet` 与 CI。
+
 ## v0.3.13（2026-11-04）
 
 - **Windows 安装版 daemon 起不来导致只能打英文**（用户反馈；v0.3.0–v0.3.12 的

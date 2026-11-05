@@ -114,7 +114,8 @@ func main() {
 			}
 		case len(line) == 1 && engine.IsPunctKey(rune(line[0])):
 			// 标点键：组词中先上屏首选候选再出中文标点，空组词直接出标点
-			text, err := ctrl.Punct(line)
+			// CLI 测试台固定全角标点（没有全/半角开关 UI）
+			text, err := ctrl.Punct(line, false)
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue
@@ -123,7 +124,7 @@ func main() {
 		default:
 			// 仅当上一行还挂着未上屏的输入时才清空，
 			// 保住跨行的学习上下文（词组进化依赖相邻上屏序列）
-			if cur, err := ctrl.Input(""); err != nil {
+			if cur, err := ctrl.Input("", false); err != nil {
 				fmt.Println("错误:", err)
 				continue
 			} else if cur.Input != "" {
@@ -132,7 +133,7 @@ func main() {
 					continue
 				}
 			}
-			comp, err := ctrl.Input(line)
+			comp, err := ctrl.Input(line, false)
 			if err != nil {
 				fmt.Println("错误:", err)
 				continue
