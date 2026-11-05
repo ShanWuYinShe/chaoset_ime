@@ -183,11 +183,24 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
-- Shift 跟踪依赖 TSF Test 阶段。**2026-11-05 已补上记账健壮性**：内部状态改用
-  幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`、
-  `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
-  此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台
-  窗口），计数器永远回不到 0，该进程内 Shift 空按会**永久失效**直到重启应用。
+- Shift 跟踪依赖 TSF Test 阶段。**2026-11-05 已补两层兜底**：
+  1. 记账改用幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`、
+     `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
+     此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台
+     窗口），计数器永远回不到 0，该进程内 Shift 空按会**永久失效**直到重启应用。
+  2. **物理状态轮询兜底**（`onShiftPollTick`，40ms 的 message-only 窗口计时器）：
+     Windows Terminal、cmd/conhost、Windows 11 开始菜单等宿主对修饰键的按下/释放
+     投递不完整（只给按下不给释放，或干脆不送进按键下沉），光靠
+     `OnTestKeyDown`+`OnTestKeyUp` 成对到达无法结算。轮询按
+     `GetAsyncKeyState` 的物理状态自行推断「按住→松开」，并在结算前用
+     `GetKeyboardState` + 鼠标键状态确认期间没有别的输入（避免 Shift+点击被误判
+     成空按）。与事件路径共用同一套状态，任一路径先结算另一条都会自然跳过。
+     排障证据：`tsf.log` 里的 `shift poll:` 行——出现 `宿主未投递 Shift 按下`
+     说明该宿主完全不送修饰键；出现 `释放事件缺失` 说明只缺 KeyUp。
+- **console（cmd/旧 PowerShell）走的是 IMM32，不是 TSF**：本壳是纯 TSF TIP，
+  没有 IMM32 入口（`ImeInquire`/`ImeProcessKey`），若 `tsf.log` 里完全没有
+  `activate ... host=conhost.exe`，说明 TIP 根本没被加载——那不是本 Bug，
+  需要单独实现 IMM32 壳才可能支持。
 - 中文标点按 US 布局字符级映射；其他键盘布局未接入 `ToAscii`。
 - `GUID_TFCAT_CATEGORY_OF_TIP` 在 mingw uuid 库缺失，当前只登记键盘类。
 - 多会话（RDP/快速用户切换）与同一用户多会话的管道命名仍待验证。
