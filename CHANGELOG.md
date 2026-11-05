@@ -4,6 +4,12 @@
 
 ## 未发布
 
+- **诊断：中英隔间写入结果可验证**：`mode compartment en=... set_hr=... get_hr=... read=...`
+  回读确认 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 是否真的写进去，用于判断
+  「任务栏中/英不显示」是写入失败还是系统未绘制。
+- **诊断修正**：`shift toggle` 里的 `samewnd` 在未组词时恒为 0、没有信息量；
+  改为同时记 `comppid`（合成上下文所属窗口的进程），只在 `pending=1` 时
+  `samewnd` 才有意义。
 - **开始菜单关闭后重开仍残留上一轮拼音与候选窗**：开始菜单/搜索宿主
   **不投递 `OnSetFocus(FALSE)`**（实机确认），原来的失焦清理路径完全不触发，
   本地组词状态与候选窗都留着。改用系统级 `EVENT_SYSTEM_FOREGROUND` 钩子

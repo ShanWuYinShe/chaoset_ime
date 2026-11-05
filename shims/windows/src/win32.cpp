@@ -2928,8 +2928,20 @@ private:
         var.vt = VT_I4;
         var.lVal = enMode_ ? 0 : 1;  // enMode_ = 英文模式
         const HRESULT hr = modeCompartment_->SetValue(clientId_, &var);
-        if (FAILED(hr) && diagBudget()) {
-            diagTsfFail("ITfCompartment::SetValue(KEYBOARD_OPENCLOSE)", hr);
+        // 回读验证：SetValue 返回 S_OK 也可能没生效（跨线程/宿主覆盖），
+        // 没有回读就无法判断「任务栏中/英不显示」到底是没写进去还是系统没画。
+        VARIANT back;
+        ZeroMemory(&back, sizeof(back));
+        const HRESULT hrGet = modeCompartment_->GetValue(&back);
+        if (diagBudget()) {
+            static volatile LONG modeLogBudget = 40;  // 切换很频繁，限量
+            if (InterlockedDecrement(&modeLogBudget) > 0) {
+                diagPrintf(L"tsf.log",
+                           "mode compartment en=%d set_hr=0x%08lX get_hr=0x%08lX read=%ld\n",
+                           enMode_ ? 1 : 0, static_cast<unsigned long>(hr),
+                           static_cast<unsigned long>(hrGet),
+                           static_cast<long>(SUCCEEDED(hrGet) ? back.lVal : -1));
+            }
         }
     }
 
@@ -2943,16 +2955,24 @@ private:
             const HWND fg = GetForegroundWindow();
             DWORD fgPid = 0;
             if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
-            // 合成上下文所属窗口与前台窗口是否同一个：Firefox 多窗口场景下若
-            // 二者不同，切换时对旧窗口上下文做编辑会话就会把那个窗口顶到前面
-            //（用户反馈：两个任务栏固定标签之间来回切，2026-11-05）。
-            const HWND composeWnd = compCtx_ != nullptr ? hostWindowOf(compCtx_) : nullptr;
-            const int sameWnd = (composeWnd != nullptr && composeWnd == fg) ? 1 : 0;
+            // 合成上下文所属窗口：**只在真有合成时**才有意义（没合成时
+            // compCtx_ 为空，之前据此算出的 samewnd 恒为 0，是无效字段）。
+            // Firefox 多窗口场景下若合成窗口 != 前台窗口，切换时对旧窗口上下文
+            // 做编辑会话就可能把那个窗口顶到前面（2026-11-05 用户反馈）。
+            DWORD compPid = 0;
+            HWND composeWnd = nullptr;
+            if (compCtx_ != nullptr) {
+                composeWnd = hostWindowOf(compCtx_);
+                if (composeWnd != nullptr) GetWindowThreadProcessId(composeWnd, &compPid);
+            }
+            const bool pending = isComposing() || !confirmedPreedit_.empty();
             diagPrintf(L"tsf.log",
-                       "shift toggle enMode=%d fgpid=%lu selfpid=%lu pending=%d samewnd=%d\n",
+                       "shift toggle enMode=%d fgpid=%lu selfpid=%lu pending=%d "
+                       "comppid=%lu samewnd=%d\n",
                        enMode_ ? 1 : 0, static_cast<unsigned long>(fgPid),
-                       static_cast<unsigned long>(GetCurrentProcessId()),
-                       (isComposing() || !confirmedPreedit_.empty()) ? 1 : 0, sameWnd);
+                       static_cast<unsigned long>(GetCurrentProcessId()), pending ? 1 : 0,
+                       static_cast<unsigned long>(compPid),
+                       (!pending || (composeWnd != nullptr && composeWnd == fg)) ? 1 : 0);
         }
         // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），纯拼音仍按
         // 旧语义丢弃；此前直接 endComposition 会清空 confirmedPreedit_
