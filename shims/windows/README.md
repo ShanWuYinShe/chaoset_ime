@@ -191,6 +191,12 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
+- **开始菜单/搜索不投递 `OnSetFocus(FALSE)`**（实机 2026-11-05）：关闭开始菜单后
+  重开，上一轮拼音与候选窗仍在。因此焦点清理不能只依赖 TSF 焦点事件，必须有
+  `EVENT_SYSTEM_FOREGROUND` 钩子兜底；回调里**不得触碰 TSF**（旧上下文可能已销毁），
+  只收浮窗 + 打标记，状态清理由下一次按键在 TIP 线程完成。
+- **模式指示器**：中英模式写进线程级隔间 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`
+  （非零 = 中文），由 Windows 输入指示器显示「中/英」，不自建托盘图标。
 - **UILess 模式现状**：已实现 `ITfTextInputProcessorEx::ActivateEx`（微软文档要求，
   否则 UILess 线程里 TIP 不被激活），但**尚未**实现 `ITfUIElementMgr` 与
   `ITfCandidateListUIElement`，因此：

@@ -109,6 +109,13 @@ const GUID kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER = {
 //
 // 保留 IMMERSIVESUPPORT / SYSTRAYSUPPORT：它们只影响「在现代设置与任务栏
 // 中可见」，与候选窗渲染路径无关。
+// 线程级隔间：键盘开/关（中文输入 = 打开）。Windows 自带的输入指示器
+//（任务栏右下的「中/英」）就是读这个值来显示当前模式的——微软拼音、搜狗
+// 等输入法都靠它，不需要自建托盘图标（2026-11-05 用户要求补模式提示）。
+// 数值取自 Windows SDK 的 msctf.lib（此处按 ReactOS 的 msctf_g.c 抄录，一致）。
+const GUID kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE = {
+    0x58273aad, 0x01bb, 0x4164, {0x95, 0xc6, 0x75, 0x5b, 0xa0, 0xb5, 0x16, 0x2d}};
+
 const GUID kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT = {
     0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0xe3, 0x5d}};
 const GUID kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT = {
@@ -2252,6 +2259,25 @@ public:
         tm_ = ptim;
         if (tm_ != nullptr) tm_->AddRef();
         clientId_ = tid;
+        // 线程级隔间：把中英模式交给 Windows 输入指示器（任务栏「中/英」）。
+        if (tm_ != nullptr && modeCompartment_ == nullptr) {
+            ITfCompartmentMgr* compMgr = nullptr;
+            if (SUCCEEDED(tm_->QueryInterface(IID_ITfCompartmentMgr,
+                                              reinterpret_cast<void**>(&compMgr))) &&
+                compMgr != nullptr) {
+                compMgr->GetCompartment(kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
+                                        &modeCompartment_);
+                compMgr->Release();
+            }
+        }
+        syncModeCompartment();
+        // 前台切换兜底：部分宿主（开始菜单/搜索）不投递 OnSetFocus(FALSE)，
+        // 只有系统级前台事件能把「用户已经离开」如实告诉我们。
+        if (fgHook_ == nullptr) {
+            hookSelf_ = this;
+            fgHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+                                      nullptr, fgHookProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        }
 
         ITfKeystrokeMgr* mgr = nullptr;
         if (SUCCEEDED(tm_->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&mgr)))) {
@@ -2289,6 +2315,16 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
+        if (fgHook_ != nullptr) {
+            UnhookWinEvent(fgHook_);
+            fgHook_ = nullptr;
+        }
+        if (hookSelf_ == this) hookSelf_ = nullptr;
+        pendingStaleReset_ = false;
+        if (modeCompartment_ != nullptr) {
+            modeCompartment_->Release();
+            modeCompartment_ = nullptr;
+        }
         candidateWnd_.destroy();
         // 已确认段先落盘（与 macOS deactivateServer → flushConfirmed 同语义）：
         // TSF 停用本 TIP 时会销毁合成，若直接 endComposition 会连用户确认过的
@@ -2382,12 +2418,15 @@ public:
         }
         // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
         shiftHoldSuspended_ = false;
+        // 指示器按当前上下文刷新（不同窗口可能是不同模式）。
+        if (fForeground != FALSE) syncModeCompartment();
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override {
         g_lastOp = kOpTestKeyDown;
+        applyPendingStaleReset();  // 前台已离开过：先丢掉上一轮的残留组词
         // Shift 记账自愈必须覆盖所有按键（含修饰键）：若上一次按住的 KeyUp
         // 丢了，这里先复位，随后的 Shift 按下才能重新开一次干净的会话。
         reconcileShiftState();
@@ -2474,6 +2513,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                         BOOL* pfEaten) override {
         g_lastOp = kOpKeyDown;
+        applyPendingStaleReset();
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
             // **第二跟踪点**（2026-11-05 实机日志实证，必须有）。
             //
@@ -2750,6 +2790,57 @@ private:
     // （真·切走应用时不该切模式）。
     bool shiftHoldSuspended_ = false;
 
+    // ---- 前台切换兜底（2026-11-05）----
+    //
+    // 为什么需要：Windows 11 开始菜单/搜索这类宿主**不投递 OnSetFocus(FALSE)**
+    //（实机：关闭开始菜单后重开，上一轮的拼音与候选窗都还在）。TSF 焦点事件
+    // 在这类宿主上不可靠，改用系统级的前台窗口事件（SetWinEventHook，
+    // 事件驱动、非轮询）作为「用户已经离开本窗口」的可靠信号。
+    //
+    // 回调里**不碰 TSF**（可能不在本 TIP 的焦点上下文中，贸然 RequestEditSession
+    // 会失败甚至干扰宿主）：只收起自己的浮窗并打标记，真正的状态清理由下一次
+    // 按键在 TIP 线程上完成。
+    HWINEVENTHOOK fgHook_ = nullptr;
+    bool pendingStaleReset_ = false;
+
+    // 线程级隔间（GUID_COMPARTMENT_KEYBOARD_OPENCLOSE）：把中英模式同步给
+    // Windows 输入指示器，任务栏「中/英」随模式变化（与微软拼音/搜狗一致）。
+    ITfCompartment* modeCompartment_ = nullptr;
+    static thread_local ChaosetTIP* hookSelf_;
+
+    static void CALLBACK fgHookProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DWORD,
+                                    DWORD) {
+        if (event != EVENT_SYSTEM_FOREGROUND) return;
+        if (hookSelf_ != nullptr) hookSelf_->onForegroundChanged(hwnd);
+    }
+
+    void onForegroundChanged(HWND fg) {
+        if (fg == nullptr) return;
+        // 前台仍停在我们自己正组词的那个窗口上：不是「离开」，不动状态。
+        HWND composeWnd = compCtx_ != nullptr ? hostWindowOf(compCtx_) : nullptr;
+        if (composeWnd != nullptr && fg == composeWnd) return;
+        candidateWnd_.hide();
+        toast_.hide();
+        if (isComposing() || !confirmedPreedit_.empty() || !assoc_.candidates.empty()) {
+            pendingStaleReset_ = true;
+            if (diagBudget()) {
+                diagPrintf(L"tsf.log", "stale state dropped (foreground changed) selfpid=%lu\n",
+                           static_cast<unsigned long>(GetCurrentProcessId()));
+            }
+        }
+    }
+
+    // 下一次按键时在 TIP 线程上清掉残留（不使用编辑会话：旧上下文可能已销毁）。
+    void applyPendingStaleReset() {
+        if (!pendingStaleReset_) return;
+        pendingStaleReset_ = false;
+        resetSession();
+        comp_ = chaoset::Comp();
+        confirmedPreedit_.clear();
+        clearAssociate();
+        candidateWnd_.hide();
+    }
+
 
     static unsigned shiftBit(WPARAM vk) {
         if (vk == VK_LSHIFT) return 1u;
@@ -2827,8 +2918,24 @@ private:
         finishShiftHold(nullptr);
     }
 
+    // 把当前中英模式写进线程级隔间，供 Windows 输入指示器显示。
+    // 语义（微软《predefined compartments》）：非零 = 键盘打开（中文输入）。
+    void syncModeCompartment() {
+        if (modeCompartment_ == nullptr) return;
+        // 手工零初始化（VariantInit 在 oleaut32，本壳不链接该库）。
+        VARIANT var;
+        ZeroMemory(&var, sizeof(var));
+        var.vt = VT_I4;
+        var.lVal = enMode_ ? 0 : 1;  // enMode_ = 英文模式
+        const HRESULT hr = modeCompartment_->SetValue(clientId_, &var);
+        if (FAILED(hr) && diagBudget()) {
+            diagTsfFail("ITfCompartment::SetValue(KEYBOARD_OPENCLOSE)", hr);
+        }
+    }
+
     void toggleEnMode(ITfContext* pic) {
         enMode_ = !enMode_;
+        syncModeCompartment();  // 立刻反映到任务栏「中/英」指示器
         if (diagBudget()) {
             // 诊断补前台信息：Firefox/Chrome 的「安装应用」(PWA) 窗口是独立
             // 进程/窗口，若 fgpid != selfpid 说明本 TIP 并不在拥有焦点的那个
@@ -2836,9 +2943,16 @@ private:
             const HWND fg = GetForegroundWindow();
             DWORD fgPid = 0;
             if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
-            diagPrintf(L"tsf.log", "shift toggle enMode=%d fgpid=%lu selfpid=%lu\n",
+            // 合成上下文所属窗口与前台窗口是否同一个：Firefox 多窗口场景下若
+            // 二者不同，切换时对旧窗口上下文做编辑会话就会把那个窗口顶到前面
+            //（用户反馈：两个任务栏固定标签之间来回切，2026-11-05）。
+            const HWND composeWnd = compCtx_ != nullptr ? hostWindowOf(compCtx_) : nullptr;
+            const int sameWnd = (composeWnd != nullptr && composeWnd == fg) ? 1 : 0;
+            diagPrintf(L"tsf.log",
+                       "shift toggle enMode=%d fgpid=%lu selfpid=%lu pending=%d samewnd=%d\n",
                        enMode_ ? 1 : 0, static_cast<unsigned long>(fgPid),
-                       static_cast<unsigned long>(GetCurrentProcessId()));
+                       static_cast<unsigned long>(GetCurrentProcessId()),
+                       (isComposing() || !confirmedPreedit_.empty()) ? 1 : 0, sameWnd);
         }
         // 模式切换收尾：已确认段先落盘（用户确认过的字不能丢），纯拼音仍按
         // 旧语义丢弃；此前直接 endComposition 会清空 confirmedPreedit_
@@ -5043,6 +5157,10 @@ public:
     }
     HRESULT STDMETHODCALLTYPE LockServer(BOOL /*fLock*/) override { return S_OK; }
 };
+
+// 前台钩子回调需要拿到「发起注册的 TIP 实例」：OUTOFCONTEXT 钩子的回调在
+// 注册它的线程上派发，所以用 thread_local 传递即可，无需加锁或全局容器。
+thread_local ChaosetTIP* ChaosetTIP::hookSelf_ = nullptr;
 
 }  // namespace
 

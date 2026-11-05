@@ -4,6 +4,21 @@
 
 ## 未发布
 
+- **开始菜单关闭后重开仍残留上一轮拼音与候选窗**：开始菜单/搜索宿主
+  **不投递 `OnSetFocus(FALSE)`**（实机确认），原来的失焦清理路径完全不触发，
+  本地组词状态与候选窗都留着。改用系统级 `EVENT_SYSTEM_FOREGROUND` 钩子
+  （`SetWinEventHook`，事件驱动、非轮询）作为「用户已离开本窗口」的可靠信号：
+  前台回调里只收起浮窗并打标记（**不碰 TSF**——旧上下文可能已销毁，
+  贸然发编辑会话会失败甚至干扰宿主），真正的状态清理由下一次按键在
+  TIP 线程上完成。
+- **补任务栏「中/英」模式指示器**：把中英模式写进 TSF 线程级隔间
+  `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`（VT_I4，非零 = 键盘打开/中文），
+  由 Windows 自带的输入指示器显示——与微软拼音、搜狗同一机制，不需要自建
+  托盘图标也不需要额外进程。在 `Activate`、模式切换、焦点回来三处刷新。
+  注：若任务栏没显示，需在「设置 → 个性化 → 任务栏 → 系统托盘图标」里打开
+  「输入指示器」。
+- `shift toggle` 日志补充 `pending` 与 `samewnd`（合成上下文窗口是否就是
+  前台窗口），用于定位 Firefox 多窗口下切换时把别的窗口顶到前面的问题。
 - **补齐 `ITfTextInputProcessorEx`（UILess 模式的第一步）**：微软《UILess Mode
   Overview》要求 TIP 实现该接口，否则在 UILess 线程里**不会被激活**。此前
   只实现 `ITfTextInputProcessor`，因此对 UILess 宿主（游戏/全屏/部分 WinUI 应用）

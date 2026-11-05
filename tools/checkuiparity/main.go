@@ -496,6 +496,43 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell, "不注册 TFCAT_TIPCAP_UIELEMENTENABLED")
 }
 
+// 焦点兜底契约（2026-11-05）：Windows 11 开始菜单/搜索**不投递
+// OnSetFocus(FALSE)**（实机：关闭开始菜单重开，上一轮拼音与候选窗仍在）。
+// 必须有系统级前台事件兜底，且清理只能发生在 TIP 线程的按键入口——
+// 前台回调里不得碰 TSF（旧上下文可能已销毁）。
+func checkForegroundFallback(fsys fs.FS, problems *[]string) {
+	const group = "焦点兜底"
+	checkContains(fsys, problems, group, winShell,
+		"SetWinEventHook(EVENT_SYSTEM_FOREGROUND",
+		"onForegroundChanged",
+		"pendingStaleReset_",
+		"applyPendingStaleReset();",                // 必须在按键入口被调用
+		"stale state dropped (foreground changed)", // 留证据，便于排障
+	)
+}
+
+// 模式指示器契约（2026-11-05 用户要求「像其他输入法那样提示当前中英文模式」）：
+// 正确做法是把模式写进线程级隔间 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE，
+// 由 Windows 自带的输入指示器显示「中/英」——微软拼音、搜狗都是这个机制，
+// 不需要自建托盘图标，也不需要额外进程。
+func checkModeIndicator(fsys fs.FS, problems *[]string) {
+	const group = "模式指示器"
+	checkContains(fsys, problems, group, winShell,
+		"kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE",
+		"syncModeCompartment",
+		"IID_ITfCompartmentMgr",
+		"VT_I4", // 隔间值类型（非零 = 键盘打开/中文）
+	)
+	// 切换与获得焦点时都必须刷新，否则指示器会停在旧模式。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if n := strings.Count(string(data), "syncModeCompartment();"); n < 3 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：syncModeCompartment() 调用点只有 %d 处，应至少 3 处"+
+					"（Activate / 切换模式 / 焦点回来）", group, n))
+		}
+	}
+}
+
 // 浮窗 owner 契约（2026-11-05 用户反馈「候选窗/提示条一出现就把别的窗口顶到前面」）：
 // 带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，所以 owner
 // 必须是**当前前台窗口且属于本进程**，不得用 TSF 上下文推出来的窗口
@@ -704,6 +741,14 @@ func Run(fsys fs.FS) []string {
 	// 否则 UILess 宿主里 TIP 完全不被激活；但在实现 ITfUIElementMgr 之前
 	// 不得注册 UIELEMENTENABLED 类别。
 	checkUILessCapability(fsys, &problems)
+
+	// 4j. 焦点兜底（2026-11-05）：开始菜单/搜索不投递 OnSetFocus(FALSE)，
+	// 必须用前台窗口事件兜底清理，否则重开后上一轮拼音与候选窗还在。
+	checkForegroundFallback(fsys, &problems)
+
+	// 4k. 模式指示器（2026-11-05）：中英模式必须同步到 TSF 线程隔间，
+	// 由 Windows 输入指示器显示「中/英」，而不是自建托盘图标。
+	checkModeIndicator(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
