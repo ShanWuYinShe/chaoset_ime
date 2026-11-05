@@ -783,6 +783,19 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	// 旧实现的致命写法不得回归：按事件累加的计数器。
 	checkExcludes(fsys, problems, group, winShell,
 		"++shiftDown_", "--shiftDown_")
+	// **两阶段都必须跟踪**（2026-11-05 实机 tsf.log 实证）：宿主分两类——
+	// Firefox 把修饰键送进 Test 阶段，Chrome/conhost/Windows Terminal 只送
+	// Key 阶段（OnKeyDown/OnKeyUp 有、OnTestKeyDown 无）。只挂一边等于对
+	// 另一类宿主彻底失效，表现为「能打字但 Shift 切不了中英」。
+	// 状态机幂等，两阶段各投递一次不会双计。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		// 4 处调用（Test/Key × 按下/释放）+ 1 处函数定义
+		if n := strings.Count(string(data), "onShiftEvent("); n < 5 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 中 onShiftEvent 只有 %d 处（含定义），应为 5 处——"+
+					"Test 与 Key 两个按键阶段都必须跟踪修饰键", group, winShell, n))
+		}
+	}
 	// Linux：焦点进出必须复位 Shift 跟踪状态。
 	checkContains(fsys, problems, group, linuxEngine,
 		"void reset() { shiftDown = 0; sinceShift = false; }",

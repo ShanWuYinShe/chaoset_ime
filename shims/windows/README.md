@@ -183,7 +183,11 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
-- Shift 跟踪依赖 TSF Test 阶段。**2026-11-05 已补两层兜底**：
+- **Shift 跟踪必须同时挂在 Test 与 Key 两个按键阶段**（2026-11-05 实机日志结论）：
+  宿主分两类——Firefox 把修饰键送进 OnTestKeyDown/OnTestKeyUp；Chrome、conhost、
+  Windows Terminal **只**送 OnKeyDown/OnKeyUp（同一进程里前者无日志、后者有）。
+  只挂一边会让另一类宿主彻底切不了中英。两阶段各投递一次不会双计（状态机幂等）。
+- Shift 跟踪同时依赖 TSF Test 阶段。**2026-11-05 已补两层兜底**：
   1. 记账改用幂等位掩码（`shiftHeld_`）而不是 ++/-- 计数器，并在 `Deactivate`、
      `OnSetFocus(FALSE)` 复位、每次按键前用 `GetAsyncKeyState` 自愈丢失的 KeyUp。
      此前若宿主漏投递一次 Shift KeyUp（典型：按住 Shift 切窗口，KeyUp 交给新前台

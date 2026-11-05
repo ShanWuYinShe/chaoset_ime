@@ -4,6 +4,17 @@
 
 ## 未发布
 
+- **Chrome / conhost / Windows Terminal 里 Shift 完全无法切换（实机日志定位）**：
+  2026-10-31 曾把 Shift 跟踪从 OnKeyDown/OnKeyUp 整体移到
+  OnTestKeyDown/OnTestKeyUp，依据是「Test 返回 FALSE 的按键不会再进 Key 阶段」。
+  实机 tsf.log 证明这个前提只对部分宿主成立：宿主分成两类——
+  Firefox 把修饰键送进 **Test** 阶段；Chrome / conhost / Windows Terminal
+  只送 **Key** 阶段（同一进程里 modifier in OnKeyDown vk=0x10 有、
+  modifier in OnTestKeyDown 无）。只挂 Test 阶段等于对后一类宿主彻底失效。
+  现改为**两阶段都跟踪**：shiftHeld_ 位掩码与 begin/end 都是幂等的，
+  同一按键被两阶段各投递一次不会双计，重复释放会被「孤立释放」拦住。
+  checkuiparity 增加断言锁死调用点数量（Test/Key × 按下/释放 = 4 处调用）。
+
 - **能打字但 Shift 切不了中英：焦点抖动把按住状态吃掉了**（用户反馈：
   Chrome「安装应用」窗口、Firefox 装到任务栏的独立窗口里 TIP 明确是激活的、
   字母能组词，只有 Shift 不生效）：

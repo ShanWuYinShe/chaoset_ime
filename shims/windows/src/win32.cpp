@@ -2333,14 +2333,25 @@ public:
                                         BOOL* pfEaten) override {
         g_lastOp = kOpKeyDown;
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-            // 诊断保留：若这行出现，说明本宿主会走到 Key 阶段；跟踪已移到
-            // OnTestKeyDown/OnTestKeyUp（2026-10-31），这里不能再调
-            // onShiftEvent——否则两个阶段各计一次，Shift 记账失衡。
+            // **第二跟踪点**（2026-11-05 实机日志实证，必须有）。
+            //
+            // 背景：2026-10-31 曾把跟踪从 Key 阶段整体移到 Test 阶段，理由是
+            // 「Test 返回 FALSE 的按键不会再进 Key 阶段」。实机 tsf.log 证明这个
+            // 前提只在部分宿主成立，Chrome / conhost / Windows Terminal 恰好相反：
+            //   Chrome pid=1376  ：modifier in OnKeyDown vk=0x10（有）
+            //                      modifier in OnTestKeyDown（无）→ 永远不切换
+            //   Firefox          ：modifier in OnTestKeyDown vk=0x10（有）→ 正常
+            // 也就是这些宿主把修饰键**只**送进 Key 阶段。只挂 Test 阶段等于对它们
+            // 彻底失效，这正是「能打字但 Shift 切不了」的直接原因。
+            //
+            // 两个阶段都挂是安全的：shiftHeld_ 位掩码与 begin/end 都是幂等的，
+            // 同一按键被两阶段各投递一次不会双计，重复释放会被「孤立释放」拦住。
             static volatile LONG loggedDownModifier = 0;
             if (InterlockedCompareExchange(&loggedDownModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnKeyDown vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
+            onShiftEvent(false, wParam, pic);
             *pfEaten = FALSE;  // 只透传不消费，Shift 组合键与按键事件完整交给宿主
             return S_OK;
         }
@@ -2373,15 +2384,16 @@ public:
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
+    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                       BOOL* pfEaten) override {
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-            // 诊断保留；跟踪在 OnTestKeyUp（见 OnKeyDown 注释，避免双计）。
+            // **第二跟踪点**（与 OnKeyDown 对称，见那里的日志实证说明）。
             static volatile LONG loggedUpModifier = 0;
             if (InterlockedCompareExchange(&loggedUpModifier, 1, 0) == 0 && diagBudget()) {
                 diagPrintf(L"tsf.log", "modifier in OnKeyUp vk=0x%02lX\n",
                            static_cast<unsigned long>(wParam));
             }
+            onShiftEvent(true, wParam, pic);
             *pfEaten = FALSE;  // 只透传不消费
             return S_OK;
         }
