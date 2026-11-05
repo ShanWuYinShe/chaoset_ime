@@ -2143,7 +2143,36 @@ private:
     int h_ = 0;
 };
 
-class ChaosetTIP : public ITfTextInputProcessor, public ITfKeyEventSink, public ITfCompositionSink {
+// mingw-w64 的 msctf.h 只声明了 ITfTextInputProcessor，没有微软 SDK 里的
+// ITfTextInputProcessorEx（UILess 模式所需）。这里按 Windows SDK 10 的
+// msctf.idl 原样补声明，IID 与虚表顺序都取自 SDK：
+//   [
+//     object, local,
+//     uuid(6e4e2102-f9cd-433d-b496-303ce03a6507),
+//   ]
+//   interface ITfTextInputProcessorEx : ITfTextInputProcessor
+//   {
+//       HRESULT ActivateEx([in] ITfThreadMgr *ptim, [in] TfClientId tid, [in] DWORD dwFlags);
+//   };
+//
+// 为什么需要（2026-11-05，微软《UILess Mode Overview》原文）：
+//   "To be UI less aware, TIP needs to implement ITfTextInputProcessorEx.
+//    If this interface is not implemented, TIP will not be activated under
+//    the UI less mode thread."
+// 不实现它就等于对 UILess 宿主（游戏/全屏/部分 WinUI 应用）完全不可见，
+// 而且连日志都不会产生——我们此前看到的 "uiless=0" 正是「被排除」而非
+// 「不存在 UILess 宿主」。
+static const GUID kIID_ITfTextInputProcessorEx = {
+    0x6e4e2102, 0xf9cd, 0x433d, {0xb4, 0x96, 0x30, 0x3c, 0xe0, 0x3a, 0x65, 0x07}};
+
+struct ITfTextInputProcessorEx : public ITfTextInputProcessor {
+    virtual HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr* ptim, TfClientId tid,
+                                                 DWORD dwFlags) = 0;
+};
+
+class ChaosetTIP : public ITfTextInputProcessorEx,
+                  public ITfKeyEventSink,
+                  public ITfCompositionSink {
 public:
     ChaosetTIP() { InterlockedIncrement(&g_liveObjects); }
     virtual ~ChaosetTIP() {
@@ -2157,6 +2186,8 @@ public:
             *ppv = static_cast<IUnknown*>(static_cast<ITfTextInputProcessor*>(this));
         } else if (riid == IID_ITfTextInputProcessor) {
             *ppv = static_cast<ITfTextInputProcessor*>(this);
+        } else if (riid == kIID_ITfTextInputProcessorEx) {
+            *ppv = static_cast<ITfTextInputProcessorEx*>(this);
         } else if (riid == IID_ITfKeyEventSink) {
             *ppv = static_cast<ITfKeyEventSink*>(this);
         } else if (riid == IID_ITfCompositionSink) {
@@ -2234,6 +2265,27 @@ public:
             transport_.ensureConnected();
         }
         return S_OK;
+    }
+
+    // ITfTextInputProcessorEx（2026-11-05）：UILess 线程下 TSF 调这个而不是 Activate。
+    //
+    // 当前只做两件事：记录 dwFlags（拿到「是否真的存在 UILess 宿主」的第一手
+    // 数据），然后复用 Activate 的初始化。**渲染路径暂不变**——是否改用
+    // ITfUIElementMgr 提交候选，等日志出现 uielementonly=1 再决定。
+    //
+    // 注意：在 UILess 线程里按微软文档「categorized by GUID_TFCAT_TIPCAP_
+    // UIELEMENTENABLED 的 TIP 必须用 ITfUIElementMgr 显示所有 UI」。我们尚未
+    // 注册该类别（注册会全局生效，声明与实现不一致时正是 2026-10-30
+    // 「开始菜单里候选窗完全消失」的原因），所以这里不会主动走 UI 元素路径。
+    HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr* ptim, TfClientId tid,
+                                         DWORD dwFlags) override {
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "activateEx flags=0x%08lX uielementonly=%d selfpid=%lu\n",
+                       static_cast<unsigned long>(dwFlags),
+                       (dwFlags & TF_TMAE_UIELEMENTENABLEDONLY) ? 1 : 0,
+                       static_cast<unsigned long>(GetCurrentProcessId()));
+        }
+        return Activate(ptim, tid);
     }
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {

@@ -4,6 +4,16 @@
 
 ## 未发布
 
+- **补齐 `ITfTextInputProcessorEx`（UILess 模式的第一步）**：微软《UILess Mode
+  Overview》要求 TIP 实现该接口，否则在 UILess 线程里**不会被激活**。此前
+  只实现 `ITfTextInputProcessor`，因此对 UILess 宿主（游戏/全屏/部分 WinUI 应用）
+  完全不可见——而且因为不会被激活，`tsf.log` 里连一行都不会有。这也修正了此前
+  一个错误推论：「日志里 uiless=0」不等于「不存在 UILess 宿主」，那是被排除的结果。
+  本次只补接口与 `ActivateEx`（记录 `flags` 与 `uielementonly`），**渲染路径不变**；
+  是否改用 `ITfUIElementMgr` 提交候选，等日志出现真实 UILess 宿主再决定。
+  仍未注册 `TFCAT_TIPCAP_UIELEMENTENABLED`——声明了就必须让所有 UI 走 UI 元素
+  管理器，否则就是 2026-10-30「开始菜单里候选窗消失」的原因；`checkuiparity`
+  已加断言锁死这一点。
 - **按 Shift 仍会把同进程的另一个窗口弹到前面（Firefox 多窗口/PWA）**：
   加了 `ownpid`/`fgpid`/`selfpid` 诊断后实机确认三者相等，说明 owner 既不是
   跨进程也不是陈旧上下文——问题在更基础的一层：**带 owner 的 TOPMOST 窗口

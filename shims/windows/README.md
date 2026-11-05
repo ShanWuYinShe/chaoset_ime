@@ -191,6 +191,14 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
+- **UILess 模式现状**：已实现 `ITfTextInputProcessorEx::ActivateEx`（微软文档要求，
+  否则 UILess 线程里 TIP 不被激活），但**尚未**实现 `ITfUIElementMgr` 与
+  `ITfCandidateListUIElement`，因此：
+  - 已注册类别里**没有** `TFCAT_TIPCAP_UIELEMENTENABLED`（声明了就必须让所有
+    UI 走 UI 元素管理器，否则候选窗会在部分宿主整体消失，见 2026-10-30 事故）；
+  - 候选窗仍是进程内自绘 GDI 弹窗；
+  - `tsf.log` 里 `activateEx ... uielementonly=1` 是「真的遇到了 UILess 宿主」
+    的唯一证据，出现后再评估是否补 UI 元素渲染路径。
 - **Shift 跟踪必须同时挂在 Test 与 Key 两个按键阶段**（2026-11-05 实机日志结论）：
   宿主分两类——Firefox 把修饰键送进 OnTestKeyDown/OnTestKeyUp；Chrome、conhost、
   Windows Terminal **只**送 OnKeyDown/OnKeyUp（同一进程里前者无日志、后者有）。

@@ -474,6 +474,28 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 		"学习数据按词删除", "右键删除", "删除该词", "chaoset-userdict delete")
 }
 
+// UILess 能力契约（2026-11-05）：
+// 微软《UILess Mode Overview》明确要求 TIP 实现 ITfTextInputProcessorEx，否则
+// 在 UILess 线程里**不会被激活**（连日志都不会有，所以「日志里 uiless=0」不是
+// 证据）。同时严禁在未实现 ITfUIElementMgr 的情况下注册
+// TFCAT_TIPCAP_UIELEMENTENABLED——声明了就必须让所有 UI 走 UI 元素管理器，
+// 否则正是 2026-10-30「开始菜单里候选窗完全消失」的事故。
+func checkUILessCapability(fsys fs.FS, problems *[]string) {
+	const group = "UILess 能力"
+	checkContains(fsys, problems, group, winShell,
+		"ITfTextInputProcessorEx",      // 接口声明（mingw 缺失，需自备）
+		"ActivateEx(",                  // 实现
+		"kIID_ITfTextInputProcessorEx", // 用自己的 IID 常量做 QI 匹配
+		"TF_TMAE_UIELEMENTENABLEDONLY", // 标志位判定入日志
+	)
+	// 未实现 ITfUIElementMgr 前不得注册 UIELEMENTENABLED 类别。
+	// 只匹配**常量名**（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED），避免把解释性
+	// 注释里的字样也算进来；一旦有人真去注册，这条就会红。
+	checkExcludes(fsys, problems, group, winShell, "kGUID_TFCAT_TIPCAP_UIELEMENTENABLED")
+	// 决策理由必须留在源码里，防止后来者"顺手补上"。
+	checkContains(fsys, problems, group, winShell, "不注册 TFCAT_TIPCAP_UIELEMENTENABLED")
+}
+
 // 浮窗 owner 契约（2026-11-05 用户反馈「候选窗/提示条一出现就把别的窗口顶到前面」）：
 // 带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，所以 owner
 // 必须是**当前前台窗口且属于本进程**，不得用 TSF 上下文推出来的窗口
@@ -677,6 +699,11 @@ func Run(fsys fs.FS) []string {
 	// 为 owner。带 owner 的 TOPMOST 窗口会把 owner 所在窗口组抬到前面，用
 	// TSF 上下文推出来的窗口当 owner 时，用户会看到「弹到别的窗口但焦点不动」。
 	checkPopupOwner(fsys, &problems)
+
+	// 4i. UILess 能力（2026-11-05）：必须实现 ITfTextInputProcessorEx，
+	// 否则 UILess 宿主里 TIP 完全不被激活；但在实现 ITfUIElementMgr 之前
+	// 不得注册 UIELEMENTENABLED 类别。
+	checkUILessCapability(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
