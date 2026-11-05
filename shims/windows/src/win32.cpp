@@ -444,6 +444,18 @@ LONG CALLBACK diagCrashHandler(EXCEPTION_POINTERS* info) {
             return EXCEPTION_CONTINUE_SEARCH;
     }
 
+    // **只记真正的错误级异常**（2026-11-05）。
+    //
+    // 以前这里什么都记，结果在开始菜单/搜索（AppContainer 宿主）里堆了 197 条
+    // 「崩溃」，实际全是宿主自己抛出又接住的 COM/RPC 首次异常：
+    //   EPT_S_NOT_REGISTERED(0x6D9)、RPC_S_SERVER_UNAVAILABLE(0x800706BA) …
+    // 决定性证据：那些条目的 pid 从头到尾没变，进程一直活着在正常出候选。
+    //
+    // NTSTATUS 的严重性位只有 0xC0000000 档是错误（访问违例 0xC0000005、
+    // 栈溢出 0xC00000FD、fail-fast 0xC0000409、页内错误 0xC0000006 …）。
+    // 0x8007xxxx 是 RPC 警告级、0x00000xxx 是 Win32 状态码，都属正常控制流。
+    if ((code & 0xF0000000u) != 0xC0000000u) return EXCEPTION_CONTINUE_SEARCH;
+
     // 同一线程重入（日志写入本身触发异常）直接放弃，避免无限递归
     static volatile LONG busy = 0;
     if (InterlockedCompareExchange(&busy, 1, 0) != 0) return EXCEPTION_CONTINUE_SEARCH;

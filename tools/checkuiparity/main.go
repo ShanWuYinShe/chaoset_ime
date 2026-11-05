@@ -511,6 +511,18 @@ func checkForegroundFallback(fsys fs.FS, problems *[]string) {
 	)
 }
 
+// 崩溃日志契约（2026-11-05）：crash.log 只允许记录**错误级**异常。
+// 曾经什么都记，结果 AppContainer 宿主里堆了 197 条「崩溃」，实际全是宿主
+// 自己抛出又接住的 COM/RPC 首次异常（pid 一直没变、进程一直活着）。
+// NTSTATUS 严重性位非 0xC0000000 档的一律跳过。
+func checkCrashLogFilter(fsys fs.FS, problems *[]string) {
+	const group = "崩溃日志"
+	checkContains(fsys, problems, group, winShell,
+		"0xF0000000u) != 0xC0000000u", // 严重性位过滤
+		"EPT_S_NOT_REGISTERED",        // 决策理由留档
+	)
+}
+
 // 模式指示器契约（2026-11-05 用户要求「像其他输入法那样提示当前中英文模式」）：
 // 正确做法是把模式写进线程级隔间 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE，
 // 由 Windows 自带的输入指示器显示「中/英」——微软拼音、搜狗都是这个机制，
@@ -762,6 +774,9 @@ func Run(fsys fs.FS) []string {
 	// 4k. 模式指示器（2026-11-05）：中英模式必须同步到 TSF 线程隔间，
 	// 由 Windows 输入指示器显示「中/英」，而不是自建托盘图标。
 	checkModeIndicator(fsys, &problems)
+
+	// 4l. 崩溃日志只记错误级异常（2026-11-05）：RPC/COM 首次异常不算崩溃。
+	checkCrashLogFilter(fsys, &problems)
 
 	// 5. 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包。
 	checkContains(fsys, &problems, "打包安装", makefile, "chaoset-setup", "chaoset-macos.zip")
