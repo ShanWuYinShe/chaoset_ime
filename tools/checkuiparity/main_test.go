@@ -159,6 +159,84 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 	}
 }
 
+// TestCheckTsfZeroBlockContract 用真实 win32.cpp + ui-parity 文档验证零阻塞契约，
+// 并做 4 个变异（任一回归都必须被捕获）：
+//  1. TSF 回调（Activate/OnSetFocus 共享调用点）体内注入 Sleep(1)——宿主 UI 线程睡眠；
+//  2. diagPrintf 去掉 enqueueLogLine——tsf.log 回退同步写；
+//  3. 前台钩子回调注入 Sleep(1)——钩子回调不再只 PostMessage；
+//  4. DllCanUnloadNow 去掉 g_liveTipMsgWindows——worker/消息窗口活着时卸载 DLL。
+func TestCheckTsfZeroBlockContract(t *testing.T) {
+	winText, err := os.ReadFile("../../" + winShell)
+	if err != nil {
+		t.Fatalf("读取 Windows 壳源码失败：%v", err)
+	}
+	docText, err := os.ReadFile("../../" + uiParityDoc)
+	if err != nil {
+		t.Fatalf("读取 ui-parity 文档失败：%v", err)
+	}
+	fsys := func(win string) fstest.MapFS {
+		return fstest.MapFS{
+			winShell:    &fstest.MapFile{Data: []byte(win)},
+			uiParityDoc: &fstest.MapFile{Data: docText},
+		}
+	}
+	var problems []string
+	checkTsfZeroBlockContract(fsys(string(winText)), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实零阻塞实现未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：TSF 回调体内注入 Sleep(1)。
+	mutated := strings.Replace(string(winText),
+		"syncEnglishFromAuthority();", "Sleep(1); syncEnglishFromAuthority();", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异 1 未生效：源码里找不到 syncEnglishFromAuthority();")
+	}
+	problems = nil
+	checkTsfZeroBlockContract(fsys(mutated), &problems)
+	joined := strings.Join(problems, "\n")
+	if !strings.Contains(joined, "TSF 回调零跨进程等待") || !strings.Contains(joined, "Sleep(") {
+		t.Fatalf("TSF 回调注入 Sleep 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：diagPrintf 去掉 enqueueLogLine（tsf.log 回退同步写）。
+	mutated = strings.Replace(string(winText), "enqueueLogLine(line, n + m);", "", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异 2 未生效：源码里找不到 enqueueLogLine(line, n + m);")
+	}
+	problems = nil
+	checkTsfZeroBlockContract(fsys(mutated), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "enqueueLogLine") {
+		t.Fatalf("diagPrintf 去掉 enqueueLogLine 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 3：前台钩子回调不再只 PostMessage（注入 Sleep 并把 PostMessage 注释掉）。
+	mutated = strings.Replace(string(winText),
+		"PostMessageW(g_tlTipMsgWnd, kTipForegroundMsg,",
+		"Sleep(1); // PostMessageW(g_tlTipMsgWnd, kTipForegroundMsg,", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异 3 未生效：源码里找不到钩子回调的 PostMessageW")
+	}
+	problems = nil
+	checkTsfZeroBlockContract(fsys(mutated), &problems)
+	joined = strings.Join(problems, "\n")
+	if !strings.Contains(joined, "前台钩子回调") || !strings.Contains(joined, "Sleep(") {
+		t.Fatalf("前台钩子回调注入 Sleep/去掉 PostMessage 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 4：DllCanUnloadNow 不计 message-only 窗口。
+	mutated = strings.Replace(string(winText),
+		"    if (g_liveTipMsgWindows != 0) return S_FALSE;\n", "", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异 4 未生效：源码里找不到 g_liveTipMsgWindows 计数")
+	}
+	problems = nil
+	checkTsfZeroBlockContract(fsys(mutated), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "DllCanUnloadNow") {
+		t.Fatalf("DllCanUnloadNow 去掉 message-only 窗口计数应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckShellVarEscaping(t *testing.T) {
 	bad := fstest.MapFS{
 		"shims/a.sh": &fstest.MapFile{Data: []byte("echo \"（$ARCH）\"\n")},

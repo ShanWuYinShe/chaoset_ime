@@ -55,6 +55,14 @@
 //     必须 mouseUp 才打开设置（按下只记录，Linux README 记录齿轮不适用）；
 //     托盘中英图标不随开机显示（UI 宿主不写登录 Run 项，TIP 首次激活带
 //     --mode 懒启动，首条模式上报后才 Shell_NotifyIcon）。
+//  17. 零阻塞契约（Windows，2026-11-06 用户要求「任何情况下都不阻塞任何进程」）：
+//     TSF 回调在宿主 UI 线程同步执行，函数体内禁止 Sleep/WaitNamedPipeW/
+//     WaitForSingleObject/CreateProcessW/CreateFileW/WriteFile/MessageBoxW/
+//     GetOpenFileNameW/RegSetValueExW/慢连接 ensureDaemonConnected；副作用统一
+//     入队 ShellWorker（任务队列 + message-only 窗口回投）；tsf.log 走异步
+//     enqueueLogLine（不回退同步写）；管道 FILE_FLAG_OVERLAPPED + 截止时间 +
+//     熔断；daemon 未就绪按键 fail-open；前台钩子回调只 PostMessage；
+//     DllCanUnloadNow 计入 worker 线程与消息窗口。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -1263,6 +1271,165 @@ func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
 		"托盘图标收到首条模式上报后才出现")
 }
 
+// checkTsfZeroBlockContract 锁住 2026-11-06 用户要求（「输入法在任何情况下都
+// 不应阻塞任何进程或 app」）+ AGENTS「零阻塞契约（Windows）」：
+// TSF 把 TIP 加载进每个宿主进程，所有 TSF 回调都在宿主 UI 线程同步执行，
+// 因此回调体内禁止任何跨进程等待/建进程/同步写盘——副作用统一交给每进程一个
+// ShellWorker 后台线程（任务队列 + message-only 窗口回投结果）。
+//
+// 断言与 .workwork/impl/phase1-report.md §4 的 a–e 对应：
+//
+//	a) 15 个关键回调函数体不含阻塞/跨进程/同步写盘 API 与慢连接路径；
+//	   tsf.log 只走 AsyncLog（diagPrintf → enqueueLogLine，不回退同步写）。
+//	b) 零阻塞基础设施存在：ShellWorker/ShellTask/AsyncLog/message-only 窗口/
+//	   overlapped 管道/熔断。
+//	c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 调用点用 ensureDaemonFast。
+//	d) 前台钩子回调只 PostMessage；TIP 线程处理前台变化时日志必须限流。
+//	e) DllCanUnloadNow 计入 worker 线程与 message-only 窗口。
+func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
+	const group = "TSF 回调零跨进程等待"
+	data, err := fs.ReadFile(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+		return
+	}
+	src := string(data)
+
+	// a) 关键 TSF 回调函数体：禁止阻塞/跨进程/同步写盘 API 与慢连接路径。
+	callbacks := []struct{ name, sig string }{
+		{"Activate", "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"},
+		{"ActivateEx", "HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr* ptim, TfClientId tid,"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override"},
+		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"render", "void render(ITfContext* pic)"},
+		{"handleKey", "bool handleKey(WPARAM vk, ITfContext* pic)"},
+		{"showSettingsWindow", "void ChaosetTIP::showSettingsWindow()"},
+		{"onForegroundChanged", "void onForegroundChanged(HWND fg)"},
+		{"selectCandidateByIndex", "void selectCandidateByIndex(int index)"},
+		{"deleteCandidateByIndex", "void deleteCandidateByIndex(int index)"},
+		{"flipPage", "void flipPage(bool next)"},
+		{"CandidateWindow::show",
+			"void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip)"},
+	}
+	banned := []string{
+		"Sleep(", "WaitNamedPipeW", "WaitForSingleObject", "CreateProcessW",
+		"CreateFileW", "WriteFile(", "MessageBoxW", "GetOpenFileNameW",
+		"RegSetValueExW", "ensureDaemonConnected(",
+	}
+	for _, cb := range callbacks {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 找不到 %s 的函数体（签名变了？）", group, winShell, cb.name))
+			continue
+		}
+		code := stripCppComments(body)
+		for _, bad := range banned {
+			if strings.Contains(code, bad) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 %s（约第 %d 行）函数体出现 %q——TSF 回调不得跨进程等待/"+
+						"建进程/同步写盘（应入队 ShellWorker）", group, winShell, cb.name, line, bad))
+			}
+		}
+	}
+
+	// a2) tsf.log 必须异步：diagPrintf 对 tsf.log 只 enqueueLogLine；同步写盘只
+	// 留给崩溃路径的 diagWrite（crash.log）。
+	if body, line, ok := cppFunctionBody(src, "void diagPrintf(const wchar_t* name, const char* fmt, ...)"); ok {
+		code := stripCppComments(body)
+		for _, need := range []string{"enqueueLogLine(", `wcscmp(name, L"tsf.log")`} {
+			if !strings.Contains(code, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 diagPrintf（约第 %d 行）缺少 %q——tsf.log 必须走 AsyncLog", group, winShell, line, need))
+			}
+		}
+		if strings.Contains(code, "WriteFile(") || strings.Contains(code, "CreateFileW") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 diagPrintf（约第 %d 行）出现同步写盘——TSF 线程不得写盘（崩溃路径另有 diagWrite）",
+				group, winShell, line))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 diagPrintf 定义", group, winShell))
+	}
+
+	// b) 零阻塞基础设施必须存在（worker 任务队列 / AsyncLog / message-only 窗口 /
+	// overlapped 管道 + 截止时间 / 熔断）。
+	checkContains(fsys, problems, group, winShell,
+		"class ShellWorker", "ShellTask", "enqueueLogLine", "kTipForegroundMsg",
+		"HWND_MESSAGE", "FILE_FLAG_OVERLAPPED", "circuitOpen", "setDeadlineMs",
+	)
+
+	// c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 调用点用 ensureDaemonFast
+	// （单次非阻塞探测 + fail-open）。
+	checkContains(fsys, problems, group, winShell, "ensureDaemonFast(")
+	if body, line, ok := cppFunctionBody(src, "static bool ensureDaemonFast(PipeTransport& transport)"); ok {
+		if strings.Contains(stripCppComments(body), "ensureDaemonConnected(") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 ensureDaemonFast（约第 %d 行）又回退到 ensureDaemonConnected（会阻塞）",
+				group, winShell, line))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 ensureDaemonFast 定义", group, winShell))
+	}
+
+	// d) 前台钩子：系统级回调体内只 PostMessage（不 hide、不写盘、不等待）；
+	// TIP 线程处理前台变化时日志必须限流（前台风暴不能每事件刷盘）。
+	if body, line, ok := cppFunctionBody(src, "static void CALLBACK fgHookProc(HWINEVENTHOOK /*hook*/"); ok {
+		code := stripCppComments(body)
+		for _, need := range []string{"PostMessageW(", "kTipForegroundMsg"} {
+			if !strings.Contains(code, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的前台钩子回调（约第 %d 行）缺少 %q——钩子回调只能 PostMessage",
+					group, winShell, line, need))
+			}
+		}
+		for _, bad := range banned {
+			if strings.Contains(code, bad) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的前台钩子回调（约第 %d 行）出现 %q（回调体内只许 PostMessage）",
+					group, winShell, line, bad))
+			}
+		}
+		if strings.Contains(code, "diagPrintf") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的前台钩子回调（约第 %d 行）出现 diagPrintf（不得每事件写盘）",
+				group, winShell, line))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 fgHookProc 定义", group, winShell))
+	}
+	if body, line, ok := cppFunctionBody(src, "void onForegroundChanged(HWND fg)"); ok {
+		code := stripCppComments(body)
+		if strings.Contains(code, "diagPrintf") && !strings.Contains(code, "lastLog") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 onForegroundChanged（约第 %d 行）写诊断日志但没有限流（前台风暴会刷盘）",
+				group, winShell, line))
+		}
+	}
+
+	// e) DLL 卸载：worker 线程与 message-only 窗口活着时不得卸载 DLL。
+	if body, line, ok := cppFunctionBody(src, "STDAPI DllCanUnloadNow()"); ok {
+		code := stripCppComments(body)
+		for _, need := range []string{"g_liveTipMsgWindows", "shellWorkerAlive()", "shellWorkerStop()"} {
+			if !strings.Contains(code, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 DllCanUnloadNow（约第 %d 行）缺少 %q——worker/消息窗口活着时不得卸载",
+					group, winShell, line, need))
+			}
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 DllCanUnloadNow", group, winShell))
+	}
+
+	// 文档必须记录契约（防止实现与 docs/ui-parity.md 脱节）。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"## 零阻塞契约", "TSF 回调", "ShellWorker", "fail-open",
+		"FILE_FLAG_OVERLAPPED", "DllCanUnloadNow", "checkuiparity")
+}
+
 // checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
 //  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
 //     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
@@ -1480,6 +1647,8 @@ func Run(fsys fs.FS) []string {
 	checkSettingsWindowContract(fsys, &problems)
 	checkCandidateGearMouseUp(fsys, &problems)
 	checkTrayLazyLifecycle(fsys, &problems)
+	// 5g. 零阻塞契约：TSF 回调体禁止跨进程等待/建进程/同步写盘（2026-11-06）。
+	checkTsfZeroBlockContract(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1673,5 +1842,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/CI 覆盖/shell 转义/文档对照）")
 }

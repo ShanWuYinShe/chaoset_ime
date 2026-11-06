@@ -172,6 +172,41 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 - 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
   Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
 
+## 零阻塞契约（Windows，2026-11-06）
+
+用户要求：「输入法在任何情况下都不应阻塞任何进程或 app」。TSF 把 TIP 加载进每个
+宿主进程，**所有 TSF 回调都在宿主 UI 线程上同步执行**，因此回调体内禁止任何跨进程
+等待/建进程/同步写盘。该契约由 `tools/checkuiparity` 的「TSF 回调零跨进程等待」组
+逐函数机器断言（含变异测试），禁止回退。
+
+- **禁止项（TSF 回调体内）**：`Sleep(`、`WaitNamedPipeW`、
+  `WaitForSingleObject`、`CreateProcessW`、`CreateFileW`、`WriteFile(`、
+  `MessageBoxW`、`GetOpenFileNameW`、`RegSetValueExW`、慢连接
+  `ensureDaemonConnected(`。覆盖函数：Activate / ActivateEx / OnSetFocus /
+  OnTestKeyDown / OnKeyDown / OnTestKeyUp / OnKeyUp / render / handleKey /
+  showSettingsWindow / onForegroundChanged / selectCandidateByIndex /
+  deleteCandidateByIndex / flipPage / CandidateWindow::show。
+- **副作用统一入口**：每进程一个 `ShellWorker` 后台线程（`ShellTask` 任务队列）
+  + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipDaemonReadyMsg`/
+  `kTipModeAuthorityMsg`/`kTipShowToastMsg` 回投结果）；建进程、管道重试、
+  派发 UI、daemon 代拉起全部在 worker 执行。
+- **异步日志**：`diagPrintf` 对 `tsf.log` 只做 `enqueueLogLine`（有界 ring，
+  worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘
+  （`candidate shown` 整条删除），前台风暴日志限流 5s。
+- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（TSF 路径 30ms、
+  worker/设置窗 200ms，`setDeadlineMs`）+ 5s 熔断（`circuitOpen`）。
+- **fail-open**：daemon 未就绪时 `ensureDaemonFast` 单次非阻塞探测，失败即原样
+  放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键恢复候选。
+  首 1–2 个内容键可能按英文直入（已确认可接受）。
+- **配置缓存**：ModeScope / Associate / 深色主题 / 全屏抑制均带 TTL 缓存，
+  候选窗每键不再做注册表/Shell 查询。
+- **前台钩子**：每线程最多一个系统级钩子，回调体内只 `PostMessage`（不 hide、
+  不写盘）；真正的清理在 TIP 线程做，前台离开本进程自动撤销；按键/下一次
+  Activate 时按需自愈重挂。
+- **生命周期安全**：worker 线程与 message-only 窗口计入 `DllCanUnloadNow`
+  （`shellWorkerAlive()`、`g_liveTipMsgWindows`），未退干净时返回 `S_FALSE`；
+  `DllMain(DETACH)` 只置停止标志不 join。
+
 ## 按键与交互
 
 ### 修饰键映射
@@ -211,9 +246,10 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 - tools/checkuiparity：三端设置窗文案/单例、设置窗契约（640×560pt、页脚版本号
   所有页、卡片契约标识、关于页正文）、学习数据 GUI、词库导入安全、齿轮 mouseUp
   （按下不得打开设置）、托盘生命周期（不写登录 Run 项、--mode 懒启动、首条模式
-  上报后才显示图标）、联想即时性、退格/修饰键语义、候选窗几何/配色字段、
-  候选点选/右键删除、单例 UI 宿主与模式指示器（不许回退为 TIP 自绘托盘/toast）、
-  打包安装、CI 覆盖、shell 转义与文档对照。
+  上报后才显示图标）、**TSF 回调零跨进程等待（15 个回调函数体禁用语 + AsyncLog +
+  熔断 + 钩子只 PostMessage + DllCanUnloadNow 计数）**、联想即时性、退格/修饰键
+  语义、候选窗几何/配色字段、候选点选/右键删除、单例 UI 宿主与模式指示器
+  （不许回退为 TIP 自绘托盘/toast）、打包安装、CI 覆盖、shell 转义与文档对照。
 - Windows 候选窗常量由上述静态工具校验；像素级渲染仍需真机观察，不能把
   编译级验证写成“双端已验证”。
 
