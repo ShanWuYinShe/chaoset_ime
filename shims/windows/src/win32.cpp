@@ -1387,6 +1387,16 @@ static void openSettingsInWorker(DWORD notifyThread) {
 
 static volatile LONG g_connectJobPending = 0;  // daemon 连接任务去重
 
+// spawn 前确认 daemon 单实例互斥体是否已存在（与 Go cmd/chaosetd 的
+// Local\ChaosetDaemon 同名）。比管道探测更强的判据：即使管道 BUSY/暂时连不上，
+// 只要互斥体在就说明 daemon 已运行，绝不能 spawn 第二个（2026-11-07 审计）。
+static bool daemonMutexPresent() {
+    HANDLE h = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\ChaosetDaemon");
+    if (h == nullptr) return false;
+    CloseHandle(h);
+    return true;
+}
+
 // worker 线程用：最多等 ms 让「本进程成为前台」。返回 true = 本进程是前台。
 // 不在 TSF 线程调用（那里只看一次，绝不等待）。
 static bool workerWaitForegroundSelf(int ms) {
@@ -1547,7 +1557,7 @@ private:
                 // AppContainer 宿主内 CreateProcessW 会创建 AC 进程，daemon 起不来；
                 // 只等待其它宿主/登录项拉起的 daemon，绝不在这里空转 spawn
                 //（2026-11-07：tsf.log/daemon.log 显示 AC 与后台实例反复 spawn）。
-                const bool canSpawn = !isAppContainer();
+                const bool canSpawn = !isAppContainer() && !daemonMutexPresent();
                 if (canSpawn) ensureDaemonStarted();
                 for (int i = 0; canSpawn && i < 40; ++i) {
                     if (daemonPipeExists()) break;
@@ -1557,7 +1567,7 @@ private:
                 break;
             }
             case ShellTask::Kind::kWarmDaemon:
-                if (!isAppContainer()) ensureDaemonStarted();
+                if (!isAppContainer() && !daemonMutexPresent()) ensureDaemonStarted();
                 break;
             case ShellTask::Kind::kOpenSettings:
                 openSettingsInWorker(task.notifyThread);
@@ -1964,10 +1974,9 @@ public:
 
     // ITfTextInputProcessor
     HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override {
-        // 零阻塞（2026-11-06 审计）：先把后台 worker 与 TIP 线程 message-only
-        // 窗口准备好；本回调余下部分只做内存/TSF 本地操作，绝不跨进程等待。
-        shellWorkerStart();
-        ensureTipMsgWnd();
+        // worker 与 message-only 窗口延迟到「真正激活」（updateInputActive）时
+        // 才创建：TSF 会把 TIP 预激活进每个宿主，后台实例不该有线程/窗口/定时器
+        //（2026-11-07 用户要求：没激活时不做任何操作）。
         registerTipOnThread(this);
         g_lastOp = kOpActivate;
         ensureCrashHandler();
@@ -2820,6 +2829,10 @@ private:
         }
         inputActive_ = next;
         if (next) {
+            // 第一次真正激活：创建后台 worker + TIP 线程 message-only 窗口
+            //（之后所有异步上报/守卫都依赖它们；未激活实例不创建）。
+            shellWorkerStart();
+            ensureTipMsgWnd();
             // system 作用域：从 HKCU 镜像同步 + worker 异步校准；其它 scope 用本地值。
             syncEnglishFromAuthority();
             syncModeCompartment();
@@ -3891,7 +3904,8 @@ private:
         // 防御：非激活时绝不渲染任何 UI（候选窗/预编辑都不该出现在别人的应用里）。
         // 按键入口已有 bailOutIfInactive 闸门，这里再兜一层——render 还有别的
         // 调用点（联想、翻页、候选删除后的刷新），不能指望每个都先过闸门。
-        if (!isActiveTip()) {
+        // 用 inputActive_ 而不是 isActiveTip：后者在后台预激活实例仍可能为 true。
+        if (!inputActive_) {
             candidateWnd_.hide();
             toast_.hide();
             return;

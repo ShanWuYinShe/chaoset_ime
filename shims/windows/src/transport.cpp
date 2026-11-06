@@ -60,9 +60,16 @@ bool daemonPipeExists() {
     if (name.empty()) return false;
     HANDLE h = ::CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                              OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    ::CloseHandle(h);
-    return true;
+    if (h != INVALID_HANDLE_VALUE) {
+        ::CloseHandle(h);
+        return true;
+    }
+    // 2026-11-07 审计/真机实测：go-winio 同一时刻只有一个监听实例，daemon 健康时
+    // 约 80% 的探测会拿到 ERROR_PIPE_BUSY；旧实现把它当「不存在」→ TIP 误 spawn
+    // 一个 chaosetd 子进程（先加载 65k 词典，再发现互斥体被占而退出）。
+    // 只有「根本没有这个管道」才算不存在；BUSY/ACCESS_DENIED 都说明实例在。
+    const DWORD err = ::GetLastError();
+    return err == ERROR_PIPE_BUSY || err == ERROR_ACCESS_DENIED;
 }
 
 }  // namespace chaoset::win

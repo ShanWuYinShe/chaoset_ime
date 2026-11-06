@@ -257,6 +257,19 @@ func run(ep ipc.Endpoint, dicts []string, userPath string, fuzzy bool, trad bool
 // runWithContext 是 daemon 的完整生命周期：加载词库/用户词典、单实例锁、
 // 监听、serve、按 ctx 取消优雅退出（停 flush ticker → Save → 清理套接字）。
 func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPath string, fuzzy bool, trad bool, shuangpin string) error {
+	// Windows 单实例互斥体必须先于词库加载：重复启动的子进程不应该先付
+	// 65k 词库加载成本（2026-11-07 真机：重启后 8 次启动 7 次是重复实例，
+	// 每次先载词典再发现互斥体被占而退出）。Unix 仍按下方原顺序（先建目录）。
+	var winLock *lockHandle
+	if runtime.GOOS == "windows" && ep.Network == "pipe" {
+		l, lerr := acquireSingleton(ep.Address)
+		if lerr != nil {
+			return lerr
+		}
+		winLock = l
+		defer winLock.release()
+	}
+
 	// 宽松加载词库：-dict 可能指向用户自备的第三方词库，一行坏数据不能让人家
 	// 整个输入法起不来。内置词库的正确性由 CI 保证（生成阶段严格校验 +
 	// engine/data_contract_test.go 严格解析断言），运行时只需跳过坏行并报告。
@@ -313,7 +326,7 @@ func runWithContext(ctx context.Context, ep ipc.Endpoint, dicts []string, userPa
 	// Unix 用 socket 旁的 flock；Windows 用会话级命名互斥体（不同用户会话的
 	// daemon 互不干扰，同一会话内的重复启动会被拒绝）。
 	// 细节见 singleton_unix.go / singleton_windows.go。
-	if ep.Network == "unix" || runtime.GOOS == "windows" {
+	if (ep.Network == "unix" || runtime.GOOS == "windows") && winLock == nil {
 		lock, lerr := acquireSingleton(ep.Address)
 		if lerr != nil {
 			return lerr

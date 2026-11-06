@@ -17,6 +17,11 @@
     scope 托盘左键不再反向改全局。修「桌面 Shift 切模式后切 app，托盘与 app 不一致」。
   - daemon 预热改为每实例只发一次且 AppContainer 内不 spawn：修 tsf.log/daemon.log
     里反复 "daemon lazy start / 已有 chaosetd 在运行"（后台 TIP 实例每次焦点都尝试）。
+  - 重复 spawn 根因修复：`daemonPipeExists` 把 `ERROR_PIPE_BUSY` 当「不存在」
+    （go-winio 同一时刻只有一个监听实例，真机约 80% 探测返回 BUSY）→ 改三态
+    （只有真正无管道才算不存在）；spawn 前先查 `Local\ChaosetDaemon` 互斥体；
+    `chaosetd` 单实例锁前移到词库加载之前（重复实例不再白载 65k 词典）；
+    后台预激活 TIP 实例不再创建 worker 线程/消息窗口（延迟到真正激活）。
 - **方案 A2（Windows 试点）：设置窗接 chaoset-settingsctl（2026-11-07）**：
   - Windows 设置窗的联想开关/中英状态读写改调 `chaoset-settingsctl get/set`
     （1s 硬超时、CREATE_NO_WINDOW、失败回退 native HKCU 读写并记限流 diag）；

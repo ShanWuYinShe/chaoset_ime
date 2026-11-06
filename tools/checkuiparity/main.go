@@ -1007,23 +1007,23 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	// 渲染/提示同样必须受激活约束（render 有多个非按键调用点）。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
-		for _, sig := range []string{
-			"void render(ITfContext* pic) {",
-			"void showToast(const wchar_t* text, bool allowMouseAnchor = false) {",
+		for _, sig := range []struct{ entry, gate string }{
+			{"void render(ITfContext* pic) {", "inputActive_"},
+			{"void showToast(const wchar_t* text, bool allowMouseAnchor = false) {", "isActiveTip()"},
 		} {
-			i := strings.Index(text, sig)
+			i := strings.Index(text, sig.entry)
 			if i < 0 {
-				*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %q", group, winShell, sig))
+				*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %q", group, winShell, sig.entry))
 				continue
 			}
 			end := i + 600
 			if end > len(text) {
 				end = len(text)
 			}
-			if !strings.Contains(text[i:end], "isActiveTip()") {
+			if !strings.Contains(text[i:end], sig.gate) {
 				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 的 %q 未先判断 isActiveTip()（非激活不许渲染/弹窗）",
-					group, winShell, sig))
+					"%s：%s 的 %q 未先判断 %s（非激活不许渲染/弹窗）",
+					group, winShell, sig.entry, sig.gate))
 			}
 		}
 	}
@@ -1775,7 +1775,8 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 		"updateInputActive(", "inputActive_")
 	// daemon spawn 只在 worker 且非 AppContainer（修 2026-11-07 重复 spawn）。
 	checkContains(fsys, problems, group, winShell,
-		"const bool canSpawn = !isAppContainer();", "if (!isAppContainer()) ensureDaemonStarted();")
+		"const bool canSpawn = !isAppContainer() && !daemonMutexPresent();",
+		"if (!isAppContainer() && !daemonMutexPresent()) ensureDaemonStarted();")
 }
 
 // checkTrayActiveLifecycle 锁住 2026-11-07 用户要求（bug1/bug3）：
@@ -1838,6 +1839,49 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	// 文档必须记录 active 生命周期与 scope 对齐语义。
 	checkContains(fsys, problems, group, uiParityDoc,
 		"active 1", "active 0", "输入法未激活时隐藏")
+}
+
+// checkDaemonSpawnGuard 锁住 2026-11-07 审计确认的「重复 spawn chaosetd」根因修复：
+//  1. 管道探测三态：ERROR_PIPE_BUSY/ERROR_ACCESS_DENIED 说明 daemon 在，只有
+//     真正没有管道才算不存在（go-winio 同一时刻只有一个监听实例，实测 80% busy）；
+//  2. spawn 前先查 Local\\ChaosetDaemon 互斥体；
+//  3. chaosed 先把单实例锁放在词库加载之前（重复实例不再白载 65k 词典）；
+//  4. 后台预激活实例不创建 worker/消息窗口（延迟到真正激活）。
+func checkDaemonSpawnGuard(fsys fs.FS, problems *[]string) {
+	const group = "daemon 懒启动去抖"
+	data, err := fs.ReadFile(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+		return
+	}
+	src := string(data)
+	checkContains(fsys, problems, group, "shims/windows/src/transport.cpp",
+		"ERROR_PIPE_BUSY", "ERROR_ACCESS_DENIED",
+		"只有「根本没有这个管道」才算不存在")
+	checkContains(fsys, problems, group, winShell,
+		"daemonMutexPresent()", "OpenMutexW(SYNCHRONIZE, FALSE, L\"Local\\\\ChaosetDaemon\")",
+		"const bool canSpawn = !isAppContainer() && !daemonMutexPresent();")
+	if data, err := fs.ReadFile(fsys, "cmd/chaosetd/main.go"); err == nil {
+		text := string(data)
+		early := strings.Index(text, "var winLock *lockHandle")
+		load := strings.Index(text, "engine.LoadDictFilesLenient(dicts)")
+		if early < 0 || load < 0 || early > load {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：cmd/chaosetd/main.go 的 Windows 单实例锁必须先于词库加载（early=%d load=%d）",
+				group, early, load))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 cmd/chaosetd/main.go 失败：%v", group, err))
+	}
+	// 后台预激活实例不建 worker/窗口：Activate 体里不得直接 shellWorkerStart。
+	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"); ok {
+		code := stripCppComments(body)
+		if strings.Contains(code, "shellWorkerStart()") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 Activate（约第 %d 行）仍无条件创建 worker 线程（延迟到 updateInputActive 激活时）",
+				group, winShell, line))
+		}
+	}
 }
 
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
@@ -2229,6 +2273,8 @@ func Run(base fs.FS) []string {
 	checkInactiveNoAction(fsys, &problems)
 	// 5d2. 非激活零副作用 + 键鼠钩子/输入注入禁区（2026-11-07）。
 	checkInactiveZeroSideEffects(fsys, &problems)
+	// 5d3. daemon 懒启动去抖（ERROR_PIPE_BUSY/互斥体/main.go 顺序）。
+	checkDaemonSpawnGuard(fsys, &problems)
 	// 5e. 托盘点击语义、中英作用域与设置窗卡片布局（2026-11-06）。
 	checkTrayAndModeScope(fsys, &problems)
 	// 5f. 设置窗阶段2 骨架/卡片契约、齿轮 mouseUp、托盘懒生命周期（2026-11-06）。
@@ -2444,5 +2490,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/非激活零副作用/托盘与中英作用域/托盘可见性（active）/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/非激活零副作用/daemon 懒启动去抖/托盘与中英作用域/托盘可见性（active）/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
 }
