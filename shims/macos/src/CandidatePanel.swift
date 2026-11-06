@@ -491,41 +491,51 @@ final class CandidatePanelView: NSView {
     // 视图，也就不会误开设置窗。
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    // 齿轮「按下」是否落在齿轮区（mouseDown 只记录，mouseUp 才真正打开设置）。
-    // 设置入口不能用按下触发：按下即弹窗会在用户按下后想拖动/放弃时误开窗，
-    // 用户 2026-11-06 明确要求改为鼠标抬起（mouseUp）触发；候选词点选保持
-    // mouseDown 原语义不变（Windows 候选窗 settingsRect_ 同契约，三端一致）。
+    // 鼠标左键按下命中的控制区（齿轮 -3 / 翻页 -1,-2 / 候选 >=0）。
+    // 2026-11-06 用户要求「鼠标用抬起触发才正常，按下触发太奇怪」：按下只记录，
+    // 抬起点仍在同一命中区才执行；按下后拖走再松开不触发。齿轮单独保留
+    // settingsPressed 标记（checkuiparity 契约）。
+    private var pressedIndex: Int?
     private var settingsPressed = false
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        // 任何一次新的按下都先清掉上一次未完成的齿轮按下状态：mouseUp 可能
-        // 因为面板被收起/切换而丢失，残留状态会让下一次抬起误触发设置。
+        // 任何一次新的按下都先清掉上一次未完成的状态：mouseUp 可能因为面板被
+        // 收起/切换而丢失，残留状态会让下一次抬起误触发。
         settingsPressed = false
+        pressedIndex = nil
         for (rect, index) in hitAreas where rect.contains(point) {
-            switch index {
-            case -1: onPageDown?()
-            case -2: onPageUp?()
-            case -3:
-                // 只记录命中，不打开设置、不上屏：真正触发在 mouseUp。
+            if index == -3 {
                 settingsPressed = true
-                return
-            default: onSelect?(index)
+            } else {
+                pressedIndex = index
             }
             return
         }
     }
 
-    /// 齿轮 mouseUp：按下与抬起都落在齿轮区才打开设置窗（按下后拖走再松开
-    /// 不触发）。候选点选不经过这里——它在 mouseDown 已上屏。
+    /// 左键抬起：按下与抬起都落在同一命中区才执行（候选上屏 / 翻页 / 打开设置）。
+    /// 按下后拖走再松开不触发（2026-11-06 用户要求：鼠标抬起触发才是常规语义）。
     override func mouseUp(with event: NSEvent) {
-        let pressed = settingsPressed
-        settingsPressed = false
-        guard pressed else { return }
         let point = convert(event.locationInWindow, from: nil)
-        guard hitAreas.contains(where: { $0.index == -3 && $0.rect.contains(point) })
+        let wasSettings = settingsPressed
+        let wasIndex = pressedIndex
+        settingsPressed = false
+        pressedIndex = nil
+        if wasSettings {
+            guard hitAreas.contains(where: { $0.index == -3 && $0.rect.contains(point) })
+            else { return }
+            onSettings?()
+            return
+        }
+        guard let index = wasIndex,
+              hitAreas.contains(where: { $0.index == index && $0.rect.contains(point) })
         else { return }
-        onSettings?()
+        switch index {
+        case -1: onPageDown?()
+        case -2: onPageUp?()
+        default: onSelect?(index)
+        }
     }
 
     // MARK: 右键删除学习记录

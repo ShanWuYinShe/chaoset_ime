@@ -1490,6 +1490,94 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, macEngineClient, "Process()", "chaosetd")
 }
 
+// checkCandidateMouseUpSemantics 锁住 2026-11-06 用户要求：候选窗左键的全部
+// 动作（候选上屏 / 翻页 / 打开设置）都必须在鼠标抬起时触发；按下只记录命中，
+// 抬起点仍在同一目标上才执行（按下后拖走再松开不触发）。此前候选词是按下即
+// 上屏，用户明确要求改为鼠标抬起。
+func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
+	const group = "候选点选（mouseup）"
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		down, _, ok := cppFunctionBody(text, "void CandidateWindow::onLButtonDown(int x, int y)")
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 CandidateWindow::onLButtonDown", group, winShell))
+		} else {
+			body := stripCppComments(down)
+			for _, bad := range []string{
+				"selectCandidateByIndex(", "flipPage(", "flipAssociateFromPanel(", "showSettingsWindow(",
+			} {
+				if strings.Contains(body, bad) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 onLButtonDown 仍直接调用 %s（左键动作必须在 mouseUp 触发）",
+						group, winShell, bad))
+				}
+			}
+			if !strings.Contains(body, "pressedItemIndex_") || !strings.Contains(body, "gearPressed_") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 onLButtonDown 未记录 pressedItemIndex_/gearPressed_", group, winShell))
+			}
+		}
+		up, _, ok := cppFunctionBody(text, "void CandidateWindow::onLButtonUp(int x, int y)")
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 CandidateWindow::onLButtonUp", group, winShell))
+		} else {
+			body := stripCppComments(up)
+			for _, want := range []string{
+				"selectCandidateByIndex(", "showSettingsWindow(", "flipPage(", "flipAssociateFromPanel(",
+			} {
+				if !strings.Contains(body, want) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 onLButtonUp 未执行 %s（左键动作须在抬起时触发）",
+						group, winShell, want))
+				}
+			}
+		}
+	}
+	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
+		text := string(data)
+		region := func(signature string) (string, bool) {
+			i := strings.Index(text, signature)
+			if i < 0 {
+				return "", false
+			}
+			rest := text[i+len(signature):]
+			if j := strings.Index(rest, "\n    override func "); j >= 0 {
+				return rest[:j], true
+			}
+			return rest, true
+		}
+		if body, ok := region("override func mouseDown(with event: NSEvent) {"); !ok {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 mouseDown", group, macPanel))
+		} else {
+			for _, bad := range []string{"onSelect?(", "onPageDown?()", "onPageUp?()", "onSettings?()"} {
+				if strings.Contains(body, bad) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 mouseDown 仍直接调用 %s（左键动作必须在 mouseUp 触发）",
+						group, macPanel, bad))
+				}
+			}
+			if !strings.Contains(body, "pressedIndex") || !strings.Contains(body, "settingsPressed") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 mouseDown 未记录 pressedIndex/settingsPressed", group, macPanel))
+			}
+		}
+		if body, ok := region("override func mouseUp(with event: NSEvent) {"); !ok {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 mouseUp", group, macPanel))
+		} else {
+			for _, want := range []string{"onSelect?(", "onSettings?()", "onPageDown?()", "onPageUp?()"} {
+				if !strings.Contains(body, want) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 mouseUp 未派发 %s", group, macPanel, want))
+				}
+			}
+		}
+	}
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 func Run(fsys fs.FS) []string {
 	var problems []string
@@ -1673,6 +1761,8 @@ func Run(fsys fs.FS) []string {
 
 	// 6. 候选窗静态几何/配色字段（mac ↔ Windows）。
 	checkCandidateWindow(fsys, &problems)
+	// 6b. 候选窗左键语义：按下只记录、抬起才执行（2026-11-06 用户要求）。
+	checkCandidateMouseUpSemantics(fsys, &problems)
 
 	// 7. CI 覆盖不退化：key_routing 按键路由回归测试必须存在且被 CI 调用。
 	checkExists(fsys, &problems, "CI 覆盖", "shims/macos/tests/key_routing/run.sh")
@@ -1694,8 +1784,10 @@ func Run(fsys fs.FS) []string {
 
 	// 8. 鼠标点选候选：mac/Windows 自绘点选 + Linux ibus CandidateClicked 回引擎。
 	// 此前 Linux 没有 CandidateClicked，面板点候选无反应（2026-10-31 补齐）。
-	checkContains(fsys, &problems, "候选点选", macPanel, "mouseDown")
-	checkContains(fsys, &problems, "候选点选", winShell, "WM_LBUTTONDOWN")
+	// 2026-11-06 用户要求：左键动作（候选上屏/翻页/打开设置）一律鼠标抬起触发，
+	// 按下只记录命中——具体语义见 checkCandidateMouseUpSemantics。
+	checkContains(fsys, &problems, "候选点选", macPanel, "mouseDown", "mouseUp", "pressedIndex")
+	checkContains(fsys, &problems, "候选点选", winShell, "WM_LBUTTONDOWN", "WM_LBUTTONUP", "pressedItemIndex_")
 	checkContains(fsys, &problems, "候选点选", linuxEngine, "candidate_clicked")
 	checkContains(fsys, &problems, "候选点选", uiParityDoc, "鼠标点选候选")
 	// linux-e2e 必须真实验证 CandidateClicked（不只是单测）：防止 E2E 用例被删。
@@ -1842,5 +1934,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/CI 覆盖/shell 转义/文档对照）")
 }

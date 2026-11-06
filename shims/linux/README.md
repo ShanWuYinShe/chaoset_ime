@@ -46,6 +46,9 @@ setup-container.sh  可复现的本地容器验证环境
   因此**齿轮不适用**；设置入口是 ibus-setup 的「首选项」或
   `/usr/share/chaoset/chaoset-setup`（见「设置与词库」）。macOS/Windows
   候选栏的齿轮 mouseUp 契约只约束这两端。
+- 候选点选/翻页的鼠标语义（按下还是抬起触发）由 ibus 面板控制：壳只收到
+  `CandidateClicked` 回调，无法也不应改变系统面板的按键/鼠标语义；macOS/Windows
+  自绘候选窗的「按下只记录、抬起才触发」契约只约束这两端。
 
 ## 设置与词库
 

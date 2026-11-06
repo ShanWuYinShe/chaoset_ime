@@ -890,6 +890,11 @@ public:
     }
 
     void hide() {
+        // 面板收起/重建时丢弃未完成的按下状态，避免下一次抬起误触发
+        //（按下后鼠标移出或被 TSF 收起，收不到对应 mouseup）。
+        gearPressed_ = false;
+        pressedItemIndex_ = -1;
+        chevronPressed_ = false;
         if (hwnd_ != nullptr && IsWindow(hwnd_)) {
             ShowWindow(hwnd_, SW_HIDE);
         }
@@ -1108,7 +1113,8 @@ private:
                 }
                 break;
             case WM_LBUTTONUP:
-                // 齿轮在抬起时触发（见 onLButtonUp）；点选候选仍在按下时生效。
+                // 左键的全部动作（点选候选/翻页/设置齿轮）都在抬起时触发；
+                // 按下只记录命中目标（见 onLButtonDown/onLButtonUp）。
                 if (self != nullptr) {
                     self->onLButtonUp(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
                     return 0;
@@ -1668,8 +1674,12 @@ private:
     RECT chevronRect_{};
     int dividerX_ = 0;
     RECT settingsRect_{}; // 设置齿轮命中区
-    // 齿轮按下但尚未抬起（见 onLButtonUp）：只在 mouseup 打开设置窗。
-    bool gearPressed_ = false;
+    // 鼠标左键按下命中的目标，抬起时才真正执行（2026-11-06 用户要求：
+    // 「鼠标用抬起触发才正常，按下触发太奇怪」）。按下只记录，抬起点仍在
+    // 同一目标上才触发；按下后拖走再松开不触发。
+    bool gearPressed_ = false;    // 按在设置齿轮上
+    int pressedItemIndex_ = -1;   // 按在候选词上（当前页切片内序号）
+    bool chevronPressed_ = false; // 按在翻页箭头上
 };
 
 // ---- 传输：Windows 命名管道 ----
@@ -5850,47 +5860,64 @@ static void unregisterTipFromThread(ChaosetTIP* tip) {
 }
 
 void CandidateWindow::onLButtonDown(int x, int y) {
-    POINT pt{ x, y };
-    if (tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
-        // 设置入口**在鼠标抬起时**才打开（2026-11-06 用户要求：按下即弹窗
-        // 容易被误触，和普通按钮语义不一致）。按下只记录待触发状态。
+    // **按下只记录命中目标，不执行任何动作**：候选点选、翻页、设置齿轮统一在
+    // 鼠标抬起时触发（2026-11-06 用户要求：「鼠标用抬起触发才正常，按下触发
+    // 太奇怪」；按下即上屏/即弹窗在按下后想拖走或放弃时会误触）。
+    const POINT pt{ x, y };
+    gearPressed_ = false;
+    pressedItemIndex_ = -1;
+    chevronPressed_ = false;
+    if (tip_ == nullptr) return;
+    if (PtInRect(&settingsRect_, pt)) {
         gearPressed_ = true;
         return;
     }
-    gearPressed_ = false;
     for (const auto& it : items_) {
         if (PtInRect(&it.itemRect, pt)) {
-            if (tip_ != nullptr) {
-                tip_->selectCandidateByIndex(it.index);
-            }
+            pressedItemIndex_ = it.index;
             return;
         }
     }
-    if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) {
-        if (tip_ != nullptr) {
-            bool hasNext = comp_.page + 1 < comp_.pageCount;
-            bool hasPrev = comp_.page > 0;
-            bool dirDown = hasNext || !hasPrev;
-            // 面板当前展示的可能是**联想**分页（showAssociatePage 传进来的是
-            // 联想页切片），此时必须翻联想页。2026-10-29 修复：此前无条件走
-            // flipPage（翻组词页）——而联想时组词态 comp_ 是空的，flipPage
-            // 首行 hasCandidates() 直接 return，**点箭头完全没反应**
-            // （macOS 面板箭头在联想态走 associateFlip、Linux 同理）。
-            if (tip_->isAssociatePanel()) {
-                tip_->flipAssociateFromPanel(dirDown);
-            } else {
-                tip_->flipPage(dirDown);
-            }
-        }
-    }
+    if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) chevronPressed_ = true;
 }
 
 void CandidateWindow::onLButtonUp(int x, int y) {
+    // 抬起点必须仍在**同一个**命中目标上才执行（按下后拖走再松开不触发）。
     const POINT pt{ x, y };
-    const bool armed = gearPressed_;
+    const bool wasGear = gearPressed_;
+    const int wasItem = pressedItemIndex_;
+    const bool wasChevron = chevronPressed_;
     gearPressed_ = false;
-    if (armed && tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
-        tip_->showSettingsWindow();
+    pressedItemIndex_ = -1;
+    chevronPressed_ = false;
+    if (tip_ == nullptr) return;
+    if (wasGear) {
+        if (PtInRect(&settingsRect_, pt)) tip_->showSettingsWindow();
+        return;
+    }
+    if (wasItem >= 0) {
+        for (const auto& it : items_) {
+            if (it.index == wasItem && PtInRect(&it.itemRect, pt)) {
+                tip_->selectCandidateByIndex(it.index);
+                break;
+            }
+        }
+        return;
+    }
+    if (wasChevron && comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) {
+        bool hasNext = comp_.page + 1 < comp_.pageCount;
+        bool hasPrev = comp_.page > 0;
+        bool dirDown = hasNext || !hasPrev;
+        // 面板当前展示的可能是**联想**分页（showAssociatePage 传进来的是
+        // 联想页切片），此时必须翻联想页。2026-10-29 修复：此前无条件走
+        // flipPage（翻组词页）——而联想时组词态 comp_ 是空的，flipPage
+        // 首行 hasCandidates() 直接 return，**点箭头完全没反应**
+        // （macOS 面板箭头在联想态走 associateFlip、Linux 同理）。
+        if (tip_->isAssociatePanel()) {
+            tip_->flipAssociateFromPanel(dirDown);
+        } else {
+            tip_->flipPage(dirDown);
+        }
     }
 }
 

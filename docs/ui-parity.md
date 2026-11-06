@@ -71,9 +71,10 @@ Windows 常用 pt 值在各 DPI 下的设备像素（四舍五入）：
 - chevron 与齿轮同高，垂直居中；chevX = blockTop + 8 + 3，水平居中；
 - 分隔线高 = textH * 55%，垂直居中；
 - 齿轮 = 圆环 + 8 齿矢量算法，macOS/Windows 同几何参数、同色值；Linux 无齿轮；
-- 齿轮触发时机：按下（mouseDown/WM_LBUTTONDOWN）只记录命中、不打开设置，
-  抬起（mouseUp/WM_LBUTTONUP）且仍在齿轮区才打开设置窗；按下后拖走再松开不
-  触发。候选词点选保持按下即选（2026-11-06 用户要求：设置入口不能按下即弹窗）；
+- 左键动作（候选上屏 / 翻页 / 打开设置）统一在**鼠标抬起**（mouseUp/WM_LBUTTONUP）
+  触发：按下（mouseDown/WM_LBUTTONDOWN）只记录命中目标，抬起点仍在同一目标上才
+  执行；按下后拖走再松开不触发（2026-11-06 用户要求：鼠标抬起触发才符合常规
+  按钮语义，按下即上屏/即弹窗属误触）；
 - 面板圆角、键帽圆角、Toast 圆角按 pt 统一。
 
 ## 色值
@@ -129,7 +130,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端都支持 system/process/window 三档，默认 system |
 | 词库导入 | Setup.app：选择文件 → chaoset-import -o -seed -backup → 重启 daemon | 设置窗同样调用 chaoset-import → 重启 daemon | 设置窗调用 chaoset-import → 重启 ibus | 合并在 Go 工具中完成 |
-| 鼠标点选候选 | 原生候选窗点击 | 原生候选窗点击 | CandidateClicked | 与数字键同语义 |
+| 鼠标点选候选 | 候选窗点击（按下记录、抬起上屏） | 同左（onLButtonDown 记录 / onLButtonUp 上屏） | CandidateClicked（ibus 面板决定点击语义） | 与数字键同语义；左键动作统一 mouseup（2026-11-06 用户要求） |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
 | 无障碍 | VoiceOver 候选文字/窗口级 | UIA 窗口级 provider | 由 ibus/桌面读屏决定 | Windows 候选子项未实现 |
 | Windows per-monitor DPI | 系统自动 | GetDpiForMonitor 按锚点/窗口 DPI，处理 WM_DPICHANGED | 由桌面环境决定 | 混合 DPI 多屏需真机验收 |
@@ -139,7 +140,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 窗口层级 | .floating(3)，不遮蔽菜单栏 | WS_EX_TOPMOST + owner=宿主窗口 | owned 候选窗在宿主之上，可跨开始菜单/搜索的沉浸式 z 序 |
 | 全屏免打扰 | 无 AppKit 对应机制 | D3D 全屏/演示模式抑制候选窗；FullscreenSuppress 注册表可关 | 只抑制显示，不改变按键/组词；无边框全屏不触发 |
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
-| 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 候选词点选仍是按下即选；按下即弹设置属误触（2026-11-06 用户要求） |
+| 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 设置窗 | 左导航三页（输入/词库/关于，132pt）+ 内容页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器），选中项 accent 胶囊 | 左导航 132pt + 右侧圆角卡片 + 底部页脚版本号 + 滚动，640×560pt；深色/DPI 需真机验收 | GtkStackSidebar + 三页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器） |
 
 ## 设置窗契约（2026-11-06 阶段2）

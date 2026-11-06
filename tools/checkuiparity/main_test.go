@@ -480,3 +480,52 @@ func TestCheckExists(t *testing.T) {
 		t.Fatalf("应报缺少文件，实际：%v", problems)
 	}
 }
+
+func TestCheckCandidateMouseUpSemantics(t *testing.T) {
+	winText, err := os.ReadFile("../../" + winShell)
+	if err != nil {
+		t.Fatalf("读取 Windows 壳源码失败：%v", err)
+	}
+	macText, err := os.ReadFile("../../" + macPanel)
+	if err != nil {
+		t.Fatalf("读取 macOS 候选窗源码失败：%v", err)
+	}
+	fsys := func(win, mac string) fstest.MapFS {
+		return fstest.MapFS{
+			winShell: &fstest.MapFile{Data: []byte(win)},
+			macPanel: &fstest.MapFile{Data: []byte(mac)},
+		}
+	}
+	var problems []string
+	checkCandidateMouseUpSemantics(fsys(string(winText), string(macText)), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实候选窗左键实现未通过 mouseup 契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：Windows 的 onLButtonDown 直接上屏（回退到按下即选）。
+	mutatedWin := strings.Replace(string(winText),
+		"void CandidateWindow::onLButtonDown(int x, int y) {\n",
+		"void CandidateWindow::onLButtonDown(int x, int y) {\n    if (tip_ != nullptr) tip_->selectCandidateByIndex(0);\n", 1)
+	if mutatedWin == string(winText) {
+		t.Fatal("变异 1 未生效：源码里找不到 onLButtonDown 函数头")
+	}
+	problems = nil
+	checkCandidateMouseUpSemantics(fsys(mutatedWin, string(macText)), &problems)
+	joined := strings.Join(problems, "\n")
+	if !strings.Contains(joined, "onLButtonDown") || !strings.Contains(joined, "selectCandidateByIndex") {
+		t.Fatalf("Windows onLButtonDown 直接上屏应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：macOS 的 mouseDown 直接上屏。
+	mutatedMac := strings.Replace(string(macText),
+		"override func mouseDown(with event: NSEvent) {\n",
+		"override func mouseDown(with event: NSEvent) {\n        onSelect?(0)\n", 1)
+	if mutatedMac == string(macText) {
+		t.Fatal("变异 2 未生效：源码里找不到 mouseDown 函数头")
+	}
+	problems = nil
+	checkCandidateMouseUpSemantics(fsys(string(winText), mutatedMac), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "mouseDown") || !strings.Contains(joined, "onSelect?(") {
+		t.Fatalf("macOS mouseDown 直接上屏应被捕获，实际：%v", problems)
+	}
+}
