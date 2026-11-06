@@ -4770,10 +4770,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
         // enqueueLogLine；未注册/worker 未启动时直接丢弃，绝不回退同步写。
         diagSetAsyncLog(&enqueueLogLine);
     } else if (fdwReason == DLL_PROCESS_DETACH && reserved == nullptr && hinstDLL != nullptr) {
-        // 动态卸载（FreeLibrary）：先停后台 worker（它跑本 DLL 的代码），并注销
-        // 本模块注册的窗口类。Windows 不会随 DLL 卸载自动注销窗口类，不注销的话
-        // 下次加载时同名类的 lpfnWndProc 可能仍指向已卸载内存。
-        // 进程终止（reserved != nullptr）时无需处理。
+        // 动态卸载（FreeLibrary）：先撤 VEH 回调（否则宿主下一次任意异常都会
+        // 跳进已卸载内存 → WER「ChaosetIME.dll_unloaded」崩溃），再停后台 worker
+        //（它跑本 DLL 的代码），并注销本模块注册的窗口类。Windows 不会随 DLL
+        // 卸载自动注销窗口类，不注销的话下次加载时同名类的 lpfnWndProc 可能仍
+        // 指向已卸载内存。进程终止（reserved != nullptr）时无需处理。
+        removeCrashHandler();
         shellWorkerStop();
         UnregisterClassW(windowClassName(L"ChaosetCandidateWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetModeToastWndClass", hinstDLL).c_str(), hinstDLL);

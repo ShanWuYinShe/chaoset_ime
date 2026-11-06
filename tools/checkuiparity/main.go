@@ -1884,6 +1884,41 @@ func checkDaemonSpawnGuard(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkDllUnloadSafety 锁住 2026-11-07 排查到的宿主进程崩溃根因：
+// 本 DLL 在宿主进程里注册了 VEH（崩溃取证）与若干窗口类；TSF 动态卸载 DLL 时
+// 若不清掉 VEH，宿主下一次任意异常会跳进已卸载内存（WER: ChaosetIME.dll_unloaded）。
+// 因此 DllMain(DLL_PROCESS_DETACH) 必须先 removeCrashHandler() 再卸载。
+func checkDllUnloadSafety(fsys fs.FS, problems *[]string) {
+	const group = "DLL 卸载安全"
+	checkContains(fsys, problems, group, "shims/windows/src/diagnostics.cpp",
+		"RemoveVectoredExceptionHandler", "void removeCrashHandler()", "g_vehHandle")
+	checkContains(fsys, problems, group, "shims/windows/src/diagnostics.hpp",
+		"void removeCrashHandler();")
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		src := string(data)
+		if body, line, ok := cppFunctionBody(src, "BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved)"); ok {
+			code := stripCppComments(body)
+			if !strings.Contains(code, "removeCrashHandler()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 DllMain（约第 %d 行）动态卸载分支未撤 VEH（removeCrashHandler）",
+					group, winShell, line))
+			}
+			if !strings.Contains(code, "UnregisterClassW(") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 DllMain（约第 %d 行）未注销窗口类（回调会指向已卸载内存）",
+					group, winShell, line))
+			}
+		} else {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 DllMain", group, winShell))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+	}
+	if data, err := fs.ReadFile(fsys, "shims/windows/src/diagnostics.cpp"); err == nil {
+		_ = data
+	}
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
 // ============================================================================
 // 2026-11-06 架构拆分：逻辑文件聚合与模块布局预算
@@ -2275,6 +2310,8 @@ func Run(base fs.FS) []string {
 	checkInactiveZeroSideEffects(fsys, &problems)
 	// 5d3. daemon 懒启动去抖（ERROR_PIPE_BUSY/互斥体/main.go 顺序）。
 	checkDaemonSpawnGuard(fsys, &problems)
+	// 5d4. DLL 动态卸载安全（VEH/窗口类不得悬空）。
+	checkDllUnloadSafety(fsys, &problems)
 	// 5e. 托盘点击语义、中英作用域与设置窗卡片布局（2026-11-06）。
 	checkTrayAndModeScope(fsys, &problems)
 	// 5f. 设置窗阶段2 骨架/卡片契约、齿轮 mouseUp、托盘懒生命周期（2026-11-06）。
@@ -2490,5 +2527,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/非激活零副作用/daemon 懒启动去抖/托盘与中英作用域/托盘可见性（active）/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/非激活零副作用/daemon 懒启动去抖/DLL 卸载安全/托盘与中英作用域/托盘可见性（active）/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
 }

@@ -38,6 +38,8 @@ void diagHostName(char* out, int cap);
 bool diagModuleOf(const void* addr, char* module, int cap, char* offsetHex);
 LONG CALLBACK diagCrashHandler(EXCEPTION_POINTERS* info);
 void ensureCrashHandler();
+// 动态卸载前撤销 VEH（否则宿主后续异常会跳进已卸载 DLL，见 diagnostics.cpp）。
+void removeCrashHandler();
 
 // tsf.log 的异步落盘入口。诊断是叶子模块，不能反向链接 TIP TU 的 ShellWorker：
 // worker 段在 DllMain 里把 enqueueLogLine 注册进来。未注册时 tsf.log 直接丢弃，

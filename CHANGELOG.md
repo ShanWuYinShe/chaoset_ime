@@ -4,6 +4,17 @@
 
 ## 未发布
 
+- **修宿主进程崩溃/卡死：DLL 动态卸载后 VEH 回调查进已卸载内存（2026-11-07 日志排查）**：
+  - Windows 应用日志证据（2026-11-05 18:05，安装升级后）：ApplicationFrameHost.exe
+    崩溃，错误模块 **ChaosetIME.dll_unloaded**、0xc0000005、偏移 0xb840。
+  - 根因：崩溃取证用的 `AddVectoredExceptionHandler` 在 DLL 动态卸载（TSF
+    FreeLibrary）时从未撤销，宿主进程下一次任意异常（shell 宿主里 COM/RPC
+    first-chance 异常很常见）就跳进已卸载代码，导致宿主进程崩溃/无响应。
+  - 修复：保存 VEH 句柄，`DllMain(DLL_PROCESS_DETACH)` 先 `removeCrashHandler()`
+    再停 worker/注销窗口类；checkuiparity 新增「DLL 卸载安全」断言。
+  - 另有系统级 GPU TDR 证据（nvlddmkm 4101 + LiveKernelEvent 141，2026-11-07
+    00:38，ToDesk 随后重启机器）——整机/远程会话卡死与该显示驱动超时相关，不归
+    输入法；explorer 18:53 的 shell 重启也在日志中，与 IME 无模块级证据。
 - **非激活零副作用 + 托盘可见性（active）（2026-11-07 用户真机反馈 bug1/bug2）**：
   - 托盘中英图标改为 `active` 生命周期：只有 TIP 上报 `active 1`（前台激活本输入法）
     才 NIM_ADD 显示；`active 0`（失焦/停用/切换输入法/前台离开）防抖 300ms 后

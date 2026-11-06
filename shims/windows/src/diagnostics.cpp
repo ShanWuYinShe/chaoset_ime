@@ -286,13 +286,27 @@ LONG CALLBACK diagCrashHandler(EXCEPTION_POINTERS* info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// VEH 句柄：**必须在 DLL 动态卸载前 RemoveVectoredExceptionHandler**。
+// 否则 DLL 卸载后内核 VEH 链里仍留着指向已卸载代码的回调；宿主进程下一次
+// 任意异常（shell 宿主里 COM/RPC first-chance 异常很常见）就会跳进已卸载内存，
+// WER 报「错误模块 ChaosetIME.dll_unloaded / 0xc0000005」→ 宿主进程崩溃
+//（2026-11-07 排查：ApplicationFrameHost 18:05 崩溃正是这一类）。
+static PVOID g_vehHandle = nullptr;
+static volatile LONG g_crashHandlerInstalled = 0;
+
 // 在 Activate 里惰性注册：DllMain/DllGetClassObject 处于加载器锁内，
 // 官方文档不建议在那里调用 AddVectoredExceptionHandler。
 void ensureCrashHandler() {
-    static volatile LONG installed = 0;
-    if (InterlockedCompareExchange(&installed, 1, 0) == 0) {
-        AddVectoredExceptionHandler(1, diagCrashHandler);
+    if (InterlockedCompareExchange(&g_crashHandlerInstalled, 1, 0) == 0) {
+        g_vehHandle = AddVectoredExceptionHandler(1, diagCrashHandler);
     }
+}
+
+void removeCrashHandler() {
+    PVOID h = g_vehHandle;
+    g_vehHandle = nullptr;
+    InterlockedExchange(&g_crashHandlerInstalled, 0);
+    if (h != nullptr) RemoveVectoredExceptionHandler(h);
 }
 
 }  // namespace chaoset::win

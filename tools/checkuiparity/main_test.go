@@ -582,3 +582,34 @@ func TestCheckLinuxSetupAssembly(t *testing.T) {
 		t.Fatalf("radio 建组回归应被捕获，实际：%v", problems)
 	}
 }
+
+// TestCheckDllUnloadSafety 锁住 DLL 动态卸载安全：删掉 removeCrashHandler() 或
+// UnregisterClassW 必须被捕获（否则宿主会崩在已卸载模块里）。
+func TestCheckDllUnloadSafety(t *testing.T) {
+	winText := readRepo(t, winShell)
+	diagText := readRepo(t, "shims/windows/src/diagnostics.cpp")
+	diagHpp := readRepo(t, "shims/windows/src/diagnostics.hpp")
+	fsys := func(win string) fstest.MapFS {
+		return fstest.MapFS{
+			winShell:                            &fstest.MapFile{Data: []byte(win)},
+			"shims/windows/src/diagnostics.cpp": &fstest.MapFile{Data: diagText},
+			"shims/windows/src/diagnostics.hpp": &fstest.MapFile{Data: diagHpp},
+		}
+	}
+	var problems []string
+	checkDllUnloadSafety(fsys(string(winText)), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实 DLL 卸载路径未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+	mutated := strings.Replace(string(winText),
+		"        removeCrashHandler();\n        shellWorkerStop();",
+		"        shellWorkerStop();", 1)
+	if mutated == string(winText) {
+		t.Fatal("变异未生效：找不到 DllMain 里的 removeCrashHandler();")
+	}
+	problems = nil
+	checkDllUnloadSafety(fsys(mutated), &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "removeCrashHandler") {
+		t.Fatalf("删掉卸载时 removeCrashHandler 应被捕获，实际：%v", problems)
+	}
+}
