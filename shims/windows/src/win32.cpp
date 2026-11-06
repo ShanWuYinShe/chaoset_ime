@@ -789,7 +789,18 @@ public:
         }
     }
 
+    // 外部（TIP）设置：当前输入法是否真的处于激活状态。非激活时**任何**显示
+    // 请求都必须被拒绝——候选窗是 WS_EX_TOPMOST 且要接收鼠标点选，绝不能
+    // 在后台留着挡住别的应用。2026-11-06 用户反馈「鼠标点系统设置/开始菜单
+    // 无效」：TOPMOST 窗口没及时隐藏就会吃掉点击。
+    void setActiveGate(bool active) { activeGate_ = active; if (!active) hide(); }
+
     void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {
+        if (!activeGate_) {
+            // 非激活：一律不显示（也不建窗），避免任何意义上抢屏幕/挡点击。
+            hide();
+            return;
+        }
         if (comp.candidates.empty()) {
             hide();
             return;
@@ -1599,6 +1610,10 @@ private:
     }
 
     HWND hwnd_ = nullptr;
+    // 只在输入法真正激活时才允许显示（见 setActiveGate）。默认 false：
+    // 建窗/Activate 之前不存在任何窗口，从根上杜绝「后台 app 里留一个
+    // TOPMOST 窗口挡鼠标」。
+    bool activeGate_ = false;
     // 候选窗的 owner 窗口（宿主窗口）。非空时候选窗是其 owned window，
     // 恒在 owner 之上，可跨越 Windows 11 开始菜单/搜索的沉浸式 z 序 band。
     // 由 show() 的调用方经 setOwner() 设置（来源见 ChaosetTIP::render 里
@@ -2027,12 +2042,23 @@ static bool uiSendCommandOnce(const char* command) {
 }
 
 // attempts=4（≈40ms）用于按键路径；设置窗点击路径用更多次（≈200ms）。
+//
+// 2026-11-06：这个函数会在宿主 UI 线程上被调用（Activate / OnSetFocus），
+// 所以「重试次数」必须很小。UI 宿主没跑时由 ensureUiHostStarted 节流拉起，
+// 本次上报失败无害（下次焦点/切换事件会重报，UI 宿主启动后还有 HKCU 记忆兜底）。
 static bool uiSendCommand(const char* command, int attempts = 4) {
     for (int i = 0; i < attempts; ++i) {
         if (uiSendCommandOnce(command)) return true;
         Sleep(10);
     }
     return false;
+}
+
+// 宿主 UI 线程专用版本：**完全不重试、不 Sleep**（单次非阻塞尝试）。
+// Activate/OnSetFocus 在系统设置、开始菜单这类宿主里同步执行，任何 Sleep
+// 都会直接变成用户可感知的卡顿（2026-11-06 用户反馈）。
+static bool uiSendCommandFast(const char* command) {
+    return uiSendCommandOnce(command);
 }
 
 // 与 DLL 同目录的 chaoset-ui.exe（安装包/便携包都把它放在 DLL 旁边）。
@@ -2145,7 +2171,8 @@ static bool openSettingsViaUi() {
 // HKCU 记忆的上次模式兜底。
 static bool reportModeToUi(bool english, bool allowSpawn) {
     const char* command = english ? "mode 1" : "mode 0";
-    if (uiSendCommand(command, 4)) return true;
+    // 单次非阻塞尝试：本函数跑在宿主 UI 线程（Activate/OnSetFocus）上。
+    if (uiSendCommandFast(command)) return true;
     if (allowSpawn) ensureUiHostStarted();
     return false;
 }
@@ -2351,12 +2378,17 @@ private:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
+public:
+    // 彻底销毁（非激活退场用）：只 hide() 的话窗口对象还活着、定时器也可能
+    // 残留；用户要求「感觉不到输入法存在」，所以退场走销毁。
     void destroy() {
+        hide();
         if (hwnd_ != nullptr) {
             if (!IsWindow(hwnd_) || !DestroyWindow(hwnd_)) onWindowDestroyed();
         }
     }
 
+private:
     // 窗口销毁回收：清句柄并归还 DLL 防卸载计数（owner 连带销毁也会走到）。
     void onWindowDestroyed() {
         if (hwnd_ != nullptr) {
@@ -2786,19 +2818,28 @@ public:
         // 进程的 TIP（实机 tsf.log 有 activate pid=2872 fgpid=12156、fgpid=0），
         // 后台实例上报会把用户当前的托盘模式改回自己的 enMode_（2026-11-05
         // 评审 P0）。
+        // 只在「本线程激活档案确实是我们 + 本进程就是前台」时才上报/懒启动。
+        // 2026-11-06 用户要求「不激活就不要有任何动作」：旧实现无条件上报，
+        // 连非激活的后台实例也会去连 UI 宿主管道（失败还会触发懒启动进程），
+        // 属于用户可感知的副作用。
         const HWND fgOnActivate = GetForegroundWindow();
         DWORD fgPidOnActivate = 0;
         if (fgOnActivate != nullptr) GetWindowThreadProcessId(fgOnActivate, &fgPidOnActivate);
-        reportModeToUi(enMode_, fgPidOnActivate == GetCurrentProcessId());
+        if (isActiveTip()) {
+            reportModeToUi(enMode_, fgPidOnActivate == GetCurrentProcessId());
+        } else {
+            // 非激活：撤掉可能残留的全局钩子，确保「零钩子」。
+            unhookForeground();
+        }
         caretFound_ = false;
         caretFromMouse_ = false;
-        // 前台切换兜底：部分宿主（开始菜单/搜索）不投递 OnSetFocus(FALSE)，
-        // 只有系统级前台事件能把「用户已经离开」如实告诉我们。
-        if (fgHook_ == nullptr) {
-            fgHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
-                                      nullptr, fgHookProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-            if (fgHook_ != nullptr) hookRegistry_.push_back(HookEntry{fgHook_, this});
-        }
+        // 前台切换兜底钩子**按需注册**（2026-11-06）：SetWinEventHook 是全局钩子
+        // （idThread/idProcess 都为 0 时监视全系统前台切换），explorer 单进程就
+        // 有 4 个 TIP 实例。在 Activate 里无条件注册 = 每个加载了 TIP 的进程
+        // 都挂一个全局钩子，系统设置/开始菜单这类 XAML 宿主对额外钩子尤其敏感。
+        // 因此只在「本进程就是前台 + 本线程激活档案是我们」时才挂；真正离开
+        // 时由 Deactivate / OnSetFocus(FALSE) 撤掉（见 unhookForeground）。
+        if (shouldWatchForeground() && fgHook_ == nullptr) ensureForegroundHook();
 
         if (!keySinkAdvised_) {
             ITfKeystrokeMgr* mgr = nullptr;
@@ -2807,12 +2848,18 @@ public:
                 mgr->Release();
             }
         }
-        // 非阻塞预热：只在尚未连上时尝试启动，已连接则直接复用；首次输入的
-        // 等待在 OnTestKeyDown/ensureDaemonConnected 里完成（只阻塞一次）。
-        if (!transport_.isConnected()) {
-            ensureDaemonStarted();
-            transport_.ensureConnected();
-        }
+        // daemon 预热**绝不阻塞宿主 UI 线程**（2026-11-06 用户反馈「卡住系统
+        // 设置」）：CreateProcessW + 3×20ms 的管道重试加起来可达数百毫秒，
+        // 而 Activate 是在宿主 UI 线程上同步调用的（TSF 把 TIP 装进每个进程）。
+        //
+        // 而且**只有激活时才预热**：拉起 chaosetd 进程本身就是用户可感知的
+        // 副作用（任务管理器里多一个进程），非激活的后台 TIP 实例不该触发。
+        // 真正的连接等待仍由首次按键路径负责（那里用户确实在用输入法）。
+        if (isActiveTip()) warmDaemonInBackgroundOnce();
+        // 激活门：Activate 只说明 TSF 把 TIP 装进了本宿主，**不代表用户在用
+        // 我们的输入法**（explorer 里 4 个实例、后台进程也会被提前 Activate），
+        // 所以这里不无条件开门——只按「本线程激活档案是不是我们」决定。
+        candidateWnd_.setActiveGate(isActiveTip());
         return S_OK;
     }
 
@@ -2847,11 +2894,9 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
-        if (fgHook_ != nullptr) {
-            UnhookWinEvent(fgHook_);
-            removeHookEntry(fgHook_);
-            fgHook_ = nullptr;
-        }
+        // 停用即「非激活」：彻底退场（销毁 UI + 撤掉所有钩子）。
+        // 绝不能留任何 TOPMOST 窗口/全局钩子在别人的应用上面。
+        retireUiCompletely();
         pendingStaleReset_ = false;
         if (profileMgr_ != nullptr) {
             profileMgr_->Release();
@@ -2861,7 +2906,7 @@ public:
             modeCompartment_->Release();
             modeCompartment_ = nullptr;
         }
-        candidateWnd_.destroy();
+        // 候选窗已在 retireUiCompletely() 里销毁，这里不再重复。
         // 已确认段先落盘（与 macOS deactivateServer → flushConfirmed 同语义）：
         // TSF 停用本 TIP 时会销毁合成，若直接 endComposition 会连用户确认过的
         // 字一起丢掉。正常失焦路径 OnSetFocus(FALSE) 已先行落盘，这里是
@@ -2903,13 +2948,13 @@ public:
     // ITfKeyEventSink
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
         if (!fForeground) {
-            candidateWnd_.hide();
-            toast_.hide();
-            // 光标锚点属于上一个窗口：失焦后不能继续用于提示条定位
-            //（否则半/全角提示会出现在旧光标处；2026-11-05 评审 P1）。
-            caretFound_ = false;
-            caretFromMouse_ = false;
-            clearAssociate();
+            // 失焦 = 非激活：**彻底退场**。
+            //
+            // 2026-11-06 用户要求：「一个进程或者窗口失去焦点，候选窗之类的东西
+            // 也应该全部隐藏……取消任何钩子、关闭任何候选窗，让用户感觉不到这个
+            // 输入法的存在」。这里不再只 hide()：直接销毁候选窗/提示条、撤掉
+            // 全局钩子、作废光标锚点与联想态（retireUiCompletely 统一收口）。
+            retireUiCompletely();
             // 焦点离开：**挂起**而不是直接丢弃按住状态。
             //
             // 浏览器（Chrome/Firefox，尤其「安装为应用」的独立窗口）会在
@@ -2938,6 +2983,14 @@ public:
                 }
             }
         } else {
+            // 焦点回来：只有「本线程激活档案确实是我们」才开门/挂钩子。
+            if (isActiveTip()) {
+                candidateWnd_.setActiveGate(true);
+                ensureForegroundHook();
+            } else {
+                candidateWnd_.setActiveGate(false);
+                unhookForeground();
+            }
             // 焦点回到本 TIP：清掉「没有活合成、但本地还挂着组词」的陈旧状态。
             //
             // 典型场景（2026-11-05 用户反馈）：Windows 11 开始菜单宿主关闭时
@@ -2952,8 +3005,8 @@ public:
                 candidateWnd_.hide();
             }
             if (!transport_.isConnected()) {
-                ensureDaemonStarted();
-                transport_.ensureConnected();
+                // 同样不阻塞宿主 UI 线程：OnSetFocus 也在宿主线程上同步调用。
+                warmDaemonInBackgroundOnce();
             }
         }
         // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
@@ -2964,8 +3017,10 @@ public:
         //（2026-11-05 回归审计 P1-1，与 docs/ui-parity 的「挂起」语义矛盾）。
         if (fForeground != FALSE) {
             shiftHoldSuspended_ = false;
-            syncModeCompartment();
-            reportModeToUi(enMode_, true);  // 焦点落在本 app：托盘显示本 app 的中英模式
+            if (isActiveTip()) {
+                syncModeCompartment();
+                reportModeToUi(enMode_, true);  // 焦点落在本 app：托盘显示本 app 的中英模式
+            }
         }
         return S_OK;
     }
@@ -3386,7 +3441,14 @@ private:
     ITfInputProcessorProfileMgr* profileMgr_ = nullptr;
 
     bool isActiveTip() {
-        if (profileMgr_ == nullptr) return true;  // 查询不可用：退回旧行为，别把输入搞坏
+        // 查询器不可用 → **fail-closed**（按「不是我们」处理）。
+        //
+        // 2026-11-06 用户要求：「输入法不激活就不该有任何动作，让用户感觉不到
+        // 它的存在」。旧实现这里 return true（怕把输入搞坏），结果是：只要
+        // 档案查询器建不出来，后台 TIP 实例就会被当成激活着，继续建候选窗、
+        // 挂全局钩子、处理按键——正是用户看到的「鼠标点了没反应 / 系统设置卡」。
+        // 反过来 fail-closed 的最坏后果只是「输入法暂时不出候选」，比干扰系统小得多。
+        if (profileMgr_ == nullptr) return false;
         TF_INPUTPROCESSORPROFILE prof{};
         const HRESULT hr = profileMgr_->GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD, &prof);
         // 首次查询结果留一条日志：否则「非激活整键放行」是否生效只能靠猜
@@ -3398,7 +3460,8 @@ private:
                        static_cast<unsigned long>(prof.dwProfileType),
                        prof.clsid == CLSID_ChaosetTIP ? 1 : 0);
         }
-        if (FAILED(hr)) return true;
+        // 查询失败同样 fail-closed：宁可放行按键，也不在不确定时干预用户。
+        if (FAILED(hr)) return false;
         return prof.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR && prof.clsid == CLSID_ChaosetTIP;
     }
     // 前台钩子回调 → TIP 实例的映射。SetWinEventHook 没有 user data，但回调
@@ -3456,8 +3519,95 @@ private:
     // 下一次按键时在 TIP 线程上清掉残留（不使用编辑会话：旧上下文可能已销毁）。
     // 当前激活的输入法不是我们 → 所有按键立即放行，收掉一切 UI。
     // 返回 true 表示调用方应直接返回 S_OK（pfEaten=FALSE）。
+    // ---- 前台钩子的按需注册（2026-11-06 用户反馈「卡住系统设置」）----
+    //
+    // SetWinEventHook(EVENT_SYSTEM_FOREGROUND, ..., idThread=0, idProcess=0) 是
+    // **全系统**钩子：每个加载了 TIP 的宿主进程都会挂一个（explorer 单进程实测
+    // 4 个 TIP 实例）。这会增加系统前台切换的派发开销，而系统设置/开始菜单
+    // 这类 XAML/AppContainer 宿主对额外钩子尤其敏感。
+    //
+    // 结论：只有当「本线程确实在用我们的输入法」时才挂；退到后台/切走输入法时
+    // 立刻撤掉。钩子的作用只是兜住「宿主不投递 OnSetFocus(FALSE)」，非激活时
+    // 本就用不上。
+    bool shouldWatchForeground() const {
+        // 必须先看激活档案：后台 TIP 实例（TSF 会提前 Activate）不该挂全局钩子。
+        if (!const_cast<ChaosetTIP*>(this)->isActiveTip()) return false;
+        // 本进程还必须是前台：完全在后台的宿主不需要兜底。
+        const HWND fg = GetForegroundWindow();
+        if (fg == nullptr) return false;
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fg, &fgPid);
+        return fgPid == GetCurrentProcessId();
+    }
+
+    void ensureForegroundHook() {
+        if (fgHook_ != nullptr || !shouldWatchForeground()) return;
+        fgHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+                                  nullptr, fgHookProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        if (fgHook_ != nullptr) {
+            hookRegistry_.push_back(HookEntry{fgHook_, this});
+        } else if (diagBudget()) {
+            diagPrintf(L"tsf.log", "foreground hook FAILED err=%lu\n", GetLastError());
+        }
+    }
+
+    void unhookForeground() {
+        if (fgHook_ == nullptr) return;
+        UnhookWinEvent(fgHook_);
+        removeHookEntry(fgHook_);
+        fgHook_ = nullptr;
+    }
+
+    // daemon 预热（一次性，后台线程）：Activate 里绝不阻塞宿主 UI 线程。
+    // 真正的「连不上就等/降级」仍由首次按键路径（OnTestKeyDown →
+    // ensureDaemonConnected）负责，那里的等待有上限且用户可感知。
+    // 线程入口必须是 __stdcall 普通函数：32 位目标下 lambda 不能隐式转成
+    // LPTHREAD_START_ROUTINE（-fpermissive 才放过，不能依赖）。
+    static DWORD WINAPI daemonWarmThread(LPVOID) {
+        ensureDaemonStarted();
+        return 0;
+    }
+
+    static void warmDaemonInBackgroundOnce() {
+        static volatile LONG started = 0;
+        if (InterlockedCompareExchange(&started, 1, 0) != 0) return;
+        HANDLE th = CreateThread(nullptr, 0, daemonWarmThread, nullptr, 0, nullptr);
+        if (th != nullptr) CloseHandle(th);
+    }
+
+    // ---- 「完全退场」：让用户感觉不到这个输入法的存在 ----
+    //
+    // 2026-11-06 用户要求：非激活 / 窗口失去焦点时，候选窗、提示条、钩子、定时器
+    // 都必须消失，不留任何会在屏幕上或系统派发里冒头的东西。
+    //
+    // 与「只是 hide()」的区别：
+    //   * hide()  只是 ShowWindow(SW_HIDE)，窗口对象还在、类还注册着，一旦哪条
+    //     路径漏判又 ShowWindow 就会重新冒出来；TOPMOST 窗口还活着本身就是
+    //     用户能感知的存在。
+    //   * retire() 直接 destroy() 窗口 + 撤掉所有钩子 + 停掉定时器，下次真正
+    //     激活时按需重建（建窗成本远小于「挡住用户鼠标」的代价）。
+    void retireUiCompletely() {
+        // 1) 候选窗/提示条：销毁而不是隐藏（destroy 内部会把 g_live* 计数归还）。
+        candidateWnd_.setActiveGate(false);
+        candidateWnd_.destroy();
+        toast_.destroy();
+        // 2) 所有钩子（全局前台钩子只在激活时挂，这里撤销即回到「零钩子」）。
+        unhookForeground();
+        // 3) 焦点锚点与联想态作废：它们只对「刚才那个窗口」有意义。
+        caretFound_ = false;
+        caretFromMouse_ = false;
+        clearAssociate();
+    }
+
     bool bailOutIfInactive() {
-        if (isActiveTip()) return false;
+        if (isActiveTip()) {
+            // 激活中：允许候选窗显示（bailOut 是每键都会走的便宜闸门，
+            // 顺手把门打开，保证从「非激活」恢复后候选窗能正常出现）。
+            candidateWnd_.setActiveGate(true);
+            return false;
+        }
+        // 非激活：**彻底退场**（销毁窗口、撤钩子），而不是只 hide。
+        retireUiCompletely();
         static volatile LONG loggedInactive = 0;
         if (InterlockedCompareExchange(&loggedInactive, 1, 0) == 0) {
             diagPrintf(L"tsf.log", "inactive profile: keys passed through\n");
@@ -3497,9 +3647,11 @@ private:
     // AppContainer 宿主不能 CreateProcess：请求 daemon（普通用户完整性、运行在
     // 同一用户会话）代拉起同目录的 chaoset-ui.exe（IPC 方法 "ui"）。
     // daemon 不可达时返回 false，调用方按失败降级。
-    bool ensureUiHostStartedByDaemon() {
+    // settings=true 时让 daemon 以 --settings 拉起 UI 宿主：首实例直接弹出
+    // 设置窗，因此**调用方不需要再轮询等管道就绪**（2026-11-06 清理）。
+    bool ensureUiHostStartedByDaemon(bool settings = false) {
         if (!transport_.isConnected() && !ensureDaemonConnected(transport_)) return false;
-        return session_.ensureUiHost();
+        return session_.ensureUiHost(settings);
     }
 
 
@@ -4442,6 +4594,14 @@ private:
     // 把引擎候选状态渲染为预编辑合成与候选悬浮窗
     void render(ITfContext* pic) {
         g_lastOp = kOpRender;
+        // 防御：非激活时绝不渲染任何 UI（候选窗/预编辑都不该出现在别人的应用里）。
+        // 按键入口已有 bailOutIfInactive 闸门，这里再兜一层——render 还有别的
+        // 调用点（联想、翻页、候选删除后的刷新），不能指望每个都先过闸门。
+        if (!isActiveTip()) {
+            candidateWnd_.hide();
+            toast_.hide();
+            return;
+        }
         ContextRef owned(nullptr);
         ITfContext* ctx = pic;
         if (ctx == nullptr) {
@@ -4854,6 +5014,9 @@ private:
     // 提示在光标和鼠标两处都出现」——模式提示已改由单例托盘承担；这里也
     // 不能再把鼠标兜底坐标当成光标，否则提示又会跟着鼠标跑。
     void showToast(const wchar_t* text, bool allowMouseAnchor = false) {
+        // 非激活一律不弹任何浮窗（2026-11-06）：提示条虽带 WS_EX_TRANSPARENT
+        // 不吃点击，但 TOPMOST 浮窗在别人的应用上突然出现同样是干扰。
+        if (!isActiveTip()) return;
         if (!allowMouseAnchor) {
             if (!caretFound_ || caretFromMouse_) return;
         }
@@ -5845,14 +6008,16 @@ static void openSettingsWindowStandalone() {
 // 宿主不能发起进程，只能连接登录 Run 项常驻的 UI 宿主。
 void ChaosetTIP::showSettingsWindow() {
     if (openSettingsViaUi()) return;
-    // AppContainer 宿主（开始菜单/搜索）不能 CreateProcess：让 daemon 代拉起
-    // UI 宿主后重试（daemon 与本 TIP 同一用户会话，CreateProcess 不会继承 AC
-    // 身份）。覆盖「升级安装结束旧 UI 进程后、下次登录 Run 项生效前」的窗口期。
-    if (isAppContainer() && ensureUiHostStartedByDaemon()) {
-        for (int i = 0; i < 50; ++i) {
-            if (uiSendCommand("settings", 1)) return;
-            Sleep(20);
-        }
+    // 兜底：AppContainer 宿主（开始菜单/搜索）里 TIP 不能 CreateProcess，请
+    // daemon（同一用户的普通完整性进程）代拉起 UI 宿主。
+    //
+    // **不轮询**（2026-11-06 用户质疑「为什么 5×20ms 轮询」）：那次轮询是为了
+    // 等刚拉起的 UI 宿主开始监听管道——但这是自找的。只要让 daemon 用
+    // --settings 拉起：首实例启动后自己弹设置窗；已有实例时第二实例把请求
+    // 转发给首实例（转发重试在 runUiHost 的互斥体分支里，跑在 UI 宿主自己
+    // 的进程里，不占 TIP 线程）。TIP 发完 IPC 立刻返回，零等待。
+    if (isAppContainer() && ensureUiHostStartedByDaemon(/*settings=*/true)) {
+        return;
     }
     static volatile LONG logged = 0;
     if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {

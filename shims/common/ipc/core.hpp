@@ -144,8 +144,10 @@ public:
     // 请求 daemon 代拉起单例 UI 宿主（chaoset-ui.exe，Windows 专用兜底）：
     // AppContainer 宿主（开始菜单/搜索）内 TIP 不能 CreateProcess，daemon 以
     // 同一用户、普通完整性运行，创建的子进程不会继承 AC 身份。
+    // settings=true 时让 UI 宿主带 --settings 启动（首实例直接弹设置窗），
+    // 壳因此不需要在 TIP 线程上轮询等管道就绪。
     // 返回 true 表示 daemon 已成功发起；非 Windows 平台恒 false（无壳调用）。
-    bool ensureUiHost();
+    bool ensureUiHost(bool settings = false);
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);

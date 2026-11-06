@@ -511,9 +511,9 @@ bool Session::userExportAll(bool phrasesOnly, std::string* out) {
 }
 
 // 请求 daemon 代拉起单例 UI 宿主（Windows 兜底；非 Windows daemon 返回错误）。
-bool Session::ensureUiHost() {
+bool Session::ensureUiHost(bool settings) {
     bool ok = false;
-    const JsonValue result = call("ui", "", &ok);
+    const JsonValue result = call("ui", settings ? "{\"settings\":true}" : "", &ok);
     if (!ok) return false;
     const JsonValue* started = result.find("started");
     return started != nullptr && started->type == JsonValue::Type::Bool && started->boolean;

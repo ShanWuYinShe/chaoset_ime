@@ -622,7 +622,7 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 		"open settings failed", "设置窗口打不开：chaoset-ui.exe 未运行")
 	// AppContainer 内 UI 未运行时由 daemon 代拉起（IPC "ui"），不能静默失败。
 	checkContains(fsys, problems, group, winShell,
-		"ensureUiHostStartedByDaemon", "session_.ensureUiHost()")
+		"ensureUiHostStartedByDaemon", "session_.ensureUiHost(settings)")
 	checkContains(fsys, problems, group, ipcServer, "case \"ui\":")
 	checkContains(fsys, problems, group, "ipc/ui_windows.go", "chaoset-ui.exe")
 	checkContains(fsys, problems, group, "ipc/ui_other.go", "ensureUIHost")
@@ -757,6 +757,141 @@ func checkVersionSource(fsys fs.FS, problems *[]string) {
 	for _, s := range []string{winBuild, macBuild, linuxSetupBuild} {
 		checkContains(fsys, problems, group, s, "version.sh")
 		checkExcludes(fsys, problems, group, s, "git describe --tags")
+	}
+}
+
+// checkInactiveNoAction 锁住 2026-11-06 用户反馈的契约：**输入法未激活时不许有
+// 任何动作**（不拦按键、不弹窗、不占屏幕、不挂全局钩子），且所有浮窗都不能
+// 在别人的应用上面挡鼠标/卡住宿主。
+//
+// 背景（用户实机反馈）：系统设置、开始菜单等 Win10/11 应用被卡住，鼠标点击
+// 打开的应用无效。根因是候选窗（WS_EX_TOPMOST 且要收鼠标点选）在非激活时
+// 仍可能留在屏幕上，以及 Activate 在宿主 UI 线程上串了一堆同步阻塞操作
+// （CreateProcess、管道重试 3×20ms、全局 SetWinEventHook）。
+func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
+	const group = "非激活零动作"
+	// 候选窗必须有「激活门」：非激活时连 show() 都不许走到建窗。
+	checkContains(fsys, problems, group, winShell,
+		"setActiveGate", "activeGate_")
+	// 门必须在 show() 的**最前面**生效（只声明成员不算：变异测试证明过，
+	// 删掉 show 里的判断时上面的 checkContains 仍然通过）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		sig := "void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {"
+		i := strings.Index(text, sig)
+		if i < 0 {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少候选窗 show() 入口", group, winShell))
+		} else {
+			end := i + 300
+			if end > len(text) {
+				end = len(text)
+			}
+			if !strings.Contains(text[i:end], "activeGate_") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的候选窗 show() 未先判 activeGate_（非激活不许建/显示 TOPMOST 窗口）",
+					group, winShell))
+			}
+		}
+	}
+	// 四个按键入口都必须先过激活闸门（顺序即语义：闸门在最前）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		for _, sig := range []string{
+			"HRESULT STDMETHODCALLTYPE OnTestKeyDown(",
+			"HRESULT STDMETHODCALLTYPE OnKeyDown(",
+			"HRESULT STDMETHODCALLTYPE OnTestKeyUp(",
+			"HRESULT STDMETHODCALLTYPE OnKeyUp(",
+		} {
+			i := strings.Index(text, sig)
+			if i < 0 {
+				*problems = append(*problems, fmt.Sprintf("%s：%s 缺少按键入口 %q",
+					group, winShell, sig))
+				continue
+			}
+			// 入口函数体前 ~200 字节内必须出现 bailOutIfInactive()。
+			end := i + 400
+			if end > len(text) {
+				end = len(text)
+			}
+			if !strings.Contains(text[i:end], "bailOutIfInactive()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 %s 未在入口先调 bailOutIfInactive()（非激活必须整键放行）",
+					group, winShell, sig))
+			}
+		}
+	}
+	// 渲染/提示同样必须受激活约束（render 有多个非按键调用点）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		for _, sig := range []string{
+			"void render(ITfContext* pic) {",
+			"void showToast(const wchar_t* text, bool allowMouseAnchor = false) {",
+		} {
+			i := strings.Index(text, sig)
+			if i < 0 {
+				*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %q", group, winShell, sig))
+				continue
+			}
+			end := i + 600
+			if end > len(text) {
+				end = len(text)
+			}
+			if !strings.Contains(text[i:end], "isActiveTip()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 %q 未先判断 isActiveTip()（非激活不许渲染/弹窗）",
+					group, winShell, sig))
+			}
+		}
+	}
+	// 宿主 UI 线程上不许有阻塞：Activate/OnSetFocus 里的 daemon 预热必须走
+	// 后台线程，设置窗拉起不许长 Sleep。
+	checkContains(fsys, problems, group, winShell,
+		"warmDaemonInBackgroundOnce", "uiSendCommandFast")
+	checkExcludes(fsys, problems, group, winShell,
+		"for (int i = 0; i < 50; ++i) {")
+	// 全局前台钩子必须按需注册/可撤销（不能每个 TIP 实例无条件挂）。
+	checkContains(fsys, problems, group, winShell,
+		"shouldWatchForeground", "ensureForegroundHook", "unhookForeground")
+	// 「彻底退场」：失焦/停用不是只 hide()，而是销毁窗口 + 撤钩子。
+	checkContains(fsys, problems, group, winShell,
+		"retireUiCompletely", "candidateWnd_.destroy()", "toast_.destroy()")
+	// 激活判定必须 fail-closed：查询不到就不许有动作（旧实现 return true，
+	// 会让「不确定」时的后台实例继续建窗/挂钩子/处理按键）。
+	checkExcludes(fsys, problems, group, winShell,
+		"if (profileMgr_ == nullptr) return true;")
+	// 拉起进程的副作用（daemon/UI 宿主预热）只能在激活时发生。
+	checkContains(fsys, problems, group, winShell,
+		"if (isActiveTip()) warmDaemonInBackgroundOnce();")
+	// 设置窗拉起**不许轮询**：daemon 侧用 --settings 拉起，UI 宿主自己弹窗 /
+	// 自己转发（2026-11-06 用户质疑「5×20ms 轮询在干什么」）。
+	checkContains(fsys, problems, group, winShell,
+		"ensureUiHostStartedByDaemon(/*settings=*/true)")
+	checkContains(fsys, problems, group, ipcServer, `"settings"`)
+	checkContains(fsys, problems, group, "ipc/ui_windows.go", "--settings")
+	checkExcludes(fsys, problems, group, winShell,
+		"if (uiSendCommand(\"settings\", 1)) return;")
+	// 失焦分支必须走「彻底退场」而不是只 hide（用户要求：失去焦点后
+	// 候选窗之类全部消失、取消任何钩子）。变异测试证明只查 retireUiCompletely
+	// 是否存在不够——它可能被定义但失焦路径没调。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		sig := "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {"
+		i := strings.Index(text, sig)
+		if i < 0 {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 OnSetFocus", group, winShell))
+		} else {
+			end := i + 1200
+			if end > len(text) {
+				end = len(text)
+			}
+			body := text[i:end]
+			if !strings.Contains(body, "retireUiCompletely()") &&
+				!strings.Contains(body, "setActiveGate(false)") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 OnSetFocus 失焦分支未彻底退场（必须调 retireUiCompletely()）",
+					group, winShell))
+			}
+		}
 	}
 }
 
@@ -969,6 +1104,8 @@ func Run(fsys fs.FS) []string {
 	checkWindowsVersionInfo(fsys, &problems)
 	// 5c. 版本号来源：tag CI 用 tag，其余用 commit hash（2026-11-06）。
 	checkVersionSource(fsys, &problems)
+	// 5d. 非激活零动作（2026-11-06 用户反馈：卡住系统设置/开始菜单）。
+	checkInactiveNoAction(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1162,5 +1299,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/非激活零动作/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

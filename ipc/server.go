@@ -315,7 +315,18 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		// 仅 Windows 有实现；其它平台返回错误（不会有壳调用该方法）。
 		// daemon 以当前交互用户、普通完整性运行，CreateProcess 创建的子进程
 		// 不会继承 AC 身份，因此开始菜单/搜索里也能打开设置窗。
-		if err := ensureUIHost(); err != nil {
+		//
+		// settings=true 时让 UI 宿主带 --settings 启动（2026-11-06）：这样
+		// 首实例直接弹出设置窗，TIP 侧不需要再轮询等管道就绪。
+		var uiParams struct {
+			Settings bool `json:"settings"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &uiParams); err != nil {
+				return nil, fmt.Errorf("解析 ui 参数失败: %w", err)
+			}
+		}
+		if err := ensureUIHost(uiParams.Settings); err != nil {
 			return nil, err
 		}
 		return map[string]bool{"started": true}, nil
