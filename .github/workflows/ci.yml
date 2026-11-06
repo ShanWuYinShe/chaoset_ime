@@ -138,8 +138,12 @@ jobs:
       # 所以这里装 Noto CJK 并用 xdotool 断言窗口已映射且尺寸合理。
       - name: 原生 GTK3 设置窗编译、单测与无头启动冒烟（C，无 Python）
         run: |
+          # 2026-11-06 按页面/职责拆分后：build.sh 内部用 *.c 通配收集源文件
+          # （自动排除 test_setup_ctl.c），新增 TU 不需要再改 CI 清单。
           sh shims/linux/setup/build.sh /tmp/chaoset-setup
           file /tmp/chaoset-setup | grep -q ELF
+          # test_setup_ctl 只依赖 setup_ctl.c（配置/路径核心，无 GTK）；页面与
+          # setup_learn/setup_import 不参与本单测链接，避免非 GTK 单测引入 UI 依赖。
           cc -std=c11 -Wall -Wextra -Werror \
             $(pkg-config --cflags glib-2.0) \
             -o /tmp/test_setup_ctl \

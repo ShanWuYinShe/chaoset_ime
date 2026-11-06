@@ -2,7 +2,8 @@
 #define CHAOSET_SETUP_CTL_H
 
 // Linux 设置窗的 C 侧编排：只调用 Go 工具（chaoset-userdict / chaoset-import）
-// 与 ibus，不实现词库合并/用户词典读写；GTK UI 在 chaoset-setup.c。
+// 与 ibus，不实现词库合并/用户词典读写；GTK UI 在 chaoset-setup.c（窗口
+// 骨架）与 setup_page_*.c（页面），拆分见 docs/architecture.md §3.3。
 //
 // 返回值统一为 SetupResult（ok + 可显示的中文消息），调用方负责 free。
 

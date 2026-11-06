@@ -22,8 +22,9 @@ esac
 
 mkdir -p "$BUILD/modulecache"
 echo "==> 编译 associate（${ARCH}）"
+# 2026-11-06 架构拆分：EngineClient 的 socket 传输在 DaemonTransport.swift。
 swiftc -O -module-cache-path "$BUILD/modulecache" -target "$TARGET" \
-  src/EngineClient.swift tests/associate/main.swift \
+  src/EngineClient.swift src/DaemonTransport.swift tests/associate/main.swift \
   -o "$BUILD/associate"
 
 TMP=$(mktemp -d)

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Go 视觉设计基准（skin/skin.go）↔ macOS 原生候选窗（CandidatePanel.swift）
+# Go 视觉设计基准（skin/skin.go）↔ macOS 原生候选窗（CandidateTheme.swift/CandidatePanelView.swift）
 # 的机器一致性检查。
 #
-# 为什么需要（2026-10-26）：skin/skin.go 与 CandidatePanel.swift 是同一套
+# 为什么需要（2026-10-26）：skin/skin.go 与 CandidatePanelView.swift 是同一套
 # 视觉的两份独立实现，色值/间距全靠人工手抄同步，没有任何自动断言。审查已实证
 # 漂移（分栏线 y、字号）。本脚本把两端的布局常量与色值导出后做差分，让漂移在
 # CI 里暴露，而不是等用户肉眼看出候选窗「两个平台长得不一样」。
@@ -44,9 +44,12 @@ case "$(uname -m)" in
   arm64) SWIFT_TARGET=arm64-apple-macos15.0 ;;
   *)     SWIFT_TARGET=x86_64-apple-macos15.0 ;;
 esac
+# 2026-11-06 架构拆分：候选窗拆成 CandidateTheme（色值/布局常量/齿轮参数）+
+# CandidatePanelView（视图实现）；panel_metrics 只需这两个文件。
 if ! swiftc -O -module-cache-path build/modulecache \
       -target "$SWIFT_TARGET" -framework AppKit \
-      src/CandidatePanel.swift tools/panel_metrics.swift -o "$OUT/panel_metrics" 2>"$OUT/swift.err"; then
+      src/CandidateTheme.swift src/CandidatePanelView.swift \
+      tools/panel_metrics.swift -o "$OUT/panel_metrics" 2>"$OUT/swift.err"; then
   note "FAIL 无法构建 Swift 度量工具："
   cat "$OUT/swift.err" | sed 's/^/     /' | head -20
   exit 1

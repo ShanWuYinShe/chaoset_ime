@@ -1,5 +1,7 @@
 // render_panel_preview.swift：离屏渲染 CandidatePanelView 出 PNG（浅色+深色），
-// 用于不干扰桌面的绘制验证。运行：swiftc src/CandidatePanel.swift tools/panel_preview.swift -o /tmp/panel_preview && /tmp/panel_preview <outDir>
+// 用于不干扰桌面的绘制验证。运行：
+//   swiftc src/CandidateTheme.swift src/CandidatePanelView.swift tools/panel_preview.swift \
+//     -o /tmp/panel_preview && /tmp/panel_preview <outDir>
 import AppKit
 
 let args = CommandLine.arguments

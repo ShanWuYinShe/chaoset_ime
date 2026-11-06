@@ -4,6 +4,22 @@
 
 ## 未发布
 
+- **架构整理 + 方案 A 设置核心（2026-11-06 用户要求：shims 大文件按职责拆分、不要埋屎山）**：
+  - 新增 `docs/architecture.md`：分层/依赖方向/模块地图/文件预算；`checkuiparity` 新增
+    「模块布局与文件预算」「架构文档」「设置核心（方案 A）」「Linux 设置窗装配」四组机器断言，
+    模块文件缺失/超预算、注册表子键被改、GtkStack/radio 装配回退都会在 `make vet` 直接 FAIL。
+  - 方案 A 第一期：新增 `internal/settings`（三端设置 schema/默认值/校验/持久化单一真源；
+    Windows HKCU、macOS UserDefaults 域 `ime.chaoset.inputmethod.ChaosetIME`、Linux
+    `$XDG_CONFIG_HOME/chaoset/config.json`）与 `cmd/chaoset-settingsctl`
+    （`get` 输出单行 JSON；`set associate|mode-scope|ui-english`；退出码 0/1/2）；
+    Windows 真机验证 get/set 与 HKCU\Software\Chaoset 逐字一致。三端设置窗改调 CLI 的 A2 下一批。
+  - Windows `win32.cpp` 7801→4815 行，拆出 9 个真实编译单元（diagnostics/winutil/theme/
+    config/transport/daemon/ui_client/settings_window/ui_host），build.sh/Makefile 源列表改
+    wildcard；macOS 4 个千行 Swift 文件拆成 13 个职责文件（最大 636 行）；Linux 设置窗拆成
+    窗口骨架 + 3 个页面 + 3 个逻辑模块（最大 516 行）。
+  - 修复 Linux 设置窗两个回归（484aae4 引入）：三个内容页从未挂到 GtkStack（设置窗内容区为空）、
+    中英状态 radio 组类型混用（三选一失效）。WSLg 实跑 stderr 0 critical/warning，三页可切换、
+    三个 radio 同组且恰一个选中；「Linux 设置窗装配」断言 + 变异测试锁死。
 - **零阻塞改造（Windows 壳，2026-11-06 用户要求）**：
   - TSF 宿主 UI 线程上的跨进程等待/建进程/同步写盘全部移除：新增每进程 ShellWorker 后台线程，
     回调只做内存操作与 PostMessage；daemon/UI 宿主懒启动、模式查询、设置窗拉起、日志写盘都在 worker。

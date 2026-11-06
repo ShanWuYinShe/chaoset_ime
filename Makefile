@@ -84,6 +84,7 @@ build:
 	go build -o bin/chaoset-import ./cmd/chaoset-import
 	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
 	go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
+	go build -o bin/chaoset-settingsctl ./cmd/chaoset-settingsctl
 
 test:
 	go test ./...
@@ -258,6 +259,10 @@ package-linux:
 # 它是独立进程，与宿主进程位数无关；必须与 ChaosetIME.dll 同目录（LoadLibrary
 # 同目录 DLL 后调用导出 ChaosetRunUi）。
 WIN_GOENV = GOOS=windows GOARCH=amd64 CGO_ENABLED=0
+# TSF DLL 的源 = shims/windows/src/*.cpp 去掉 UI 宿主入口 ui_main.cpp
+# （docs/architecture.md §3.1 的真实 TU；wildcard 后新增叶子模块不用再手改）。
+# UI 宿主仍然只编 ui_main.cpp，且必须 LoadLibrary 同目录 DLL 复用实现。
+WIN_DLL_SRCS := $(filter-out shims/windows/src/ui_main.cpp,$(wildcard shims/windows/src/*.cpp))
 
 package-windows:
 	rm -rf dist/chaoset-windows-x64
@@ -305,13 +310,13 @@ package-windows:
 	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
-		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
+		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
 	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
-		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
+		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
 	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。

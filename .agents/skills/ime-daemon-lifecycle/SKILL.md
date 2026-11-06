@@ -64,7 +64,7 @@ launchctl print "gui/$(id -u)/ime.chaoset.daemon" | grep -E 'state|last exit'
 
 ### 第 3 步：壳在 IPC 失败时是否吞键
 
-见 `shims/macos/src/ChaosetController.swift` 的字母分支。**铁律：任何情况下
+见 `shims/macos/src/KeyRouter.swift` 的字母分支（`ChaosetController.swift` 只保留 IMK 核心/生命周期）。**铁律：任何情况下
 都不能丢键**——daemon 不可达时必须 `passThrough` 放行原键，绝不能
 `current = nil; return true`（那正是首字母凭空消失的直接原因）。
 

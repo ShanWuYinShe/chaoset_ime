@@ -1,11 +1,18 @@
 #define _POSIX_C_SOURCE 200809L
 
+// Linux 设置窗 C 侧核心：路径解析、Go 工具执行、config 读写与输入法进程
+// 生命周期（2026-11-06 按职责拆分，模块地图见 docs/architecture.md §3.3）。
+//
+// 只调用 Go 工具（chaoset-userdict / chaoset-import）与 ibus，不实现词库
+// 合并/用户词典读写；学习数据流程在 setup_learn.c，词库导入流程在
+// setup_import.c。拆分后跨 TU 共享的内部声明见 setup_internal.h。
+
 #include "setup_ctl.h"
+#include "setup_internal.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <signal.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -13,17 +20,17 @@
 
 #include <glib/gstdio.h>
 
-static SetupResult result_ok(gchar *message) {
+SetupResult result_ok(gchar *message) {
     SetupResult r = { TRUE, message ? message : g_strdup("完成") };
     return r;
 }
 
-static SetupResult result_error(const gchar *message) {
+SetupResult result_error(const gchar *message) {
     SetupResult r = { FALSE, g_strdup(message ? message : "操作失败") };
     return r;
 }
 
-static SetupResult result_error_take(gchar *message) {
+SetupResult result_error_take(gchar *message) {
     SetupResult r = { FALSE, message ? message : g_strdup("操作失败") };
     return r;
 }
@@ -37,7 +44,7 @@ void setup_result_free(SetupResult *result) {
 }
 
 // find_tool 先查 PATH（安装后 /usr/bin），再查源码树 bin/（CI/开发环境）。
-static gchar *find_tool(const gchar *name) {
+gchar *find_tool(const gchar *name) {
     gchar *exe = g_find_program_in_path(name);
     if (exe != NULL) {
         return exe;
@@ -53,7 +60,7 @@ static gchar *find_tool(const gchar *name) {
 }
 
 // run_tool 同步执行子进程；out/err 可为 NULL。成功 = 正常退出且退出码 0。
-static gboolean run_tool(gchar **argv, gchar **out, gchar **err, GError **error) {
+gboolean run_tool(gchar **argv, gchar **out, gchar **err, GError **error) {
     gint status = 0;
     gchar *stdout_text = NULL;
     gchar *stderr_text = NULL;
@@ -76,7 +83,7 @@ static gboolean run_tool(gchar **argv, gchar **out, gchar **err, GError **error)
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static gchar *trimmed(gchar *text) {
+gchar *trimmed(gchar *text) {
     if (text == NULL) {
         return g_strdup("");
     }
@@ -183,11 +190,11 @@ static gchar *config_path(void) {
     return tool_path("config", fallback_config_path);
 }
 
-static gchar *userdict_path(void) {
+gchar *userdict_path(void) {
     return tool_path("userdict", fallback_userdict_path);
 }
 
-static gchar *imported_dict_path(void) {
+gchar *imported_dict_path(void) {
     return tool_path("imported_dict", fallback_imported_dict_path);
 }
 
@@ -381,67 +388,6 @@ gboolean setup_config_save(gboolean associate) {
     return ok;
 }
 
-static SetupResult run_userdict(gchar *const extra[], const gchar *fallback_message) {
-    gchar *tool = find_tool("chaoset-userdict");
-    if (tool == NULL) {
-        return result_error("未找到 chaoset-userdict（请重新安装）");
-    }
-    gchar *path = userdict_path();
-    gchar **argv = g_new0(gchar *, 8);
-    gsize i = 0;
-    argv[i++] = tool;
-    argv[i++] = "-userdict";
-    argv[i++] = path;
-    for (gsize j = 0; extra != NULL && extra[j] != NULL; j++) {
-        argv[i++] = extra[j];
-    }
-    gchar *out = NULL;
-    gchar *err = NULL;
-    GError *error = NULL;
-    gboolean ok = run_tool(argv, &out, &err, &error);
-    g_free(argv);
-    g_free(path);
-    g_free(tool);
-    SetupResult result;
-    if (!ok) {
-        gchar *detail = (err != NULL && *err != '\0') ? g_strdup(err) :
-                        (error != NULL ? g_strdup(error->message) : g_strdup(fallback_message));
-        if (out != NULL && *out != '\0' && (err == NULL || *err == '\0')) {
-            g_free(detail);
-            detail = g_strdup(out);
-        }
-        result = result_error_take(g_strstrip(detail));
-    } else {
-        gchar *detail = trimmed(out != NULL ? g_strdup(out) : g_strdup(""));
-        result = result_ok(*detail != '\0' ? detail : g_strdup(fallback_message));
-        if (*detail == '\0') {
-            g_free(detail);
-        }
-    }
-    g_clear_error(&error);
-    g_free(out);
-    g_free(err);
-    return result;
-}
-
-SetupResult setup_userdict_stats(void) {
-    gchar *extra[] = { "stats", NULL };
-    return run_userdict(extra, "读取学习数据失败");
-}
-
-SetupResult setup_userdict_export(const gchar *out_path) {
-    if (out_path == NULL || *out_path == '\0') {
-        return result_error("未选择导出路径");
-    }
-    gchar *extra[] = { "export", "-o", (gchar *)out_path, NULL };
-    SetupResult result = run_userdict(extra, "导出失败");
-    if (result.ok) {
-        g_free(result.message);
-        result.message = g_strdup_printf("已导出到 %s", out_path);
-    }
-    return result;
-}
-
 // process_pids 扫描 /proc 找指定 comm 的进程（不依赖 pgrep）。
 static GArray *process_pids(const gchar *name) {
     GArray *pids = g_array_new(FALSE, FALSE, sizeof(pid_t));
@@ -477,7 +423,7 @@ static GArray *process_pids(const gchar *name) {
     return pids;
 }
 
-static GArray *engine_pids(void) { return process_pids("chaoset-engine"); }
+GArray *engine_pids(void) { return process_pids("chaoset-engine"); }
 static GArray *daemon_pids(void) { return process_pids("chaosetd"); }
 
 static gboolean wait_engines_gone(gint timeout_ms) {
@@ -496,7 +442,7 @@ static gboolean wait_engines_gone(gint timeout_ms) {
     }
 }
 
-static gboolean terminate_engines(GArray *pids, gint timeout_ms) {
+gboolean terminate_engines(GArray *pids, gint timeout_ms) {
     for (guint i = 0; i < pids->len; i++) {
         pid_t pid = g_array_index(pids, pid_t, i);
         if (kill(pid, SIGTERM) != 0 && errno != ESRCH) {
@@ -534,7 +480,7 @@ static gboolean wait_daemon_gone(gint timeout_ms) {
     }
 }
 
-static gboolean terminate_daemon(void) {
+gboolean terminate_daemon(void) {
     GArray *pids = daemon_pids();
     for (guint i = 0; i < pids->len; i++) {
         pid_t pid = g_array_index(pids, pid_t, i);
@@ -556,7 +502,7 @@ static gboolean terminate_daemon(void) {
     return wait_daemon_gone(3000);
 }
 
-static gboolean run_ibus(const gchar *subcommand) {
+gboolean run_ibus(const gchar *subcommand) {
     gchar *ibus = find_tool("ibus");
     if (ibus == NULL) {
         return FALSE;
@@ -567,132 +513,4 @@ static gboolean run_ibus(const gchar *subcommand) {
     g_clear_error(&error);
     g_free(ibus);
     return ok;
-}
-
-static SetupResult restart_engines(void) {
-    // daemon 内存里有词库/用户词典；不先停掉，重启引擎后连上的还是旧 daemon，
-    // 导入/清空不会生效。
-    if (!terminate_daemon()) {
-        return result_error("无法停止 chaosetd，未能重启输入法");
-    }
-    GArray *pids = engine_pids();
-    gboolean has_engines = pids->len > 0;
-    gchar *ibus = find_tool("ibus");
-    if (has_engines && ibus == NULL) {
-        g_array_free(pids, TRUE);
-        return result_error("输入法引擎正在运行，但找不到 ibus 命令，未能重启");
-    }
-    g_free(ibus);
-    if (has_engines) {
-        (void)run_ibus("exit");
-        if (!terminate_engines(pids, 8000)) {
-            g_array_free(pids, TRUE);
-            return result_error("无法停止输入法引擎，未能重启");
-        }
-    }
-    g_array_free(pids, TRUE);
-    if (find_tool("ibus") == NULL) {
-        return result_ok(g_strdup("ibus 未运行（下次启动输入法时生效）"));
-    }
-    if (run_ibus("restart") || run_ibus("start")) {
-        return result_ok(g_strdup("ibus 已重启，新词库已生效"));
-    }
-    return result_error("ibus 未能自动重启；请运行：ibus restart");
-}
-
-SetupResult setup_userdict_clear(void) {
-    if (!terminate_daemon()) {
-        return result_error("无法停止 chaosetd，未清空学习数据");
-    }
-    GArray *pids = engine_pids();
-    gboolean had_engines = pids->len > 0;
-    gchar *ibus = find_tool("ibus");
-    if (had_engines && ibus == NULL) {
-        g_array_free(pids, TRUE);
-        return result_error("输入法引擎正在运行，但找不到 ibus 命令，未清空学习数据");
-    }
-    g_free(ibus);
-    if (had_engines) {
-        (void)run_ibus("exit");
-        if (!terminate_engines(pids, 8000)) {
-            g_array_free(pids, TRUE);
-            return result_error("无法停止输入法引擎，未清空学习数据。请注销后重新登录再试");
-        }
-    }
-    g_array_free(pids, TRUE);
-
-    gchar *extra[] = { "clear", NULL };
-    SetupResult result = run_userdict(extra, "已清空学习数据");
-    if (result.ok) {
-        g_free(result.message);
-        result.message = g_strdup("已清空学习数据");
-    }
-    if (had_engines && find_tool("ibus") != NULL) {
-        gboolean restored = run_ibus("restart") || run_ibus("start");
-        if (!restored && result.ok) {
-            g_free(result.message);
-            result.message = g_strdup("学习数据已清空，但 ibus 未能自动重启；请运行：ibus restart");
-        }
-    }
-    return result;
-}
-
-SetupResult setup_import_dicts(gchar **paths, gsize n_paths) {
-    if (paths == NULL || n_paths == 0) {
-        return result_error("未选择词库文件");
-    }
-    gchar *tool = find_tool("chaoset-import");
-    if (tool == NULL) {
-        return result_error("未找到 chaoset-import（请重新安装）");
-    }
-    gchar *target = imported_dict_path();
-    gchar **argv = g_new0(gchar *, n_paths + 6);
-    gsize i = 0;
-    argv[i++] = tool;
-    argv[i++] = "-o";
-    argv[i++] = target;
-    argv[i++] = "-backup";
-    for (gsize j = 0; j < n_paths; j++) {
-        argv[i++] = paths[j];
-    }
-    gchar *out = NULL;
-    gchar *err = NULL;
-    GError *error = NULL;
-    gboolean ok = run_tool(argv, &out, &err, &error);
-    g_free(argv);
-    g_free(tool);
-    SetupResult result;
-    if (!ok) {
-        gchar *detail = (err != NULL && *err != '\0') ? g_strdup(err) :
-                        (error != NULL ? g_strdup(error->message) : g_strdup("导入失败"));
-        result = result_error_take(g_strstrip(detail));
-    } else if (!g_file_test(target, G_FILE_TEST_IS_REGULAR)) {
-        result = result_error("导入失败：未生成词库文件");
-    } else {
-        gchar *detail = trimmed(out != NULL ? g_strdup(out) : g_strdup(""));
-        SetupResult restart = restart_engines();
-        if (!restart.ok) {
-            gchar *message = g_strdup_printf("词库已导入，但 %s", restart.message);
-            result = result_error_take(message);
-        } else {
-            gchar *message = g_strdup_printf("已导入到 %s%s；%s",
-                                             target,
-                                             *detail != '\0' ? "；" : "",
-                                             restart.message);
-            if (*detail != '\0') {
-                gchar *with_detail = g_strdup_printf("已导入到 %s；%s；%s",
-                                                     target, detail, restart.message);
-                g_free(message);
-                message = with_detail;
-            }
-            result = result_ok(message);
-        }
-        setup_result_free(&restart);
-        g_free(detail);
-    }
-    g_clear_error(&error);
-    g_free(out);
-    g_free(err);
-    g_free(target);
-    return result;
 }

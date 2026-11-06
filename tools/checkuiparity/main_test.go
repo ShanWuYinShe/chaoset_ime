@@ -1,11 +1,23 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+// readRepo 读取逻辑文件（与 Run 相同的多源聚合）。2026-11-06 架构拆分后，
+// 单测不能直接读单文件：CandidatePanel.swift / win32.cpp 等只是聚合的一部分。
+func readRepo(t *testing.T, p string) []byte {
+	t.Helper()
+	data, err := fs.ReadFile(bundledFS(os.DirFS("../..")), p)
+	if err != nil {
+		t.Fatalf("读取 %s 失败：%v", p, err)
+	}
+	return data
+}
 
 // TestRunOnRepo 在真实仓库上跑一遍全部契约：
 //   - 当前仓库必须通过（否则本工具会把 CI 卡红）；
@@ -37,18 +49,9 @@ func TestCheckKeyRoutingCount(t *testing.T) {
 // TestCheckCandidateWindow 用真实候选窗源码验证候选窗契约，并做一次变异：
 // 改 Windows 正文字号应被「候选窗几何」捕获。
 func TestCheckCandidateWindow(t *testing.T) {
-	macText, err := os.ReadFile("../../" + macPanel)
-	if err != nil {
-		t.Fatalf("读取 mac 候选窗源码失败：%v", err)
-	}
-	winText, err := os.ReadFile("../../" + winShell)
-	if err != nil {
-		t.Fatalf("读取 Windows 壳源码失败：%v", err)
-	}
-	buildText, err := os.ReadFile("../../" + winBuild)
-	if err != nil {
-		t.Fatalf("读取 Windows 构建脚本失败：%v", err)
-	}
+	macText := readRepo(t, macPanel)
+	winText := readRepo(t, winShell)
+	buildText := readRepo(t, winBuild)
 	fsys := fstest.MapFS{
 		macPanel: &fstest.MapFile{Data: macText},
 		winShell: &fstest.MapFile{Data: winText},
@@ -85,10 +88,7 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 		uiParityDoc, macSettings, linuxSetup}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
-		data, err := os.ReadFile("../../" + p)
-		if err != nil {
-			t.Fatalf("读取 %s 失败：%v", p, err)
-		}
+		data := readRepo(t, p)
 		fsys[p] = &fstest.MapFile{Data: data}
 	}
 	var problems []string
@@ -166,14 +166,8 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 //  3. 前台钩子回调注入 Sleep(1)——钩子回调不再只 PostMessage；
 //  4. DllCanUnloadNow 去掉 g_liveTipMsgWindows——worker/消息窗口活着时卸载 DLL。
 func TestCheckTsfZeroBlockContract(t *testing.T) {
-	winText, err := os.ReadFile("../../" + winShell)
-	if err != nil {
-		t.Fatalf("读取 Windows 壳源码失败：%v", err)
-	}
-	docText, err := os.ReadFile("../../" + uiParityDoc)
-	if err != nil {
-		t.Fatalf("读取 ui-parity 文档失败：%v", err)
-	}
+	winText := readRepo(t, winShell)
+	docText := readRepo(t, uiParityDoc)
 	fsys := func(win string) fstest.MapFS {
 		return fstest.MapFS{
 			winShell:    &fstest.MapFile{Data: []byte(win)},
@@ -260,22 +254,10 @@ func TestCheckShellVarEscaping(t *testing.T) {
 // TestCheckImportSafety 用真实两端源码验证导入安全契约，并做一次变异：
 // 去掉 Windows 的原子替换标志应被捕获。
 func TestCheckImportSafety(t *testing.T) {
-	macText, err := os.ReadFile("../../" + macSetup)
-	if err != nil {
-		t.Fatalf("读取 mac Setup.app 源码失败：%v", err)
-	}
-	winText, err := os.ReadFile("../../" + winShell)
-	if err != nil {
-		t.Fatalf("读取 Windows 壳源码失败：%v", err)
-	}
-	linuxText, err := os.ReadFile("../../" + linuxDictImport)
-	if err != nil {
-		t.Fatalf("读取 Linux 导入模块失败：%v", err)
-	}
-	importText, err := os.ReadFile("../../" + chaosetImport)
-	if err != nil {
-		t.Fatalf("读取 chaoset-import 源码失败：%v", err)
-	}
+	macText := readRepo(t, macSetup)
+	winText := readRepo(t, winShell)
+	linuxText := readRepo(t, linuxDictImport)
+	importText := readRepo(t, chaosetImport)
 	fsys := fstest.MapFS{
 		macSetup:        &fstest.MapFile{Data: macText},
 		winShell:        &fstest.MapFile{Data: winText},
@@ -326,10 +308,7 @@ func TestCheckWindowsVersionInfo(t *testing.T) {
 	paths := []string{winInstaller, winResource, makefile, winBuild, releaseYML, ciYML, winShell, winInstallBat}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
-		data, err := os.ReadFile("../../" + p)
-		if err != nil {
-			t.Fatalf("读取 %s 失败：%v", p, err)
-		}
+		data := readRepo(t, p)
 		fsys[p] = &fstest.MapFile{Data: data}
 	}
 	original := string(fsys[winInstaller].Data)
@@ -369,10 +348,7 @@ func TestCheckVersionSource(t *testing.T) {
 	paths := []string{makefile, winBuild, macBuild, linuxSetupBuild, releaseYML}
 	fsys := fstest.MapFS{}
 	for _, p := range append(paths, "scripts/version.sh") {
-		data, err := os.ReadFile("../../" + p)
-		if err != nil {
-			t.Fatalf("读取 %s 失败：%v", p, err)
-		}
+		data := readRepo(t, p)
 		fsys[p] = &fstest.MapFile{Data: data}
 	}
 	var problems []string
@@ -482,14 +458,8 @@ func TestCheckExists(t *testing.T) {
 }
 
 func TestCheckCandidateMouseUpSemantics(t *testing.T) {
-	winText, err := os.ReadFile("../../" + winShell)
-	if err != nil {
-		t.Fatalf("读取 Windows 壳源码失败：%v", err)
-	}
-	macText, err := os.ReadFile("../../" + macPanel)
-	if err != nil {
-		t.Fatalf("读取 macOS 候选窗源码失败：%v", err)
-	}
+	winText := readRepo(t, winShell)
+	macText := readRepo(t, macPanel)
 	fsys := func(win, mac string) fstest.MapFS {
 		return fstest.MapFS{
 			winShell: &fstest.MapFile{Data: []byte(win)},
@@ -527,5 +497,86 @@ func TestCheckCandidateMouseUpSemantics(t *testing.T) {
 	checkCandidateMouseUpSemantics(fsys(string(winText), mutatedMac), &problems)
 	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "mouseDown") || !strings.Contains(joined, "onSelect?(") {
 		t.Fatalf("macOS mouseDown 直接上屏应被捕获，实际：%v", problems)
+	}
+}
+
+// TestCheckShimModuleLayoutAndDocs 锁住 2026-11-06 架构拆分：
+// docs/architecture.md 模块地图里的文件必须存在且在预算内；删掉/合并回大文件
+// 必须被机器断言抓住。
+func TestCheckShimModuleLayoutAndDocs(t *testing.T) {
+	root := os.DirFS("../../")
+	var problems []string
+	checkShimModuleLayout(root, &problems)
+	checkArchitectureDoc(root, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实仓库未通过架构模块布局契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 用真实文件构建 MapFS 后删掉一个模块文件：必须报「缺少模块文件」。
+	base := fstest.MapFS{}
+	for _, m := range shimModuleBudgets {
+		data, err := fs.ReadFile(root, m.path)
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", m.path, err)
+		}
+		base[m.path] = &fstest.MapFile{Data: append([]byte(nil), data...)}
+	}
+	doc, err := fs.ReadFile(root, archDoc)
+	if err != nil {
+		t.Fatalf("读取 %s 失败：%v", archDoc, err)
+	}
+	base[archDoc] = &fstest.MapFile{Data: append([]byte(nil), doc...)}
+	delete(base, "shims/windows/src/diagnostics.cpp")
+	problems = nil
+	checkShimModuleLayout(base, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "缺少模块文件") {
+		t.Fatalf("删除模块文件应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：把模块文件塞成超预算（模拟大文件回潮）。
+	big := []byte(strings.Repeat("// filler\n", 5300+50))
+	base["shims/windows/src/win32.cpp"] = &fstest.MapFile{Data: big}
+	problems = nil
+	checkShimModuleLayout(base, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "超过预算") {
+		t.Fatalf("超预算大文件应被捕获，实际：%v", problems)
+	}
+}
+
+// TestCheckLinuxSetupAssembly 锁住 Linux 设置窗装配回归：
+// GtkStack 页面误用 gtk_box_pack_start、radio 组类型混用都必须被捕获。
+func TestCheckLinuxSetupAssembly(t *testing.T) {
+	text := string(readRepo(t, linuxSetup))
+	fsys := fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(text)}}
+	var problems []string
+	checkLinuxSetupAssembly(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实 Linux 设置窗装配未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：把 gtk_stack_add_titled 换回 gtk_box_pack_start(GTK_BOX(stack), ...)。
+	mutated := strings.Replace(text,
+		"gtk_stack_add_titled(GTK_STACK(stack), input_page, \"input\", \"输入\");",
+		"gtk_box_pack_start(GTK_BOX(stack), input_page, TRUE, TRUE, 0);", 1)
+	if mutated == text {
+		t.Fatal("变异 1 未生效：找不到 gtk_stack_add_titled(input_page)")
+	}
+	problems = nil
+	checkLinuxSetupAssembly(fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(mutated)}}, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_box_pack_start(GTK_BOX(stack)") {
+		t.Fatalf("GtkStack 页面误挂载应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：radio 首成员建组被删（模拟组类型混用回归）。
+	mutated = strings.Replace(text,
+		"rb = gtk_radio_button_new_with_label_from_widget(",
+		"rb = gtk_radio_button_new_with_label(", 1)
+	if mutated == text {
+		t.Fatal("变异 2 未生效：找不到 from_widget")
+	}
+	problems = nil
+	checkLinuxSetupAssembly(fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(mutated)}}, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_radio_button_new_with_label_from_widget") {
+		t.Fatalf("radio 建组回归应被捕获，实际：%v", problems)
 	}
 }

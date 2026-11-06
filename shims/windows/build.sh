@@ -81,11 +81,21 @@ gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "C
 # ChaosetRunUi 的 __declspec(dllexport) 会让 mingw 停止自动导出其余全局
 # 符号，COM 注册入口（DllRegisterServer 等）随之消失、regsvr32 失败；显式
 # --export-all-symbols 恢复全部导出（与 Makefile package-windows 一致）。
+#
+# DLL 源 = src/*.cpp 去掉 UI 宿主入口 ui_main.cpp（docs/architecture.md §3.1 的
+# 真实 TU：win32.cpp 只留 TIP/CandidateWindow/worker/DllMain，叶子模块独立编译）。
+# 用 wildcard 后新增模块不需要再手改这份清单；UI 宿主仍然只编 ui_main.cpp。
+DLL_SRCS=""
+for f in src/*.cpp; do
+  if [ "$f" != "src/ui_main.cpp" ]; then
+    DLL_SRCS="$DLL_SRCS $f"
+  fi
+done
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--export-all-symbols \
   -Isrc -I../common/ipc \
   -DCHAOSET_VERSION="\"$VERSION\"" \
   -o build/ChaosetIME.dll \
-  src/win32.cpp ../common/ipc/core.cpp build/chaoset_rc.o \
+  $DLL_SRCS ../common/ipc/core.cpp build/chaoset_rc.o \
   -lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
   echo "  图标与版本资源已嵌入（.rsrc 段存在）"

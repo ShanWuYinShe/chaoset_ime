@@ -69,14 +69,17 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"math"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // 三端设置窗共享文案：必须逐字一致（改文案要三端一起改，本检查会失败）。
@@ -114,6 +117,7 @@ const (
 	winShell        = "shims/windows/src/win32.cpp"
 	winBuild        = "shims/windows/build.sh"
 	winInstaller    = "shims/windows/installer/chaoset.nsi"
+	archDoc         = "docs/architecture.md"
 	winInstallBat   = "shims/windows/install.bat"
 	winResource     = "shims/windows/resources/chaoset.rc"
 	linuxSetupBuild = "shims/linux/setup/build.sh"
@@ -365,7 +369,9 @@ var layoutContracts = []numericContract{
 var gearContracts = []numericContract{
 	{"圆环半径", `center\.x - ([0-9.]+)`, `const double rr = ([0-9.]+) \* u;`},
 	{"圆环线宽", `ring\.lineWidth = ([0-9.]+)`, `CreatePen\(PS_SOLID, static_cast<int>\(([0-9.]+) \* u \+ 0\.5\), gearColor\)`},
-	{"辐条数", `for i in 0\.\.<([0-9]+)`, `for \(int i = 0; i < ([0-9]+); \+\+i\)`},
+	// Windows 侧锚定齿轮绘制块：拆分后 winShell 是聚合文本，别的模块也有
+	// for (int i = 0; i < N; ++i)（如 daemon 重试 40 次），不能取全文第一个。
+	{"辐条数", `for i in 0\.\.<([0-9]+)`, `(?s)const COLORREF gearColor = theme\.chipDigit;.*?for \(int i = 0; i < ([0-9]+); \+\+i\)`},
 	{"辐条内半径", `spokes\.move\(to: NSPoint\(x: center\.x \+ dx \* ([0-9.]+)`, `(?s)MoveToEx\(memDC,\s*static_cast<int>\(cx \+ dx \* ([0-9.]+) \* u`},
 	{"辐条外半径", `spokes\.line\(to: NSPoint\(x: center\.x \+ dx \* ([0-9.]+)`, `(?s)LineTo\(memDC,\s*static_cast<int>\(cx \+ dx \* ([0-9.]+) \* u`},
 	{"辐条线宽", `spokes\.lineWidth = ([0-9.]+)`, `createRoundCapPen\(static_cast<int>\(([0-9.]+) \* u \+ 0\.5\), gearColor\)`},
@@ -1578,9 +1584,318 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkSettingsCore 锁住方案 A 的 Go 单一真源与 CLI 契约（2026-11-06）：
+// internal/settings 是设置 schema/默认值/持久化的唯一真源；三端设置窗冷路径
+// 通过 chaoset-settingsctl 读写。文件缺失、存储键名被改、CLI 子命令被删都会 FAIL。
+func checkSettingsCore(fsys fs.FS, problems *[]string) {
+	const group = "设置核心（方案 A）"
+	for _, path := range []string{
+		"internal/settings/settings.go",
+		"internal/settings/store_windows.go",
+		"internal/settings/store_darwin.go",
+		"internal/settings/store_linux.go",
+		"internal/settings/settings_test.go",
+		"internal/settings/store_linux_test.go",
+		"cmd/chaoset-settingsctl/main.go",
+		"cmd/chaoset-settingsctl/main_test.go",
+	} {
+		checkExists(fsys, problems, group, path)
+	}
+	// Windows 注册表子键必须逐字等于 Software\Chaoset（raw string 里只有一个
+	// 反斜杠；2026-11-06 曾因生成脚本吞反斜杠写成 SoftwareChaoset）。
+	checkContains(fsys, problems, group, "internal/settings/settings.go",
+		"windowsRegistrySubKey", "Software\\Chaoset")
+	// CLI 契约面：get/set + 三个键名 + JSON 字段名。
+	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
+		"get", "set", "associate", "mode-scope", "ui-english")
+	checkContains(fsys, problems, group, "internal/settings/settings.go",
+		"mode_scope", "ui_english", "ModeScopeSystem", "ModeScopeProcess", "ModeScopeWindow")
+	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
+	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
+		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope")
+	// Linux 必须复用 appdirs 的 config 路径（与 C 设置窗/chaoset-userdict 同源）。
+	checkContains(fsys, problems, group, "internal/settings/store_linux.go", "appdirs.LinuxConfigPath")
+	// 架构文档必须记录 CLI 契约与单一真源位置。
+	checkContains(fsys, problems, group, archDoc, "chaoset-settingsctl", "internal/settings")
+}
+
+// checkLinuxSetupAssembly 锁住 2026-11-06 修复的两个 Linux 设置窗回归：
+//  1. GtkStack 页面必须用 gtk_stack_add_titled 挂载（GtkStack 不是 GtkBox；
+//     误用 gtk_box_pack_start 会让三个内容页从未挂上、设置窗内容区为空）；
+//  2. 中英状态三选一必须共用同一个首 radio 建组（from_widget），不能把
+//     GSList 等错误类型传给 GTK_RADIO_BUTTON（否则三个 radio 各自成组、可同时选中）。
+func checkLinuxSetupAssembly(fsys fs.FS, problems *[]string) {
+	const group = "Linux 设置窗装配"
+	text, err := readText(fsys, linuxSetup)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, linuxSetup, err))
+		return
+	}
+	// 正向/负向扫描都必须去注释：修复说明注释里同时会提到新旧两种写法，
+	// 用注释内容判断会两边都「命中」。
+	code := stripCppComments(text)
+	for _, want := range []string{
+		"gtk_stack_add_titled(GTK_STACK(stack)",
+		"\"input\"", "\"dict\"", "\"about\"",
+		"gtk_radio_button_new_with_label_from_widget(",
+		"mode_group_first",
+	} {
+		if !strings.Contains(code, want) {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 装配代码缺少 %q（2026-11-06 Linux 设置窗回归修复）", group, linuxSetup, want))
+		}
+	}
+	for _, bad := range []string{
+		"gtk_box_pack_start(GTK_BOX(stack)",
+		"GTK_RADIO_BUTTON(mode_group_radio)",
+	} {
+		if strings.Contains(code, bad) {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 仍包含错误装配 %q（2026-11-06 Linux 设置窗回归，见 docs/architecture.md）",
+				group, linuxSetup, bad))
+		}
+	}
+}
+
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
-func Run(fsys fs.FS) []string {
+// ============================================================================
+// 2026-11-06 架构拆分：逻辑文件聚合与模块布局预算
+//
+// 用户要求把 shims 大文件按职责拆分（见 docs/architecture.md）。拆分后
+// winShell / macPanel / macSettings / linuxSetup 不再是单个文件，而是同目录
+// 多文件聚合的「逻辑文件」；既有逐条文案/几何/行为断言保持不变。
+// ============================================================================
+
+type bundleSpec struct {
+	dir     string
+	exts    []string
+	exclude map[string]bool
+}
+
+type bundleFS struct {
+	base    fs.FS
+	bundles map[string]bundleSpec
+}
+
+func (b bundleFS) Open(name string) (fs.File, error) {
+	spec, ok := b.bundles[name]
+	if !ok {
+		return b.base.Open(name)
+	}
+	entries, err := fs.ReadDir(b.base, spec.dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if spec.exclude[n] {
+			continue
+		}
+		matched := false
+		for _, ext := range spec.exts {
+			if strings.HasSuffix(n, ext) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return b.base.Open(spec.dir)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	for _, n := range names {
+		p := spec.dir + "/" + n
+		data, err := fs.ReadFile(b.base, p)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&buf, "\n// ===== bundled source: %s =====\n", p)
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	return &memFile{Reader: bytes.NewReader(buf.Bytes()), name: name, size: int64(buf.Len())}, nil
+}
+
+type memFile struct {
+	*bytes.Reader
+	name string
+	size int64
+}
+
+func (f *memFile) Stat() (fs.FileInfo, error) { return memFileInfo{f.name, f.size}, nil }
+func (f *memFile) Close() error               { return nil }
+
+type memFileInfo struct {
+	name string
+	size int64
+}
+
+func (i memFileInfo) Name() string       { return i.name }
+func (i memFileInfo) Size() int64        { return i.size }
+func (i memFileInfo) Mode() fs.FileMode  { return 0o444 }
+func (i memFileInfo) ModTime() time.Time { return time.Time{} }
+func (i memFileInfo) IsDir() bool        { return false }
+func (i memFileInfo) Sys() any           { return nil }
+
+type shimModuleBudget struct {
+	path     string
+	maxLines int
+}
+
+var shimModuleBudgets = []shimModuleBudget{
+	{"shims/windows/src/win32.cpp", 5300},
+	{"shims/windows/src/diagnostics.cpp", 700},
+	{"shims/windows/src/diagnostics.hpp", 250},
+	{"shims/windows/src/winutil.cpp", 500},
+	{"shims/windows/src/winutil.hpp", 300},
+	{"shims/windows/src/theme.cpp", 500},
+	{"shims/windows/src/theme.hpp", 250},
+	{"shims/windows/src/config.cpp", 700},
+	{"shims/windows/src/config.hpp", 300},
+	{"shims/windows/src/transport.cpp", 500},
+	{"shims/windows/src/transport.hpp", 300},
+	{"shims/windows/src/daemon.cpp", 500},
+	{"shims/windows/src/daemon.hpp", 300},
+	{"shims/windows/src/ui_client.cpp", 700},
+	{"shims/windows/src/ui_client.hpp", 300},
+	{"shims/windows/src/settings_window.cpp", 1600},
+	{"shims/windows/src/settings_window.hpp", 300},
+	{"shims/windows/src/ui_host.cpp", 1000},
+	{"shims/windows/src/ui_host.hpp", 300},
+	{"shims/windows/src/candidate_layout.hpp", 200},
+	{"shims/windows/src/ui_main.cpp", 120},
+	{"shims/macos/src/ChaosetController.swift", 900},
+	{"shims/macos/src/KeyRouter.swift", 700},
+	{"shims/macos/src/CandidatePanel.swift", 400},
+	{"shims/macos/src/CandidatePanelView.swift", 900},
+	{"shims/macos/src/CandidatePanelWindow.swift", 400},
+	{"shims/macos/src/CandidateTheme.swift", 500},
+	{"shims/macos/src/CandidateSettings.swift", 200},
+	{"shims/macos/src/EngineClient.swift", 600},
+	{"shims/macos/src/DaemonTransport.swift", 500},
+	{"shims/macos/src/SettingsWindow.swift", 600},
+	{"shims/macos/src/SettingsWindowPages.swift", 700},
+	{"shims/macos/src/SettingsWindowTargets.swift", 400},
+	{"shims/macos/src/main.swift", 100},
+	{"shims/linux/setup/chaoset-setup.c", 400},
+	{"shims/linux/setup/setup_page_input.c", 400},
+	{"shims/linux/setup/setup_page_dict.c", 400},
+	{"shims/linux/setup/setup_page_about.c", 300},
+	{"shims/linux/setup/setup_pages.h", 120},
+	{"shims/linux/setup/setup_ctl.c", 700},
+	{"shims/linux/setup/setup_internal.h", 120},
+	{"shims/linux/setup/setup_import.c", 500},
+	{"shims/linux/setup/setup_learn.c", 500},
+	{"shims/linux/setup/setup_ctl.h", 120},
+	{"shims/linux/setup/test_setup_ctl.c", 200},
+	{"shims/common/ipc/core.cpp", 700},
+	{"shims/common/ipc/core.hpp", 300},
+}
+
+var shimDirLineLimits = map[string]int{
+	"shims/windows/src": 1600,
+	"shims/macos/src":   1000,
+	"shims/linux/setup": 800,
+	"shims/common/ipc":  800,
+}
+
+func lineCount(data []byte) int {
+	return strings.Count(string(data), "\n") + 1
+}
+
+func checkShimModuleLayout(fsys fs.FS, problems *[]string) {
+	const group = "模块布局与文件预算"
+	registered := make(map[string]bool, len(shimModuleBudgets))
+	for _, m := range shimModuleBudgets {
+		registered[m.path] = true
+		data, err := fs.ReadFile(fsys, m.path)
+		if err != nil {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：缺少模块文件 %s（架构拆分不许回退；模块地图见 %s）", group, m.path, archDoc))
+			continue
+		}
+		if n := lineCount(data); n > m.maxLines {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 有 %d 行，超过预算 %d 行（按 %s 模块地图拆分）", group, m.path, n, m.maxLines, archDoc))
+		}
+	}
+	for dir, limit := range shimDirLineLimits {
+		entries, err := fs.ReadDir(fsys, dir)
+		if err != nil {
+			*problems = append(*problems, fmt.Sprintf("%s：无法读取模块目录 %s：%v", group, dir, err))
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			p := dir + "/" + e.Name()
+			if registered[p] {
+				continue
+			}
+			switch path.Ext(e.Name()) {
+			case ".cpp", ".hpp", ".swift", ".c", ".h":
+			default:
+				continue
+			}
+			data, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				continue
+			}
+			if n := lineCount(data); n > limit {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 有 %d 行，超过目录单文件上限 %d；新增模块必须登记到 %s 与 checker 模块清单",
+					group, p, n, limit, archDoc))
+			}
+		}
+	}
+}
+
+func checkArchitectureDoc(fsys fs.FS, problems *[]string) {
+	const group = "架构文档"
+	data, err := fs.ReadFile(fsys, archDoc)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：缺少 %s", group, archDoc))
+		return
+	}
+	text := string(data)
+	for _, want := range []string{"## 2. 方案 A", "## 3. 模块地图", "文件预算", "依赖方向"} {
+		if !strings.Contains(text, want) {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少关键小节「%s」", group, archDoc, want))
+		}
+	}
+}
+
+// defaultBundles 返回逻辑文件的聚合规格。Run 与单测共用同一份，避免单测
+// 绕过聚合去读单文件（拆分后单文件不再包含完整实现）。
+func defaultBundles() map[string]bundleSpec {
+	return map[string]bundleSpec{
+		winShell:    {dir: "shims/windows/src", exts: []string{".cpp", ".hpp"}, exclude: map[string]bool{"ui_main.cpp": true}},
+		macPanel:    {dir: "shims/macos/src", exts: []string{".swift"}},
+		macSettings: {dir: "shims/macos/src", exts: []string{".swift"}},
+		"shims/macos/src/ChaosetController.swift": {dir: "shims/macos/src", exts: []string{".swift"}},
+		"shims/macos/src/EngineClient.swift":      {dir: "shims/macos/src", exts: []string{".swift"}},
+		linuxSetup:                                {dir: "shims/linux/setup", exts: []string{".c", ".h"}, exclude: map[string]bool{"test_setup_ctl.c": true}},
+		linuxCtl:                                  {dir: "shims/linux/setup", exts: []string{".c", ".h"}, exclude: map[string]bool{"test_setup_ctl.c": true}},
+	}
+}
+
+// bundledFS 用默认聚合规格包装 base（单测读真实仓库时与 Run 行为一致）。
+func bundledFS(base fs.FS) fs.FS { return bundleFS{base: base, bundles: defaultBundles()} }
+
+func Run(base fs.FS) []string {
 	var problems []string
+
+	// 2026-11-06 架构拆分：逻辑文件由同目录多文件聚合（既有逐条断言不变）。
+	fsys := bundledFS(base)
 
 	// 1. 设置窗共享文案三端一致。
 	for _, path := range []string{macSettings, winShell, linuxSetup} {
@@ -1810,6 +2125,14 @@ func Run(fsys fs.FS) []string {
 	checkExcludes(fsys, &problems, "文档对照", readmeDoc,
 		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
 
+	// 2026-11-06 架构：模块地图/文件预算/架构文档；方案 A 设置核心与 CLI 契约。
+	checkSettingsCore(fsys, &problems)
+	// Linux 设置窗装配（2026-11-06 GtkStack/radio 回归修复）。
+	checkLinuxSetupAssembly(fsys, &problems)
+	// 模块布局/架构文档必须读物理文件：bundleFS 会把逻辑路径聚合为整目录行数。
+	checkShimModuleLayout(base, &problems)
+	checkArchitectureDoc(base, &problems)
+
 	return problems
 }
 
@@ -1934,5 +2257,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
 }

@@ -13,7 +13,8 @@
 //     参考常量，D 段做 Go↔Swift 逐色比对（浅+深）。
 //
 // 用法：
-//   swiftc src/CandidatePanel.swift tools/panel_metrics.swift -o /tmp/panel_metrics
+//   swiftc src/CandidateTheme.swift src/CandidatePanelView.swift tools/panel_metrics.swift \
+//     -o /tmp/panel_metrics
 //   /tmp/panel_metrics
 import AppKit
 import Foundation

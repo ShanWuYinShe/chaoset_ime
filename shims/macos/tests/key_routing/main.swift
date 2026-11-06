@@ -13,9 +13,9 @@ import InputMethodKit
 //
 // 手动用法（在 shims/macos 目录下，需要 daemon 在跑）:
 //   swiftc -O -framework InputMethodKit -framework AppKit \
-//     tests/key_routing/main.swift src/ChaosetController.swift src/EngineClient.swift \
-//     src/CandidatePanel.swift src/SettingsWindow.swift -o build/key_routing
+//     tests/key_routing/main.swift $(ls src/*.swift | grep -v 'src/main.swift$') -o build/key_routing
 //   ./build/key_routing
+// （2026-11-06 架构拆分后 src/*.swift 为多文件；入口只能是 tests/key_routing/main.swift）
 // （入口文件必须叫 main.swift：与其它文件一起编译时，顶层语句只允许出现在 main.swift）
 final class MockClient: NSObject, IMKTextInput {
     var marked = ""

@@ -29,10 +29,19 @@ esac
 
 mkdir -p "$BUILD/modulecache"
 echo "==> 编译 key_routing（${ARCH}）"
+# 2026-11-06 架构拆分：src 已拆成多个文件（ChaosetController/KeyRouter/...），
+# 用通配符收集并排除带顶层入口的 main.swift；测试入口固定在
+# tests/key_routing/main.swift。以后新增 src 文件无需再手改本清单。
+SRCS=()
+for f in src/*.swift; do
+  if [ "$f" = "src/main.swift" ]; then
+    continue
+  fi
+  SRCS+=("$f")
+done
 swiftc -O -module-cache-path "$BUILD/modulecache" -target "$TARGET" \
   -framework InputMethodKit -framework AppKit \
-  tests/key_routing/main.swift src/ChaosetController.swift src/EngineClient.swift \
-  src/CandidatePanel.swift src/SettingsWindow.swift \
+  tests/key_routing/main.swift "${SRCS[@]}" \
   -o "$BUILD/key_routing"
 
 TMP=$(mktemp -d)

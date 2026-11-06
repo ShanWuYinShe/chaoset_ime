@@ -3,7 +3,8 @@
 本文件记录 macOS / Windows / Linux 三端的当前视觉与交互契约。权威实现：
 
 - 基准期望值（布局常量 + 浅/深各 13 色）：内联在 shims/macos/tests/visual-parity.sh；
-- macOS 渲染：shims/macos/src/CandidatePanel.swift；
+- macOS 渲染：shims/macos/src/CandidatePanelView.swift（视觉/布局/鼠标），
+  shims/macos/src/CandidatePanel.swift 为对外 controller，CandidateTheme.swift 为色值/几何；
 - Windows 渲染：shims/windows/src/win32.cpp 与 shims/windows/src/candidate_layout.hpp；
 - Linux：ibus 原生 LookupTable/Preedit，不自绘候选窗；
 - 机器校验：tools/checkuiparity、shims/macos/tests/visual-parity.sh、

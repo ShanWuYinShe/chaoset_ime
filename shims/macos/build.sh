@@ -87,7 +87,9 @@ swift_universal "$APP/Contents/MacOS/ChaosetIME" InputMethodKit AppKit -- src/*.
 #   tis   —— 注册/枚举 TIS 输入源（判断系统是否收录本输入法）
 #   smoke —— 与 daemon 的 IPC 全链路自检（需要先跑起 daemon）
 swift_universal build/tis Carbon -- tools/tis.swift
-swift_universal build/smoke InputMethodKit AppKit -- smoke/main.swift src/EngineClient.swift
+# 2026-11-06 架构拆分：EngineClient 的 socket 传输已移到 DaemonTransport.swift，
+# smoke 只编这两个文件即覆盖「IPC 全链路」（不依赖 UI）。
+swift_universal build/smoke InputMethodKit AppKit -- smoke/main.swift src/EngineClient.swift src/DaemonTransport.swift
 #   icon-size —— 对比系统设置/菜单栏**实际渲染**的输入源图标尺寸是否与系统原生一致
 #                （icon.tiff 的像素尺寸 ≠ 系统显示尺寸；见 README「图标要求」）
 rm -f build/icon-size
