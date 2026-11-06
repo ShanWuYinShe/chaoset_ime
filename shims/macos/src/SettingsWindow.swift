@@ -33,6 +33,35 @@ extension Notification.Name {
         Notification.Name("chaosetAssociateDisabled")
 }
 
+/// 中英状态作用域三选一的 target（2026-11-06，与 Windows 设置窗对齐）。
+@objc final class ModeScopeTarget: NSObject {
+    @objc func scopeChanged(_ sender: NSButton) {
+        // radioButtonWithTitle 是自动互斥的；用标题反查 scope 最稳妥
+        // （tag 在初始化后绑定时容易与顺序耦合）。
+        switch sender.title {
+        case "每程序": ModeScopeSetting.current = .process
+        case "每窗口": ModeScopeSetting.current = .window
+        default: ModeScopeSetting.current = .system
+        }
+    }
+}
+
+/// 设置窗左侧导航的页切换 target（2026-11-06 卡片式布局，与 Windows 对齐）。
+/// 三个页面视图在构建时注册进来；按按钮 identifier（"0"/"1"/"2"）切页。
+final class PageSwitchTarget: NSObject {
+    static let shared = PageSwitchTarget()
+    weak var inputPage: NSView?
+    weak var dictPage: NSView?
+    weak var aboutPage: NSView?
+
+    @objc func switchPage(_ sender: NSButton) {
+        let idx = sender.identifier?.rawValue ?? "0"
+        inputPage?.isHidden = idx != "0"
+        dictPage?.isHidden = idx != "1"
+        aboutPage?.isHidden = idx != "2"
+    }
+}
+
 /// 学习数据区的按钮动作（清空/导出）与统计刷新。
 /// 单独成类是为了 @objc target/action 能拿到稳定对象；不持有窗口强引用。
 @objc final class LearningDataTarget: NSObject {
@@ -145,6 +174,9 @@ enum SettingsWindowController {
     /// 同一 daemon 支持多连接，每个连接有独立组词会话）。
     static let engine = EngineClient()
 
+    // 中英状态三选一的 target（静态持有，避免窗口重建时悬空）。
+    private static let modeTarget = ModeScopeTarget()
+
     static func show() {
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
@@ -156,19 +188,21 @@ enum SettingsWindowController {
             return
         }
 
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 12
-        content.edgeInsets = NSEdgeInsets(top: 24, left: 28, bottom: 24, right: 28)
+        // 布局：左侧导航（输入 / 词库 / 关于）+ 右侧内容页（2026-11-06
+        // 卡片式重构，与 Windows 设置窗对齐；参照微信输入法设置窗的形态）。
+        let pageTarget = PageSwitchTarget.shared
 
-        // —— 分组标题：输入行为 ——
+        // —— 输入页 ——
+        let inputPage = NSStackView()
+        inputPage.orientation = .vertical
+        inputPage.alignment = .leading
+        inputPage.spacing = 12
+
         let group = NSTextField(labelWithString: "输入行为")
         group.font = .boldSystemFont(ofSize: 13)
         group.textColor = .secondaryLabelColor
-        content.addArrangedSubview(group)
+        inputPage.addArrangedSubview(group)
 
-        // 词组联想开关行：标签 + NSSwitch
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 12
@@ -180,29 +214,60 @@ enum SettingsWindowController {
         sw.action = #selector(AssociateSwitchTarget.switchChanged(_:))
         row.addArrangedSubview(label)
         row.addArrangedSubview(sw)
-        content.addArrangedSubview(row)
+        inputPage.addArrangedSubview(row)
 
-        // 说明文字
         let hint = NSTextField(wrappingLabelWithString:
             "选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.preferredMaxLayoutWidth = 320
-        content.addArrangedSubview(hint)
+        inputPage.addArrangedSubview(hint)
 
-        // —— 分组标题：学习数据 ——
+        let modeGroup = NSTextField(labelWithString: "中英状态")
+        modeGroup.font = .boldSystemFont(ofSize: 13)
+        modeGroup.textColor = .secondaryLabelColor
+        inputPage.addArrangedSubview(modeGroup)
+
+        let modeRow = NSStackView()
+        modeRow.orientation = .horizontal
+        modeRow.spacing = 8
+        for scope in ModeScope.allCases {
+            let title: String
+            switch scope {
+            case .system: title = "系统共享"
+            case .process: title = "每程序"
+            case .window: title = "每窗口"
+            }
+            let btn = NSButton(radioButtonWithTitle: title, target: modeTarget,
+                               action: #selector(ModeScopeTarget.scopeChanged(_:)))
+            btn.state = ModeScopeSetting.current == scope ? .on : .off
+            modeRow.addArrangedSubview(btn)
+        }
+        inputPage.addArrangedSubview(modeRow)
+
+        let modeHint = NSTextField(wrappingLabelWithString:
+            "切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。")
+        modeHint.font = .systemFont(ofSize: 11)
+        modeHint.textColor = .secondaryLabelColor
+        modeHint.preferredMaxLayoutWidth = 320
+        inputPage.addArrangedSubview(modeHint)
+
+        // —— 词库页 ——
+        let dictPage = NSStackView()
+        dictPage.orientation = .vertical
+        dictPage.alignment = .leading
+        dictPage.spacing = 12
+
         let dataGroup = NSTextField(labelWithString: "学习数据")
         dataGroup.font = .boldSystemFont(ofSize: 13)
         dataGroup.textColor = .secondaryLabelColor
-        content.addArrangedSubview(dataGroup)
+        dictPage.addArrangedSubview(dataGroup)
 
-        // 统计行（打开窗口时实时读取；daemon 不可达显示提示）
         let stats = NSTextField(labelWithString: "读取中…")
         stats.font = .systemFont(ofSize: 13)
-        content.addArrangedSubview(stats)
+        dictPage.addArrangedSubview(stats)
         learningTarget.statsLabel = stats
 
-        // 清空 / 导出（普通用户的唯一入口；CLI 仅作高级/排障兜底）
         let dataRow = NSStackView()
         dataRow.orientation = .horizontal
         dataRow.spacing = 12
@@ -212,46 +277,88 @@ enum SettingsWindowController {
                                 action: #selector(LearningDataTarget.exportLearningData(_:)))
         dataRow.addArrangedSubview(clearBtn)
         dataRow.addArrangedSubview(exportBtn)
-        content.addArrangedSubview(dataRow)
+        dictPage.addArrangedSubview(dataRow)
 
         let dataHint = NSTextField(wrappingLabelWithString:
             "学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。")
         dataHint.font = .systemFont(ofSize: 11)
         dataHint.textColor = .secondaryLabelColor
         dataHint.preferredMaxLayoutWidth = 320
-        content.addArrangedSubview(dataHint)
+        dictPage.addArrangedSubview(dataHint)
 
-        // —— 分组标题：词库（入口与 Windows 设置窗「词库」区对齐）——
         let dictGroup = NSTextField(labelWithString: "词库")
         dictGroup.font = .boldSystemFont(ofSize: 13)
         dictGroup.textColor = .secondaryLabelColor
-        content.addArrangedSubview(dictGroup)
+        dictPage.addArrangedSubview(dictGroup)
 
         let importBtn = NSButton(title: "导入词库…", target: dictImportTarget,
                                  action: #selector(DictionaryImportTarget.openDictionaryImport(_:)))
-        content.addArrangedSubview(importBtn)
+        dictPage.addArrangedSubview(importBtn)
 
         let dictHint = NSTextField(wrappingLabelWithString:
             "打开「Chaoset 安装与设置」导入 Rime dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。")
         dictHint.font = .systemFont(ofSize: 11)
         dictHint.textColor = .secondaryLabelColor
         dictHint.preferredMaxLayoutWidth = 320
-        content.addArrangedSubview(dictHint)
+        dictPage.addArrangedSubview(dictHint)
 
-        // 底部提示：更多设置后续版本提供
+        // —— 关于页 ——
+        let aboutPage = NSStackView()
+        aboutPage.orientation = .vertical
+        aboutPage.alignment = .leading
+        aboutPage.spacing = 12
+
         let more = NSTextField(labelWithString: "更多设置将在后续版本提供")
         more.font = .systemFont(ofSize: 11)
         more.textColor = .tertiaryLabelColor
-        content.addArrangedSubview(more)
+        aboutPage.addArrangedSubview(more)
 
         let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
         let versionLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
         versionLabel.font = .systemFont(ofSize: 11)
         versionLabel.textColor = .tertiaryLabelColor
-        content.addArrangedSubview(versionLabel)
+        aboutPage.addArrangedSubview(versionLabel)
+
+        let repo = NSTextField(labelWithString: "https://github.com/ShanWuYinShe/chaoset_ime")
+        repo.font = .systemFont(ofSize: 11)
+        repo.textColor = .tertiaryLabelColor
+        aboutPage.addArrangedSubview(repo)
+
+        // —— 左侧导航 ——
+        let sidebar = NSStackView()
+        sidebar.orientation = .vertical
+        sidebar.alignment = .leading
+        sidebar.spacing = 6
+        let appTitle = NSTextField(labelWithString: "Chaoset 设置")
+        appTitle.font = .boldSystemFont(ofSize: 14)
+        sidebar.addArrangedSubview(appTitle)
+        PageSwitchTarget.shared.inputPage = inputPage
+        PageSwitchTarget.shared.dictPage = dictPage
+        PageSwitchTarget.shared.aboutPage = aboutPage
+        for (idx, title) in [("0", "输入"), ("1", "词库"), ("2", "关于")] {
+            let b = NSButton(title: title, target: PageSwitchTarget.shared,
+                             action: #selector(PageSwitchTarget.switchPage(_:)))
+            b.isBordered = false
+            b.identifier = NSUserInterfaceItemIdentifier(idx)
+            b.font = .systemFont(ofSize: 13)
+            sidebar.addArrangedSubview(b)
+        }
+
+        // 整窗：横向 [导航 | 内容页]；初始只显示输入页。
+        let content = NSStackView()
+        content.orientation = .horizontal
+        content.alignment = .top
+        content.spacing = 24
+        content.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 24, right: 28)
+        content.addArrangedSubview(sidebar)
+        content.addArrangedSubview(inputPage)
+        content.addArrangedSubview(dictPage)
+        content.addArrangedSubview(aboutPage)
+        dictPage.isHidden = true
+        aboutPage.isHidden = true
 
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)

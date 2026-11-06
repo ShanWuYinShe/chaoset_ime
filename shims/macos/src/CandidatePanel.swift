@@ -905,6 +905,36 @@ enum AssociateSetting {
     }
 }
 
+/// 中英状态的共享作用域（2026-11-06 用户要求可配置，与 Windows
+/// HKCU\Software\Chaoset\ModeScope 同语义）。
+///
+/// - system：全系统共享（默认）——切一次所有程序都生效。
+/// - process：每个程序各自独立。
+/// - window：每个窗口/输入上下文独立。
+///
+/// macOS 侧由本进程（IMK 输入法）持有模式状态，三档分别落到：
+/// system → UserDefaults（跨进程共享）；process → 静态量；window → 按 client 标识。
+enum ModeScope: String, CaseIterable {
+    case system
+    case process
+    case window
+}
+
+enum ModeScopeSetting {
+    private static let key = "ChaosetModeScope"
+
+    static var current: ModeScope {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: key),
+               let scope = ModeScope(rawValue: raw) {
+                return scope
+            }
+            return .system
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
+
 // 齿轮区宽度（pt，折叠区内、chevron 左侧）：
 // 齿轮矢量直径 2*7.2pt=14.4pt + 两侧各约 5.8pt 余量 = 26pt。
 // 与 Windows win32.cpp 的 gearBoxW（pt(26)）对应。

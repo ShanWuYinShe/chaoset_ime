@@ -247,7 +247,7 @@ DP 拼接候选的 Score 含「多字词奖励 (l-1)*100」，碎片拼接「中
 ## 四、改动后的验证清单
 
 ```sh
-gofmt -l engine/ cmd/ ipc/ skin/
+gofmt -l engine/ cmd/ ipc/
 go vet ./...
 go test ./... -count=1
 go test -race -count=1 ./engine/

@@ -242,6 +242,72 @@ gboolean setup_config_load(gboolean *associate) {
     return TRUE;
 }
 
+/* 中英状态作用域：读 JSON 里的 "mode_scope" 字符串；缺省 system。
+ * 与 Windows HKCU\Software\Chaoset\ModeScope / macOS UserDefaults 同语义。 */
+const char *setup_config_load_mode_scope(void) {
+    static char cached[16] = "system";
+    gchar *path = config_path();
+    GError *error = NULL;
+    gchar *text = read_text(path, NULL, &error);
+    g_free(path);
+    if (error != NULL) {
+        g_clear_error(&error);
+        return cached;
+    }
+    if (text == NULL) {
+        return cached;
+    }
+    const gchar *p = strstr(text, "\"mode_scope\"");
+    if (p != NULL) {
+        const gchar *colon = strchr(p, ':');
+        if (colon != NULL) {
+            const gchar *q = strchr(colon, '"');
+            if (q != NULL) {
+                q++;
+                const gchar *end = strchr(q, '"');
+                if (end != NULL && (gsize)(end - q) < sizeof(cached)) {
+                    g_strlcpy(cached, q, (gsize)(end - q) + 1);
+                }
+            }
+        }
+    }
+    g_free(text);
+    return cached;
+}
+
+/* 写作用域：重新拼一份最小 JSON（只保留 associate + mode_scope）。
+ * 配置文件是本项目独占的简单键值 JSON，重建比原地编辑更不容易出错，
+ * 也避免上面的字符串手术在损坏文件上产生非法 JSON。 */
+gboolean setup_config_save_mode_scope(const char *scope) {
+    if (scope == NULL || *scope == '\0') {
+        return FALSE;
+    }
+    gboolean associate = TRUE;
+    (void)setup_config_load(&associate);
+    gchar *path = config_path();
+    gchar *dir = g_path_get_dirname(path);
+    if (g_mkdir_with_parents(dir, 0700) != 0) {
+        g_free(dir);
+        g_free(path);
+        return FALSE;
+    }
+    g_free(dir);
+    gchar *json = g_strdup_printf(
+        "{\n  \"associate\": %s,\n  \"mode_scope\": \"%s\"\n}\n",
+        associate ? "true" : "false", scope);
+    GError *error = NULL;
+    gboolean ok = g_file_set_contents(path, json, -1, &error);
+    g_free(json);
+    if (ok) {
+        (void)g_chmod(path, 0644);
+    } else {
+        g_clear_error(&error);
+    }
+    g_free(path);
+    return ok;
+}
+
+
 static gchar *replace_associate_value(const gchar *text, gboolean associate) {
     const gchar *needle = "\"associate\"";
     const gchar *p = strstr(text, needle);

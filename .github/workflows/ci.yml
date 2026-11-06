@@ -67,10 +67,6 @@ jobs:
       - name: 核心构建检查
         run: make build
 
-      # 度量工具带 //go:build ignore，不在 ./... 里，单独编译防止烂掉。
-      - name: 检查度量工具可编译
-        run: go build -o /dev/null tools/render_metrics.go
-
   # ── 2. Go 单测 ────────────────────────────────────────────────────
   test:
     name: 单元测试

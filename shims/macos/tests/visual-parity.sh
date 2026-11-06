@@ -32,13 +32,11 @@ trap 'rm -rf "$OUT"' EXIT
 
 note() { printf '%s\n' "$*"; }
 
-note "== A. 导出两端度量 =="
-if ! (cd "$ROOT" && go run tools/render_metrics.go) > "$OUT/go.json" 2>"$OUT/go.err"; then
-  note "FAIL 无法导出 Go 端度量："
-  cat "$OUT/go.err" | sed 's/^/     /'
-  exit 1
-fi
-note "ok   Go 端度量已导出"
+note "== A. 导出 Swift 端度量 =="
+# 2026-11-06：原 skin/ 包（Go 侧「设计基准」）已删除——它在产品里零调用，
+# 只在 macOS 测试里当对照物，容易让人误以为 Go 是跨端视觉真源。
+# 基准值改为**内联在本脚本**（见下方 PY 段），macOS 是视觉参考实现，
+# 断言方向变成「Swift 实现 ↔ 文档化期望值」，不再需要 Go 侧导出。
 
 # macOS 的 CI runner 是 arm64，本地开发机也可能有 Intel；target 按 uname 选择，
 # 避免把 x86_64 机器上写死的 arm64 target 当成「唯一正确」。
@@ -56,12 +54,37 @@ fi
 "$OUT/panel_metrics" > "$OUT/swift.json" 2>>"$OUT/swift.err"
 note "ok   Swift 端度量已导出"
 
-# 用 python 做 JSON 差分（jq 不一定可用）
-python3 - "$OUT/go.json" "$OUT/swift.json" <<'PY'
+# 用 python 做差分（jq 不一定可用）
+python3 - "$OUT/swift.json" <<'PY'
 import json, sys
 
-go = json.load(open(sys.argv[1]))
-sw = json.load(open(sys.argv[2]))
+sw = json.load(open(sys.argv[1]))
+
+# Go 侧「设计基准」已内联至此（原 skin/skin.go，2026-11-06 删除该包）。
+# macOS 是视觉参考实现：这些期望值即三端对齐的文档化基准，
+# 改动必须同时更新这里 + docs/ui-parity.md + 另外两端。
+GO_LAYOUT = {
+    "fontSize": 15,
+    "padding": 7,
+    "lineSpacing": 4,
+    "maxWidth": 720,
+    "cornerRadius": 8,
+}
+# 浅/深各 13 色（ARGB 十六进制，原 skin.DefaultSkinFor 的 NRGBA 值）。
+GO_COLORS = {
+    "panelBg": "#F6F6F8F6", "panelBorder": "#0000001A", "text": "#1D1D1FFF",
+    "highlightBg": "#007AFFFF", "highlightText": "#FFFFFFFF",
+    "chipBg": "#FFFFFFFF", "chipBorder": "#0000003C", "chipDigit": "#1D1D1FFF",
+    "highlightChipBg": "#FFFFFF45", "pageColor": "#8E8E93D0",
+    "userMark": "#34C759FF", "divider": "#00000014", "chevron": "#8E8E93D0",
+}
+GO_COLORS_DARK = {
+    "panelBg": "#2C2C2EF5", "panelBorder": "#FFFFFF24", "text": "#FFFFFFFF",
+    "highlightBg": "#0066EBFF", "highlightText": "#FFFFFFFF",
+    "chipBg": "#5A5A5EFF", "chipBorder": "#FFFFFF40", "chipDigit": "#FFFFFFFF",
+    "highlightChipBg": "#FFFFFF45", "pageColor": "#98989FB8",
+    "userMark": "#30D158FF", "divider": "#FFFFFF1E", "chevron": "#98989FB8",
+}
 
 fails = []
 def cmp(name, a, b):
@@ -80,7 +103,7 @@ def expect(name, got, want):
 
 print("== B. 布局常量对比（Go skin/skin.go ↔ Swift CandidatePanel.Layout）==")
 for k in ("fontSize", "padding", "lineSpacing", "maxWidth", "cornerRadius"):
-    cmp(f"skin.{k}", go["skin"][k], sw["skin"][k])
+    cmp(f"skin.{k}", GO_LAYOUT[k], sw["skin"][k])
 
 print()
 print("== C. macOS 参考常量自检（期望值见 docs/ui-parity.md 排版参数表）==")
@@ -135,7 +158,7 @@ color_keys = [
 for section, label in (("colors", "浅色"), ("colorsDark", "深色")):
     print(f"-- {label}")
     for k in color_keys:
-        g = go.get(section, {}).get(k)
+        g = (GO_COLORS if section == "colors" else GO_COLORS_DARK).get(k)
         s = sw.get(section, {}).get(k)
         if g is None or s is None:
             fails.append((f"{section}.{k}", g, s))

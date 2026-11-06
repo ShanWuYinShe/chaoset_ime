@@ -64,7 +64,7 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
 
 本项目是**从零实现**的：Go 引擎（`engine/`）、IPC（`ipc/`）、视觉参数真源
-（`skin/`）、三端薄壳（`shims/`）全部为本仓库自研代码，
+、三端薄壳（`shims/`）全部为本仓库自研代码，
 `git ls-files` 中没有任何 Squirrel / librime 源码，也没有引用其图标素材。
 来自第三方的只有**数据**：
 
@@ -98,7 +98,7 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
   userdict.go        用户数据：调频记录、合成词组、上下文共现
   import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
-skin/              候选窗视觉参数设计基准（几何 + 浅/深配色，DefaultSkinFor(dark)）：
+docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内联在 visual-parity.sh）：
                    无运行时消费者——实际渲染是 macOS CandidatePanel.swift 与
                    Windows win32.cpp 两份实现；Go↔macOS 的布局/色值一致性由
                    shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
@@ -826,7 +826,7 @@ IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Compositi
 `shims/macos/src/CandidatePanel.swift`；Windows 用 GDI），Linux 不重绘面板、
 用 ibus 原生 LookupTable/Preedit 呈现；daemon 不提供贴图渲染。
 
-视觉参数（几何 + 浅/深配色）的设计基准是 `skin/skin.go`（`DefaultSkinFor(dark)`，
+视觉参数（几何 + 浅/深配色）的基准期望值内联在 `shims/macos/tests/visual-parity.sh`（
 **无运行时消费者**）；mac/Windows 两份壳实现按它手写。Go↔macOS 的布局常量
 （5 项）+ macOS 参考常量（含 divider）+ 浅/深各 13 色由
 `shims/macos/tests/visual-parity.sh` 逐项机器断言；Windows 侧目前只有 pt

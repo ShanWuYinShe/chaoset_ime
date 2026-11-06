@@ -159,7 +159,7 @@ if [ "$fails" -eq 0 ]; then
   fi
 fi
 
-# F. macOS 视觉一致性：Go 视觉设计基准（skin/skin.go）vs macOS 原生端
+# F. macOS 视觉一致性：内联基准期望值（visual-parity.sh）vs macOS 原生端
 #    （CandidatePanel.swift）。
 #    实际断言范围（以 visual-parity.sh 为准，见其文件头）：布局常量 5 项
 #    Go↔Swift、macOS 参考常量 13 项 + divider 几何自检、浅/深各 13 色

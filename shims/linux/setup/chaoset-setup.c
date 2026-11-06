@@ -248,6 +248,20 @@ static gboolean on_associate_toggled(GtkSwitch *sw, gboolean state, gpointer use
     return FALSE;
 }
 
+/* 中英状态作用域单选：只在被选中时保存（GTK 单选会同时发 toggled，
+ * 其中一个是取消选中，必须过滤掉）。 */
+static void on_mode_scope_toggled(GtkToggleButton *btn, gpointer user_data) {
+    (void)user_data;
+    if (!gtk_toggle_button_get_active(btn)) {
+        return;
+    }
+    const char *scope = g_object_get_data(G_OBJECT(btn), "chaoset-mode-scope");
+    if (scope != NULL && !setup_config_save_mode_scope(scope)) {
+        show_message(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(btn))),
+                     GTK_MESSAGE_ERROR, "保存设置失败，请检查配置目录权限。");
+    }
+}
+
 static GtkWidget *build_window(AppCtx *ctx) {
     gboolean associate = TRUE;
     (void)setup_config_load(&associate);
@@ -257,10 +271,31 @@ static GtkWidget *build_window(AppCtx *ctx) {
     gtk_window_set_title(GTK_WINDOW(window), "Chaoset 设置");
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
-    gtk_container_set_border_width(GTK_CONTAINER(window), 24);
 
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_container_add(GTK_CONTAINER(window), box);
+    /* 布局：左侧导航（GtkStackSidebar：输入 / 词库 / 关于）+ 右侧内容页
+     * （GtkStack），2026-11-06 卡片式重构，与 Windows/macOS 设置窗对齐。 */
+    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_container_add(GTK_CONTAINER(window), hbox);
+    GtkWidget *stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+    gtk_stack_set_hhomogeneous(GTK_STACK(stack), TRUE);
+    gtk_stack_set_vhomogeneous(GTK_STACK(stack), FALSE);
+    GtkWidget *sidebar = gtk_stack_sidebar_new();
+    gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar), GTK_STACK(stack));
+    gtk_box_pack_start(GTK_BOX(hbox), sidebar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox), stack, TRUE, TRUE, 0);
+    GtkWidget *input_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    GtkWidget *dict_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    GtkWidget *about_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(input_page, 12);
+    gtk_widget_set_margin_end(input_page, 12);
+    gtk_box_pack_start(GTK_BOX(stack), input_page, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(stack), dict_page, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(stack), about_page, TRUE, TRUE, 0);
+    gtk_stack_child_set_title(GTK_STACK(stack), input_page, "输入");
+    gtk_stack_child_set_title(GTK_STACK(stack), dict_page, "词库");
+    gtk_stack_child_set_title(GTK_STACK(stack), about_page, "关于");
+    GtkWidget *box = input_page;
 
     GtkWidget *group = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(group), "<b>输入行为</b>");
@@ -283,57 +318,103 @@ static GtkWidget *build_window(AppCtx *ctx) {
     gtk_style_context_add_class(gtk_widget_get_style_context(hint), "dim-label");
     gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 0);
 
+    /* 中英状态作用域（2026-11-06 与 Windows/macOS 设置窗对齐）：
+     * 三选一，写入配置文件，引擎下次启动读取。 */
+    GtkWidget *mode_group = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(mode_group), "<b>中英状态</b>");
+    gtk_label_set_xalign(GTK_LABEL(mode_group), 0.0);
+    gtk_box_pack_start(GTK_BOX(input_page), mode_group, FALSE, FALSE, 0);
+
+    GtkWidget *mode_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    const char *current_scope = setup_config_load_mode_scope();
+    GSList *mode_group_radio = NULL;
+    const struct {
+        const char *label;
+        const char *scope;
+    } kScopes[] = {
+        {"系统共享", "system"},
+        {"每程序", "process"},
+        {"每窗口", "window"},
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(kScopes); i++) {
+        GtkWidget *rb = gtk_radio_button_new_with_label_from_widget(
+            GTK_RADIO_BUTTON(mode_group_radio), kScopes[i].label);
+        if (mode_group_radio == NULL) {
+            mode_group_radio = gtk_radio_button_get_group(GTK_RADIO_BUTTON(rb));
+        }
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rb),
+                                     g_strcmp0(current_scope, kScopes[i].scope) == 0);
+        g_object_set_data_full(G_OBJECT(rb), "chaoset-mode-scope",
+                               g_strdup(kScopes[i].scope), g_free);
+        g_signal_connect(rb, "toggled", G_CALLBACK(on_mode_scope_toggled), ctx);
+        gtk_box_pack_start(GTK_BOX(mode_row), rb, FALSE, FALSE, 0);
+    }
+    gtk_box_pack_start(GTK_BOX(input_page), mode_row, FALSE, FALSE, 0);
+
+    GtkWidget *mode_hint = gtk_label_new("切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。");
+    gtk_label_set_xalign(GTK_LABEL(mode_hint), 0.0);
+    gtk_label_set_line_wrap(GTK_LABEL(mode_hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(mode_hint), 40);
+    gtk_style_context_add_class(gtk_widget_get_style_context(mode_hint), "dim-label");
+    gtk_box_pack_start(GTK_BOX(input_page), mode_hint, FALSE, FALSE, 0);
+
     GtkWidget *data_group = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(data_group), "<b>学习数据</b>");
     gtk_label_set_xalign(GTK_LABEL(data_group), 0.0);
-    gtk_box_pack_start(GTK_BOX(box), data_group, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), data_group, FALSE, FALSE, 0);
 
     ctx->stats_label = gtk_label_new("读取中…");
     gtk_label_set_xalign(GTK_LABEL(ctx->stats_label), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(ctx->stats_label), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(ctx->stats_label), 40);
-    gtk_box_pack_start(GTK_BOX(box), ctx->stats_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), ctx->stats_label, FALSE, FALSE, 0);
 
     GtkWidget *data_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     GtkWidget *clear_btn = gtk_button_new_with_label("清空学习数据…");
     GtkWidget *export_btn = gtk_button_new_with_label("导出学习数据…");
     gtk_box_pack_start(GTK_BOX(data_row), clear_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(data_row), export_btn, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), data_row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), data_row, FALSE, FALSE, 0);
 
     GtkWidget *data_hint = gtk_label_new("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。");
     gtk_label_set_xalign(GTK_LABEL(data_hint), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(data_hint), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(data_hint), 40);
     gtk_style_context_add_class(gtk_widget_get_style_context(data_hint), "dim-label");
-    gtk_box_pack_start(GTK_BOX(box), data_hint, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), data_hint, FALSE, FALSE, 0);
 
     GtkWidget *dict_group = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(dict_group), "<b>词库</b>");
     gtk_label_set_xalign(GTK_LABEL(dict_group), 0.0);
-    gtk_box_pack_start(GTK_BOX(box), dict_group, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), dict_group, FALSE, FALSE, 0);
 
     GtkWidget *import_btn = gtk_button_new_with_label("导入词库…");
-    gtk_box_pack_start(GTK_BOX(box), import_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), import_btn, FALSE, FALSE, 0);
 
     GtkWidget *dict_hint = gtk_label_new("导入 Rime dict.yaml / CC-CEDICT txt / TSV（可多选），合并进用户词库并重启输入法生效。");
     gtk_label_set_xalign(GTK_LABEL(dict_hint), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(dict_hint), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(dict_hint), 40);
     gtk_style_context_add_class(gtk_widget_get_style_context(dict_hint), "dim-label");
-    gtk_box_pack_start(GTK_BOX(box), dict_hint, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(dict_page), dict_hint, FALSE, FALSE, 0);
 
     GtkWidget *more = gtk_label_new("更多设置将在后续版本提供");
     gtk_label_set_xalign(GTK_LABEL(more), 0.0);
     gtk_style_context_add_class(gtk_widget_get_style_context(more), "dim-label");
-    gtk_box_pack_start(GTK_BOX(box), more, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(about_page), more, FALSE, FALSE, 0);
 
     gchar *version_text = g_strdup_printf("Chaoset 版本 %s", CHAOSET_VERSION);
     GtkWidget *version_label = gtk_label_new(version_text);
     g_free(version_text);
     gtk_label_set_xalign(GTK_LABEL(version_label), 0.0);
     gtk_style_context_add_class(gtk_widget_get_style_context(version_label), "dim-label");
-    gtk_box_pack_start(GTK_BOX(box), version_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(about_page), version_label, FALSE, FALSE, 0);
+    GtkWidget *repo_label = gtk_label_new("https://github.com/ShanWuYinShe/chaoset_ime");
+    gtk_label_set_xalign(GTK_LABEL(repo_label), 0.0);
+    gtk_label_set_line_wrap(GTK_LABEL(repo_label), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(repo_label), "dim-label");
+    gtk_box_pack_start(GTK_BOX(about_page), repo_label, FALSE, FALSE, 0);
+
     g_signal_connect(sw, "state-set", G_CALLBACK(on_associate_toggled), ctx);
     g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_clicked), ctx);
     g_signal_connect(export_btn, "clicked", G_CALLBACK(on_export_clicked), ctx);

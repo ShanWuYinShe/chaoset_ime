@@ -75,6 +75,10 @@ var sharedSettingsText = []string{
 	"学习数据仅保存在本机",
 	"更多设置将在后续版本提供",
 	"Chaoset 版本",
+	"中英状态",
+	"系统共享",
+	"每程序",
+	"每窗口",
 }
 
 const (
@@ -593,14 +597,14 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	)
 	// 初始化/切换/焦点回来都必须上报，否则托盘会停在旧模式。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
-		if n := strings.Count(string(data), "reportModeToUi(enMode_"); n < 3 {
+		if n := strings.Count(string(data), "reportModeToUi("); n < 3 {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：reportModeToUi(enMode_) 只有 %d 处，应至少 3 处"+
+				"%s：reportModeToUi( 只有 %d 处，应至少 3 处"+
 					"（Activate / 切换模式 / 焦点回来）", group, n))
 		}
 		// 设置窗创建入口只允许出现在 UI 宿主路径里（定义 + 消息处理 + 首启），
 		// 且候选栏齿轮只发管道请求。
-		if n := strings.Count(string(data), "openSettingsWindowStandalone()"); n < 3 {
+		if n := strings.Count(string(data), "openSettingsWindowStandalone("); n < 3 {
 			*problems = append(*problems, fmt.Sprintf(
 				"%s：openSettingsWindowStandalone() 只有 %d 处，应至少 3 处"+
 					"（定义 / UI 宿主消息 / 首启 --settings）", group, n))
@@ -895,6 +899,73 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkTrayAndModeScope 锁住 2026-11-06 用户要求的三件事：
+//  1. 托盘左键 = 切换中英、右键 = 弹菜单（旧实现左键打开设置、右键无处理）；
+//  2. 中英状态可配置作用域（system/process/window），且状态同步只在获得焦点/
+//     激活时做一次——按键热路径不许做跨进程查询（性能要求）；
+//  3. 设置窗改卡片式布局（左导航三页 + 右侧分组卡片 + 页脚版本号 + 滚动）。
+func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
+	const group = "托盘与中英作用域"
+	checkContains(fsys, problems, group, winShell,
+		"kUiToggleModeMsg", "showTrayMenu", "TrackPopupMenu",
+		"WM_RBUTTONUP", "WM_LBUTTONUP", "打开设置…", "关于 Chaoset")
+	// 左键必须切中英：托盘回调里投递 toggle 消息。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		i := strings.Index(text, "if (ev == WM_LBUTTONUP) {")
+		if i < 0 {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少左键分支", group, winShell))
+		} else {
+			end := i + 400
+			if end > len(text) {
+				end = len(text)
+			}
+			if !strings.Contains(text[i:end], "kUiToggleModeMsg") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的左键分支未切换中英（应投递 kUiToggleModeMsg）", group, winShell))
+			}
+		}
+	}
+	// 作用域三档 + 持久化。
+	checkContains(fsys, problems, group, winShell,
+		"enum class ModeScope", "ModeScope::System", "ModeScope::Process",
+		"ModeScope::Window", "uiLoadModeScope", "uiSaveModeScope")
+	// 热路径只读本地缓存：currentEnglish() 内不许出现跨进程查询。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		i := strings.Index(text, "bool currentEnglish() {")
+		if i < 0 {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 currentEnglish()", group, winShell))
+		} else {
+			end := i + 900
+			if end > len(text) {
+				end = len(text)
+			}
+			if strings.Contains(text[i:end], "uiQueryMode") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 currentEnglish() 在按键热路径做跨进程查询（应在焦点/激活时同步）",
+					group, winShell))
+			}
+		}
+	}
+	checkContains(fsys, problems, group, winShell,
+		"syncEnglishFromAuthority", "PIPE_ACCESS_DUPLEX", "uiQueryMode")
+	// 「谁有焦点谁就能更新托盘」：reportModeToUi 入口统一判定本进程持焦，
+	// 后台实例（explorer 里 4 个 TIP 实例）不许用陈旧状态覆盖托盘。
+	checkContains(fsys, problems, group, winShell,
+		"static bool reportModeToUi(bool english, bool allowSpawn) {",
+		"if (fgPid != GetCurrentProcessId()) return false;")
+
+	// 设置窗卡片式布局：左导航三页 + 卡片 + 页脚 + 滚动。
+	checkContains(fsys, problems, group, winShell,
+		"enum class SettingsPage", "SettingsPage::Input", "SettingsPage::Dictionary",
+		"SettingsPage::About", "kNavWidth", "settingsPaint", "settingsSwitchPage",
+		"settingsNavItemRect", "kCardRadius", "WM_MOUSEWHEEL")
+	// 「关于」跳设置窗关于页（不再另开 MessageBox 对话框）。
+	checkContains(fsys, problems, group, winShell,
+		"kUiOpenSettingsAboutMsg", "openSettingsWindowStandalone(SettingsPage::About)")
+}
+
 // checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
 //  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
 //     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
@@ -1106,6 +1177,8 @@ func Run(fsys fs.FS) []string {
 	checkVersionSource(fsys, &problems)
 	// 5d. 非激活零动作（2026-11-06 用户反馈：卡住系统设置/开始菜单）。
 	checkInactiveNoAction(fsys, &problems)
+	// 5e. 托盘点击语义、中英作用域与设置窗卡片布局（2026-11-06）。
+	checkTrayAndModeScope(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1234,9 +1307,9 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	// **实际处理点**（handleKey）：Chrome/conhost 等宿主的内容键也走 Key 阶段，
 	// 只写预告点等于英文模式对它们无效（实机：切换后仍在出拼音候选）。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
-		if n := strings.Count(string(data), "if (enMode_)"); n < 2 {
+		if n := strings.Count(string(data), "if (currentEnglish())"); n < 2 {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 中 if (enMode_) 只有 %d 处，应在 OnTestKeyDown 与 handleKey 各一处",
+				"%s：%s 中 if (currentEnglish()) 只有 %d 处，应在 OnTestKeyDown 与 handleKey 各一处",
 				group, winShell, n))
 		}
 	}
@@ -1299,5 +1372,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/非激活零动作/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

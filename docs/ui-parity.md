@@ -2,7 +2,7 @@
 
 本文件记录 macOS / Windows / Linux 三端的当前视觉与交互契约。权威实现：
 
-- 设计基准与色值：skin/skin.go（DefaultSkinFor(dark)）；
+- 基准期望值（布局常量 + 浅/深各 13 色）：内联在 shims/macos/tests/visual-parity.sh；
 - macOS 渲染：shims/macos/src/CandidatePanel.swift；
 - Windows 渲染：shims/windows/src/win32.cpp 与 shims/windows/src/candidate_layout.hpp；
 - Linux：ibus 原生 LookupTable/Preedit，不自绘候选窗；
@@ -78,7 +78,7 @@ Windows 常用 pt 值在各 DPI 下的设备像素（四舍五入）：
 - 浅色/深色两套静态 sRGB 色，按系统 appearance 选择；不在绘制时临时混色；
 - 字段集合：background、text、secondaryText、selectionFill、selectionText、
   keycapFill、keycapText、divider、border、gear、gearHover、mark、shadow；
-- Windows 静态契约要求字段名集合与 macOS 一致，具体色值以 skin/skin.go 为准。
+- Windows 静态契约要求字段名集合与 macOS 一致，具体色值以 visual-parity.sh 内联期望值为准。
 
 主色（skin.DefaultSkinFor）：
 
@@ -124,6 +124,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | Windows UI 宿主 | — | `chaoset-ui.exe`（登录 Run 项 + TIP 懒启动；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标 |
 | 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
+| 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端都支持 system/process/window 三档，默认 system |
 | 词库导入 | Setup.app：选择文件 → chaoset-import -o -seed -backup → 重启 daemon | 设置窗同样调用 chaoset-import → 重启 daemon | 设置窗调用 chaoset-import → 重启 ibus | 合并在 Go 工具中完成 |
 | 鼠标点选候选 | 原生候选窗点击 | 原生候选窗点击 | CandidateClicked | 与数字键同语义 |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
@@ -135,7 +136,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 窗口层级 | .floating(3)，不遮蔽菜单栏 | WS_EX_TOPMOST + owner=宿主窗口 | owned 候选窗在宿主之上，可跨开始菜单/搜索的沉浸式 z 序 |
 | 全屏免打扰 | 无 AppKit 对应机制 | D3D 全屏/演示模式抑制候选窗；FullscreenSuppress 注册表可关 | 只抑制显示，不改变按键/组词；无边框全屏不触发 |
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
-| 设置窗 | 380×330pt，NSSwitch，跟随系统深浅 | 380×390pt，自绘控件，跟随系统深浅 + per-monitor DPI | Windows 深色/DPI 需真机验收 |
+| 设置窗 | 左导航三页（输入/词库/关于）+ 右侧内容页，NSSwitch | 左导航三页（输入/词库/关于）+ 右侧卡片 + 页脚版本号 + 滚动，640×560pt | GtkStackSidebar + GtkStack 三页（输入/词库/关于）；Windows 深色/DPI 需真机验收 |
 
 ## 按键与交互
 
