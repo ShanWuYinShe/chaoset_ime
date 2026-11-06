@@ -4,6 +4,19 @@
 
 ## 未发布
 
+- **零阻塞改造（Windows 壳，2026-11-06 用户要求）**：
+  - TSF 宿主 UI 线程上的跨进程等待/建进程/同步写盘全部移除：新增每进程 ShellWorker 后台线程，
+    回调只做内存操作与 PostMessage；daemon/UI 宿主懒启动、模式查询、设置窗拉起、日志写盘都在 worker。
+  - 修复零阻塞审计 P0：uiQueryMode 在同步句柄上的伪 200ms 上限（真机实测无上限）→ FILE_FLAG_OVERLAPPED +
+    移出 TSF 线程 + HKCU UiEnglish 微秒读镜像；pipeIo 的 WaitForSingleObject(INFINITE) → 有界截止
+    （TSF 30ms / worker 200ms）+ 5s 熔断；齿轮点击 20 次重试 + 同线程 CreateProcessW → 入队 worker；
+    按键路径同步懒启动 daemon → ensureDaemonFast（单次非阻塞探测，失败 fail-open 原样放行）。
+  - spawn 前非阻塞探测管道，消除每次宿主首次激活的空转拉起 chaosetd（实测 115/125 次空转，子进程先加载 65k 词库）。
+  - 按键路径零写盘（删除每键 candidate shown 日志）并改 AsyncLog 有界队列；前台钩子每线程一个、回调只
+    PostMessage、前台离开自动撤销；配置查询 TTL 缓存；worker/消息窗口计入 DllCanUnloadNow。
+  - 归因口径：Notepad 事件中 17:38:20–17:43:30 输入法并未加载进 notepad.exe（不能直接阻塞它），
+    但 shell 进程里存在无上限阻塞路径；本次改造后 TSF 回调不再有跨进程等待（阶段1），daemon 半死时
+    按键最多约 90ms 有界后 fail-open，阶段2 异步按键请求另排期。
 - **设置窗可读性 + 齿轮鼠标语义 + 托盘懒显示（2026-11-06 用户反馈）**：
   - Windows 设置窗：卡片标题带与内容行分离（「中英状态」不再被三选一按钮压住），
     子控件背景改用卡片刷（不再出现深色横条），第一张卡片标题改为「输入行为」、
