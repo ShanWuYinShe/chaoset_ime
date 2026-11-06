@@ -65,6 +65,10 @@ static HBRUSH g_settingsBgBrush = nullptr;    // 窗口背景刷（主题切换�
 static HBRUSH g_settingsCardBrush = nullptr; // 卡片背景刷（子控件擦除背景必须用它）
 static bool g_settingsDark = false;           // 当前系统是否深色
 static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘复选框）
+// 中英状态作用域缓存（方案 A）：打开设置窗时从 chaoset-settingsctl get 读到，
+// 点选时经 set 写入。自绘控件每帧都读它——绝不能在 WM_DRAWITEM 里读注册表/
+// 起进程（每次重绘都发一次进程会明显拖慢设置窗）。
+static ModeScope g_settingsModeScope = ModeScope::System;
 
 // ---- 设置窗布局：左侧导航 + 右侧分组卡片 + 滚动（2026-11-06 重构）----
 //
@@ -460,7 +464,9 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     HDC dc = dis->hDC;
     FillRect(dc, &dis->rcItem, settingsControlBg());
     const bool focused = (dis->itemState & ODS_FOCUS) != 0;
-    ModeScope current = uiLoadModeScope();
+    // 读打开窗口时缓存的共享设置（settingsLoadShared）：WM_DRAWITEM 里绝不
+    // 读注册表/起进程，重绘是高频动作（鼠标划过、主题切换都会触发）。
+    const ModeScope current = g_settingsModeScope;
     bool selected = false;
     if (dis->CtlID == 121) selected = current == ModeScope::System;
     else if (dis->CtlID == 122) selected = current == ModeScope::Process;
@@ -639,6 +645,183 @@ static void SettingsExportLearningData(HWND wnd) {
 // 检查导入器退出码——只看产物文件会把部分解析失败当成成功）。
 
 static std::wstring settingsQuote(const std::wstring& s) { return L"\"" + s + L"\""; }
+
+// ---- 方案 A（冷路径）：设置项读写统一走 Go chaoset-settingsctl ----
+//
+// 设置窗是**冷路径**（用户手动打开、低频），允许起进程；但每次调用必须有硬
+// 超时，UI 线程绝不无限等待（任务契约 ≤1s；正常一次 get/set 在 100ms 内）。
+// 输入热路径（TSF 回调）不经过这里，仍读 config.cpp 的 TTL 缓存。
+//
+// 可执行文件定位：<ChaosetIME.dll 所在目录>\chaoset-settingsctl.exe。设置窗
+// 代码编在 DLL 里、由同目录 chaoset-ui.exe 宿主加载，g_hInst 是 DLL 模块句柄，
+// 与安装/便携包布局（Makefile package-windows 把 CLI 放进同一目录）一致。
+//
+// 回退：CLI 不存在 / 起不来 / 超时 / 非 0 退出 / JSON 非法 → 回退原生 HKCU
+// 读写（RegGetAssociate/RegSetAssociate/uiLoadModeScope/uiSaveModeScope），
+// 保证旧安装包、便携包、被杀软拦截时设置窗仍可用；回退只记一条限流 diag。
+static const DWORD kSettingsCtlTimeoutMs = 1000;   // ≤1s 硬上限（任务契约）
+static const size_t kSettingsCtlMaxOutput = 4096;  // get 契约是单行 JSON，防御上限
+
+static std::wstring settingsCtlPath() {
+    wchar_t mod[MAX_PATH] = {0};
+    const DWORD n = GetModuleFileNameW(g_hInst, mod, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return std::wstring();
+    std::wstring path(mod, n);
+    const size_t slash = path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return std::wstring();
+    return path.substr(0, slash + 1) + L"chaoset-settingsctl.exe";
+}
+
+// 方案 A 回退诊断：CLI 缺失/失败是「每开一次窗、每点一次」都会发生的事，
+// 不能把 tsf.log 刷爆；60s 内只记一条（diagBudget 本身还有 200 行总预算）。
+static void settingsDiagCtlFallback(const char* op) {
+    static ULONGLONG lastTick = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (lastTick != 0 && now - lastTick < 60000) return;
+    lastTick = now;
+    if (!diagBudget()) return;
+    diagPrintf(L"tsf.log", "settings ctl fallback op=%s (native HKCU read/write)\n", op);
+}
+
+// 运行 chaoset-settingsctl 并捕获 stdout（UTF-8）。timeoutMs 内未退出则
+// TerminateProcess 并返回 false——调用方在 UI 线程，必须有硬上限。
+// 只在进程正常退出（退出码 0）时才读 stdout，避免超时/被杀时读管道阻塞。
+static bool settingsRunCtl(const std::wstring& args, std::string* out, DWORD timeoutMs) {
+    if (out != nullptr) out->clear();
+    const std::wstring exe = settingsCtlPath();
+    if (exe.empty()) return false;
+    // 缺文件是最常见的回退路径：先 stat，避免无谓的 CreateProcessW 失败。
+    if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE outRead = nullptr;
+    HANDLE outWrite = nullptr;
+    if (!CreatePipe(&outRead, &outWrite, &sa, 0)) return false;
+    SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
+    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE nulErr = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                &sa, OPEN_EXISTING, 0, nullptr);
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nulIn;
+    si.hStdOutput = outWrite;
+    si.hStdError = nulErr;
+    std::wstring cmd = settingsQuote(exe) + L" " + args;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE,
+                                   CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    // 父进程必须立刻关掉写端，否则读端等不到 EOF。
+    CloseHandle(outWrite);
+    if (nulIn != nullptr && nulIn != INVALID_HANDLE_VALUE) CloseHandle(nulIn);
+    if (nulErr != nullptr && nulErr != INVALID_HANDLE_VALUE) CloseHandle(nulErr);
+    if (!ok) {
+        CloseHandle(outRead);
+        return false;
+    }
+
+    bool success = false;
+    const DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
+    if (wait == WAIT_OBJECT_0) {
+        DWORD code = 1;
+        if (GetExitCodeProcess(pi.hProcess, &code) && code == 0) success = true;
+    } else {
+        // 超时：杀掉避免残留进程；本次按失败回退（不再读管道）。
+        TerminateProcess(pi.hProcess, 2);
+        WaitForSingleObject(pi.hProcess, 100);
+    }
+    std::string data;
+    if (success) {
+        char buf[512];
+        DWORD read = 0;
+        while (ReadFile(outRead, buf, sizeof(buf), &read, nullptr) && read > 0) {
+            data.append(buf, read);
+            if (data.size() >= kSettingsCtlMaxOutput) break;
+        }
+        // 去掉行尾换行/空白（契约是单行 JSON）。
+        while (!data.empty() && (data.back() == '\n' || data.back() == '\r' || data.back() == ' ')) {
+            data.pop_back();
+        }
+        if (data.empty() || data.size() > kSettingsCtlMaxOutput) success = false;
+    }
+    CloseHandle(outRead);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (!success) return false;
+    if (out != nullptr) *out = data;
+    return true;
+}
+
+// 解析 get 的单行 JSON 契约（见 cmd/chaoset-settingsctl/main.go 与
+// internal/settings/settings.go）：
+//   {"associate":true,"mode_scope":"system","ui_english":false}
+// 只认本窗用到的 associate + mode_scope；缺字段/未知枚举一律算失败（回退原生，
+// 不把半个设置项当真源——写错键比读不到更糟）。
+static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeScope* scope) {
+    if (associate == nullptr || scope == nullptr) return false;
+    const size_t a = json.find("\"associate\":");
+    const size_t m = json.find("\"mode_scope\":\"");
+    if (a == std::string::npos || m == std::string::npos) return false;
+    size_t p = a + sizeof("\"associate\":") - 1;
+    while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) ++p;
+    if (p + 4 <= json.size() && json.compare(p, 4, "true") == 0) {
+        *associate = true;
+    } else if (p + 5 <= json.size() && json.compare(p, 5, "false") == 0) {
+        *associate = false;
+    } else {
+        return false;
+    }
+    const size_t v = m + sizeof("\"mode_scope\":\"") - 1;
+    const size_t q = json.find('"', v);
+    if (q == std::string::npos) return false;
+    const std::string raw = json.substr(v, q - v);
+    if (raw == "system") *scope = ModeScope::System;
+    else if (raw == "process") *scope = ModeScope::Process;
+    else if (raw == "window") *scope = ModeScope::Window;
+    else return false;
+    return true;
+}
+
+static const wchar_t* settingsScopeName(ModeScope scope) {
+    switch (scope) {
+        case ModeScope::Process: return L"process";
+        case ModeScope::Window: return L"window";
+        default: return L"system";
+    }
+}
+
+// 冷路径读取「词组联想 + 中英状态作用域」：优先 Go 单一真源，失败回退原生。
+static void settingsLoadShared() {
+    std::string raw;
+    if (settingsRunCtl(L"get", &raw, kSettingsCtlTimeoutMs)) {
+        bool associate = true;
+        ModeScope scope = ModeScope::System;
+        if (settingsParseGetJSON(raw, &associate, &scope)) {
+            g_settingsAssociate = associate;
+            g_settingsModeScope = scope;
+            return;
+        }
+        settingsDiagCtlFallback("get-json");
+    } else {
+        settingsDiagCtlFallback("get");
+    }
+    // 回退：旧安装包/便携包/CLI 被拦时保证设置窗仍能显示与修改。
+    g_settingsAssociate = RegGetAssociate();
+    g_settingsModeScope = uiLoadModeScope();
+}
+
+// 冷路径写设置项：成功返回 true；失败返回 false 并限流记一条 diag，
+// 由调用方执行原生 HKCU 回退写。
+static bool settingsWriteShared(const std::wstring& args, const char* op) {
+    std::string ignored;
+    if (settingsRunCtl(args, &ignored, kSettingsCtlTimeoutMs)) return true;
+    settingsDiagCtlFallback(op);
+    return false;
+}
 
 // 运行子进程并等待退出；logPath 非空时把 stdout/stderr 重定向到该文件。
 // 返回 true 表示进程正常退出（*exitCode 为退出码）；超时/启动失败返回 false。
@@ -933,11 +1116,17 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             }
             if (HIWORD(wParam) == BN_CLICKED &&
                 (LOWORD(wParam) == 121 || LOWORD(wParam) == 122 || LOWORD(wParam) == 123)) {
-                // 中英状态作用域切换：写 HKCU，立即生效（TIP 下次获得焦点时读取）。
+                // 中英状态作用域切换（方案 A 冷路径）：写 Go 单一真源
+                // （chaoset-settingsctl set mode-scope），立即生效（TIP 下次
+                // 获得焦点时读注册表）。CLI 缺失/失败时回退原生 uiSaveModeScope。
                 ModeScope scope = ModeScope::System;
                 if (LOWORD(wParam) == 122) scope = ModeScope::Process;
                 else if (LOWORD(wParam) == 123) scope = ModeScope::Window;
-                uiSaveModeScope(scope);
+                g_settingsModeScope = scope;
+                const std::wstring scopeArg = L"set mode-scope " + std::wstring(settingsScopeName(scope));
+                if (!settingsWriteShared(scopeArg, "set-mode-scope")) {
+                    uiSaveModeScope(scope);
+                }
                 for (int id : {121, 122, 123}) {
                     HWND b = GetDlgItem(hwnd, id);
                     if (b != nullptr) InvalidateRect(b, nullptr, TRUE);
@@ -955,7 +1144,13 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 // 进程的候选窗立即收起（候选窗自己转发给同进程 TIP），与 macOS
                 // 设置窗通知即时收起对齐；设置窗仍不持有 TIP 指针，不引入 UAF。
                 g_settingsAssociate = !g_settingsAssociate;
-                RegSetAssociate(g_settingsAssociate);
+                // 方案 A 冷路径：写 Go 单一真源（chaoset-settingsctl set
+                // associate on|off）；CLI 缺失/失败时回退原生 RegSetAssociate。
+                const std::wstring assocArg =
+                    L"set associate " + std::wstring(g_settingsAssociate ? L"on" : L"off");
+                if (!settingsWriteShared(assocArg, "set-associate")) {
+                    RegSetAssociate(g_settingsAssociate);
+                }
                 if (!g_settingsAssociate) {
                     PostMessageW(HWND_BROADCAST, associateChangedMessage(), 0, 0);
                 }
@@ -1054,7 +1249,11 @@ void openSettingsWindowStandalone(SettingsPage page) {
     GetCursorPos(&anchor);
     g_settingsDpi = dpiForPoint(anchor);
     g_settingsDark = isSystemDarkTheme();
-    g_settingsAssociate = RegGetAssociate();
+    // 方案 A 冷路径：打开设置窗时读 Go 单一真源（chaoset-settingsctl get，
+    // ≤1s 硬超时）；失败回退原生 HKCU（旧安装包/便携包/CLI 被拦）。此时窗口
+    // 尚未创建，最坏情况是开窗慢 1s，绝不会卡住任何宿主进程（设置窗属于
+    // chaoset-ui.exe，与 TIP 进程无关）。
+    settingsLoadShared();
     settingsCreateFonts();
 
     // 居中于光标所在显示器的工作区（macOS center 同语义）

@@ -31,6 +31,10 @@ if not exist "%DLL%"    ( echo ERROR: %DLL% missing & pause & exit /b 1 )
 if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
 if not exist "chaoset-ui.exe" ( echo WARN: chaoset-ui.exe missing; tray indicator/settings window in Start menu will not work & pause )
+REM Settings read/write go through the Go single-source CLI (plan A cold path).
+REM If it is missing the settings window falls back to native HKCU read/write, so
+REM this is a warning (portable zip upgrade from an older package), not an error.
+if not exist "chaoset-settingsctl.exe" ( echo WARN: chaoset-settingsctl.exe missing; settings window will fall back to native registry read/write )
 
 echo ==^> Refreshing user dictionary (preserve imported words)
 REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps

@@ -4,6 +4,25 @@
 
 ## 未发布
 
+- **非激活零副作用 + 托盘可见性（active）（2026-11-07 用户真机反馈 bug1/bug2）**：
+  - 托盘中英图标改为 `active` 生命周期：只有 TIP 上报 `active 1`（前台激活本输入法）
+    才 NIM_ADD 显示；`active 0`（失焦/停用/切换输入法/前台离开）防抖 300ms 后
+    NIM_DELETE 隐藏；`mode` 只更新图标，启动 `--mode` 不再点亮托盘。切换输入法但
+    TSF 不调用 Deactivate 的宿主，由按键闸门每键复核 + 500ms 激活档案定时器兜底。
+  - 未激活零动作：所有 TSF 按键/焦点回调以 `inputActive_` 为唯一闸门；未激活时
+    立即 `*pfEaten = FALSE` 放行，不清理/不查询/不写盘/不挂钩子/不读鼠标。修饰键
+    KeyUp 恒放行（绝不消费），全壳禁止键鼠钩子与输入注入。
+  - 中英状态对齐：system scope 托盘为权威（写 HKCU，app 跟托盘）；process/window
+    scope 托盘跟随当前前台 app（TIP 获得焦点时重新上报，不写 HKCU）；非 system
+    scope 托盘左键不再反向改全局。修「桌面 Shift 切模式后切 app，托盘与 app 不一致」。
+  - daemon 预热改为每实例只发一次且 AppContainer 内不 spawn：修 tsf.log/daemon.log
+    里反复 "daemon lazy start / 已有 chaosetd 在运行"（后台 TIP 实例每次焦点都尝试）。
+- **方案 A2（Windows 试点）：设置窗接 chaoset-settingsctl（2026-11-07）**：
+  - Windows 设置窗的联想开关/中英状态读写改调 `chaoset-settingsctl get/set`
+    （1s 硬超时、CREATE_NO_WINDOW、失败回退 native HKCU 读写并记限流 diag）；
+    CLI 随 Windows 安装包/zip 分发（NSIS 安装+卸载清单同步）。
+  - checkuiparity 新增「非激活零副作用」「托盘可见性（active）」两组断言，并锁住
+    A2 的 CLI 调用/超时/打包清单与「非 system scope 托盘只能指示、不写 HKCU」。
 - **架构整理 + 方案 A 设置核心（2026-11-06 用户要求：shims 大文件按职责拆分、不要埋屎山）**：
   - 新增 `docs/architecture.md`：分层/依赖方向/模块地图/文件预算；`checkuiparity` 新增
     「模块布局与文件预算」「架构文档」「设置核心（方案 A）」「Linux 设置窗装配」四组机器断言，

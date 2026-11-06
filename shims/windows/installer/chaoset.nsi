@@ -143,6 +143,9 @@ Section "MainSection" SEC01
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-cli.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-import.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-ui.exe"
+    ; 设置项 Go 单一真源 CLI（方案 A 冷路径）：设置窗通过它读写「词组联想/中英
+    ; 状态」，必须与 ChaosetIME.dll 同目录；缺失时设置窗自动回退 HKCU。
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settingsctl.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
     ; 图标非关键文件：同样不因占用中止
     SetOverwrite try
@@ -351,6 +354,7 @@ Section "Uninstall"
     Delete "$INSTDIR\chaoset-cli.exe"
     Delete "$INSTDIR\chaoset-import.exe"
     Delete "$INSTDIR\chaoset-ui.exe"
+    Delete "$INSTDIR\chaoset-settingsctl.exe"
     Delete "$INSTDIR\dict.tsv"
     Delete "$INSTDIR\chaoset.ico"
     Delete "$INSTDIR\uninstall.exe"
@@ -363,6 +367,8 @@ Section "Uninstall"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old2"
     Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old"
     Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old2"
+    Delete /REBOOTOK "$INSTDIR\chaoset-settingsctl.exe.old"
+    Delete /REBOOTOK "$INSTDIR\chaoset-settingsctl.exe.old2"
     RMDir /REBOOTOK "$INSTDIR"
 
     ; 清理用户数据目录（词库副本 + 用户学习数据 + 日志）。

@@ -272,6 +272,10 @@ package-windows:
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
 	# 用户词典管理工具：与 Linux 包对齐（Windows 上走 -pipe 连 daemon 的命名管道）。
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-userdict.exe ./cmd/chaoset-userdict
+	# 设置项 Go 单一真源 CLI（方案 A 冷路径）：设置窗打开/点选时调用它读写
+	# 「词组联想 / 中英状态」；必须与 ChaosetIME.dll 同目录（settings_window.cpp
+	# 用 g_hInst 解析同目录 exe）。CLI 缺失时设置窗回退原生 HKCU 读写。
+	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-settingsctl.exe ./cmd/chaoset-settingsctl
 	# 资源模板 chaoset.rc 含图标 + VS_VERSION_INFO（@VERSION@ 等占位符）。
 	# 单一真源：$(VERSION)/$(VERSION_QUAD) 由 git tag 推导，sed 注入后交给 windres；
 	# 64/32 位 DLL 与 UI 宿主各生成一份带各自 FileDescription 的资源，让
@@ -337,7 +341,7 @@ package-windows:
 	cp shims/windows/install.bat dist/chaoset-windows-x64/
 	cp shims/windows/README.md dist/chaoset-windows-x64/
 	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
-	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe dist/chaoset-windows-x64/chaoset-userdict.exe; do \
+	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe dist/chaoset-windows-x64/chaoset-userdict.exe dist/chaoset-windows-x64/chaoset-settingsctl.exe; do \
 		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
 	done
 	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }

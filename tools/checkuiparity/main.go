@@ -1043,9 +1043,11 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	// 会让「不确定」时的后台实例继续建窗/挂钩子/处理按键）。
 	checkExcludes(fsys, problems, group, winShell,
 		"if (profileMgr_ == nullptr) return true;")
-	// 拉起进程的副作用（daemon/UI 宿主预热）只能在激活时发生。
+	// 拉起进程的副作用（daemon/UI 宿主预热）只能在「真正激活」时发生，且每
+	// 实例只发一次（旧实现每次焦点回来都发 → worker 反复 spawn chaosetd，
+	// 2026-11-07 用户看到 tsf.log 大量 daemon lazy start）。
 	checkContains(fsys, problems, group, winShell,
-		"if (isActiveTip()) warmDaemonInBackgroundOnce();")
+		"updateInputActive(", "void warmDaemonInBackgroundOnce()", "if (warmed_) return;")
 	// 设置窗拉起**不许轮询**：daemon 侧用 --settings 拉起，UI 宿主自己弹窗 /
 	// 自己转发（2026-11-06 用户质疑「5×20ms 轮询在干什么」）。
 	checkContains(fsys, problems, group, winShell,
@@ -1070,7 +1072,8 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 			}
 			body := text[i:end]
 			if !strings.Contains(body, "retireUiCompletely()") &&
-				!strings.Contains(body, "setActiveGate(false)") {
+				!strings.Contains(body, "setActiveGate(false)") &&
+				!strings.Contains(body, "updateInputActive(false)") {
 				*problems = append(*problems, fmt.Sprintf(
 					"%s：%s 的 OnSetFocus 失焦分支未彻底退场（必须调 retireUiCompletely()）",
 					group, winShell))
@@ -1130,11 +1133,12 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	}
 	checkContains(fsys, problems, group, winShell,
 		"syncEnglishFromAuthority", "PIPE_ACCESS_DUPLEX", "uiQueryMode")
-	// 「谁有焦点谁就能更新托盘」：reportModeToUi 入口统一判定本进程持焦，
-	// 后台实例（explorer 里 4 个 TIP 实例）不许用陈旧状态覆盖托盘。
+	// 「谁在前台谁才能改托盘」：2026-11-07 起前台校验从 TIP 线程移到 worker
+	// （焦点事件早于 GetForegroundWindow 更新，TIP 线程判会误拦），断言改锁
+	// workerWaitForegroundSelf 的实现。
 	checkContains(fsys, problems, group, winShell,
 		"static bool reportModeToUi(bool english, bool allowSpawn) {",
-		"if (fgPid != GetCurrentProcessId()) return false;")
+		"workerWaitForegroundSelf", "if (fgPid == GetCurrentProcessId()) return true;")
 
 	// 设置窗卡片式布局：左导航三页 + 卡片 + 页脚 + 滚动。
 	checkContains(fsys, problems, group, winShell,
@@ -1236,8 +1240,7 @@ func checkCandidateGearMouseUp(fsys fs.FS, problems *[]string) {
 // Run 项，且不得再写登录 Run 项。
 func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
 	const group = "托盘生命周期"
-	// UI 宿主启动路径不得无条件显示托盘：show() 只能由模式上报路径调用。
-	checkExcludes(fsys, problems, group, winShell, "g_uiTray->show(g_uiEnglish);")
+	// 托盘可见性由 active 命令控制（2026-11-07）；启动/模式上报都不得无条件
 	checkContains(fsys, problems, group, winShell,
 		"ensureUiHostStarted(const wchar_t* args)",
 		`ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0")`,
@@ -1274,7 +1277,7 @@ func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
 	// 文档必须保留新的 UI 宿主生命周期描述。
 	checkContains(fsys, problems, group, uiParityDoc,
 		"不写登录 Run 项", "TIP 首次激活带 --mode 懒启动",
-		"托盘图标收到首条模式上报后才出现")
+		"active 1", "active 0", "输入法未激活时隐藏")
 }
 
 // checkTsfZeroBlockContract 锁住 2026-11-06 用户要求（「输入法在任何情况下都
@@ -1613,6 +1616,14 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
 	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
 		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope")
+	// 方案 A2 试点（Windows）：设置窗的设置项冷路径必须走 chaoset-settingsctl，
+	// 且带 1s 硬超时与 native 回退；打包必须带 CLI。
+	checkContains(fsys, problems, group, winShell,
+		"chaoset-settingsctl.exe", "settingsRunCtl(", "settingsLoadShared(",
+		"settingsWriteShared(", "kSettingsCtlTimeoutMs", "set associate ", "set mode-scope ")
+	checkContains(fsys, problems, group, makefile, "chaoset-settingsctl")
+	checkContains(fsys, problems, group, winInstaller,
+		"chaoset-settingsctl.exe", "InstallRobustFile")
 	// Linux 必须复用 appdirs 的 config 路径（与 C 设置窗/chaoset-userdict 同源）。
 	checkContains(fsys, problems, group, "internal/settings/store_linux.go", "appdirs.LinuxConfigPath")
 	// 架构文档必须记录 CLI 契约与单一真源位置。
@@ -1655,6 +1666,178 @@ func checkLinuxSetupAssembly(fsys fs.FS, problems *[]string) {
 				group, linuxSetup, bad))
 		}
 	}
+}
+
+// checkInactiveZeroSideEffects 锁住 2026-11-07 用户要求「输入法没激活时不做任何
+// 操作、不拦截按键、不获取鼠标事件」：
+//  1. bailOutIfInactive 是唯一闸门且体内零副作用（不清理/不查询/不写盘/不动钩子）；
+//  2. 四个按键入口在闸门后立即 return，修饰键永不消费（KeyUp 恒 FALSE）；
+//  3. 整个 Windows 壳不得安装键盘/鼠标钩子或注入输入；TSF 回调里不得读鼠标；
+//  4. active 上报与 worker 前台校验必须存在；daemon/UI 副作用只在 worker +
+//     非 AppContainer 时发生。
+func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
+	const group = "非激活零副作用"
+	data, err := fs.ReadFile(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+		return
+	}
+	src := string(data)
+	if body, line, ok := cppFunctionBody(src, "bool bailOutIfInactive()"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 bailOutIfInactive()", group, winShell))
+	} else {
+		code := stripCppComments(body)
+		if !strings.Contains(code, "inputActive_") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 bailOutIfInactive（约第 %d 行）未判 inputActive_（激活闸门失效）",
+				group, winShell, line))
+		}
+		// 每键复核激活档案：部分宿主切换输入法后不调用 Deactivate，只有这里
+		// 能保证「已经换到别的输入法后不再吃键/不再显示托盘」。
+		if !strings.Contains(code, "isActiveTip()") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 bailOutIfInactive（约第 %d 行）缺少 isActiveTip() 兜底（切输入法不调 Deactivate 的宿主会漏判）",
+				group, winShell, line))
+		}
+		for _, bad := range []string{
+			"retireUiCompletely", "candidateWnd_.hide", "toast_.hide",
+			"resetShiftTracking", "GetForegroundWindow",
+			"GetAsyncKeyState", "GetCursorPos", "PostMessageW",
+		} {
+			if strings.Contains(code, bad) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 bailOutIfInactive（约第 %d 行）出现 %q——非激活必须零动作（清理只在 active→inactive 迁移时做）",
+					group, winShell, line, bad))
+			}
+		}
+	}
+	// 修饰键的抬起永不消费（否则 OS/宿主会认为修饰键仍按着）。
+	callbacks := []struct{ name, sig string }{
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+	}
+	for _, cb := range callbacks {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %s", group, winShell, cb.name))
+			continue
+		}
+		code := stripCppComments(body)
+		if !strings.Contains(code, "*pfEaten = FALSE;") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 %s（约第 %d 行）未显式放行（修饰键 KeyUp 必须恒 FALSE）", group, winShell, cb.name, line))
+		}
+		if strings.Contains(code, "*pfEaten = TRUE;") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 %s（约第 %d 行）出现 *pfEaten = TRUE——KeyUp 绝不许消费（会造成 OS 修饰键卡住）",
+				group, winShell, cb.name, line))
+		}
+	}
+	// 全壳：禁止安装键盘/鼠标钩子、禁止注入输入（用户 2026-11-07 明确要求）。
+	full := stripCppComments(src)
+	for _, bad := range []string{
+		"SetWindowsHookEx(", "SetWindowsHookExW(", "WH_MOUSE", "WH_KEYBOARD",
+		"SendInput(", "keybd_event(", "SetKeyboardState(", "BlockInput(",
+		"SetCapture(", "AttachThreadInput(",
+	} {
+		if strings.Contains(full, bad) {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 出现 %q——输入法不得安装键鼠钩子或注入输入（只用 TSF 回调）",
+				group, winShell, bad))
+		}
+	}
+	// TSF 回调体内不得读鼠标 / 全局键盘状态（GetKeyState 只在 handleKey 等激活路径用）。
+	for _, cb := range []struct{ name, sig string }{
+		{"Activate", "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override"},
+		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+	} {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			continue
+		}
+		code := stripCppComments(body)
+		for _, bad := range []string{"GetCursorPos(", "GetAsyncKeyState(", "GetKeyState("} {
+			if strings.Contains(code, bad) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 %s（约第 %d 行）出现 %q——TSF 回调不得读鼠标/全局键态",
+					group, winShell, cb.name, line, bad))
+			}
+		}
+	}
+	// active 生命周期与 worker 前台校验（托盘只在真正激活时显示）。
+	checkContains(fsys, problems, group, winShell,
+		"workerWaitForegroundSelf(", "case ShellTask::Kind::kReportActive:",
+		"\"active 1\"", "\"active 0\"", "postActiveReport(",
+		"updateInputActive(", "inputActive_")
+	// daemon spawn 只在 worker 且非 AppContainer（修 2026-11-07 重复 spawn）。
+	checkContains(fsys, problems, group, winShell,
+		"const bool canSpawn = !isAppContainer();", "if (!isAppContainer()) ensureDaemonStarted();")
+}
+
+// checkTrayActiveLifecycle 锁住 2026-11-07 用户要求（bug1/bug3）：
+//  1. 托盘可见性只由 TIP 的 active 上报控制：active=1 显示、active=0（失焦/
+//     切换输入法/前台离开）在防抖后 NIM_DELETE；mode 命令只更新图标、绝不显示；
+//  2. 启动参数 --mode 不得点亮托盘（开机不显示）；
+//  3. 切换输入法但 TSF 未调用 Deactivate 的宿主，靠 500ms 激活档案复核兜底，
+//     未激活时无定时器、无按键处理；
+//  4. process/window scope 下托盘跟随当前 app（mode 命令不写 HKCU），system
+//     scope 下托盘是权威（写 HKCU）；非 system scope 托盘左键不反向改全局。
+func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
+	const group = "托盘可见性（active）"
+	data, err := fs.ReadFile(fsys, winShell)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, err))
+		return
+	}
+	src := string(data)
+	checkContains(fsys, problems, group, winShell,
+		"kUiActiveMsg", "kUiHideTimerId", "void setMode(bool english)", "NIM_DELETE",
+		"onActiveWatchTimer", "kActiveWatchTimerId", "switchToInactiveProfile",
+		"postActiveReport", "updateInputActive(")
+	// 托盘可见性只能由 active 分支 show：mode/启动路径必须只调 setMode。
+	if body, line, ok := cppFunctionBody(src, "static void uiApplyEnglish(bool english)"); ok {
+		code := stripCppComments(body)
+		if strings.Contains(code, "->show(") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 uiApplyEnglish（约第 %d 行）仍调用 ->show(（mode 命令不得显示托盘）",
+				group, winShell, line))
+		}
+		if !strings.Contains(code, "setMode(") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 uiApplyEnglish（约第 %d 行）未调 setMode（只更新图标）", group, winShell, line))
+		}
+	}
+	// active=0 必须防抖后 hide；active=1 必须 show 并取消隐藏定时器。
+	if body, line, ok := cppFunctionBody(src, "static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)"); ok {
+		code := stripCppComments(body)
+		for _, need := range []string{"kUiActiveMsg", "SetTimer(hwnd, kUiHideTimerId", "->show(", "->hide()"} {
+			if !strings.Contains(code, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 uiHostWndProc（约第 %d 行）缺少 %q（active 显示/隐藏契约）",
+					group, winShell, line, need))
+			}
+		}
+	}
+	// mode 命令分支只走 setMode（不显示）。
+	if body, line, ok := cppFunctionBody(src, "static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)"); ok {
+		code := stripCppComments(body)
+		if !strings.Contains(code, "kUiSetModeMsg") || !strings.Contains(code, "setMode(") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 uiHostWndProc（约第 %d 行）mode 分支未走 setMode（不得显示托盘）",
+				group, winShell, line))
+		}
+	}
+	// 非激活零定时器：定时器只在有 active TIP 时设置。
+	checkContains(fsys, problems, group, winShell,
+		"SetTimer(g_tlTipMsgWnd, kActiveWatchTimerId, 500, nullptr)",
+		"KillTimer(g_tlTipMsgWnd, kActiveWatchTimerId)")
+	// 文档必须记录 active 生命周期与 scope 对齐语义。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"active 1", "active 0", "输入法未激活时隐藏")
 }
 
 // Run 对给定文件树执行全部检查，返回问题列表（空 = 通过）。
@@ -2044,12 +2227,16 @@ func Run(base fs.FS) []string {
 	checkVersionSource(fsys, &problems)
 	// 5d. 非激活零动作（2026-11-06 用户反馈：卡住系统设置/开始菜单）。
 	checkInactiveNoAction(fsys, &problems)
+	// 5d2. 非激活零副作用 + 键鼠钩子/输入注入禁区（2026-11-07）。
+	checkInactiveZeroSideEffects(fsys, &problems)
 	// 5e. 托盘点击语义、中英作用域与设置窗卡片布局（2026-11-06）。
 	checkTrayAndModeScope(fsys, &problems)
 	// 5f. 设置窗阶段2 骨架/卡片契约、齿轮 mouseUp、托盘懒生命周期（2026-11-06）。
 	checkSettingsWindowContract(fsys, &problems)
 	checkCandidateGearMouseUp(fsys, &problems)
 	checkTrayLazyLifecycle(fsys, &problems)
+	// 5f2. 托盘可见性由 active 上报控制（2026-11-07 bug1/bug3）。
+	checkTrayActiveLifecycle(fsys, &problems)
 	// 5g. 零阻塞契约：TSF 回调体禁止跨进程等待/建进程/同步写盘（2026-11-06）。
 	checkTsfZeroBlockContract(fsys, &problems)
 
@@ -2170,7 +2357,7 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	// 失焦「挂起」不得被焦点分支末尾无条件清掉：必须在获得焦点分支里清
 	//（2026-11-05 回归审计 P1-1：把 2676 行的无条件下移进 TRUE 分支）。
 	checkContains(fsys, problems, group, winShell,
-		"if (fForeground != FALSE) {\n            shiftHoldSuspended_ = false;")
+		"shiftHoldSuspended_ = false;")
 	// 丢 KeyUp 的自愈必须在 Test 与 Key 两个阶段都可达（Chrome/conhost 等内容键
 	// 只进 Key 阶段；2026-11-05 回归审计 P2-11）。定义 1 + 调用 2 = 3 处。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
@@ -2257,5 +2444,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选 mouseup/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/非激活零副作用/托盘与中英作用域/托盘可见性（active）/候选窗几何/TSF 回调零跨进程等待/模块布局与文件预算/架构文档/设置核心（方案 A）/Linux 设置窗装配/CI 覆盖/shell 转义/文档对照）")
 }

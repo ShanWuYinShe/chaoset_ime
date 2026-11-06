@@ -125,8 +125,8 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 能力 | macOS | Windows | Linux | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | 设置入口 | 候选栏齿轮（mouseUp 抬起才打开）→ AppKit 设置窗 | 候选栏齿轮（mouseUp 抬起才打开）/ 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开）；齿轮按下只记录、抬起且仍在齿轮区才触发 |
-| 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标；TIP 经命名管道上报模式，不在光标/鼠标旁弹提示 | 由 ibus/桌面环境指示 | 2026-11-05 用户反馈定稿：每用户会话只许一个状态指示器 |
-| Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘图标收到首条模式上报后才出现**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
+| 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标；TIP 经命名管道上报模式，不在光标/鼠标旁弹提示。**托盘状态始终等于当前前台 app 的实际状态**：system scope 下托盘是权威（写 HKCU，app 跟托盘；app 切模式后托盘同步）；process/window scope 下托盘跟随当前 app（切窗口时该 TIP 重新上报，不写 HKCU）；非 system scope 托盘左键不反向改全局（仅指示） | 由 ibus/桌面环境指示 | 2026-11-05 用户反馈定稿：每用户会话只许一个状态指示器；2026-11-07 用户要求「输入法未激活时隐藏，任何时候托盘与 app 实际状态一致」 |
+| Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘图标只在 TIP 上报 `active 1` 后显示，`active 0`（失焦/切换输入法/前台离开）防抖 300ms 后 NIM_DELETE；mode 只更新图标；启动 --mode 不显示**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
 | 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端都支持 system/process/window 三档，默认 system |
@@ -143,6 +143,21 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
 | 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 设置窗 | 左导航三页（输入/词库/关于，132pt）+ 内容页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器），选中项 accent 胶囊 | 左导航 132pt + 右侧圆角卡片 + 底部页脚版本号 + 滚动，640×560pt；深色/DPI 需真机验收 | GtkStackSidebar + 三页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器） |
+
+## 非激活与托盘可见性（2026-11-07 用户要求）
+
+- **非激活零动作**：TSF 回调只在 `inputActive_`（本线程激活档案是 Chaoset +
+  TSF 焦点在本上下文）为真时处理按键；否则立即 `*pfEaten = FALSE` 放行，不查询、
+  不清理、不挂/撤钩子、不读鼠标、不写盘、不起进程。切换输入法后即使宿主不投递
+  Deactivate，也会在按键路径复核激活档案、并由 500ms 激活档案定时器兜底。
+- **修饰键永不消费**：所有 KeyUp 恒返回 FALSE（含 Shift/Ctrl/Alt/Win），避免 OS
+  出现「修饰键卡住」；Ctrl 组合键（除组词中 Ctrl+U）一律透传宿主。RDP/macOS 本地
+  快捷键吞掉 Ctrl keyup 属于远端输入通道问题，IME 不得注入按键去"修复"。
+- **托盘可见性**：只有 TIP 的 `active 1`（前台激活本输入法）会让 UI 宿主显示
+  托盘；`active 0`（失焦/停用/前台离开）防抖 300ms 后 NIM_DELETE 隐藏；`mode`
+  只更新图标，启动 `--mode` 不显示。输入法未激活时隐藏，切换回来自动重新出现。
+- **scope 对齐方向**：system → 托盘是权威（app 跟托盘）；process/window → 托盘
+  跟当前 app（app 跟自身作用域状态）；两种方向都由 TIP 在获得焦点时上报保证。
 
 ## 设置窗契约（2026-11-06 阶段2）
 

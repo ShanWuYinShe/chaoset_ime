@@ -14,8 +14,9 @@
 //      重启 daemon 在 AC 里都不可用；宿主退出还会带走设置窗。
 // 因此任务栏中英指示器与设置窗统一交给「每用户会话唯一」的后台 UI 进程
 // （chaoset-ui.exe，**不随登录启动**：TIP 首次激活时带 --mode 懒启动；托盘
-// 图标也只在第一次上报后显示，见 ui_host.cpp 的 runUiHost）。TIP 只通过命名
-// 管道上报模式、请求打开设置，不持有任何 UI。
+// 可见性只由 TIP 的 active 上报控制——active=1 显示、active=0 防抖后隐藏，
+// 见 ui_host.cpp 的 kUiActiveMsg/UiTray）。TIP 只通过命名管道上报模式与激活
+// 状态、请求打开设置，不持有任何 UI。
 //
 // 管道安全描述符与 daemon 完全同规则：DACL 当前用户 + SYSTEM +
 // ALL APPLICATION PACKAGES(S-1-15-2-1)，SACL 低完整性标签 ML;;NW;;;LW。
@@ -37,6 +38,15 @@ namespace chaoset::win {
 const std::wstring& uiPipeName();
 std::wstring uiMutexName();
 
+// 命令集（纯文本行 + '\n'，服务端 ui_host.cpp 的 uiHandleCommand 解析）：
+//   mode 0|1    当前 app 的中英模式：system scope 写 HKCU + 图标；其它 scope
+//               只更新 UI 宿主内存与托盘图标（不写 HKCU）
+//   active 0|1  托盘可见性的唯一开关：active=1 显示（取消待隐藏），active=0
+//               300ms 防抖后隐藏（2026-11-07 用户要求：未激活不许显示托盘）
+//   query       查询 UI 宿主持有的权威模式，应答 "mode 0\n"/"mode 1\n"
+//   toggle      等价托盘左键：system scope 翻转权威模式，其它 scope 忽略
+//   settings    打开设置窗
+//
 // 发一条命令（每次短连接，几十字节）；服务端同一时刻只有一个实例在监听。
 bool uiSendCommandOnce(const char* command);
 // attempts=4（≈40ms）用于按键路径；设置窗点击路径用更多次（≈200ms）。

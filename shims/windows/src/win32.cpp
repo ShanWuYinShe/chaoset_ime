@@ -106,12 +106,16 @@ constexpr UINT kTipForegroundMsg    = WM_APP + 101;  // 前台变化（钩子回
 constexpr UINT kTipDaemonReadyMsg   = WM_APP + 102;  // 后台 daemon 已就绪
 constexpr UINT kTipModeAuthorityMsg = WM_APP + 103;  // 后台查到的权威中英状态
 constexpr UINT kTipShowToastMsg     = WM_APP + 104;  // 后台失败提示（wParam=文案 id）
+// TIP message-only 窗口定时器：只在「本线程有激活 TIP」时运行，500ms 复核一次
+// 激活档案；用户切换输入法但 TSF 未调用 Deactivate 时，托盘要能及时隐藏。
+constexpr UINT_PTR kActiveWatchTimerId = 3;
 static void enqueueLogLine(const char* text, int len);   // diagPrintf → 异步日志
 static void shellWorkerStart();
 static void shellWorkerStop();
 static bool shellWorkerAlive();
 static void shellWorkerWaitStopped(DWORD ms);
 static void postModeReport(bool english, bool allowSpawn);
+static void postActiveReport(bool active, bool english, bool allowSpawn);
 static void postModeQuery();
 static void postDaemonWarm();
 static void postDaemonConnect();
@@ -1258,13 +1262,11 @@ static bool openSettingsViaUi() {
 // storeEnglish 里，逐个判断容易漏（2026-11-06 审计：4 个调用点原先只有 1 个
 // 判断了前台）。**所有**托盘更新都必须经过这里。
 static bool reportModeToUi(bool english, bool allowSpawn) {
-    // 本进程不是前台 → 一律不许改托盘。
-    const HWND fg = GetForegroundWindow();
-    DWORD fgPid = 0;
-    if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
-    if (fgPid != GetCurrentProcessId()) return false;
-    // 只入队：管道写/重试/拉起 UI 宿主全部在 ShellWorker（零阻塞审计 T7）。
-    // allowSpawn 仍由调用点语义决定（只有持有焦点、确认在接收输入时才允许懒启动）。
+    // 调用方必须已确认 inputActive_（本 TIP 是前台激活输入法）。**不在 TIP 线程
+    // 判前台**：焦点事件到达时 GetForegroundWindow 往往还是旧进程，立刻判会
+    // 把刚获得焦点的实例误拦掉——那正是 2026-11-07「切 app 后托盘还是旧状态」
+    // 的根因。前台校验交给 ShellWorker（可等 150ms 再发）。
+    // 仍然只入队：管道写/重试/拉起 UI 宿主全部在 worker（零阻塞审计 T7）。
     postModeReport(english, allowSpawn);
     return true;
 }
@@ -1343,10 +1345,11 @@ static std::atomic<int> g_modeAuthorityEnglish{0};
 struct ShellTask {
     enum class Kind {
         kWriteLog, kReportMode, kQueryMode, kConnectDaemon, kWarmDaemon,
-        kOpenSettings, kEnsureUiHost
+        kOpenSettings, kEnsureUiHost, kReportActive
     };
     Kind kind = Kind::kWriteLog;
     int arg = 0;
+    int arg2 = 0;  // kReportActive：当前中英模式（0=中文 1=英文），供懒启动 UI 宿主 --mode 用
     bool allowSpawn = false;
     DWORD notifyThread = 0;
     std::string text;
@@ -1383,6 +1386,21 @@ static void openSettingsInWorker(DWORD notifyThread) {
 }
 
 static volatile LONG g_connectJobPending = 0;  // daemon 连接任务去重
+
+// worker 线程用：最多等 ms 让「本进程成为前台」。返回 true = 本进程是前台。
+// 不在 TSF 线程调用（那里只看一次，绝不等待）。
+static bool workerWaitForegroundSelf(int ms) {
+    const DWORD start = GetTickCount();
+    for (;;) {
+        const HWND fg = GetForegroundWindow();
+        DWORD fgPid = 0;
+        if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
+        if (fgPid == GetCurrentProcessId()) return true;
+        if (static_cast<int>(GetTickCount() - start) >= ms) return false;
+        Sleep(20);
+    }
+}
+
 class ShellWorker {
 public:
     static ShellWorker& get() {
@@ -1476,10 +1494,16 @@ private:
                 diagWrite(L"tsf.log", task.text.data(), static_cast<int>(task.text.size()));
                 break;
             case ShellTask::Kind::kReportMode: {
+                // 只有**本进程确实是前台**才允许改托盘：焦点事件到达时前台窗口
+                // 可能还没切完（GetForegroundWindow 仍是旧进程），在 worker 里
+                // 最多等 150ms 让前台稳定，再发命令；仍不是前台则丢弃（下一次
+                // 焦点/按键上报会再发）。这修 2026-11-07「切 app 后托盘还是旧
+                // 状态」：TIP 线程上的前台闸门会把刚获得焦点的实例误拦掉。
+                if (!workerWaitForegroundSelf(150)) break;
                 const char* cmd = task.arg != 0 ? "mode 1" : "mode 0";
                 if (uiSendCommandFast(cmd)) break;
                 if (!task.allowSpawn) break;
-                // UI 宿主没跑：带当前模式懒启动（task-3 语义：首实例即显示托盘）。
+                // UI 宿主没跑：带当前模式懒启动（首实例同时收到 active 1）。
                 const bool english = task.arg != 0;
                 ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0");
                 for (int i = 0; i < 10; ++i) {  // worker 线程：短等首实例监听管道
@@ -1497,10 +1521,35 @@ private:
                 }
                 break;
             }
+            case ShellTask::Kind::kReportActive: {
+                // active 命令控制托盘可见性（2026-11-07 用户要求：输入法没激活
+                // 就不该显示托盘）。active=1 同样要求本进程是前台；active=0 是
+                // 「刚才那个前台上下文离开了」，任何实例发都安全（UI 宿主有防抖，
+                // 且下一条 active=1 会取消隐藏）。
+                if (task.arg != 0) {
+                    if (!workerWaitForegroundSelf(150)) break;
+                    if (task.allowSpawn) {
+                        ensureUiHostStarted(task.arg2 != 0 ? L"--mode 1" : L"--mode 0");
+                    }
+                    uiSendCommand("active 1", 4);
+                    // UI 宿主刚起来时管道监听还没就绪，补几次短等（仅 worker）。
+                    for (int i = 0; i < 10; ++i) {
+                        if (uiSendCommandFast("active 1")) break;
+                        Sleep(20);
+                    }
+                } else {
+                    uiSendCommand("active 0", 4);
+                }
+                break;
+            }
             case ShellTask::Kind::kConnectDaemon: {
                 InterlockedExchange(&g_connectJobPending, 0);
-                ensureDaemonStarted();
-                for (int i = 0; i < 40; ++i) {
+                // AppContainer 宿主内 CreateProcessW 会创建 AC 进程，daemon 起不来；
+                // 只等待其它宿主/登录项拉起的 daemon，绝不在这里空转 spawn
+                //（2026-11-07：tsf.log/daemon.log 显示 AC 与后台实例反复 spawn）。
+                const bool canSpawn = !isAppContainer();
+                if (canSpawn) ensureDaemonStarted();
+                for (int i = 0; canSpawn && i < 40; ++i) {
                     if (daemonPipeExists()) break;
                     Sleep(20);
                 }
@@ -1508,7 +1557,7 @@ private:
                 break;
             }
             case ShellTask::Kind::kWarmDaemon:
-                ensureDaemonStarted();
+                if (!isAppContainer()) ensureDaemonStarted();
                 break;
             case ShellTask::Kind::kOpenSettings:
                 openSettingsInWorker(task.notifyThread);
@@ -1543,6 +1592,18 @@ static void postModeReport(bool english, bool allowSpawn) {
     ShellTask task;
     task.kind = ShellTask::Kind::kReportMode;
     task.arg = english ? 1 : 0;
+    task.allowSpawn = allowSpawn;
+    shellWorker().post(std::move(task));
+}
+
+// 托盘可见性上报：active=1 只在该 TIP 真正成为「前台激活输入法」时入队；
+// active=0 在失焦/停用/前台离开时入队。worker 里 active=1 仍会校验前台，
+// active=0 直接发（UI 宿主防抖；下一条 active=1 取消隐藏）。
+static void postActiveReport(bool active, bool english, bool allowSpawn) {
+    ShellTask task;
+    task.kind = ShellTask::Kind::kReportActive;
+    task.arg = active ? 1 : 0;
+    task.arg2 = english ? 1 : 0;
     task.allowSpawn = allowSpawn;
     shellWorker().post(std::move(task));
 }
@@ -1587,13 +1648,13 @@ static void addTipToThreadHookList(ChaosetTIP* tip) {
     for (ChaosetTIP* p : g_tlHookTips) {
         if (p == tip) return;
     }
-    g_tlFgTips.push_back(tip);
+    g_tlHookTips.push_back(tip);  // 2026-11-07 修正：此前误 push 到 g_tlFgTips
 }
 
 static void removeTipFromThreadHookList(ChaosetTIP* tip) {
     for (auto it = g_tlHookTips.begin(); it != g_tlHookTips.end(); ++it) {
         if (*it == tip) {
-            g_tlFgTips.erase(it);
+            g_tlHookTips.erase(it);  // 2026-11-07 修正：此前误删 g_tlFgTips
             return;
         }
     }
@@ -1908,9 +1969,6 @@ public:
         shellWorkerStart();
         ensureTipMsgWnd();
         registerTipOnThread(this);
-        // AppContainer/沉浸式宿主（开始菜单、搜索）不投递 OnSetFocus(FALSE)，
-        // 但会重复调用 Activate——这是把上一轮残留清干净的最早可靠时机。
-        applyPendingStaleReset();
         g_lastOp = kOpActivate;
         ensureCrashHandler();
         // 每个宿主进程只记一次 Activate（异步写盘）：字段统一不变，同时避免
@@ -1980,16 +2038,8 @@ public:
         syncModeCompartment();
         // 模式指示器归单例 UI 进程所有（chaoset-ui.exe 托盘图标唯一），TIP 只上报。
         // 只有「本线程激活档案确实是我们」才同步/上报；后台实例在这里就被拦下。
-        if (isActiveTip()) {
-            syncEnglishFromAuthority();
-            reportModeToUi(enMode_, true);
-        } else {
-            unhookForeground();
-        }
         caretFound_ = false;
         caretFromMouse_ = false;
-        // 前台切换兜底钩子按需注册（每线程最多一个，见 ensureForegroundHook）。
-        if (shouldWatchForeground() && fgHook_ == nullptr) ensureForegroundHook();
         if (!keySinkAdvised_) {
             ITfKeystrokeMgr* mgr = nullptr;
             if (SUCCEEDED(tm_->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&mgr)))) {
@@ -1997,11 +2047,11 @@ public:
                 mgr->Release();
             }
         }
-        // daemon 预热只在激活时发生，且只是入队：真正的 CreateProcessW 在
-        // ShellWorker 线程（checkuiparity 契约：保留下面这一行）。
-        if (isActiveTip()) warmDaemonInBackgroundOnce();
-        // 激活门：Activate 只说明 TSF 把 TIP 装进了本宿主，不代表用户在用我们。
-        candidateWnd_.setActiveGate(isActiveTip());
+        // 激活状态迁移：Activate 可能是后台宿主（TSF 会提前把 TIP 装进任意
+        // 进程），只有本进程是前台且激活档案是 Chaoset 才进入「在用」状态。
+        // 之后所有按键回调都以 inputActive_ 为闸门，未激活时零动作。
+        focused_ = foregroundIsSelf();
+        updateInputActive(true);
         return S_OK;
     }
 
@@ -2035,6 +2085,13 @@ public:
 
     HRESULT STDMETHODCALLTYPE Deactivate() override {
         // 停用即「非激活」：先从线程注册表/钩子表摘掉，再彻底退场。
+        if (inputActive_) {
+            inputActive_ = false;
+            focused_ = false;
+            postActiveReport(false, currentEnglish(), false);
+        } else {
+            focused_ = false;
+        }
         unregisterTipFromThread(this);
         retireUiCompletely();
         pendingStaleReset_ = false;
@@ -2080,9 +2137,11 @@ public:
     // ITfKeyEventSink
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {
         if (!fForeground) {
-            // 失焦 = 非激活：彻底退场（销毁浮窗 + 撤钩子）。
-            retireUiCompletely();
-            suspendShiftHoldOnFocusLost();
+            focused_ = false;
+            // 从未激活的实例：**零动作**（不比较 goal、不清理、不上报）。
+            if (!inputActive_) return S_OK;
+            // 失焦 = 非激活：updateInputActive 内部上报 active 0、销毁浮窗、撤钩子。
+            updateInputActive(false);
             if (isComposing() || !confirmedPreedit_.empty()) {
                 resetSession();
                 comp_ = chaoset::Comp();
@@ -2094,20 +2153,12 @@ public:
                     endComposition();
                 }
             }
-        } else {
-            // 焦点回来：只有「本线程激活档案确实是我们」才开门/挂钩子。
-            if (isActiveTip()) {
-                // system 作用域：HKCU 镜像微秒读 + worker 异步校准（零跨进程等待）；
-                // process/window 作用域保持本地值，只同步隔间/托盘。
-                syncEnglishFromAuthority();
-                syncModeCompartment();
-                reportModeToUi(currentEnglish(), false);
-                candidateWnd_.setActiveGate(true);
-                ensureForegroundHook();
-            } else {
-                candidateWnd_.setActiveGate(false);
-                unhookForeground();
-            }
+            return S_OK;
+        }
+        // 焦点回来：TSF 已把焦点交给本上下文，不依赖 GetForegroundWindow 是否更新。
+        focused_ = true;
+        updateInputActive(true);
+        if (inputActive_) {
             // 清掉「没有活合成、但本地还挂着组词」的陈旧状态。
             if (composition_ == nullptr && (isComposing() || !confirmedPreedit_.empty())) {
                 resetComposition();
@@ -2115,14 +2166,7 @@ public:
                 confirmedPreedit_.clear();
                 candidateWnd_.hide();
             }
-            if (!transport_.isConnected()) {
-                // 只入队预热：CreateProcessW 在 worker 线程（TSF 回调零等待）。
-                warmDaemonInBackgroundOnce();
-            }
-        }
-        // 焦点回来：解除挂起，按住的 Shift 松开时仍可正常切换。
-        if (fForeground != FALSE) {
-            shiftHoldSuspended_ = false;
+            shiftHoldSuspended_ = false;  // 焦点回来：按住的 Shift 松开时仍可切换
         }
         return S_OK;
     }
@@ -2135,9 +2179,6 @@ public:
             return S_OK;
         }
         applyPendingStaleReset();  // 前台已离开过：先丢掉上一轮的残留组词
-        // 前台钩子自愈：shell 宿主可能只投递一次 focus-in（或不投递），钩子在
-        // 前台离开时被自动撤销后，这里在下次按键按需重挂（只读前台进程，非阻塞）。
-        if (fgHook_ == nullptr && shouldWatchForeground()) ensureForegroundHook();
         // Shift 记账自愈必须覆盖所有按键（含修饰键）：若上一次按住的 KeyUp
         // 丢了，这里先复位，随后的 Shift 按下才能重新开一次干净的会话。
         reconcileShiftState();
@@ -2676,6 +2717,24 @@ private:
     void onForegroundChanged(HWND fg) {
         if (fg == nullptr) return;
         if (composeHostWnd_ != nullptr && fg == composeHostWnd_) return;
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fg, &fgPid);
+        if (fgPid == GetCurrentProcessId()) {
+            // 前台回到本进程：恢复处理并按当前 app 的本地模式上报托盘
+            //（process/window 作用域下托盘跟 app 对齐）。
+            focused_ = true;
+            updateInputActive(true);
+            return;
+        }
+        // 前台离开本进程：开始菜单/搜索等宿主不投递 OnSetFocus(FALSE)，靠这里收口。
+        const bool wasActive = inputActive_;
+        inputActive_ = false;
+        focused_ = false;
+        if (wasActive) {
+            postActiveReport(false, currentEnglish(), false);
+            retireUiCompletely();
+            suspendShiftHoldOnFocusLost();
+        }
         candidateWnd_.hide();
         toast_.hide();
         if (isComposing() || !confirmedPreedit_.empty() || !assoc_.candidates.empty()) {
@@ -2689,10 +2748,7 @@ private:
                            static_cast<unsigned long>(GetCurrentProcessId()));
             }
         }
-        // 前台离开本进程：自动撤钩子（不必等宿主给 focus-out）。
-        DWORD fgPid = 0;
-        GetWindowThreadProcessId(fg, &fgPid);
-        if (fgPid != GetCurrentProcessId()) unhookForeground();
+        unhookForeground();
     }
 
     // 前台钩子的按需注册：只有「本线程确实在用我们的输入法 + 本进程是前台」
@@ -2730,9 +2786,79 @@ private:
             g_tlFgHook = nullptr;
         }
     }
+    // ---- 激活状态机（2026-11-07 用户要求：未激活时不做任何操作）----
+    //
+    // inputActive_ 是**所有 TSF 按键/焦点逻辑的唯一闸门**：只有「TSF 焦点在本
+    // 上下文 + 本线程激活档案是 Chaoset」时才为 true。为 false 时按键回调立即
+    // 放行、不查询/不清理/不上报；清理已在上一次 active→inactive 迁移时完成。
+    bool focused_ = false;      // OnSetFocus 记录的 TSF 焦点
+    bool inputActive_ = false;  // 前台激活输入法（真正的“在用”）
+    bool warmed_ = false;       // daemon 预热每实例只发一次（修重复 spawn）
+
+    static bool foregroundIsSelf() {
+        const HWND fg = GetForegroundWindow();
+        if (fg == nullptr) return false;
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fg, &fgPid);
+        return fgPid == GetCurrentProcessId();
+    }
+
+    // 唯一的激活状态迁移出口。fromFocusEvent：OnSetFocus(TRUE) 时 TSF 已把焦点
+    // 交给本上下文，允许不等 GetForegroundWindow 更新；Activate 则需要前台校验
+    //（后台宿主会重复 Activate）。
+    void updateInputActive(bool fromFocusEvent) {
+        const bool next = focused_ && isActiveTip() &&
+                          (fromFocusEvent || foregroundIsSelf());
+        if (next == inputActive_) {
+            if (!next) {
+                candidateWnd_.setActiveGate(false);
+                unhookForeground();
+            } else {
+                candidateWnd_.setActiveGate(true);
+            }
+            return;
+        }
+        inputActive_ = next;
+        if (next) {
+            // system 作用域：从 HKCU 镜像同步 + worker 异步校准；其它 scope 用本地值。
+            syncEnglishFromAuthority();
+            syncModeCompartment();
+            // 先 active 再 mode：UI 宿主只有收到 active 1 才显示托盘。
+            postActiveReport(true, currentEnglish(), true);
+            reportModeToUi(currentEnglish(), true);
+            candidateWnd_.setActiveGate(true);
+            ensureForegroundHook();
+            if (!transport_.isConnected()) warmDaemonInBackgroundOnce();
+            refreshActiveWatchTimer();
+            static volatile LONG loggedOn = 0;
+            if (InterlockedCompareExchange(&loggedOn, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "input active=1 pid=%lu fgpid=%lu\n",
+                           static_cast<unsigned long>(GetCurrentProcessId()),
+                           static_cast<unsigned long>(0));
+            }
+        } else {
+            // 失焦/停用/前台离开：先通知托盘隐藏，再彻底退场。
+            postActiveReport(false, currentEnglish(), false);
+            retireUiCompletely();
+            // 保留旧的「焦点抖一下不丢 Shift 会话」语义：物理键仍按着则挂起，
+            // 释放后由下一次按键按「挂起」规则收口（真切走应用时不会误切中英）。
+            suspendShiftHoldOnFocusLost();
+            refreshActiveWatchTimer();
+            static volatile LONG loggedOff = 0;
+            if (InterlockedCompareExchange(&loggedOff, 1, 0) == 0 && diagBudget()) {
+                diagPrintf(L"tsf.log", "input active=0 pid=%lu\n",
+                           static_cast<unsigned long>(GetCurrentProcessId()));
+            }
+        }
+    }
+
     // daemon 预热（保留原函数名/调用形态作为 checkuiparity 契约）：只入队，
-    // CreateProcessW 在 ShellWorker 线程执行，Activate/OnSetFocus 零等待。
-    static void warmDaemonInBackgroundOnce() {
+    // CreateProcessW 在 ShellWorker 线程执行。每实例只发一次：旧实现每次焦点
+    // 回来都发，连接失败时 worker 每次都 spawn chaosetd（tsf.log 大量
+    // "daemon lazy start"、daemon.log 反复 "已有 chaosetd 在运行"）。
+    void warmDaemonInBackgroundOnce() {
+        if (warmed_) return;
+        warmed_ = true;
         postDaemonWarm();
     }
     // ---- 「完全退场」：让用户感觉不到这个输入法的存在 ----
@@ -2759,26 +2885,57 @@ private:
         clearAssociate();
     }
 
+    // 线程内是否有任一 TIP 真正在用：定时器只在有用例时运行，未激活时零定时器。
+    void refreshActiveWatchTimer() {
+        if (g_tlTipMsgWnd == nullptr) return;
+        bool any = false;
+        for (ChaosetTIP* t : g_tlFgTips) {
+            if (t != nullptr && t->inputActive_) {
+                any = true;
+                break;
+            }
+        }
+        if (any) {
+            SetTimer(g_tlTipMsgWnd, kActiveWatchTimerId, 500, nullptr);
+        } else {
+            KillTimer(g_tlTipMsgWnd, kActiveWatchTimerId);
+        }
+    }
+
+    // 切换到其它输入法（TSF 未调 Deactivate）时的统一收口：托盘隐藏 + 彻底退场。
+    void switchToInactiveProfile() {
+        inputActive_ = false;
+        focused_ = false;
+        postActiveReport(false, currentEnglish(), false);
+        retireUiCompletely();
+        suspendShiftHoldOnFocusLost();
+        refreshActiveWatchTimer();
+        static volatile LONG logged = 0;
+        if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
+            diagPrintf(L"tsf.log", "profile switched: input inactive pid=%lu\n",
+                       static_cast<unsigned long>(GetCurrentProcessId()));
+        }
+    }
+
     bool bailOutIfInactive() {
-        if (isActiveTip()) {
-            // 激活中：允许候选窗显示（bailOut 是每键都会走的便宜闸门，
-            // 顺手把门打开，保证从「非激活」恢复后候选窗能正常出现）。
+        if (inputActive_) {
+            // 双保险：TSF 在部分宿主里切走输入法后仍把按键下沉给本 TIP 且不调用
+            // Deactivate（2026-11-05 实测）。必须每键复核激活档案，否则用户已经
+            // 换到别的输入法时我们还会吃键/显示托盘（用户 2026-11-07 的 bug1/2）。
+            if (!isActiveTip()) {
+                switchToInactiveProfile();
+                return true;
+            }
             candidateWnd_.setActiveGate(true);
             return false;
         }
-        // 非激活：**彻底退场**（销毁窗口、撤钩子），而不是只 hide。
-        retireUiCompletely();
+        // 非激活：**绝对零动作**（2026-11-07 用户要求：没激活时不要处理任何
+        // 东西、不要拦截按键、不要获取鼠标事件）。这里不 retire、不查询档案、
+        // 不写盘、不动钩子/候选窗——清理已在 active→inactive 迁移时完成。
         static volatile LONG loggedInactive = 0;
-        if (InterlockedCompareExchange(&loggedInactive, 1, 0) == 0) {
-            diagPrintf(L"tsf.log", "inactive profile: keys passed through\n");
+        if (InterlockedCompareExchange(&loggedInactive, 1, 0) == 0 && diagBudget()) {
+            diagPrintf(L"tsf.log", "inactive: keys passed through untouched\n");
         }
-        candidateWnd_.hide();
-        toast_.hide();
-        // 联想态也要清：否则切到别的输入法再切回来，数字/空格会继续用
-        // 上一次的联想列表选词（2026-11-05 回归审计 P2-6）。
-        clearAssociate();
-        pendingStaleReset_ = false;
-        resetShiftTracking();
         return true;
     }
 
@@ -4248,6 +4405,14 @@ private:
     // MSDN KB135788 的经典要求），返回后补发 WM_NULL 复位。
 public:
     // ---- worker 消息回投入口（message-only 窗口 → TIP 线程）----
+    // 500ms 激活档案复核（定时器只在 active 时运行）：部分宿主切换输入法后
+    // 不会调用 Deactivate（2026-11-05 实测），必须有一处事件驱动兜底让托盘
+    // 和按键闸门在同一时刻失效。
+    void onActiveWatchTimer() {
+        if (!inputActive_) return;
+        if (isActiveTip()) return;
+        switchToInactiveProfile();
+    }
     void onWorkerForeground(HWND fg) { onForegroundChanged(fg); }
     void onWorkerModeAuthority() {
         if (cachedModeScope() != ModeScope::System) return;
@@ -4340,6 +4505,14 @@ private:
 // 对象，只能 PostMessage 到这个窗口；窗口过程在 TIP 线程上分发。
 static LRESULT CALLBACK tipMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+        case WM_TIMER:
+            if (wParam == kActiveWatchTimerId) {
+                for (ChaosetTIP* tip : g_tlFgTips) {
+                    if (tip != nullptr) tip->onActiveWatchTimer();
+                }
+                return 0;
+            }
+            break;
         case WM_NCDESTROY:
             if (g_tlTipMsgWnd == hwnd) g_tlTipMsgWnd = nullptr;
             unregTipWnd(hwnd);

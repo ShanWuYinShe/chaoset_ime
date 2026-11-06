@@ -180,11 +180,13 @@ func TestCheckTsfZeroBlockContract(t *testing.T) {
 		t.Fatalf("真实零阻塞实现未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
 
-	// 变异 1：TSF 回调体内注入 Sleep(1)。
+	// 变异 1：TSF 回调体内注入 Sleep(1)（注入到 Activate 回调体；2026-11-07
+	// 拆分后 syncEnglishFromAuthority 的首次出现位置在状态机辅助函数里，不再
+	// 属于被检查的回调体，所以锚点改为 Activate 体内的语句）。
 	mutated := strings.Replace(string(winText),
-		"syncEnglishFromAuthority();", "Sleep(1); syncEnglishFromAuthority();", 1)
+		"g_lastOp = kOpActivate;", "Sleep(1); g_lastOp = kOpActivate;", 1)
 	if mutated == string(winText) {
-		t.Fatal("变异 1 未生效：源码里找不到 syncEnglishFromAuthority();")
+		t.Fatal("变异 1 未生效：源码里找不到 g_lastOp = kOpActivate;")
 	}
 	problems = nil
 	checkTsfZeroBlockContract(fsys(mutated), &problems)

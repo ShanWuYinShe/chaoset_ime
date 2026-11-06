@@ -63,9 +63,10 @@ public:
     UiTray& operator=(const UiTray&) = delete;
     ~UiTray() { destroy(); }
 
-    // 注意：show() 同时把图标标记为「用户期望可见」。UI 宿主启动时不调用
-    // show()（2026-11-06 用户要求：托盘图标只在切换到/使用输入法后出现，
-    // 不能开机就显示）；只有收到 TIP 的模式上报后才第一次 show。
+    // 显示并刷新图标（由 TIP 的 active=1 命令驱动，2026-11-07 用户要求：
+    // 输入法未激活时托盘必须隐藏、激活时才出现）。visible_ 表示「用户期望
+    // 可见」：active=0 隐藏后置 false，explorer 重启（TaskbarCreated）不会
+    // 把用户已经不期望的图标提前点亮。
     void show(bool english) {
         visible_ = true;
         if (!ensureWindow()) {
@@ -81,15 +82,7 @@ public:
             logFailure("icon", GetLastError());
             return;
         }
-        NOTIFYICONDATAW nid{};
-        nid.cbSize = sizeof(nid);
-        nid.hWnd = hwnd_;
-        nid.uID = kIconId;
-        nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-        nid.uCallbackMessage = kCallbackMsg;
-        nid.hIcon = icon_;
-        wcscpy_s(nid.szTip, english ? L"Chaoset 输入法：英文" : L"Chaoset 输入法：中文");
-        if (!Shell_NotifyIconW(shown_ ? NIM_MODIFY : NIM_ADD, &nid)) {
+        if (!notifyIcon(shown_ ? NIM_MODIFY : NIM_ADD)) {
             shown_ = false;
             logFailure("Shell_NotifyIcon", GetLastError());
             // explorer/taskbar 未就绪时（登录早期实测 1460/1008）1.5s 后重试，
@@ -102,19 +95,37 @@ public:
         KillTimer(hwnd_, kRetryTimerId);
     }
 
+    // 只更新图标/提示，**绝不创建或显示图标**：托盘可见性只由 TIP 的 active
+    // 命令控制（mode 命令只负责「当前 app 实际中英状态」）。2026-11-07 用户
+    // 反馈 bug1/bug3：旧实现 mode 上报即 show()，托盘一旦出现永不休眠，且
+    // process/window scope 下托盘状态会和当前 app 的实际状态脱节。
+    // 隐藏时什么都不做——下一次 show(g_uiEnglish) 会自然带上最新模式。
+    void setMode(bool english) {
+        if (!shown_) return;
+        if (icon_ != nullptr && english_ == english) return;
+        HICON fresh = makeGlyphIcon(english);
+        if (fresh == nullptr) {
+            logFailure("icon", GetLastError());
+            return;
+        }
+        if (icon_ != nullptr) DestroyIcon(icon_);
+        icon_ = fresh;
+        english_ = english;
+        if (!notifyIcon(NIM_MODIFY)) logFailure("Shell_NotifyIcon", GetLastError());
+    }
+
     // 托盘图标当前是否真的在显示。调用方据此决定要不要再用浮动提示兜底
     //（两个地方同时提示中英文模式既重复又干扰，2026-11-05 用户反馈）。
     bool isShown() const { return shown_; }
 
+    // 隐藏：NIM_DELETE 把图标从任务栏移除并清 shown_；之后 active=1 的 show()
+    // 会重新 NIM_ADD（用户要求：未激活必须消失，切回来必须能再出现）。
+    // 由 UI 主线程的 active=0 防抖定时器调用。
     void hide() {
         visible_ = false;
         if (hwnd_ != nullptr) KillTimer(hwnd_, kRetryTimerId);
         if (!shown_) return;
-        NOTIFYICONDATAW nid{};
-        nid.cbSize = sizeof(nid);
-        nid.hWnd = hwnd_;
-        nid.uID = kIconId;
-        Shell_NotifyIconW(NIM_DELETE, &nid);
+        if (!notifyIcon(NIM_DELETE)) logFailure("Shell_NotifyIcon", GetLastError());
         shown_ = false;
     }
 
@@ -125,7 +136,7 @@ private:
     HWND hwnd_ = nullptr;
     HICON icon_ = nullptr;
     bool shown_ = false;
-    bool visible_ = false;  // 用户期望托盘可见（首次模式上报后置 true）
+    bool visible_ = false;  // 用户期望托盘可见（TIP active=1 显示 / active=0 隐藏）
     bool english_ = false;
     // 是否已把本窗口计入 g_liveTrayWindows（WM_NCDESTROY 里按此判断是否归还，
     // 避免窗口创建失败路径把计数减成负数→ DllCanUnloadNow 恒 S_FALSE）。
@@ -140,6 +151,20 @@ private:
         diagPrintf(L"tsf.log", "tray icon FAILED: %s err=%lu\n", what, err);
     }
 
+    // 统一填 NOTIFYICONDATAW：add/show、setMode（NIM_MODIFY）、hide（NIM_DELETE）
+    // 用同一份字段，避免三处 tooltip/回调消息漂移。
+    bool notifyIcon(DWORD action) {
+        NOTIFYICONDATAW nid{};
+        nid.cbSize = sizeof(nid);
+        nid.hWnd = hwnd_;
+        nid.uID = kIconId;
+        nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+        nid.uCallbackMessage = kCallbackMsg;
+        nid.hIcon = icon_;
+        wcscpy_s(nid.szTip, english_ ? L"Chaoset 输入法：英文" : L"Chaoset 输入法：中文");
+        return Shell_NotifyIconW(action, &nid) != FALSE;
+    }
+
     static UINT taskbarCreatedMsg() {
         static const UINT msg = RegisterWindowMessageW(L"TaskbarCreated");
         return msg;
@@ -152,8 +177,8 @@ private:
             // icon_ != nullptr 时才重加，若首次 NIM_ADD 就失败（登录早期）
             // 会整场没有图标（2026-11-05 评审 P1）。
             if (self != nullptr) {
-                // 只有用户已经「见过」托盘（visible_）才在 explorer 重启后恢复；
-                // 启动阶段从未显示过的会话不能被 TaskbarCreated 提前点亮。
+                // 只在 active 生命周期期望可见（visible_）时恢复：启动阶段从未
+                // 显示过、或已被 active=0 隐藏的会话，不能被 TaskbarCreated 复活。
                 self->shown_ = false;
                 if (self->visible_) self->show(self->english_);
             }
@@ -334,10 +359,19 @@ volatile LONG g_liveTrayWindows = 0;
 // ConnectNamedPipe/ReadFile，DLL 卸载后它会在已卸载代码里恢复并解引用已释放的
 // g_uiTray。
 static constexpr UINT kUiOpenSettingsMsg = WM_APP + 71;
-// 打开设置窗并切到「关于」页（托盘右键菜单用，2026-11-06）。
-static constexpr UINT kUiOpenSettingsAboutMsg = WM_APP + 74;
 static constexpr UINT kUiSetModeMsg = WM_APP + 72;
+// TIP→UI 的 active 上报（2026-11-07 协议定稿）：托盘可见性的唯一开关。
+// 命令管道收到纯文本 "active 1"/"active 0" 后 PostMessage 到这里；
+// active=1 取消待隐藏定时器并 show(g_uiEnglish)，active=0 防抖 300ms 后 hide()。
+// 占 WM_APP+74（原「打开设置→关于」消息顺延到 +75，避免撞号）。
+static constexpr UINT kUiActiveMsg = WM_APP + 74;
+// 打开设置窗并切到「关于」页（托盘右键菜单用，2026-11-06）。
+static constexpr UINT kUiOpenSettingsAboutMsg = WM_APP + 75;
 // kUiToggleModeMsg 定义见文件前部（TIP 侧托盘点击也要用）。
+// 托盘隐藏防抖（active=0 后 300ms 才真正隐藏，期间 active=1 取消）：焦点在同一
+// 进程多个 TIP 实例/多个窗口间抖动时不会闪图标。定时器挂在 UI 宿主隐藏窗口上。
+static constexpr UINT_PTR kUiHideTimerId = 1;
+static constexpr UINT kUiHideDelayMs = 300;
 HWND g_uiHostWnd = nullptr;
 static UiTray* g_uiTray = nullptr;  // 进程生命周期内唯一托盘实例（仅 UI 主线程使用）
 static HANDLE g_uiStopEvent = nullptr;
@@ -381,6 +415,9 @@ static void showTrayMenu(HWND owner) {
 // 为什么放在 UI 宿主：它每用户会话唯一、常驻、中等完整性（能写 HKCU），
 // 而 TIP 会被装进任意宿主进程（含 AppContainer，写不了 HKCU）。
 // g_uiEnglish 只在 UI 主线程读写（托盘/菜单/管道消息都由主线程处理）。
+//
+// process/window 作用域下它不是全局权威：只表示「最近一次激活 app 的模式」，
+// 供托盘图标显示（托盘跟 app），不写 HKCU（2026-11-07 bug3 修复）。
 static bool g_uiEnglish = false;
 
 static bool uiCurrentEnglish() { return g_uiEnglish; }
@@ -396,6 +433,15 @@ static std::string uiHandleCommand(const char* command, DWORD len) {
     if (len >= 6 && strncmp(command, "mode ", 5) == 0) {
         if (g_uiHostWnd != nullptr) {
             PostMessageW(g_uiHostWnd, kUiSetModeMsg, command[5] == '1' ? 1 : 0, 0);
+        }
+        return std::string();
+    }
+    // active 1/0：托盘可见性的唯一开关（2026-11-07 用户反馈「托盘永不休眠」）。
+    // mode 只更新图标/状态，active 才决定显示还是隐藏；解析后投递 UI 主线程
+    //（Shell_NotifyIcon/窗口操作只能由拥有消息循环的主线程做）。
+    if (len >= 8 && strncmp(command, "active ", 7) == 0) {
+        if (g_uiHostWnd != nullptr) {
+            PostMessageW(g_uiHostWnd, kUiActiveMsg, command[7] == '1' ? 1 : 0, 0);
         }
         return std::string();
     }
@@ -418,34 +464,64 @@ static std::string uiHandleCommand(const char* command, DWORD len) {
     return std::string();
 }
 
-// 设置权威中英状态（只在 UI 主线程调用）：托盘图标 + HKCU 一起更新。
+// 设置权威中英状态（只在 UI 主线程调用）：写 HKCU + 同步托盘图标。
+// **不改变托盘可见性**：可见性只由 active 命令控制（2026-11-07）。system
+// scope 下托盘是全局权威（app 跟托盘）；process/window scope 见 kUiSetModeMsg。
 static void uiApplyEnglish(bool english) {
     g_uiEnglish = english;
     if (g_uiTray != nullptr) {
-        g_uiTray->show(english);
+        g_uiTray->setMode(english);
     }
     uiSaveEnglish(english);
 }
 
 static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case kUiSetModeMsg:
-            // TIP 上报它当前的中英模式。system 作用域下以「最后一次上报」为
-            // 权威（用户刚在某个窗口里切过）；process/window 作用域下各窗口
-            // 独立，托盘只反映最近活动窗口，不写回权威状态。
-            if (g_uiTray != nullptr) {
-                const bool english = wParam != 0;
-                if (uiLoadModeScope() == ModeScope::System) {
-                    uiApplyEnglish(english);
-                } else {
-                    g_uiTray->show(english);  // 只在 UI 主线程碰托盘
+        case kUiSetModeMsg: {
+            // TIP 上报它当前 app 的中英模式（激活/切换时）。**不改变托盘可见性**：
+            //   - system scope：托盘是全局权威，写 HKCU（app 跟托盘）；
+            //   - process/window scope：托盘只是当前 app 的指示器（托盘跟 app），
+            //     只更新内存与图标，不写 HKCU（后果由 docs/ui-parity.md 记录）。
+            const bool english = wParam != 0;
+            if (uiLoadModeScope() == ModeScope::System) {
+                uiApplyEnglish(english);
+            } else {
+                g_uiEnglish = english;
+                if (g_uiTray != nullptr) g_uiTray->setMode(english);  // 只在 UI 主线程碰托盘
+            }
+            return 0;
+        }
+        case kUiToggleModeMsg:
+            // 托盘左键 / 管道 "toggle"：翻转权威状态。
+            // 只在 system scope 生效：process/window scope 下托盘只是「当前 app
+            // 实际状态」的指示器，不能反向改全局（2026-11-07 用户反馈 bug3：
+            // 托盘与 app 中英不一致；scope 语义见 docs/ui-parity.md）。
+            if (uiLoadModeScope() == ModeScope::System) uiApplyEnglish(!g_uiEnglish);
+            return 0;
+        case kUiActiveMsg:
+            // TIP→UI active 上报：托盘可见性的唯一开关（2026-11-07 用户反馈
+            // bug1「托盘永不休眠」）。所有托盘操作只在 UI 主线程。
+            if (wParam != 0) {
+                // 前台有激活的 Chaoset TIP：取消待隐藏并显示当前模式。
+                KillTimer(hwnd, kUiHideTimerId);
+                if (g_uiTray != nullptr) g_uiTray->show(g_uiEnglish);
+            } else {
+                // 激活上下文失焦/停用/前台离开：防抖 300ms 后隐藏；期间若收到
+                // active=1（焦点在同一进程多 TIP 实例间抖动）会被 KillTimer 取消。
+                if (SetTimer(hwnd, kUiHideTimerId, kUiHideDelayMs, nullptr) == 0) {
+                    // 定时器创建失败（资源耗尽等）：立刻隐藏——绝不能留下一个
+                    // 「未激活却永不消失」的托盘图标（用户反馈的 bug1）。
+                    if (g_uiTray != nullptr) g_uiTray->hide();
                 }
             }
             return 0;
-        case kUiToggleModeMsg:
-            // 托盘左键 / 管道 "toggle"：翻转权威状态。
-            uiApplyEnglish(!g_uiEnglish);
-            return 0;
+        case WM_TIMER:
+            if (wParam == kUiHideTimerId) {
+                KillTimer(hwnd, kUiHideTimerId);
+                if (g_uiTray != nullptr) g_uiTray->hide();
+                return 0;
+            }
+            break;
         case kUiOpenSettingsMsg:
             openSettingsWindowStandalone(SettingsPage::Input);
             return 0;
@@ -456,6 +532,7 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            KillTimer(hwnd, kUiHideTimerId);
             g_uiHostWnd = nullptr;
             PostQuitMessage(0);
             return 0;
@@ -639,9 +716,10 @@ int runUiHost(LPCWSTR cmdLine) {
         return finishUiHost(1);
     }
 
-    // 托盘中英指示器：整个用户会话唯一。**启动时不显示**（2026-11-06 用户
-    // 要求：托盘图标只在切换到/使用输入法后才出现；UI 宿主也不再由登录 Run
-    // 项启动，改为 TIP 首次激活时带 --mode 懒启动，见 ensureUiHostStarted）。
+    // 托盘中英指示器：整个用户会话唯一。**启动时一律不显示**（2026-11-07 用户
+    // 要求：输入法未激活时托盘必须隐藏）。可见性只由 TIP 的 active 上报控制：
+    // 收到 active=1 才 show()，active=0 防抖后 hide()；UI 宿主不写登录 Run 项，
+    // 由 TIP 首次激活时带 --mode 懒启动（见 ensureUiHostStarted）。
     g_uiTray = new UiTray();
     // 权威状态初始化：优先 HKCU 记忆（上次托盘显示的状态），否则中文。
     g_uiEnglish = uiLoadSavedEnglish();
@@ -662,8 +740,9 @@ int runUiHost(LPCWSTR cmdLine) {
 
     // 命令行语义：
     //   --settings   TIP 点齿轮但 UI 宿主没在跑时的拉起路径，首实例直接弹设置窗；
-    //   --mode 0/1   TIP 首次激活时带上的当前中英状态——这是托盘图标第一次
-    //                显示的时刻（开机不显示，切到输入法才显示）。
+    //   --mode 0/1   TIP 首次激活时带上的当前中英状态——**只记录，不显示托盘**
+    //                （可见性由随后到达的 active 上报控制；旧实现在这里直接
+    //                 show()，是「托盘一旦出现永不休眠」的根因之一）。
     bool wantSettings = false;
     bool haveMode = false;
     bool modeEnglish = false;
@@ -677,8 +756,10 @@ int runUiHost(LPCWSTR cmdLine) {
         }
     }
     if (haveMode) {
-        // 首实例：显示托盘 + 把权威状态写回 HKCU（此后 TIP 焦点事件上报会覆盖）。
-        uiApplyEnglish(modeEnglish);
+        // 只同步模式（system scope 写 HKCU），**不显示托盘**：此后 TIP 的
+        // active=1 上报才会真正 show()，模式上报会再校准图标。
+        g_uiEnglish = modeEnglish;
+        if (uiLoadModeScope() == ModeScope::System) uiSaveEnglish(modeEnglish);
     }
     if (wantSettings) {
         Sleep(30);  // 给管道线程一个创建实例的机会

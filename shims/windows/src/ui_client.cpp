@@ -27,8 +27,8 @@ namespace chaoset::win {
 //      重启 daemon 在 AC 里都不可用；宿主退出还会带走设置窗。
 // 因此任务栏中英指示器与设置窗统一交给「每用户会话唯一」的后台 UI 进程
 // （chaoset-ui.exe，**不随登录启动**：TIP 首次激活时带 --mode 懒启动；托盘
-// 图标也只在第一次上报后显示，见 runUiHost）。TIP 只通过命名管道上报
-// 模式、请求打开设置，不持有任何 UI。
+// 可见性只由 TIP 的 active 上报控制，见 ui_host.cpp 的 kUiActiveMsg）。
+// TIP 只通过命名管道上报模式与激活状态、请求打开设置，不持有任何 UI。
 //
 // 管道安全描述符与 daemon 完全同规则：DACL 当前用户 + SYSTEM +
 // ALL APPLICATION PACKAGES(S-1-15-2-1)，SACL 低完整性标签 ML;;NW;;;LW。
