@@ -589,11 +589,13 @@ func TestCheckDllUnloadSafety(t *testing.T) {
 	winText := readRepo(t, winShell)
 	diagText := readRepo(t, "shims/windows/src/diagnostics.cpp")
 	diagHpp := readRepo(t, "shims/windows/src/diagnostics.hpp")
+	uiHostText := readRepo(t, "shims/windows/src/ui_host.cpp")
 	fsys := func(win string) fstest.MapFS {
 		return fstest.MapFS{
 			winShell:                            &fstest.MapFile{Data: []byte(win)},
 			"shims/windows/src/diagnostics.cpp": &fstest.MapFile{Data: diagText},
 			"shims/windows/src/diagnostics.hpp": &fstest.MapFile{Data: diagHpp},
+			"shims/windows/src/ui_host.cpp":     &fstest.MapFile{Data: uiHostText},
 		}
 	}
 	var problems []string

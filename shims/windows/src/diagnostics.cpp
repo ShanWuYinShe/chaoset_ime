@@ -294,8 +294,10 @@ LONG CALLBACK diagCrashHandler(EXCEPTION_POINTERS* info) {
 static PVOID g_vehHandle = nullptr;
 static volatile LONG g_crashHandlerInstalled = 0;
 
-// 在 Activate 里惰性注册：DllMain/DllGetClassObject 处于加载器锁内，
-// 官方文档不建议在那里调用 AddVectoredExceptionHandler。
+// 只由 UI 宿主自己的进程（ui_host.cpp runUiHost）惰性注册：我们拥有该进程
+// 生命周期、不存在 TSF FreeLibrary 卸载路径。**TSF 宿主进程不注册 VEH**
+//（2026-11-07：宿主进程里注册会在卸载后悬空，且给每个异常增加回调开销）。
+// 官方文档不建议在 DllMain/DllGetClassObject（加载器锁内）注册。
 void ensureCrashHandler() {
     if (InterlockedCompareExchange(&g_crashHandlerInstalled, 1, 0) == 0) {
         g_vehHandle = AddVectoredExceptionHandler(1, diagCrashHandler);

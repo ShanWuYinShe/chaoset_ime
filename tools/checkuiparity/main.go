@@ -1892,10 +1892,32 @@ func checkDllUnloadSafety(fsys fs.FS, problems *[]string) {
 	const group = "DLL 卸载安全"
 	checkContains(fsys, problems, group, "shims/windows/src/diagnostics.cpp",
 		"RemoveVectoredExceptionHandler", "void removeCrashHandler()", "g_vehHandle")
+	// VEH 只允许在 UI 宿主进程安装（我们拥有其生命周期，不会 FreeLibrary）。
+	if data, err := fs.ReadFile(fsys, "shims/windows/src/ui_host.cpp"); err == nil {
+		if !strings.Contains(string(data), "ensureCrashHandler()") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：UI 宿主未安装 VEH（crash.log 诊断会丢失；TSF 宿主禁止安装）", group))
+		}
+	} else {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 ui_host.cpp 失败：%v", group, err))
+	}
 	checkContains(fsys, problems, group, "shims/windows/src/diagnostics.hpp",
 		"void removeCrashHandler();")
+	// TSF 宿主进程不得安装 VEH（只有 UI 宿主可以）：宿主里注册的 VEH 在 DLL
+	// 卸载后会悬空，也会给宿主每个 first-chance 异常增加回调开销。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		src := string(data)
+		if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"); ok {
+			if strings.Contains(stripCppComments(body), "ensureCrashHandler()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 Activate（约第 %d 行）仍安装 VEH——TSF 宿主进程不得注册全局异常回调（会悬空/增负担）",
+					group, winShell, line))
+			}
+		}
+		if body, line, ok := cppFunctionBody(src, "void runUiHost(LPWSTR cmdLine)"); ok {
+			_ = body
+			_ = line
+		}
 		if body, line, ok := cppFunctionBody(src, "BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved)"); ok {
 			code := stripCppComments(body)
 			if !strings.Contains(code, "removeCrashHandler()") {

@@ -12,6 +12,10 @@
     first-chance 异常很常见）就跳进已卸载代码，导致宿主进程崩溃/无响应。
   - 修复：保存 VEH 句柄，`DllMain(DLL_PROCESS_DETACH)` 先 `removeCrashHandler()`
     再停 worker/注销窗口类；checkuiparity 新增「DLL 卸载安全」断言。
+  - **进一步（用户硬要求：输入法绝不能给系统/app 增加负担）**：TSF 宿主进程
+    **不再安装 VEH**，只由 UI 宿主自己的进程注册写 crash.log；宿主进程零全局
+    异常回调（从根上消除卸载悬空与每个 first-chance 异常的回调开销），宿主崩溃
+    由系统 WER 记录。
   - 另有系统级 GPU TDR 证据（nvlddmkm 4101 + LiveKernelEvent 141，2026-11-07
     00:38，ToDesk 随后重启机器）——整机/远程会话卡死与该显示驱动超时相关，不归
     输入法；explorer 18:53 的 shell 重启也在日志中，与 IME 无模块级证据。

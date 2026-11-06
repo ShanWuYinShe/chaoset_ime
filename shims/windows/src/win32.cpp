@@ -1979,7 +1979,11 @@ public:
         //（2026-11-07 用户要求：没激活时不做任何操作）。
         registerTipOnThread(this);
         g_lastOp = kOpActivate;
-        ensureCrashHandler();
+        // **不在 TSF 宿主进程安装 VEH**（2026-11-07 用户硬要求：输入法不得给
+        // 系统/app 增加负担，也绝不能造成宿主 crash）。宿主进程里注册的 VEH
+        // 在 TSF FreeLibrary 后会悬空（WER: ChaosetIME.dll_unloaded），且会给
+        // 每个宿主的所有 first-chance 异常增加一次回调开销。诊断交给系统 WER；
+        // 只有我们自己的 UI 宿主进程（runUiHost）注册 VEH 写 crash.log。
         // 每个宿主进程只记一次 Activate（异步写盘）：字段统一不变，同时避免
         // 反复聚焦耗尽 diagBudget（预算要留给真正的 daemon 失败/渲染失败日志）。
         static volatile LONG activateLogged = 0;
