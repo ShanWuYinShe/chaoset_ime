@@ -91,6 +91,7 @@ const (
 	winBuild        = "shims/windows/build.sh"
 	winInstaller    = "shims/windows/installer/chaoset.nsi"
 	winInstallBat   = "shims/windows/install.bat"
+	winResource     = "shims/windows/resources/chaoset.rc"
 	winCoreHpp      = "shims/common/ipc/core.hpp"
 	winCoreCpp      = "shims/common/ipc/core.cpp"
 	linuxEngine     = "shims/linux/engine/main.cpp"
@@ -684,6 +685,58 @@ func checkKeyRoutingCount(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkWindowsVersionInfo 锁住「安装程序与 Windows 二进制都带版本信息 / app
+// 信息」契约（2026-11-06 用户反馈：ChaosetSetup.exe 属性页全空，无法判断
+// 装的是哪一版）。版本号必须来自单一真源 git tag——NSIS 用注入的
+// ${VERSION}/${VERSION_QUAD}，资源模板用 @VERSION@ 占位符，
+// 任何一处写死数字都会被 make check-version 拦下。
+func checkWindowsVersionInfo(fsys fs.FS, problems *[]string) {
+	const group = "Windows 版本信息"
+	// 安装器 EXE：VS_FIXEDFILEINFO（数字 4 段）+ 属性页字符串键。
+	checkContains(fsys, problems, group, winInstaller,
+		"VIProductVersion", "VIFileVersion", "VIAddVersionKey",
+		`"ProductName"`, `"CompanyName"`, `"LegalCopyright"`,
+		`"FileDescription"`, `"FileVersion"`, `"ProductVersion"`,
+		`"OriginalFilename"`, `"InternalName"`, `"Comments"`,
+		`"Chaoset 拼音输入法"`, `"ShanWuYinShe"`)
+	// 卸载注册表（已安装的应用）：显示版本、安装位置、安装日期、帮助/
+	// 主页/更新链接与体积等 app 元数据；InstallDate 必须是标准格式。
+	checkContains(fsys, problems, group, winInstaller,
+		`"DisplayVersion"`, `"InstallLocation"`, `"InstallDate"`,
+		`"HelpLink"`, `"URLInfoAbout"`, `"URLUpdateInfo"`,
+		`"EstimatedSize"`, `"NoModify"`, `"NoRepair"`,
+		"${GetTime}")
+	// 版本号不得写死：全部走注入的 define / 占位符。
+	checkContains(fsys, problems, group, winInstaller,
+		`"${VERSION}"`, `"${VERSION_QUAD}"`,
+		"VIProductVersion \"${VERSION_QUAD}\"")
+	checkExcludes(fsys, problems, group, winInstaller,
+		`"DisplayVersion" "0.`, `VIProductVersion "0.`)
+	// Windows 二进制资源模板：图标 + VS_VERSION_INFO，版本号用占位符。
+	checkExists(fsys, problems, group, winResource)
+	checkContains(fsys, problems, group, winResource,
+		`1 ICON "chaoset.ico"`, "VS_VERSION_INFO VERSIONINFO",
+		"FILEVERSION", "PRODUCTVERSION", "StringFileInfo", "VarFileInfo",
+		`"CompanyName"`, `"FileDescription"`, `"FileVersion"`,
+		`"ProductName"`, `"ProductVersion"`, `"LegalCopyright"`,
+		"@VERSION@", "@VERSION_QUAD@", "@VER_MAJOR@",
+		"@FILE_DESCRIPTION@", "@ORIGINAL_FILENAME@", "@FILE_TYPE@")
+	// 两条构建链都必须：注入占位符、以 UTF-8 代码页编译版本资源、把 UI 宿主
+	// 资源链进 exe；且 NSIS 收到 VERSION_QUAD。
+	checkContains(fsys, problems, group, makefile,
+		"@VERSION@", "@VERSION_QUAD@", "-c 65001",
+		"chaoset-ui.rc", "chaoset_ui_res.o",
+		"VERSION_QUAD := ", "-DVERSION_QUAD=$(VERSION_QUAD)",
+		"-Wl,--export-all-symbols", "makensis -DVERSION=$(VERSION)")
+	checkContains(fsys, problems, group, winBuild,
+		"@VERSION@", "@VERSION_QUAD@", "-c 65001",
+		"ui.gen.rc", "ui_rc.o",
+		"gen_rc", "VERSION_QUAD", "-Wl,--export-all-symbols")
+	// 发行包自检必须真的验证版本资源，而不只是「文件存在」。
+	checkContains(fsys, problems, group, releaseYML,
+		"VS_VERSION_INFO", "ChaosetSetup.exe")
+}
+
 // checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
 //  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
 //     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
@@ -889,6 +942,8 @@ func Run(fsys fs.FS) []string {
 	checkContains(fsys, &problems, "打包安装", macInstall,
 		"$IM/ChaosetIME.app/Contents/Resources/chaosetd")
 	checkWindowsInstallSafety(fsys, &problems)
+	// 5b. 安装程序与 Windows 二进制的版本信息 / app 信息（2026-11-06）。
+	checkWindowsVersionInfo(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1082,5 +1137,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

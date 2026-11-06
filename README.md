@@ -855,7 +855,10 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 每个包都自带**完整的内置常用词库（约 6.5 万条）**，装完即可用，不需要另配词库。
 
 > **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
-> 确认装的是新版本，再排查其他问题。
+> 确认装的是新版本，再排查其他问题。Windows 还可以右键 `ChaosetSetup.exe`
+> 或安装目录里的 `ChaosetIME.dll` / `chaoset-ui.exe` →「属性 → 详细信息」
+> 查看产品名、公司、版权与文件/产品版本，或在「已安装的应用」的 Chaoset
+> 条目里看 `DisplayVersion`。版本号统一由 git tag 注入，源码不写死。
 
 发布包由 CI 在目标平台构建并做启动冒烟：Linux/Windows 包显式指定
 `GOOS/GOARCH`，macOS 为 universal，Windows 提供 `ChaosetSetup.exe` 与

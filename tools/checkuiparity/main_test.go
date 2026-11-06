@@ -158,6 +158,48 @@ func TestCheckImportSafety(t *testing.T) {
 	}
 }
 
+// TestCheckWindowsVersionInfo 用真实安装器/模板/构建脚本验证版本信息契约，
+// 并做变异：删掉安装器的 VIProductVersion 或写死版本号都应被捕获。
+func TestCheckWindowsVersionInfo(t *testing.T) {
+	paths := []string{winInstaller, winResource, makefile, winBuild, releaseYML, ciYML, winShell, winInstallBat}
+	fsys := fstest.MapFS{}
+	for _, p := range paths {
+		data, err := os.ReadFile("../../" + p)
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", p, err)
+		}
+		fsys[p] = &fstest.MapFile{Data: data}
+	}
+	original := string(fsys[winInstaller].Data)
+	var problems []string
+	checkWindowsVersionInfo(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实版本信息实现未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	mutated := strings.ReplaceAll(original, "VIProductVersion", "NoVersionProduct")
+	if mutated == string(fsys[winInstaller].Data) {
+		t.Fatal("变异未生效：安装器里找不到 VIProductVersion")
+	}
+	problems = nil
+	fsys[winInstaller] = &fstest.MapFile{Data: []byte(mutated)}
+	checkWindowsVersionInfo(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "VIProductVersion") {
+		t.Fatalf("删掉 VIProductVersion 应被捕获，实际：%v", problems)
+	}
+
+	// 写死版本号：契约应拒绝（make check-version 是第二道防线）。
+	problems = nil
+	fsys[winInstaller] = &fstest.MapFile{Data: []byte(
+		strings.Replace(original,
+			`VIProductVersion "${VERSION_QUAD}"`,
+			`VIProductVersion "0.2.12.0"`, 1))}
+	checkWindowsVersionInfo(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "不应包含") {
+		t.Fatalf("写死版本号应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckContains(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.txt": &fstest.MapFile{Data: []byte("hello 学习数据")},

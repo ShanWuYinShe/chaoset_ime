@@ -52,6 +52,30 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
 安装器**不关闭任何已运行程序**：被占用的 DLL 由改名/重启替换处理。已打开程序继续
 使用旧版 DLL，重新打开后加载新版；系统输入宿主在注销/重启后刷新。
 
+### 版本信息与 app 信息
+
+`ChaosetSetup.exe` 与安装目录里的 PE 二进制（`ChaosetIME.dll`、
+`ChaosetIME32.dll`、`chaoset-ui.exe`）都带 `VS_VERSION_INFO`：
+右键「属性 → 详细信息」可看到「Chaoset 拼音输入法」、公司
+`ShanWuYinShe`、版权、文件说明、原始文件名、`@VERSION@`（如 0.3.17）
+与 4 段数字版本（如 0.3.17.0）。安装器向导欢迎页标题也带版本。
+
+版本号**只有一个真源**：git tag → Makefile 的 `$(VERSION)`。
+`$(VERSION_QUAD)` 是从它归一化出的 4 段数字版本（`0.3.17` →
+`0.3.17.0`、`0.0.0-dev` → `0.0.0.0`），因为 NSIS `VIProductVersion`
+与 PE `VS_FIXEDFILEINFO` 只接受数字；带 `-dev` 后缀的人类可读版本放在
+属性页字符串字段。NSIS 脚本用 `${VERSION}` / `${VERSION_QUAD}`，资源模板
+`shims/windows/resources/chaoset.rc` 用 `@VERSION@` 等占位符，二者都由
+`make package-windows` / `build.sh` 注入，源码不写死版本号。中文说明必须
+用 `windres -c 65001` 编译，否则属性页会显示 mojibake。
+
+「设置 → 应用 → 已安装的应用」里的 Chaoset 条目还写入
+`DisplayVersion`、`InstallLocation`、`InstallDate`（YYYYMMDD）、
+`EstimatedSize`（安装后实测）、`HelpLink` / `URLInfoAbout` /
+`URLUpdateInfo`、`NoModify` / `NoRepair` 等元数据。
+`make check-version`、`make check-uiparity` 与 `release.yml` 冒烟共同
+锁死这些契约。
+
 ### 便携 ZIP
 
 解压后以管理员身份运行 `install.bat`；卸载运行 `install.bat uninstall`。

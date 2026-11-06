@@ -46,25 +46,72 @@ rm -rf "$SOCKDIR"
 
 echo "[3/4] mingw-w64 交叉编译 ChaosetIME.dll..."
 VERSION=${VERSION:-dev}
+# 版本资源单一真源：$(VERSION) 由 Makefile 从 git tag 推导后传入（本地直跑
+# build.sh 时回退到 git describe，仍不写死）。VERSION_QUAD 是 4 段数字版本，
+# VS_FIXEDFILEINFO 只接受数字；dev/预发布后缀留在人类可读的 @VERSION@ 字符串里。
+QUAD=$(echo "$VERSION" | sed -E 's/^v//; s/[^0-9.].*$//; s/\.$//' \
+  | awk -F. '{print ($1+0)"."($2+0)"."($3+0)"."($4+0)}')
+VMAJOR=$(echo "$QUAD" | cut -d. -f1); VMINOR=$(echo "$QUAD" | cut -d. -f2)
+VPATCH=$(echo "$QUAD" | cut -d. -f3); VBUILD=$(echo "$QUAD" | cut -d. -f4)
 CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
-# 图标资源必须链进 DLL：注册表 IconFile 指向本 DLL（win32.cpp RegisterProfile），
-# 此前 build.sh 从不编译 chaoset.rc，语言栏/切换菜单拿到的是空图标（2026-10-27 审查）。
 WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
-"$WINDRES" -I resources resources/chaoset.rc -O coff -o build/chaoset_rc.o
-"$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static \
+# chaoset.rc 是模板（图标 + VS_VERSION_INFO，含 @VERSION@ 等占位符）：先按
+# sed 注入版本与文件名生成 chaoset.gen.rc，再交给 windres。图标必须链进 DLL
+# （注册表 IconFile 指向本 DLL），版本信息让「右键属性 → 详细信息」可见。
+gen_rc() { # $1=输出 rc  $2=FileDescription  $3=InternalName  $4=OriginalFilename  $5=FileType
+  sed -e "s/@VERSION@/$VERSION/g" -e "s/@VERSION_QUAD@/$QUAD/g" \
+      -e "s/@VER_MAJOR@/$VMAJOR/g" -e "s/@VER_MINOR@/$VMINOR/g" \
+      -e "s/@VER_PATCH@/$VPATCH/g" -e "s/@VER_BUILD@/$VBUILD/g" \
+      -e "s/@FILE_DESCRIPTION@/$2/g" -e "s/@INTERNAL_NAME@/$3/g" \
+      -e "s/@ORIGINAL_FILENAME@/$4/g" -e "s/@FILE_TYPE@/$5/g" \
+      resources/chaoset.rc > "$1"
+}
+gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "ChaosetIME.dll" 2
+# -c 65001：模板里的中文说明是 UTF-8，windres 默认按 ANSI 解释会存成
+# mojibake（属性页乱码），显式指定 UTF-8 代码页。
+"$WINDRES" -c 65001 -I resources build/chaoset.gen.rc -O coff -o build/chaoset_rc.o
+# ChaosetRunUi 的 __declspec(dllexport) 会让 mingw 停止自动导出其余全局
+# 符号，COM 注册入口（DllRegisterServer 等）随之消失、regsvr32 失败；显式
+# --export-all-symbols 恢复全部导出（与 Makefile package-windows 一致）。
+"$CXXWIN" -std=c++17 -O2 -Wall -Wextra -shared -static -Wl,--export-all-symbols \
   -Isrc -I../common/ipc \
   -DCHAOSET_VERSION="\"$VERSION\"" \
   -o build/ChaosetIME.dll \
   src/win32.cpp ../common/ipc/core.cpp build/chaoset_rc.o \
   -lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
-  echo "  图标资源已嵌入（.rsrc 段存在）"
+  echo "  图标与版本资源已嵌入（.rsrc 段存在）"
 else
-  echo "  警告：.rsrc 段缺失，语言栏将没有图标" >&2
+  echo "  警告：.rsrc 段缺失，语言栏将没有图标、属性页看不到版本信息" >&2
   exit 1
 fi
+# 版本资源自检：strings -el 会在 UTF-16 中文处截断，直接用 python3 查
+# UTF-16LE 字节，确认 VS_VERSION_INFO、产品名、中文与注入的版本号都真的
+# 进了资源；QUAD 通过环境变量传入，避开 shell 引号。
+if ! CHAOSET_QUAD="$QUAD" python3 - <<'PY'
+import os, sys
+d = open("build/chaoset_rc.o", "rb").read()
+for s in ("VS_VERSION_INFO", "ProductName", "ShanWuYinShe", "拼音输入法",
+          os.environ["CHAOSET_QUAD"]):
+    if s.encode("utf-16-le") not in d:
+        print("版本资源缺少: " + s, file=sys.stderr)
+        sys.exit(1)
+PY
+then
+  echo "错误：版本资源缺少产品名/版本号（VS_VERSION_INFO 未生成）" >&2
+  exit 1
+fi
+echo "  版本资源自检通过（产品名/公司/中文/版本号均为 UTF-16）"
 x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -E "DllRegisterServer|DllGetClassObject|DllCanUnloadNow|DllUninstallServer|ChaosetRunUi" | while read -r line; do
   echo "  导出: $line"
+done
+# COM 注册入口缺一不可：regsvr32 只认 DllRegisterServer/DllUnregisterServer，
+# 缺了安装后输入法完全不可用。此前只打印不校验，静默漏掉过导出表回退。
+for sym in DllRegisterServer DllUnregisterServer DllGetClassObject DllCanUnloadNow; do
+  if ! x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -q "$sym"; then
+    echo "错误：ChaosetIME.dll 缺少 COM 导出 ${sym}（regsvr32 将无法注册）" >&2
+    exit 1
+  fi
 done
 # 单例 UI 宿主入口必须导出：chaoset-ui.exe 靠 LoadLibrary + ChaosetRunUi 复用
 # 本 DLL 的设置窗/托盘/管道实现。缺了这个导出，设置窗与中英指示器整体不可用。
@@ -85,8 +132,12 @@ echo "  UIA 动态加载自检通过（无 uiautomationcore 静态导入）"
 echo "[4/4] 交叉编译单例 UI 宿主 chaoset-ui.exe..."
 # 托盘指示器 + 设置窗的唯一宿主。exe 本身只有几十行：LoadLibrary 同目录的
 # ChaosetIME.dll 后调用导出 ChaosetRunUi，UI 实现全部在 DLL 里（无第二套 UI）。
+# 同一份版本模板再生成一份 UI 宿主专用资源：独立 EXE 的属性页也要显示
+# 产品名/公司/版本，且 FileDescription 指向「UI 宿主」而非前端 DLL。
+gen_rc build/ui.gen.rc "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1
+"$WINDRES" -c 65001 -I resources build/ui.gen.rc -O coff -o build/ui_rc.o
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
-  -o build/chaoset-ui.exe src/ui_main.cpp
+  -o build/chaoset-ui.exe src/ui_main.cpp build/ui_rc.o
 # 不得静态导入 ChaosetIME.dll：必须 LoadLibrary，否则 DLL 与 exe 版本/路径
 # 不一致时整个 UI 宿主起不来（且无法给出可读错误）。
 if x86_64-w64-mingw32-objdump -p build/chaoset-ui.exe | command grep -qi 'DLL Name:.*ChaosetIME'; then

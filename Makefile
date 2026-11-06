@@ -12,6 +12,16 @@
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
 VERSION := $(if $(VERSION),$(VERSION),0.0.0-dev)
 
+# VERSION_QUAD：从 $(VERSION) 归一化出的 4 段数字版本（如 0.3.17 → 0.3.17.0，
+# 0.0.0-dev → 0.0.0.0）。Windows 版本资源（NSIS VIProductVersion / PE
+# VS_FIXEDFILEINFO）只接受 4 段数字，而人类可读的 $(VERSION) 可能带 -dev 等
+# 后缀。二者同源于 git tag，源码里不写死任何版本号。
+VERSION_QUAD := $(shell echo '$(VERSION)' | sed -E 's/^v//; s/[^0-9.].*$$//; s/[.]+$$//' | awk -F. '{print ($$1+0)"."($$2+0)"."($$3+0)"."($$4+0)}')
+VER_MAJOR := $(word 1,$(subst ., ,$(VERSION_QUAD)))
+VER_MINOR := $(word 2,$(subst ., ,$(VERSION_QUAD)))
+VER_PATCH := $(word 3,$(subst ., ,$(VERSION_QUAD)))
+VER_BUILD := $(word 4,$(subst ., ,$(VERSION_QUAD)))
+
 version:
 	@echo $(VERSION)
 
@@ -32,7 +42,17 @@ check-version:
 		|| { echo "错误：macOS build.sh 的 CFBundleShortVersionString 未使用 \$$VERSION"; exit 1; }
 	@! grep -q '"DisplayVersion" "0\.' shims/windows/installer/chaoset.nsi 2>/dev/null \
 		|| { echo "错误：NSIS 的 DisplayVersion 仍是写死的数字"; exit 1; }
-	@echo "版本号单一真源检查通过（8 处历史散落点全部改为注入）"
+	@# Windows 安装器与二进制的版本资源：必须用注入的 $${VERSION}/$${VERSION_QUAD}，
+	@# 不能把版本号写死在 NSIS 命令或资源模板里（2026-11-06 补齐安装程序版本信息）。
+	@grep -q 'VIProductVersion "\$${VERSION_QUAD}"' shims/windows/installer/chaoset.nsi \
+		|| { echo "错误：NSIS 的 VIProductVersion 未使用注入的 VERSION_QUAD"; exit 1; }
+	@grep -q 'VIFileVersion "\$${VERSION_QUAD}"' shims/windows/installer/chaoset.nsi \
+		|| { echo "错误：NSIS 的 VIFileVersion 未使用注入的 VERSION_QUAD"; exit 1; }
+	@grep -q 'VIAddVersionKey.*"ProductVersion".*"\$${VERSION}"' shims/windows/installer/chaoset.nsi \
+		|| { echo "错误：NSIS 的 ProductVersion 未使用注入的 VERSION"; exit 1; }
+	@grep -q 'VALUE "ProductVersion", "@VERSION@"' shims/windows/resources/chaoset.rc \
+		|| { echo "错误：资源模板的 ProductVersion 未使用 @VERSION@ 占位符"; exit 1; }
+	@echo "版本号单一真源检查通过（含 Windows 安装器/二进制版本资源）"
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd
@@ -223,26 +243,63 @@ package-windows:
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
 	# 用户词典管理工具：与 Linux 包对齐（Windows 上走 -pipe 连 daemon 的命名管道）。
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-userdict.exe ./cmd/chaoset-userdict
-	# 资源文件编译（将应用图标嵌入 DLL，确保 Windows 语言栏与切换菜单显示专属图标）
-	x86_64-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
-	i686-w64-mingw32-windres -I shims/windows/resources shims/windows/resources/chaoset.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
+	# 资源模板 chaoset.rc 含图标 + VS_VERSION_INFO（@VERSION@ 等占位符）。
+	# 单一真源：$(VERSION)/$(VERSION_QUAD) 由 git tag 推导，sed 注入后交给 windres；
+	# 64/32 位 DLL 与 UI 宿主各生成一份带各自 FileDescription 的资源，让
+	# 「右键属性 → 详细信息」在安装目录的每个二进制上都显示版本与 app 信息。
+	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
+		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
+		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
+		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（64 位）/g' \
+		-e 's/@FILE_TYPE@/2/g' \
+		-e 's/@INTERNAL_NAME@/ChaosetIME/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME.dll/g' \
+		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset64.rc
+	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
+		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
+		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
+		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（32 位）/g' \
+		-e 's/@FILE_TYPE@/2/g' \
+		-e 's/@INTERNAL_NAME@/ChaosetIME32/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME32.dll/g' \
+		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset32.rc
+	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
+		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
+		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
+		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）/g' \
+		-e 's/@FILE_TYPE@/1/g' \
+		-e 's/@INTERNAL_NAME@/chaoset-ui/g' -e 's/@ORIGINAL_FILENAME@/chaoset-ui.exe/g' \
+		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset-ui.rc
+	# -c 65001：模板里的中文说明是 UTF-8，windres 默认按 ANSI/Latin-1 解释
+	# 会把「拼音输入法」存成 mojibake，属性页全是乱码（2026-11-06 打包验证）。
+	x86_64-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset64.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
+	i686-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset32.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
+	x86_64-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset-ui.rc -O coff -o dist/chaoset-windows-x64/chaoset_ui_res.o
 	# 64 位 TSF 前端 DLL
-	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static \
+	# -Wl,--export-all-symbols：ChaosetRunUi 用了 __declspec(dllexport)，
+	# mingw 一旦发现显式 dllexport 就不再自动导出其余全局符号——COM 入口
+	# DllRegisterServer/DllGetClassObject/DllCanUnloadNow 会消失，regsvr32
+	# 注册失败（2026-11-06 打包自检发现）。显式打开全量导出恢复 COM 入口。
+	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
-	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at \
+	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		shims/windows/src/win32.cpp shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
 		-lole32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
-	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o
 	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
 	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。
+	# 版本资源链进 UI 宿主：独立 EXE 的属性页也要显示产品名/公司/版本。
 	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
-		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp
+		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp \
+		dist/chaoset-windows-x64/chaoset_ui_res.o
+	# 三个资源（64/32 DLL + UI 宿主）都链接完之后再删中间产物。
+	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o \
+		dist/chaoset-windows-x64/chaoset_ui_res.o \
+		dist/chaoset-windows-x64/chaoset64.rc dist/chaoset-windows-x64/chaoset32.rc \
+		dist/chaoset-windows-x64/chaoset-ui.rc
 	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
 	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
 	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
@@ -272,7 +329,7 @@ package-windows:
 		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
-		(cd shims/windows/installer && makensis -DVERSION=$(VERSION) chaoset.nsi); \
+		(cd shims/windows/installer && makensis -DVERSION=$(VERSION) -DVERSION_QUAD=$(VERSION_QUAD) chaoset.nsi); \
 	fi
 	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
 	rm -rf dist/chaoset-windows-x64

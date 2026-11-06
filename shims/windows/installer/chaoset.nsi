@@ -4,12 +4,44 @@
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
+!include "FileFunc.nsh" ; ${GetTime}：写标准 YYYYMMDD 格式的 InstallDate
 
 Name "Chaoset 拼音输入法"
 OutFile "..\..\..\dist\ChaosetSetup.exe"
 InstallDir "$PROGRAMFILES64\Chaoset"
 InstallDirRegKey HKLM "Software\Chaoset" "InstallDir"
 RequestExecutionLevel admin
+
+; ── 安装程序 EXE 的版本信息 / app 信息 ────────────────────────────────
+; 此前 ChaosetSetup.exe 没有任何版本资源：右键「属性 → 详细信息」全空，
+; 用户无法判断下载/安装的到底是哪一版（2026-11-06 用户反馈）。
+; VIProductVersion / VIFileVersion 写进 VS_FIXEDFILEINFO，只接受 4 段数字；
+; VIAddVersionKey 是属性页里显示的 UTF-16 字符串，可用人类可读版本。
+; 两个版本号都由 Makefile 从 git tag（单一真源）注入：VERSION 是 0.3.17 /
+; 0.0.0-dev，VERSION_QUAD 是归一化后的 0.3.17.0 / 0.0.0.0。
+; 源码里不写死任何版本号，改动由 make check-version 静态拦截。
+!ifndef VERSION
+  !define VERSION "0.0.0-dev"
+!endif
+!ifndef VERSION_QUAD
+  !define VERSION_QUAD "0.0.0.0"
+!endif
+VIProductVersion "${VERSION_QUAD}"
+VIFileVersion "${VERSION_QUAD}"
+VIAddVersionKey /LANG=0 "ProductName" "Chaoset 拼音输入法"
+VIAddVersionKey /LANG=0 "CompanyName" "ShanWuYinShe"
+VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) 2026 ShanWuYinShe"
+VIAddVersionKey /LANG=0 "FileDescription" "Chaoset 拼音输入法安装程序"
+VIAddVersionKey /LANG=0 "FileVersion" "${VERSION_QUAD}"
+VIAddVersionKey /LANG=0 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=0 "InternalName" "ChaosetSetup"
+VIAddVersionKey /LANG=0 "OriginalFilename" "ChaosetSetup.exe"
+VIAddVersionKey /LANG=0 "Comments" "跨平台中文输入法 Chaoset（代码 MIT，词库 CC BY-SA 4.0）"
+VIAddVersionKey /LANG=0 "LegalTrademarks" "Chaoset"
+
+; 安装器窗口标题带上版本，向导里也能一眼看到装的是哪一版。
+!define MUI_WELCOMEPAGE_TITLE "Chaoset 拼音输入法 ${VERSION} 安装"
+!define MUI_WELCOMEPAGE_TEXT "本向导将把 Chaoset 拼音输入法 ${VERSION} 安装到您的电脑。$\r$\n$\r$\n安装需要管理员权限（注册 TSF 组件）；安装过程中不会关闭任何已打开的程序。"
 
 ; 图标设置
 !define MUI_ICON "..\resources\chaoset.ico"
@@ -223,17 +255,31 @@ Section "MainSection" SEC01
     ;（AppContainer 宿主内不能 CreateProcess，必须已有实例才能打开设置窗）。
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi" '"$INSTDIR\chaoset-ui.exe"'
 
-    ; 写入系统“已安装的应用/控制面板”标准卸载信息
+    ; 写入系统“已安装的应用/控制面板”标准卸载信息。
+    ; 除基本信息外补全 app 元数据：版本号、安装位置、安装日期、体积、
+    ; 帮助/主页链接、修改/修复标志，让「已安装的应用」列表与属性页
+    ; 和安装程序 EXE 的版本信息一致（2026-11-06 用户反馈）。
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayName" "Chaoset 拼音输入法"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayIcon" '"$INSTDIR\chaoset.ico"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Publisher" "ShanWuYinShe"
-    ; 版本号由 makensis 的命令行 -DVERSION=… 注入（Makefile 从 git tag 推导）。
-    ; 此处曾写死 0.2.12，发版时必然漏改（2026-10-26 修复）。
-    !ifndef VERSION
-      !define VERSION "0.0.0-dev"
-    !endif
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "HelpLink" "https://github.com/ShanWuYinShe/chaoset_ime"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "URLInfoAbout" "https://github.com/ShanWuYinShe/chaoset_ime"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "URLUpdateInfo" "https://github.com/ShanWuYinShe/chaoset_ime/releases"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "Comments" "跨平台中文输入法 Chaoset（代码 MIT，词库 CC BY-SA 4.0）"
+    ; InstallDate 必须是 YYYYMMDD：%DATE% 是 locale 相关的（2026/11/06 等），
+    ; 不能直接用；用 FileFunc.nsh 的 GetTime 在安装时取本地日期拼出标准格式。
+    ${GetTime} "" "L" $R2 $R3 $R4 $R5 $R6 $R7 $R8
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "InstallDate" "$R2$R3$R4"
+    ; EstimatedSize 用安装后的实际目录体积（KB），不写死估算值。
+    ${GetSize} "$INSTDIR" "/S=0K" $R9 $R8 $R7
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "EstimatedSize" $R9
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chaoset" "NoRepair" 1
+    ; 安装包自身版本：由 makensis 命令行 -DVERSION=… 注入（Makefile 从 git tag 推导），
+    ; 与 DisplayVersion 同源；此前曾写死 0.2.12，发版时必然漏改（2026-10-26 修复）。
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; 开始菜单快捷方式

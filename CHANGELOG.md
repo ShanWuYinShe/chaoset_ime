@@ -4,6 +4,31 @@
 
 ## 未发布
 
+- **Windows 安装程序与二进制补齐版本信息 / app 信息（2026-11-06 用户反馈）**：
+  此前 `ChaosetSetup.exe` 没有任何版本资源（右键「属性 → 详细信息」全空），
+  用户无法判断下载/安装的是哪一版；`ChaosetIME.dll` / `chaoset-ui.exe` 等
+  PE 二进制同样没有 `VS_VERSION_INFO`。现在：
+  - NSIS 用 `VIProductVersion` / `VIFileVersion` + `VIAddVersionKey` 写入
+    产品名、公司、版权、文件说明、原始文件名、注释与「产品/文件版本」；
+    向导欢迎页标题带版本；版本号由 Makefile 的 `$(VERSION)`（git tag 单一真源）
+    与归一化 4 段数字 `$(VERSION_QUAD)` 注入，源码不写死。
+  - 「已安装的应用/控制面板」卸载项补全 `DisplayVersion`、
+    `InstallLocation`、`InstallDate`（`${GetTime}` 取 YYYYMMDD，不用 locale
+    相关的 `%DATE%`）、`EstimatedSize`（安装后 `${GetSize}` 实测）、
+    `HelpLink` / `URLInfoAbout` / `URLUpdateInfo`、
+    `NoModify` / `NoRepair` 等 app 元数据。
+  - `shims/windows/resources/chaoset.rc` 改为「图标 + VS_VERSION_INFO」模板，
+    `@VERSION@` 等占位符由 Makefile / `build.sh` 经 sed 注入后 windres 编译；
+    64/32 位前端 DLL 与 `chaoset-ui.exe` 各带一份带自身 `FileDescription` 的
+    版本资源，中文用 `windres -c 65001` 保证属性页不乱码（默认 ANSI 会把
+    「拼音输入法」存成 mojibake）。
+  - `make check-version` 与 `tools/checkuiparity` 新增契约组锁死版本信息，
+    `release.yml` 冒烟校验四个 PE 的版本资源与中文编码；补了变异测试。
+  - 同批修复打包回归：`ChaosetRunUi` 的 `__declspec(dllexport)` 会让 mingw
+    停止自动导出其余全局符号，导致 `DllRegisterServer` 等 COM 入口消失、
+    `regsvr32` 注册失败。两条构建链都加 `-Wl,--export-all-symbols`，
+    `build.sh` 从「只打印导出」升级为逐个断言 COM 入口必须存在。
+
 - **Windows 中英文模式提示/任务栏图标乱套、开始菜单里设置窗打不开（2026-11-05
   用户反馈）**：两个用户可见问题的根因是同一类架构错误——把「每用户会话唯一」
   的 UI 放进了会被 TSF 加载进每个宿主进程的 TIP 里。

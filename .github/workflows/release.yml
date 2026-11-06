@@ -265,6 +265,33 @@ jobs:
           echo "ZIP 包内容校验通过"
           test -f "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
           file "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" | grep -q 'PE32' || { echo "ChaosetSetup.exe 不是有效 Windows PE"; exit 1; }
+          # 版本信息 / app 信息（2026-11-06）：安装器 EXE 与包内每个 PE 二进制
+          # 都必须带 VS_VERSION_INFO 与产品名/公司/版本字符串，且中文不能是
+          # mojibake（windres -c 65001 曾漏掉导致属性页乱码）。
+          python3 - <<'PY'
+          import os, struct, sys
+          files = [
+              "ChaosetIME.dll", "ChaosetIME32.dll", "chaoset-ui.exe",
+              os.environ["GITHUB_WORKSPACE"] + "/dist/ChaosetSetup.exe",
+          ]
+          for p in files:
+              d = open(p, "rb").read()
+              i = d.find("VS_VERSION_INFO".encode("utf-16-le"))
+              if i < 0:
+                  print(p + ": 缺少 VS_VERSION_INFO 版本资源"); sys.exit(1)
+              # windres 把 VS_FIXEDFILEINFO 与字符串块放在资源节不同位置，
+              # 与 marker 相隔可达数十 KB，签名和键名都必须在全文件里找。
+              if d.find(struct.pack("<I", 0xFEEF04BD)) < 0:
+                  print(p + ": 缺少 VS_FIXEDFILEINFO（数字版本）"); sys.exit(1)
+              for k in ("ProductName", "CompanyName", "FileVersion", "ProductVersion"):
+                  if k.encode("utf-16-le") not in d:
+                      print(p + ": 版本资源缺少 " + k); sys.exit(1)
+              # UTF-8 中文必须是真 UTF-16，不能被 windres 按 ANSI 解释成乱码
+              if "拼音输入法".encode("utf-16-le") not in d:
+                  print(p + ": 版本资源中文乱码（需 windres -c 65001）"); sys.exit(1)
+              print(p + ": 版本信息 OK")
+          PY
+          echo "版本信息 / app 信息自检通过"
           echo "ChaosetSetup.exe 安装程序自检通过"
 
       - name: 上传产物
