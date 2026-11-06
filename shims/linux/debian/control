@@ -1,5 +1,5 @@
 Package: chaoset-ime
-# 占位符 @VERSION@，由 Makefile 的 $(VERSION)（源自 git tag）在打包时替换。
+# 占位符 @VERSION@，由 Makefile 的 $(PKG_VERSION) 在打包时替换（deb 版本必须以数字开头，故为 0.0.0+<commit hash>；tag 构建用 tag 号）。
 Version: @VERSION@
 Section: utils
 Priority: optional

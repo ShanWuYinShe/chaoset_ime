@@ -1,6 +1,6 @@
 # Maintainer: ShanWuYinShe <https://github.com/ShanWuYinShe/chaoset_ime>
 pkgname=chaoset-ime
-# 占位符 @VERSION@，由 Makefile 的 $(VERSION)（源自 git tag）在打包时替换。
+# 占位符 @VERSION@，本地 makepkg 前请用 scripts/version.sh --pkg 的输出替换（必须以数字开头）。CI 的 package.sh 由 Makefile 传 PKG_VERSION。
 pkgver=@VERSION@
 pkgrel=1
 pkgdesc="Chaoset Pinyin IME - 傻瓜式现代拼音输入法"

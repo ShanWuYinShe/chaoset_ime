@@ -45,14 +45,22 @@ trap - EXIT
 rm -rf "$SOCKDIR"
 
 echo "[3/4] mingw-w64 交叉编译 ChaosetIME.dll..."
-VERSION=${VERSION:-dev}
-# 版本资源单一真源：$(VERSION) 由 Makefile 从 git tag 推导后传入（本地直跑
-# build.sh 时回退到 git describe，仍不写死）。VERSION_QUAD 是 4 段数字版本，
-# VS_FIXEDFILEINFO 只接受数字；dev/预发布后缀留在人类可读的 @VERSION@ 字符串里。
-QUAD=$(echo "$VERSION" | sed -E 's/^v//; s/[^0-9.].*$//; s/\.$//' \
-  | awk -F. '{print ($1+0)"."($2+0)"."($3+0)"."($4+0)}')
+# 版本资源单一真源 scripts/version.sh：tag 触发的 CI 用 tag 号，其余一律用
+# commit hash（本地测试不需要累加版本号，又能从 hash 定位构建）。Makefile 通过
+# VERSION 环境变量注入；直接跑 build.sh 时自己调同一个脚本。QUAD 是 4 段数字
+# 版本（NSIS / PE VS_FIXEDFILEINFO 只接受数字），显示用 @VERSION@ 仍是原始 hash。
+ROOT=$(cd ../.. && pwd)
+if [ -z "${VERSION:-}" ]; then
+  VERSION=$(sh "$ROOT/scripts/version.sh")
+fi
+if [ -z "${VERSION_QUAD:-}" ]; then
+  QUAD=$(sh "$ROOT/scripts/version.sh" --quad)
+else
+  QUAD="$VERSION_QUAD"
+fi
 VMAJOR=$(echo "$QUAD" | cut -d. -f1); VMINOR=$(echo "$QUAD" | cut -d. -f2)
 VPATCH=$(echo "$QUAD" | cut -d. -f3); VBUILD=$(echo "$QUAD" | cut -d. -f4)
+export VERSION
 CXXWIN=${CXXWIN:-x86_64-w64-mingw32-g++}
 WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
 # chaoset.rc 是模板（图标 + VS_VERSION_INFO，含 @VERSION@ 等占位符）：先按

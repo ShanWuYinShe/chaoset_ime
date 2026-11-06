@@ -60,11 +60,15 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
 `ShanWuYinShe`、版权、文件说明、原始文件名、`@VERSION@`（如 0.3.17）
 与 4 段数字版本（如 0.3.17.0）。安装器向导欢迎页标题也带版本。
 
-版本号**只有一个真源**：git tag → Makefile 的 `$(VERSION)`。
-`$(VERSION_QUAD)` 是从它归一化出的 4 段数字版本（`0.3.17` →
-`0.3.17.0`、`0.0.0-dev` → `0.0.0.0`），因为 NSIS `VIProductVersion`
-与 PE `VS_FIXEDFILEINFO` 只接受数字；带 `-dev` 后缀的人类可读版本放在
-属性页字符串字段。NSIS 脚本用 `${VERSION}` / `${VERSION_QUAD}`，资源模板
+版本号**只有一个真源**：`scripts/version.sh`（Makefile 的 `$(VERSION)`）。
+**只有 push tag 触发的 GitHub CI 构建**才用 tag 号（`0.3.17`）；本地构建、
+日常 CI、`workflow_dispatch`、PR 一律用当前 `git commit hash`（12 位，工作区
+有未提交改动时追加 `-dirty`）——本地测试不必累加版本号，又能从 hash 定位到底
+装的是哪个提交。`$(VERSION_QUAD)` 是 4 段数字版本（tag 构建 `0.3.17.0`，
+hash 构建 `0.0.<hash 派生>.<hash 派生>`），因为 NSIS `VIProductVersion` 与
+PE `VS_FIXEDFILEINFO` 只接受数字；人类可读的 hash 放在属性页字符串字段。
+deb/Arch 的包版本用 `$(PKG_VERSION)`（`0.0.0+<hash>`，保证以数字开头）。
+NSIS 脚本用 `${VERSION}` / `${VERSION_QUAD}`，资源模板
 `shims/windows/resources/chaoset.rc` 用 `@VERSION@` 等占位符，二者都由
 `make package-windows` / `build.sh` 注入，源码不写死版本号。中文说明必须
 用 `windres -c 65001` 编译，否则属性页会显示 mojibake。

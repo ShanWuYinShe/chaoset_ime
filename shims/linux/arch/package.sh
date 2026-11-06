@@ -3,11 +3,11 @@ set -e
 
 SRC_DIR="$1"
 OUT_PKG="$2"
-# 版本号必须由调用方（Makefile 的 $(VERSION)，源自 git tag）显式注入。
+# 版本号必须由调用方（Makefile 的 $(PKG_VERSION)）显式注入：tag 构建用 tag 号，其余为 0.0.0+<commit hash>。
 # 此前这里有默认值 0.2.12，一旦忘记传参就会打出与 tag 不符的包。
 PKG_VER="$3"
 if [ -z "$PKG_VER" ]; then
-    echo "错误：缺少版本号参数（由 Makefile 的 $(VERSION) 传入，源自 git tag）" >&2
+    echo "错误：缺少版本号参数（由 Makefile 的 $(PKG_VERSION) 传入）" >&2
     exit 1
 fi
 

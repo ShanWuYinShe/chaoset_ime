@@ -13,16 +13,14 @@ ROOT=$(cd ../.. && pwd)
 ARCHS=${ARCHS:-"arm64 x86_64"}
 MIN_MACOS=15.0
 
-# 版本号：由调用方（Makefile 的 $(VERSION)，源自 git tag）通过 VERSION 环境
-# 变量注入；直接跑 build.sh 时从 git tag 推导，取不到则用 0.0.0-dev。
+# 版本号单一真源：由 Makefile 通过 VERSION 环境变量注入（tag 触发的 CI 用 tag
+# 号，其余一律用 commit hash，见 scripts/version.sh）。直接跑 build.sh 时
+# 自己调同一个脚本，不再回退到「最近一次发布的 tag」。
 # 此前这里写死 0.1.0，与 tag 长期不符（2026-10-26 修复）。
-if [ -z "$VERSION" ]; then
-  # 脚本顶部已 cd 到 shims/macos，dirname "$0" 仍是调用时的相对路径；
-  # 再拼 ../.. 会算到 shims/ 而不是仓库根，git describe 失败后静默回退
-  # 0.0.0-dev（2026-11-02 本地直接运行 build.sh 实测）。用已解析的 ROOT 变量。
-  VERSION=$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+if [ -z "${VERSION:-}" ]; then
+  VERSION=$(sh "$ROOT/scripts/version.sh")
 fi
-VERSION=${VERSION:-0.0.0-dev}
+export VERSION
 # 交叉编译 Swift 需要独立的模块缓存目录：默认缓存在部分环境不可写
 # （沙盒 / 只读 HOME），统一放到 build/（已 gitignore）下且可复用。
 MODCACHE="$ROOT/shims/macos/build/modulecache"

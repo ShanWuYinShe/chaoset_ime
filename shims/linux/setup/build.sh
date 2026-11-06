@@ -11,7 +11,12 @@ case "$OUT" in
 esac
 cd "$(dirname "$0")"
 CC=${CC:-cc}
-VERSION=${VERSION:-dev}
+# 版本号单一真源 scripts/version.sh：tag 触发的 CI 用 tag 号，其余用 commit
+# hash；Makefile 通过 VERSION 环境变量注入，直接跑时自己调同一个脚本。
+ROOT=$(cd ../../.. && pwd)
+if [ -z "${VERSION:-}" ]; then
+    VERSION=$(sh "$ROOT/scripts/version.sh")
+fi
 
 # shellcheck disable=SC2086
 $CC -std=c11 -O2 -Wall -Wextra -Werror \

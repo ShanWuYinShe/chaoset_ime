@@ -7,16 +7,20 @@
 # 全部手工维护且已经不一致——component XML 还停在 0.1.0，而 tag 早已
 # v0.2.12（2026-10-26 审查发现）。发版时必然漏改。
 #
-# 现在统一从 git tag 推导，各打包步骤通过 $(VERSION) 注入。
-# 不在 git 仓库里（如源码 tarball）时回退到 VERSION 文件或 0.0.0-dev。
-VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
-VERSION := $(if $(VERSION),$(VERSION),0.0.0-dev)
-
-# VERSION_QUAD：从 $(VERSION) 归一化出的 4 段数字版本（如 0.3.17 → 0.3.17.0，
-# 0.0.0-dev → 0.0.0.0）。Windows 版本资源（NSIS VIProductVersion / PE
-# VS_FIXEDFILEINFO）只接受 4 段数字，而人类可读的 $(VERSION) 可能带 -dev 等
-# 后缀。二者同源于 git tag，源码里不写死任何版本号。
-VERSION_QUAD := $(shell echo '$(VERSION)' | sed -E 's/^v//; s/[^0-9.].*$$//; s/[.]+$$//' | awk -F. '{print ($$1+0)"."($$2+0)"."($$3+0)"."($$4+0)}')
+# 2026-11-06 用户规则：**只有 push tag 触发的 GitHub CI 构建**才用 tag 号，
+# 其他一切情况（本地、日常 CI、workflow_dispatch、PR）都用当前 git commit
+# hash。以前取「最近一次发布的 tag」，本地/日常 CI 打的包永远显示它，用户
+# 分不清装的是哪个提交；commit hash 才是构建的真实身份，且本地测试不必
+# 累加版本号。唯一真源是 scripts/version.sh：
+#   VERSION      显示用版本（tag 号或 12 位 commit hash[-dirty]）
+#   VERSION_QUAD 4 段数字版本（NSIS/PE VS_FIXEDFILEINFO 只接受数字）
+#   PKG_VERSION  包管理器版本（deb/Arch 必须合法，含 hash）
+VERSION_SCRIPT := scripts/version.sh
+# 用 sh 显式调用，避免源码 tarball / Windows 检出丢失可执行位时取不到版本。
+VERSION ?= $(shell sh $(VERSION_SCRIPT))
+VERSION := $(if $(VERSION),$(VERSION),nogit)
+VERSION_QUAD := $(shell sh $(VERSION_SCRIPT) --quad)
+PKG_VERSION := $(shell sh $(VERSION_SCRIPT) --pkg)
 VER_MAJOR := $(word 1,$(subst ., ,$(VERSION_QUAD)))
 VER_MINOR := $(word 2,$(subst ., ,$(VERSION_QUAD)))
 VER_PATCH := $(word 3,$(subst ., ,$(VERSION_QUAD)))
@@ -24,11 +28,20 @@ VER_BUILD := $(word 4,$(subst ., ,$(VERSION_QUAD)))
 
 version:
 	@echo $(VERSION)
+	@echo "来源: $(shell sh $(VERSION_SCRIPT) --source)  |  数字版本: $(VERSION_QUAD)  |  包版本: $(PKG_VERSION)" >&2
 
-# check-version：CI 里断言各处的版本占位符没有被写死成具体数字。
-# 具体数字只允许出现在 git tag 里，源码里一律用 $(VERSION) 注入。
+# check-version：CI 里断言各处版本号没写死，且版本源不是「最近的 tag」。
 check-version:
-	@echo "当前版本（由 git tag 推导）: $(VERSION)"
+	@echo "当前版本: $(VERSION)（来源 $(shell sh $(VERSION_SCRIPT) --source)）"
+	@# 禁止「最近一次发布的 tag」再成为版本源：只查非注释的可执行行。
+	@if grep -rn --include='*.sh' --include='*.yml' 'git describe --tags' shims scripts .github 2>/dev/null \
+		| grep -v 'scripts/version.sh' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -q .; then \
+		echo "错误：仍有可执行代码用 git describe --tags 推导版本（应改用 scripts/version.sh）"; exit 1; \
+	fi
+	@# 单一真源必须存在、真的用 commit hash，且只在 tag 触发的 CI 才认 tag。
+	@test -f $(VERSION_SCRIPT) || { echo "错误：缺少 $(VERSION_SCRIPT)"; exit 1; }
+	@grep -q 'rev-parse' $(VERSION_SCRIPT) || { echo "错误：version.sh 未使用 commit hash"; exit 1; }
+	@grep -q 'GITHUB_REF_TYPE' $(VERSION_SCRIPT) || { echo "错误：version.sh 未限定 tag 触发的 CI"; exit 1; }
 	@! grep -rn '^Version: [0-9]' shims/linux/debian/control 2>/dev/null \
 		|| { echo "错误：debian/control 的 Version 仍是写死的数字"; exit 1; }
 	@! grep -qn '<version>[0-9]' shims/linux/component/chaoset.xml 2>/dev/null \
@@ -52,7 +65,14 @@ check-version:
 		|| { echo "错误：NSIS 的 ProductVersion 未使用注入的 VERSION"; exit 1; }
 	@grep -q 'VALUE "ProductVersion", "@VERSION@"' shims/windows/resources/chaoset.rc \
 		|| { echo "错误：资源模板的 ProductVersion 未使用 @VERSION@ 占位符"; exit 1; }
-	@echo "版本号单一真源检查通过（含 Windows 安装器/二进制版本资源）"
+	@# Makefile 本身必须走 version.sh，不能自己取 tag；三端 build.sh 也一样。
+	@grep -q 'VERSION ?= .*VERSION_SCRIPT' Makefile \
+		|| { echo "错误：Makefile 的 VERSION 未取自 scripts/version.sh"; exit 1; }
+	@for s in shims/macos/build.sh shims/windows/build.sh shims/linux/setup/build.sh; do \
+		grep -q 'version.sh' "$$s" \
+			|| { echo "错误：$$s 未使用 scripts/version.sh"; exit 1; }; \
+	done
+	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 commit hash；含 Windows 安装器/二进制版本资源）"
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd
@@ -205,7 +225,7 @@ package-linux:
 		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
-		sed -e '/^#/d' -e "s/@VERSION@/$(VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
+		sed -e '/^#/d' -e "s/@VERSION@/$(PKG_VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
 		mkdir -p dist/deb_staging/usr/share/doc/chaoset-ime; \
 		cp LICENSE dist/deb_staging/usr/share/doc/chaoset-ime/copyright; \
 		cp shims/linux/debian/postinst dist/deb_staging/DEBIAN/postinst; \
@@ -219,7 +239,7 @@ package-linux:
 	fi
 	@if command -v zstd >/dev/null 2>&1; then \
 		echo "==> 构建 Arch Linux 一键安装包 (chaoset-ime-x86_64.pkg.tar.zst)..."; \
-		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst $(VERSION); \
+		./shims/linux/arch/package.sh dist/chaoset-linux-x86_64 dist/chaoset-ime-x86_64.pkg.tar.zst $(PKG_VERSION); \
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 

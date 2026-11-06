@@ -92,6 +92,7 @@ const (
 	winInstaller    = "shims/windows/installer/chaoset.nsi"
 	winInstallBat   = "shims/windows/install.bat"
 	winResource     = "shims/windows/resources/chaoset.rc"
+	linuxSetupBuild = "shims/linux/setup/build.sh"
 	winCoreHpp      = "shims/common/ipc/core.hpp"
 	winCoreCpp      = "shims/common/ipc/core.cpp"
 	linuxEngine     = "shims/linux/engine/main.cpp"
@@ -737,6 +738,25 @@ func checkWindowsVersionInfo(fsys fs.FS, problems *[]string) {
 		"VS_VERSION_INFO", "ChaosetSetup.exe")
 }
 
+// checkVersionSource 锁住 2026-11-06 用户规则：只有 push tag 触发的 GitHub CI
+// 构建用 tag 号，其余一律用 commit hash。本地测试不必累加版本号，又能从
+// hash 定位构建；禁止回退到 git describe --tags 取「最近的 tag」。
+func checkVersionSource(fsys fs.FS, problems *[]string) {
+	const group = "版本号来源"
+	checkExists(fsys, problems, group, "scripts/version.sh")
+	checkContains(fsys, problems, group, "scripts/version.sh",
+		"rev-parse", "GITHUB_REF_TYPE", "GITHUB_EVENT_NAME", "--quad", "--pkg")
+	checkContains(fsys, problems, group, makefile,
+		"VERSION_SCRIPT", "VERSION_QUAD", "PKG_VERSION",
+		"s/@VERSION@/$(PKG_VERSION)/g", "version.sh")
+	checkContains(fsys, problems, group, releaseYML, "scripts/version.sh")
+	checkExcludes(fsys, problems, group, releaseYML, "git describe --tags")
+	for _, s := range []string{winBuild, macBuild, linuxSetupBuild} {
+		checkContains(fsys, problems, group, s, "version.sh")
+		checkExcludes(fsys, problems, group, s, "git describe --tags")
+	}
+}
+
 // checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
 //  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
 //     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
@@ -944,6 +964,8 @@ func Run(fsys fs.FS) []string {
 	checkWindowsInstallSafety(fsys, &problems)
 	// 5b. 安装程序与 Windows 二进制的版本信息 / app 信息（2026-11-06）。
 	checkWindowsVersionInfo(fsys, &problems)
+	// 5c. 版本号来源：tag CI 用 tag，其余用 commit hash（2026-11-06）。
+	checkVersionSource(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1137,5 +1159,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

@@ -54,24 +54,21 @@ jobs:
           go-version-file: go.mod
 
       - name: 构建 Go 二进制与 macOS app
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
-          if [[ "$VERSION" == v* ]]; then
-            export VERSION="${VERSION#v}"
-          else
-            export VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
-          fi
+          # 版本单一真源 scripts/version.sh：只有 push tag 触发的构建用 tag 号，
+          # workflow_dispatch / 日常 CI 一律用 commit hash（本地测试不必累加版本号，
+          # 又能从 hash 定位构建）。不再回退到「最近一次发布的 tag」。
           make build
-          chmod +x shims/macos/build.sh shims/macos/tests/equivalence.sh \
+          chmod +x shims/macos/build.sh \
+                   shims/macos/tests/equivalence.sh \
                    shims/macos/tests/visual-parity.sh
           ./shims/macos/build.sh
-          # 版本号必须来自 tag，而不是 build.sh 的 fallback；release v0.3.1
-          # 曾因 tag 推导失败把 0.0.0-dev 写进安装包，用户无法判断是否更新。
+          expected=$(sh scripts/version.sh)
+          echo "构建版本: $expected（来源 $(sh scripts/version.sh --source)）"
           for app in ChaosetIME ChaosetSetup; do
             got=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
                   "shims/macos/build/$app.app/Contents/Info.plist")
-            [ "$got" = "$VERSION" ] || { echo "$app 版本 = $got，期望 $VERSION"; exit 1; }
+            [ "$got" = "$expected" ] || { echo "$app 版本 = $got，期望 $expected"; exit 1; }
           done
           # 运行组件必须真的在输入法 app 内，而不是散落到 Application Support。
           for f in chaosetd chaoset-import dict_common.tsv; do
@@ -101,14 +98,7 @@ jobs:
           done
 
       - name: 打包 ZIP
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
-          if [[ "$VERSION" == v* ]]; then
-            export VERSION="${VERSION#v}"
-          else
-            export VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
-          fi
           mkdir -p dist
           (cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
           test -f dist/chaoset-macos.zip || { echo "缺少 dist/chaoset-macos.zip"; exit 1; }

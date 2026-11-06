@@ -17,11 +17,12 @@ RequestExecutionLevel admin
 ; 用户无法判断下载/安装的到底是哪一版（2026-11-06 用户反馈）。
 ; VIProductVersion / VIFileVersion 写进 VS_FIXEDFILEINFO，只接受 4 段数字；
 ; VIAddVersionKey 是属性页里显示的 UTF-16 字符串，可用人类可读版本。
-; 两个版本号都由 Makefile 从 git tag（单一真源）注入：VERSION 是 0.3.17 /
-; 0.0.0-dev，VERSION_QUAD 是归一化后的 0.3.17.0 / 0.0.0.0。
+; 两个版本号都由 Makefile 从 scripts/version.sh（单一真源）注入：只有
+; push tag 触发的 GitHub CI 用 tag 号（0.3.17 / 0.3.17.0），其余一律用
+; commit hash（16ccbc41cf6f / 0.0.5836.48193），本地测试不必累加版本号。
 ; 源码里不写死任何版本号，改动由 make check-version 静态拦截。
 !ifndef VERSION
-  !define VERSION "0.0.0-dev"
+  !define VERSION "nogit"
 !endif
 !ifndef VERSION_QUAD
   !define VERSION_QUAD "0.0.0.0"

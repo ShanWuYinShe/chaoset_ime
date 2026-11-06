@@ -200,6 +200,47 @@ func TestCheckWindowsVersionInfo(t *testing.T) {
 	}
 }
 
+// TestCheckVersionSource 用真实文件验证「tag CI 用 tag、其余用 commit hash」
+// 契约，并做变异：version.sh 去掉 rev-parse、release.yml 回退到 describe --tags
+// 都应被捕获。
+func TestCheckVersionSource(t *testing.T) {
+	paths := []string{makefile, winBuild, macBuild, linuxSetupBuild, releaseYML}
+	fsys := fstest.MapFS{}
+	for _, p := range append(paths, "scripts/version.sh") {
+		data, err := os.ReadFile("../../" + p)
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", p, err)
+		}
+		fsys[p] = &fstest.MapFile{Data: data}
+	}
+	var problems []string
+	checkVersionSource(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实版本源实现未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：version.sh 不再用 commit hash。
+	orig := string(fsys["scripts/version.sh"].Data)
+	problems = nil
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(
+		strings.Replace(orig, "rev-parse", "describe --tags", 1))}
+	checkVersionSource(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "rev-parse") {
+		t.Fatalf("version.sh 去掉 rev-parse 应被捕获，实际：%v", problems)
+	}
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(orig)}
+
+	// 变异 2：release.yml 回退到「最近的 tag」。
+	ymlorig := string(fsys[releaseYML].Data)
+	problems = nil
+	fsys[releaseYML] = &fstest.MapFile{Data: []byte(
+		strings.Replace(ymlorig, "mkdir -p dist", "git describe --tags", 1))}
+	checkVersionSource(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "不应包含") {
+		t.Fatalf("release.yml 回退到 git describe --tags 应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckContains(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.txt": &fstest.MapFile{Data: []byte("hello 学习数据")},
