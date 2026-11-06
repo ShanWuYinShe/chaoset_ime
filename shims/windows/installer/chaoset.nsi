@@ -252,9 +252,12 @@ Section "MainSection" SEC01
 
     ; UI 宿主：托盘中英指示器 + 设置窗的唯一进程（每用户会话一个）。
     ; 它必须以**当前登录用户**身份在正常完整性下运行（安装器是提升后的管理员，
-    ; 不能在这里启动），所以只写 Run 项；也由 TSF 首键/点齿轮时懒启动兜底
-    ;（AppContainer 宿主内不能 CreateProcess，必须已有实例才能打开设置窗）。
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi" '"$INSTDIR\chaoset-ui.exe"'
+    ; 不能在这里启动）。2026-11-06 用户要求「托盘图标只在切换到/使用输入法后
+    ; 才显示，不能开机就启动并显示」：因此**不写登录 Run 项**，改由 TSF 首次
+    ; 激活时懒启动（win32.cpp ensureUiHostStarted → chaoset-ui.exe --mode 0/1）。
+    ; 升级时清掉旧版本留下的 Run 项（HKLM 机器级为主，HKCU 兜底）。
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetUi"
 
     ; 写入系统“已安装的应用/控制面板”标准卸载信息。
     ; 除基本信息外补全 app 元数据：版本号、安装位置、安装日期、体积、

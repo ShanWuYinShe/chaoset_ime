@@ -896,6 +896,10 @@ public:
     }
 
     void onLButtonDown(int x, int y);
+    // 设置齿轮在**鼠标抬起**（WM_LBUTTONUP）才打开设置窗（2026-11-06 用户要求：
+    // 按下即弹窗属于误触语义）。按下只记录待触发状态，抬起时仍在齿轮区才生效；
+    // 候选词点选保持按下即选的既有语义。
+    void onLButtonUp(int x, int y);
     // 右键候选行：弹出上下文菜单「删除该词」（先记录命中项，菜单返回后
     // 由 TIP 删除学习记录并刷新候选；详见文件后部定义与 docs/ui-parity.md）。
     void onRButtonUp(int x, int y);
@@ -959,6 +963,8 @@ private:
                 if (PtInRect(&it.itemRect, pt)) return true;
             }
             if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) return true;
+            // 齿轮也算可点区域：悬停显示手型光标，与翻页/候选一致。
+            if (PtInRect(&settingsRect_, pt)) return true;
         }
         return false;
     }
@@ -1072,6 +1078,13 @@ private:
             case WM_LBUTTONDOWN:
                 if (self != nullptr) {
                     self->onLButtonDown(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
+                    return 0;
+                }
+                break;
+            case WM_LBUTTONUP:
+                // 齿轮在抬起时触发（见 onLButtonUp）；点选候选仍在按下时生效。
+                if (self != nullptr) {
+                    self->onLButtonUp(static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)));
                     return 0;
                 }
                 break;
@@ -1630,6 +1643,8 @@ private:
     RECT chevronRect_{};
     int dividerX_ = 0;
     RECT settingsRect_{}; // 设置齿轮命中区
+    // 齿轮按下但尚未抬起（见 onLButtonUp）：只在 mouseup 打开设置窗。
+    bool gearPressed_ = false;
 };
 
 // ---- 传输：Windows 命名管道 ----
@@ -1960,7 +1975,8 @@ static void diagDaemonRequestFailure(PipeTransport& transport, const char* op) {
 //      AppContainer）里会被沉浸式 z 序 band 压住，且文件对话框、导入器进程、
 //      重启 daemon 在 AC 里都不可用；宿主退出还会带走设置窗。
 // 因此任务栏中英指示器与设置窗统一交给「每用户会话唯一」的后台 UI 进程
-// （chaoset-ui.exe，登录 Run 项常驻 + TIP 按需拉起）。TIP 只通过命名管道上报
+// （chaoset-ui.exe，**不随登录启动**：TIP 首次激活时带 --mode 懒启动；托盘
+// 图标也只在第一次上报后显示，见 runUiHost）。TIP 只通过命名管道上报
 // 模式、请求打开设置，不持有任何 UI。
 //
 // 管道安全描述符与 daemon 完全同规则：DACL 当前用户 + SYSTEM +
@@ -2173,12 +2189,14 @@ static bool uiSpawnHost(const wchar_t* args) {
 }
 
 // 按需拉起 UI 宿主（5s 节流）：托盘指示器 / 设置窗都靠它。只在管道连不上时调用。
-static void ensureUiHostStarted() {
+// args 可为 "--mode 0/1"（TIP 首次激活时带上当前中英状态，UI 宿主起来后
+// 直接显示正确模式）或 "--settings"。
+static void ensureUiHostStarted(const wchar_t* args) {
     static DWORD lastAttempt = 0;
     const DWORD now = GetTickCount();
     if (lastAttempt != 0 && now - lastAttempt < 5000) return;
     lastAttempt = now;
-    if (!uiSpawnHost(nullptr)) {
+    if (!uiSpawnHost(args)) {
         static volatile LONG logged = 0;
         if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
             diagPrintf(L"tsf.log", "ui host spawn failed appcontainer=%d elevated=%d\n",
@@ -2189,7 +2207,8 @@ static void ensureUiHostStarted() {
 
 // 打开设置窗：优先请求已在运行的 UI 宿主；没有就让 UI 宿主带 --settings 启动
 // （首实例会直接弹出设置窗，第二实例把请求转给首实例后退出）。AppContainer
-// 宿主不能发起进程，只能走已运行实例（登录 Run 项负责常驻），失败时由调用方
+// 宿主不能发起进程，只能走已运行实例（通常由此前正常宿主里的一次输入激活懒启动），
+// 失败时由调用方
 // 通过 daemon 代拉起（见 ChaosetTIP::showSettingsWindow）。
 static bool openSettingsViaUi() {
     // TIP 所在宿主进程通常就是前台进程：显式授权 UI 宿主把设置窗切到前台，
@@ -2236,7 +2255,9 @@ static bool reportModeToUi(bool english, bool allowSpawn) {
     const char* command = english ? "mode 1" : "mode 0";
     // 单次非阻塞尝试：本函数跑在宿主 UI 线程（Activate/OnSetFocus）上。
     if (uiSendCommandFast(command)) return true;
-    if (allowSpawn) ensureUiHostStarted();
+    // 首次激活时 UI 宿主还没起来：把当前模式一起带过去，UI 宿主首启即显示
+    // 正确的托盘中英状态（此前不带模式会停在 HKCU 旧值直到下一次上报）。
+    if (allowSpawn) ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0");
     return false;
 }
 
@@ -2495,8 +2516,6 @@ struct ITfTextInputProcessorEx : public ITfTextInputProcessor {
 };
 
 
-// 托盘左键单击 → 打开设置窗（实现在 UI 宿主段；这里只需前向声明）。
-static void onUiTrayIconClicked();
 // 托盘右键菜单（实现在 UI 宿主段；需要 g_uiHostWnd/openSettings 等）。
 static void showTrayMenu(HWND owner);
 
@@ -2533,7 +2552,11 @@ public:
     UiTray& operator=(const UiTray&) = delete;
     ~UiTray() { destroy(); }
 
+    // 注意：show() 同时把图标标记为「用户期望可见」。UI 宿主启动时不调用
+    // show()（2026-11-06 用户要求：托盘图标只在切换到/使用输入法后出现，
+    // 不能开机就显示）；只有收到 TIP 的模式上报后才第一次 show。
     void show(bool english) {
+        visible_ = true;
         if (!ensureWindow()) {
             logFailure("window", GetLastError());
             return;
@@ -2573,6 +2596,7 @@ public:
     bool isShown() const { return shown_; }
 
     void hide() {
+        visible_ = false;
         if (hwnd_ != nullptr) KillTimer(hwnd_, kRetryTimerId);
         if (!shown_) return;
         NOTIFYICONDATAW nid{};
@@ -2590,6 +2614,7 @@ private:
     HWND hwnd_ = nullptr;
     HICON icon_ = nullptr;
     bool shown_ = false;
+    bool visible_ = false;  // 用户期望托盘可见（首次模式上报后置 true）
     bool english_ = false;
     // 是否已把本窗口计入 g_liveTrayWindows（WM_NCDESTROY 里按此判断是否归还，
     // 避免窗口创建失败路径把计数减成负数→ DllCanUnloadNow 恒 S_FALSE）。
@@ -2616,8 +2641,10 @@ private:
             // icon_ != nullptr 时才重加，若首次 NIM_ADD 就失败（登录早期）
             // 会整场没有图标（2026-11-05 评审 P1）。
             if (self != nullptr) {
+                // 只有用户已经「见过」托盘（visible_）才在 explorer 重启后恢复；
+                // 启动阶段从未显示过的会话不能被 TaskbarCreated 提前点亮。
                 self->shown_ = false;
-                self->show(self->english_);
+                if (self->visible_) self->show(self->english_);
             }
             return 0;
         }
@@ -5369,9 +5396,12 @@ private:
 void CandidateWindow::onLButtonDown(int x, int y) {
     POINT pt{ x, y };
     if (tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
-        tip_->showSettingsWindow();
+        // 设置入口**在鼠标抬起时**才打开（2026-11-06 用户要求：按下即弹窗
+        // 容易被误触，和普通按钮语义不一致）。按下只记录待触发状态。
+        gearPressed_ = true;
         return;
     }
+    gearPressed_ = false;
     for (const auto& it : items_) {
         if (PtInRect(&it.itemRect, pt)) {
             if (tip_ != nullptr) {
@@ -5396,6 +5426,15 @@ void CandidateWindow::onLButtonDown(int x, int y) {
                 tip_->flipPage(dirDown);
             }
         }
+    }
+}
+
+void CandidateWindow::onLButtonUp(int x, int y) {
+    const POINT pt{ x, y };
+    const bool armed = gearPressed_;
+    gearPressed_ = false;
+    if (armed && tip_ != nullptr && PtInRect(&settingsRect_, pt)) {
+        tip_->showSettingsWindow();
     }
 }
 
@@ -5471,8 +5510,9 @@ static int g_settingsDpi = 96;              // 设置窗所在显示器 DPI（pe
 static HFONT g_settingsFont = nullptr;      // 正文/标签 13pt
 static HFONT g_settingsFontBold = nullptr;  // 分组标题 13pt Bold
 static HFONT g_settingsFontHint = nullptr;  // 说明文字 11pt
-static HBRUSH g_settingsBgBrush = nullptr;  // 背景刷（主题切换时重建）
-static bool g_settingsDark = false;         // 当前系统是否深色
+static HBRUSH g_settingsBgBrush = nullptr;    // 窗口背景刷（主题切换时重建）
+static HBRUSH g_settingsCardBrush = nullptr; // 卡片背景刷（子控件擦除背景必须用它）
+static bool g_settingsDark = false;           // 当前系统是否深色
 static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘复选框）
 
 // ---- 设置窗布局：左侧导航 + 右侧分组卡片 + 滚动（2026-11-06 重构）----
@@ -5510,18 +5550,53 @@ static RECT settingsContentRect() {
     return r;
 }
 
-// 本页内容总高度（用于决定滚动条范围）。按页手工声明——页内容固定，
-// 不需要通用布局树；保持「一眼能算出高度」比引入布局框架更可控。
-static int settingsPageContentHeight(SettingsPage page) {
+// 卡片定义（pt，y 相对内容区顶部、h 含上下内边距）。卡片标题由 settingsPaint
+// 绘制；卡片内控件按「标题带 + 行」固定节奏摆放（kSettingsCtl），标题带占
+// y+12..y+34，控件从 y+42 开始——两者不重叠。此前用一组固定坐标手摆控件，
+// 第二张卡的标题（中英状态）被三选一按钮压住（2026-11-06 用户截图）。
+struct SettingsCardDef {
+    int y;
+    int h;
+    const wchar_t* caption;
+};
+
+static const SettingsCardDef kInputCards[] = {
+    {0, 108, L"输入行为"},
+    {122, 110, L"中英状态"},
+};
+static const SettingsCardDef kDictionaryCards[] = {
+    {0, 134, L"学习数据"},
+    {146, 110, L"词库"},
+};
+static const SettingsCardDef kAboutCards[] = {
+    {0, 150, L"关于"},
+};
+
+// 返回本页卡片表与数量（数组顺序即绘制顺序）。
+static const SettingsCardDef* settingsCards(SettingsPage page, int* count) {
     switch (page) {
         case SettingsPage::Input:
-            return 300;
+            *count = static_cast<int>(sizeof(kInputCards) / sizeof(kInputCards[0]));
+            return kInputCards;
         case SettingsPage::Dictionary:
-            return 340;
+            *count = static_cast<int>(sizeof(kDictionaryCards) / sizeof(kDictionaryCards[0]));
+            return kDictionaryCards;
         case SettingsPage::About:
-            return 220;
+            *count = static_cast<int>(sizeof(kAboutCards) / sizeof(kAboutCards[0]));
+            return kAboutCards;
     }
-    return 200;
+    *count = 0;
+    return nullptr;
+}
+
+// 本页内容总高度（滚动条范围）。当前 640×560pt 下三页都放得下，滚动代码留作
+// 以后加设置项时直接生效。
+static int settingsPageContentHeight(SettingsPage page) {
+    int count = 0;
+    const SettingsCardDef* cards = settingsCards(page, &count);
+    if (cards == nullptr || count == 0) return 0;
+    const SettingsCardDef& last = cards[count - 1];
+    return last.y + last.h;
 }
 
 static int settingsMaxScroll() {
@@ -5591,13 +5666,27 @@ static void settingsApplyDarkTitleBar(HWND wnd, bool dark) {
     if (FAILED(fn(wnd, 20, &v, sizeof(v)))) fn(wnd, 19, &v, sizeof(v));
 }
 
-// 主题切换：重建背景刷、标题栏、重绘所有自绘控件（候选窗/Toast 另有实现）。
+// 卡片底色：自绘子控件的背景必须与所在卡片一致。此前统一用窗口背景刷，
+// 卡片（0x2A2A2E）上会留下一条窗口底色（0x1E1E20）的横条——用户截图里
+// 「设置项标题被挡住」的观感就是它（2026-11-06）。
+static COLORREF settingsCardColor() {
+    return g_settingsDark ? RGB(0x2A, 0x2A, 0x2E) : RGB(0xFA, 0xFA, 0xFC);
+}
+
+// 子控件（Static / 自绘按钮）擦除背景统一用它；刷子还没建好时退回窗口刷。
+static HBRUSH settingsControlBg() {
+    return g_settingsCardBrush != nullptr ? g_settingsCardBrush : g_settingsBgBrush;
+}
+
+// 主题切换：重建背景/卡片刷、标题栏、重绘所有自绘控件（候选窗/Toast 另有实现）。
 static void settingsUpdateTheme(HWND wnd) {
     g_settingsDark = isSystemDarkTheme();
     if (g_settingsBgBrush != nullptr) DeleteObject(g_settingsBgBrush);
     g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+    if (g_settingsCardBrush != nullptr) DeleteObject(g_settingsCardBrush);
+    g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
     settingsApplyDarkTitleBar(wnd, g_settingsDark);
-    for (int id : {101, 106, 107, 110, 121, 122, 123}) {
+    for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 123, 124}) {
         HWND c = GetDlgItem(wnd, id);
         if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
     }
@@ -5615,21 +5704,24 @@ struct SettingsCtlItem {
     int fontKind;     // 0=正文 1=加粗 2=提示
 };
 
+// 控件相对内容区左上角的坐标（pt），必须落在上面卡片定义的「标题带之下」：
+// 输入页卡 1 从 y=42 开始、卡 2 从 122+42=164 开始；词库页卡 1 从 42、卡 2 从
+// 146+42=188 开始。x=16 即卡片内边距 kCardPad。
 static const SettingsCtlItem kSettingsCtl[] = {
     // ---- 输入页 ----
-    {101, SettingsPage::Input, 20, 44, 200, 26, 0},   // 词组联想
-    {102, SettingsPage::Input, 20, 74, 380, 18, 2},   // 说明
-    {121, SettingsPage::Input, 20, 130, 110, 28, 0},  // 系统共享
-    {122, SettingsPage::Input, 138, 130, 110, 28, 0}, // 每程序
-    {123, SettingsPage::Input, 256, 130, 110, 28, 0}, // 每窗口
-    {124, SettingsPage::Input, 20, 166, 400, 18, 2},  // 说明
+    {101, SettingsPage::Input, 16, 42, 240, 26, 0},   // 词组联想
+    {102, SettingsPage::Input, 16, 74, 436, 18, 2},   // 说明
+    {121, SettingsPage::Input, 16, 164, 110, 28, 0},  // 系统共享
+    {122, SettingsPage::Input, 134, 164, 110, 28, 0}, // 每程序
+    {123, SettingsPage::Input, 252, 164, 110, 28, 0}, // 每窗口
+    {124, SettingsPage::Input, 16, 198, 436, 18, 2},  // 说明
     // ---- 词库页 ----
-    {105, SettingsPage::Dictionary, 20, 44, 400, 18, 0},   // 学习数据统计
-    {106, SettingsPage::Dictionary, 20, 76, 130, 28, 0},   // 清空
-    {107, SettingsPage::Dictionary, 158, 76, 130, 28, 0},  // 导出
-    {108, SettingsPage::Dictionary, 20, 112, 400, 18, 2},  // 说明
-    {110, SettingsPage::Dictionary, 20, 160, 150, 28, 0},  // 导入词库
-    {112, SettingsPage::Dictionary, 20, 196, 400, 18, 2},  // 说明
+    {105, SettingsPage::Dictionary, 16, 42, 436, 18, 0},   // 学习数据统计
+    {106, SettingsPage::Dictionary, 16, 66, 130, 28, 0},   // 清空
+    {107, SettingsPage::Dictionary, 158, 66, 130, 28, 0},  // 导出
+    {108, SettingsPage::Dictionary, 16, 100, 436, 18, 2},  // 说明
+    {110, SettingsPage::Dictionary, 16, 188, 150, 28, 0},  // 导入词库
+    {112, SettingsPage::Dictionary, 16, 222, 436, 18, 2},  // 说明
 };
 
 static void settingsLayoutControls(HWND wnd) {
@@ -5725,7 +5817,9 @@ static void settingsPaint(HDC dc, HWND wnd) {
     // 2) 左侧导航栏底色（比背景略深/略浅一档，形成分栏）
     RECT nav{0, 0, settingsPt(kNavWidth), H};
     const COLORREF navBg = g_settingsDark ? RGB(0x24, 0x24, 0x27) : RGB(0xF5, 0xF5, 0xF7);
-    FillRect(dc, &nav, CreateSolidBrush(navBg));
+    HBRUSH navBrush = CreateSolidBrush(navBg);
+    FillRect(dc, &nav, navBrush);
+    DeleteObject(navBrush);
 
     // 3) 应用标题
     SetBkMode(dc, TRANSPARENT);
@@ -5751,46 +5845,36 @@ static void settingsPaint(HDC dc, HWND wnd) {
         SelectObject(dc, of);
     }
 
-    // 5) 右侧内容卡片
+    // 5) 右侧内容卡片：卡片底 + 卡片标题（自绘）；交互控件是子窗口、叠在卡片上。
+    //    标题带固定 top+12..top+34，卡片内控件从 top+42 起（kSettingsCtl 同口径）。
     const RECT content = settingsContentRect();
     const int cardX = settingsPt(content.left);
     const int cardW = settingsPt(content.right - content.left);
-    auto drawCard = [&](int y, int h, const wchar_t* caption) {
-        RECT card{cardX, settingsPt(y), cardX + cardW, settingsPt(y + h)};
-        const COLORREF cardBg = g_settingsDark ? RGB(0x2A, 0x2A, 0x2E) : RGB(0xFA, 0xFA, 0xFC);
-        settingsFillRoundRect(dc, card, settingsPt(kCardRadius), cardBg);
+    const int baseY = content.top - g_settingsScroll;
+    int cardCount = 0;
+    const SettingsCardDef* cards = settingsCards(g_settingsPage, &cardCount);
+    for (int i = 0; i < cardCount; ++i) {
+        const SettingsCardDef& card = cards[i];
+        RECT rc{cardX, settingsPt(baseY + card.y), cardX + cardW,
+                settingsPt(baseY + card.y + card.h)};
+        settingsFillRoundRect(dc, rc, settingsPt(kCardRadius), settingsCardColor());
         SetTextColor(dc, c.secondary);
         HGDIOBJ of = SelectObject(dc, g_settingsFontBold);
-        RECT cap{card.left + settingsPt(kCardPad), card.top + settingsPt(12),
-                 card.right - settingsPt(kCardPad), card.top + settingsPt(34)};
-        DrawTextW(dc, caption, -1, &cap, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(12),
+                 rc.right - settingsPt(kCardPad), rc.top + settingsPt(34)};
+        DrawTextW(dc, card.caption, -1, &cap, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
-    };
-    const int baseY = content.top - g_settingsScroll;
-    if (g_settingsPage == SettingsPage::Input) {
-        drawCard(baseY, 100, L"词组联想");
-        drawCard(baseY + 114, 106, L"中英状态");
-    } else if (g_settingsPage == SettingsPage::Dictionary) {
-        drawCard(baseY, 132, L"学习数据");
-        drawCard(baseY + 146, 166, L"词库");
-    } else {
-        drawCard(baseY, 150, L"关于");
-        // 关于页信息直接画（没有交互控件）
+    }
+    if (g_settingsPage == SettingsPage::About) {
+        // 关于页没有交互控件：正文直接画在卡片里；版本号只在页脚出现，避免重复。
+        RECT dr{cardX + settingsPt(kCardPad), settingsPt(baseY + 44),
+                cardX + cardW - settingsPt(kCardPad), settingsPt(baseY + 136)};
         SetTextColor(dc, c.text);
-        HGDIOBJ of = SelectObject(dc, g_settingsFont);
-        wchar_t ver[128];
-        swprintf_s(ver, L"Chaoset 版本 %hs", CHAOSET_VERSION);
-        RECT vr{settingsPt(content.left + kCardPad), settingsPt(baseY + 44),
-                settingsPt(content.right - kCardPad), settingsPt(baseY + 68)};
-        DrawTextW(dc, ver, -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        SetTextColor(dc, c.secondary);
-        HGDIOBJ of2 = SelectObject(dc, g_settingsFontHint);
-        RECT dr{settingsPt(content.left + kCardPad), settingsPt(baseY + 72),
-                settingsPt(content.right - kCardPad), settingsPt(baseY + 130)};
+        HGDIOBJ of = SelectObject(dc, g_settingsFontHint);
         DrawTextW(dc, L"跨平台中文输入法（Windows TSF 壳）\n代码 MIT · 词库 CC BY-SA 4.0\n"
+                      L"更多设置将在后续版本提供\n"
                       L"https://github.com/ShanWuYinShe/chaoset_ime",
                   -1, &dr, DT_LEFT | DT_WORDBREAK);
-        SelectObject(dc, of2);
         SelectObject(dc, of);
     }
 
@@ -5823,7 +5907,7 @@ static void settingsPaint(HDC dc, HWND wnd) {
 static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
-    FillRect(dc, &dis->rcItem, g_settingsBgBrush);
+    FillRect(dc, &dis->rcItem, settingsControlBg());
     const bool focused = (dis->itemState & ODS_FOCUS) != 0;
     ModeScope current = uiLoadModeScope();
     bool selected = false;
@@ -5864,7 +5948,7 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
 static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
-    FillRect(dc, &dis->rcItem, g_settingsBgBrush);
+    FillRect(dc, &dis->rcItem, settingsControlBg());
     const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
     RECT r = dis->rcItem;
     const COLORREF fillColor = pressed ? c.border
@@ -5892,7 +5976,7 @@ static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
 static void settingsDrawCheckbox(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
-    FillRect(dc, &dis->rcItem, g_settingsBgBrush);
+    FillRect(dc, &dis->rcItem, settingsControlBg());
     const int box = settingsPt(14);
     const int top = dis->rcItem.top + ((dis->rcItem.bottom - dis->rcItem.top) - box) / 2;
     RECT br{dis->rcItem.left, top, dis->rcItem.left + box, top + box};
@@ -6348,20 +6432,22 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             break;
         }
         case WM_CTLCOLORSTATIC: {
-            // 说明文字/分组标题用次级文本色（macOS secondaryLabel 对应），
-            // 正文用主文本色；背景统一返回主题背景刷（深色模式必需）。
+            // 说明文字用次级文本色（macOS secondaryLabel 对应），正文用主文本色。
+            // 背景返回**卡片刷**：这些 Static 都在卡片上，用窗口背景刷会画出
+            // 一条深色横条（2026-11-06 用户截图）。
             if (g_settingsBgBrush == nullptr) {
                 g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
             }
+            if (g_settingsCardBrush == nullptr) {
+                g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
+            }
             const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
             const SettingsColors c = settingsColors(g_settingsDark);
-            const bool secondary = (id == 100 || id == 109 || id == 111 || id == 120 ||
-                                    id == 102 || id == 103 || id == 104 || id == 108 ||
-                                    id == 112 || id == 124);
+            const bool secondary = (id == 102 || id == 108 || id == 112 || id == 124);
             HDC dc = reinterpret_cast<HDC>(wParam);
             SetTextColor(dc, secondary ? c.secondary : c.text);
             SetBkMode(dc, TRANSPARENT);
-            return reinterpret_cast<LRESULT>(g_settingsBgBrush);
+            return reinterpret_cast<LRESULT>(settingsControlBg());
         }
         case WM_SETTINGCHANGE:
         case WM_THEMECHANGED:
@@ -6378,6 +6464,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case WM_DESTROY:
             settingsDeleteFonts();
             if (g_settingsBgBrush != nullptr) { DeleteObject(g_settingsBgBrush); g_settingsBgBrush = nullptr; }
+            if (g_settingsCardBrush != nullptr) { DeleteObject(g_settingsCardBrush); g_settingsCardBrush = nullptr; }
             g_settingsWnd = nullptr;
             InterlockedDecrement(&g_liveSettingsWindows);
             return 0;
@@ -6446,35 +6533,28 @@ static void openSettingsWindowStandalone(SettingsPage page = SettingsPage::Input
     g_settingsWnd = wnd;
     InterlockedIncrement(&g_liveSettingsWindows);
 
-    // 分组标题用加粗 Static（与 macOS 同构；深色下不会出现浅色 GroupBox 边框）；
-    // 复选框与按钮自绘（BS_OWNERDRAW），深色/浅色都跟随主题。
+    // 分组标题/页脚版本号/关于页正文由 settingsPaint 自绘（卡片标题），不再
+    // 创建 Static 标题控件——旧实现里 100/103/104/109/111/113/120 这 7 个
+    // 标题控件从未参与布局，既不可见又容易和卡片标题重复（2026-11-06）。
+    // 交互控件用 BS_OWNERDRAW 子窗口，保留 Tab/键盘可达性；背景由自绘函数
+    // 用卡片刷擦除（见 settingsControlBg）。
     auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text, int id) {
         return CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
                                0, 0, 0, 0, wnd,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
     };
-    makeCtl(L"Static", SS_LEFT, L"输入行为", 100);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"词组联想", 101);
-    makeCtl(L"Static", SS_LEFT, L"选词上屏后展示可续接的词组候选；", 102);
-    makeCtl(L"Static", SS_LEFT, L"关闭后不再弹出联想候选。", 103);
-    // 中英状态作用域（2026-11-06 用户要求可配置）：三选一按钮组。
-    // 说明写清楚差异，避免用户不知道「系统共享」和「每窗口」到底差在哪。
-    makeCtl(L"Static", SS_LEFT, L"中英状态", 120);
+    makeCtl(L"Static", SS_LEFT, L"选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。", 102);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"系统共享", 121);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每程序", 122);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每窗口", 123);
     makeCtl(L"Static", SS_LEFT, L"切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。", 124);
-    makeCtl(L"Static", SS_LEFT, L"学习数据", 109);
     makeCtl(L"Static", SS_LEFT, L"读取中…", 105);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"清空学习数据…", 106);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导出学习数据…", 107);
     makeCtl(L"Static", SS_LEFT, L"学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。", 108);
-    makeCtl(L"Static", SS_LEFT, L"词库", 111);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导入词库…", 110);
-    makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。", 112);
-    makeCtl(L"Static", SS_LEFT, L"更多设置将在后续版本提供", 104);
-    std::wstring versionText = L"Chaoset 版本 " + toWide(CHAOSET_VERSION);
-    makeCtl(L"Static", SS_LEFT, versionText.c_str(), 113);
+    makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。", 112);
 
     settingsLayoutControls(wnd);
     settingsUpdateTheme(wnd);
@@ -6551,7 +6631,8 @@ void ChaosetTIP::showSettingsWindow() {
 // 单实例：Local\ChaosetUi-<SID>-<session> 互斥体。第二个实例若带 --settings，
 // 就把 "settings" 命令转发给首实例后退出（连点齿轮不会开多个设置窗）。
 //
-// 生命周期：登录 Run 项常驻；TIP 在托盘/设置窗需要时按需拉起
+// 生命周期：不写登录 Run 项（2026-11-06 用户要求：开机不显示托盘，切到输入法
+// 才显示）；TIP 首次激活时用 --mode 懒启动，设置窗入口用 --settings 拉起
 // （ensureUiHostStarted / openSettingsViaUi / daemon 代拉起）。退出只由本输入法
 // 自己的维护动作触发（安装器 taskkill，或向隐藏窗口 PostMessage(WM_CLOSE) 做
 // 测试）——命令管道**不接受 quit**：DACL 对 ALL APPLICATION PACKAGES 开放，
@@ -6571,11 +6652,6 @@ HWND g_uiHostWnd = nullptr;
 static UiTray* g_uiTray = nullptr;  // 进程生命周期内唯一托盘实例（仅 UI 主线程使用）
 static HANDLE g_uiStopEvent = nullptr;
 static volatile LONG g_uiStopping = 0;
-
-// UiTray 左键单击入口（UiTray::wndProc 里调用；只投递消息，不直接建窗）。
-static void onUiTrayIconClicked() {
-    if (g_uiHostWnd != nullptr) PostMessageW(g_uiHostWnd, kUiOpenSettingsMsg, 0, 0);
-}
 
 // 托盘右键菜单（2026-11-06 用户要求）。
 //
@@ -6849,16 +6925,29 @@ static int runUiHost(LPCWSTR cmdLine) {
     if (!mutexName.empty()) {
         mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
         if (mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
-            // 已有实例：带 --settings 时把请求转发给首实例。首实例可能还没开始
-            // 监听管道（互斥体在管道线程之前创建），这里做 ~2s 的短重试。
-            const bool wantSettings =
-                cmdLine != nullptr && wcsstr(cmdLine, L"--settings") != nullptr;
-            if (wantSettings) {
-                bool sent = false;
-                for (int i = 0; i < 100 && !sent; ++i) {
-                    sent = uiSendCommand("settings", 1);
-                    if (!sent) Sleep(20);
+            // 已有实例：把 --settings / --mode 请求转发给首实例。首实例可能还没
+            // 开始监听管道（互斥体在管道线程之前创建），这里做 ~2s 的短重试。
+            bool wantSettings = false;
+            bool wantMode = false;
+            bool modeEnglish = false;
+            if (cmdLine != nullptr) {
+                wantSettings = wcsstr(cmdLine, L"--settings") != nullptr;
+                if (wcsstr(cmdLine, L"--mode 1") != nullptr) {
+                    wantMode = true;
+                    modeEnglish = true;
+                } else if (wcsstr(cmdLine, L"--mode 0") != nullptr) {
+                    wantMode = true;
                 }
+            }
+            if (wantSettings || wantMode) {
+                bool sentSettings = !wantSettings;
+                bool sentMode = !wantMode;
+                for (int i = 0; i < 100 && (!sentSettings || !sentMode); ++i) {
+                    if (!sentMode) sentMode = uiSendCommand(modeEnglish ? "mode 1" : "mode 0", 1);
+                    if (!sentSettings) sentSettings = uiSendCommand("settings", 1);
+                    if (!sentSettings || !sentMode) Sleep(20);
+                }
+                bool sent = sentSettings && sentMode;
                 if (!sent) {
                     diagPrintf(L"tsf.log", "ui host: forward settings failed after retry\\n");
                 }
@@ -6887,11 +6976,12 @@ static int runUiHost(LPCWSTR cmdLine) {
         return 1;
     }
 
-    // 托盘中英指示器：整个用户会话唯一。恢复上次模式；TIP 焦点/切换时上报。
+    // 托盘中英指示器：整个用户会话唯一。**启动时不显示**（2026-11-06 用户
+    // 要求：托盘图标只在切换到/使用输入法后才出现；UI 宿主也不再由登录 Run
+    // 项启动，改为 TIP 首次激活时带 --mode 懒启动，见 ensureUiHostStarted）。
     g_uiTray = new UiTray();
     // 权威状态初始化：优先 HKCU 记忆（上次托盘显示的状态），否则中文。
     g_uiEnglish = uiLoadSavedEnglish();
-    g_uiTray->show(g_uiEnglish);
 
     // 先启动管道线程，再处理 --settings：否则二次实例的转发请求会赶在监听前
     // 到达（虽然它自身有重试，这里尽量避免）。
@@ -6907,8 +6997,27 @@ static int runUiHost(LPCWSTR cmdLine) {
         return 1;
     }
 
-    // 首次带 --settings 启动（TIP 侧连不上管道时的拉起路径）：直接弹设置窗。
-    if (cmdLine != nullptr && wcsstr(cmdLine, L"--settings") != nullptr) {
+    // 命令行语义：
+    //   --settings   TIP 点齿轮但 UI 宿主没在跑时的拉起路径，首实例直接弹设置窗；
+    //   --mode 0/1   TIP 首次激活时带上的当前中英状态——这是托盘图标第一次
+    //                显示的时刻（开机不显示，切到输入法才显示）。
+    bool wantSettings = false;
+    bool haveMode = false;
+    bool modeEnglish = false;
+    if (cmdLine != nullptr) {
+        wantSettings = wcsstr(cmdLine, L"--settings") != nullptr;
+        if (wcsstr(cmdLine, L"--mode 1") != nullptr) {
+            haveMode = true;
+            modeEnglish = true;
+        } else if (wcsstr(cmdLine, L"--mode 0") != nullptr) {
+            haveMode = true;
+        }
+    }
+    if (haveMode) {
+        // 首实例：显示托盘 + 把权威状态写回 HKCU（此后 TIP 焦点事件上报会覆盖）。
+        uiApplyEnglish(modeEnglish);
+    }
+    if (wantSettings) {
         Sleep(30);  // 给管道线程一个创建实例的机会
         openSettingsWindowStandalone();
     }

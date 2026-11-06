@@ -71,6 +71,9 @@ Windows 常用 pt 值在各 DPI 下的设备像素（四舍五入）：
 - chevron 与齿轮同高，垂直居中；chevX = blockTop + 8 + 3，水平居中；
 - 分隔线高 = textH * 55%，垂直居中；
 - 齿轮 = 圆环 + 8 齿矢量算法，macOS/Windows 同几何参数、同色值；Linux 无齿轮；
+- 齿轮触发时机：按下（mouseDown/WM_LBUTTONDOWN）只记录命中、不打开设置，
+  抬起（mouseUp/WM_LBUTTONUP）且仍在齿轮区才打开设置窗；按下后拖走再松开不
+  触发。候选词点选保持按下即选（2026-11-06 用户要求：设置入口不能按下即弹窗）；
 - 面板圆角、键帽圆角、Toast 圆角按 pt 统一。
 
 ## 色值
@@ -119,9 +122,9 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 
 | 能力 | macOS | Windows | Linux | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| 设置入口 | 候选栏齿轮 → AppKit 设置窗 | 候选栏齿轮 / 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开） |
+| 设置入口 | 候选栏齿轮（mouseUp 抬起才打开）→ AppKit 设置窗 | 候选栏齿轮（mouseUp 抬起才打开）/ 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开）；齿轮按下只记录、抬起且仍在齿轮区才触发 |
 | 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标；TIP 经命名管道上报模式，不在光标/鼠标旁弹提示 | 由 ibus/桌面环境指示 | 2026-11-05 用户反馈定稿：每用户会话只许一个状态指示器 |
-| Windows UI 宿主 | — | `chaoset-ui.exe`（登录 Run 项 + TIP 懒启动；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标 |
+| Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘图标收到首条模式上报后才出现**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
 | 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端都支持 system/process/window 三档，默认 system |
@@ -136,7 +139,38 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 窗口层级 | .floating(3)，不遮蔽菜单栏 | WS_EX_TOPMOST + owner=宿主窗口 | owned 候选窗在宿主之上，可跨开始菜单/搜索的沉浸式 z 序 |
 | 全屏免打扰 | 无 AppKit 对应机制 | D3D 全屏/演示模式抑制候选窗；FullscreenSuppress 注册表可关 | 只抑制显示，不改变按键/组词；无边框全屏不触发 |
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
-| 设置窗 | 左导航三页（输入/词库/关于）+ 右侧内容页，NSSwitch | 左导航三页（输入/词库/关于）+ 右侧卡片 + 页脚版本号 + 滚动，640×560pt | GtkStackSidebar + GtkStack 三页（输入/词库/关于）；Windows 深色/DPI 需真机验收 |
+| 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 候选词点选仍是按下即选；按下即弹设置属误触（2026-11-06 用户要求） |
+| 设置窗 | 左导航三页（输入/词库/关于，132pt）+ 内容页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器），选中项 accent 胶囊 | 左导航 132pt + 右侧圆角卡片 + 底部页脚版本号 + 滚动，640×560pt；深色/DPI 需真机验收 | GtkStackSidebar + 三页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器） |
+
+## 设置窗契约（2026-11-06 阶段2）
+
+三端设置窗共享骨架、分组标题与文案；**卡片容器是 Windows 的视觉实现**，macOS/Linux
+用原生分组（AppKit/GTK 不做像素级卡片），但分组标题/顺序/组内行序/文案必须一致，
+由 tools/checkuiparity 静态断言。
+
+- 尺寸与骨架：客户区 640×560pt；左侧导航宽 132pt，三项「输入 / 词库 / 关于」，
+  选中项 accent（RGB 0A84FF）胶囊高亮；右侧内容区左右各 20pt 边距；页脚固定
+  34pt 高，**所有页**显示「Chaoset 版本 x.y.z」。
+- 卡片外观（仅 Windows）：圆角 10pt，浅/深底色 #FAFAFC / #2A2A2E，卡片标题
+  13pt bold secondary；标题带 y+12..34pt，内容从 y+42pt 起（标题与控件不重叠，
+  控件背景按所在卡片颜色绘制）。macOS/Linux 必须满足：分组标题文案与顺序一致、
+  组内行序一致、无标题被控件遮挡。
+- 滚动：仅 Windows 实现（640×560pt 下三页都放得下，代码留作扩展）；macOS/Linux
+  不要求滚动。
+- 分组与文案（三端统一）：
+  - 输入页卡 1「输入行为」：行「词组联想」开关；说明「选词上屏后展示可续接的
+    词组候选；关闭后不再弹出联想候选。」
+  - 输入页卡 2「中英状态」：三选一「系统共享 / 每程序 / 每窗口」；说明「切一次
+    所有程序都生效（推荐）；后两者仅当前程序/窗口独立。」
+  - 词库页卡 1「学习数据」：统计行 + 清空/导出按钮 + 说明「学习数据仅保存在
+    本机，用于调频与词组联想；清空后不可恢复。」
+  - 词库页卡 2「词库」：导入按钮 + 统一说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」
+    （macOS 导入机制不同，统一句后补「会打开『Chaoset 安装与设置』完成导入」括注。）
+  - 关于页卡「关于」：正文含「跨平台中文输入法」「代码 MIT · 词库 CC BY-SA 4.0」
+    「更多设置将在后续版本提供」+ 仓库链接；**版本号只在页脚**，关于卡片不放
+    （避免重复）。
+- 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
+  Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
 
 ## 按键与交互
 
@@ -174,10 +208,12 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 - shims/macos/tests/visual-parity.sh：macOS 布局 5 项 + 参考常量（含 divider）+
   浅/深各 13 色；故意改字号/色值会 FAIL。
 - shims/macos/tests/equivalence.sh：图标 keycap 契约、universal 架构、TIS 图标键。
-- tools/checkuiparity：三端设置窗文案/单例、学习数据 GUI、词库导入安全、
-  联想即时性、退格/修饰键语义、候选窗几何/配色字段、候选点选/右键删除、
-  单例 UI 宿主与模式指示器（不许回退为 TIP 自绘托盘/toast）、打包安装、
-  CI 覆盖、shell 转义与文档对照。
+- tools/checkuiparity：三端设置窗文案/单例、设置窗契约（640×560pt、页脚版本号
+  所有页、卡片契约标识、关于页正文）、学习数据 GUI、词库导入安全、齿轮 mouseUp
+  （按下不得打开设置）、托盘生命周期（不写登录 Run 项、--mode 懒启动、首条模式
+  上报后才显示图标）、联想即时性、退格/修饰键语义、候选窗几何/配色字段、
+  候选点选/右键删除、单例 UI 宿主与模式指示器（不许回退为 TIP 自绘托盘/toast）、
+  打包安装、CI 覆盖、shell 转义与文档对照。
 - Windows 候选窗常量由上述静态工具校验；像素级渲染仍需真机观察，不能把
   编译级验证写成“双端已验证”。
 

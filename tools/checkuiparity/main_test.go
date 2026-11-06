@@ -75,6 +75,90 @@ func TestCheckCandidateWindow(t *testing.T) {
 	}
 }
 
+// TestCheckSettingsGearAndTray 用真实源码验证 2026-11-06 阶段2 新增契约，并做
+// 三次变异：
+//  1. mac mouseDown 直接 onSettings?()（齿轮按下即弹窗）必须被捕获；
+//  2. Windows onLButtonDown 直接 showSettingsWindow 必须被捕获；
+//  3. 安装器重新写 ChaosetUi Run 项必须被捕获。
+func TestCheckSettingsGearAndTray(t *testing.T) {
+	paths := []string{macPanel, winShell, linuxReadme, winInstaller, winInstallBat,
+		uiParityDoc, macSettings, linuxSetup}
+	fsys := fstest.MapFS{}
+	for _, p := range paths {
+		data, err := os.ReadFile("../../" + p)
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", p, err)
+		}
+		fsys[p] = &fstest.MapFile{Data: data}
+	}
+	var problems []string
+	checkSettingsWindowContract(fsys, &problems)
+	checkCandidateGearMouseUp(fsys, &problems)
+	checkTrayLazyLifecycle(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实源码未通过阶段2契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：mac mouseDown 直接打开设置（用户明确禁止的「按下即弹窗」）。
+	macText := string(fsys[macPanel].Data)
+	mutatedMac := strings.Replace(macText, "settingsPressed = true", "onSettings?()", 1)
+	if mutatedMac == macText {
+		t.Fatal("变异未生效：mac 源码里找不到 settingsPressed = true")
+	}
+	problems = nil
+	checkCandidateGearMouseUp(fstest.MapFS{
+		macPanel: &fstest.MapFile{Data: []byte(mutatedMac)},
+		winShell: fsys[winShell], linuxReadme: fsys[linuxReadme], uiParityDoc: fsys[uiParityDoc],
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "mouseDown") {
+		t.Fatalf("mac mouseDown 直接 onSettings 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：Windows onLButtonDown 直接 showSettingsWindow（同一回归）。
+	winText := string(fsys[winShell].Data)
+	mutatedWin := strings.Replace(winText, "gearPressed_ = true;", "tip_->showSettingsWindow();", 1)
+	if mutatedWin == winText {
+		t.Fatal("变异未生效：win32.cpp 里找不到 gearPressed_ = true;")
+	}
+	problems = nil
+	checkCandidateGearMouseUp(fstest.MapFS{
+		macPanel: fsys[macPanel], winShell: &fstest.MapFile{Data: []byte(mutatedWin)},
+		linuxReadme: fsys[linuxReadme], uiParityDoc: fsys[uiParityDoc],
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "onLButtonDown") {
+		t.Fatalf("Windows onLButtonDown 直接 showSettingsWindow 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 3：安装器重新写 ChaosetUi Run 项（开机就启动/显示托盘）。
+	instText := string(fsys[winInstaller].Data)
+	mutatedInst := instText + "\n    WriteRegStr HKLM \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"ChaosetUi\" \"x\"\n"
+	problems = nil
+	checkTrayLazyLifecycle(fstest.MapFS{
+		winShell: fsys[winShell], winInstaller: &fstest.MapFile{Data: []byte(mutatedInst)},
+		winInstallBat: fsys[winInstallBat], uiParityDoc: fsys[uiParityDoc],
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "ChaosetUi") {
+		t.Fatalf("安装器重写 ChaosetUi Run 项应被捕获，实际：%v", problems)
+	}
+
+	// 变异 4：设置窗尺寸回退（mac 640×480）应被捕获。
+	settingsText := string(fsys[macSettings].Data)
+	mutatedSettings := strings.Replace(settingsText, "width: 640, height: 560", "width: 640, height: 480", 1)
+	if mutatedSettings == settingsText {
+		t.Fatal("变异未生效：mac SettingsWindow 里找不到 width: 640, height: 560")
+	}
+	problems = nil
+	checkSettingsWindowContract(fstest.MapFS{
+		macPanel: fsys[macPanel], winShell: fsys[winShell], linuxReadme: fsys[linuxReadme],
+		winInstaller: fsys[winInstaller], winInstallBat: fsys[winInstallBat],
+		uiParityDoc: fsys[uiParityDoc],
+		macSettings: &fstest.MapFile{Data: []byte(mutatedSettings)}, linuxSetup: fsys[linuxSetup],
+	}, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "640, height: 560") {
+		t.Fatalf("mac 设置窗尺寸回退应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckShellVarEscaping(t *testing.T) {
 	bad := fstest.MapFS{
 		"shims/a.sh": &fstest.MapFile{Data: []byte("echo \"（$ARCH）\"\n")},

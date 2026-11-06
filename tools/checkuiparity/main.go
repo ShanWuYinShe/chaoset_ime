@@ -48,6 +48,13 @@
 //     内创建会被 z 序 band 压住且无法启动子进程。TIP 只许经命名管道上报模式/
 //     请求设置；构建（build.sh/Makefile）、安装器（Run 项 + 文件）与发行包
 //     必须包含 chaoset-ui.exe，DLL 必须导出 ChaosetRunUi。
+//  16. 设置窗阶段2（2026-11-06）：客户区 640×560pt、左导航 132pt + 选中态、
+//     页脚版本号所有页、关于页正文（含「关于」分组标题）；Windows 卡片契约
+//     （SettingsCardDef / kInputCards / kDictionaryCards / kAboutCards /
+//     settingsCardColor，控件背景必须用卡片刷防深色横条回归）；候选栏齿轮
+//     必须 mouseUp 才打开设置（按下只记录，Linux README 记录齿轮不适用）；
+//     托盘中英图标不随开机显示（UI 宿主不写登录 Run 项，TIP 首次激活带
+//     --mode 懒启动，首条模式上报后才 Shell_NotifyIcon）。
 //
 // 用法：go run ./tools/checkuiparity <仓库根>
 // 退出码：0 = 通过，1 = 发现违规，2 = 用法错误。
@@ -79,6 +86,11 @@ var sharedSettingsText = []string{
 	"系统共享",
 	"每程序",
 	"每窗口",
+	// 2026-11-06 阶段2：关于页正文与词库导入统一说明（三端逐字一致）。
+	// 词库导入统一句三端一致（macOS 在统一句之后另补 Setup.app 括注，不替换）。
+	"跨平台中文输入法",
+	"代码 MIT · 词库 CC BY-SA 4.0",
+	"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。",
 }
 
 const (
@@ -966,6 +978,137 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 		"kUiOpenSettingsAboutMsg", "openSettingsWindowStandalone(SettingsPage::About)")
 }
 
+// checkSettingsWindowContract 锁住 2026-11-06 阶段2 定稿的三端设置窗契约：
+//  1. 骨架：客户区 640×560pt、左导航 132pt + 选中态、底部固定页脚版本号
+//     （所有页，不再只放关于页）；关于页有「关于」分组标题、版本号不重复；
+//  2. Windows 卡片契约：SettingsCardDef / kInputCards / kDictionaryCards /
+//     kAboutCards / settingsCardColor；控件背景必须用卡片刷（settingsControlBg
+//     + g_settingsCardBrush），防止「卡片上一条窗口底色横条」回归；
+//  3. macOS/Linux 不做像素级卡片容器（用原生分组），但页脚/关于页标题/词库
+//     导入统一说明必须与契约一致；
+//  4. docs/ui-parity.md 必须记录骨架、卡片口径与分组文案。
+func checkSettingsWindowContract(fsys fs.FS, problems *[]string) {
+	const group = "设置窗契约"
+	// Windows 卡片契约（2026-11-06 修复的回归锁）。
+	checkContains(fsys, problems, group, winShell,
+		"struct SettingsCardDef", "kInputCards", "kDictionaryCards", "kAboutCards",
+		"settingsCardColor", "g_settingsCardBrush", "settingsControlBg",
+	)
+	// 尺寸：三端客户区 640×560pt；Windows 页脚 34pt。
+	checkContains(fsys, problems, group, winShell,
+		"constexpr int kWinW = 640;", "constexpr int kWinH = 560;",
+		"constexpr int kFooterH = 34;")
+	checkContains(fsys, problems, group, macSettings,
+		"width: 640, height: 560", "footerLabel", "PageSwitchTarget", "styleNavButton")
+	checkContains(fsys, problems, group, linuxSetup,
+		"gtk_window_set_default_size(GTK_WINDOW(window), 640, 560)",
+		"Chaoset 版本 %s", "GtkStackSidebar")
+	// 页脚版本号固定在最底：Windows 自绘、macOS footerLabel、Linux vbox 页脚。
+	checkContains(fsys, problems, group, linuxSetup,
+		"gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);")
+	// 关于页分组标题（三端）：Windows 卡片标题 / macOS label / Linux markup。
+	checkContains(fsys, problems, group, winShell, `L"关于"`)
+	checkContains(fsys, problems, group, macSettings, `labelWithString: "关于"`)
+	checkContains(fsys, problems, group, linuxSetup, "<b>关于</b>")
+	// 词库导入统一说明由 sharedSettingsText 在三端逐字断言（2026-11-06 定稿：
+	// Windows 也已改为「导入后自动重启输入法」）；这里只锁文档同步。
+	// 文档必须记录骨架/卡片口径/分组文案（实现改了文档不跟会 FAIL）。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"## 设置窗契约", "640×560pt", "卡片容器是 Windows 的视觉实现",
+		"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。")
+}
+
+// checkCandidateGearMouseUp 锁住 2026-11-06 用户要求：候选栏设置齿轮必须
+// 鼠标抬起（mouseUp）才打开设置窗，按下（mouseDown）只记录命中；候选词点选
+// 仍是按下即选。按下即弹窗属误触，禁止回归。Linux ibus 面板无齿轮，必须在
+// README 记录不适用理由与替代入口。
+func checkCandidateGearMouseUp(fsys fs.FS, problems *[]string) {
+	const group = "候选窗齿轮 mouseUp"
+	checkContains(fsys, problems, group, macPanel,
+		"settingsPressed", "override func mouseUp(with event: NSEvent)", "hitArea -3")
+	checkContains(fsys, problems, group, winShell,
+		"gearPressed_", "void CandidateWindow::onLButtonUp(",
+		"void onLButtonUp(int x, int y);")
+	checkContains(fsys, problems, group, linuxReadme,
+		"候选栏设置齿轮", "齿轮不适用")
+	checkContains(fsys, problems, group, uiParityDoc,
+		"齿轮触发时机", "mouseUp 仍在齿轮区才打开设置窗")
+
+	// macOS：mouseDown 函数体内不允许出现 onSettings?()（必须留给 mouseUp）。
+	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
+		text := string(data)
+		start := strings.Index(text, "override func mouseDown(with event: NSEvent) {")
+		end := strings.Index(text, "override func mouseUp(with event: NSEvent) {")
+		if start < 0 || end < 0 || end <= start {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 mouseDown/mouseUp 覆盖（齿轮必须先记录后抬起触发）", group, macPanel))
+		} else if strings.Contains(text[start:end], "onSettings?()") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 mouseDown 仍直接调用 onSettings?()——齿轮必须在 mouseUp 才打开设置", group, macPanel))
+		}
+	}
+	// Windows：onLButtonDown 函数体内不允许 showSettingsWindow（只允许 onLButtonUp）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		start := strings.Index(text, "void CandidateWindow::onLButtonDown(int x, int y) {")
+		end := strings.Index(text, "void CandidateWindow::onLButtonUp(int x, int y) {")
+		if start < 0 || end < 0 || end <= start {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 CandidateWindow::onLButtonDown/onLButtonUp 定义", group, winShell))
+		} else if strings.Contains(text[start:end], "showSettingsWindow(") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 onLButtonDown 仍直接 showSettingsWindow()——齿轮必须在 mouseUp 才打开设置", group, winShell))
+		}
+	}
+}
+
+// checkTrayLazyLifecycle 锁住 2026-11-06 用户要求：托盘中英图标不随开机显示，
+// TIP 首次激活（切到输入法）时带 --mode 懒启动 UI 宿主，UI 宿主收到首条模式
+// 上报后才第一次 Shell_NotifyIcon；安装器/便携包升级必须清掉旧版 ChaosetUi
+// Run 项，且不得再写登录 Run 项。
+func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
+	const group = "托盘生命周期"
+	// UI 宿主启动路径不得无条件显示托盘：show() 只能由模式上报路径调用。
+	checkExcludes(fsys, problems, group, winShell, "g_uiTray->show(g_uiEnglish);")
+	checkContains(fsys, problems, group, winShell,
+		"ensureUiHostStarted(const wchar_t* args)",
+		`ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0")`,
+		"--mode 1", "--mode 0", "visible_")
+	// 安装器：ChaosetUi 只能出现在 DeleteRegValue（清旧 Run 项）行。
+	if data, err := fs.ReadFile(fsys, winInstaller); err == nil {
+		for i, line := range strings.Split(string(data), "\n") {
+			if !strings.Contains(line, "ChaosetUi") {
+				continue
+			}
+			if strings.Contains(line, "WriteRegStr") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s:%d 仍写入 ChaosetUi Run 项（UI 宿主不随登录启动）", group, winInstaller, i+1))
+			} else if !strings.Contains(line, "DeleteRegValue") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s:%d 出现 ChaosetUi 但不是 DeleteRegValue 清理（升级必须清旧 Run 项）", group, winInstaller, i+1))
+			}
+		}
+	}
+	checkContains(fsys, problems, group, winInstaller, "DeleteRegValue", "ChaosetUi")
+	// 便携包 install.bat 也必须幂等清理旧 Run 项。
+	if data, err := fs.ReadFile(fsys, winInstallBat); err == nil {
+		cleaned := false
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "reg delete") && strings.Contains(line, "ChaosetUi") {
+				cleaned = true
+			}
+		}
+		if !cleaned {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 reg delete ... ChaosetUi（便携包升级清旧 Run 项）", group, winInstallBat))
+		}
+	}
+	// 文档必须保留新的 UI 宿主生命周期描述。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"不写登录 Run 项", "TIP 首次激活带 --mode 懒启动",
+		"托盘图标收到首条模式上报后才出现")
+}
+
 // checkWindowsInstallSafety 固定安装器的两个用户可见契约（2026-11-03）：
 //  1. 安装/升级不得强杀加载旧 DLL 的用户程序或系统输入宿主——用户未保存的
 //     工作不能因为装输入法丢失；被占用文件由 InstallRobustFile/重启替换兜底。
@@ -1179,6 +1322,10 @@ func Run(fsys fs.FS) []string {
 	checkInactiveNoAction(fsys, &problems)
 	// 5e. 托盘点击语义、中英作用域与设置窗卡片布局（2026-11-06）。
 	checkTrayAndModeScope(fsys, &problems)
+	// 5f. 设置窗阶段2 骨架/卡片契约、齿轮 mouseUp、托盘懒生命周期（2026-11-06）。
+	checkSettingsWindowContract(fsys, &problems)
+	checkCandidateGearMouseUp(fsys, &problems)
+	checkTrayLazyLifecycle(fsys, &problems)
 
 	// daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
 	// LaunchAgent 慢启动时手动再 exec 一个 chaosetd，Activity Monitor 出现两个。
@@ -1372,5 +1519,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "UI 一致性契约检查失败（%d 项）\n", len(problems))
 		os.Exit(1)
 	}
-	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/单例 UI 宿主与模式指示器/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/CI 覆盖/shell 转义/文档对照）")
+	fmt.Println("UI 一致性契约检查通过（设置窗文案/单例/设置窗契约/学习数据 GUI/词库导入/导入安全/联想即时性/退格键语义/修饰键映射/候选点选/候选右键删除/候选窗齿轮 mouseUp/单例 UI 宿主与模式指示器/托盘生命周期/打包安装/Windows 版本信息/版本号来源/非激活零动作/托盘与中英作用域/候选窗几何/CI 覆盖/shell 转义/文档对照）")
 }

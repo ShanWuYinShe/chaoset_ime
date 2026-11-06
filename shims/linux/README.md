@@ -41,6 +41,11 @@ setup-container.sh  可复现的本地容器验证环境
   仍照常影响排序。
 - 候选右键删除：ibus 面板不提供上下文菜单回调，**不适用**；按词删除用
   `chaoset-userdict delete`，整体清空用设置窗或 `chaoset-userdict clear`。
+- 候选栏设置齿轮：Linux 不自绘候选窗/控制区，候选表与预编辑都由 ibus 面板
+  渲染，壳拿不到齿轮的绘制与命中矩形（ibus 面板也没有「设置」按钮回调），
+  因此**齿轮不适用**；设置入口是 ibus-setup 的「首选项」或
+  `/usr/share/chaoset/chaoset-setup`（见「设置与词库」）。macOS/Windows
+  候选栏的齿轮 mouseUp 契约只约束这两端。
 
 ## 设置与词库
 

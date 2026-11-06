@@ -428,9 +428,10 @@ final class CandidatePanelView: NSView {
             hitAreas.append((flipRect, dirDown ? -1 : -2))
         }
 
-        // 设置齿轮：手绘矢量（见 drawGear），hitArea -3 由 mouseDown 转发
-        // onSettings。颜色固定用 chipDigit（浅色深黑/深色纯白），不随
-        // hover/输入内容变色。
+        // 设置齿轮：手绘矢量（见 drawGear），hitArea -3 由 mouseDown 记录、
+        // mouseUp 且仍在齿轮区才转发 onSettings（设置入口不用按下触发，理由
+        // 见 mouseDown/mouseUp 处注释）。颜色固定用 chipDigit（浅色深黑/
+        // 深色纯白），不随 hover/输入内容变色。
         let gearRect = NSRect(x: dividerX, y: 0, width: SettingsGear.boxW, height: bounds.height)
         // 齿轮用**手绘矢量路径**（中心圆环 + 8 齿辐条）：SF Symbol 模板图
         // 在离屏/PDF 上下文的着色不可靠（tint.set 无效；蒙版填色在 PDF
@@ -485,20 +486,46 @@ final class CandidatePanelView: NSView {
 
     // 非 key 窗口的首击默认只用于激活窗口、不投递 mouseDown，会导致
     // 「第一次点候选词没反应，要点第二次」。候选窗永不成为 key 窗口
-    // （nonactivatingPanel），因此必须显式接受首次点击。
+    // （nonactivatingPanel），因此必须显式接受首次点击。齿轮改成 mouseUp
+    // 触发后仍依赖这条：首击若只用于激活窗口，mouseDown/mouseUp 都不会送到
+    // 视图，也就不会误开设置窗。
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // 齿轮「按下」是否落在齿轮区（mouseDown 只记录，mouseUp 才真正打开设置）。
+    // 设置入口不能用按下触发：按下即弹窗会在用户按下后想拖动/放弃时误开窗，
+    // 用户 2026-11-06 明确要求改为鼠标抬起（mouseUp）触发；候选词点选保持
+    // mouseDown 原语义不变（Windows 候选窗 settingsRect_ 同契约，三端一致）。
+    private var settingsPressed = false
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // 任何一次新的按下都先清掉上一次未完成的齿轮按下状态：mouseUp 可能
+        // 因为面板被收起/切换而丢失，残留状态会让下一次抬起误触发设置。
+        settingsPressed = false
         for (rect, index) in hitAreas where rect.contains(point) {
             switch index {
             case -1: onPageDown?()
             case -2: onPageUp?()
-            case -3: onSettings?()
+            case -3:
+                // 只记录命中，不打开设置、不上屏：真正触发在 mouseUp。
+                settingsPressed = true
+                return
             default: onSelect?(index)
             }
             return
         }
+    }
+
+    /// 齿轮 mouseUp：按下与抬起都落在齿轮区才打开设置窗（按下后拖走再松开
+    /// 不触发）。候选点选不经过这里——它在 mouseDown 已上屏。
+    override func mouseUp(with event: NSEvent) {
+        let pressed = settingsPressed
+        settingsPressed = false
+        guard pressed else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hitAreas.contains(where: { $0.index == -3 && $0.rect.contains(point) })
+        else { return }
+        onSettings?()
     }
 
     // MARK: 右键删除学习记录
@@ -567,7 +594,7 @@ enum CandidatePanelController {
     static var onPageDown: (() -> Void)?
     /// 末页时折叠区箭头变 ⌃，点击翻上一页。
     static var onPageUp: (() -> Void)?
-    /// 候选栏齿轮点击（打开设置菜单）。
+    /// 候选栏齿轮点击（mouseUp 且仍在齿轮区才打开设置窗口）。
     static var onSettings: (() -> Void)?
     /// 右键候选「删除该词」回调，与 onSelect 同约定。
     static var onDelete: ((Int) -> Void)?

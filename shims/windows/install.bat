@@ -58,6 +58,10 @@ taskkill /IM %DAEMON% /F >nul 2>&1
 REM UI 宿主 chaoset-ui.exe 是托盘「中/英」与设置窗的唯一进程，属于本输入法
 REM 自己的后台程序；升级时结束它，避免旧进程继续加载旧 DLL 并占着单例互斥体。
 taskkill /IM chaoset-ui.exe /F >nul 2>&1
+REM 2026-11-06：UI 宿主不再随登录启动（托盘图标只在切换到输入法后才显示），
+REM 升级时清掉旧版（NSIS 安装器）写入的 Run 项；便携包本来不写 Run，幂等清理。
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetUi /f /reg:64 >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetUi /f /reg:64 >nul 2>&1
 
 echo ==^> Registering TSF input method
 set REGSVR=%WINDIR%\System32\regsvr32.exe

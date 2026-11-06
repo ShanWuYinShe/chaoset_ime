@@ -271,11 +271,20 @@ static GtkWidget *build_window(AppCtx *ctx) {
     gtk_window_set_title(GTK_WINDOW(window), "Chaoset 设置");
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
+    /* 客户区 640x560：与 Windows/macOS 设置窗对齐（2026-11-06 阶段2）。 */
+    gtk_window_set_default_size(GTK_WINDOW(window), 640, 560);
 
     /* 布局：左侧导航（GtkStackSidebar：输入 / 词库 / 关于）+ 右侧内容页
-     * （GtkStack），2026-11-06 卡片式重构，与 Windows/macOS 设置窗对齐。 */
+     * （GtkStack）+ 底部固定页脚版本号；2026-11-06 阶段2 与 Windows/macOS
+     * 设置窗对齐。卡片外观只在 Windows 上实现（AppKit/GTK 不做像素级卡片），
+     * Linux 用原生分组：GtkStackSidebar + 分组标题。 */
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    gtk_container_add(GTK_CONTAINER(window), hbox);
+    gtk_widget_set_margin_start(hbox, 12);
+    gtk_widget_set_margin_end(hbox, 12);
+    gtk_widget_set_margin_top(hbox, 12);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, TRUE, TRUE, 0);
     GtkWidget *stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_stack_set_hhomogeneous(GTK_STACK(stack), TRUE);
@@ -289,12 +298,18 @@ static GtkWidget *build_window(AppCtx *ctx) {
     GtkWidget *about_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_start(input_page, 12);
     gtk_widget_set_margin_end(input_page, 12);
+    gtk_widget_set_margin_start(dict_page, 12);
+    gtk_widget_set_margin_end(dict_page, 12);
+    gtk_widget_set_margin_start(about_page, 12);
+    gtk_widget_set_margin_end(about_page, 12);
     gtk_box_pack_start(GTK_BOX(stack), input_page, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(stack), dict_page, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(stack), about_page, TRUE, TRUE, 0);
-    gtk_stack_child_set_title(GTK_STACK(stack), input_page, "输入");
-    gtk_stack_child_set_title(GTK_STACK(stack), dict_page, "词库");
-    gtk_stack_child_set_title(GTK_STACK(stack), about_page, "关于");
+    /* GTK3 没有 gtk_stack_child_set_title（那是 GTK4 的 gtk_stack_page_set_title）；
+     * GTK3 通过 GtkStack 的子属性 "title" 设置导航标题（2026-11-06 修复编译错误）。 */
+    gtk_container_child_set(GTK_CONTAINER(stack), input_page, "title", "输入", NULL);
+    gtk_container_child_set(GTK_CONTAINER(stack), dict_page, "title", "词库", NULL);
+    gtk_container_child_set(GTK_CONTAINER(stack), about_page, "title", "关于", NULL);
     GtkWidget *box = input_page;
 
     GtkWidget *group = gtk_label_new(NULL);
@@ -391,24 +406,36 @@ static GtkWidget *build_window(AppCtx *ctx) {
     GtkWidget *import_btn = gtk_button_new_with_label("导入词库…");
     gtk_box_pack_start(GTK_BOX(dict_page), import_btn, FALSE, FALSE, 0);
 
-    GtkWidget *dict_hint = gtk_label_new("导入 Rime dict.yaml / CC-CEDICT txt / TSV（可多选），合并进用户词库并重启输入法生效。");
+    /* 词库导入说明：2026-11-06 阶段2 三端统一句（Windows/macOS 同句）。 */
+    GtkWidget *dict_hint = gtk_label_new("支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。");
     gtk_label_set_xalign(GTK_LABEL(dict_hint), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(dict_hint), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(dict_hint), 40);
     gtk_style_context_add_class(gtk_widget_get_style_context(dict_hint), "dim-label");
     gtk_box_pack_start(GTK_BOX(dict_page), dict_hint, FALSE, FALSE, 0);
 
+    /* 关于页分组标题与正文（2026-11-06 阶段2：与 Windows 卡片标题「关于」、
+     * macOS「关于」分组统一）；版本号统一放在窗口底部页脚，本页不再重复。 */
+    GtkWidget *about_group = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(about_group), "<b>关于</b>");
+    gtk_label_set_xalign(GTK_LABEL(about_group), 0.0);
+    gtk_box_pack_start(GTK_BOX(about_page), about_group, FALSE, FALSE, 0);
+
+    GtkWidget *about_desc = gtk_label_new("跨平台中文输入法（Linux IBus 壳）");
+    gtk_label_set_xalign(GTK_LABEL(about_desc), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(about_desc), "dim-label");
+    gtk_box_pack_start(GTK_BOX(about_page), about_desc, FALSE, FALSE, 0);
+
+    GtkWidget *about_license = gtk_label_new("代码 MIT · 词库 CC BY-SA 4.0");
+    gtk_label_set_xalign(GTK_LABEL(about_license), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(about_license), "dim-label");
+    gtk_box_pack_start(GTK_BOX(about_page), about_license, FALSE, FALSE, 0);
+
     GtkWidget *more = gtk_label_new("更多设置将在后续版本提供");
     gtk_label_set_xalign(GTK_LABEL(more), 0.0);
     gtk_style_context_add_class(gtk_widget_get_style_context(more), "dim-label");
     gtk_box_pack_start(GTK_BOX(about_page), more, FALSE, FALSE, 0);
 
-    gchar *version_text = g_strdup_printf("Chaoset 版本 %s", CHAOSET_VERSION);
-    GtkWidget *version_label = gtk_label_new(version_text);
-    g_free(version_text);
-    gtk_label_set_xalign(GTK_LABEL(version_label), 0.0);
-    gtk_style_context_add_class(gtk_widget_get_style_context(version_label), "dim-label");
-    gtk_box_pack_start(GTK_BOX(about_page), version_label, FALSE, FALSE, 0);
     GtkWidget *repo_label = gtk_label_new("https://github.com/ShanWuYinShe/chaoset_ime");
     gtk_label_set_xalign(GTK_LABEL(repo_label), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(repo_label), TRUE);
@@ -419,6 +446,18 @@ static GtkWidget *build_window(AppCtx *ctx) {
     g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_clicked), ctx);
     g_signal_connect(export_btn, "clicked", G_CALLBACK(on_export_clicked), ctx);
     g_signal_connect(import_btn, "clicked", G_CALLBACK(on_import_clicked), ctx);
+
+    /* 页脚版本号：所有页固定显示（AGENTS.md 版本可见性；与 Windows/macOS 页脚
+     * 同语义），取代「版本号只放关于页」的旧形态（2026-11-06 阶段2）。 */
+    gchar *footer_text = g_strdup_printf("Chaoset 版本 %s", CHAOSET_VERSION);
+    GtkWidget *footer = gtk_label_new(footer_text);
+    g_free(footer_text);
+    gtk_label_set_xalign(GTK_LABEL(footer), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(footer), "dim-label");
+    gtk_widget_set_margin_start(footer, 12);
+    gtk_widget_set_margin_end(footer, 12);
+    gtk_widget_set_margin_bottom(footer, 8);
+    gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);
 
     gtk_widget_show_all(window);
     refresh_stats(ctx);

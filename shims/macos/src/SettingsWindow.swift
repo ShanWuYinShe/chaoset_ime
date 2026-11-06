@@ -48,17 +48,43 @@ extension Notification.Name {
 
 /// 设置窗左侧导航的页切换 target（2026-11-06 卡片式布局，与 Windows 对齐）。
 /// 三个页面视图在构建时注册进来；按按钮 identifier（"0"/"1"/"2"）切页。
+/// 2026-11-06 阶段2：补左导航选中态——当前页按钮用 accent 胶囊底 + 白字
+/// （Windows 左导航同为 accent RGB 0A84FF 圆角高亮；此前 macOS 三个按钮外观
+/// 完全相同，看不出当前在哪一页）。
 final class PageSwitchTarget: NSObject {
     static let shared = PageSwitchTarget()
     weak var inputPage: NSView?
     weak var dictPage: NSView?
     weak var aboutPage: NSView?
+    /// 左导航三个按钮（窗口单例生命周期内复用，切换选中态用）。
+    var navButtons: [NSButton] = []
 
     @objc func switchPage(_ sender: NSButton) {
-        let idx = sender.identifier?.rawValue ?? "0"
-        inputPage?.isHidden = idx != "0"
-        dictPage?.isHidden = idx != "1"
-        aboutPage?.isHidden = idx != "2"
+        select(Int(sender.identifier?.rawValue ?? "0") ?? 0)
+    }
+
+    /// 切到指定页并同步左导航选中态。
+    func select(_ idx: Int) {
+        inputPage?.isHidden = idx != 0
+        dictPage?.isHidden = idx != 1
+        aboutPage?.isHidden = idx != 2
+        for (i, button) in navButtons.enumerated() {
+            styleNavButton(button, selected: i == idx)
+        }
+    }
+
+    /// 选中项：accent 胶囊底 + 白字；未选中：透明底 + 主文本色。
+    private func styleNavButton(_ button: NSButton, selected: Bool) {
+        let accent = NSColor(srgbRed: 0x0A / 255.0, green: 0x84 / 255.0, blue: 0xFF / 255.0, alpha: 1)
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 8
+        button.layer?.backgroundColor = selected ? accent.cgColor : NSColor.clear.cgColor
+        button.attributedTitle = NSAttributedString(
+            string: button.title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: selected ? NSColor.white : NSColor.labelColor,
+            ])
     }
 }
 
@@ -295,8 +321,11 @@ enum SettingsWindowController {
                                  action: #selector(DictionaryImportTarget.openDictionaryImport(_:)))
         dictPage.addArrangedSubview(importBtn)
 
+        // 词库导入说明：2026-11-06 阶段2 三端统一句「支持 dict.yaml / CC-CEDICT
+        // txt / TSV；导入后自动重启输入法。」（Windows/Linux 同句）；macOS 导入
+        // 机制不同（打开 Setup.app），在统一句后补括注，不替换统一句。
         let dictHint = NSTextField(wrappingLabelWithString:
-            "打开「Chaoset 安装与设置」导入 Rime dict.yaml / CC-CEDICT txt / TSV；导入后自动重启 daemon。")
+            "支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。（会打开「Chaoset 安装与设置」完成导入）")
         dictHint.font = .systemFont(ofSize: 11)
         dictHint.textColor = .secondaryLabelColor
         dictHint.preferredMaxLayoutWidth = 320
@@ -308,16 +337,27 @@ enum SettingsWindowController {
         aboutPage.alignment = .leading
         aboutPage.spacing = 12
 
+        // 关于分组标题（2026-11-06 阶段2：与 Windows 卡片标题「关于」、Linux
+        // 「关于」分组统一）。版本号统一在窗口底部页脚，本页不再重复。
+        let aboutGroup = NSTextField(labelWithString: "关于")
+        aboutGroup.font = .boldSystemFont(ofSize: 13)
+        aboutGroup.textColor = .secondaryLabelColor
+        aboutPage.addArrangedSubview(aboutGroup)
+
+        let appDesc = NSTextField(labelWithString: "跨平台中文输入法（macOS IMK 壳）")
+        appDesc.font = .systemFont(ofSize: 11)
+        appDesc.textColor = .secondaryLabelColor
+        aboutPage.addArrangedSubview(appDesc)
+
+        let license = NSTextField(labelWithString: "代码 MIT · 词库 CC BY-SA 4.0")
+        license.font = .systemFont(ofSize: 11)
+        license.textColor = .secondaryLabelColor
+        aboutPage.addArrangedSubview(license)
+
         let more = NSTextField(labelWithString: "更多设置将在后续版本提供")
         more.font = .systemFont(ofSize: 11)
         more.textColor = .tertiaryLabelColor
         aboutPage.addArrangedSubview(more)
-
-        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
-        let versionLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
-        versionLabel.font = .systemFont(ofSize: 11)
-        versionLabel.textColor = .tertiaryLabelColor
-        aboutPage.addArrangedSubview(versionLabel)
 
         let repo = NSTextField(labelWithString: "https://github.com/ShanWuYinShe/chaoset_ime")
         repo.font = .systemFont(ofSize: 11)
@@ -325,45 +365,77 @@ enum SettingsWindowController {
         aboutPage.addArrangedSubview(repo)
 
         // —— 左侧导航 ——
+        // 宽度 132pt 与 Windows kNavWidth 一致；按钮固定 112×32pt，才能让
+        // 选中项的 accent 胶囊（layer 圆角底）形成稳定矩形（见
+        // PageSwitchTarget.styleNavButton）。
         let sidebar = NSStackView()
         sidebar.orientation = .vertical
         sidebar.alignment = .leading
         sidebar.spacing = 6
+        sidebar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        sidebar.widthAnchor.constraint(equalToConstant: 132).isActive = true
         let appTitle = NSTextField(labelWithString: "Chaoset 设置")
         appTitle.font = .boldSystemFont(ofSize: 14)
         sidebar.addArrangedSubview(appTitle)
         PageSwitchTarget.shared.inputPage = inputPage
         PageSwitchTarget.shared.dictPage = dictPage
         PageSwitchTarget.shared.aboutPage = aboutPage
+        PageSwitchTarget.shared.navButtons.removeAll()
         for (idx, title) in [("0", "输入"), ("1", "词库"), ("2", "关于")] {
             let b = NSButton(title: title, target: PageSwitchTarget.shared,
                              action: #selector(PageSwitchTarget.switchPage(_:)))
             b.isBordered = false
             b.identifier = NSUserInterfaceItemIdentifier(idx)
             b.font = .systemFont(ofSize: 13)
+            b.widthAnchor.constraint(equalToConstant: 112).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 32).isActive = true
             sidebar.addArrangedSubview(b)
+            PageSwitchTarget.shared.navButtons.append(b)
         }
 
-        // 整窗：横向 [导航 | 内容页]；初始只显示输入页。
+        // 整窗：横向 [导航 | 内容页]，初始只显示输入页；底部固定页脚版本号。
         let content = NSStackView()
         content.orientation = .horizontal
         content.alignment = .top
         content.spacing = 24
-        content.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 24, right: 28)
         content.addArrangedSubview(sidebar)
         content.addArrangedSubview(inputPage)
         content.addArrangedSubview(dictPage)
         content.addArrangedSubview(aboutPage)
         dictPage.isHidden = true
         aboutPage.isHidden = true
+        PageSwitchTarget.shared.select(0)
+
+        // 页脚版本号：2026-11-06 阶段2 与 Windows 对齐——三端设置窗底部固定显示
+        // 「Chaoset 版本 x.y.z」，不再只放在「关于」页（AGENTS.md:19 版本可见性）。
+        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+        let footerLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
+        footerLabel.font = .systemFont(ofSize: 11)
+        footerLabel.textColor = .tertiaryLabelColor
+
+        // 内容与页脚分开：内容贴顶（20pt 边距），页脚贴底（12pt），中间不允许
+        // 重叠（页脚 top >= 内容 bottom + 8）。窗口固定 640×560pt（不可缩放）。
+        let root = NSView()
+        root.addSubview(content)
+        root.addSubview(footerLabel)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        footerLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -28),
+            footerLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            footerLabel.topAnchor.constraint(greaterThanOrEqualTo: content.bottomAnchor, constant: 8),
+            footerLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+        ])
 
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
         w.title = "Chaoset 设置"
-        w.contentView = content
+        w.contentView = root
         w.isReleasedWhenClosed = false
         w.center()
         w.makeKeyAndOrderFront(nil)
