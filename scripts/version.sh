@@ -1,33 +1,29 @@
 #!/bin/sh
 # 版本号单一真源（2026-11-06 用户规则）：
 #
-#   * **只有 GitHub CI 上、由 push tag 触发的构建**才用 tag 里的版本号（去 v）；
-#   * **其他一切情况**（本地构建、日常 CI、workflow_dispatch、PR、源码直跑）
-#     都用当前 git commit hash（12 位），不再取「最近的 tag」。
+#   * 环境变量 CHAOS_VERSION_TAG 有值（GitHub CI 上 push tag 触发时设置），
+#     就用 tag 里的规范版本号（去掉前导 v），如 0.3.17；
+#   * 没值（本地、日常 CI、workflow_dispatch、PR、源码直跑），一律用
+#     「构建当天年月日 + git commit hash」，如 20261106-8b2eb0ca0c38。
 #
-# 动机（用户原话）：「本地测试的时候不想一直累加版本号，同时又想知道我本地
-# 测试的到底是什么版本，方便排查问题」。以前 make version 用 git describe
-# --tags，本地/日常 CI 打出来的包永远显示最近一次发布的 tag，根本分不清装的是
-# 哪个提交；commit hash 才是构建的真实身份，而且不需要为每次测试累加版本号。
-# 工作区有未提交改动时追加 -dirty：同一次提交但代码不同的本地构建也能区分。
+# 就一个环境变量的事：CI 在 tag 触发时把它设成 tag 版本，其他任何地方都不设，
+# 脚本读不到就自己生成日期+hash。不在脚本里判断 GITHUB_*，也不取「最近的 tag」。
+# 工作区有未提交改动时追加 -dirty：同一提交但代码不同的构建也能区分。
 #
 # 用法（所有输出都是单行，供 Makefile / 打包脚本 / CI 注入）：
-#   scripts/version.sh                 显示用版本（tag 号或 commit hash[-dirty]）
+#   scripts/version.sh                 显示用版本
 #   scripts/version.sh --quad          4 段数字版本（NSIS / PE VS_FIXEDFILEINFO）
 #   scripts/version.sh --pkg           包管理器版本（deb / Arch，保证以数字开头）
-#   scripts/version.sh --source        来源说明（tag / commit / nogit），用于日志
-#
-# tag 触发判据（全部满足才算）：GITHUB_ACTIONS=true、GITHUB_EVENT_NAME=push、
-# GITHUB_REF_TYPE=tag 且 GITHUB_REF_NAME 像 v*；或调用方显式 --tag <号>
-# （本地复跑同一条打包链用）。workflow_dispatch 即使选了 tag ref 也不算。
+#   scripts/version.sh --source        来源说明（tag / date-hash / nogit）
 #
 # 派生规则（纯函数，同一输入永远同一输出）：
-#   --quad：tag 版 x.y.z → x.y.z.0；commit hash → 0.0.A.B，A/B 取 hash 前 8 位
+#   --quad：tag 版 x.y.z → x.y.z.0；其余 → 0.0.A.B，A/B 取 hash 前 8 位
 #           十六进制每 4 位转成的十进制数（≤65535）。Windows 版本资源只接受
-#           4 段数字，显示用版本仍是原始 hash[-dirty]。
+#           4 段数字，日期与完整显示版本放在属性页字符串字段里。
 #   --pkg ：dpkg 的 Version 与 Arch 的 pkgver 必须是合法版本串；裸 hash 可能以
-#           字母开头（dpkg 直接拒绝）。统一为 0.0.0+<hash>[.dirty]：以数字开头、
-#           含完整 hash、每次提交都不同；人类可读字段仍显示裸 hash。
+#           字母开头（dpkg 直接拒绝）。统一为 0.0.0+<日期>.<hash>[.dirty]：
+#           以数字开头、含日期与 hash、每次构建可区分；人类可读字段仍显示
+#           完整版本（含年月日）。
 #   不在 git 仓库（源码 tarball）时显示 nogit，--pkg 为 0.0.0+nogit。
 set -eu
 
@@ -45,48 +41,38 @@ hex4dec() {
           print n }'
 }
 
-tag_version=""
-case "${1:-}" in
-    --tag)
-        [ $# -ge 2 ] || { echo "错误：--tag 需要版本号参数" >&2; exit 2; }
-        tag_version="$2"
-        shift 2
-        ;;
-esac
-
 mode="${1:-display}"
 case "$mode" in
     display|--quad|--pkg|--source) ;;
-    *) echo "用法: $0 [--tag <版本号>] [display|--quad|--pkg|--source]" >&2; exit 2 ;;
+    *) echo "用法: $0 [display|--quad|--pkg|--source]" >&2; exit 2 ;;
 esac
 
-# 是否「tag 触发的 GitHub CI」：显式 --tag 优先，其次要求 push + tag 三个条件。
-if [ -n "$tag_version" ]; then
-    version=$(printf '%s' "$tag_version" | sed 's/^v//')
-    source="tag"
-elif [ "${GITHUB_ACTIONS:-}" = "true" ] \
-     && [ "${GITHUB_EVENT_NAME:-}" = "push" ] \
-     && [ "${GITHUB_REF_TYPE:-}" = "tag" ] \
-     && printf '%s' "${GITHUB_REF_NAME:-}" | grep -Eq '^v[0-9]'; then
-    version=$(printf '%s' "$GITHUB_REF_NAME" | sed 's/^v//')
+hash=""
+date_stamp=""
+dirty=""
+dirty_pkg=""
+if [ -n "${CHAOS_VERSION_TAG:-}" ]; then
+    version=$(printf '%s' "$CHAOS_VERSION_TAG" | sed 's/^v//')
     source="tag"
 else
-    version=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)
-    if [ -n "$version" ]; then
-        source="commit"
-        # 未提交的本地改动（排除未跟踪文件，构建产物不会误判）让同一 hash 的
-        # 不同本地构建可区分；CI checkout 是干净工作区，不会带这个后缀。
+    hash=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)
+    if [ -n "$hash" ]; then
+        source="date-hash"
+        date_stamp=$(date +%Y%m%d)
+        # 未提交的本地改动（排除未跟踪文件，构建产物不会误判）。
         if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
-            version="${version}-dirty"
+            dirty="-dirty"
+            dirty_pkg=".dirty"
         fi
+        version="${date_stamp}-${hash}${dirty}"
     else
         version="nogit"
         source="nogit"
     fi
 fi
 
-# 数字/包版本只取 hash 主体，丢掉 -dirty 等后缀。
-base=$(printf '%s' "$version" | sed 's/-.*$//')
+# 数字版本只认 hash 主体（四段数字窗口有限，日期放在字符串字段）。
+quad_hash=$(printf '%s' "$hash" | tr -cd '0-9a-fA-F' | cut -c1-8)
 
 case "$mode" in
     display)
@@ -97,11 +83,11 @@ case "$mode" in
         ;;
     --quad)
         if [ "$source" = "tag" ]; then
-            printf '%s\n' "$base" \
+            printf '%s\n' "$version" \
                 | sed -E 's/^v//; s/[^0-9.].*$//; s/[.]+$//' \
                 | awk -F. '{print ($1+0)"."($2+0)"."($3+0)"."($4+0)}'
         else
-            hex=$(printf '%s' "$base" | tr -cd '0-9a-fA-F' | cut -c1-8)
+            hex="$quad_hash"
             while [ "${#hex}" -lt 8 ]; do hex="${hex}0"; done
             printf '0.0.%s.%s\n' "$(hex4dec "$(printf '%s' "$hex" | cut -c1-4)")" \
                 "$(hex4dec "$(printf '%s' "$hex" | cut -c5-8)")"
@@ -111,11 +97,12 @@ case "$mode" in
         if [ "$source" = "tag" ]; then
             # tag 号本身已合法（以数字开头）；保留预发布后缀，只去掉前导 v。
             printf '%s\n' "$(printf '%s' "$version" | sed 's/^v//')"
+        elif [ "$source" = "nogit" ]; then
+            printf '0.0.0+nogit\n'
         else
-            # dpkg 要求 Version 以数字开头；Arch pkgver 也接受 +。
-            # -dirty 换成 .dirty，避免被 deb 当成 debian_revision 分隔符。
-            suffix=$(printf '%s' "$version" | sed "s/^[^.-]*//; s/^-/./")
-            printf '0.0.0+%s%s\n' "$base" "$suffix"
+            # dpkg 要求以数字开头；Arch pkgver 也接受 + 与 .。
+            # -dirty 用 .dirty 表示，避免被 deb 当成 debian_revision 分隔符。
+            printf '0.0.0+%s.%s%s\n' "$date_stamp" "$hash" "$dirty_pkg"
         fi
         ;;
 esac

@@ -61,13 +61,15 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
 与 4 段数字版本（如 0.3.17.0）。安装器向导欢迎页标题也带版本。
 
 版本号**只有一个真源**：`scripts/version.sh`（Makefile 的 `$(VERSION)`）。
-**只有 push tag 触发的 GitHub CI 构建**才用 tag 号（`0.3.17`）；本地构建、
-日常 CI、`workflow_dispatch`、PR 一律用当前 `git commit hash`（12 位，工作区
-有未提交改动时追加 `-dirty`）——本地测试不必累加版本号，又能从 hash 定位到底
-装的是哪个提交。`$(VERSION_QUAD)` 是 4 段数字版本（tag 构建 `0.3.17.0`，
-hash 构建 `0.0.<hash 派生>.<hash 派生>`），因为 NSIS `VIProductVersion` 与
-PE `VS_FIXEDFILEINFO` 只接受数字；人类可读的 hash 放在属性页字符串字段。
-deb/Arch 的包版本用 `$(PKG_VERSION)`（`0.0.0+<hash>`，保证以数字开头）。
+它只读环境变量 `CHAOS_VERSION_TAG`：`release.yml` 顶层 env 在 **push tag 触发**
+的 CI 里把它设成 tag 里的规范版本号（`0.3.17`），其他任何环境（本地、日常 CI、
+`workflow_dispatch`、PR）都不设，脚本读不到就生成「构建当天年月日 + commit hash」
+（如 `20261106-8b2eb0ca0c38`，工作区有未提交改动追加 `-dirty`）——
+本地测试不必累加版本号，又能看出构建日期与基于哪个提交。`$(VERSION_QUAD)` 是
+4 段数字版本（tag 构建 `0.3.17.0`，其余 `0.0.<hash 派生>.<hash 派生>`），因为
+NSIS `VIProductVersion` 与 PE `VS_FIXEDFILEINFO` 只接受数字；日期与完整显示版本
+放在属性页字符串字段。deb/Arch 的包版本用 `$(PKG_VERSION)`
+（`0.0.0+<日期>.<hash>`，保证以数字开头）。
 NSIS 脚本用 `${VERSION}` / `${VERSION_QUAD}`，资源模板
 `shims/windows/resources/chaoset.rc` 用 `@VERSION@` 等占位符，二者都由
 `make package-windows` / `build.sh` 注入，源码不写死版本号。中文说明必须

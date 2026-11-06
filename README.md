@@ -859,8 +859,9 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 > 或安装目录里的 `ChaosetIME.dll` / `chaoset-ui.exe` →「属性 → 详细信息」
 > 查看产品名、公司、版权与文件/产品版本，或在「已安装的应用」的 Chaoset
 > 条目里看 `DisplayVersion`。版本号统一由 `scripts/version.sh` 注入，源码不写死：
-> **只有 push tag 触发的 GitHub CI 构建**显示 tag 号，本地/日常 CI 构建显示
-> 当前 commit hash（有未提交改动时带 `-dirty`），便于排障时定位构建。
+> CI 在 **push tag 触发**时通过 `CHAOS_VERSION_TAG` 注入 tag 号；其他一切构建
+> （本地、日常 CI、`workflow_dispatch`、PR）不设该变量，显示「年月日-commit hash」
+> （如 `20261106-8b2eb0ca0c38`，有未提交改动带 `-dirty`），便于排障时定位构建日期与提交。
 
 发布包由 CI 在目标平台构建并做启动冒烟：Linux/Windows 包显式指定
 `GOOS/GOARCH`，macOS 为 universal，Windows 提供 `ChaosetSetup.exe` 与

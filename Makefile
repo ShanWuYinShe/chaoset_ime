@@ -7,12 +7,12 @@
 # 全部手工维护且已经不一致——component XML 还停在 0.1.0，而 tag 早已
 # v0.2.12（2026-10-26 审查发现）。发版时必然漏改。
 #
-# 2026-11-06 用户规则：**只有 push tag 触发的 GitHub CI 构建**才用 tag 号，
-# 其他一切情况（本地、日常 CI、workflow_dispatch、PR）都用当前 git commit
-# hash。以前取「最近一次发布的 tag」，本地/日常 CI 打的包永远显示它，用户
-# 分不清装的是哪个提交；commit hash 才是构建的真实身份，且本地测试不必
-# 累加版本号。唯一真源是 scripts/version.sh：
-#   VERSION      显示用版本（tag 号或 12 位 commit hash[-dirty]）
+# 2026-11-06 用户规则：版本号只由环境变量 CHAOS_VERSION_TAG 决定——
+# release.yml 顶层 env 在 push tag 触发的 CI 里设成 tag 版本，其他任何环境
+# 都不设，version.sh 读不到就生成「构建当天年月日 + commit hash」。
+# 以前取「最近一次发布的 tag」，本地/日常 CI 打的包永远显示它，分不清装的是
+# 哪个提交；年月日 + hash 才是构建的真实日期与身份。唯一真源是 scripts/version.sh：
+#   VERSION      显示用版本（tag 号或 YYYYMMDD-<hash>[-dirty]）
 #   VERSION_QUAD 4 段数字版本（NSIS/PE VS_FIXEDFILEINFO 只接受数字）
 #   PKG_VERSION  包管理器版本（deb/Arch 必须合法，含 hash）
 VERSION_SCRIPT := scripts/version.sh
@@ -38,10 +38,14 @@ check-version:
 		| grep -v 'scripts/version.sh' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -q .; then \
 		echo "错误：仍有可执行代码用 git describe --tags 推导版本（应改用 scripts/version.sh）"; exit 1; \
 	fi
-	@# 单一真源必须存在、真的用 commit hash，且只在 tag 触发的 CI 才认 tag。
+	@# 单一真源必须存在：读 CHAOS_VERSION_TAG，读不到则生成 年月日-commit hash。
 	@test -f $(VERSION_SCRIPT) || { echo "错误：缺少 $(VERSION_SCRIPT)"; exit 1; }
+	@grep -q 'CHAOS_VERSION_TAG' $(VERSION_SCRIPT) || { echo "错误：version.sh 未读取 CHAOS_VERSION_TAG"; exit 1; }
 	@grep -q 'rev-parse' $(VERSION_SCRIPT) || { echo "错误：version.sh 未使用 commit hash"; exit 1; }
-	@grep -q 'GITHUB_REF_TYPE' $(VERSION_SCRIPT) || { echo "错误：version.sh 未限定 tag 触发的 CI"; exit 1; }
+	@grep -q 'date +%Y%m%d' $(VERSION_SCRIPT) || { echo "错误：version.sh 未生成年月日"; exit 1; }
+	@# tag 版本只在 release.yml 顶层 env 注入，且只允许 push tag 触发时。
+	@grep -q "github.event_name == 'push'" .github/workflows/release.yml \
+		|| { echo "错误：release.yml 未限定只有 push tag 注入 CHAOS_VERSION_TAG"; exit 1; }
 	@! grep -rn '^Version: [0-9]' shims/linux/debian/control 2>/dev/null \
 		|| { echo "错误：debian/control 的 Version 仍是写死的数字"; exit 1; }
 	@! grep -qn '<version>[0-9]' shims/linux/component/chaoset.xml 2>/dev/null \
@@ -72,7 +76,7 @@ check-version:
 		grep -q 'version.sh' "$$s" \
 			|| { echo "错误：$$s 未使用 scripts/version.sh"; exit 1; }; \
 	done
-	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 commit hash；含 Windows 安装器/二进制版本资源）"
+	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 年月日-commit hash；含 Windows 安装器/二进制版本资源）"
 
 build:
 	go build -o bin/chaosetd ./cmd/chaosetd

@@ -200,9 +200,9 @@ func TestCheckWindowsVersionInfo(t *testing.T) {
 	}
 }
 
-// TestCheckVersionSource 用真实文件验证「tag CI 用 tag、其余用 commit hash」
-// 契约，并做变异：version.sh 去掉 rev-parse、release.yml 回退到 describe --tags
-// 都应被捕获。
+// TestCheckVersionSource 用真实文件验证「只读 CHAOS_VERSION_TAG，读不到就生成
+// 年月日+hash」契约，并做变异：version.sh 去掉环境变量 / rev-parse / 日期、
+// release.yml 回退到 describe --tags 都应被捕获。
 func TestCheckVersionSource(t *testing.T) {
 	paths := []string{makefile, winBuild, macBuild, linuxSetupBuild, releaseYML}
 	fsys := fstest.MapFS{}
@@ -219,18 +219,39 @@ func TestCheckVersionSource(t *testing.T) {
 		t.Fatalf("真实版本源实现未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
 
-	// 变异 1：version.sh 不再用 commit hash。
 	orig := string(fsys["scripts/version.sh"].Data)
+
+	// 变异 1：version.sh 不再读取 CHAOS_VERSION_TAG（tag 版本注入会失效）。
 	problems = nil
 	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(
-		strings.Replace(orig, "rev-parse", "describe --tags", 1))}
+		strings.ReplaceAll(orig, "CHAOS_VERSION_TAG", "IGNORED_VERSION_VAR"))}
+	checkVersionSource(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "CHAOS_VERSION_TAG") {
+		t.Fatalf("version.sh 去掉 CHAOS_VERSION_TAG 应被捕获，实际：%v", problems)
+	}
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(orig)}
+
+	// 变异 2：version.sh 不再用 commit hash。
+	problems = nil
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(
+		strings.ReplaceAll(orig, "rev-parse", "describe --tags"))}
 	checkVersionSource(fsys, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "rev-parse") {
 		t.Fatalf("version.sh 去掉 rev-parse 应被捕获，实际：%v", problems)
 	}
 	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(orig)}
 
-	// 变异 2：release.yml 回退到「最近的 tag」。
+	// 变异 3：version.sh 去掉日期（变回纯 hash）。
+	problems = nil
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(
+		strings.ReplaceAll(orig, "date +%Y%m%d", "date +%s"))}
+	checkVersionSource(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "date +%Y%m%d") {
+		t.Fatalf("version.sh 去掉年月日格式应被捕获，实际：%v", problems)
+	}
+	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(orig)}
+
+	// 变异 4：release.yml 回退到「最近的 tag」。
 	ymlorig := string(fsys[releaseYML].Data)
 	problems = nil
 	fsys[releaseYML] = &fstest.MapFile{Data: []byte(

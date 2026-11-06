@@ -738,19 +738,22 @@ func checkWindowsVersionInfo(fsys fs.FS, problems *[]string) {
 		"VS_VERSION_INFO", "ChaosetSetup.exe")
 }
 
-// checkVersionSource 锁住 2026-11-06 用户规则：只有 push tag 触发的 GitHub CI
-// 构建用 tag 号，其余一律用 commit hash。本地测试不必累加版本号，又能从
-// hash 定位构建；禁止回退到 git describe --tags 取「最近的 tag」。
+// checkVersionSource 锁住 2026-11-06 用户规则：只看一个环境变量
+// CHAOS_VERSION_TAG——CI 在 push tag 触发时设成 tag 版本，其余构建不设，
+// version.sh 读不到就生成「年月日 + commit hash」。禁止回退到 git describe --tags。
 func checkVersionSource(fsys fs.FS, problems *[]string) {
 	const group = "版本号来源"
 	checkExists(fsys, problems, group, "scripts/version.sh")
 	checkContains(fsys, problems, group, "scripts/version.sh",
-		"rev-parse", "GITHUB_REF_TYPE", "GITHUB_EVENT_NAME", "--quad", "--pkg")
+		"CHAOS_VERSION_TAG", "rev-parse", "date +%Y%m%d", "--quad", "--pkg",
+		"date-hash")
+	// tag 版本只由 release.yml 顶层 env 注入，且限定 push tag 触发。
+	checkContains(fsys, problems, group, releaseYML,
+		"CHAOS_VERSION_TAG", "github.event_name == 'push'", "scripts/version.sh")
+	checkExcludes(fsys, problems, group, releaseYML, "git describe --tags")
 	checkContains(fsys, problems, group, makefile,
 		"VERSION_SCRIPT", "VERSION_QUAD", "PKG_VERSION",
-		"s/@VERSION@/$(PKG_VERSION)/g", "version.sh")
-	checkContains(fsys, problems, group, releaseYML, "scripts/version.sh")
-	checkExcludes(fsys, problems, group, releaseYML, "git describe --tags")
+		"s/@VERSION@/$(PKG_VERSION)/g", "version.sh", "CHAOS_VERSION_TAG")
 	for _, s := range []string{winBuild, macBuild, linuxSetupBuild} {
 		checkContains(fsys, problems, group, s, "version.sh")
 		checkExcludes(fsys, problems, group, s, "git describe --tags")

@@ -4,24 +4,27 @@
 
 ## 未发布
 
-- **版本号来源改为「tag 触发的 CI 用 tag，其余用 commit hash」（2026-11-06
-  用户要求）**：用户原话「本地测试的时候不想一直累加版本号，同时又想知道我本地
-  测试的到底是什么版本，方便排查问题」。此前 `make version` 用
-  `git describe --tags`，本地/日常 CI 打出来的包永远显示最近一次发布的 tag，
-  分不清装的是哪个提交。新增 `scripts/version.sh` 作为唯一真源：
-  - 只有 `GITHUB_ACTIONS=true` + `GITHUB_EVENT_NAME=push` +
-    `GITHUB_REF_TYPE=tag` + `v*` ref 时用 tag 号（去 v）；显式 `--tag` 用于
-    本地复跑同一条打包链。`workflow_dispatch`、日常 CI、PR、本地一律用
-    `git rev-parse --short=12 HEAD`，工作区有未提交改动追加 `-dirty`。
-  - `--quad` 派生 4 段数字版本（tag → `0.3.17.0`；hash → `0.0.A.B`，
+- **版本号规则简化为单一环境变量（2026-11-06 用户要求）**：用户原话「本地测试的
+  时候不想一直累加版本号，同时又想知道我本地测试的到底是什么版本」、
+  「除了在 github ci 上通过 tag 触发的时候走规范的版本号，其他都年月日+commit
+  hash」，最后明确「这不是很简单通过一个环境变量读取就可以做到么」。此前
+  `make version` 用 `git describe --tags`，本地/日常 CI 打的包永远显示最近一次
+  发布的 tag；中间一版在脚本里判断了四个 `GITHUB_*` 变量，属于过度设计。
+  现在 `scripts/version.sh` 只读一个环境变量 `CHAOS_VERSION_TAG`：
+  - `release.yml` 顶层 `env:` 用 `github.event_name == 'push' &&
+    startsWith(github.ref, 'refs/tags/v') && github.ref_name || ''` 注入——
+    **只有 push tag 触发**时该变量是 tag 号（去 v），`workflow_dispatch`、
+    日常 CI、PR、本地全部为空。
+  - 读不到变量就生成「构建当天年月日 + commit hash」：`20261106-8b2eb0ca0c38`，
+    工作区有未提交改动追加 `-dirty`。`--source` 返回 `date-hash`。
+  - `--quad` 派生 4 段数字版本（tag → `0.3.17.0`；其余 → `0.0.A.B`，
     A/B 由 hash 前 8 位十六进制转十进制），供 NSIS/PE `VS_FIXEDFILEINFO`；
-    `--pkg` 派生 `0.0.0+<hash>`，供 deb/Arch（版本号必须以数字开头）。
+    日期与完整显示版本放在属性页字符串字段。`--pkg` 派生
+    `0.0.0+<日期>.<hash>[.dirty]`，供 deb/Arch（版本号必须以数字开头）。
   - Makefile 的 `$(VERSION)`/`$(VERSION_QUAD)`/`$(PKG_VERSION)` 全部来自该脚本；
-    三端 `build.sh` 去掉 `git describe --tags` 回退；`release.yml` 不再从
-    `github.ref_name` 无条件注入、也不再回退到「最近 tag」，构建后断言
-    Info.plist 版本等于 `scripts/version.sh` 的输出。
-  - `make version` 打印显示版本 + 来源 + 数字/包版本；`make check-version` 新增
-    「禁止 `git describe --tags` 作版本源」断言（注释里的历史说明除外）。
+    三端 `build.sh` 与 `release.yml` 构建后断言都复用 `version.sh` 输出。
+  - `make check-version` 与 `checkuiparity` 的「版本号来源」契约锁死
+    `CHAOS_VERSION_TAG`、年月日格式与 tag 注入条件（含变异测试）。
 
 - **Windows 安装程序与二进制补齐版本信息 / app 信息（2026-11-06 用户反馈）**：
   此前 `ChaosetSetup.exe` 没有任何版本资源（右键「属性 → 详细信息」全空），

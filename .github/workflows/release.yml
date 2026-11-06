@@ -5,6 +5,12 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 版本号只在这里注入一次：只有「push tag 触发」时把 tag 号（去 v）写进
+# CHAOS_VERSION_TAG；workflow_dispatch（即使选了 tag ref）、PR、日常 CI 都不设，
+# scripts/version.sh 读不到就自动生成「年月日-commit hash」。
+env:
+  CHAOS_VERSION_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
 jobs:
   test:
     name: 格式 / 静态检查 / 测试 / 构建
@@ -55,9 +61,8 @@ jobs:
 
       - name: 构建 Go 二进制与 macOS app
         run: |
-          # 版本单一真源 scripts/version.sh：只有 push tag 触发的构建用 tag 号，
-          # workflow_dispatch / 日常 CI 一律用 commit hash（本地测试不必累加版本号，
-          # 又能从 hash 定位构建）。不再回退到「最近一次发布的 tag」。
+          # 版本单一真源 scripts/version.sh：workflow 顶层 env 只在 push tag
+          # 触发时设置 CHAOS_VERSION_TAG；其余构建读不到就生成「年月日-commit hash」。
           make build
           chmod +x shims/macos/build.sh \
                    shims/macos/tests/equivalence.sh \
