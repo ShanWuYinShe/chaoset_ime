@@ -2,7 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.3.18（2026-11-07）
+
+- **根除 RDP 修饰键卡键 + 输入热路径零捕获零干扰（Windows 壳，2026-11-07 用户反馈）**：
+  - 彻底根治远程桌面（如 macOS RDP 连接 Windows）下使用 `Ctrl+向上箭头` 切换应用切回后 Windows 出现 Ctrl 卡键状态的恶性 bug。
+  - 严格贯彻输入法「被动响应、零捕获、零副作用」底线：所有修饰键（Ctrl/Alt/Win/Shift）在 `OnTestKeyDown`/`OnKeyDown` 中一律透明放行（`pfEaten=FALSE`），绝不调用 `handleKey`，绝不进入管道探测链路；彻底移除对 Ctrl/Alt/Win 释放事件的主动嗅探与写盘日志，只有 Shift 释放参与中英切换判定。
+  - 非组词键（`!wouldHandle`）或英文模式下，若存在未决预编辑（`isComposing` / `confirmedPreedit`），安全收起浮窗（`flushOrCancel`）后原样放行，绝不阻断宿主快捷键与普通按键。
+  - 前台焦点事件钩子（`SetWinEventHook`）限制仅在 Win11 开始菜单/搜索宿主中按需注册，普通应用程序（RDP、浏览器、编辑器等）钩子注册数物理降至 0，彻底杜绝系统级事件风暴对远程桌面与宿主按键时序的干扰。
+  - 修复 macOS 下单元测试因目录路径较长触发 Unix domain socket 104 字节上限导致 bind 失败的问题。
 
 - **修宿主进程崩溃/卡死：DLL 动态卸载后 VEH 回调查进已卸载内存（2026-11-07 日志排查）**：
   - Windows 应用日志证据（2026-11-05 18:05，安装升级后）：ApplicationFrameHost.exe

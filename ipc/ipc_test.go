@@ -3,6 +3,7 @@ package ipc
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -485,8 +486,12 @@ func TestSelectPrefixProgressive(t *testing.T) {
 // 前者只丢组词、保留学习上下文（prev/history），后者连上下文一起清。
 // 壳在切中英/透传等「继续打字」场景走前者，靠这条链路生效。
 func TestServerResetCompositionVsReset(t *testing.T) {
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "resetcomp.sock")
+	dir, err := os.MkdirTemp("", "cst*")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	sock := filepath.Join(dir, "s.sock")
 
 	dict, err := engine.ParseDict(strings.NewReader(ipcTestDict))
 	if err != nil {

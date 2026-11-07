@@ -2196,30 +2196,12 @@ public:
         // 丢了，这里先复位，随后的 Shift 按下才能重新开一次干净的会话。
         reconcileShiftState();
         if (isModifierKey(wParam)) {
-            // Shift 空按切换中英的跟踪点（2026-10-31 修复）。
-            //
-            // 为什么从 OnKeyDown/OnKeyUp 移到这里：TSF 两阶段模型下，
-            // OnTestKeyDown 返回 FALSE 的按键（本壳对所有修饰键都返回 FALSE）
-            // **不会**再调用 OnKeyDown/OnKeyUp——原实现把跟踪写在 Key 阶段，
-            // 修饰键可能永远进不了跟踪函数（中英切换失效）。Test 阶段对每个
-            // 按键都会调用，是唯一可靠的位置（OnTestKeyUp 同理）。
-            static volatile LONG loggedTestModifier = 0;
-            if (InterlockedCompareExchange(&loggedTestModifier, 1, 0) == 0 && diagBudget()) {
-                diagPrintf(L"tsf.log", "modifier in OnTestKeyDown vk=0x%02lX\n",
-                           static_cast<unsigned long>(wParam));
-            }
-            // 只有 Shift 参与「空按切换中英」；Ctrl/Alt/Win 等其它修饰键
-            // 不能进 onShiftEvent（否则松 Ctrl 会被误判成 Shift 空按），但
-            // 它们属于「Shift 按住期间按过其它键」——必须关闭空按窗口。
-            // mac（flagsChanged 清 shiftArmed）/Linux（任何非 Shift 事件清
-            // sinceShift）都是这个语义；此前 Windows 漏了这一步，
-            // Shift→Ctrl→松 Shift 会误切换中英（2026-10-31 三端复核发现）。
             if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
                 onShiftEvent(false, wParam, pic);
             } else if (shiftHeld_ != 0) {
                 sinceShift_ = true;
             }
-            *pfEaten = FALSE;  // 修饰键始终放行
+            *pfEaten = FALSE;  // 修饰键始终被动放行，绝不进入 handleKey 干扰系统状态
             return S_OK;
         }
         // 任何非 Shift 键按下都取消「Shift 空按」窗口。必须放在 Test 阶段：
@@ -2287,30 +2269,32 @@ public:
         // 等宿主的内容键只进 Key 阶段（Test 阶段收不到修饰键），只挂 Test
         // 会让这些宿主丢 KeyUp 后没有收口路径（2026-11-05 回归审计 P2-11）。
         reconcileShiftState();
-        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-            // **第二跟踪点**（2026-11-05 实机日志实证，必须有）。
-            //
-            // 背景：2026-10-31 曾把跟踪从 Key 阶段整体移到 Test 阶段，理由是
-            // 「Test 返回 FALSE 的按键不会再进 Key 阶段」。实机 tsf.log 证明这个
-            // 前提只在部分宿主成立，Chrome / conhost / Windows Terminal 恰好相反：
-            //   Chrome pid=1376  ：modifier in OnKeyDown vk=0x10（有）
-            //                      modifier in OnTestKeyDown（无）→ 永远不切换
-            //   Firefox          ：modifier in OnTestKeyDown vk=0x10（有）→ 正常
-            // 也就是这些宿主把修饰键**只**送进 Key 阶段。只挂 Test 阶段等于对它们
-            // 彻底失效，这正是「能打字但 Shift 切不了」的直接原因。
-            //
-            // 两个阶段都挂是安全的：shiftHeld_ 位掩码与 begin/end 都是幂等的，
-            // 同一按键被两阶段各投递一次不会双计，重复释放会被「孤立释放」拦住。
-            static volatile LONG loggedDownModifier = 0;
-            if (InterlockedCompareExchange(&loggedDownModifier, 1, 0) == 0 && diagBudget()) {
-                diagPrintf(L"tsf.log", "modifier in OnKeyDown vk=0x%02lX\n",
-                           static_cast<unsigned long>(wParam));
+        if (isModifierKey(wParam)) {
+            if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+                onShiftEvent(false, wParam, pic);
+            } else if (shiftHeld_ != 0) {
+                sinceShift_ = true;
             }
-            onShiftEvent(false, wParam, pic);
-            *pfEaten = FALSE;  // 只透传不消费，Shift 组合键与按键事件完整交给宿主
+            *pfEaten = FALSE;  // 修饰键始终放行，绝不进入 handleKey 干扰系统状态
             return S_OK;
         }
         sinceShift_ = true;  // 幂等兜底（正常已在 OnTestKeyDown 置位）
+        if (currentEnglish()) {
+            clearAssociate();
+            if (isComposing() || !confirmedPreedit_.empty()) {
+                flushOrCancel(pic);
+            }
+            *pfEaten = FALSE;  // 英文模式全放行
+            return S_OK;
+        }
+        if (!wouldHandle(wParam)) {
+            clearAssociate();
+            if (isComposing() || !confirmedPreedit_.empty()) {
+                flushOrCancel(pic);
+            }
+            *pfEaten = FALSE;  // 非组词按键一律放行给宿主
+            return S_OK;
+        }
         *pfEaten = handleKey(wParam, pic) ? TRUE : FALSE;
         return S_OK;
     }
@@ -2321,23 +2305,10 @@ public:
             *pfEaten = FALSE;
             return S_OK;
         }
-        if (isModifierKey(wParam)) {
-            static volatile LONG loggedTestUpModifier = 0;
-            if (InterlockedCompareExchange(&loggedTestUpModifier, 1, 0) == 0 && diagBudget()) {
-                diagPrintf(L"tsf.log", "modifier in OnTestKeyUp vk=0x%02lX\n",
-                           static_cast<unsigned long>(wParam));
-            }
-            if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-                // 与 OnTestKeyDown 对称：Key 阶段收不到修饰键时，这里也收不到；
-                // 跟踪必须放在 Test 阶段（见 OnTestKeyDown 注释）。
-                onShiftEvent(true, wParam, pic);
-            } else if (shiftHeld_ != 0) {
-                // 其它修饰键的释放同样关闭空按窗口：mac 在 flagsChanged（按下
-                // 与释放都触发）清 shiftArmed，Linux 在任何非 Shift 事件清
-                // sinceShift。典型场景：Ctrl 先按住 → 按 Shift → 松 Ctrl →
-                // 松 Shift，Windows 此前会误切换中英。
-                sinceShift_ = true;
-            }
+        // 只有 Shift 键释放才参与中英切换判定；
+        // 其它任何按键（包括 Ctrl、Alt、Win 等修饰键）的释放，输入法绝不关心、不干预、直接放行
+        if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+            onShiftEvent(true, wParam, pic);
         }
         *pfEaten = FALSE;  // KeyUp 一律不消费，保证宿主应用状态机完整，绝不导致宿主丢键或键盘卡死
         return S_OK;
@@ -2349,18 +2320,12 @@ public:
             *pfEaten = FALSE;
             return S_OK;
         }
+        // 只有 Shift 键释放才参与中英切换判定（Key 阶段对称兜底）；
+        // 其它任何按键（包括 Ctrl、Alt、Win 等修饰键）的释放，输入法绝不关心、不干预、直接放行
         if (wParam == kVkShift || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-            // **第二跟踪点**（与 OnKeyDown 对称，见那里的日志实证说明）。
-            static volatile LONG loggedUpModifier = 0;
-            if (InterlockedCompareExchange(&loggedUpModifier, 1, 0) == 0 && diagBudget()) {
-                diagPrintf(L"tsf.log", "modifier in OnKeyUp vk=0x%02lX\n",
-                           static_cast<unsigned long>(wParam));
-            }
             onShiftEvent(true, wParam, pic);
-            *pfEaten = FALSE;  // 只透传不消费
-            return S_OK;
         }
-        *pfEaten = FALSE;
+        *pfEaten = FALSE;  // 只透传不消费
         return S_OK;
     }
 
@@ -2767,6 +2732,7 @@ private:
     // 前台钩子的按需注册：只有「本线程确实在用我们的输入法 + 本进程是前台」
     // 时才挂；每线程最多一个系统级钩子（多 TIP 实例共用，审计 T6）。
     bool shouldWatchForeground() const {
+        if (!shellHostNeedsOwner()) return false;
         if (!const_cast<ChaosetTIP*>(this)->isActiveTip()) return false;
         const HWND fg = GetForegroundWindow();
         if (fg == nullptr) return false;
