@@ -204,8 +204,8 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   showSettingsWindow / onForegroundChanged / selectCandidateByIndex /
   deleteCandidateByIndex / flipPage / CandidateWindow::show。
 - **副作用统一入口**：每进程一个 `ShellWorker` 后台线程（`ShellTask` 任务队列）
-  + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipDaemonReadyMsg`/
-  `kTipModeAuthorityMsg`/`kTipShowToastMsg` 回投结果）；建进程、管道重试、
+  + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipModeAuthorityMsg`/
+  `kTipShowToastMsg` 回投结果）；建进程、管道重试、
   派发 UI、daemon 代拉起全部在 worker 执行。
 - **异步日志**：`diagPrintf` 对 `tsf.log` 只做 `enqueueLogLine`（有界 ring，
   worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘

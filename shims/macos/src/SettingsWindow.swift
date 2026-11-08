@@ -48,7 +48,6 @@ enum SettingsWindowController {
 
         // 布局：左侧导航（输入 / 词库 / 关于）+ 右侧内容页（2026-11-06
         // 卡片式重构，与 Windows 设置窗对齐；参照微信输入法设置窗的形态）。
-        let pageTarget = PageSwitchTarget.shared
 
         // —— 输入页 ——（三页视图构建见 SettingsWindowPages.swift）
         let inputPage = SettingsWindowPages.makeInputPage(

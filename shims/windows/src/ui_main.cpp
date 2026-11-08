@@ -36,7 +36,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR /*cmdLine*/, int) {
         showLoadError(L"找不到 ChaosetIME.dll（请使用完整安装包）。");
         return 1;
     }
-    auto runUi = reinterpret_cast<RunUiFn>(GetProcAddress(dll, "ChaosetRunUi"));
+    // GetProcAddress 返回签名未知的 FARPROC：先经 void* 中转再转目标签名，
+    // 避免 mingw -Wall 的 -Wcast-function-type（与 win32.cpp 的 loadProcAddress 同语义）。
+    auto runUi = reinterpret_cast<RunUiFn>(reinterpret_cast<void*>(GetProcAddress(dll, "ChaosetRunUi")));
     if (runUi == nullptr) {
         FreeLibrary(dll);
         showLoadError(L"ChaosetIME.dll 缺少 ChaosetRunUi 导出（DLL 与 UI 宿主版本不匹配）。");

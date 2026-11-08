@@ -17,16 +17,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM（设置窗导航命中）
 #include <wingdi.h>
 #include <appmodel.h>
 #include <msctf.h>
 #include <objbase.h>
-#include <shellapi.h>  // SHQueryUserNotificationState（全屏免打扰，2026-10-31 A7）
-#include <commdlg.h>  // GetSaveFileNameW（设置窗口导出学习数据，2026-10-31）
-#include <shlobj.h>   // SHGetFolderPathW（设置窗口导入词库定位 %LOCALAPPDATA%，2026-10-31）
-#include <sddl.h>     // ConvertSidToStringSidW（命名管道名按当前用户 SID）
-#include <cderr.h>    // FNERR_BUFFERTOOSMALL（导入词库多选缓冲区不足）
 #include <uiautomationcore.h>     // UIA 类型（无障碍宿主 provider，2026-10-31）
 #include <uiautomationcoreapi.h>  // UiaHostProviderFromHwnd / UiaReturnRawElementProvider
 
@@ -40,7 +34,6 @@
 #include <deque>
 #include <map>
 #include <mutex>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -75,16 +68,26 @@ using UiaReturnRawElementProviderFn = LRESULT(WINAPI*)(HWND, WPARAM, LPARAM, IRa
 static UiaHostProviderFromHwndFn g_uiaHostProviderFromHwnd = nullptr;
 static UiaReturnRawElementProviderFn g_uiaReturnRawElementProvider = nullptr;
 
+// GetProcAddress 返回签名未知的 FARPROC，直接 reinterpret_cast 到具体导出
+// 函数指针会触发 mingw -Wall 的 -Wcast-function-type（构建基线要求零警告）。
+// 先经 void* 中转再转目标签名与直接转换语义等价（Win32 ABI 下函数指针与
+// 数据指针同宽，实际签名由调用方按导出文档保证），不屏蔽/降级任何告警。
+template <typename Fn>
+static Fn loadProcAddress(HMODULE mod, const char* name) {
+    void* proc = reinterpret_cast<void*>(GetProcAddress(mod, name));
+    return reinterpret_cast<Fn>(proc);
+}
+
 static void ensureUiaLoaded() {
     static bool tried = false;
     if (tried) return;
     tried = true;
     HMODULE mod = LoadLibraryW(L"uiautomationcore.dll");
     if (mod == nullptr) return;
-    g_uiaHostProviderFromHwnd = reinterpret_cast<UiaHostProviderFromHwndFn>(
-        GetProcAddress(mod, "UiaHostProviderFromHwnd"));
-    g_uiaReturnRawElementProvider = reinterpret_cast<UiaReturnRawElementProviderFn>(
-        GetProcAddress(mod, "UiaReturnRawElementProvider"));
+    g_uiaHostProviderFromHwnd = loadProcAddress<UiaHostProviderFromHwndFn>(
+        mod, "UiaHostProviderFromHwnd");
+    g_uiaReturnRawElementProvider = loadProcAddress<UiaReturnRawElementProviderFn>(
+        mod, "UiaReturnRawElementProvider");
 }
 
 
@@ -103,7 +106,6 @@ class ChaosetTIP;
 // 一律经 ShellWorker 后台线程执行，TSF 线程只做内存操作与 PostMessage。
 // ============================================================================
 constexpr UINT kTipForegroundMsg    = WM_APP + 101;  // 前台变化（钩子回调 → TIP 线程）
-constexpr UINT kTipDaemonReadyMsg   = WM_APP + 102;  // 后台 daemon 已就绪
 constexpr UINT kTipModeAuthorityMsg = WM_APP + 103;  // 后台查到的权威中英状态
 constexpr UINT kTipShowToastMsg     = WM_APP + 104;  // 后台失败提示（wParam=文案 id）
 // TIP message-only 窗口定时器：只在「本线程有激活 TIP」时运行，500ms 复核一次
@@ -1563,7 +1565,6 @@ private:
                     if (daemonPipeExists()) break;
                     Sleep(20);
                 }
-                postTipThread(task.notifyThread, kTipDaemonReadyMsg, 0, 0);
                 break;
             }
             case ShellTask::Kind::kWarmDaemon:
@@ -1631,7 +1632,6 @@ static void postDaemonConnect() {
     if (InterlockedCompareExchange(&g_connectJobPending, 1, 0) != 0) return;  // 去重
     ShellTask task;
     task.kind = ShellTask::Kind::kConnectDaemon;
-    task.notifyThread = GetCurrentThreadId();
     shellWorker().post(std::move(task));
 }
 static void postOpenSettings(DWORD notifyThread) {
@@ -1940,6 +1940,17 @@ public:
         // Deactivate 的情况下直接释放 TIP（TSF 不保证成对）。窗口过程与
         // SetWinEventHook 钩子都指向本 DLL 内的代码，不撤会让下次
         // WM_PAINT / 前台事件跳到已卸载内存（宿主进程崩溃）。
+        //
+        // 必须先摘掉线程注册表：析构后本实例若仍留在 g_tlFgTips 里，500ms
+        // 激活档案定时器与前台/模式消息会把它当活对象解引用（悬垂指针 →
+        // 宿主进程崩溃）。unregisterTipFromThread 还负责「本线程最后一个 TIP
+        // 退出时销毁 message-only 窗口」——漏调会让 g_liveTipMsgWindows 永不
+        // 归零、DllCanUnloadNow 恒 S_FALSE（DLL 常驻宿主、窗口类残留）。
+        // 该函数幂等：Deactivate 已调用过时是空操作，不会双重销毁。
+        // 限制：注册表是 thread_local，只在 TSF 常规路径（同线程 Release）有效；
+        // 跨线程 Release 时这里看到的是其它线程的空表（原 Deactivate 路径同样
+        // 无法清理），彻底修复需要全局 (tip, 线程 id) 注册表，本轮不做。
+        unregisterTipFromThread(this);
         if (fgHook_ != nullptr) unhookForeground();
         candidateWnd_.destroy();
         if (tm_ != nullptr) { tm_->Release(); tm_ = nullptr; }
@@ -4519,8 +4530,6 @@ static LRESULT CALLBACK tipMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             for (ChaosetTIP* tip : g_tlFgTips) {
                 if (tip != nullptr) tip->onWorkerShowToast(static_cast<int>(wParam));
             }
-            return 0;
-        case kTipDaemonReadyMsg:
             return 0;
         default:
             break;
