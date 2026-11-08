@@ -14,13 +14,14 @@ import (
 
 	"chaoset.ime/engine"
 	"chaoset.ime/internal/buildinfo"
+	"chaoset.ime/internal/cliutil"
 	"chaoset.ime/ipc"
 )
 
 func main() {
 	socket := flag.String("socket", "", "连接该 Unix 套接字上的 chaosetd；与 -pipe 二选一，都为空则使用本地内嵌引擎")
 	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
-	var dicts repeatFlag
+	var dicts cliutil.RepeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径，可多次传入（仅本地模式）")
 	userPath := flag.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
 	fuzzy := flag.Bool("fuzzy", false, "启用模糊音（仅本地模式；daemon 模式由 chaosetd 的 -fuzzy 决定）")
@@ -36,7 +37,7 @@ func main() {
 		log.Fatal("-socket / -pipe 只能二选一")
 	}
 	if len(dicts) == 0 {
-		dicts = repeatFlag{"data/dict_common.tsv"}
+		dicts = cliutil.RepeatFlag{"data/dict_common.tsv"}
 	}
 
 	ctrl, closeFn, err := buildController(*socket, *usePipe, dicts, *userPath, *fuzzy, *trad, *sp)
@@ -141,15 +142,6 @@ func main() {
 			printComposition(comp)
 		}
 	}
-}
-
-// repeatFlag 支持同一参数多次传入，与 chaosetd 保持一致。
-type repeatFlag []string
-
-func (f *repeatFlag) String() string { return strings.Join(*f, ",") }
-func (f *repeatFlag) Set(v string) error {
-	*f = append(*f, v)
-	return nil
 }
 
 func buildController(socket string, usePipe bool, dicts []string, userPath string, fuzzy bool, trad bool, sp string) (engine.Controller, func(), error) {

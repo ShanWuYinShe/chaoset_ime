@@ -19,22 +19,14 @@ import (
 	"chaoset.ime/engine"
 	"chaoset.ime/internal/appdirs"
 	"chaoset.ime/internal/buildinfo"
+	"chaoset.ime/internal/cliutil"
 	"chaoset.ime/ipc"
 )
-
-// repeatFlag 支持同一参数多次传入（如多个 -dict 叠加加载）。
-type repeatFlag []string
-
-func (f *repeatFlag) String() string { return strings.Join(*f, ",") }
-func (f *repeatFlag) Set(v string) error {
-	*f = append(*f, v)
-	return nil
-}
 
 func main() {
 	socket := flag.String("socket", "", "Unix 套接字路径（空=按平台用户数据目录生成）")
 	usePipe := flag.Bool("pipe", false, "使用 Windows 命名管道（按当前用户 SID 自动生成名字；仅 Windows）")
-	var dicts repeatFlag
+	var dicts cliutil.RepeatFlag
 	flag.Var(&dicts, "dict", "主词典 TSV 路径（可多次传入合并加载；也可用 --import 产物）")
 	seedDict := flag.String("seeddict", "", "种子词库路径：-dict 目标不存在时先复制一份（Windows 安装器/开机自启首次运行；不覆盖已有用户词库）")
 	userPath := flag.String("userdict", "", "用户词典路径（空=按平台用户数据目录生成；显式传空串表示不落盘）")
@@ -79,7 +71,7 @@ func main() {
 	}
 	log.Printf("chaosetd 启动: %s", buildinfo.Info())
 	if len(dicts) == 0 {
-		dicts = repeatFlag{"data/dict_common.tsv"}
+		dicts = cliutil.RepeatFlag{"data/dict_common.tsv"}
 	}
 	// Windows 安装器/开机自启以当前用户身份启动 daemon 时，用户词库副本可能
 	// 尚不存在（安装器是管理员上下文，不能可靠地替交互用户准备 LOCALAPPDATA）。

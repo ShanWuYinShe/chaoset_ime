@@ -146,23 +146,105 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 }
 
+// 请求参数结构体：字段名/类型即 IPC JSON 契约。集中定义 + 泛型解码，避免每个
+// case 重复「匿名 struct + json.Unmarshal + 错误包装」（旧实现 12 处重复）；
+// 新增方法时只加结构体与一行动词，错误文案由 req.Method 统一生成。
+type inputParams struct {
+	Text string `json:"text"`
+	// Half 可选：壳侧全/半角标点状态，**本次请求内生效，daemon 不保存**
+	// （2026-11-05 起：壳是唯一真源，daemon 不再持有镜像状态）。
+	// nil = 旧壳未携带，按全角处理（历史默认），不回落到会话残留值。
+	Half *bool `json:"half"`
+}
+
+// indexParams 是「按候选序号操作」类方法的参数（select / selectPrefix）。
+type indexParams struct {
+	Index int `json:"index"`
+}
+
+type associateParams struct {
+	Sylls []string `json:"sylls"`
+}
+
+type associateSelectParams struct {
+	Word  string   `json:"word"`
+	Sylls []string `json:"sylls"`
+}
+
+type punctParams struct {
+	Key string `json:"key"`
+	// Half 由壳随请求下发（壳本地持有全/半角开关）。指针区分「旧壳未携带」
+	// 与「显式 false」：nil 时按全角处理（历史默认），不回落会话状态。
+	Half *bool `json:"half"`
+}
+
+type userDeleteParams struct {
+	Word string `json:"word"`
+	// Syllables 是 ' 或空格分隔的音节串（macOS 壳/CLI 用）；
+	// Sylls 是结构化数组（Windows core::Session 用），二者取其一。
+	Syllables string   `json:"syllables"`
+	Sylls     []string `json:"sylls"`
+}
+
+type uiParams struct {
+	Settings bool `json:"settings"`
+}
+
+type userExportParams struct {
+	PhrasesOnly bool `json:"phrases_only"`
+	// Offset/Limit 是分页参数：行偏移（0 起）与本页最大行数。
+	//
+	// 为什么分页（2026-10-30 审计 P1）：帧上限 1 MiB 只在读侧校验，此前整份
+	// TSV 塞进单帧——学习数据无上限增长，重度用户的导出必然超过 1 MiB，客户端
+	// 读帧被拒且流里残留未读 body（连接失步）。Limit<=0 保持旧行为（全量导出、
+	// next=-1），兼容旧客户端。
+	Offset int `json:"offset"`
+	Limit  int `json:"limit"`
+}
+
+// decodeParams 解码**必填**参数：空 params 与非法 JSON 都返回「解析 <method>
+// 参数失败」，与旧实现逐字一致的错误文案（客户端会透传该文案）。
+func decodeParams[T any](req Request) (T, error) {
+	var p T
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return p, fmt.Errorf("解析 %s 参数失败: %w", req.Method, err)
+	}
+	return p, nil
+}
+
+// decodeOptionalParams 解码**可选**参数：空 params 返回零值（兼容旧客户端不
+// 传参的调用；userDelete/ui/userExport 三处历史语义）。
+func decodeOptionalParams[T any](req Request) (T, error) {
+	var p T
+	if len(req.Params) == 0 {
+		return p, nil
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return p, fmt.Errorf("解析 %s 参数失败: %w", req.Method, err)
+	}
+	return p, nil
+}
+
+// requireUser 统一「未启用用户词典」错误（userStats/userClear/userDelete/
+// userExport 四个 case 共用）。
+func (s *Server) requireUser() error {
+	if s.user == nil {
+		return fmt.Errorf("未启用用户词典")
+	}
+	return nil
+}
+
 func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	switch req.Method {
 	case "ping":
 		return "pong", nil
 	case "input":
-		var p struct {
-			Text string `json:"text"`
-			// Half 可选：壳侧全/半角标点状态，**本次请求内生效，daemon 不保存**
-			// （2026-11-05 起：壳是唯一真源，daemon 不再持有镜像状态）。
-			// nil = 旧壳未携带，按全角处理（历史默认），不回落到会话残留值。
-			Half *bool `json:"half"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, fmt.Errorf("解析 input 参数失败: %w", err)
-		}
-		// 宽度随请求下发（壳是唯一真源）：nil = 旧壳未携带，按全角处理。
+		// 宽度随请求下发（壳是唯一真源）：nil = 旧壳未携带，按全角处理；
 		// 引擎不保存该状态，因此不存在「上次残留」的可能。
+		p, err := decodeParams[inputParams](req)
+		if err != nil {
+			return nil, err
+		}
 		return sess.Input(p.Text, p.Half != nil && *p.Half)
 	case "backspace":
 		return sess.Backspace()
@@ -186,11 +268,9 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "prevPage":
 		return sess.PrevPage()
 	case "select":
-		var p struct {
-			Index int `json:"index"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, fmt.Errorf("解析 select 参数失败: %w", err)
+		p, err := decodeParams[indexParams](req)
+		if err != nil {
+			return nil, err
 		}
 		text, err := sess.Select(p.Index)
 		if err != nil {
@@ -203,11 +283,9 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		// 据此把它并入预编辑/合成，整条组词结束才落盘（2026-10-30 起三
 		// 端统一，兼容对「组词中写正文」处理有缺陷的程序）；input/preedit=
 		// 剩余拼音，candidates=剩余候选），壳据此刷新预编辑与候选。
-		var p struct {
-			Index int `json:"index"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, fmt.Errorf("解析 selectPrefix 参数失败: %w", err)
+		p, err := decodeParams[indexParams](req)
+		if err != nil {
+			return nil, err
 		}
 		// 直接回传 Composition：Session.SelectPrefix 已把 committed 写进
 		// comp.Committed（engine/session.go）。此前这里手工拼 map 复制字段，
@@ -221,40 +299,29 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 	case "associate":
 		// 联想候选：选词上屏后拼音区已清空，按上屏词音节查续接词组
 		// （Candidate 列表，结构同 input 响应）。macOS 壳进入联想模式时调用。
-		var pAsso struct {
-			Sylls []string `json:"sylls"`
-		}
-		if err := json.Unmarshal(req.Params, &pAsso); err != nil {
-			return nil, fmt.Errorf("解析 associate 参数失败: %w", err)
+		p, err := decodeParams[associateParams](req)
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{
 			"input": "", "preedit": "", "page": 0, "page_count": 1,
-			"candidates": sess.Associate(pAsso.Sylls),
+			"candidates": sess.Associate(p.Sylls),
 		}, nil
 	case "associateSelect":
 		// 联想候选直接上屏：学习路径与 select 完全一致（调频/共现/词组进化）。
-		var pAssoSel struct {
-			Word  string   `json:"word"`
-			Sylls []string `json:"sylls"`
+		p, err := decodeParams[associateSelectParams](req)
+		if err != nil {
+			return nil, err
 		}
-		if err := json.Unmarshal(req.Params, &pAssoSel); err != nil {
-			return nil, fmt.Errorf("解析 associateSelect 参数失败: %w", err)
-		}
-		text, err := sess.AssociateSelect(pAssoSel.Word, pAssoSel.Sylls)
+		text, err := sess.AssociateSelect(p.Word, p.Sylls)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]string{"committed": text}, nil
 	case "punct":
-		var p struct {
-			Key string `json:"key"`
-			// Half 由壳随请求下发（壳本地持有全/半角开关）。指针区分
-			// 「旧壳未携带」与「显式 false」：nil 时按全角处理（历史默认），
-			// 不再回落到任何会话状态——daemon 不保存该状态（2026-11-05）。
-			Half *bool `json:"half"`
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, fmt.Errorf("解析 punct 参数失败: %w", err)
+		p, err := decodeParams[punctParams](req)
+		if err != nil {
+			return nil, err
 		}
 		half := p.Half != nil && *p.Half
 		text, err := sess.Punct(p.Key, half)
@@ -263,13 +330,13 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		}
 		return map[string]string{"committed": text}, nil
 	case "userStats":
-		if s.user == nil {
-			return nil, fmt.Errorf("未启用用户词典")
+		if err := s.requireUser(); err != nil {
+			return nil, err
 		}
 		return s.user.Stats(), nil
 	case "userClear":
-		if s.user == nil {
-			return nil, fmt.Errorf("未启用用户词典")
+		if err := s.requireUser(); err != nil {
+			return nil, err
 		}
 		if err := s.user.Clear(); err != nil {
 			return nil, err
@@ -279,20 +346,12 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		// 按词删除学习数据（候选窗右键「删除该词」/ chaoset-userdict delete）：
 		// 只从共享 UserDict 删记录，不触碰任何连接的组词会话——壳拿到 deleted
 		// 后自行重新组词刷新候选（daemon 不缓存候选列表，重算即最新）。
-		if s.user == nil {
-			return nil, fmt.Errorf("未启用用户词典")
+		if err := s.requireUser(); err != nil {
+			return nil, err
 		}
-		var p struct {
-			Word string `json:"word"`
-			// Syllables 是 ' 或空格分隔的音节串（macOS 壳/CLI 用）；
-			// Sylls 是结构化数组（Windows core::Session 用），二者取其一。
-			Syllables string   `json:"syllables"`
-			Sylls     []string `json:"sylls"`
-		}
-		if len(req.Params) > 0 {
-			if err := json.Unmarshal(req.Params, &p); err != nil {
-				return nil, fmt.Errorf("解析 userDelete 参数失败: %w", err)
-			}
+		p, err := decodeOptionalParams[userDeleteParams](req)
+		if err != nil {
+			return nil, err
 		}
 		word := strings.TrimSpace(p.Word)
 		if word == "" {
@@ -315,37 +374,21 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		//
 		// settings=true 时让 UI 宿主带 --settings 启动（2026-11-06）：这样
 		// 首实例直接弹出设置窗，TIP 侧不需要再轮询等管道就绪。
-		var uiParams struct {
-			Settings bool `json:"settings"`
+		p, err := decodeOptionalParams[uiParams](req)
+		if err != nil {
+			return nil, err
 		}
-		if len(req.Params) > 0 {
-			if err := json.Unmarshal(req.Params, &uiParams); err != nil {
-				return nil, fmt.Errorf("解析 ui 参数失败: %w", err)
-			}
-		}
-		if err := ensureUIHost(uiParams.Settings); err != nil {
+		if err := ensureUIHost(p.Settings); err != nil {
 			return nil, err
 		}
 		return map[string]bool{"started": true}, nil
 	case "userExport":
-		if s.user == nil {
-			return nil, fmt.Errorf("未启用用户词典")
+		if err := s.requireUser(); err != nil {
+			return nil, err
 		}
-		var p struct {
-			PhrasesOnly bool `json:"phrases_only"`
-			// Offset/Limit 是分页参数：行偏移（0 起）与本页最大行数。
-			//
-			// 为什么分页（2026-10-30 审计 P1）：帧上限 1 MiB 只在读侧校验，
-			// 此前整份 TSV 塞进单帧——学习数据无上限增长，重度用户的导出
-			// 必然超过 1 MiB，客户端读帧被拒且流里残留未读 body（连接失步）。
-			// Limit<=0 保持旧行为（全量导出、next=-1），兼容旧客户端。
-			Offset int `json:"offset"`
-			Limit  int `json:"limit"`
-		}
-		if len(req.Params) > 0 {
-			if err := json.Unmarshal(req.Params, &p); err != nil {
-				return nil, fmt.Errorf("解析 userExport 参数失败: %w", err)
-			}
+		p, err := decodeOptionalParams[userExportParams](req)
+		if err != nil {
+			return nil, err
 		}
 		var buf bytes.Buffer
 		if err := s.user.ExportTSV(&buf, p.PhrasesOnly); err != nil {
