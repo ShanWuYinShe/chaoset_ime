@@ -124,7 +124,7 @@ check-uiparity:
 # 详细背景与检查项见 tools/checkworkflows 的文件头注释（Go，跨平台编译）。
 lint-workflows:
 	go run ./tools/checkworkflows \
-		--expect-jobs lint,test,race,linux-e2e,macos-build,windows-build \
+		--expect-jobs lint,test,race,linux-e2e,macos-build,windows-build,settings-windows \
 		.github/workflows/ci.yml
 	go run ./tools/checkworkflows \
 		--expect-jobs test,package-macos,package-linux,package-windows,release \

@@ -66,7 +66,7 @@ gofmt -l $(git ls-files '*.go')   # 应无输出
 go build ./...                    # 秒级
 ```
 
-6 个并行 job 的覆盖范围、本地复跑方式与 CI 相关陷阱见 skill `ime-daemon-lifecycle`「五、CI 相关」。
+7 个并行 job 的覆盖范围、本地复跑方式与 CI 相关陷阱见 skill `ime-daemon-lifecycle`「五、CI 相关」。
 
 ### 发布必须由用户触发（禁止代理自行发版）
 

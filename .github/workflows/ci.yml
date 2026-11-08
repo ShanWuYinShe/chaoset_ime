@@ -51,7 +51,7 @@ jobs:
       - name: 校验 workflow 结构
         run: |
           go run ./tools/checkworkflows \
-            --expect-jobs lint,test,race,linux-e2e,macos-build,windows-build \
+            --expect-jobs lint,test,race,linux-e2e,macos-build,windows-build,settings-windows \
             .github/workflows/ci.yml
           go run ./tools/checkworkflows \
             --expect-jobs test,package-macos,package-linux,package-windows,release \
@@ -274,6 +274,11 @@ jobs:
           ./shims/macos/tests/equivalence.sh
           ./shims/macos/tests/visual-parity.sh
 
+      # macOS 设置存储（UserDefaults 经 /usr/bin/defaults）的解析/写入单测：
+      # 注入执行器，不碰真实用户偏好；此前该 store 从未被任何测试执行过。
+      - name: 设置存储单测（macOS defaults）
+        run: go test ./internal/settings -count=1
+
   # ── 6. Windows 壳：交叉编译 + 核心行为测试 + 安装包（2026-10-31 新增）──
   # 为什么需要：Windows 壳（C++/NSIS）此前只在打 tag 的 release.yml 里编译，
   # 日常提交改坏 win32.cpp 或 chaoset.nsi 时 CI 仍全绿，到发版才暴露
@@ -307,3 +312,23 @@ jobs:
 
       - name: Windows 安装包（NSIS 脚本 + ZIP/UI 宿主内容自检）
         run: make package-windows
+
+  # ── 7. Windows 设置存储单测（2026-11-08 审计 GO-04）────────────────
+  # 为什么需要：internal/settings 是设置项单一真源，但 Windows 注册表 store
+  # （DWORD/REG_SZ 读写、类型损坏回退）此前从未被任何测试/CI 执行过——
+  # windows-build job 在 ubuntu 上只做交叉编译，跑不了 Windows 二进制。
+  # 这里用一次性 windows runner 真跑 HKCU 往返测试（键值测试后恢复）。
+  settings-windows:
+    name: Windows 设置存储单测（注册表往返）
+    runs-on: windows-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 注册表 store 往返测试
+        run: go test ./internal/settings -count=1 -v

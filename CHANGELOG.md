@@ -47,6 +47,13 @@
   `make fmt` 只格式化 git 跟踪的 `.go`（不再扫 `.workwork/` 临时文件）；`lint-workflows` 对
   ci.yml 断言全部 6 个 job（此前只断言 test，lint job 被删后 make vet 仍绿）。
 
+- **测试（三端设置存储）**：三端设置单一真源此前只有 Linux store 有测试，Windows 注册表与
+  macOS defaults 的解析/写值路径从未被执行（CI 的 macos/windows job 也不跑这些 Go 测试）。
+  新增 `store_darwin_test.go`（`defaultsRunner` 注入点，覆盖解析/缺省回退/损坏值报错/写入参数，
+  不碰真实用户偏好）与 `store_windows_test.go`（真实 HKCU 往返、未知 ModeScope 回退 system、
+  值类型被改坏时回退缺省，测试后恢复原值）；CI 增加 windows-latest「Windows 设置存储单测」job，
+  并在 macOS job 内跑 `go test ./internal/settings`（7 个并行 job）。
+
 - **文档**：architecture.md 修正方案 A 阶段状态（A1/A3 已完成、A4 明确不做）、补 Linux 引擎模块
   与预算、预算口径统一为逐文件、Swift 本地可 typecheck；AGENTS.md 修正 macOS 设置窗路径与
   「依赖方向已机器断言」的表述；README 开发命令与「验证交给 CI」对齐。

@@ -58,7 +58,7 @@ func SetAssociate(on bool) error {
 	if on {
 		value = "true"
 	}
-	if _, err := runDefaults("write", defaultsDomain, macKeyAssociate, "-bool", value); err != nil {
+	if _, err := defaultsRunner("write", defaultsDomain, macKeyAssociate, "-bool", value); err != nil {
 		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyAssociate, err)
 	}
 	return nil
@@ -69,7 +69,7 @@ func SetModeScope(scope ModeScope) error {
 	if !scope.Valid() {
 		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process|window）", string(scope))
 	}
-	if _, err := runDefaults("write", defaultsDomain, macKeyModeScope, "-string", string(scope)); err != nil {
+	if _, err := defaultsRunner("write", defaultsDomain, macKeyModeScope, "-string", string(scope)); err != nil {
 		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyModeScope, err)
 	}
 	return nil
@@ -81,7 +81,7 @@ func SetUiEnglish(bool) error {
 }
 
 func readDefaultsBool(key string) (bool, bool, error) {
-	out, err := runDefaults("read", defaultsDomain, key)
+	out, err := defaultsRunner("read", defaultsDomain, key)
 	if err != nil {
 		if isDefaultsUnset(err) {
 			return false, false, nil
@@ -96,7 +96,7 @@ func readDefaultsBool(key string) (bool, bool, error) {
 }
 
 func readDefaultsString(key string) (string, bool, error) {
-	out, err := runDefaults("read", defaultsDomain, key)
+	out, err := defaultsRunner("read", defaultsDomain, key)
 	if err != nil {
 		if isDefaultsUnset(err) {
 			return "", false, nil
@@ -105,6 +105,10 @@ func readDefaultsString(key string) (string, bool, error) {
 	}
 	return parseDefaultsString(out), true, nil
 }
+
+// defaultsRunner 是 runDefaults 的测试注入点：单元测试替换它验证解析/写值
+// 参数，绝不碰真实用户偏好。生产代码始终指向 runDefaults。
+var defaultsRunner = runDefaults
 
 // runDefaults 执行 /usr/bin/defaults 并返回 trim 后的 stdout；失败时把
 // stderr 一起带进 error 便于排障。未设置（域/键不存在）由 isDefaultsUnset
