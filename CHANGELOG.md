@@ -66,6 +66,13 @@
   `decodeParams`/`decodeOptionalParams`（错误文案仍由 method 统一生成，协议与错误文本不变）；
   `repeatFlag` 从 chaosetd / chaoset-cli 两份逐字复制收敛到 `internal/cliutil`（含单测）。
 
+- **修复（IPC 关闭生命周期/超时，审计 GO-09）**：`Server.Close` 由「只关 listener 就 Save」
+  改为「停止接受 → 关闭活跃连接 → 等待 handler 退出 → Save」，消除 daemon 退出时最后一批
+  学习数据落在 Save 之后的丢失窗口；连接登记与 `WaitGroup.Add` 在同一把锁内完成，避免
+  Accept/Close 竞争漏等；Close 幂等。`Client` 普通调用增加 5s 默认截止时间（daemon 卡死时
+  CLI 不再无限阻塞；Ping 仍保持自己的 250ms 语义）。新增 `ipc/shutdown_test.go` 覆盖超时、
+  活跃连接关闭与 Close 幂等，`go test -race ./ipc ./cmd/chaosetd` 通过。
+
 - **发布/CI 安全**：release.yml 的 `release` job 增加「仅 push tag」守卫——此前
   workflow_dispatch 即使选 tag ref 也会用「日期-hash」版本创建 Release（审计 P1-1）；移除
   release 测试 job 中 renderer 删除后已无用的 CJK 字体安装；`ci.yml` 删除与 `make vet`

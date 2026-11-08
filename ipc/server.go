@@ -10,6 +10,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"chaoset.ime/engine"
 )
@@ -23,6 +24,18 @@ type Server struct {
 	fuzzy        bool   // 可选：新会话启用模糊音
 	traditional  bool   // 可选：新会话启用繁体输出
 	doublePinyin string // 可选：新会话的双拼方案（空 = 关闭）
+
+	// 连接生命周期（2026-11-08 审计 GO-09）：Close 要「先停接受、关掉活跃连接、
+	// 等 handler 退出，再 Save」——否则 Save 之后仍可能有会话在 BumpWord，
+	// 退出时丢失最后一次学习。connMu 保护 closing/conns，wg 只统计已登记的
+	// handler；Add 必须在同一把锁内检查 closing，避免与 Wait 竞争。
+	connMu  sync.Mutex
+	conns   map[net.Conn]struct{}
+	closing bool
+	wg      sync.WaitGroup
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Option 定制 Server 可选能力。
@@ -45,7 +58,7 @@ func WithDoublePinyin(scheme string) Option {
 }
 
 func NewServer(ln net.Listener, dict *engine.Dictionary, user *engine.UserDict, opts ...Option) *Server {
-	s := &Server{ln: ln, dict: dict, user: user}
+	s := &Server{ln: ln, dict: dict, user: user, conns: make(map[net.Conn]struct{})}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -71,21 +84,70 @@ func (s *Server) Serve() error {
 			network, addr = remote.Network(), remote.String()
 		}
 		log.Printf("ipc 连接: network=%s addr=%s", network, addr)
-		go s.handleConn(conn)
+		if !s.trackConn(conn) {
+			_ = conn.Close()
+			return nil
+		}
+		go func() {
+			defer s.untrackConn(conn)
+			s.handleConn(conn)
+		}()
 	}
 }
 
-// Close 停止接受连接并保存用户词典。
+// trackConn 登记一条已接受的连接；Close 开始后返回 false（调用方应立即关闭）。
+//
+// Add 与 closing 检查在同一把锁内完成：否则 Accept 与 Close 竞争时可能在
+// Wait 启动之后才 Add，违反 WaitGroup 的使用约定（也会漏掉这条连接的退出等待）。
+func (s *Server) trackConn(conn net.Conn) bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.conns[conn] = struct{}{}
+	s.wg.Add(1)
+	return true
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	delete(s.conns, conn)
+	s.connMu.Unlock()
+	s.wg.Done()
+}
+
+// Close 停止接受连接、关闭所有活跃连接并等待 handler 退出，最后保存用户词典。
+//
+// 退出顺序（2026-11-08 审计 GO-09 P2）：旧实现只关 listener 就 Save，已接受连接
+// 的 goroutine 仍可能在 Save 之后写学习数据（daemon 退出丢最后一次学习）。
+// 现在先关活跃连接（让 handler 的阻塞读立刻返回）并等它们全部退出，再 Save；
+// 调用方可重复调用（幂等）。
 func (s *Server) Close() error {
-	if err := s.ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		return err
-	}
-	if s.user != nil {
-		if err := s.user.Save(); err != nil {
-			return fmt.Errorf("保存用户词典失败: %w", err)
+	s.closeOnce.Do(func() {
+		s.connMu.Lock()
+		s.closing = true
+		conns := make([]net.Conn, 0, len(s.conns))
+		for conn := range s.conns {
+			conns = append(conns, conn)
 		}
-	}
-	return nil
+		s.connMu.Unlock()
+
+		if err := s.ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			s.closeErr = err
+		}
+		// 关掉活跃连接：handler 的 readMessage 会立即返回，随后退出循环。
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+		s.wg.Wait()
+		if s.closeErr == nil && s.user != nil {
+			if err := s.user.Save(); err != nil {
+				s.closeErr = fmt.Errorf("保存用户词典失败: %w", err)
+			}
+		}
+	})
+	return s.closeErr
 }
 
 func (s *Server) handleConn(conn net.Conn) {

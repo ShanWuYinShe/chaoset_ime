@@ -34,10 +34,15 @@ func (c *Client) Close() error {
 // pingTimeout 是 Ping 的硬上限。
 //
 // Ping 的契约是「探活，不等待」：daemon 未就绪时调用方应降级放行按键。
-// 但 call 本身是阻塞的（无 deadline），若 daemon 进程还在、socket 也活着
-// 却不回包（极端情况：卡在 GC 或持锁写盘），Ping 会一直阻塞，与契约相反。
-// 取值与壳侧 IPC 超时同量级（macOS 250ms / Windows 200ms）。
+// Ping 自带 250ms 截止时间（与壳侧 IPC 超时同量级：macOS 250ms / Windows 200ms）。
 const pingTimeout = 250 * time.Millisecond
+
+// defaultCallTimeout 是普通 Client 调用的默认截止时间（2026-11-08 审计 GO-09）。
+// daemon 进程还在、socket 也活着却不回包（GC/持锁写盘/死锁）时，CLI 等调用方
+// 不应无限阻塞；壳侧本来就有自己的 IPC 超时，这里主要兜住命令行工具与测试。
+// 取 5s：正常请求是毫秒级（含 userExport 分页单页），留足慢盘/调度余量。
+// 变量形式仅为单测可缩短，生产代码不修改它。
+var defaultCallTimeout = 5 * time.Second
 
 // Ping 探活：daemon 未就绪时调用方应降级放行按键，而不是等待。
 //
@@ -50,7 +55,7 @@ func (c *Client) Ping() error {
 	if err := c.conn.SetDeadline(time.Now().Add(pingTimeout)); err != nil {
 		return fmt.Errorf("设置探活超时失败: %w", err)
 	}
-	err := c.callLocked("ping", nil, nil)
+	err := c.callLocked("ping", nil, nil, 0) // deadline 已由 Ping 自己设置
 	// 清除截止时间：deadline 是连接级状态，不清除会让后续正常调用继承它。
 	if clrErr := c.conn.SetDeadline(time.Time{}); clrErr != nil && err == nil {
 		return fmt.Errorf("清除探活超时失败: %w", clrErr)
@@ -64,11 +69,19 @@ func (c *Client) Ping() error {
 func (c *Client) call(method string, params any, result any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.callLocked(method, params, result)
+	return c.callLocked(method, params, result, defaultCallTimeout)
 }
 
-// callLocked 是 call 的持锁主体（Ping 需要在同一把锁内设置/清除 deadline）。
-func (c *Client) callLocked(method string, params any, result any) error {
+// callLocked 是 call 的持锁主体。timeout>0 时在本次请求内设置并清除 deadline；
+// timeout==0 表示调用方已自行管理 deadline（Ping 的 250ms 探活）。
+func (c *Client) callLocked(method string, params any, result any, timeout time.Duration) error {
+	if timeout > 0 {
+		if err := c.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			return fmt.Errorf("设置请求超时失败: %w", err)
+		}
+		// deadline 是连接级状态：本次请求结束必须清除，否则后续调用继承旧截止时间。
+		defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
+	}
 	c.next++
 	req := Request{ID: c.next, Method: method}
 	if params != nil {
