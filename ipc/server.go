@@ -131,6 +131,10 @@ func (s *Server) handleConn(conn net.Conn) {
 			data, merr := json.Marshal(result)
 			if merr != nil {
 				resp.Error = merr.Error()
+			} else if len(data) > maxMessageSize {
+				// 单帧超过协议上限：返回错误响应而不是写半帧（写了会让对端
+				// 读帧失败、流里残留 body）。正常路径由分页保证不触发。
+				resp.Error = fmt.Sprintf("响应长度 %d 超过上限 %d", len(data), maxMessageSize)
 			} else {
 				resp.Result = data
 			}
@@ -205,22 +209,15 @@ func (s *Server) dispatch(sess *engine.Session, req Request) (any, error) {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, fmt.Errorf("解析 selectPrefix 参数失败: %w", err)
 		}
-		comp, committed, err := sess.SelectPrefix(p.Index)
+		// 直接回传 Composition：Session.SelectPrefix 已把 committed 写进
+		// comp.Committed（engine/session.go）。此前这里手工拼 map 复制字段，
+		// Composition 新增字段时会被漏掉（shuangpin 就人工补过一次），是协议
+		// 漂移点。
+		comp, _, err := sess.SelectPrefix(p.Index)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"committed":  committed,
-			"input":      comp.Input,
-			"preedit":    comp.Preedit,
-			"candidates": comp.Candidates,
-			"page":       comp.Page,
-			"page_count": comp.PageCount,
-			// 双拼方案名随响应下发（壳据此路由 ';'）：selectPrefix 是手工
-			// 拼的 map，不会自动带 Composition 字段，漏了会让壳在渐进上屏
-			// 后把双拼 ';' 错当标点。
-			"shuangpin": comp.Shuangpin,
-		}, nil
+		return comp, nil
 	case "associate":
 		// 联想候选：选词上屏后拼音区已清空，按上屏词音节查续接词组
 		// （Candidate 列表，结构同 input 响应）。macOS 壳进入联想模式时调用。

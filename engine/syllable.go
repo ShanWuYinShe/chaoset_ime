@@ -365,7 +365,7 @@ func hasCleanSyllableSplit(chunk string) bool {
 // qwertyNeighbors 记录 QWERTY 键盘上每个字母物理按键的几何相邻键（按物理中心距由近及远排序）。
 // 用于在敲错键时，优先推测距离手滑落点最近的邻近按键。
 var qwertyNeighbors = [26][]byte{
-	'a' - 'a': {'s', 'q', 'z', 'w'},
+	0:         {'s', 'q', 'z', 'w'}, // 'a' - 'a'
 	'b' - 'a': {'n', 'v', 'g', 'h'},
 	'c' - 'a': {'v', 'x', 'd', 'f'},
 	'd' - 'a': {'f', 's', 'e', 'c', 'x', 'r'},

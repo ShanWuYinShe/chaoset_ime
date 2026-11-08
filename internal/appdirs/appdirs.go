@@ -121,7 +121,7 @@ func LinuxImportedDictPath() (string, error) {
 // 管道，不返回 socket 路径。
 func SocketPath() (string, error) {
 	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("Windows 使用命名管道（ipc.DefaultPipeName），没有 Unix socket 路径")
+		return "", fmt.Errorf("当前平台使用命名管道（ipc.DefaultPipeName），没有 Unix socket 路径")
 	}
 	if runtime.GOOS == "linux" {
 		if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {

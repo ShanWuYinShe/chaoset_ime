@@ -76,6 +76,9 @@ func TestSessionTraditional(t *testing.T) {
 	s3 := NewSession(dict, nil)
 	s3.SetTraditional(true)
 	comp, err = s3.Input("shiguang", false)
+	if err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
 	if !hasCand(comp, "時光") {
 		t.Fatalf("应输出 時光, 得到 %v", comp.Candidates)
 	}

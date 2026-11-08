@@ -85,6 +85,13 @@ func (c *Client) callLocked(method string, params any, result any) error {
 	if err := readMessage(c.br, &resp); err != nil {
 		return fmt.Errorf("读取响应失败: %w", err)
 	}
+	// 请求/响应按 ID 关联。ID 对不上说明连接上的流已经错位（上一次超时/中断
+	// 残留响应），继续解析会把旧结果当成本次结果；与 Ping 超时处理一致，
+	// 直接关闭连接，要求调用方重新 Dial。
+	if resp.ID != req.ID {
+		_ = c.conn.Close()
+		return fmt.Errorf("响应 ID 不匹配（期望 %d，收到 %d），连接已关闭，请重新 Dial", req.ID, resp.ID)
+	}
 	if resp.Error != "" {
 		return fmt.Errorf("daemon 返回错误: %s", resp.Error)
 	}

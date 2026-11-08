@@ -27,6 +27,11 @@ func writeMessage(w io.Writer, v any) error {
 	if err != nil {
 		return fmt.Errorf("序列化消息失败: %w", err)
 	}
+	// 写侧也校验帧上限（与读侧 readMessage 同口径）：超限响应若只写出去一半，
+	// 对端读帧失败后流里会残留 body，连接失步。正常响应走分页，不会触发。
+	if len(data) > maxMessageSize {
+		return fmt.Errorf("消息长度 %d 超过上限 %d", len(data), maxMessageSize)
+	}
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
 	if _, err := w.Write(header); err != nil {
