@@ -615,3 +615,82 @@ func TestCheckDllUnloadSafety(t *testing.T) {
 		t.Fatalf("删掉卸载时 removeCrashHandler 应被捕获，实际：%v", problems)
 	}
 }
+
+// TestGroupRegistry 锁住检查组注册表的基本契约：组名非空且唯一（去重后）、
+// 执行体非 nil、组数不退化。成功输出由 groupNames() 生成，因此本测试同时守住
+// 「实际运行的组」与「打印的组」不会变成两份漂移的清单。
+func TestGroupRegistry(t *testing.T) {
+	if len(checkGroups) < 40 {
+		t.Fatalf("注册表只有 %d 个检查组，疑似有组被误删", len(checkGroups))
+	}
+	seen := map[string]bool{}
+	for i, g := range checkGroups {
+		if g.name == "" {
+			t.Fatalf("注册表第 %d 项组名为空", i)
+		}
+		if g.run == nil {
+			t.Fatalf("注册表第 %d 项（%s）没有执行体", i, g.name)
+		}
+	}
+	for i, name := range groupNames() {
+		if seen[name] {
+			t.Fatalf("groupNames() 出现重复组名 %q", name)
+		}
+		seen[name] = true
+		if i > 0 && strings.TrimSpace(name) == "" {
+			t.Fatalf("groupNames() 第 %d 项为空", i)
+		}
+	}
+	if len(groupNames()) == 0 {
+		t.Fatal("groupNames() 为空，main 的成功输出会没有任何组名")
+	}
+}
+
+// TestCheckCandidatePageSize 锁住「每页候选数」四端一致：真实仓库必须通过；
+// 引擎 pageSize 漂移、macOS associatePageSize 漂移都必须被捕获。
+func TestCheckCandidatePageSize(t *testing.T) {
+	pageSizePaths := []string{"engine/session.go", macController, winShell, linuxEngine}
+	makeFS := func(overrides map[string]string) fstest.MapFS {
+		fsys := fstest.MapFS{}
+		for _, p := range pageSizePaths {
+			data := readRepo(t, p)
+			if over, ok := overrides[p]; ok {
+				data = []byte(over)
+			}
+			fsys[p] = &fstest.MapFile{Data: data}
+		}
+		return fsys
+	}
+	var problems []string
+	checkCandidatePageSize(makeFS(nil), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实仓库未通过每页候选数契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：引擎 pageSize 6 -> 9，三端都应报错。
+	engineText := string(readRepo(t, "engine/session.go"))
+	mutatedEngine := strings.Replace(engineText, "pageSize = 6", "pageSize = 9", 1)
+	if mutatedEngine == engineText {
+		t.Fatal("变异未生效：engine/session.go 里找不到 pageSize = 6")
+	}
+	problems = nil
+	checkCandidatePageSize(makeFS(map[string]string{"engine/session.go": mutatedEngine}), &problems)
+	joined := strings.Join(problems, "\n")
+	for _, end := range []string{"macOS", "Windows", "Linux"} {
+		if !strings.Contains(joined, end+" 每页候选数 = 6") {
+			t.Fatalf("引擎 pageSize 漂移应捕获 %s 端不一致，实际：%v", end, problems)
+		}
+	}
+
+	// 变异 2：macOS associatePageSize 6 -> 9，只报 macOS。
+	macText := string(readRepo(t, macController))
+	mutatedMac := strings.Replace(macText, "static let associatePageSize = 6", "static let associatePageSize = 9", 1)
+	if mutatedMac == macText {
+		t.Fatal("变异未生效：ChaosetController.swift 里找不到 associatePageSize = 6")
+	}
+	problems = nil
+	checkCandidatePageSize(makeFS(map[string]string{macController: mutatedMac}), &problems)
+	if len(problems) != 1 || !strings.Contains(problems[0], "macOS 每页候选数 = 9") {
+		t.Fatalf("macOS 页容量漂移应被捕获，实际：%v", problems)
+	}
+}
