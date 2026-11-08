@@ -61,13 +61,23 @@
   值类型被改坏时回退缺省，测试后恢复原值）；CI 增加 windows-latest「Windows 设置存储单测」job，
   并在 macOS job 内跑 `go test ./internal/settings`（7 个并行 job）。
 
+- **重构（IPC/cmd 去重，审计 GO-07/GO-11）**：`ipc.Server.dispatch` 里 12 处重复的匿名参数
+  结构 + `json.Unmarshal` 错误包装收敛为具名参数结构体 + 泛型
+  `decodeParams`/`decodeOptionalParams`（错误文案仍由 method 统一生成，协议与错误文本不变）；
+  `repeatFlag` 从 chaosetd / chaoset-cli 两份逐字复制收敛到 `internal/cliutil`（含单测）。
+
+- **发布/CI 安全**：release.yml 的 `release` job 增加「仅 push tag」守卫——此前
+  workflow_dispatch 即使选 tag ref 也会用「日期-hash」版本创建 Release（审计 P1-1）；移除
+  release 测试 job 中 renderer 删除后已无用的 CJK 字体安装；`ci.yml` 删除与 `make vet`
+  重复的 workflow 结构校验步骤，release.yml 的 checkworkflows 期望 job 列表补齐到 7 个。
+
 - **文档**：architecture.md 修正方案 A 阶段状态（A1/A3 已完成、A4 明确不做）、补 Linux 引擎模块
   与预算、预算口径统一为逐文件、Swift 本地可 typecheck；AGENTS.md 修正 macOS 设置窗路径与
   「依赖方向已机器断言」的表述；README 开发命令与「验证交给 CI」对齐。
 
-- **已知问题（本轮未修，已留证）**：① Linux 设置窗 `setup_config_save_mode_scope` 重建最小 JSON
-  会清掉 fuzzy/traditional/shuangpin；② release.yml 手动 dispatch 无 release 守卫；③ win32.cpp
-  4974 行，拆到 ≤2000 需先拆 TIP 类（13 文件方案已审计）。
+- **已知问题（本轮未修，已留证）**：① win32.cpp 约 4980 行，拆到 ≤2000 需先拆 TIP 类（audit
+  已给出 13 文件方案与 checker 断言改法）；② release 的 macOS 打包仍是 Makefile 的手写复制品
+  （审计 P1-4，弱于 `make package-macos` 的 universal/内容自检）。
 
 ## v0.3.18（2026-11-07）
 

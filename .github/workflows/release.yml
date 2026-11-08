@@ -26,7 +26,7 @@ jobs:
       - name: 校验 workflow 结构
         run: |
           go run ./tools/checkworkflows \
-            --expect-jobs test \
+            --expect-jobs lint,test,race,linux-e2e,macos-build,windows-build,settings-windows \
             .github/workflows/ci.yml
           go run ./tools/checkworkflows \
             --expect-jobs test,package-macos,package-linux,package-windows,release \
@@ -36,11 +36,9 @@ jobs:
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-      - name: 安装 CJK 字体
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
-
+      # 注：renderer 包已于 2026-10-27 删除，Go 测试不再需要 CJK 字体；
+      # 原「安装 CJK 字体」步骤随 2026-11-08 审计清理移除（GTK 无头冒烟在 ci.yml
+      # 的 linux-e2e job 内自行安装）。
       - name: 运行单元测试
         run: make test
 
@@ -302,6 +300,11 @@ jobs:
     name: 发布 GitHub Release
     needs: [package-macos, package-linux, package-windows]
     runs-on: ubuntu-24.04
+    # 只在 push tag 时创建 Release（2026-11-08 审计 P1-1）：workflow_dispatch
+    # 即使选了 tag ref 也不会注入 CHAOS_VERSION_TAG，三端产物是「日期-hash」
+    # 构建；允许 dispatch 发 Release 会把无法追溯的包发布成该 tag 的正式版本。
+    # dispatch 仍可用于只产出 artifact 的预演（三个 package job 不受影响）。
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:

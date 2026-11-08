@@ -46,17 +46,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # workflow 结构校验：2026-10-25 有过一次文本替换误删 job 声明，导致
-      # YAML 仍合法但 GitHub 判 workflow file issue、CI 全线不跑的教训。
-      - name: 校验 workflow 结构
-        run: |
-          go run ./tools/checkworkflows \
-            --expect-jobs lint,test,race,linux-e2e,macos-build,windows-build,settings-windows \
-            .github/workflows/ci.yml
-          go run ./tools/checkworkflows \
-            --expect-jobs test,package-macos,package-linux,package-windows,release \
-            .github/workflows/release.yml
-
+      # workflow 结构校验已并入 make vet（Makefile 的 lint-workflows），不再单独跑
+      # 一遍（2026-11-08 审计：此前同一检查在 lint job 内执行两次）。
       - name: gofmt 检查（不应有输出）
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
