@@ -73,6 +73,12 @@
   CLI 不再无限阻塞；Ping 仍保持自己的 250ms 语义）。新增 `ipc/shutdown_test.go` 覆盖超时、
   活跃连接关闭与 Close 幂等，`go test -race ./ipc ./cmd/chaosetd` 通过。
 
+- **发布一致性（审计 P1-4）**：release.yml 的 macOS 打包改为复用 Makefile `package-macos`——
+  与日常 CI 的 macos-build 走同一条链（主壳/安装器/App 内置工具全量 universal 自检、app 资源
+  清单、zip 生成），删除此前手写的更弱复制品（只 lipo 两个主二进制）；`Info.plist` 版本号与
+  `scripts/version.sh` 的一致性断言下沉到 Makefile，日常 CI 与发版共用；release 仍保留
+  equivalence / visual-parity 回归。
+
 - **发布/CI 安全**：release.yml 的 `release` job 增加「仅 push tag」守卫——此前
   workflow_dispatch 即使选 tag ref 也会用「日期-hash」版本创建 Release（审计 P1-1）；移除
   release 测试 job 中 renderer 删除后已无用的 CJK 字体安装；`ci.yml` 删除与 `make vet`
@@ -82,9 +88,9 @@
   与预算、预算口径统一为逐文件、Swift 本地可 typecheck；AGENTS.md 修正 macOS 设置窗路径与
   「依赖方向已机器断言」的表述；README 开发命令与「验证交给 CI」对齐。
 
-- **已知问题（本轮未修，已留证）**：① win32.cpp 约 4980 行，拆到 ≤2000 需先拆 TIP 类（audit
-  已给出 13 文件方案与 checker 断言改法）；② release 的 macOS 打包仍是 Makefile 的手写复制品
-  （审计 P1-4，弱于 `make package-macos` 的 universal/内容自检）。
+- **已知问题（本轮未修，已留证）**：win32.cpp 约 4980 行，拆到 ≤2000 需先拆 TIP 类
+  （audit 已给出 13 文件方案与 checker 断言改法），是剩余唯一的架构级大项；其余为
+  checkuiparity 部分检查组缺变异测试、macOS/Linux 设置窗接 chaoset-settingsctl（方案 A2/A3 收尾）。
 
 ## v0.3.18（2026-11-07）
 

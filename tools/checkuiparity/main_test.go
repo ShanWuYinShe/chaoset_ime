@@ -391,14 +391,21 @@ func TestCheckVersionSource(t *testing.T) {
 	}
 	fsys["scripts/version.sh"] = &fstest.MapFile{Data: []byte(orig)}
 
-	// 变异 4：release.yml 回退到「最近的 tag」。
+	// 变异 4：release.yml 回退到「最近的 tag」，且不再走 Makefile 打包链。
 	ymlorig := string(fsys[releaseYML].Data)
 	problems = nil
-	fsys[releaseYML] = &fstest.MapFile{Data: []byte(
-		strings.Replace(ymlorig, "mkdir -p dist", "git describe --tags", 1))}
+	mutated := strings.ReplaceAll(ymlorig, "make package-macos", "git describe --tags")
+	if mutated == ymlorig {
+		t.Fatal("变异 4 未生效：release.yml 里找不到 make package-macos")
+	}
+	fsys[releaseYML] = &fstest.MapFile{Data: []byte(mutated)}
 	checkVersionSource(fsys, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "不应包含") {
+	joined := strings.Join(problems, "\n")
+	if len(problems) == 0 || !strings.Contains(joined, "不应包含") {
 		t.Fatalf("release.yml 回退到 git describe --tags 应被捕获，实际：%v", problems)
+	}
+	if !strings.Contains(joined, "make package-macos") {
+		t.Fatalf("release.yml 缺 Makefile 打包链应被捕获，实际：%v", problems)
 	}
 }
 

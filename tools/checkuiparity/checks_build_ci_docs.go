@@ -42,8 +42,10 @@ func checkVersionSource(fsys fs.FS, problems *[]string) {
 		"CHAOS_VERSION_TAG", "rev-parse", "date +%Y%m%d", "--quad", "--pkg",
 		"date-hash")
 	// tag 版本只由 release.yml 顶层 env 注入，且限定 push tag 触发。
+	// 发版包必须走与日常 CI 相同的 Makefile 打包链（`make package-macos`）：
+	// release 手写复制品曾弱于 Makefile 的 universal/内容自检（2026-11-08 审计 P1-4）。
 	checkContains(fsys, problems, group, releaseYML,
-		"CHAOS_VERSION_TAG", "github.event_name == 'push'", "scripts/version.sh")
+		"CHAOS_VERSION_TAG", "github.event_name == 'push'", "make package-macos")
 	checkExcludes(fsys, problems, group, releaseYML, "git describe --tags")
 	checkContains(fsys, problems, group, makefile,
 		"VERSION_SCRIPT", "VERSION_QUAD", "PKG_VERSION",

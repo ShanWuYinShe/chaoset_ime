@@ -179,6 +179,16 @@ package-macos:
 	@test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.tsv \
 		|| { echo "错误：ChaosetIME.app 缺种子词库"; exit 1; }
 	@echo "✓ 全部二进制 universal（主壳 + 安装器 + app 内置工具）"
+	@# 版本号一致性：两个 app 的 CFBundleShortVersionString 必须等于 $(VERSION)
+	@# （tag 发布 = tag 号；本地/日常 CI = 年月日-commit hash）。release 与日常
+	@# CI 共用这条断言，避免「发版包版本与 tag 不一致」只能到用户手里才发现。
+	@for app in ChaosetIME ChaosetSetup; do \
+		got=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+			"shims/macos/build/$$app.app/Contents/Info.plist"); \
+		[ "$$got" = "$(VERSION)" ] \
+			|| { echo "错误：$$app 版本 = $$got，期望 $(VERSION)"; exit 1; }; \
+	done
+	@echo "✓ app 版本与 scripts/version.sh 一致：$(VERSION)"
 	mkdir -p dist
 	(cd shims/macos/build && zip -r -y ../../../dist/chaoset-macos.zip ChaosetIME.app ChaosetSetup.app)
 	@test -f dist/chaoset-macos.zip || { echo "错误：未生成 dist/chaoset-macos.zip"; exit 1; }
