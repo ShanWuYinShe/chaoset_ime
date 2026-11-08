@@ -62,10 +62,10 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 阶段 | 内容 | 状态 |
 | :--- | :--- | :--- |
-| A1 | Go 设置核心 + CLI + 单测（本批） | 进行中 |
-| A2 | 三端设置窗的「读取/写入设置项」改调 CLI（冷路径）；热路径缓存继续读原生存储 | **Windows 试点已完成（2026-11-07）**；macOS/Linux 下一批 |
-| A3 | 学习数据（统计/清空/导出）与词库导入流程收敛到 Go（复用 chaoset-userdict / chaoset-import） | 下一批 |
-| A4 | 热路径配置读取收敛评估（Windows TIP/候选窗内存缓存、Linux ibus 引擎配置） | 后续 |
+| A1 | Go 设置核心 + CLI + 单测 | 已完成（checkuiparity「设置核心（方案 A）」组锁定） |
+| A2 | 三端设置窗的「读取/写入设置项」改调 CLI（冷路径）；热路径缓存继续读原生存储 | Windows 已完成；macOS/Linux 未接线 |
+| A3 | 学习数据（统计/清空/导出）与词库导入流程收敛到 Go（复用 chaoset-userdict / chaoset-import） | 已完成：三端词库导入均调 chaoset-import，学习数据经 daemon IPC 或 chaoset-userdict，壳只渲染 |
+| A4 | 热路径配置读取收敛 | **明确不做**：热路径零阻塞契约禁止在 TSF/IMK/ibus 回调里起进程，三端继续用本机 TTL/进程内缓存 |
 
 热路径不调用 CLI/进程：三端壳沿用本机缓存（Windows config TTL 缓存、macOS/Linux 进程内
 缓存），CLI 只负责**写**与设置窗**读**，保证输入延迟不受影响。
@@ -76,7 +76,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
-| `win32.cpp` | TIP 主体、CandidateWindow、ModeToast、ShellWorker、DllMain/类厂/导出 | 全部叶子模块 | ≤5300（wave1）/ 目标 ≤2000 |
+| `win32.cpp` | TIP 主体、CandidateWindow、ModeToast、ShellWorker、DllMain/类厂/导出 | 全部叶子模块 | ≤5300（当前 ~4970；拆到 ≤2000 需先拆 TIP 类，未完成） |
 | `diagnostics.cpp` `.hpp` | tsf.log/crash.log 诊断、VEH 崩溃取证 | — | ≤700 |
 | `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换 | — | ≤500 |
 | `theme.cpp` `.hpp` | 候选窗配色/主题判定（与 macOS 视觉契约） | winutil | ≤500 |
@@ -107,7 +107,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `SettingsWindowTargets.swift` | @objc target/action | ≤400 |
 | `main.swift` | 入口 | ≤100 |
 
-（若实际拆分与上表不同，以本表为准更新；`checkuiparity` 断言上表文件存在且单文件 ≤1100 行。）
+（若实际拆分与上表不同，以本表为准更新；`checkuiparity` 断言上表文件存在且单文件不超过上表预算。）
 
 ### 3.3 Linux（`shims/linux/setup/`）
 
@@ -125,7 +125,14 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `setup_ctl.h` | 对外 API | ≤120 |
 | `test_setup_ctl.c` | setup_ctl 单测 | ≤200 |
 
-### 3.4 共用
+### 3.4 Linux 原生引擎（`shims/linux/engine/`）
+
+| 文件 | 职责 | 预算 |
+| :--- | :--- | :--- |
+| `main.cpp` | ibus engine 入口/按键处理/daemon IPC/懒启动 | ≤900 |
+| `daemon.cpp` | daemon 连接与 XDG 路径解析 | ≤300 |
+
+### 3.5 共用
 
 | 文件 | 预算 |
 | :--- | :--- |
@@ -137,6 +144,8 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 - `checkShimModuleLayout`：上表每个文件必须存在；单文件行数不得超过预算；
   防止有人把拆开的代码搬回单文件（架构回退即 FAIL）。
 - `checkArchitectureDoc`：本文件必须存在且包含「模块地图 / 文件预算 / 依赖方向 / 方案 A」。
+- 依赖方向（叶子模块不得反向 include TIP）目前由代码评审保证；`checkShimModuleLayout` 只校验
+  模块存在性与单文件行数预算。
 - 逻辑文件聚合：`winShell` / `macPanel` / `macSettings` / `linuxSetup` 在 checkuiparity 里
   从「单文件」改为「按目录聚合多文件读取」，既有逐条文案/几何/行为断言保持不变。
 - 新增平台代码必须同步：本文件模块地图 + `checkuiparity` 模块清单 + 构建脚本源列表
@@ -150,4 +159,4 @@ sh shims/windows/build.sh
 sh shims/linux/setup/build.sh /tmp/chaoset-setup
 make build               # 含 chaoset-settingsctl
 ```
-macOS Swift 由 CI `macos-build` 编译验证（本地无 xcrun）。
+macOS Swift 由 CI `macos-build` 编译验证；本地装有 swiftc 时可直接 `swiftc -typecheck`（见 CI job 命令）。

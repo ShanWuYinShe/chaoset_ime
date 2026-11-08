@@ -1034,10 +1034,13 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 
 ## 开发
 
+提交前本地只跑轻量项（测试/构建重活交给 CI，本地跑会占用 CPU）：
+
 ```sh
-make fmt && make vet && make test && make build
-make cover    # 覆盖率报告（写入 .workwork/cover.out）
-make race     # 并发竞争检测（提交前建议）
+gofmt -l $(git ls-files '*.go')   # 应无输出；make fmt 可自动格式化
+go build ./...                    # 秒级
+make vet                          # go vet + workflow/版本/GDI/三端一致性静态检查
+# 单测、race、三端构建与打包由 CI 执行（见 AGENTS.md「验证交给 CI」）
 ```
 
 ### 词库相关的测试

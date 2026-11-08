@@ -2,6 +2,49 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **架构/代码质量：拆分 engine 组词核心与 checkuiparity 检查器（代码质量专项）**：
+  - `engine/session.go` 2188→1193 行：`compose()` 1009 行按职责拆为
+    `compose_state/shape/continuation/typo/query/rank.go` + 142 行编排 `compose.go`；
+    调用顺序、rank 常量值、`SliceStable`、typoFix 标记、分页与 compose memo 副作用逐条保留。
+  - 新增 `engine/compose_golden_test.go` + `engine/testdata/`（303 条语料 × 5 模式 = 1520 条记录，
+    跨全部页的完整 Candidates/Preedit/PageCount 断言，gzip 320KB）：纯重构的逐字节等价门禁；
+    `-update` 刷新、`-detect-unstable` 复核已知非确定性输入。
+  - 性能无回归（synthetic 100k 词库，-count=3）：Compose100k 40.8–42.7µs→40.9–41.3µs，
+    ComposeInitials ~292–299µs→~289–298µs；+10 allocs/op、B/op +3.5%。
+  - `tools/checkuiparity` main.go 2553 行→10 个文件：组名唯一表（`groups.go`）+ 注册表
+    （`run.go`）驱动执行，成功输出的组清单由注册表生成（旧硬编码 32 项漏了 11 个实际运行的组）；
+    新增「候选每页数量」四端一致断言；Linux 原生引擎 `shims/linux/engine/*` 纳入模块预算（此前盲区）。
+
+- **修复（engine）**：Compose 缓存失效不完整——`SetFuzzy`/`SetTraditional` 切换后连续
+  `Compose()` 可能返回旧结果；新增 `invalidateComposeMemo` 并接入 4 个配置入口（另有单测）。
+
+- **修复（IPC 健壮性）**：`selectPrefix` 响应直接回传 Composition（删除手工拼 map 的协议漂移点）；
+  帧上限增加写侧校验，服务端对超限响应返回错误帧而不是写半帧（避免对端读帧失败后连接失步）；
+  Client 校验响应 ID，错位即关闭连接（与 Ping 超时同语义）。
+
+- **修复（Windows 壳生命周期）**：`~ChaosetTIP` 补幂等 `unregisterTipFromThread`——宿主未调
+  Deactivate 直接 Release 时 `g_tlFgTips` 会留悬垂指针（500ms 定时器/前台消息解引用 → 宿主崩溃），
+  message-only 窗口计数不归零导致 `DllCanUnloadNow` 恒 `S_FALSE`；checkuiparity「DLL 卸载安全」
+  组新增析构断言。同时删除死消息 `kTipDaemonReadyMsg`、6 个仅注释引用的系统头、重复 `<map>`，
+  修掉 mingw `-Wall` 的 cast-function-type 警告（win32.cpp / ui_main.cpp）与 macOS 设置窗未使用变量。
+
+- **质量/工具链**：staticcheck 报出的 5 条静态缺陷修复（`qwertyNeighbors` 自减键、s2t 单测未检查
+  error、appdirs 错误串首字母大写等）；`make vet` 新增 `check-fmt`（与 CI gofmt 同口径），
+  `make fmt` 只格式化 git 跟踪的 `.go`（不再扫 `.workwork/` 临时文件）；`lint-workflows` 对
+  ci.yml 断言全部 6 个 job（此前只断言 test，lint job 被删后 make vet 仍绿）。
+
+- **文档**：architecture.md 修正方案 A 阶段状态（A1/A3 已完成、A4 明确不做）、补 Linux 引擎模块
+  与预算、预算口径统一为逐文件、Swift 本地可 typecheck；AGENTS.md 修正 macOS 设置窗路径与
+  「依赖方向已机器断言」的表述；README 开发命令与「验证交给 CI」对齐。
+
+- **已知问题（本轮未修，已留证）**：① engine 词典前缀 BFS 的 map 遍历序 + 词频截断导致极短输入
+  （zh/aq/bb…）候选总数随运行抖动（2660 输入快照中 20/9696 条仅第二页后差异、首选不变；确定性
+  修复需重构 BFS，实测热路径 +14~21%，golden 语料已排除并写 TODO）；② Linux 设置窗
+  `setup_config_save_mode_scope` 重建最小 JSON 会清掉 fuzzy/traditional/shuangpin；③ release.yml
+  手动 dispatch 无 release 守卫；④ win32.cpp 4974 行，拆到 ≤2000 需先拆 TIP 类（13 文件方案已审计）。
+
 ## v0.3.18（2026-11-07）
 
 - **根除 RDP 修饰键卡键 + 输入热路径零捕获零干扰（Windows 壳，2026-11-07 用户反馈）**：

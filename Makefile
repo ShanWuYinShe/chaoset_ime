@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
+.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -91,6 +91,7 @@ test:
 
 vet:
 	go vet ./...
+	$(MAKE) check-fmt
 	$(MAKE) lint-workflows
 	$(MAKE) check-version
 	$(MAKE) check-win32-gdi
@@ -101,6 +102,12 @@ vet:
 # 候选窗首帧渲染即带走宿主进程；Linux CI 没有 Windows 运行时，
 # 只能在源码层把这条契约固定住。详见 tools/checkgdi（Go，跨平台编译，
 # make vet 不再依赖 python3）。
+# 格式检查接入 make vet：CI 的 gofmt 步骤与本地 make vet 同口径（只查 git 跟踪的 .go，
+# 避免 .workwork/ 下 AI 中间文件干扰；检查失败时打印违规文件清单）。
+check-fmt:
+	@bad=$$(gofmt -l $$(git ls-files '*.go')); \
+	if [ -n "$$bad" ]; then echo "以下 Go 文件未格式化（跑 make fmt）："; echo "$$bad"; exit 1; fi
+
 check-win32-gdi:
 	go run ./tools/checkgdi shims/windows/src
 
@@ -117,14 +124,15 @@ check-uiparity:
 # 详细背景与检查项见 tools/checkworkflows 的文件头注释（Go，跨平台编译）。
 lint-workflows:
 	go run ./tools/checkworkflows \
-		--expect-jobs test \
+		--expect-jobs lint,test,race,linux-e2e,macos-build,windows-build \
 		.github/workflows/ci.yml
 	go run ./tools/checkworkflows \
 		--expect-jobs test,package-macos,package-linux,package-windows,release \
 		.github/workflows/release.yml
 
+# 只格式化 git 跟踪的 .go：gofmt -l -w . 会扫到 .workwork/ 下的临时 Go 文件（AI 中间产物）。
 fmt:
-	gofmt -l -w .
+	gofmt -l -w $(shell git ls-files '*.go')
 
 cover:
 	@mkdir -p .workwork
