@@ -76,9 +76,10 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
-| `win32.cpp` | TIP 主体、CandidateWindow、ModeToast、ShellWorker、DllMain/类厂/导出 | 全部叶子模块 | ≤5300（当前 ~4970；拆到 ≤2000 需先拆 TIP 类，未完成） |
+| `win32.cpp` | TIP 主体、CandidateWindow、ShellWorker、DllMain/类厂/导出（ModeToast 已拆出，见下） | 全部叶子模块 | ≤4800（当前 ~4700；目标 ≤2000 需继续拆 TIP 类，未完成） |
+| `mode_toast.cpp` `.hpp` | 模式切换提示条（窗口生命周期/绘制/防卸载计数） | winutil, theme, diagnostics | ≤400 / ≤150 |
 | `diagnostics.cpp` `.hpp` | tsf.log/crash.log 诊断、VEH 崩溃取证 | — | ≤700 |
-| `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换 | — | ≤500 |
+| `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换、浮窗 owner 判定 | — | ≤500 |
 | `theme.cpp` `.hpp` | 候选窗配色/主题判定（与 macOS 视觉契约） | winutil | ≤500 |
 | `config.cpp` `.hpp` | HKCU 设置读写、配置 TTL 缓存、全屏抑制 | winutil, diagnostics | ≤700 |
 | `transport.cpp` `.hpp` | daemon 命名管道名/探测/PipeTransport | winutil | ≤500 |

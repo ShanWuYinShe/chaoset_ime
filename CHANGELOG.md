@@ -73,6 +73,14 @@
   CLI 不再无限阻塞；Ping 仍保持自己的 250ms 语义）。新增 `ipc/shutdown_test.go` 覆盖超时、
   活跃连接关闭与 Close 幂等，`go test -race ./ipc ./cmd/chaosetd` 通过。
 
+- **Windows 壳拆分 wave1（审计 P1-1 第一步）**：模式切换提示 `ModeToast`（239 行）从
+  win32.cpp 拆到 `mode_toast.{hpp,cpp}` 独立编译；浮窗 owner 判定
+  （`popupOwner`/`shellHostNeedsOwner`）上移到叶子模块 winutil（候选窗/提示条共用，
+  避免叶子 TU 反向依赖 TIP TU）。win32.cpp 4974→4701 行，checker 预算从 5300 收紧到
+  4800 锁定进度；新文件登记 checker 与 architecture.md 模块地图。双架构 mingw 语法
+  编译零警告、`build.sh` 完整构建（DLL/导出表/资源/UI 宿主/core_test）与 `make vet` 通过。
+  注：TIP 类本身（~2557 行）仍未拆分，是 ≤2000 目标的剩余前置。
+
 - **发布一致性（审计 P1-4）**：release.yml 的 macOS 打包改为复用 Makefile `package-macos`——
   与日常 CI 的 macos-build 走同一条链（主壳/安装器/App 内置工具全量 universal 自检、app 资源
   清单、zip 生成），删除此前手写的更弱复制品（只 lipo 两个主二进制）；`Info.plist` 版本号与

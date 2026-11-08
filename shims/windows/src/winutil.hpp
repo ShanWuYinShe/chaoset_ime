@@ -33,6 +33,12 @@ bool isAppContainer();
 // 内存的 lpfnWndProc（第二道防线，见 win32.cpp DllMain 注释）。
 std::wstring windowClassName(const wchar_t* base, HINSTANCE inst);
 
+// 浮窗（候选窗/模式提示条）的 owner：必须是当前前台窗口且属于本进程。
+// 只有沉浸式 shell 宿主（开始菜单/搜索等）需要 owner（否则被 z 序 band 压住）；
+// 普通桌面宿主不需要 owner（带 owner 会把 owner 窗口组抬到前面，见实现注释）。
+bool shellHostNeedsOwner();
+HWND popupOwner();
+
 // 主屏 DPI / 指定屏幕坐标所在显示器的 DPI（Win8.1+ shcore，缺失时退回主屏）。
 int systemDpi();
 int dpiForPoint(POINT pt);

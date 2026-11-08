@@ -172,7 +172,10 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 func checkPopupOwner(fsys fs.FS, problems *[]string) {
 	const group = groupPopupOwner
 	// Windows：统一经 popupOwner() 取 owner。
-	checkContains(fsys, problems, group, winShell, "static HWND popupOwner()", "candidateWnd_.setOwner(popupOwner());")
+	// 2026-11-08 wave1：owner 判定从 win32.cpp 迁到 winutil.cpp（候选窗/提示条
+	// 两个叶子 TU 共用，避免反向依赖 TIP TU）；规则本身不变，防回退断言留在 winShell 聚合上。
+	checkContains(fsys, problems, group, winShell,
+		"HWND popupOwner()", "candidateWnd_.setOwner(popupOwner());")
 	// 不得回退为用上下文窗口当 owner。
 	checkExcludes(fsys, problems, group, winShell, "setOwner(hostWindowOf(ctx))")
 	// 候选窗创建时不得再兜底取前台窗口当 owner——那会绕过「只给 shell 宿主
@@ -183,8 +186,10 @@ func checkPopupOwner(fsys fs.FS, problems *[]string) {
 	// **只有沉浸式 shell 宿主才需要 owner**：普通桌面宿主带 owner 会让同进程的
 	// 另一个窗口被抬到前面（Firefox 多窗口实机复现）。判定必须集中在一处。
 	checkContains(fsys, problems, group, winShell,
-		"static bool shellHostNeedsOwner()", "if (!shellHostNeedsOwner()) return nullptr;",
+		"bool shellHostNeedsOwner()", "if (!shellHostNeedsOwner()) return nullptr;",
 		"startmenuexperiencehost.exe", "searchapp.exe")
+	// 判定实现必须落在叶子模块 winutil.cpp，而不是散在 TIP TU。
+	checkContains(fsys, problems, group, "shims/windows/src/winutil.cpp", "HWND popupOwner()")
 	// 前台事件回调里不得碰 TSF（ITfContext::GetActiveView 等 COM）：合成窗口
 	// HWND 必须在 TSF 线程缓存（composeHostWnd_），回调只做纯 Win32 比较。
 	//（2026-11-05 回归审计 P2-3）

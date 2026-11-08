@@ -62,7 +62,11 @@ type shimModuleBudget struct {
 }
 
 var shimModuleBudgets = []shimModuleBudget{
-	{"shims/windows/src/win32.cpp", 5300},
+	// win32.cpp 拆分 wave1（2026-11-08）：ModeToast 已迁到 mode_toast.cpp，
+	// owner/DPI 判定迁到 winutil；预算从 5300 收紧到 4800 锁定进度。
+	{"shims/windows/src/win32.cpp", 4800},
+	{"shims/windows/src/mode_toast.hpp", 150},
+	{"shims/windows/src/mode_toast.cpp", 400},
 	{"shims/windows/src/diagnostics.cpp", 700},
 	{"shims/windows/src/diagnostics.hpp", 250},
 	{"shims/windows/src/winutil.cpp", 500},

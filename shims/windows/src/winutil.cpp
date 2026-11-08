@@ -143,4 +143,45 @@ DWORD currentSessionId() {
     return id;
 }
 
+// 浮窗 owner 判定（原 win32.cpp 匿名命名空间；候选窗/提示条两个叶子 TU 都要用，
+// 因此上移到 winutil 并由头文件声明，避免叶子 TU 反向依赖 TIP TU）。
+//
+// 2026-11-05 实机问题：只按 hostWindowOf(ctx) 设 owner 时，若 TSF 给的上下文
+// 还停留在**另一个窗口**（用户先在别的窗口打过字、或窗口内部焦点抖动），
+// owner 就指向了那个窗口。带 owner 的 TOPMOST 窗口显示时会把 owner 所在的
+// 窗口组抬到前面，表现为「按 Shift 后弹到另一个窗口，但键盘焦点仍在原输入框」。
+// 跨进程 owner 更糟（会把别人进程的窗口带上来），因此一并排除。
+bool shellHostNeedsOwner() {
+    static int cached = -1;  // -1 未判定，0 不需要，1 需要
+    if (cached >= 0) return cached != 0;
+    wchar_t path[MAX_PATH]{};
+    bool need = false;
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
+        const wchar_t* base = wcsrchr(path, L'\\');
+        const wchar_t* name = base != nullptr ? base + 1 : path;
+        static const wchar_t* const kShellHosts[] = {
+            L"explorer.exe", L"searchapp.exe", L"startmenuexperiencehost.exe",
+            L"shellexperiencehost.exe", L"textinputhost.exe", L"applicationframehost.exe",
+        };
+        for (const wchar_t* host : kShellHosts) {
+            if (lstrcmpiW(name, host) == 0) {
+                need = true;
+                break;
+            }
+        }
+    }
+    cached = need ? 1 : 0;
+    return need;
+}
+
+HWND popupOwner() {
+    if (!shellHostNeedsOwner()) return nullptr;
+    const HWND fg = GetForegroundWindow();
+    if (fg == nullptr) return nullptr;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid != GetCurrentProcessId()) return nullptr;
+    return fg;
+}
+
 }  // namespace chaoset::win
