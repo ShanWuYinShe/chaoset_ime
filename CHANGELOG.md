@@ -47,6 +47,13 @@
   `make fmt` 只格式化 git 跟踪的 `.go`（不再扫 `.workwork/` 临时文件）；`lint-workflows` 对
   ci.yml 断言全部 6 个 job（此前只断言 test，lint job 被删后 make vet 仍绿）。
 
+- **修复（Linux 设置窗）**：`setup_config_save_mode_scope` 此前读取 associate 后**重建最小 JSON**，
+  切换一次「中英状态作用域」就会静默清掉 Go 侧（chaoset-settingsctl）写入的
+  fuzzy/traditional/shuangpin（审计 GO-03）。改为读-改-写：通用 `replace_json_value` 只替换
+  目标键并保留其它键；作用域写入校验 system|process|window，读取时未知/损坏值回退 system
+  （与 Go store 的宽容归一化一致）。`test_setup_ctl.c` 新增「保留未知键/缺省创建/损坏回退/
+  非法值拒绝」用例；本机 Docker 内 GTK3 编译 + C 单测通过，CI linux-e2e 同命令复查。
+
 - **测试（三端设置存储）**：三端设置单一真源此前只有 Linux store 有测试，Windows 注册表与
   macOS defaults 的解析/写值路径从未被执行（CI 的 macos/windows job 也不跑这些 Go 测试）。
   新增 `store_darwin_test.go`（`defaultsRunner` 注入点，覆盖解析/缺省回退/损坏值报错/写入参数，

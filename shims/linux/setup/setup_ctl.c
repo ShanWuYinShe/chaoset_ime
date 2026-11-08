@@ -249,97 +249,41 @@ gboolean setup_config_load(gboolean *associate) {
     return TRUE;
 }
 
-/* 中英状态作用域：读 JSON 里的 "mode_scope" 字符串；缺省 system。
- * 与 Windows HKCU\Software\Chaoset\ModeScope / macOS UserDefaults 同语义。 */
-const char *setup_config_load_mode_scope(void) {
-    static char cached[16] = "system";
-    gchar *path = config_path();
-    GError *error = NULL;
-    gchar *text = read_text(path, NULL, &error);
-    g_free(path);
-    if (error != NULL) {
-        g_clear_error(&error);
-        return cached;
-    }
-    if (text == NULL) {
-        return cached;
-    }
-    const gchar *p = strstr(text, "\"mode_scope\"");
-    if (p != NULL) {
-        const gchar *colon = strchr(p, ':');
-        if (colon != NULL) {
-            const gchar *q = strchr(colon, '"');
-            if (q != NULL) {
-                q++;
-                const gchar *end = strchr(q, '"');
-                if (end != NULL && (gsize)(end - q) < sizeof(cached)) {
-                    g_strlcpy(cached, q, (gsize)(end - q) + 1);
-                }
-            }
-        }
-    }
-    g_free(text);
-    return cached;
-}
-
-/* 写作用域：重新拼一份最小 JSON（只保留 associate + mode_scope）。
- * 配置文件是本项目独占的简单键值 JSON，重建比原地编辑更不容易出错，
- * 也避免上面的字符串手术在损坏文件上产生非法 JSON。 */
-gboolean setup_config_save_mode_scope(const char *scope) {
-    if (scope == NULL || *scope == '\0') {
-        return FALSE;
-    }
-    gboolean associate = TRUE;
-    (void)setup_config_load(&associate);
-    gchar *path = config_path();
-    gchar *dir = g_path_get_dirname(path);
-    if (g_mkdir_with_parents(dir, 0700) != 0) {
-        g_free(dir);
-        g_free(path);
-        return FALSE;
-    }
-    g_free(dir);
-    gchar *json = g_strdup_printf(
-        "{\n  \"associate\": %s,\n  \"mode_scope\": \"%s\"\n}\n",
-        associate ? "true" : "false", scope);
-    GError *error = NULL;
-    gboolean ok = g_file_set_contents(path, json, -1, &error);
-    g_free(json);
-    if (ok) {
-        (void)g_chmod(path, 0644);
-    } else {
-        g_clear_error(&error);
-    }
-    g_free(path);
-    return ok;
-}
-
-
-static gchar *replace_associate_value(const gchar *text, gboolean associate) {
-    const gchar *needle = "\"associate\"";
+/* replace_json_value 在简单键值 JSON 里原地替换 "key": <旧 token> 为 raw_value
+ * （raw_value 由调用方拼好，含引号的字符串值也支持）。只改这一个键、保留其它键：
+ * fuzzy/traditional/shuangpin 等键由 Go 工具（chaoset-settingsctl）写入，C 设置窗
+ * 只做冷路径的单项更新，**不得**重建最小 JSON 把其它键清掉（2026-11-08 审计
+ * GO-03：切一次中英作用域会丢用户已保存的设置）。
+ * key 不存在时插到最后一个 '}' 前；空/损坏文件（无 '}'）写最小 JSON。 */
+static gchar *replace_json_value(const gchar *text, const char *key,
+                                 const char *raw_value) {
+    gchar *needle = g_strdup_printf("\"%s\"", key);
     const gchar *p = strstr(text, needle);
-    const gchar *value = associate ? "true" : "false";
     if (p == NULL) {
-        // 没有该键：插到最后一个 '}' 前；空/损坏文件直接写最小 JSON。
         const gchar *close = strrchr(text, '}');
         if (close == NULL) {
-            return g_strdup_printf("{\n  \"associate\": %s\n}\n", value);
+            gchar *result = g_strdup_printf("{\n  \"%s\": %s\n}\n", key, raw_value);
+            g_free(needle);
+            return result;
         }
         gchar *prefix = g_strndup(text, (gsize)(close - text));
         gchar *trimmed_prefix = g_strdup(prefix);
         g_strchomp(trimmed_prefix);
         gboolean has_content = trimmed_prefix[0] != '\0' &&
                                strchr(trimmed_prefix, ':') != NULL;
-        gchar *result = g_strdup_printf("%s%s\"associate\": %s\n}%s",
+        gchar *result = g_strdup_printf("%s%s\"%s\": %s\n}%s",
                                         prefix,
                                         has_content ? ",\n  " : "\n  ",
-                                        value, close + 1);
+                                        key, raw_value, close + 1);
         g_free(trimmed_prefix);
         g_free(prefix);
+        g_free(needle);
         return result;
     }
+    p += strlen(needle);
     p = strchr(p, ':');
     if (p == NULL) {
+        g_free(needle);
         return g_strdup(text);
     }
     p++;
@@ -353,8 +297,104 @@ static gchar *replace_associate_value(const gchar *text, gboolean associate) {
         token_end++;
     }
     gchar *result = g_strdup_printf("%.*s%s%s",
-                                    (gint)(p - text), text, value, token_end);
+                                    (gint)(p - text), text, raw_value, token_end);
+    g_free(needle);
     return result;
+}
+
+/* 作用域合法值与 Go internal/settings / Windows 注册表 / macOS defaults 同口径。 */
+static gboolean valid_mode_scope(const char *scope) {
+    return scope != NULL &&
+           (g_strcmp0(scope, "system") == 0 ||
+            g_strcmp0(scope, "process") == 0 ||
+            g_strcmp0(scope, "window") == 0);
+}
+
+/* 中英状态作用域：读 JSON 里的 "mode_scope" 字符串；缺省 system。
+ * 与 Windows HKCU\Software\Chaoset\ModeScope / macOS UserDefaults 同语义。 */
+const char *setup_config_load_mode_scope(void) {
+    static char cached[16] = "system";
+    gchar *path = config_path();
+    GError *error = NULL;
+    gchar *text = read_text(path, NULL, &error);
+    g_free(path);
+    if (error != NULL) {
+        g_clear_error(&error);
+        g_strlcpy(cached, "system", sizeof(cached)); // 读取失败：回到缺省，不沿用旧缓存
+        return cached;
+    }
+    if (text == NULL) {
+        g_strlcpy(cached, "system", sizeof(cached)); // 文件不存在 = 未配置
+        return cached;
+    }
+    // 未知/损坏值一律回退缺省 system（与 Go store_linux 的宽容归一化一致）：
+    // 先把缓存置缺省，只在解析出合法值时覆盖，避免旧值在文件被改坏后继续生效。
+    g_strlcpy(cached, "system", sizeof(cached));
+    const gchar *p = strstr(text, "\"mode_scope\"");
+    if (p != NULL) {
+        const gchar *colon = strchr(p, ':');
+        if (colon != NULL) {
+            const gchar *q = strchr(colon, '"');
+            if (q != NULL) {
+                q++;
+                const gchar *end = strchr(q, '"');
+                if (end != NULL && (gsize)(end - q) < sizeof(cached)) {
+                    char tmp[16];
+                    g_strlcpy(tmp, q, (gsize)(end - q) + 1);
+                    if (valid_mode_scope(tmp)) {
+                        g_strlcpy(cached, tmp, sizeof(cached));
+                    }
+                }
+            }
+        }
+    }
+    g_free(text);
+    return cached;
+}
+
+/* 写作用域：读-改-写，只替换 mode_scope 一个键、保留文件里其它键。
+ * 不能重建最小 JSON：fuzzy/traditional/shuangpin 等键由 Go 工具写入，
+ * 重建会把用户已保存的设置静默清掉（2026-11-08 审计 GO-03）。 */
+gboolean setup_config_save_mode_scope(const char *scope) {
+    if (!valid_mode_scope(scope)) {
+        return FALSE;
+    }
+    gchar *path = config_path();
+    gchar *dir = g_path_get_dirname(path);
+    if (g_mkdir_with_parents(dir, 0700) != 0) {
+        g_free(dir);
+        g_free(path);
+        return FALSE;
+    }
+    g_free(dir);
+
+    GError *error = NULL;
+    gboolean missing = FALSE;
+    gchar *old = read_text(path, &missing, &error);
+    if (error != NULL) {
+        g_clear_error(&error);
+        g_free(path);
+        return FALSE;
+    }
+    gchar *quoted = g_strdup_printf("\"%s\"", scope);
+    gchar *updated = replace_json_value(old != NULL ? old : "{}", "mode_scope", quoted);
+    g_free(quoted);
+    g_free(old);
+    gboolean ok = g_file_set_contents(path, updated, -1, &error);
+    g_free(updated);
+    if (ok) {
+        (void)g_chmod(path, 0644);
+    } else {
+        g_clear_error(&error);
+    }
+    g_free(path);
+    return ok;
+}
+
+
+// 联想开关的单项写入复用通用 JSON 编辑（保留 fuzzy/traditional/shuangpin 等键）。
+static gchar *replace_associate_value(const gchar *text, gboolean associate) {
+    return replace_json_value(text, "associate", associate ? "true" : "false");
 }
 
 gboolean setup_config_save(gboolean associate) {
