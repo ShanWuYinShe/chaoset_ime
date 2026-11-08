@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,11 @@ type Entry struct {
 type dictNode struct {
 	children map[string]*dictNode
 	ids      []int
+	// subtreeMin 是本节点**子树**内最小词条下标。同层节点的子树互不相交，
+	// 因此它在一层内唯一，可作为「等词频节点」的确定性排序键：
+	// 前缀 BFS 的截断取舍由此不再依赖 map 遍历顺序（同一输入每次组词结果
+	// 不同的问题，2026-11-08 修复）。-1 表示尚未写入。
+	subtreeMin int32
 }
 
 // Dictionary 以音节为边的 Trie：每个节点代表一段音节序列，
@@ -37,7 +43,7 @@ type Dictionary struct {
 }
 
 func NewDictionary() *Dictionary {
-	return &Dictionary{root: &dictNode{}, seen: make(map[string]int)}
+	return &Dictionary{root: &dictNode{subtreeMin: -1}, seen: make(map[string]int)}
 }
 
 func (d *Dictionary) add(word string, syllables []string, freq int) {
@@ -54,8 +60,13 @@ func (d *Dictionary) add(word string, syllables []string, freq int) {
 		}
 		next := node.children[s]
 		if next == nil {
-			next = &dictNode{}
+			next = &dictNode{subtreeMin: -1}
 			node.children[s] = next
+		}
+		// 词条 id 单调递增：遇到更小的才更新，路径上每个节点的子树最小
+		// 下标即其全部后代词条里最早载入的那条（用于确定性排序）。
+		if next.subtreeMin < 0 || id < int(next.subtreeMin) {
+			next.subtreeMin = int32(id)
 		}
 		node = next
 	}
@@ -168,7 +179,10 @@ func (d *Dictionary) QueryContinuation(tokens []Token, frag string, maxResults i
 		if out[i].Entry.Freq != out[j].Entry.Freq {
 			return out[i].Entry.Freq > out[j].Entry.Freq
 		}
-		return out[i].Entry.Word < out[j].Entry.Word
+		if out[i].Entry.Word != out[j].Entry.Word {
+			return out[i].Entry.Word < out[j].Entry.Word
+		}
+		return syllablesKey(out[i].Entry) < syllablesKey(out[j].Entry)
 	})
 	if len(out) > maxResults {
 		out = out[:maxResults]
@@ -243,7 +257,10 @@ func (d *Dictionary) QueryJoinedPinyin(input string, maxResults int) []*Entry {
 		if len(out[i].Word) != len(out[j].Word) {
 			return len(out[i].Word) < len(out[j].Word)
 		}
-		return out[i].Word < out[j].Word
+		if out[i].Word != out[j].Word {
+			return out[i].Word < out[j].Word
+		}
+		return syllablesKey(out[i]) < syllablesKey(out[j])
 	})
 	if len(out) > maxResults {
 		out = out[:maxResults]
@@ -338,7 +355,10 @@ func (d *Dictionary) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 		if exactMatches[i].Freq != exactMatches[j].Freq {
 			return exactMatches[i].Freq > exactMatches[j].Freq
 		}
-		return exactMatches[i].Word < exactMatches[j].Word
+		if exactMatches[i].Word != exactMatches[j].Word {
+			return exactMatches[i].Word < exactMatches[j].Word
+		}
+		return syllablesKey(exactMatches[i]) < syllablesKey(exactMatches[j])
 	})
 	if len(exactMatches) > maxResults {
 		exactMatches = exactMatches[:maxResults]
@@ -382,7 +402,10 @@ func (d *Dictionary) queryTokens(tokens []Token, maxResults, exactMax int) ([]*E
 		if exactMatches[i].Freq != exactMatches[j].Freq {
 			return exactMatches[i].Freq > exactMatches[j].Freq
 		}
-		return exactMatches[i].Word < exactMatches[j].Word
+		if exactMatches[i].Word != exactMatches[j].Word {
+			return exactMatches[i].Word < exactMatches[j].Word
+		}
+		return syllablesKey(exactMatches[i]) < syllablesKey(exactMatches[j])
 	})
 	if len(exactMatches) > exactMax {
 		exactMatches = exactMatches[:exactMax]
@@ -399,13 +422,25 @@ func (d *Dictionary) queryTokens(tokens []Token, maxResults, exactMax int) ([]*E
 	// 优化：第一层节点按「节点内词条最高词频」排序后再展开，并限制每层
 	// 展开的节点数。原先 map 遍历无序收集，有限名额给到的是随机词；
 	// 现在优先给高频词，候选质量同步提升，长尾节点被剪枝。
+	//
+	// 确定性（2026-11-08）：walkTokens 的非精确 token 分支来自 map 遍历，
+	// 处理顺序随机；而下面的「逐节点累积排名 + 截断」会让处理顺序决定
+	// prefixMatches 的子集（同一输入候选总数随运行抖动）。两处固定顺序：
+	//   1. 起点 curr 按节点子树最小词条下标排序；
+	//   2. 每层 ranked 按 (节点内最高词频, 子树最小词条下标) 排序——同层
+	//      节点子树互不相交，该键唯一，构成全序。
+	slices.SortFunc(curr, func(a, b *dictNode) int { return int(a.subtreeMin) - int(b.subtreeMin) })
 	levelNodes := curr
 	maxPrefixScan := maxResults * 4
 	const maxExpandPerLevel = 12
 	for depth := 0; depth < 2 && len(levelNodes) > 0 && len(prefixMatches) < maxPrefixScan; depth++ {
+		// childFreq 打包成 16 字节（指针 + 两个 int32）：freq/minID 在收集时
+		// 一次算好，排序比较器只做整数比较，避免在 O(n log n) 次比较里反复
+		// 解引用节点（词频并列很多，实测这是该循环的主要开销）。
 		type childFreq struct {
-			node *dictNode
-			freq int
+			node  *dictNode
+			freq  int32
+			minID int32
 		}
 		var ranked []childFreq
 		for _, node := range levelNodes {
@@ -419,9 +454,14 @@ func (d *Dictionary) queryTokens(tokens []Token, maxResults, exactMax int) ([]*E
 						top = d.entries[id].Freq
 					}
 				}
-				ranked = append(ranked, childFreq{child, top})
+				ranked = append(ranked, childFreq{child, int32(top), child.subtreeMin})
 			}
-			sort.Slice(ranked, func(i, j int) bool { return ranked[i].freq > ranked[j].freq })
+			slices.SortFunc(ranked, func(a, b childFreq) int {
+				if a.freq != b.freq {
+					return int(b.freq) - int(a.freq)
+				}
+				return int(a.minID) - int(b.minID)
+			})
 			if len(ranked) > maxExpandPerLevel {
 				ranked = ranked[:maxExpandPerLevel]
 			}
@@ -443,13 +483,27 @@ func (d *Dictionary) queryTokens(tokens []Token, maxResults, exactMax int) ([]*E
 		if prefixMatches[i].Freq != prefixMatches[j].Freq {
 			return prefixMatches[i].Freq > prefixMatches[j].Freq
 		}
-		return len(prefixMatches[i].Word) < len(prefixMatches[j].Word)
+		if len(prefixMatches[i].Word) != len(prefixMatches[j].Word) {
+			return len(prefixMatches[i].Word) < len(prefixMatches[j].Word)
+		}
+		if prefixMatches[i].Word != prefixMatches[j].Word {
+			return prefixMatches[i].Word < prefixMatches[j].Word
+		}
+		return syllablesKey(prefixMatches[i]) < syllablesKey(prefixMatches[j])
 	})
 	if len(prefixMatches) > maxResults {
 		prefixMatches = prefixMatches[:maxResults]
 	}
 
 	return exactMatches, prefixMatches
+}
+
+// syllablesKey 返回词条音节的连写串，作为排序的最终决胜键。
+// 多音字让「同词同频」的两条记录比较器相等；不给出全序时 sort.Slice
+// （不稳定）的相对顺序取决于输入顺序，而输入顺序可能来自 map 遍历——
+// 同一输入每次组词就可能得到不同候选顺序。
+func syllablesKey(e *Entry) string {
+	return strings.Join(e.Syllables, " ")
 }
 
 // Contains 判断主词典是否已存在「词 + 精确音节序列」一致的词条。
@@ -727,7 +781,10 @@ func (d *Dictionary) QueryWordPrefix(prefix string, maxResults int) []*Entry {
 		if out[i].Freq != out[j].Freq {
 			return out[i].Freq > out[j].Freq
 		}
-		return out[i].Word < out[j].Word
+		if out[i].Word != out[j].Word {
+			return out[i].Word < out[j].Word
+		}
+		return syllablesKey(out[i]) < syllablesKey(out[j])
 	})
 	if len(out) > maxResults {
 		out = out[:maxResults]

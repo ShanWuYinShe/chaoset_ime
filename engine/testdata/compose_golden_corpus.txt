@@ -1,6 +1,6 @@
 # compose golden 语料（生成规则见 engine/compose_golden_test.go 顶部注释）
 # 来源：a) engine/ipc 测试出现过的输入串 b) data/dict_common.tsv 按词频分带等距抽样派生（整词连写/简拼/混拼/末音节残缺）c) 固定边界样例
-# 已知非确定性输入（dict.go 前缀 BFS 的 map 遍历序导致，未修复）已排除： b b'a ch k kkdz sh wmd yb zg zh zhongg
+# 2026-11-08 确定性修复（dict.go 前缀 BFS 全序化）后，原「已知非确定性」输入已稳定并纳入语料。
 # 每行一个输入串；# 开头为注释；空串由测试固定注入（语料文件无法表示空行）
 a
 a'b'c'd'e'f'g'h
@@ -305,3 +305,26 @@ zuozi
 zuqu
 zxcv
 zzz
+
+# 2026-11-08 确定性修复后回归纳入（原 dict.go 前缀 BFS map 序导致候选总数抖动）。
+# 每条都经 -detect-unstable 复核稳定；修复说明见 compose_golden_test.go 顶部注释。
+b
+b'a
+ch
+k
+kkdz
+sh
+wmd
+yb
+zg
+zh
+zhongg
+aq
+bb
+bd
+bf
+bg
+bh
+z
+q
+w

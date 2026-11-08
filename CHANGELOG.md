@@ -8,9 +8,9 @@
   - `engine/session.go` 2188→1193 行：`compose()` 1009 行按职责拆为
     `compose_state/shape/continuation/typo/query/rank.go` + 142 行编排 `compose.go`；
     调用顺序、rank 常量值、`SliceStable`、typoFix 标记、分页与 compose memo 副作用逐条保留。
-  - 新增 `engine/compose_golden_test.go` + `engine/testdata/`（303 条语料 × 5 模式 = 1520 条记录，
-    跨全部页的完整 Candidates/Preedit/PageCount 断言，gzip 320KB）：纯重构的逐字节等价门禁；
-    `-update` 刷新、`-detect-unstable` 复核已知非确定性输入。
+  - 新增 `engine/compose_golden_test.go` + `engine/testdata/`（323 条语料 × 5 模式 = 1620 条记录，
+    跨全部页的完整 Candidates/Preedit/PageCount 断言，gzip 约 320KB）：纯重构的逐字节等价门禁；
+    `-update` 刷新、`-detect-unstable` 复核非确定性输入。
   - 性能无回归（synthetic 100k 词库，-count=3）：Compose100k 40.8–42.7µs→40.9–41.3µs，
     ComposeInitials ~292–299µs→~289–298µs；+10 allocs/op、B/op +3.5%。
   - `tools/checkuiparity` main.go 2553 行→10 个文件：组名唯一表（`groups.go`）+ 注册表
@@ -19,6 +19,18 @@
 
 - **修复（engine）**：Compose 缓存失效不完整——`SetFuzzy`/`SetTraditional` 切换后连续
   `Compose()` 可能返回旧结果；新增 `invalidateComposeMemo` 并接入 4 个配置入口（另有单测）。
+
+- **修复（engine 组词确定性）**：词典前缀 BFS 曾依赖 map 遍历序 + 非全序比较器，极短简拼/混拼
+  输入（zh/aq/bh…）的候选总数会随运行抖动。修复：Trie 节点记录子树最小词条下标
+  （`dictNode.subtreeMin`）作为前缀 BFS 的全序决胜键，各查询 sort 补齐 Word/音节决胜键
+  （多音字「同词同频」不再依赖输入顺序）；用户词库查询把「按词去重」从收集阶段移到
+  全序排序之后（多音字同词保留哪个读音不再由 map 遍历顺序决定）；该循环改用
+  `slices.SortFunc` + 16 字节紧凑结构，
+  顺带把热路径跑快：Compose100k 40.7–42.4µs→32.2–32.6µs（约 -20%）、ComposeInitials
+  282–293µs→266–275µs（约 -5~7%），alloc 97→92 / 621→608。
+  验证：2660 条语料 × 两种模式（词典/预热用户词库）各 8 轮重复组词 0 抖动；修复前后快照仅
+  7/9696 条记录有差异且都发生在首页之后（首选不变）；新增 `TestComposeDeterministic` /
+  `TestUserDictQueryDeterministic` 回归，原非确定性输入已纳入 golden 语料。
 
 - **修复（IPC 健壮性）**：`selectPrefix` 响应直接回传 Composition（删除手工拼 map 的协议漂移点）；
   帧上限增加写侧校验，服务端对超限响应返回错误帧而不是写半帧（避免对端读帧失败后连接失步）；
@@ -39,11 +51,9 @@
   与预算、预算口径统一为逐文件、Swift 本地可 typecheck；AGENTS.md 修正 macOS 设置窗路径与
   「依赖方向已机器断言」的表述；README 开发命令与「验证交给 CI」对齐。
 
-- **已知问题（本轮未修，已留证）**：① engine 词典前缀 BFS 的 map 遍历序 + 词频截断导致极短输入
-  （zh/aq/bb…）候选总数随运行抖动（2660 输入快照中 20/9696 条仅第二页后差异、首选不变；确定性
-  修复需重构 BFS，实测热路径 +14~21%，golden 语料已排除并写 TODO）；② Linux 设置窗
-  `setup_config_save_mode_scope` 重建最小 JSON 会清掉 fuzzy/traditional/shuangpin；③ release.yml
-  手动 dispatch 无 release 守卫；④ win32.cpp 4974 行，拆到 ≤2000 需先拆 TIP 类（13 文件方案已审计）。
+- **已知问题（本轮未修，已留证）**：① Linux 设置窗 `setup_config_save_mode_scope` 重建最小 JSON
+  会清掉 fuzzy/traditional/shuangpin；② release.yml 手动 dispatch 无 release 守卫；③ win32.cpp
+  4974 行，拆到 ≤2000 需先拆 TIP 类（13 文件方案已审计）。
 
 ## v0.3.18（2026-11-07）
 

@@ -31,13 +31,14 @@ package engine
 // 查看：gunzip -c engine/testdata/compose_golden.jsonl.gz | head。gzip 头不含
 // 时间戳/文件名，同样输入压缩结果逐字节稳定，可放心按内容做 golden 比较。
 //
-// ⚠️ 已知非确定性（本任务未修复，dict.go 不在改动范围）：
-// dict.go 的前缀 BFS 在命中 maxResults / maxPrefixScan 上限时，哪些词条被收集
-// 取决于 map 遍历序（Go 每次 range 随机起点），因此部分短简拼/混拼输入的候选
-// 总数与成员会随机波动（Lead 已验证：aq/zh/bb/bd/bf/bg/bh 等；本次实测
-// b/ch/k/sh/zg/yb/kkdz/wmd/b'a/zhongg）。这些输入已从语料中排除（见下方
-// composeGoldenKnownUnstable），并由 -detect-unstable 模式复核。根因在 dict.go
-// 修复后（TODO），应清空排除清单、把这些输入重新纳入语料并重跑本测试。
+// 确定性（2026-11-08 已修复）：dict.go 的前缀 BFS 此前在命中 maxResults /
+// maxPrefixScan 上限时依赖 map 遍历序（Go 每次 range 随机起点），部分短简拼/
+// 混拼输入的候选总数随机波动。修复方式：Trie 节点记录子树最小词条下标
+// （dictNode.subtreeMin），BFS 起点与每层排名都用它做全序决胜键；各查询的
+// sort 比较器补齐 Word/音节决胜键（同词多音、同频同长不再依赖输入顺序）。
+// 原「已知非确定性」输入已稳定并纳入语料；composeGoldenKnownUnstable 保留为
+// 空清单 + 守卫测试：将来若发现新的非确定性输入，先补根因再纳入，不要直接
+// 塞进 golden（会随机翻红）。
 //
 // 维护工具（默认跳过，手动执行）：
 //
@@ -73,14 +74,12 @@ const (
 	detectComposeGoldenRounds = 20
 )
 
-// composeGoldenKnownUnstable 是已知非确定性输入，语料中必须不存在。
+// composeGoldenKnownUnstable 是「已知非确定性、不得进入 golden 语料」的输入清单。
 //
-// 根因：dict.go 前缀 BFS 的 map 遍历序 + maxResults/maxPrefixScan 截断；
-// 修复前无法把这些输入纳入逐字节 golden（会随机翻红）。清单由
-// -detect-unstable 实测得出；修复 dict.go 后应清空本清单（TODO）。
-var composeGoldenKnownUnstable = []string{
-	"b", "b'a", "ch", "k", "kkdz", "sh", "wmd", "yb", "zg", "zh", "zhongg",
-}
+// 2026-11-08 前缀 BFS 确定性修复后清空；保留空清单是为了让守卫测试与
+// -detect-unstable 工具继续可用：将来新增语料若实测不稳定，先把根因修掉，
+// 不要直接塞进 golden（会随机翻红、掩盖真正的排序漂移）。
+var composeGoldenKnownUnstable = []string{}
 
 // composeGoldenModes 是 golden 覆盖的子串配置；顺序即 golden 文件记录顺序。
 var composeGoldenModes = []string{"plain", "fuzzy", "trad", "zrm", "user"}
@@ -129,7 +128,8 @@ func TestComposeGolden(t *testing.T) {
 }
 
 // TestComposeGoldenCorpusExcludesKnownUnstable 守卫「已知非确定性输入不得混入
-// golden 语料」：否则测试会随机翻红，掩盖真正的排序漂移。
+// golden 语料」：否则测试会随机翻红，掩盖真正的排序漂移。当前清单为空
+// （2026-11-08 修复后）；将来新增不稳定输入时由 -detect-unstable 发现。
 func TestComposeGoldenCorpusExcludesKnownUnstable(t *testing.T) {
 	corpus := readComposeGoldenCorpus(t)
 	inCorpus := make(map[string]bool, len(corpus))
@@ -138,8 +138,8 @@ func TestComposeGoldenCorpusExcludesKnownUnstable(t *testing.T) {
 	}
 	for _, input := range composeGoldenKnownUnstable {
 		if inCorpus[input] {
-			t.Errorf("输入 %q 属已知非确定性（dict.go 前缀 BFS map 遍历序），"+
-				"不得进入 golden 语料；见 composeGoldenKnownUnstable 注释", input)
+			t.Errorf("输入 %q 属已知非确定性，不得进入 golden 语料；"+
+				"见 composeGoldenKnownUnstable 注释（先修根因或排除，再纳入）", input)
 		}
 	}
 }

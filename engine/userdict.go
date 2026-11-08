@@ -398,6 +398,26 @@ func (u *UserDict) phraseScore(rec *phraseRecord) int {
 	return int(float64(rec.Count*UserBoostPerCount) * decay(rec.LastUsed, u.now()))
 }
 
+// dedupeEntriesByWord 按 Word 去重，保留排序后（全序、词频高者在前）的第一条。
+// 用户词库同一词可有多个读音（多音字），热路径候选不应重复显示同一个词；
+// 去重必须放在全序排序之后：收集阶段按 word 去重会让「保留哪个读音」取决于
+// map 遍历顺序，同一输入重复组词的结果就不稳定（2026-11-08 确定性修复）。
+func dedupeEntriesByWord(entries []*Entry) []*Entry {
+	if len(entries) < 2 {
+		return entries
+	}
+	out := entries[:0]
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if seen[e.Word] {
+			continue
+		}
+		seen[e.Word] = true
+		out = append(out, e)
+	}
+	return out
+}
+
 // QueryJoinedPinyin 按「拼音连写 == input」匹配用户学习记录（调频词、词组进化、
 // 带分段整句）。与 Dictionary.QueryJoinedPinyin 同口径：只匹配已存在的用户词条，
 // 不组合；用于兜住音节切分枚举上限导致的用户词漏匹配（用户要求词库里有的词
@@ -414,10 +434,14 @@ func (u *UserDict) QueryJoinedPinyin(input string, maxResults int) []*Entry {
 	var out []*Entry
 	seen := make(map[string]bool, 8)
 	add := func(word string, sylls []string, freq int, segs []string) {
-		if len(sylls) == 0 || seen[word] || strings.Join(sylls, "") != input {
+		if len(sylls) == 0 || strings.Join(sylls, "") != input {
 			return
 		}
-		seen[word] = true
+		key := word + "\x00" + strings.Join(sylls, " ")
+		if seen[key] {
+			return
+		}
+		seen[key] = true
 		out = append(out, &Entry{
 			Word:      word,
 			Syllables: sylls,
@@ -443,8 +467,12 @@ func (u *UserDict) QueryJoinedPinyin(input string, maxResults int) []*Entry {
 		if out[i].Freq != out[j].Freq {
 			return out[i].Freq > out[j].Freq
 		}
-		return out[i].Word < out[j].Word
+		if out[i].Word != out[j].Word {
+			return out[i].Word < out[j].Word
+		}
+		return syllablesKey(out[i]) < syllablesKey(out[j])
 	})
+	out = dedupeEntriesByWord(out)
 	if len(out) > maxResults {
 		out = out[:maxResults]
 	}
@@ -542,8 +570,9 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 				break
 			}
 		}
-		if ok && !seen[rec.Word] {
-			seen[rec.Word] = true
+		entryKey := rec.Word + "\x00" + strings.Join(sylls, " ")
+		if ok && !seen[entryKey] {
+			seen[entryKey] = true
 			exacts = append(exacts, &Entry{
 				Word:      rec.Word,
 				Syllables: sylls,
@@ -569,8 +598,9 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 				break
 			}
 		}
-		if ok && !seen[word] {
-			seen[word] = true
+		entryKey := word + "\x00" + strings.Join(sylls, " ")
+		if ok && !seen[entryKey] {
+			seen[entryKey] = true
 			exacts = append(exacts, &Entry{
 				Word:      word,
 				Syllables: sylls,
@@ -584,8 +614,15 @@ func (u *UserDict) QueryTokensExact(tokens []Token, maxResults int) []*Entry {
 		if exacts[i].Freq != exacts[j].Freq {
 			return exacts[i].Freq > exacts[j].Freq
 		}
-		return len(exacts[i].Word) < len(exacts[j].Word)
+		if len(exacts[i].Word) != len(exacts[j].Word) {
+			return len(exacts[i].Word) < len(exacts[j].Word)
+		}
+		if exacts[i].Word != exacts[j].Word {
+			return exacts[i].Word < exacts[j].Word
+		}
+		return syllablesKey(exacts[i]) < syllablesKey(exacts[j])
 	})
+	exacts = dedupeEntriesByWord(exacts)
 	if len(exacts) > maxResults {
 		exacts = exacts[:maxResults]
 	}
@@ -621,8 +658,9 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 				break
 			}
 		}
-		if ok && !seen[rec.Word] {
-			seen[rec.Word] = true
+		entryKey := rec.Word + "\x00" + strings.Join(sylls, " ")
+		if ok && !seen[entryKey] {
+			seen[entryKey] = true
 			e := &Entry{
 				Word:      rec.Word,
 				Syllables: sylls,
@@ -653,8 +691,9 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 				break
 			}
 		}
-		if ok && !seen[word] {
-			seen[word] = true
+		entryKey := word + "\x00" + strings.Join(sylls, " ")
+		if ok && !seen[entryKey] {
+			seen[entryKey] = true
 			e := &Entry{
 				Word:      word,
 				Syllables: sylls,
@@ -674,12 +713,20 @@ func (u *UserDict) QueryTokens(tokens []Token, maxResults int) ([]*Entry, []*Ent
 			if entries[i].Freq != entries[j].Freq {
 				return entries[i].Freq > entries[j].Freq
 			}
-			return len(entries[i].Word) < len(entries[j].Word)
+			if len(entries[i].Word) != len(entries[j].Word) {
+				return len(entries[i].Word) < len(entries[j].Word)
+			}
+			if entries[i].Word != entries[j].Word {
+				return entries[i].Word < entries[j].Word
+			}
+			return syllablesKey(entries[i]) < syllablesKey(entries[j])
 		})
 	}
 
 	sortSlice(exacts)
 	sortSlice(prefixes)
+	exacts = dedupeEntriesByWord(exacts)
+	prefixes = dedupeEntriesByWord(prefixes)
 
 	if len(exacts) > maxResults {
 		exacts = exacts[:maxResults]
@@ -749,7 +796,10 @@ func (u *UserDict) QueryContinuation(tokens []Token, frag string, maxResults int
 		if out[i].Entry.Freq != out[j].Entry.Freq {
 			return out[i].Entry.Freq > out[j].Entry.Freq
 		}
-		return out[i].Entry.Word < out[j].Entry.Word
+		if out[i].Entry.Word != out[j].Entry.Word {
+			return out[i].Entry.Word < out[j].Entry.Word
+		}
+		return syllablesKey(out[i].Entry) < syllablesKey(out[j].Entry)
 	})
 	if len(out) > maxResults {
 		out = out[:maxResults]
@@ -1229,7 +1279,10 @@ func (u *UserDict) QueryWordsByWordPrefix(prefix string) []*Entry {
 		if out[i].Freq != out[j].Freq {
 			return out[i].Freq > out[j].Freq
 		}
-		return out[i].Word < out[j].Word
+		if out[i].Word != out[j].Word {
+			return out[i].Word < out[j].Word
+		}
+		return syllablesKey(out[i]) < syllablesKey(out[j])
 	})
 	return out
 }
