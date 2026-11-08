@@ -120,14 +120,23 @@ func deleteRegistryValue(t *testing.T, h syscall.Handle, name string) {
 }
 
 // withRegistrySnapshot 在测试开始时快照三个设置值，结束后恢复。
+//
+// winCreateKey 打开的是 KEY_WRITE 句柄（写值与恢复都用它）；读取快照必须另开
+// 一个 KEY_READ 句柄——用写句柄调 RegQueryValueEx 会得到 Access is denied
+// （Windows 上真实踩到：CI windows-latest 首跑失败）。
 func withRegistrySnapshot(t *testing.T) syscall.Handle {
 	t.Helper()
 	h := winTestKey(t)
 	t.Cleanup(func() { syscall.RegCloseKey(h) })
 
-	assoc, assocOK := snapshotDWORD(t, h, winValueAssociate)
-	scope, scopeOK := snapshotString(t, h, winValueModeScope)
-	english, englishOK := snapshotDWORD(t, h, winValueUiEnglish)
+	readH, err := winOpenKey(syscall.KEY_READ)
+	if err != nil {
+		t.Fatalf("打开注册表读句柄失败: %v", err)
+	}
+	assoc, assocOK := snapshotDWORD(t, readH, winValueAssociate)
+	scope, scopeOK := snapshotString(t, readH, winValueModeScope)
+	english, englishOK := snapshotDWORD(t, readH, winValueUiEnglish)
+	syscall.RegCloseKey(readH)
 	t.Cleanup(func() {
 		restoreDWORD(t, h, winValueAssociate, assoc, assocOK)
 		restoreString(t, h, winValueModeScope, scope, scopeOK)
