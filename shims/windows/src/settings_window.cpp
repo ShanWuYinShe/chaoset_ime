@@ -1,5 +1,5 @@
 // 设置窗（三端一致：macOS SettingsWindow.swift 同构；由 chaoset-ui.exe 创建）。
-// 叶子模块：不得 include/引用 win32.cpp（TIP TU）的类型；
+// 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型；
 // 设置窗可活过 TIP（不持有 TIP 指针，审计 P1-2）。
 
 #define WIN32_LEAN_AND_MEAN

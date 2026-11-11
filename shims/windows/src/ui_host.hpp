@@ -1,8 +1,8 @@
 // 单例 UI 宿主进程（chaoset-ui.exe）：UiTray、托盘菜单、runUiHost、命令管道线程。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型。UI 宿主进程里的 ShellWorker（异步日志）属于
-// win32.cpp 的 worker 调度，导出入口 ChaosetRunUi 在调用 runUiHost 前注入
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型。UI 宿主进程里的 ShellWorker（异步日志）属于 shell_worker.cpp
+// 的 worker 调度，导出入口 ChaosetRunUi（win32.cpp）在调用 runUiHost 前注入
 // 启动/停止原语（依赖倒置，避免 leaf 反向引用 TIP TU）。
 //
 // 进程模型：chaoset-ui.exe 只有几十行（LoadLibrary 本 DLL + 调用导出
@@ -16,7 +16,7 @@
 
 namespace chaoset::win {
 
-// UI 宿主进程里的 ShellWorker 生命周期原语（实现见 win32.cpp 的 worker 段）。
+// UI 宿主进程里的 ShellWorker 生命周期原语（实现见 shell_worker.cpp）。
 using UiHostWorkerFn = void (*)();
 using UiHostWorkerWaitFn = void (*)(DWORD ms);
 

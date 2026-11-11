@@ -3,7 +3,8 @@
 // 与 macOS CandidatePanel.layoutRows 同算法（2026-10-31 三端一致性收尾）：
 // 按内容宽度 maxContentW 折行，最多 maxRows 行；第 maxRows 行之后的候选不参与
 // 布局（与 mac 一致，数字键仍可能选中——文档记录为已知边角）。放在头文件里是
-// 为了让 win32.cpp 与 tests/core_test.cpp 共用，并能在 macOS 上单测布局数学。
+// 为了让候选窗 TU（candidate_window.cpp）与 tests/core_test.cpp 共用，并能在
+// macOS 上单测布局数学。
 #pragma once
 
 #include <vector>

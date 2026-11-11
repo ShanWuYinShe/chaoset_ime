@@ -1,7 +1,7 @@
 // 单例 UI 宿主（chaoset-ui.exe）管道低层：命令/查询/拉起原语。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型。worker 调度/orchestrator（reportModeToUi /
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型。worker 调度/orchestrator（reportModeToUi /
 // openSettingsViaUi）在 shell_worker.cpp，由 TIP TU 调用这里的原语。实现见
 // ui_client.cpp。
 //

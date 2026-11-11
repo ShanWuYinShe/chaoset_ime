@@ -83,10 +83,11 @@ gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "C
 # --export-all-symbols 恢复全部导出（与 Makefile package-windows 一致）。
 #
 # DLL 源 = src/*.cpp 去掉 UI 宿主入口 ui_main.cpp（docs/architecture.md §3.1 的
-# 真实 TU：win32.cpp 只保留 TIP 主体/TIP 线程消息窗口/类厂/DllMain，候选窗
-# （candidate_window）、后台 worker（shell_worker）、TIP 注册（tip_registration）
-# 与叶子模块（含 mode_toast）独立编译）。（wave1 续已完成叶子层拆分；TIP 类本身
-# 仍未拆分，是 ≤2000 目标的剩余前置）
+# 真实 TU：win32.cpp 只保留 DLL 生命周期编排（类厂/导出/DllMain/DllCanUnloadNow）；
+# TIP 主体 = tip.hpp（类声明）+ tip_core/tip_keys/tip_composition/tip_candidates.cpp，
+# TIP 线程消息窗口 = tip_thread.cpp，候选窗（candidate_window）、后台 worker
+# （shell_worker）、TIP 注册（tip_registration）与叶子模块（含 mode_toast）独立编译。
+# wave2 已完成 TIP 类拆分，win32.cpp 129 行，≤2000 目标达成）
 # 用 wildcard 后新增模块不需要再手改这份清单；UI 宿主仍然只编 ui_main.cpp。
 DLL_SRCS=""
 for f in src/*.cpp; do

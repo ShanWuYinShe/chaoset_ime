@@ -1,7 +1,7 @@
 // 候选窗配色/主题判定（与 macOS CandidatePanel.swift 视觉契约）。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型。CandidateColors 的字段/色值由
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型。CandidateColors 的字段/色值由
 // tools/checkuiparity「候选窗几何 / 候选窗配色」静态断言锁定。实现见 theme.cpp。
 
 #ifndef CHAOSET_WIN_THEME_HPP_

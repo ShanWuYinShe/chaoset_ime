@@ -1,10 +1,10 @@
 // chaoset-ui.exe：单例 UI 宿主进程（托盘中英指示器 + 设置窗）。
 //
 // 只有几十行：找到与自身同目录的 ChaosetIME.dll，调用导出 ChaosetRunUi。
-// 托盘绘制 / 设置窗 / 命名管道命令全部复用 TSF 壳（win32.cpp）里的同一份实现，
+// 托盘绘制 / 设置窗 / 命名管道命令全部复用本 DLL 内的同一份实现，
 // 不存在第二套 UI 代码；也不把设置窗搬进 Go daemon（项目职责边界：UI 归平台 shim）。
 //
-// 为什么需要独立进程见 win32.cpp「单例 UI 宿主进程通信」注释：
+// 为什么需要独立进程见 ui_client.hpp / ui_host.hpp 的说明：
 //   - TSF 把 TIP 加载进每个宿主进程，进程内自绘托盘会变成任务栏多个图标；
 //   - 设置窗由宿主进程托管时，开始菜单/搜索（Low IL AppContainer）里打不开，
 //     且宿主退出会带走设置窗。
@@ -37,7 +37,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR /*cmdLine*/, int) {
         return 1;
     }
     // GetProcAddress 返回签名未知的 FARPROC：先经 void* 中转再转目标签名，
-    // 避免 mingw -Wall 的 -Wcast-function-type（与 win32.cpp 的 loadProcAddress 同语义）。
+    // 避免 mingw -Wall 的 -Wcast-function-type（与 candidate_window.cpp 的 loadProcAddress 同语义）。
     auto runUi = reinterpret_cast<RunUiFn>(reinterpret_cast<void*>(GetProcAddress(dll, "ChaosetRunUi")));
     if (runUi == nullptr) {
         FreeLibrary(dll);

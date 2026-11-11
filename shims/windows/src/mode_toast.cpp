@@ -1,6 +1,6 @@
 // 模式切换提示（短暂 toast）实现；声明与职责说明见 mode_toast.hpp。
 //
-// 叶子模块（docs/architecture.md §3.1）：本 TU 不得 include/引用 win32.cpp，
+// 叶子模块（docs/architecture.md §3.1）：本 TU 不得 include/引用 TIP TU，
 // 只使用 winutil（owner/类名/DPI）、theme（配色）、diagnostics（预算日志）。
 
 #define WIN32_LEAN_AND_MEAN

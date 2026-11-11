@@ -1,5 +1,5 @@
 // 诊断日志（tsf.log / crash.log）与 VEH 崩溃取证（模块实现）。
-// 叶子模块：不得 include/引用 win32.cpp（TIP TU）的类型；
+// 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型；
 // tsf.log 的异步落盘入口由 TIP TU 的 DllMain 注入（见 diagnostics.hpp）。
 
 #define WIN32_LEAN_AND_MEAN

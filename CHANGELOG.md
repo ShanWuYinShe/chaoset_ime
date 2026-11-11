@@ -4,6 +4,36 @@
 
 ## 未发布
 
+- **Windows 壳拆分 wave2（审计 P1-1 收尾，TIP 类拆分完成，≤2000 目标达成）**：
+  win32.cpp 2994→129 行，把 `class ChaosetTIP`（类内 inline 定义 2564 行）按职责拆成
+  `tip.hpp`（完整类声明 + kVk*/kPageSize 常量 + mingw 缺失的 ITfTextInputProcessorEx
+  补声明，396 行）、`tip_core.cpp`（生命周期/激活状态机/中英模式/前台钩子/worker
+  回投入口，830 行）、`tip_keys.cpp`（ITfKeyEventSink 五入口/Shift 状态机/键位映射/
+  wouldHandle/handleKey，913 行）、`tip_composition.cpp`（EditSession/光标/预编辑/
+  提交/结束合成/双拼会话收尾，587 行）、`tip_candidates.cpp`（候选点选/删除/翻页/
+  showToast/设置窗入口/联想面板，278 行）。`tip_thread.{hpp,cpp}`（hpp 36→68 行、cpp 68→189 行）迁入
+  TIP 线程 message-only 窗口过程/创建销毁/按线程 TIP 注册表/前台钩子表；窗口过程对 TIP
+  的分发改为 `TipThreadSink` 抽象接口（tip_thread.cpp 不 include tip.hpp，依赖方向仍
+  单向）。win32.cpp 只留类厂/ChaosetRunUi/DllMain/DllGetClassObject/DllCanUnloadNow 与
+  g_liveObjects；DllMain/DllCanUnloadNow 函数体逐字保留，后者计数来源只改为跨 TU extern
+  （`g_liveTipMsgWindows`/shellWorkerAlive()/shellWorkerStop() 字面仍在体内）。
+  方法体逐字迁移（脚本生成 + 连续行审计 0 失配；唯一接口化调整是 refreshActiveWatchTimer
+  改经 `tipInputActive()` 查询、线程注册表指针类型 `ChaosetTIP*→TipThreadSink*`）。
+  checker 同步（同一 commit）：预算 win32.cpp 3200→1200、新增 5 个 TIP 文件预算、
+  tip_thread.cpp 150→350；checks_tsf 的 25 个不同函数体/入口签名 needle（34 处断言匹配点）全部更新为类外定义的
+  完整签名（如 `HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim,
+  TfClientId tid)`、`void CALLBACK ChaosetTIP::fgHookProc(...)`、
+  `bool ChaosetTIP::bailOutIfInactive()`），未删除/放宽任何断言；main_test.go 变异锚点
+  （`g_lastOp = kOpActivate;` / `PostMessageW(g_tlTipMsgWnd, kTipForegroundMsg,` /
+  `g_liveTipMsgWindows` / DllMain 的 removeCrashHandler+shellWorkerStop 组合 /
+  `gearPressed_ = true;`）未改且仍能抓回退。docs/architecture.md §3.1、AGENTS.md
+  架构地图、build.sh 注释、shims/windows/README 同步；顺带清理叶子模块注释里
+  「ShellWorker/worker 编排在 win32.cpp」的陈旧表述（改指 shell_worker.cpp），并修正
+  wave1 条目 needle 计数措辞（4 条字面量/3 种签名）。验证：双架构（x86_64/i686）
+  `-fsyntax-only -Wall -Wextra` 零警告、`go run ./tools/checkuiparity .`（47 组）、
+  `go test ./tools/checkuiparity/ ./tools/checkgdi/`、`sh shims/windows/build.sh`
+  （core_test + DLL 导出表 + UIA 动态加载 + UI 宿主）、`make vet` 通过。
+
 - **Windows 壳拆分 wave1 续（审计 P1-1 第二步）**：win32.cpp 4701→2994 行，把候选窗、
   后台 worker、COM 注册与 CLSID/GUID 常量拆成独立 TU：
   `candidate_window.{hpp,cpp}`（候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/
@@ -17,9 +47,10 @@
   showSettingsWindow/selectCandidateByIndex/deleteCandidateByIndex/flipPage/
   flipAssociateFromPanel/isAssociatePanel/clearAssociateFromSettings），`ChaosetTIP`
   继承实现（同 DLL 内部类型，不影响 COM QI 返回的接口指针）；DllCanUnloadNow 的候选窗
-  计数改为跨 TU extern。checker 预算 win32.cpp 4800→3200 并登记 9 个新文件；3 处函数体
-  签名 needle 同步到新定义处（show 的 CandidateWindowHost 参数、去 static 的
-  ensureDaemonFast/reportModeToUi），未删除/放宽任何断言，变异测试仍能抓住回退。
+  计数改为跨 TU extern。checker 预算 win32.cpp 4800→3200 并登记 9 个新文件；4 条函数体签名 needle
+  （3 种签名，CandidateWindow::show 出现两处）同步到新定义处（show 的
+  CandidateWindowHost 参数、去 static 的 ensureDaemonFast/reportModeToUi），
+  未删除/放宽任何断言，变异测试仍能抓住回退。
   docs/architecture.md 模块地图、docs/ui-parity.md、README、shims/windows/README、
   build.sh 注释与 AGENTS.md 同步。验证：双架构（x86_64/i686）mingw
   `-fsyntax-only -Wall -Wextra` 零警告、`go run ./tools/checkuiparity .`、
@@ -2016,4 +2047,3 @@
 
 各项的具体实现位置、部署命令、诊断工具均已在对应 README 与脚本中就位，
 条件满足后无需额外准备即可继续。
-

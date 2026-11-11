@@ -26,7 +26,8 @@ shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交
 3. **大小预算**：单文件超过预算即视为架构回退，`checkuiparity` 会 FAIL。拆分时按职责，
    不要按行数硬切；拆分文件必须登记到本文件的模块地图。
 4. **禁止反向依赖**：Windows 叶子模块不得 include/引用 TIP/CandidateWindow 类型；
-   由 `win32.cpp`（TIP TU）向下编排。macOS/Linux 同理：页面/视图不反向依赖应用控制器。
+   由 `win32.cpp`（DLL 生命周期编排）与 `tip.hpp` / `tip_*.cpp`（TIP 主体）向下编排。
+   macOS/Linux 同理：页面/视图不反向依赖应用控制器。
 
 ## 2. 方案 A：设置逻辑收敛到 Go（单一真源）
 
@@ -76,10 +77,15 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
-| `win32.cpp` | TIP 主体（class ChaosetTIP）、TIP 线程 message-only 窗口过程、类厂、DllMain/DllGetClassObject/DllCanUnloadNow、ChaosetRunUi 导出 | 全部叶子模块 + candidate_window/shell_worker/tip_ids/tip_thread | ≤3200（当前 ~2994；目标 ≤2000 需 wave2 拆 TIP 类本身，未完成） |
+| `win32.cpp` | DLL 生命周期编排：ChaosetFactory、ChaosetRunUi 导出、DllMain/DllGetClassObject/DllCanUnloadNow、g_liveObjects 存活计数 | 全部 Windows 壳模块（含 tip.hpp） | ≤1200（当前 129；≤2000 目标已达成） |
+| `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink）、kVk*/kPageSize 常量、mingw 缺失的 ITfTextInputProcessorEx 补声明 | candidate_window, mode_toast, tip_thread, tip_ids, winutil, config, transport, daemon, diagnostics, core | ≤500 |
+| `tip_core.cpp` | TIP 生命周期/激活状态机/中英模式与激活档案/前台钩子/worker 回投入口 | tip.hpp | ≤1100 |
+| `tip_keys.cpp` | ITfKeyEventSink 五入口、Shift 状态机、修饰键/键位映射、wouldHandle/handleKey | tip.hpp | ≤1100 |
+| `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾 | tip.hpp, core | ≤900 |
+| `tip_candidates.cpp` | 候选点选/删除/翻页、showToast、设置窗入口、联想面板与 CandidateWindowHost 转发 | tip.hpp | ≤500 |
 | `candidate_window.cpp` `.hpp` | 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/齿轮笔/防卸载计数；TIP 侧只经 CandidateWindowHost 抽象接口 | winutil, theme, config, diagnostics, candidate_layout, core | ≤1200 / ≤300 |
-| `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
-| `tip_thread.cpp` `.hpp` | kTip* 消息常量、worker→TIP 线程 message-only 窗口注册表原语（窗口过程仍留 win32.cpp，wave2 迁） | — | ≤150 / ≤200 |
+| `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | winutil, core, transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
+| `tip_thread.cpp` `.hpp` | kTip* 消息常量、worker→TIP 线程回投、message-only 窗口过程/创建销毁、按线程 TIP 注册表与前台钩子表；对 TIP 只经 TipThreadSink 抽象接口分发（不依赖具体 TIP 类） | winutil | ≤350 / ≤200 |
 | `tip_registration.cpp` `.hpp` | COM/TSF 注册与反注册（DllRegisterServer/DllUnregisterServer/DllUninstallServer，冷路径） | tip_ids, winutil | ≤300 / ≤120 |
 | `tip_ids.hpp` | CLSID/GUID/TSF 接口与类别常量（C++17 inline const GUID，namespace chaoset::win） | — | ≤150 |
 | `mode_toast.cpp` `.hpp` | 模式切换提示条（窗口生命周期/绘制/防卸载计数） | winutil, theme, diagnostics | ≤400 / ≤150 |

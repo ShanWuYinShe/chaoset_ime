@@ -62,10 +62,17 @@ type shimModuleBudget struct {
 }
 
 var shimModuleBudgets = []shimModuleBudget{
-	// win32.cpp 拆分 wave1（2026-11-08 起）：ModeToast/浮窗 owner 已拆出；wave1 续
-	// 把 CandidateWindow / ShellWorker / TIP 注册 / CLSID-GUID 常量拆成独立 TU，
-	// 预算从 4800 收紧到 3200 锁定进度（≤2000 目标需 wave2 拆 TIP 类本身）。
-	{"shims/windows/src/win32.cpp", 3200},
+	// win32.cpp 拆分 wave2（TIP 类拆分完成）：wave1 续拆出 CandidateWindow/ShellWorker/
+	// TIP 注册/CLSID-GUID 常量（预算 4800→3200），wave2 把 class ChaosetTIP 的 2564 行
+	// 类内定义按职责拆成 tip.hpp + tip_core/keys/composition/candidates.cpp，win32.cpp
+	// 只剩类厂/导出/DllMain/DllGetClassObject/DllCanUnloadNow（≤2000 目标达成）。
+	// 新文件预算按实测行数留余量，防止回搬大文件。
+	{"shims/windows/src/win32.cpp", 1200},
+	{"shims/windows/src/tip.hpp", 500},
+	{"shims/windows/src/tip_core.cpp", 1100},
+	{"shims/windows/src/tip_keys.cpp", 1100},
+	{"shims/windows/src/tip_composition.cpp", 900},
+	{"shims/windows/src/tip_candidates.cpp", 500},
 	{"shims/windows/src/candidate_window.cpp", 1200},
 	{"shims/windows/src/candidate_window.hpp", 300},
 	{"shims/windows/src/shell_worker.cpp", 600},
@@ -73,7 +80,8 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/tip_registration.cpp", 300},
 	{"shims/windows/src/tip_registration.hpp", 120},
 	{"shims/windows/src/tip_ids.hpp", 150},
-	{"shims/windows/src/tip_thread.cpp", 150},
+	// tip_thread.cpp：wave2 迁入窗口过程/按线程 TIP 注册表/前台钩子表（68→191 行）。
+	{"shims/windows/src/tip_thread.cpp", 350},
 	{"shims/windows/src/tip_thread.hpp", 200},
 	{"shims/windows/src/mode_toast.hpp", 150},
 	{"shims/windows/src/mode_toast.cpp", 400},

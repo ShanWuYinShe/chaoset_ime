@@ -4,7 +4,8 @@
 // macOS/ibus 壳统一补齐）。独立小窗 + 1.2s 自动隐藏；连续切换时重置
 // 定时器，不会提前收起新提示。深浅色跟随系统（与候选窗同源）。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp（TIP TU）
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）
 // 的类型；只依赖 winutil/theme/diagnostics 叶子模块。窗口过程指向本 DLL 代码，
 // 存活计数 g_liveToastWindows 参与 DllCanUnloadNow 防卸载判定。
 

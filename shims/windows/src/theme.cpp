@@ -1,5 +1,5 @@
 // 候选窗配色/主题判定（模块实现；CandidateColors 定义在 theme.hpp）。
-// 叶子模块：不得 include/引用 win32.cpp（TIP TU）的类型。
+// 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型。
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX

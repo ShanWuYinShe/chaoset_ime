@@ -1,7 +1,7 @@
 // 诊断日志（tsf.log / crash.log）与 VEH 崩溃取证。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型；由 win32.cpp（TIP TU）向下编排。实现见 diagnostics.cpp。
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型；由 win32.cpp（DLL 编排）与 TIP TU 向下编排。实现见 diagnostics.cpp。
 
 #ifndef CHAOSET_WIN_DIAGNOSTICS_HPP_
 #define CHAOSET_WIN_DIAGNOSTICS_HPP_

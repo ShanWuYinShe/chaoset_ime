@@ -1,7 +1,7 @@
 // daemon 命名管道：管道名、存在性探测、带截止时间/熔断的 PipeTransport。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型；实现见 transport.cpp。
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型；实现见 transport.cpp。
 //
 // 2026-11-06 零阻塞审计后：连接建立/懒启动在 ShellWorker 后台线程完成；
 // TSF 线程只允许 tryConnectOnce()（一次非阻塞 CreateFileW）与有截止时间的请求。

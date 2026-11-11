@@ -1,7 +1,7 @@
 // HKCU 设置读写、配置 TTL 缓存与失效、全屏抑制、中英状态作用域。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型。TIP 热路径全部读这里的 TTL 缓存（零阻塞契约：
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型。TIP 热路径全部读这里的 TTL 缓存（零阻塞契约：
 // 注册表/Shell 查询不发生在按键回调里）。实现见 config.cpp。
 
 #ifndef CHAOSET_WIN_CONFIG_HPP_
@@ -12,7 +12,7 @@
 namespace chaoset::win {
 
 // 中英状态作用域（system/process/window）。定义放这里：TIP 主体与配置缓存
-// 都在 TIP 类之前使用（原 win32.cpp 文件前部定义）。
+// 都在 TIP 类之前使用（原 win32.cpp 文件前部定义，wave2 后跨 TU 由本头声明）。
 enum class ModeScope { System, Process, Window };
 
 // 词组联想开关（HKCU\Software\Chaoset，DWORD Associate；未写入时默认开启）。

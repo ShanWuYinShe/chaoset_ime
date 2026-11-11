@@ -1,7 +1,7 @@
 // 设置窗（三端一致：macOS SettingsWindow.swift 同构；由 chaoset-ui.exe 创建）。
 //
-// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型；设置窗可活过 TIP（不持有 TIP 指针）。实现见
+// 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
+// tip_*.cpp）的类型；设置窗可活过 TIP（不持有 TIP 指针）。实现见
 // settings_window.cpp。
 
 #ifndef CHAOSET_WIN_SETTINGS_WINDOW_HPP_

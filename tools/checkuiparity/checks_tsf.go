@@ -287,10 +287,10 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
 		for _, sig := range []string{
-			"HRESULT STDMETHODCALLTYPE OnTestKeyDown(",
-			"HRESULT STDMETHODCALLTYPE OnKeyDown(",
-			"HRESULT STDMETHODCALLTYPE OnTestKeyUp(",
-			"HRESULT STDMETHODCALLTYPE OnKeyUp(",
+			"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyDown(",
+			"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyDown(",
+			"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyUp(",
+			"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(",
 		} {
 			i := strings.Index(text, sig)
 			if i < 0 {
@@ -314,8 +314,8 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
 		for _, sig := range []struct{ entry, gate string }{
-			{"void render(ITfContext* pic) {", "inputActive_"},
-			{"void showToast(const wchar_t* text, bool allowMouseAnchor = false) {", "isActiveTip()"},
+			{"void ChaosetTIP::render(ITfContext* pic) {", "inputActive_"},
+			{"void ChaosetTIP::showToast(const wchar_t* text, bool allowMouseAnchor) {", "isActiveTip()"},
 		} {
 			i := strings.Index(text, sig.entry)
 			if i < 0 {
@@ -367,7 +367,7 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	// 是否存在不够——它可能被定义但失焦路径没调。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
-		sig := "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override {"
+		sig := "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {"
 		i := strings.Index(text, sig)
 		if i < 0 {
 			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 OnSetFocus", group, winShell))
@@ -422,7 +422,7 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	// 热路径只读本地缓存：currentEnglish() 内不许出现跨进程查询。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
-		i := strings.Index(text, "bool currentEnglish() {")
+		i := strings.Index(text, "bool ChaosetTIP::currentEnglish() {")
 		if i < 0 {
 			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 currentEnglish()", group, winShell))
 		} else {
@@ -527,21 +527,24 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 	src := string(data)
 
 	// a) 关键 TSF 回调函数体：禁止阻塞/跨进程/同步写盘 API 与慢连接路径。
+	// wave2（TIP 类拆分）后这些方法定义在 tip_core/keys/composition/candidates.cpp，
+	// 类内只剩声明；needle 必须是**类外定义**的完整签名（cppFunctionBody 遇到声明
+	// 的 ';' 会跳过，再匹配不到就报「签名变了」，等于静默失去零阻塞守卫）。
 	callbacks := []struct{ name, sig string }{
-		{"Activate", "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"},
-		{"ActivateEx", "HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr* ptim, TfClientId tid,"},
-		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override"},
-		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"render", "void render(ITfContext* pic)"},
-		{"handleKey", "bool handleKey(WPARAM vk, ITfContext* pic)"},
+		{"Activate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"},
+		{"ActivateEx", "HRESULT STDMETHODCALLTYPE ChaosetTIP::ActivateEx(ITfThreadMgr* ptim, TfClientId tid,"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)"},
+		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"render", "void ChaosetTIP::render(ITfContext* pic)"},
+		{"handleKey", "bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic)"},
 		{"showSettingsWindow", "void ChaosetTIP::showSettingsWindow()"},
-		{"onForegroundChanged", "void onForegroundChanged(HWND fg)"},
-		{"selectCandidateByIndex", "void selectCandidateByIndex(int index)"},
-		{"deleteCandidateByIndex", "void deleteCandidateByIndex(int index)"},
-		{"flipPage", "void flipPage(bool next)"},
+		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
+		{"selectCandidateByIndex", "void ChaosetTIP::selectCandidateByIndex(int index)"},
+		{"deleteCandidateByIndex", "void ChaosetTIP::deleteCandidateByIndex(int index)"},
+		{"flipPage", "void ChaosetTIP::flipPage(bool next)"},
 		{"CandidateWindow::show",
 			"void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, CandidateWindowHost* host)"},
 	}
@@ -608,7 +611,7 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 
 	// d) 前台钩子：系统级回调体内只 PostMessage（不 hide、不写盘、不等待）；
 	// TIP 线程处理前台变化时日志必须限流（前台风暴不能每事件刷盘）。
-	if body, line, ok := cppFunctionBody(src, "static void CALLBACK fgHookProc(HWINEVENTHOOK /*hook*/"); ok {
+	if body, line, ok := cppFunctionBody(src, "void CALLBACK ChaosetTIP::fgHookProc(HWINEVENTHOOK /*hook*/"); ok {
 		code := stripCppComments(body)
 		for _, need := range []string{"PostMessageW(", "kTipForegroundMsg"} {
 			if !strings.Contains(code, need) {
@@ -632,7 +635,7 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 	} else {
 		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 fgHookProc 定义", group, winShell))
 	}
-	if body, line, ok := cppFunctionBody(src, "void onForegroundChanged(HWND fg)"); ok {
+	if body, line, ok := cppFunctionBody(src, "void ChaosetTIP::onForegroundChanged(HWND fg)"); ok {
 		code := stripCppComments(body)
 		if strings.Contains(code, "diagPrintf") && !strings.Contains(code, "lastLog") {
 			*problems = append(*problems, fmt.Sprintf(
@@ -736,7 +739,7 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 		return
 	}
 	src := string(data)
-	if body, line, ok := cppFunctionBody(src, "bool bailOutIfInactive()"); !ok {
+	if body, line, ok := cppFunctionBody(src, "bool ChaosetTIP::bailOutIfInactive()"); !ok {
 		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 bailOutIfInactive()", group, winShell))
 	} else {
 		code := stripCppComments(body)
@@ -766,8 +769,8 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 	}
 	// 修饰键的抬起永不消费（否则 OS/宿主会认为修饰键仍按着）。
 	callbacks := []struct{ name, sig string }{
-		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
 	}
 	for _, cb := range callbacks {
 		body, line, ok := cppFunctionBody(src, cb.sig)
@@ -801,12 +804,12 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 	}
 	// TSF 回调体内不得读鼠标 / 全局键盘状态（GetKeyState 只在 handleKey 等激活路径用）。
 	for _, cb := range []struct{ name, sig string }{
-		{"Activate", "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"},
-		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override"},
-		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
-		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"Activate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)"},
+		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
+		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
 	} {
 		body, line, ok := cppFunctionBody(src, cb.sig)
 		if !ok {
@@ -927,7 +930,7 @@ func checkDaemonSpawnGuard(fsys fs.FS, problems *[]string) {
 		*problems = append(*problems, fmt.Sprintf("%s：读取 cmd/chaosetd/main.go 失败：%v", group, err))
 	}
 	// 后台预激活实例不建 worker/窗口：Activate 体里不得直接 shellWorkerStart。
-	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"); ok {
+	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"); ok {
 		code := stripCppComments(body)
 		if strings.Contains(code, "shellWorkerStart()") {
 			*problems = append(*problems, fmt.Sprintf(
@@ -960,7 +963,7 @@ func checkDllUnloadSafety(fsys fs.FS, problems *[]string) {
 	// 卸载后会悬空，也会给宿主每个 first-chance 异常增加回调开销。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		src := string(data)
-		if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* ptim, TfClientId tid) override"); ok {
+		if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"); ok {
 			if strings.Contains(stripCppComments(body), "ensureCrashHandler()") {
 				*problems = append(*problems, fmt.Sprintf(
 					"%s：%s 的 Activate（约第 %d 行）仍安装 VEH——TSF 宿主进程不得注册全局异常回调（会悬空/增负担）",

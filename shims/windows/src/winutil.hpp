@@ -2,7 +2,7 @@
 // 当前用户 SID/会话、宽字符转换。
 //
 // 叶子模块（docs/architecture.md §3.1）：无内部依赖；不得 include/引用
-// win32.cpp（TIP TU）的类型。实现见 winutil.cpp。
+// TIP TU（tip.hpp / tip_*.cpp）的类型。实现见 winutil.cpp。
 
 #ifndef CHAOSET_WIN_WINUTIL_HPP_
 #define CHAOSET_WIN_WINUTIL_HPP_
@@ -18,8 +18,9 @@ namespace chaoset::win {
 extern HINSTANCE g_hInst;
 
 // 设置窗 / 托盘的生命周期计数（DllCanUnloadNow 防卸载）。定义分别在
-// settings_window.cpp / ui_host.cpp；TIP 自己的三个计数是 TIP TU 私有的
-// （win32.cpp 匿名命名空间），不跨 TU。
+// settings_window.cpp / ui_host.cpp；TIP 相关计数分别在 win32.cpp
+// （g_liveObjects）/ tip_thread.cpp（g_liveTipMsgWindows）/ candidate_window.cpp /
+// mode_toast.cpp（对应窗口存活数）定义，各自头文件里 extern。
 extern volatile LONG g_liveSettingsWindows;
 extern volatile LONG g_liveTrayWindows;
 

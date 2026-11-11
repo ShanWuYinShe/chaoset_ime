@@ -1,6 +1,6 @@
 // 单例 UI 宿主（chaoset-ui.exe）管道低层：命令/查询/拉起原语（模块实现）。
-// 叶子模块：不得 include/引用 win32.cpp（TIP TU）的类型；
-// reportModeToUi / openSettingsViaUi 等 worker 编排留在 win32.cpp。
+// 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型；
+// reportModeToUi / openSettingsViaUi 等 worker 编排在 shell_worker.cpp。
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX

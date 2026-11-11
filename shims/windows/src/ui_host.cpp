@@ -1,5 +1,5 @@
 // 单例 UI 宿主进程（chaoset-ui.exe）：UiTray、托盘菜单、runUiHost、命令管道线程。
-// 叶子模块：不得 include/引用 win32.cpp（TIP TU）的类型；
+// 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型；
 // UI 宿主进程里的 ShellWorker 生命周期由导出入口注入（见 ui_host.hpp）。
 
 #define WIN32_LEAN_AND_MEAN
@@ -32,7 +32,7 @@ extern HWND g_uiHostWnd;
 static constexpr UINT kUiToggleModeMsg = WM_APP + 73;
 
 // UI 宿主进程里的 ShellWorker 生命周期原语：由导出入口 ChaosetRunUi 注入
-// （worker 调度属于 win32.cpp 的 TIP TU，叶子模块不反向引用）。
+// （worker 调度属于 shell_worker.cpp，叶子模块不反向引用）。
 static UiHostWorkerFn g_workerStart = nullptr;
 static UiHostWorkerFn g_workerStop = nullptr;
 static UiHostWorkerWaitFn g_workerWaitStopped = nullptr;
@@ -642,7 +642,7 @@ static DWORD WINAPI uiPipeThreadProc(LPVOID) {
 // UI 宿主主函数（由导出 ChaosetRunUi 调用，运行在 chaoset-ui.exe 进程里）。
 static int finishUiHost(int code) {
     // 先停后台 worker 并等它退出（它跑本 DLL 的代码，FreeLibrary 前必须结束）。
-    // worker 原语由导出入口 ChaosetRunUi 注入（win32.cpp 的 ShellWorker）。
+    // worker 原语由导出入口 ChaosetRunUi 注入（shell_worker.cpp 的 ShellWorker）。
     if (g_workerStop != nullptr) g_workerStop();
     if (g_workerWaitStopped != nullptr) g_workerWaitStopped(2000);
     return code;
