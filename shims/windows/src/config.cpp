@@ -176,23 +176,24 @@ void uiSaveEnglish(bool english) {
                     REG_DWORD, &value, sizeof(value));
 }
 
-// ModeScope 的定义见文件前部（TIP 侧要先用到）。读取失败一律按 system
-// （最符合用户直觉：切一次全系统生效）。
+// 作用域读取宽容归一化（三端一致）：system→System；process→Process；
+// 旧 window→Process（用户澄清「一窗口=一进程」，同进程多窗口共享状态）；
+// 未知/空→System（默认最符合用户直觉：切一次全系统生效）。新写入只有
+// system/process。
 ModeScope uiLoadModeScope() {
     wchar_t buf[32] = {0};
     DWORD size = sizeof(buf) - sizeof(wchar_t);
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"ModeScope",
                      RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS) {
+        if (_wcsicmp(buf, L"system") == 0) return ModeScope::System;
         if (_wcsicmp(buf, L"process") == 0) return ModeScope::Process;
-        if (_wcsicmp(buf, L"window") == 0) return ModeScope::Window;
+        if (_wcsicmp(buf, L"window") == 0) return ModeScope::Process;  // 旧档迁移
     }
     return ModeScope::System;
 }
 
 void uiSaveModeScope(ModeScope scope) {
-    const wchar_t* text = L"system";
-    if (scope == ModeScope::Process) text = L"process";
-    else if (scope == ModeScope::Window) text = L"window";
+    const wchar_t* text = (scope == ModeScope::Process) ? L"process" : L"system";
     RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"ModeScope",
                     REG_SZ, text, static_cast<DWORD>((wcslen(text) + 1) * sizeof(wchar_t)));
     invalidateModeScopeCache();  // 设置窗改了作用域：TIP 侧缓存立即失效

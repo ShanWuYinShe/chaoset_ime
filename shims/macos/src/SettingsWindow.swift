@@ -32,7 +32,7 @@ enum SettingsWindowController {
     /// 同一 daemon 支持多连接，每个连接有独立组词会话）。
     static let engine = EngineClient()
 
-    // 中英状态三选一的 target（静态持有，避免窗口重建时悬空）。
+    // 中英状态二选一的 target（静态持有，避免窗口重建时悬空）。
     private static let modeTarget = ModeScopeTarget()
 
     static func show() {

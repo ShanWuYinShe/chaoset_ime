@@ -6,8 +6,9 @@ package settings
 //
 // 此前 store_windows.go 的注册表读写路径从未被任何测试/CI 执行过（只有 Linux
 // store 有测试，CI 的 Windows job 只做交叉编译）。本测试在真实 HKCU 上验证：
-// 键/值往返（DWORD/REG_SZ）、未知 ModeScope 回退 system、值类型被手工改坏时
-// 回退缺省。测试结束时恢复原值（CI runner 为一次性环境，仍保持可重复运行）。
+// 键/值往返（DWORD/REG_SZ）、旧 ModeScope 值归一化（window→process、
+// system/process 保持、未知→system）、值类型被手工改坏时回退缺省。
+// 测试结束时恢复原值（CI runner 为一次性环境，仍保持可重复运行）。
 
 import (
 	"syscall"
@@ -181,15 +182,32 @@ func TestStoreWindowsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStoreWindowsModeScopeUnknownFallsBackToSystem(t *testing.T) {
-	h := withRegistrySnapshot(t)
-	if err := winSetString(h, winValueModeScope, "Bogus"); err != nil {
-		t.Fatalf("写入未知 ModeScope 失败: %v", err)
+// 注册表存量值读取归一化：system/process 保持原值；旧三档 window→process；
+// 未知/空回退 system；大小写容忍。
+func TestStoreWindowsModeScopeNormalized(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want ModeScope
+	}{
+		{"system", ModeScopeSystem},
+		{"SYSTEM", ModeScopeSystem},
+		{"process", ModeScopeProcess},
+		{"PROCESS", ModeScopeProcess},
+		{"window", ModeScopeProcess}, // 旧值迁移
+		{"WINDOW", ModeScopeProcess},
+		{"Bogus", ModeScopeSystem},
+		{"", ModeScopeSystem},
 	}
-	if got, err := Load(); err != nil {
-		t.Fatalf("Load() 报错: %v", err)
-	} else if got.ModeScope != ModeScopeSystem {
-		t.Fatalf("未知 ModeScope 应回退 system，实际 %q", got.ModeScope)
+	for _, c := range cases {
+		h := withRegistrySnapshot(t)
+		if err := winSetString(h, winValueModeScope, c.raw); err != nil {
+			t.Fatalf("写入 ModeScope=%q 失败: %v", c.raw, err)
+		}
+		if got, err := Load(); err != nil {
+			t.Fatalf("Load() 报错: %v", err)
+		} else if got.ModeScope != c.want {
+			t.Errorf("注册表 ModeScope=%q 归一化后 = %q，期望 %q", c.raw, got.ModeScope, c.want)
+		}
 	}
 }
 

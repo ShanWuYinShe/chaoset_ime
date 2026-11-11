@@ -302,15 +302,33 @@ static gchar *replace_json_value(const gchar *text, const char *key,
     return result;
 }
 
-/* 作用域合法值与 Go internal/settings / Windows 注册表 / macOS defaults 同口径。 */
+/* 作用域合法值（新写入契约）：只允许 system|process，与 Go internal/settings /
+ * Windows 注册表 / macOS UserDefaults 同口径。旧三档值只在读取/CLI 解析时归一化。 */
 static gboolean valid_mode_scope(const char *scope) {
     return scope != NULL &&
            (g_strcmp0(scope, "system") == 0 ||
-            g_strcmp0(scope, "process") == 0 ||
-            g_strcmp0(scope, "window") == 0);
+            g_strcmp0(scope, "process") == 0);
+}
+
+/* 存储读取的宽容归一化（三端一致）：system/process 保持原值；旧三档
+ * window→process（「每窗口」并入「每进程」）；未知/空→system。
+ * 大小写与首尾空白容忍（与 Go parseStoredModeScope 同语义）。 */
+static const char *normalized_mode_scope(const char *raw) {
+    if (raw == NULL) {
+        return "system";
+    }
+    char lower[16];
+    g_strlcpy(lower, raw, sizeof(lower));
+    g_strstrip(lower);
+    if (g_ascii_strcasecmp(lower, "process") == 0 ||
+        g_ascii_strcasecmp(lower, "window") == 0) {
+        return "process";
+    }
+    return "system";
 }
 
 /* 中英状态作用域：读 JSON 里的 "mode_scope" 字符串；缺省 system。
+ * 旧三档值 window 读取时归一化为 process；未知/损坏值→system。
  * 与 Windows HKCU\Software\Chaoset\ModeScope / macOS UserDefaults 同语义。 */
 const char *setup_config_load_mode_scope(void) {
     static char cached[16] = "system";
@@ -328,7 +346,7 @@ const char *setup_config_load_mode_scope(void) {
         return cached;
     }
     // 未知/损坏值一律回退缺省 system（与 Go store_linux 的宽容归一化一致）：
-    // 先把缓存置缺省，只在解析出合法值时覆盖，避免旧值在文件被改坏后继续生效。
+    // 先把缓存置缺省，只在解析出取值时按两档归一化覆盖，避免旧值在文件被改坏后继续生效。
     g_strlcpy(cached, "system", sizeof(cached));
     const gchar *p = strstr(text, "\"mode_scope\"");
     if (p != NULL) {
@@ -341,9 +359,7 @@ const char *setup_config_load_mode_scope(void) {
                 if (end != NULL && (gsize)(end - q) < sizeof(cached)) {
                     char tmp[16];
                     g_strlcpy(tmp, q, (gsize)(end - q) + 1);
-                    if (valid_mode_scope(tmp)) {
-                        g_strlcpy(cached, tmp, sizeof(cached));
-                    }
+                    g_strlcpy(cached, normalized_mode_scope(tmp), sizeof(cached));
                 }
             }
         }
@@ -352,7 +368,8 @@ const char *setup_config_load_mode_scope(void) {
     return cached;
 }
 
-/* 写作用域：读-改-写，只替换 mode_scope 一个键、保留文件里其它键。
+/* 写作用域：只接受新值 system|process（旧三档值由读取/CLI 归一化，不写入）。
+ * 读-改-写，只替换 mode_scope 一个键、保留文件里其它键。
  * 不能重建最小 JSON：fuzzy/traditional/shuangpin 等键由 Go 工具写入，
  * 重建会把用户已保存的设置静默清掉（2026-11-08 审计 GO-03）。 */
 gboolean setup_config_save_mode_scope(const char *scope) {

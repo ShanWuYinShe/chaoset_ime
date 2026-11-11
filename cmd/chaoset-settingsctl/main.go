@@ -17,14 +17,16 @@
 //	chaoset-settingsctl set associate on|off
 //	    写联想开关；成功无输出。
 //
-//	chaoset-settingsctl set mode-scope system|process|window
-//	    写中英状态作用域；成功无输出。
+//	chaoset-settingsctl set mode-scope system|process
+//	    写中英状态作用域；成功无输出。旧三档值 window 也接受并归一化
+//	    （window→process），但新写入只落 system|process。
 //
 //	chaoset-settingsctl set ui-english on|off
 //	    写 Windows UI 宿主持久化的中英状态镜像（内部用）。
 //	    macOS/Linux 壳没有对应存储：报错退出 1（不支持，不是参数错误）。
 //
-// 取值大小写不敏感（on/ON、SYSTEM 均可），前后空白忽略。
+// 取值大小写不敏感（on/ON、SYSTEM 均可），前后空白忽略；mode-scope 的旧三档
+// 值 window 也接受并归一化（读取存储时同样归一化）。
 //
 // # 退出码
 //
@@ -39,17 +41,18 @@
 //
 //	Windows  HKCU\Software\Chaoset
 //	         Associate REG_DWORD 缺省 1
-//	         ModeScope REG_SZ    缺省 "system"（system|process|window）
+//	         ModeScope REG_SZ    缺省 "system"（只写 system|process；
+//	                             旧三档 window→process）
 //	         UiEnglish REG_DWORD 缺省 0
 //	macOS    UserDefaults 域 ime.chaoset.inputmethod.ChaosetIME（输入法
 //	         bundle id；SettingsWindow.swift 编进 ChaosetIME.app）
 //	         AssociateEnabled Bool   缺省 true
-//	         ChaosetModeScope String 缺省 "system"
+//	         ChaosetModeScope String 缺省 "system"（旧值读取时归一化）
 //	         ui_english 不支持（macOS 壳不持久化中英状态）
 //	Linux    $XDG_CONFIG_HOME/chaoset/config.json（回退
 //	         $HOME/.config/chaoset/config.json）
 //	         "associate"  bool   缺省 true
-//	         "mode_scope" string 缺省 "system"
+//	         "mode_scope" string 缺省 "system"（旧值读取时归一化）
 //	         其它键（fuzzy/traditional/shuangpin 等）原样保留
 //	         ui_english 不支持（Linux 壳不持久化中英状态）
 package main
@@ -65,10 +68,11 @@ import (
 const usageText = `用法：
   chaoset-settingsctl get
   chaoset-settingsctl set associate on|off
-  chaoset-settingsctl set mode-scope system|process|window
+  chaoset-settingsctl set mode-scope system|process
   chaoset-settingsctl set ui-english on|off
 
 get 输出单行 JSON：{"associate":true,"mode_scope":"system","ui_english":false}
+mode-scope 同时接受旧三档值 window 并归一化（window→process）。
 退出码：0 成功；1 运行错误；2 参数非法。错误写 stderr。`
 
 func main() {
@@ -134,7 +138,7 @@ func runSet(args []string, stderr io.Writer) int {
 		}
 	case "mode-scope":
 		if len(args) != 2 {
-			return usageError(stderr, "set mode-scope 需要 system|process|window")
+			return usageError(stderr, "set mode-scope 需要 system|process")
 		}
 		scope, err := settings.ParseModeScope(value)
 		if err != nil {

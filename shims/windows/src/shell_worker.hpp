@@ -37,6 +37,14 @@ void shellWorkerWaitStopped(DWORD ms);
 void enqueueLogLine(const char* text, int len);
 
 // ---- TIP 线程 → worker 的投递入口（零等待：只入队）----
+//
+// 命令协议（UI 宿主 ui_host.cpp 服务端解析，pid 由 worker 附 GetCurrentProcessId()）：
+//   mode <0|1> <pid>         模式变化即时上报
+//   active 1 <0|1> <pid>     激活 + 当前中英 + pid（激活迁移/焦点事件时立即发）
+//   active 0 <pid>           失活/失焦/停用
+//   query / toggle / settings  不变
+// english：当前中英模式（0=中文 1=英文）；allowSpawn：UI 宿主不可用时是否允许
+// 在 worker 线程懒启动（调用方必须已确认 TSF 焦点 + 激活档案为真）。
 void postModeReport(bool english, bool allowSpawn);
 void postActiveReport(bool active, bool english, bool allowSpawn);
 void postModeQuery();

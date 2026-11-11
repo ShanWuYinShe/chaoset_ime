@@ -14,7 +14,8 @@
 //
 //	HKCU\Software\Chaoset
 //	  Associate  REG_DWORD  缺省 1（未写入 = 开启）
-//	  ModeScope  REG_SZ     缺省 "system"；读取大小写不敏感（system|process|window）
+//	  ModeScope  REG_SZ     缺省 "system"；只写入 system|process，读取大小写不敏感
+//	                        并归一化旧值（旧三档 window→process，未知→system）
 //	  UiEnglish  REG_DWORD  缺省 0（UI 宿主上次的中英模式镜像）
 //
 // macOS（shims/macos/src/CandidateSettings.swift：AssociateSetting、
@@ -25,7 +26,8 @@
 //
 //	域 ime.chaoset.inputmethod.ChaosetIME
 //	  AssociateEnabled    Bool    缺省 true
-//	  ChaosetModeScope    String  缺省 "system"（system|process|window）
+//	  ChaosetModeScope    String  缺省 "system"（system|process；
+//	                              旧值 window 读取时归一化）
 //	  （UiEnglish：macOS 壳没有持久化中英状态，不支持，见 ErrUnsupported）
 //
 // Linux（shims/linux/setup/setup_ctl.c：setup_config_load/setup_config_save/
@@ -34,7 +36,7 @@
 //
 //	$XDG_CONFIG_HOME/chaoset/config.json（缺省 $HOME/.config/chaoset/config.json）
 //	  "associate"   bool    缺省 true
-//	  "mode_scope"  string  缺省 "system"
+//	  "mode_scope"  string  缺省 "system"（system|process；旧值 window 读取时归一化）
 //	  其它键（fuzzy/traditional/shuangpin 等）原样保留。
 //	  （UiEnglish：Linux 壳没有持久化中英状态，不支持）
 //
@@ -70,22 +72,20 @@ var ErrUnsupported = errors.New("当前平台不支持该设置项")
 // ModeScope 是中英状态的共享作用域（与 Windows HKCU ModeScope、macOS
 // UserDefaults ChaosetModeScope、Linux config.json mode_scope 同语义）。
 //
-//   - system：全系统共享（默认）——切一次所有程序都生效；
-//   - process：每个程序各自独立；
-//   - window：每个窗口/输入上下文独立。
+//   - system：全局共享（默认）——切一次所有程序都生效；
+//   - process：每进程独立——每个程序各自记住中英状态。
 type ModeScope string
 
 const (
 	ModeScopeSystem  ModeScope = "system"
 	ModeScopeProcess ModeScope = "process"
-	ModeScopeWindow  ModeScope = "window"
 )
 
-// Valid 报告作用域是否为三种合法取值之一（大小写敏感；存储读取路径用
-// parseStoredModeScope 做宽容归一化）。
+// Valid 报告作用域是否为两种合法取值之一（大小写敏感；存储读取路径用
+// parseStoredModeScope 做宽容归一化，CLI 解析用 ParseModeScope）。
 func (m ModeScope) Valid() bool {
 	switch m {
-	case ModeScopeSystem, ModeScopeProcess, ModeScopeWindow:
+	case ModeScopeSystem, ModeScopeProcess:
 		return true
 	}
 	return false
@@ -107,10 +107,11 @@ func Defaults() Settings {
 	}
 }
 
-// Validate 校验设置项取值。bool 项无需校验；mode_scope 必须是合法枚举。
+// Validate 校验设置项取值。bool 项无需校验；mode_scope 必须是合法枚举
+// （只允许新值 system|process；旧值 window 只在读取/CLI 解析时归一化，不进入写入）。
 func (s Settings) Validate() error {
 	if !s.ModeScope.Valid() {
-		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process|window）", string(s.ModeScope))
+		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(s.ModeScope))
 	}
 	return nil
 }
@@ -127,14 +128,27 @@ func (s Settings) JSON() (string, error) {
 	return string(raw), nil
 }
 
-// ParseModeScope 解析 CLI/调用方传入的作用域：容忍首尾空白与大小写，
-// 只接受 system|process|window（供 set mode-scope 用，非法输入报参数错误）。
-func ParseModeScope(raw string) (ModeScope, error) {
-	scope := ModeScope(strings.ToLower(strings.TrimSpace(raw)))
-	if !scope.Valid() {
-		return "", fmt.Errorf("mode-scope 只接受 system|process|window，收到 %q", raw)
+// normalizeModeScope 把大小写/首尾空白容忍的取值归一化为两档：
+// system→system、process→process；旧三档 window→process（「每窗口」并入
+// 「每进程」）；未知/空值 ok=false（由调用方决定报错还是回退缺省）。
+func normalizeModeScope(raw string) (ModeScope, bool) {
+	switch ModeScope(strings.ToLower(strings.TrimSpace(raw))) {
+	case ModeScopeSystem:
+		return ModeScopeSystem, true
+	case ModeScopeProcess, "window":
+		return ModeScopeProcess, true
 	}
-	return scope, nil
+	return "", false
+}
+
+// ParseModeScope 解析 CLI/调用方传入的作用域：只接受新值 system|process，
+// 同时接受旧三档值 window（归一化为 process）；容忍首尾空白与大小写。
+// 非法输入报参数错误。
+func ParseModeScope(raw string) (ModeScope, error) {
+	if scope, ok := normalizeModeScope(raw); ok {
+		return scope, nil
+	}
+	return "", fmt.Errorf("mode-scope 只接受 system|process（兼容旧值 window），收到 %q", raw)
 }
 
 // ParseOnOff 解析 CLI/调用方传入的开关值：on/off（大小写不敏感、容忍空白）。
@@ -148,15 +162,14 @@ func ParseOnOff(raw string) (bool, error) {
 	return false, fmt.Errorf("只接受 on|off，收到 %q", raw)
 }
 
-// parseStoredModeScope 归一化从原生存储读到的 mode_scope。
+// parseStoredModeScope 归一化从原生存储读到的 mode_scope（三端一致）。
 //
-// 三端历史行为：Windows 壳用 _wcsicmp 做大小写不敏感比较，未知值一律按
-// system；macOS 只认小写枚举（rawValue 不匹配即 system）；Linux 设置窗把
-// 任意字符串原样返回。这里统一成 Windows 语义：大小写不敏感匹配，未知/
-// 空值回退 system（不会因为用户手改配置而让 get 失败）。
+// 旧三档迁移：system/process 保持原值，window→process（「每窗口」并入
+// 「每进程」）；未知/空值回退缺省 system（不会因为用户手改配置而让 get 失败）。
+// 大小写与首尾空白容忍（Windows 壳用 _wcsicmp，macOS 只认小写枚举，Linux
+// 设置窗原样返回——这里统一成同一套宽容语义）。
 func parseStoredModeScope(raw string) ModeScope {
-	scope := ModeScope(strings.ToLower(strings.TrimSpace(raw)))
-	if scope.Valid() {
+	if scope, ok := normalizeModeScope(raw); ok {
 		return scope
 	}
 	return ModeScopeSystem

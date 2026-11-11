@@ -74,7 +74,9 @@ static void test_config_mode_scope_preserves_unknown_keys(void) {
     g_free(text);
     g_assert_cmpstr(setup_config_load_mode_scope(), ==, "process");
 
-    // 非法作用域：拒绝写入且不改动文件。
+    // 非法/旧三档值：新写入只接受 system|process，旧值 window 只允许读取归一化；
+    // 拒绝写入且不改动文件。
+    g_assert_false(setup_config_save_mode_scope("window"));
     g_assert_false(setup_config_save_mode_scope("Bogus"));
     g_assert_false(setup_config_save_mode_scope(NULL));
     g_assert_false(setup_config_save_mode_scope(""));
@@ -95,11 +97,11 @@ static void test_config_mode_scope_defaults_create_and_corrupt(void) {
     g_setenv("PATH", "/nonexistent", TRUE);
 
     g_assert_cmpstr(setup_config_load_mode_scope(), ==, "system");
-    g_assert_true(setup_config_save_mode_scope("window"));
+    g_assert_true(setup_config_save_mode_scope("process"));
 
     gchar *path = g_build_filename(dir, "chaoset", "config.json", NULL);
     g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS));
-    g_assert_cmpstr(setup_config_load_mode_scope(), ==, "window");
+    g_assert_cmpstr(setup_config_load_mode_scope(), ==, "process");
 
     // 未知值/损坏文件一律回退缺省 system（与 Go store 的宽容归一化一致）。
     g_assert_true(g_file_set_contents(path, "{\n  \"mode_scope\": \"bogus\"\n}\n",
@@ -112,6 +114,42 @@ static void test_config_mode_scope_defaults_create_and_corrupt(void) {
     g_free(dir);
 }
 
+// 存量值读取时归一化：system/process 保持原值、旧三档 window→process；
+// 大小写/首尾空白容忍；未知/空→system（与 Go parseStoredModeScope 一致）。
+static void test_config_mode_scope_legacy_normalized(void) {
+    gchar *dir = g_dir_make_tmp("chaoset-setup-test-XXXXXX", NULL);
+    g_assert_nonnull(dir);
+    g_setenv("XDG_CONFIG_HOME", dir, TRUE);
+    g_setenv("PATH", "/nonexistent", TRUE);
+
+    gchar *path = g_build_filename(dir, "chaoset", "config.json", NULL);
+    gchar *dir_path = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir_path, 0700);
+    const struct {
+        const char *raw;
+        const char *want;
+    } kCases[] = {
+        {"system", "system"},
+        {"SYSTEM", "system"},
+        {"process", "process"},
+        {"PROCESS", "process"},
+        {"window", "process"}, // 旧值迁移：window→process
+        {" WINDOW ", "process"},
+        {"bogus", "system"},
+        {"", "system"},
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(kCases); i++) {
+        gchar *json = g_strdup_printf("{\n  \"mode_scope\": \"%s\"\n}\n", kCases[i].raw);
+        g_assert_true(g_file_set_contents(path, json, -1, NULL));
+        g_free(json);
+        g_assert_cmpstr(setup_config_load_mode_scope(), ==, kCases[i].want);
+    }
+
+    g_free(dir_path);
+    g_free(path);
+    g_free(dir);
+}
+
 int main(int argc, char **argv) {
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/setupctl/config_roundtrip", test_config_roundtrip);
@@ -120,5 +158,7 @@ int main(int argc, char **argv) {
                     test_config_mode_scope_preserves_unknown_keys);
     g_test_add_func("/setupctl/config_mode_scope_defaults_create_and_corrupt",
                     test_config_mode_scope_defaults_create_and_corrupt);
+    g_test_add_func("/setupctl/config_mode_scope_legacy_normalized",
+                    test_config_mode_scope_legacy_normalized);
     return g_test_run();
 }

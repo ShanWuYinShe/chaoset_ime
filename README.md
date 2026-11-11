@@ -873,7 +873,9 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 |---|---|---|
 | Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 容器内端到端验证；真机桌面闭环待环境 |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态与设置窗 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态（显示当前输入上下文实际状态）与设置窗 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
+
+Windows 的中英状态指示器由单例 UI 宿主 `chaoset-ui.exe` 托管，托盘显示**当前输入上下文的实际状态**。中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语），用户切换输入法由系统/TSF 触发，TIP 在 `Activate`/`Deactivate` 与 `ITfActiveLanguageProfileNotifySink` 中响应。设置项 `mode_scope` 只有两档：`system`（全局共享，默认；托盘是权威，TIP 获得焦点时从托盘同步，托盘左键切换全局中英）与 `process`（每进程独立；每个程序各自记住中英状态，TIP 激活时把本进程状态上报到托盘，托盘左键只显示不切换）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process。托盘可见性由 TSF 事件驱动（无周期定时器/心跳）：TIP 在 `Activate`/`Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink` 信号下上报 `active 1 <0|1> <pid>`（显示托盘、设为 owner）或 `active 0 <pid>`（仅 owner 生效隐藏），UI 宿主用 `OpenProcess`+`RegisterWaitForSingleObject` 在 owner 进程退出时清理，隐藏保留 300ms 防抖；没有输入焦点（桌面/任务栏）或切到其它输入法即隐藏。
 
 ### 渐进上屏的跨程序兼容模型
 

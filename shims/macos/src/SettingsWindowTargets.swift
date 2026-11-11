@@ -1,7 +1,7 @@
 // SettingsWindowTargets.swift：设置窗的 @objc target/action。
 //
 // 从 SettingsWindow.swift 拆出（2026-11-06 架构拆分，纯移动、行为零改动）：
-// 联想开关、中英作用域三选一、左导航翻页、学习数据（统计/清空/导出）与
+// 联想开关、中英作用域二选一、左导航翻页、学习数据（统计/清空/导出）与
 // 词库导入入口。窗口/控制器见 SettingsWindow.swift，三页视图见
 // SettingsWindowPages.swift。
 
@@ -23,14 +23,13 @@ extension Notification.Name {
         Notification.Name("chaosetAssociateDisabled")
 }
 
-/// 中英状态作用域三选一的 target（2026-11-06，与 Windows 设置窗对齐）。
+/// 中英状态作用域二选一的 target（与 Windows/Linux 设置窗对齐）。
 @objc final class ModeScopeTarget: NSObject {
     @objc func scopeChanged(_ sender: NSButton) {
         // radioButtonWithTitle 是自动互斥的；用标题反查 scope 最稳妥
         // （tag 在初始化后绑定时容易与顺序耦合）。
         switch sender.title {
-        case "每程序": ModeScopeSetting.current = .process
-        case "每窗口": ModeScopeSetting.current = .window
+        case "每进程独立": ModeScopeSetting.current = .process
         default: ModeScopeSetting.current = .system
         }
     }

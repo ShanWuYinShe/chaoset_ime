@@ -38,14 +38,24 @@ namespace chaoset::win {
 const std::wstring& uiPipeName();
 std::wstring uiMutexName();
 
-// 命令集（纯文本行 + '\n'，服务端 ui_host.cpp 的 uiHandleCommand 解析）：
-//   mode 0|1    当前 app 的中英模式：system scope 写 HKCU + 图标；其它 scope
-//               只更新 UI 宿主内存与托盘图标（不写 HKCU）
-//   active 0|1  托盘可见性的唯一开关：active=1 显示（取消待隐藏），active=0
-//               300ms 防抖后隐藏（2026-11-07 用户要求：未激活不许显示托盘）
-//   query       查询 UI 宿主持有的权威模式，应答 "mode 0\n"/"mode 1\n"
-//   toggle      等价托盘左键：system scope 翻转权威模式，其它 scope 忽略
-//   settings    打开设置窗
+// 命令集（纯文本行 + '\n'，服务端 ui_host.cpp 的 uiHandleCommand 解析；
+// 2026-11-11 起 mode/active 命令尾部带发送进程的 pid，UI 宿主按 pid 聚合
+// 可见性——pid 由 TIP 自己附在命令里，不依赖服务端取客户端 pid 的 API）：
+//   mode <0|1> <pid>         当前进程的中英模式：System 档写 HKCU + 图标
+//                            （托盘是权威）；Process 档只更新该 pid 条目与图标
+//   active 1 <0|1> <pid>     激活 + 当前中英 + pid（TSF 信号事件驱动，无心跳）：
+//                            取消待隐藏并显示托盘；System 档显示权威
+//                            g_uiEnglish，Process 档显示该 pid 的模式
+//   active 0 <pid>           失活：删除该 pid 条目；表空时 300ms 防抖后隐藏
+//                            （2026-11-07 用户要求：未激活不许显示托盘）
+//   query                    查询 UI 宿主持有的权威模式，应答 "mode 0\n"/"mode 1\n"
+//   toggle                   等价托盘左键：System 档翻转权威模式，Process 档忽略
+//   settings                 打开设置窗
+//
+// 信任模型：pid 由 TIP 在命令载荷里提供（不依赖服务端取客户端 pid 的 API）；
+// 命令管道 ACL 允许 ALL APPLICATION PACKAGES（AC 宿主必须能写），因此同机同
+// 用户进程理论上可伪造 pid 抢占/隐藏托盘——影响面仅限托盘显示，不涉及按键与
+// 输入路径；如需更强校验，后续可在服务端交叉校验客户端进程身份。
 //
 // 发一条命令（每次短连接，几十字节）；服务端同一时刻只有一个实例在监听。
 bool uiSendCommandOnce(const char* command);

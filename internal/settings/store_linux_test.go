@@ -85,8 +85,8 @@ func TestLinuxRoundTrip(t *testing.T) {
 		t.Errorf("SetAssociate 后 mode_scope = %q，期望保持缺省 system", s.ModeScope)
 	}
 
-	if err := SetModeScope(ModeScopeWindow); err != nil {
-		t.Fatalf("SetModeScope(window) 报错: %v", err)
+	if err := SetModeScope(ModeScopeProcess); err != nil {
+		t.Fatalf("SetModeScope(process) 报错: %v", err)
 	}
 	s, err = Load()
 	if err != nil {
@@ -95,14 +95,14 @@ func TestLinuxRoundTrip(t *testing.T) {
 	if s.Associate {
 		t.Error("SetModeScope 后 associate 被覆盖了（应保留 false）")
 	}
-	if s.ModeScope != ModeScopeWindow {
-		t.Errorf("Load().ModeScope = %q，期望 window", s.ModeScope)
+	if s.ModeScope != ModeScopeProcess {
+		t.Errorf("Load().ModeScope = %q，期望 process", s.ModeScope)
 	}
 
 	// 写出的文件对 C 设置窗的字符串读取（strstr "\"associate\""）友好：
 	// 键名与 true/false、字符串字面量格式必须与 setup_ctl.c 一致。
 	text := readFile(t, path)
-	for _, want := range []string{`"associate": false`, `"mode_scope": "window"`} {
+	for _, want := range []string{`"associate": false`, `"mode_scope": "process"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("config.json 应包含 %q，实际:\n%s", want, text)
 		}
@@ -121,7 +121,7 @@ func TestLinuxDefaultFileMatchesCFormat(t *testing.T) {
 	if err := SetModeScope(ModeScopeSystem); err != nil {
 		t.Fatalf("SetModeScope(system) 报错: %v", err)
 	}
-	// setup_config_save_mode_scope 的输出（setup_ctl.c:295-297）：
+	// setup_config_save_mode_scope 的输出（与 C 的 JSON 格式逐字节一致）：
 	// {
 	//   "associate": true,
 	//   "mode_scope": "system"
@@ -133,10 +133,11 @@ func TestLinuxDefaultFileMatchesCFormat(t *testing.T) {
 	}
 }
 
-// 读 C 设置窗写出的文件（老用户升级场景）：值必须正确解析。
+// 读 C 设置窗写出的文件（老用户升级场景）：旧三档 window 归一化为 process，
+// 不能因为值是旧格式而 get 失败。
 func TestLinuxReadsFileWrittenByCSetup(t *testing.T) {
 	path := setupXDG(t)
-	writeFile(t, path, "{\n  \"associate\": false,\n  \"mode_scope\": \"process\"\n}\n")
+	writeFile(t, path, "{\n  \"associate\": false,\n  \"mode_scope\": \"window\"\n}\n")
 	s, err := Load()
 	if err != nil {
 		t.Fatalf("Load() 报错: %v", err)
@@ -145,7 +146,7 @@ func TestLinuxReadsFileWrittenByCSetup(t *testing.T) {
 		t.Error("C 文件 associate=false 被读成 true")
 	}
 	if s.ModeScope != ModeScopeProcess {
-		t.Errorf("C 文件 mode_scope=process 被读成 %q", s.ModeScope)
+		t.Errorf("C 文件旧值 mode_scope=window 应归一化为 process，实际 %q", s.ModeScope)
 	}
 }
 
@@ -182,16 +183,32 @@ func TestLinuxSetModeScopePreservesOtherKeys(t *testing.T) {
 	}
 }
 
-// 未知 mode_scope（手改配置）按 Windows 壳语义归一化为 system，不报错。
-func TestLinuxUnknownModeScopeFallsBackToSystem(t *testing.T) {
-	path := setupXDG(t)
-	writeFile(t, path, `{"mode_scope": "auto"}`)
-	s, err := Load()
-	if err != nil {
-		t.Fatalf("Load() 报错: %v", err)
+// 存储读取的三端统一归一化：system/process 保持原值；旧三档 window→process；
+// 大小写/空白容忍；未知/空回退缺省 system，不报错。
+func TestLinuxModeScopeNormalized(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want ModeScope
+	}{
+		{"system", ModeScopeSystem},
+		{"SYSTEM", ModeScopeSystem},
+		{"process", ModeScopeProcess},
+		{"PROCESS", ModeScopeProcess},
+		{"window", ModeScopeProcess}, // 旧值迁移
+		{"WINDOW", ModeScopeProcess},
+		{"auto", ModeScopeSystem},
+		{"", ModeScopeSystem},
 	}
-	if s.ModeScope != ModeScopeSystem {
-		t.Errorf("未知 mode_scope 应回退 system，实际 %q", s.ModeScope)
+	for _, c := range cases {
+		path := setupXDG(t)
+		writeFile(t, path, `{"mode_scope": "`+c.raw+`"}`)
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load() 报错: %v", err)
+		}
+		if s.ModeScope != c.want {
+			t.Errorf("mode_scope=%q 归一化后 = %q，期望 %q", c.raw, s.ModeScope, c.want)
+		}
 	}
 }
 
@@ -229,7 +246,8 @@ func TestLinuxInvalidFieldTypes(t *testing.T) {
 // 非法枚举写入必须拒绝（CLI 层是退出码 2；store 层也不接受非法值）。
 func TestLinuxSetModeScopeRejectsInvalid(t *testing.T) {
 	setupXDG(t)
-	for _, scope := range []ModeScope{"", "SYSTEM", "auto"} {
+	// 旧三档值不在写入契约里：写入只接受 system|process（旧值 window 只允许读取/CLI 归一化）。
+	for _, scope := range []ModeScope{"", "SYSTEM", "PROCESS", "window", "Window", "auto"} {
 		if err := SetModeScope(scope); err == nil {
 			t.Errorf("SetModeScope(%q) 应报错", scope)
 		}

@@ -21,7 +21,6 @@
 #include <windows.h>
 #include <msctf.h>
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -108,6 +107,8 @@ extern volatile LONG g_liveObjects;
 class ChaosetTIP : public chaoset::win::ITfTextInputProcessorEx,
                   public ITfKeyEventSink,
                   public ITfCompositionSink,
+                  public ITfThreadFocusSink,
+                  public ITfActiveLanguageProfileNotifySink,
                   public chaoset::win::CandidateWindowHost,
                   public chaoset::win::TipThreadSink {
 public:
@@ -121,6 +122,14 @@ public:
                                          DWORD dwFlags) override;
     HRESULT STDMETHODCALLTYPE Deactivate() override;
     HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL fForeground) override;
+    // ITfThreadFocusSink：TSF 线程 UI 焦点（替代 GetForegroundWindow 的 pid
+    // 启发式——UWP/ApplicationFrameHost 宿主的前台窗口属于另一个进程）。
+    HRESULT STDMETHODCALLTYPE OnSetThreadFocus() override;
+    HRESULT STDMETHODCALLTYPE OnKillThreadFocus() override;
+    // ITfActiveLanguageProfileNotifySink：TSF 的「输入法之间切换」通知。
+    // 宿主在用户切走本输入法时常常不调用 Deactivate，靠它立即收口。
+    HRESULT STDMETHODCALLTYPE OnActivated(REFCLSID clsid, REFGUID guidProfile,
+                                          BOOL fActivated) override;
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override;
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
@@ -157,17 +166,26 @@ private:
     //   3. 宿主重复投递同一次按下（auto-repeat / TSF 与宿主各投递一次）。
     // 这正好解释实机症状：Terminal / 开始菜单 / Chrome（长驻进程 + 频繁切走
     // 窗口）切不了，Firefox（同一会话里连续空按）可以。
-    // 本地中英模式缓存。真正语义由 ModeScope 决定（见 currentEnglish）：
-    //   system  —— 权威在 UI 宿主，这里只是「上次查到的值」，按键时会刷新。
-    //   process —— 本进程所有 TIP 实例共享（下面 g_procEnglish）。
-    //   window  —— 按宿主窗口分开存（g_winEnglish）。
+    // ---- 中英模式状态机（两档作用域：System/Process）----
+    //
+    // 本地中英模式缓存：所有判断都走 currentEnglish()，不要直接读 enMode_。
+    //   System  —— 权威在 UI 宿主 g_uiEnglish + HKCU UiEnglish 镜像。获得焦点时
+    //              从权威同步，enMode_ 跟随；按键路径只读本地缓存，距上次权威
+    //              同步 >300ms 才补一次 HKCU 镜像读（注册表微秒级，无跨进程）。
+    //   Process —— 进程各自独立：进程级 static bool（同进程多 TIP 实例共享、
+    //              同进程多窗口也共享），获得焦点时把本进程模式上报托盘。
     bool enMode_ = false;
-    static std::map<HWND, bool>& windowModes();
     static bool& processEnglish();
-    HWND modeBucketKey() const;
+    // 获得焦点/激活/切换输入法时按作用域应用模式（两档语义唯一出口）。
+    void applyModeForCurrentScope();
     bool currentEnglish();
     void syncEnglishFromAuthority();
     void storeEnglish(bool english);
+    // 上次从权威源同步的时刻：currentEnglish 的 300ms TTL 复读用。
+    DWORD lastAuthoritySyncTick_ = 0;
+    // 本地 Shift 切中英的时刻：500ms 内不得被权威旧值回退（HKCU 由 UI 宿主
+    // 异步写回，刚切完立刻复读会翻回旧状态）。
+    DWORD lastLocalToggleTick_ = 0;
     // 当前按住的 Shift 物理键位掩码（bit0=左、bit1=右、bit2=泛化 VK_SHIFT）。
     // 用**掩码**而不是计数器：置位/清位天然幂等，键盘 auto-repeat 或宿主重复
     // 投递同一次按下都不会把它推到「永远回不到 0」——这正是旧实现 ++/-- 的
@@ -227,7 +245,6 @@ private:
     void updateInputActive(bool fromFocusEvent);
     void warmDaemonInBackgroundOnce();
     void retireUiCompletely();
-    void refreshActiveWatchTimer();
     void switchToInactiveProfile();
     bool bailOutIfInactive();
     void applyPendingStaleReset();
@@ -306,6 +323,14 @@ private:
     ITfThreadMgr* tm_ = nullptr;
     TfClientId clientId_ = 0;
     bool keySinkAdvised_ = false;
+    // TSF 两个 sink 的 ITfSource cookie（Activate 里 AdviseSink 保存，
+    // Deactivate/析构成对 UnadviseSink；幂等、初始为无效 cookie）：
+    //   threadFocusCookie_    ITfThreadFocusSink（线程 UI 焦点）
+    //   languageProfileCookie_ ITfActiveLanguageProfileNotifySink（输入法切换）
+    DWORD threadFocusCookie_ = TF_INVALID_COOKIE;
+    DWORD languageProfileCookie_ = TF_INVALID_COOKIE;
+    void adviseThreadSinks();
+    void unadviseThreadSinks();
 
     chaoset::win::CandidateWindow candidateWnd_;
     chaoset::win::ModeToast toast_;
@@ -366,14 +391,9 @@ private:
     // TrackPopupMenu 前需 SetForegroundWindow（否则菜单点外部不消失，
     // MSDN KB135788 的经典要求），返回后补发 WM_NULL 复位。
 public:
-    void onActiveWatchTimer() override;
     void onWorkerForeground(HWND fg) override;
     void onWorkerModeAuthority() override;
     void onWorkerShowToast(int id) override;
-
-    // TipThreadSink：本实例是否处于「前台在用」状态（500ms 激活档案复核用；
-    // 拆分前 refreshActiveWatchTimer 直接读 inputActive_，接口化后经此查询）。
-    bool tipInputActive() const override { return inputActive_; }
 
     // 设置窗口入口（三端一致的独立设置窗口，macOS SettingsWindow 同构；
     // 定义见 tip_candidates.cpp）。

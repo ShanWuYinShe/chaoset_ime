@@ -11,9 +11,14 @@
 
 namespace chaoset::win {
 
-// 中英状态作用域（system/process/window）。定义放这里：TIP 主体与配置缓存
-// 都在 TIP 类之前使用（原 win32.cpp 文件前部定义，wave2 后跨 TU 由本头声明）。
-enum class ModeScope { System, Process, Window };
+// 中英状态作用域（两档）。定义放这里：TIP 主体与配置缓存都在 TIP 类之前
+// 使用（原 win32.cpp 文件前部定义，wave2 后跨 TU 由本头声明）。
+//   System  —— 系统全局共享（默认）：托盘是权威，获得焦点时从权威同步；
+//   Process —— 进程各自独立：各进程分别记住中英（同进程多窗口共享一个值），
+//              获得焦点时把本进程状态送到托盘。
+// 旧存储值只在读取时归一化（旧 window→Process；未知/空→System），
+// 新写入只有 system/process。
+enum class ModeScope { System, Process };
 
 // 词组联想开关（HKCU\Software\Chaoset，DWORD Associate；未写入时默认开启）。
 bool RegGetAssociate();
@@ -39,7 +44,8 @@ bool readHkcuEnglish(bool* english);
 bool uiLoadSavedEnglish();
 void uiSaveEnglish(bool english);
 
-// 中英状态作用域持久化（读取失败一律按 system）。
+// 中英状态作用域持久化。读取宽容归一化（三端一致）：system→System；
+// process→Process；旧 window→Process；未知/空→System（默认）。
 ModeScope uiLoadModeScope();
 void uiSaveModeScope(ModeScope scope);
 

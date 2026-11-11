@@ -108,7 +108,7 @@ static RECT settingsContentRect() {
 // 卡片定义（pt，y 相对内容区顶部、h 含上下内边距）。卡片标题由 settingsPaint
 // 绘制；卡片内控件按「标题带 + 行」固定节奏摆放（kSettingsCtl），标题带占
 // y+12..y+34，控件从 y+42 开始——两者不重叠。此前用一组固定坐标手摆控件，
-// 第二张卡的标题（中英状态）被三选一按钮压住（2026-11-06 用户截图）。
+// 第二张卡的标题（中英状态）被作用域按钮压住（2026-11-06 用户截图）。
 struct SettingsCardDef {
     int y;
     int h;
@@ -241,7 +241,7 @@ static void settingsUpdateTheme(HWND wnd) {
     if (g_settingsCardBrush != nullptr) DeleteObject(g_settingsCardBrush);
     g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
     settingsApplyDarkTitleBar(wnd, g_settingsDark);
-    for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 123, 124}) {
+    for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 124}) {
         HWND c = GetDlgItem(wnd, id);
         if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
     }
@@ -266,9 +266,8 @@ static const SettingsCtlItem kSettingsCtl[] = {
     // ---- 输入页 ----
     {101, SettingsPage::Input, 16, 42, 240, 26, 0},   // 词组联想
     {102, SettingsPage::Input, 16, 74, 436, 18, 2},   // 说明
-    {121, SettingsPage::Input, 16, 164, 110, 28, 0},  // 系统共享
-    {122, SettingsPage::Input, 134, 164, 110, 28, 0}, // 每程序
-    {123, SettingsPage::Input, 252, 164, 110, 28, 0}, // 每窗口
+    {121, SettingsPage::Input, 16, 164, 110, 28, 0},  // 全局共享
+    {122, SettingsPage::Input, 134, 164, 110, 28, 0}, // 每进程独立
     {124, SettingsPage::Input, 16, 198, 436, 18, 2},  // 说明
     // ---- 词库页 ----
     {105, SettingsPage::Dictionary, 16, 42, 436, 18, 0},   // 学习数据统计
@@ -457,8 +456,9 @@ static void settingsPaint(HDC dc, HWND wnd) {
     }
 }
 
-// 自绘「三选一」按钮（中英状态作用域）。选中项用主题强调色描边 + 浅底，
-// 与自绘按钮同一套配色，深浅色都跟随主题（Win32 标准按钮不跟随）。
+// 自绘「两档」按钮（中英状态作用域：全局共享 / 每进程独立）。选中项用主题
+// 强调色描边 + 浅底，与自绘按钮同一套配色，深浅色都跟随主题（Win32 标准按钮
+// 不跟随）。
 static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
@@ -470,7 +470,6 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     bool selected = false;
     if (dis->CtlID == 121) selected = current == ModeScope::System;
     else if (dis->CtlID == 122) selected = current == ModeScope::Process;
-    else if (dis->CtlID == 123) selected = current == ModeScope::Window;
     RECT r = dis->rcItem;
     const COLORREF fillColor = selected
                                    ? (g_settingsDark ? RGB(0x2A, 0x3A, 0x4A) : RGB(0xE3, 0xEF, 0xFB))
@@ -759,8 +758,9 @@ static bool settingsRunCtl(const std::wstring& args, std::string* out, DWORD tim
 // 解析 get 的单行 JSON 契约（见 cmd/chaoset-settingsctl/main.go 与
 // internal/settings/settings.go）：
 //   {"associate":true,"mode_scope":"system","ui_english":false}
-// 只认本窗用到的 associate + mode_scope；缺字段/未知枚举一律算失败（回退原生，
-// 不把半个设置项当真源——写错键比读不到更糟）。
+// 只认本窗用到的 associate + mode_scope；mode_scope 读取宽容归一化（三端一致）：
+// system→System；process→Process；旧 window→Process；未知枚举一律算失败
+//（回退原生，不把半个设置项当真源——写错键比读不到更糟）。
 static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeScope* scope) {
     if (associate == nullptr || scope == nullptr) return false;
     const size_t a = json.find("\"associate\":");
@@ -781,17 +781,13 @@ static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeS
     const std::string raw = json.substr(v, q - v);
     if (raw == "system") *scope = ModeScope::System;
     else if (raw == "process") *scope = ModeScope::Process;
-    else if (raw == "window") *scope = ModeScope::Window;
+    else if (raw == "window") *scope = ModeScope::Process;  // 旧档迁移
     else return false;
     return true;
 }
 
 static const wchar_t* settingsScopeName(ModeScope scope) {
-    switch (scope) {
-        case ModeScope::Process: return L"process";
-        case ModeScope::Window: return L"window";
-        default: return L"system";
-    }
+    return scope == ModeScope::Process ? L"process" : L"system";
 }
 
 // 冷路径读取「词组联想 + 中英状态作用域」：优先 Go 单一真源，失败回退原生。
@@ -1115,19 +1111,19 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 return 0;
             }
             if (HIWORD(wParam) == BN_CLICKED &&
-                (LOWORD(wParam) == 121 || LOWORD(wParam) == 122 || LOWORD(wParam) == 123)) {
-                // 中英状态作用域切换（方案 A 冷路径）：写 Go 单一真源
-                // （chaoset-settingsctl set mode-scope），立即生效（TIP 下次
-                // 获得焦点时读注册表）。CLI 缺失/失败时回退原生 uiSaveModeScope。
+                (LOWORD(wParam) == 121 || LOWORD(wParam) == 122)) {
+                // 中英状态作用域两档切换（方案 A 冷路径）：写 Go 单一真源
+                // （chaoset-settingsctl set mode-scope system|process），立即生效
+                //（TIP 下次获得焦点时读注册表）。CLI 缺失/失败时回退原生
+                // uiSaveModeScope。
                 ModeScope scope = ModeScope::System;
                 if (LOWORD(wParam) == 122) scope = ModeScope::Process;
-                else if (LOWORD(wParam) == 123) scope = ModeScope::Window;
                 g_settingsModeScope = scope;
                 const std::wstring scopeArg = L"set mode-scope " + std::wstring(settingsScopeName(scope));
                 if (!settingsWriteShared(scopeArg, "set-mode-scope")) {
                     uiSaveModeScope(scope);
                 }
-                for (int id : {121, 122, 123}) {
+                for (int id : {121, 122}) {
                     HWND b = GetDlgItem(hwnd, id);
                     if (b != nullptr) InvalidateRect(b, nullptr, TRUE);
                 }
@@ -1169,8 +1165,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                     settingsDrawButton(dis);
                     return TRUE;
                 }
-                // 中英状态三选一（121/122/123）：选中项高亮。
-                if (dis->CtlID == 121 || dis->CtlID == 122 || dis->CtlID == 123) {
+                // 中英状态两档（121/122）：选中项高亮。
+                if (dis->CtlID == 121 || dis->CtlID == 122) {
                     settingsDrawChoice(dis);
                     return TRUE;
                 }
@@ -1295,10 +1291,9 @@ void openSettingsWindowStandalone(SettingsPage page) {
     };
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"词组联想", 101);
     makeCtl(L"Static", SS_LEFT, L"选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。", 102);
-    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"系统共享", 121);
-    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每程序", 122);
-    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每窗口", 123);
-    makeCtl(L"Static", SS_LEFT, L"切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。", 124);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"全局共享", 121);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每进程独立", 122);
+    makeCtl(L"Static", SS_LEFT, L"切一次所有程序都生效（推荐）；每进程则各自独立。", 124);
     makeCtl(L"Static", SS_LEFT, L"读取中…", 105);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"清空学习数据…", 106);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导出学习数据…", 107);

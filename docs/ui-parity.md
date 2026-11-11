@@ -125,11 +125,11 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 能力 | macOS | Windows | Linux | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | 设置入口 | 候选栏齿轮（mouseUp 抬起才打开）→ AppKit 设置窗 | 候选栏齿轮（mouseUp 抬起才打开）/ 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开）；齿轮按下只记录、抬起且仍在齿轮区才触发 |
-| 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标；TIP 经命名管道上报模式，不在光标/鼠标旁弹提示。**托盘状态始终等于当前前台 app 的实际状态**：system scope 下托盘是权威（写 HKCU，app 跟托盘；app 切模式后托盘同步）；process/window scope 下托盘跟随当前 app（切窗口时该 TIP 重新上报，不写 HKCU）；非 system scope 托盘左键不反向改全局（仅指示） | 由 ibus/桌面环境指示 | 2026-11-05 用户反馈定稿：每用户会话只许一个状态指示器；2026-11-07 用户要求「输入法未激活时隐藏，任何时候托盘与 app 实际状态一致」 |
-| Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘图标只在 TIP 上报 `active 1` 后显示，`active 0`（失焦/切换输入法/前台离开）防抖 300ms 后 NIM_DELETE；mode 只更新图标；启动 --mode 不显示**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
+| 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标，显示**当前输入上下文的实际状态**；中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语，不代管中英模式），TIP 经命名管道上报，不在光标/鼠标旁弹提示。**两档同步方向**：`system`（全局共享）下托盘是权威——TIP 获得焦点时从托盘同步，托盘左键切换全局中英；`process`（每进程独立）下托盘是镜像——TIP 激活/切进程时把本进程状态上报到托盘，托盘左键只显示、不切换 | 由 ibus/桌面环境指示 | 每用户会话只许一个状态指示器；激活/失活与托盘可见性由 TSF 信号事件驱动、无输入焦点即隐藏（见下文「非激活与托盘可见性」） |
+| Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘可见性事件驱动（无周期定时器/心跳）：TSF 激活状态变化时 TIP 上报带中英值与 pid 的 `active 1`（显示并把该进程设为 owner）或 `active 0`（仅 owner 生效；失焦/切换输入法/前台离开），UI 宿主用 `OpenProcess`+`RegisterWaitForSingleObject` 监听 owner 退出并清理，隐藏保留 300ms 防抖；mode 只更新图标；启动 --mode 不显示**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
 | 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
 | 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
-| 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端都支持 system/process/window 三档，默认 system |
+| 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端统一两档：`system`（全局共享，默认）/ `process`（每进程独立）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process |
 | 词库导入 | Setup.app：选择文件 → chaoset-import -o -seed -backup → 重启 daemon | 设置窗同样调用 chaoset-import → 重启 daemon | 设置窗调用 chaoset-import → 重启 ibus | 合并在 Go 工具中完成 |
 | 鼠标点选候选 | 候选窗点击（按下记录、抬起上屏） | 同左（onLButtonDown 记录 / onLButtonUp 上屏） | CandidateClicked（ibus 面板决定点击语义） | 与数字键同语义；左键动作统一 mouseup（2026-11-06 用户要求） |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
@@ -149,15 +149,26 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 - **非激活零动作**：TSF 回调只在 `inputActive_`（本线程激活档案是 Chaoset +
   TSF 焦点在本上下文）为真时处理按键；否则立即 `*pfEaten = FALSE` 放行，不查询、
   不清理、不挂/撤钩子、不读鼠标、不写盘、不起进程。切换输入法后即使宿主不投递
-  Deactivate，也会在按键路径复核激活档案、并由 500ms 激活档案定时器兜底。
+  Deactivate，也会在按键路径复核激活档案兜底。
 - **修饰键永不消费**：所有 KeyUp 恒返回 FALSE（含 Shift/Ctrl/Alt/Win），避免 OS
   出现「修饰键卡住」；Ctrl 组合键（除组词中 Ctrl+U）一律透传宿主。RDP/macOS 本地
   快捷键吞掉 Ctrl keyup 属于远端输入通道问题，IME 不得注入按键去"修复"。
-- **托盘可见性**：只有 TIP 的 `active 1`（前台激活本输入法）会让 UI 宿主显示
-  托盘；`active 0`（失焦/停用/前台离开）防抖 300ms 后 NIM_DELETE 隐藏；`mode`
-  只更新图标，启动 `--mode` 不显示。输入法未激活时隐藏，切换回来自动重新出现。
-- **scope 对齐方向**：system → 托盘是权威（app 跟托盘）；process/window → 托盘
-  跟当前 app（app 跟自身作用域状态）；两种方向都由 TIP 在获得焦点时上报保证。
+- **托盘可见性（TSF 事件驱动，无周期定时器/心跳）**：激活/失活完全由
+  `Activate`/`Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink`
+  等 TSF 信号驱动；TIP 在激活状态变化时发 `active 1 <0|1> <pid>`（显示托盘并把该进程
+  设为 owner）或 `active 0 <pid>`（仅当 pid 是当前 owner 时隐藏）。UI 宿主不轮询，
+  用 `OpenProcess`+`RegisterWaitForSingleObject` 监听 owner 进程退出并清理；隐藏保留
+  300ms 防抖（同一进程多 TIP 实例焦点抖动时不闪图标）；UI 宿主重启后靠下一次 TSF 事件
+  重发恢复。**没有输入焦点（桌面/任务栏）或切到其它输入法即隐藏**；输入法未激活时隐藏，
+  切换回来自动重新出现。`mode <0|1> <pid>` 只更新图标，启动 `--mode` 不显示。
+- **中英状态归属与输入法切换链路**：中英模式由输入法自己维护（TSF 只提供线程隔间
+  与焦点/激活原语，不代管中英模式）；用户切换输入法（切走/切回）由系统/TSF 触发，
+  TIP 在 `Activate`/`Deactivate` 与 `ITfActiveLanguageProfileNotifySink` 中响应，
+  据此更新激活态与托盘可见性。
+- **作用域同步方向**：`system`（全局共享）→ 托盘是权威（TIP 获得焦点时从托盘同步，
+  托盘左键切换全局中英），状态在所有程序间共享；`process`（每进程独立）→ 托盘镜像
+  当前进程状态（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/
+  切进程时把本进程状态上报到托盘，托盘左键只显示、不切换）。
 
 ## 设置窗契约（2026-11-06 阶段2）
 
@@ -177,8 +188,8 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 - 分组与文案（三端统一）：
   - 输入页卡 1「输入行为」：行「词组联想」开关；说明「选词上屏后展示可续接的
     词组候选；关闭后不再弹出联想候选。」
-  - 输入页卡 2「中英状态」：三选一「系统共享 / 每程序 / 每窗口」；说明「切一次
-    所有程序都生效（推荐）；后两者仅当前程序/窗口独立。」
+  - 输入页卡 2「中英状态」：二选一「全局共享 / 每进程独立」；说明「切一次
+    所有程序都生效（推荐）；每进程则各自独立。」
   - 词库页卡 1「学习数据」：统计行 + 清空/导出按钮 + 说明「学习数据仅保存在
     本机，用于调频与词组联想；清空后不可恢复。」
   - 词库页卡 2「词库」：导入按钮 + 统一说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」
@@ -200,9 +211,10 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   `WaitForSingleObject`、`CreateProcessW`、`CreateFileW`、`WriteFile(`、
   `MessageBoxW`、`GetOpenFileNameW`、`RegSetValueExW`、慢连接
   `ensureDaemonConnected(`。覆盖函数：Activate / ActivateEx / OnSetFocus /
-  OnTestKeyDown / OnKeyDown / OnTestKeyUp / OnKeyUp / render / handleKey /
-  showSettingsWindow / onForegroundChanged / selectCandidateByIndex /
-  deleteCandidateByIndex / flipPage / CandidateWindow::show。
+  OnSetThreadFocus / OnKillThreadFocus / OnActivated / OnTestKeyDown / OnKeyDown /
+  OnTestKeyUp / OnKeyUp / render / handleKey / showSettingsWindow /
+  onForegroundChanged / selectCandidateByIndex / deleteCandidateByIndex /
+  flipPage / CandidateWindow::show。
 - **副作用统一入口**：每进程一个 `ShellWorker` 后台线程（`ShellTask` 任务队列）
   + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipModeAuthorityMsg`/
   `kTipShowToastMsg` 回投结果）；建进程、管道重试、

@@ -26,8 +26,8 @@ ChaosetTIP::~ChaosetTIP() {
     // SetWinEventHook 钩子都指向本 DLL 内的代码，不撤会让下次
     // WM_PAINT / 前台事件跳到已卸载内存（宿主进程崩溃）。
     //
-    // 必须先摘掉线程注册表：析构后本实例若仍留在 g_tlFgTips 里，500ms
-    // 激活档案定时器与前台/模式消息会把它当活对象解引用（悬垂指针 →
+    // 必须先摘掉线程注册表：析构后本实例若仍留在 g_tlFgTips 里，前台/模式
+    // 消息派发会把它当活对象解引用（悬垂指针 →
     // 宿主进程崩溃）。unregisterTipFromThread 还负责「本线程最后一个 TIP
     // 退出时销毁 message-only 窗口」——漏调会让 g_liveTipMsgWindows 永不
     // 归零、DllCanUnloadNow 恒 S_FALSE（DLL 常驻宿主、窗口类残留）。
@@ -38,6 +38,9 @@ ChaosetTIP::~ChaosetTIP() {
     unregisterTipFromThread(this);
     if (fgHook_ != nullptr) unhookForeground();
     candidateWnd_.destroy();
+    // TSF 焦点 sink 必须在释放 tm_ 之前 Unadvise（幂等）：宿主未调 Deactivate
+    // 直接 Release 时也成对摘除，避免 TSF 持有指向本对象/已卸载 DLL 的回调。
+    unadviseThreadSinks();
     if (tm_ != nullptr) { tm_->Release(); tm_ = nullptr; }
     InterlockedDecrement(&g_liveObjects);
 }
@@ -55,6 +58,10 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<ITfKeyEventSink*>(this);
     } else if (riid == IID_ITfCompositionSink) {
         *ppv = static_cast<ITfCompositionSink*>(this);
+    } else if (riid == IID_ITfThreadFocusSink) {
+        *ppv = static_cast<ITfThreadFocusSink*>(this);
+    } else if (riid == IID_ITfActiveLanguageProfileNotifySink) {
+        *ppv = static_cast<ITfActiveLanguageProfileNotifySink*>(this);
     } else {
         *ppv = nullptr;
         return E_NOINTERFACE;
@@ -117,8 +124,10 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
                    (SUCCEEDED(hrFlags) && (flags & 0x4)) ? 1 : 0);
     }
     // 部分宿主会重复调用 Activate：初始化必须幂等（否则泄漏 ITfThreadMgr、
-    // 重复 Advise 会让每个按键投递两次）。
+    // 重复 Advise 会让每个按键投递两次）。换 tm_ 时先把旧 source 上的焦点
+    // sink 摘掉，否则 cookie 会指向已释放的旧线程管理器（后续 Unadvise 失效）。
     if (tm_ != nullptr && tm_ != ptim) {
+        unadviseThreadSinks();
         tm_->Release();
         tm_ = nullptr;
     }
@@ -160,11 +169,17 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
             mgr->Release();
         }
     }
+    // TSF 焦点/输入法切换原语：挂 ITfThreadFocusSink（线程 UI 焦点）与
+    // ITfActiveLanguageProfileNotifySink（输入法之间切换）。焦点判定从此走
+    // TSF（ITfThreadMgr::IsThreadFocus），不再用 GetForegroundWindow 的 pid
+    // 启发式——UWP/ApplicationFrameHost 宿主的前台窗口属于另一个进程，pid
+    // 启发式会误判「没焦点」，表现为托盘不显示。
+    adviseThreadSinks();
     // 激活状态迁移：Activate 可能是后台宿主（TSF 会提前把 TIP 装进任意
-    // 进程），只有本进程是前台且激活档案是 Chaoset 才进入「在用」状态。
-    // 之后所有按键回调都以 inputActive_ 为闸门，未激活时零动作。
-    focused_ = foregroundIsSelf();
-    updateInputActive(true);
+    // 进程）。焦点交给 updateInputActive 里的 TSF 原语判定（本线程没有焦点时
+    // 仍保持非激活）；之后所有按键/焦点回调都以 inputActive_ 为闸门。
+    focused_ = true;
+    updateInputActive(false);
     return S_OK;
 }
 
@@ -199,15 +214,16 @@ DWORD dwFlags) {
 
 
 HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate() {
-    // 停用即「非激活」：先从线程注册表/钩子表摘掉，再彻底退场。
-    if (inputActive_) {
-        inputActive_ = false;
-        focused_ = false;
-        postActiveReport(false, currentEnglish(), false);
-    } else {
-        focused_ = false;
-    }
+    // 停用即「非激活」：只有本实例确实处于激活态才上报 active 0（UI 宿主只认
+    // owner pid；同进程多实例下，后台/从未激活的实例发失活事件会把当前 owner
+    // 的托盘误隐藏——无心跳兜底时尤其危险）。再从线程注册表/钩子表摘掉并退场。
+    const bool wasActive = inputActive_;
+    inputActive_ = false;
+    focused_ = false;
+    if (wasActive) postActiveReport(false, enMode_, false);
     unregisterTipFromThread(this);
+    // 焦点 sink 必须在 tm_ 释放前成对摘除（幂等：Activate 失败/重复调用安全）。
+    unadviseThreadSinks();
     retireUiCompletely();
     pendingStaleReset_ = false;
     if (profileMgr_ != nullptr) {
@@ -288,6 +304,110 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
 }
 
 
+// ---- TSF 焦点/输入法切换原语（2026-11-11，替换 GetForegroundWindow 的 pid 启发式）----
+//
+// 挂/摘两个 sink 都走 tm_ 的 ITfSource（TSF 标准连接点）：AdviseSink 会
+// AddRef 本对象，因此 cookie 有效期间对象不会被提前释放；UnadviseSink 必须在
+// tm_ 释放前成对调用（Deactivate/析构幂等，见 unadviseThreadSinks）。
+void ChaosetTIP::adviseThreadSinks() {
+    if (tm_ == nullptr) return;
+    ITfSource* source = nullptr;
+    if (FAILED(tm_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))) ||
+        source == nullptr) {
+        return;
+    }
+    if (threadFocusCookie_ == TF_INVALID_COOKIE) {
+        DWORD cookie = TF_INVALID_COOKIE;
+        if (SUCCEEDED(source->AdviseSink(IID_ITfThreadFocusSink,
+                                         static_cast<ITfThreadFocusSink*>(this), &cookie))) {
+            threadFocusCookie_ = cookie;
+        }
+    }
+    if (languageProfileCookie_ == TF_INVALID_COOKIE) {
+        DWORD cookie = TF_INVALID_COOKIE;
+        if (SUCCEEDED(source->AdviseSink(IID_ITfActiveLanguageProfileNotifySink,
+                                         static_cast<ITfActiveLanguageProfileNotifySink*>(this),
+                                         &cookie))) {
+            languageProfileCookie_ = cookie;
+        }
+    }
+    source->Release();
+}
+
+void ChaosetTIP::unadviseThreadSinks() {
+    if (threadFocusCookie_ == TF_INVALID_COOKIE &&
+        languageProfileCookie_ == TF_INVALID_COOKIE) {
+        return;
+    }
+    if (tm_ != nullptr) {
+        ITfSource* source = nullptr;
+        if (SUCCEEDED(tm_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))) &&
+            source != nullptr) {
+            if (threadFocusCookie_ != TF_INVALID_COOKIE) {
+                source->UnadviseSink(threadFocusCookie_);
+                threadFocusCookie_ = TF_INVALID_COOKIE;
+            }
+            if (languageProfileCookie_ != TF_INVALID_COOKIE) {
+                source->UnadviseSink(languageProfileCookie_);
+                languageProfileCookie_ = TF_INVALID_COOKIE;
+            }
+            source->Release();
+            return;
+        }
+    }
+    // tm_ 已释放/取不到 source：至少清掉 cookie，绝不重复 Unadvise 失效值。
+    threadFocusCookie_ = TF_INVALID_COOKIE;
+    languageProfileCookie_ = TF_INVALID_COOKIE;
+}
+
+
+// ITfThreadFocusSink：TSF 线程 UI 焦点。回调在宿主 TSF 线程同步执行——只做
+// 内存操作 + 入队（零阻塞契约：不等待、不建进程、不同步写盘）。
+HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus() {
+    focused_ = true;
+    updateInputActive(true);
+    return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus() {
+    focused_ = false;
+    updateInputActive(false);
+    return S_OK;
+}
+
+
+// ITfActiveLanguageProfileNotifySink：TSF 的「输入法之间切换」通知。
+//
+// 为什么需要：用户从 Chaoset 切到其它输入法/英文键盘布局时，很多宿主**不调用
+// Deactivate**（2026-11-05 实测：按键仍下沉给本 TIP），托盘会一直显示、按键
+// 闸门也不收口。这个 sink 在语言档案激活/失活时同步回调，是拍平这条路径的
+// 权威事件源；bailOutIfInactive 的按键复核仍保留作兜底。
+HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(REFCLSID clsid, REFGUID /*guidProfile*/,
+                                                   BOOL fActivated) {
+    if (clsid != CLSID_ChaosetTIP) return S_OK;  // 其它输入法切换：不归本 TIP 管
+    if (fActivated) {
+        focused_ = true;
+        // 先走激活状态迁移（建 worker/窗口、上报 active 1）；再按作用域应用
+        // 模式：System 从权威同步、Process 上报本进程模式（与焦点事件同语义）。
+        updateInputActive(true);
+        if (inputActive_) applyModeForCurrentScope();
+        return S_OK;
+    }
+    // 本输入法被切走：立即收口（不依赖宿主是否调用 Deactivate）。只有本实例
+    // 确实激活时才上报 active 0（同进程多实例下避免误隐藏 owner 的托盘）；
+    // 清理/Shift 挂起与 switchToInactiveProfile 同语义（幂等）。
+    const bool wasActive = inputActive_;
+    inputActive_ = false;
+    focused_ = false;
+    if (wasActive) {
+        postActiveReport(false, enMode_, false);
+        retireUiCompletely();
+        suspendShiftHoldOnFocusLost();
+    }
+    return S_OK;
+}
+
+
 // ITfCompositionSink：合成被外部终止（焦点切换等）
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnCompositionTerminated(TfEditCookie /*ec*/,
 ITfComposition* /*pComposition*/) {
@@ -321,54 +441,51 @@ bool ChaosetTIP::isComposing() const { return !comp_.input.empty(); }
 bool ChaosetTIP::hasCandidates() const { return !comp_.candidates.empty(); }
 
 
-// 进程级/窗口级状态（process / window 作用域用）。故意放在进程静态区：
-// TSF 会在同一宿主进程里创建多个 TIP 实例，process 档要求它们共享。
-std::map<HWND, bool>& ChaosetTIP::windowModes() {
-    static std::map<HWND, bool> m;
-    return m;
-}
-
+// Process 档的进程级状态（进程各自独立）：故意放在进程静态区——TSF 会在
+// 同一宿主进程里创建多个 TIP 实例（explorer 实测 4 个），Process 档要求它们
+// 共享同一个中英状态；同进程的多个窗口也共享（用户澄清：一窗口通常就是一
+// 进程，不需要更细的窗口粒度）。
 bool& ChaosetTIP::processEnglish() {
     static bool english = false;
     return english;
 }
 
 
-// 当前宿主窗口（window 作用域的分桶键）。拿不到就退化成进程级，
-// 绝不能因为取不到窗口而让状态随机跳。
-HWND ChaosetTIP::modeBucketKey() const {
-    const HWND fg = GetForegroundWindow();
-    if (fg != nullptr) return fg;
-    return GetActiveWindow();
+// 读当前中英模式（所有判断都走这里，不要直接读 enMode_）。
+//
+// 性能约束（2026-11-06 用户要求）：按键热路径只读本地缓存，绝不做跨进程
+// 查询；ModeScope 查询也走 TTL 缓存（cachedModeScope）。它在每个按键的
+// OnTestKeyDown 里都会被调用，这里的唯一 IO 是 System 档超过 300ms 时补一次
+// HKCU UiEnglish 镜像读（注册表微秒级，不跨进程、不阻塞）。
+bool ChaosetTIP::currentEnglish() {
+    if (cachedModeScope() != ModeScope::System) return processEnglish();
+    const DWORD now = GetTickCount();
+    // 本地刚 Shift 切完：500ms 内不得被权威旧值回退（HKCU 由 UI 宿主异步写回）。
+    if (lastLocalToggleTick_ != 0 && now - lastLocalToggleTick_ < 500) return enMode_;
+    // 权威 TTL 复读：≤300ms 跟一次 HKCU 镜像（托盘左键切换后本进程及时跟上）。
+    if (lastAuthoritySyncTick_ == 0 || now - lastAuthoritySyncTick_ > 300) {
+        bool english = false;
+        if (readHkcuEnglish(&english)) enMode_ = english;
+        lastAuthoritySyncTick_ = now;
+    }
+    return enMode_;
 }
 
 
-// 读当前中英模式（**所有判断都应该走这里**，不要直接读 enMode_）。
-//
-// 关键性能约束（2026-11-06 用户要求）：「窗口在获取焦点以后才有必要去获取、
-// 更新这个状态，用不到的时候没必要浪费性能」。所以这里**只读本地缓存**，
-// 不做任何 IPC —— 它在每个按键的 OnTestKeyDown 里都会被调用。
-// system 作用域的跨进程同步只在 OnSetFocus / Activate 时做一次（见
-// syncEnglishFromAuthority）。
-// 读当前中英模式（所有判断都应该走这里，不要直接读 enMode_）。
-//
-// 性能约束（2026-11-06 用户要求）：按键路径只读本地缓存；ModeScope 查询
-// 也走 TTL 缓存（cachedModeScope），绝不每键读注册表（审计 T10）。
-bool ChaosetTIP::currentEnglish() {
-    switch (cachedModeScope()) {
-        case ModeScope::System:
-            return enMode_;
-        case ModeScope::Process:
-            return processEnglish();
-        case ModeScope::Window: {
-            const HWND key = modeBucketKey();
-            auto it = windowModes().find(key);
-            if (it != windowModes().end()) return it->second;
-            windowModes()[key] = enMode_;
-            return enMode_;
-        }
+// 按当前作用域应用中英模式——两档语义的唯一出口：
+//   System：托盘是权威 → 从 HKCU 镜像同步（worker 异步 query 校准），
+//           enMode_ 跟随，**不上报 mode**（托盘本来就是权威）；
+//   Process：进程各自独立 → 取本进程状态写入 enMode_ + 隔间，并上报 mode
+//            让托盘显示本进程的实际状态。
+void ChaosetTIP::applyModeForCurrentScope() {
+    if (cachedModeScope() == ModeScope::System) {
+        syncEnglishFromAuthority();
+        syncModeCompartment();
+        return;
     }
-    return enMode_;
+    enMode_ = processEnglish();
+    syncModeCompartment();
+    reportModeToUi(enMode_, true);
 }
 
 
@@ -380,6 +497,10 @@ bool ChaosetTIP::currentEnglish() {
 // （结果经 message-only 窗口的 kTipModeAuthorityMsg 回投）。
 void ChaosetTIP::syncEnglishFromAuthority() {
     if (cachedModeScope() != ModeScope::System) return;
+    const DWORD now = GetTickCount();
+    lastAuthoritySyncTick_ = now;
+    // 本地刚切换的 500ms 防回抖窗内跳过：HKCU 还是旧值，同步会把刚切的状态翻回去。
+    if (lastLocalToggleTick_ != 0 && now - lastLocalToggleTick_ < 500) return;
     bool english = false;
     if (readHkcuEnglish(&english)) {
         enMode_ = english;
@@ -391,21 +512,25 @@ void ChaosetTIP::syncEnglishFromAuthority() {
 
 // 写当前中英模式（所有切换都必须走这里）。
 void ChaosetTIP::storeEnglish(bool english) {
+    const DWORD now = GetTickCount();
     enMode_ = english;
+    // 本地切换记账：500ms 防回抖窗 + 刷新权威同步时刻（currentEnglish 的
+    // 300ms TTL 不得立刻用 HKCU 旧值把刚切的状态覆盖回去）。
+    lastLocalToggleTick_ = now;
+    lastAuthoritySyncTick_ = now;
     switch (cachedModeScope()) {
         case ModeScope::System:
-            // 权威在 UI 宿主：上报即写入（system 档下 wndproc 会更新托盘+HKCU）。
+            // 权威在 UI 宿主：上报 mode 即写入（UI 宿主更新 g_uiEnglish + HKCU）。
             break;
         case ModeScope::Process:
             processEnglish() = english;
             break;
-        case ModeScope::Window:
-            windowModes()[modeBucketKey()] = english;
-            break;
     }
     syncModeCompartment();
-    // 上报托盘：reportModeToUi 入口统一要求「本进程持有焦点」才放行，
-    // 实际管道写入在 ShellWorker（零阻塞）。
+    // 上报托盘：模式变化本身也是一次 TSF 事件——先重播 active（UI 宿主重启后
+    // 靠它重新认领 owner），再发 mode；System 档让 UI 宿主更新权威，Process 档
+    // 把本进程状态送到托盘。只入队（ShellWorker 写管道），零阻塞。
+    postActiveReport(true, enMode_, true);
     reportModeToUi(english, true);
 }
 
@@ -460,7 +585,7 @@ void ChaosetTIP::onForegroundChanged(HWND fg) {
     GetWindowThreadProcessId(fg, &fgPid);
     if (fgPid == GetCurrentProcessId()) {
         // 前台回到本进程：恢复处理并按当前 app 的本地模式上报托盘
-        //（process/window 作用域下托盘跟 app 对齐）。
+        //（Process 作用域下托盘跟 app 对齐）。
         focused_ = true;
         updateInputActive(true);
         return;
@@ -470,7 +595,7 @@ void ChaosetTIP::onForegroundChanged(HWND fg) {
     inputActive_ = false;
     focused_ = false;
     if (wasActive) {
-        postActiveReport(false, currentEnglish(), false);
+        postActiveReport(false, enMode_, false);
         retireUiCompletely();
         suspendShiftHoldOnFocusLost();
     }
@@ -540,18 +665,36 @@ bool ChaosetTIP::foregroundIsSelf() {
 }
 
 
-// 唯一的激活状态迁移出口。fromFocusEvent：OnSetFocus(TRUE) 时 TSF 已把焦点
-// 交给本上下文，允许不等 GetForegroundWindow 更新；Activate 则需要前台校验
-//（后台宿主会重复 Activate）。
+// 唯一的激活状态迁移出口。
+//
+// 焦点判定改用 TSF 原语（spec §2.5）：ITfThreadMgr::IsThreadFocus 是「本线程
+// 是否持有 TSF 焦点」的权威答案；取代 GetForegroundWindow 的 pid 启发式
+//（UWP/ApplicationFrameHost 宿主的前台窗口 pid != TIP 进程 pid，会误判）。
+// IsThreadFocus 失败（tm_ 为空/老系统）才回退旧判据；fromFocusEvent 只在
+// 回退路径里使用（OnSetFocus(TRUE) 时 TSF 已把焦点交给本上下文，允许不等
+// GetForegroundWindow 更新）。
 void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
-    const bool next = focused_ && isActiveTip() &&
-                      (fromFocusEvent || foregroundIsSelf());
+    bool threadFocused = false;
+    bool haveThreadFocus = false;
+    if (tm_ != nullptr) {
+        BOOL focus = FALSE;
+        if (SUCCEEDED(tm_->IsThreadFocus(&focus))) {
+            threadFocused = focus != FALSE;
+            haveThreadFocus = true;
+        }
+    }
+    if (!haveThreadFocus) threadFocused = fromFocusEvent || foregroundIsSelf();
+    const bool next = focused_ && isActiveTip() && threadFocused;
     if (next == inputActive_) {
         if (!next) {
             candidateWnd_.setActiveGate(false);
             unhookForeground();
         } else {
             candidateWnd_.setActiveGate(true);
+            // 焦点事件重复到达（状态没变）：重新播报一次 active，并按作用域重新
+            // 应用模式——UI 宿主被杀/重启后靠这次事件重发自愈（无心跳/定时器）。
+            postActiveReport(true, enMode_, true);
+            applyModeForCurrentScope();
         }
         return;
     }
@@ -561,16 +704,15 @@ void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
         //（之后所有异步上报/守卫都依赖它们；未激活实例不创建）。
         shellWorkerStart();
         ensureTipMsgWnd();
-        // system 作用域：从 HKCU 镜像同步 + worker 异步校准；其它 scope 用本地值。
-        syncEnglishFromAuthority();
-        syncModeCompartment();
-        // 先 active 再 mode：UI 宿主只有收到 active 1 才显示托盘。
-        postActiveReport(true, currentEnglish(), true);
-        reportModeToUi(currentEnglish(), true);
+        // 先按作用域应用模式（System 同步权威 / Process 取本进程值），再上报：
+        // 先 active 后 mode，UI 宿主只有收到 active 1 才显示托盘。
+        applyModeForCurrentScope();
+        const bool mode = enMode_;
+        postActiveReport(true, mode, true);
+        if (cachedModeScope() == ModeScope::Process) reportModeToUi(mode, true);
         candidateWnd_.setActiveGate(true);
         ensureForegroundHook();
         if (!transport_.isConnected()) warmDaemonInBackgroundOnce();
-        refreshActiveWatchTimer();
         static volatile LONG loggedOn = 0;
         if (InterlockedCompareExchange(&loggedOn, 1, 0) == 0 && diagBudget()) {
             diagPrintf(L"tsf.log", "input active=1 pid=%lu fgpid=%lu\n",
@@ -579,12 +721,11 @@ void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
         }
     } else {
         // 失焦/停用/前台离开：先通知托盘隐藏，再彻底退场。
-        postActiveReport(false, currentEnglish(), false);
+        postActiveReport(false, enMode_, false);
         retireUiCompletely();
         // 保留旧的「焦点抖一下不丢 Shift 会话」语义：物理键仍按着则挂起，
         // 释放后由下一次按键按「挂起」规则收口（真切走应用时不会误切中英）。
         suspendShiftHoldOnFocusLost();
-        refreshActiveWatchTimer();
         static volatile LONG loggedOff = 0;
         if (InterlockedCompareExchange(&loggedOff, 1, 0) == 0 && diagBudget()) {
             diagPrintf(L"tsf.log", "input active=0 pid=%lu\n",
@@ -629,32 +770,13 @@ void ChaosetTIP::retireUiCompletely() {
 }
 
 
-// 线程内是否有任一 TIP 真正在用：定时器只在有用例时运行，未激活时零定时器。
-void ChaosetTIP::refreshActiveWatchTimer() {
-    if (g_tlTipMsgWnd == nullptr) return;
-    bool any = false;
-    for (TipThreadSink* t : g_tlFgTips) {
-        if (t != nullptr && t->tipInputActive()) {
-            any = true;
-            break;
-        }
-    }
-    if (any) {
-        SetTimer(g_tlTipMsgWnd, kActiveWatchTimerId, 500, nullptr);
-    } else {
-        KillTimer(g_tlTipMsgWnd, kActiveWatchTimerId);
-    }
-}
-
-
 // 切换到其它输入法（TSF 未调 Deactivate）时的统一收口：托盘隐藏 + 彻底退场。
 void ChaosetTIP::switchToInactiveProfile() {
     inputActive_ = false;
     focused_ = false;
-    postActiveReport(false, currentEnglish(), false);
+    postActiveReport(false, enMode_, false);
     retireUiCompletely();
     suspendShiftHoldOnFocusLost();
-    refreshActiveWatchTimer();
     static volatile LONG logged = 0;
     if (InterlockedCompareExchange(&logged, 1, 0) == 0 && diagBudget()) {
         diagPrintf(L"tsf.log", "profile switched: input inactive pid=%lu\n",
@@ -720,12 +842,14 @@ bool ChaosetTIP::ensureUiHostStartedByDaemon(bool settings) {
 
 // 把当前中英模式写进线程级隔间，供 Windows 输入指示器显示。
 // 语义（微软《predefined compartments》）：非零 = 键盘打开（中文输入）。
+// 值直接取 enMode_（不经过 currentEnglish()）：避免作用域/权威同步逻辑
+// 在隔间写入路径上递归，也保证写完的值就是本实例刚应用的模式。
 void ChaosetTIP::syncModeCompartment() {
     if (modeCompartment_ == nullptr) return;
     VARIANT var;
     ZeroMemory(&var, sizeof(var));
     var.vt = VT_I4;
-    var.lVal = currentEnglish() ? 0 : 1;  // 非零 = 键盘打开（中文）
+    var.lVal = enMode_ ? 0 : 1;  // 非零 = 键盘打开（中文）
     const HRESULT hr = modeCompartment_->SetValue(clientId_, &var);
     VARIANT back;
     ZeroMemory(&back, sizeof(back));
@@ -738,7 +862,7 @@ void ChaosetTIP::syncModeCompartment() {
         lastFailLog = now;
         diagPrintf(L"tsf.log",
                    "mode compartment failed en=%d set_hr=0x%08lX get_hr=0x%08lX read=%ld\n",
-                   currentEnglish() ? 1 : 0, static_cast<unsigned long>(hr),
+                   enMode_ ? 1 : 0, static_cast<unsigned long>(hr),
                    static_cast<unsigned long>(hrGet),
                    static_cast<long>(SUCCEEDED(hrGet) ? back.lVal : -1));
     }
@@ -806,21 +930,22 @@ void ChaosetTIP::toggleEnMode(ITfContext* pic) {
 }
 
 // ---- worker 消息回投入口（message-only 窗口 → TIP 线程）----
-// 500ms 激活档案复核（定时器只在 active 时运行）：部分宿主切换输入法后
-// 不会调用 Deactivate（2026-11-05 实测），必须有一处事件驱动兜底让托盘
-// 和按键闸门在同一时刻失效。
-void ChaosetTIP::onActiveWatchTimer() {
-    if (!inputActive_) return;
-    if (isActiveTip()) return;
-    switchToInactiveProfile();
-}
-
+// 托盘可见性与中英状态完全由 TSF 信号事件驱动（无周期定时器/心跳）：
+// Activate/Deactivate、ITfThreadFocusSink、ITfActiveLanguageProfileNotifySink、
+// ITfKeyEventSink::OnSetFocus、前台钩子回调分别在激活/失活迁移时上报一次
+// active 1/0（见 updateInputActive），模式变化上报 mode。
 void ChaosetTIP::onWorkerForeground(HWND fg) { onForegroundChanged(fg); }
 
+// worker 异步查到的权威模式（System 档校准）：只在没有「本地刚切换」时采纳。
+// 否则 Shift 切换后、UI 宿主还没把新值写回 HKCU 的窗口期内，这个旧结果会把
+// 刚切的状态翻回去（500ms 防回抖窗，与 currentEnglish 的 TTL 同步刷新配合）。
 void ChaosetTIP::onWorkerModeAuthority() {
     if (cachedModeScope() != ModeScope::System) return;
+    const DWORD now = GetTickCount();
+    if (lastLocalToggleTick_ != 0 && now - lastLocalToggleTick_ < 500) return;
     if (g_modeAuthorityValid.load() != 0) {
         enMode_ = g_modeAuthorityEnglish.load() != 0;
+        lastAuthoritySyncTick_ = now;
         syncModeCompartment();
     }
 }

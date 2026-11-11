@@ -10,7 +10,7 @@ import AppKit
 enum SettingsWindowPages {
 
     // —— 输入页 ——
-    /// 输入页：输入行为（词组联想开关）+ 中英状态（共享作用域三选一）。
+    /// 输入页：输入行为（词组联想开关）+ 中英状态（共享作用域二选一）。
     static func makeInputPage(switchTarget: AssociateSwitchTarget,
                               modeTarget: ModeScopeTarget) -> NSStackView {
         let inputPage = NSStackView()
@@ -54,9 +54,8 @@ enum SettingsWindowPages {
         for scope in ModeScope.allCases {
             let title: String
             switch scope {
-            case .system: title = "系统共享"
-            case .process: title = "每程序"
-            case .window: title = "每窗口"
+            case .system: title = "全局共享"
+            case .process: title = "每进程独立"
             }
             let btn = NSButton(radioButtonWithTitle: title, target: modeTarget,
                                action: #selector(ModeScopeTarget.scopeChanged(_:)))
@@ -66,7 +65,7 @@ enum SettingsWindowPages {
         inputPage.addArrangedSubview(modeRow)
 
         let modeHint = NSTextField(wrappingLabelWithString:
-            "切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。")
+            "切一次所有程序都生效（推荐）；每进程则各自独立。")
         modeHint.font = .systemFont(ofSize: 11)
         modeHint.textColor = .secondaryLabelColor
         modeHint.preferredMaxLayoutWidth = 320

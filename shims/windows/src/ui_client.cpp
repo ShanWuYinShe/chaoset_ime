@@ -98,7 +98,7 @@ bool uiSendCommandFast(const char* command) {
     return uiSendCommandOnce(command);
 }
 
-// 向 UI 宿主查权威中英状态（system 作用域）。只在 ShellWorker 后台线程调用。
+// 向 UI 宿主查权威中英状态（System 作用域）。只在 ShellWorker 后台线程调用。
 //
 // 2026-11-06 零阻塞审计（真机实测）：旧实现用同步句柄却传 OVERLAPPED，ReadFile
 // 会同步阻塞到底、所谓的 200ms 上限是死代码；UI 宿主挂起时宿主 UI 线程可无限

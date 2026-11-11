@@ -4,8 +4,8 @@
 // worker 线程（shell_worker.cpp）只能经 postTipThread/postTipAll 把结果回投到
 // TIP 线程的 message-only 窗口；窗口过程、按线程 TIP 注册表、窗口创建/销毁与
 // 前台钩子表全部在 tip_thread.cpp。TIP 侧（tip_core.cpp）通过 TipThreadSink
-// 抽象接口接收分发（onActiveWatchTimer/onWorkerForeground/onWorkerModeAuthority/
-// onWorkerShowToast/tipInputActive），因此本 TU 不 include/引用具体 TIP 类型。
+// 抽象接口接收分发（onWorkerForeground/onWorkerModeAuthority/onWorkerShowToast），
+// 因此本 TU 不 include/引用具体 TIP 类型。
 //
 // 模块边界（docs/architecture.md §3.1）：只依赖 <windows.h>/<vector>；
 // 不 include tip.hpp 或 win32.cpp。
@@ -22,10 +22,6 @@ namespace chaoset::win {
 constexpr UINT kTipForegroundMsg    = WM_APP + 101;  // 前台变化（钩子回调 → TIP 线程）
 constexpr UINT kTipModeAuthorityMsg = WM_APP + 103;  // 后台查到的权威中英状态
 constexpr UINT kTipShowToastMsg     = WM_APP + 104;  // 后台失败提示（wParam=文案 id）
-// TIP message-only 窗口定时器：只在「本线程有激活 TIP」时运行，500ms 复核一次
-// 激活档案；用户切换输入法但 TSF 未调用 Deactivate 时，托盘要能及时隐藏。
-constexpr UINT_PTR kActiveWatchTimerId = 3;
-
 // worker 线程 → TIP 线程回投（按线程 id 找该线程的 message-only 窗口）。
 void postTipThread(DWORD tid, UINT msg, WPARAM wp, LPARAM lp);
 // 广播到所有存活的 TIP 线程窗口（权威中英状态变化等）。
@@ -40,12 +36,9 @@ void unregTipWnd(HWND wnd);
 class TipThreadSink {
 public:
     virtual ~TipThreadSink() = default;
-    virtual void onActiveWatchTimer() = 0;
     virtual void onWorkerForeground(HWND fg) = 0;
     virtual void onWorkerModeAuthority() = 0;
     virtual void onWorkerShowToast(int id) = 0;
-    // 本实例是否「前台在用」：500ms 激活档案定时器据此决定是否常驻。
-    virtual bool tipInputActive() const = 0;
 };
 
 // 按线程的 TIP 注册表与消息窗口（Thread_local；窗口过程见 tip_thread.cpp）。

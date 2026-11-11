@@ -70,11 +70,22 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	// 反斜杠；2026-11-06 曾因生成脚本吞反斜杠写成 SoftwareChaoset）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
 		"windowsRegistrySubKey", "Software\\Chaoset")
-	// CLI 契约面：get/set + 三个键名 + JSON 字段名。
+	// CLI 契约面：get/set + 三个键名 + JSON 字段名 + 两档作用域取值。
 	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
-		"get", "set", "associate", "mode-scope", "ui-english")
+		"get", "set", "associate", "mode-scope", "ui-english", "system|process")
+	// 单一真源：两档枚举名与缺省 JSON 契约值固定为 system。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		"mode_scope", "ui_english", "ModeScopeSystem", "ModeScopeProcess", "ModeScopeWindow")
+		"mode_scope", "ui_english", "ModeScopeSystem", "ModeScopeProcess",
+		`{"associate":true,"mode_scope":"system","ui_english":false}`)
+	// 旧三档值的读取归一化必须保留：window→process、未知→system
+	// （老用户存储里仍有 window，删掉迁移映射会让 get/设置窗拿到非法值）。
+	checkContains(fsys, problems, group, "internal/settings/settings.go",
+		`case ModeScopeProcess, "window":`,
+		"parseStoredModeScope")
+	// ui-parity 文档必须记录两档语义与旧值迁移规则（实现/文档同步）。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"两档", "全局共享", "每进程独立",
+		"window→process", "未知→system")
 	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
 	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
 		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope")
@@ -95,8 +106,8 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 // checkLinuxSetupAssembly 锁住 2026-11-06 修复的两个 Linux 设置窗回归：
 //  1. GtkStack 页面必须用 gtk_stack_add_titled 挂载（GtkStack 不是 GtkBox；
 //     误用 gtk_box_pack_start 会让三个内容页从未挂上、设置窗内容区为空）；
-//  2. 中英状态三选一必须共用同一个首 radio 建组（from_widget），不能把
-//     GSList 等错误类型传给 GTK_RADIO_BUTTON（否则三个 radio 各自成组、可同时选中）。
+//  2. 中英状态二选一必须共用同一个首 radio 建组（from_widget），不能把
+//     GSList 等错误类型传给 GTK_RADIO_BUTTON（否则两个 radio 各自成组、可同时选中）。
 func checkLinuxSetupAssembly(fsys fs.FS, problems *[]string) {
 	const group = groupLinuxSetupAssembly
 	text, err := readText(fsys, linuxSetup)
@@ -135,6 +146,22 @@ func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
 	for _, path := range []string{macSettings, winShell, linuxSetup} {
 		checkContains(fsys, problems, groupSettingsSharedText, path, sharedSettingsText...)
 	}
+	// 两档作用域的按钮文案 → 存储值映射不得接反：macOS/Linux 设置窗都必须是
+	// 「全局共享」→system、「每进程独立」→process。
+	checkContains(fsys, problems, groupSettingsSharedText, macSettings,
+		`case .system: title = "全局共享"`,
+		`case .process: title = "每进程独立"`)
+	checkContains(fsys, problems, groupSettingsSharedText, linuxSetup,
+		`{"全局共享", "system"}`,
+		`{"每进程独立", "process"}`)
+	// Windows 设置窗按钮标题必须真的是两档文案（注释里出现不算）。
+	checkContains(fsys, problems, groupSettingsSharedText, winShell,
+		`L"全局共享"`, `L"每进程独立"`)
+	// Windows 121/122 → System/Process 映射不得接反（默认 System；旧的 123 档已删）。
+	checkContains(fsys, problems, groupSettingsSharedText, winShell,
+		"(LOWORD(wParam) == 121 || LOWORD(wParam) == 122)",
+		"ModeScope scope = ModeScope::System;",
+		"if (LOWORD(wParam) == 122) scope = ModeScope::Process;")
 }
 
 // checkSettingsSingleton 三端设置窗单例实现必须存在（mac 静态 window / Windows g_settingsWnd / Linux Gtk.Application）。

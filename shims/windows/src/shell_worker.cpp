@@ -60,27 +60,17 @@ bool openSettingsViaUi() {
 // 把当前中英模式上报给 UI 宿主（0=中文 1=英文）。每次事件一次短连接，
 // 正常路径 <1ms。
 //
-// allowSpawn：只有「本进程就是前台、确实在接收用户输入」时才允许懒启动 UI
-// 宿主。后台 TIP 实例（explorer 单进程 4 个、被 TSF 提前激活的进程）不能
-// 因为一次无关的 Activate 就拉起进程或改写托盘模式（2026-11-05 评审 P0）。
-// 上报失败不重发本次模式：下一轮焦点/切换事件会再上报，UI 宿主启动后还有
-// HKCU 记忆的上次模式兜底。
-// 只有**持有焦点的进程**能更新托盘（2026-11-06 用户规则：
-// 「谁有焦点谁就能更新托盘」）。
+// allowSpawn：是否允许 worker 在管道不可用时懒启动 UI 宿主（CreateProcessW
+// 只在 worker 线程）。调用方必须已确认 inputActive_（TSF 焦点 + 本线程激活
+// 档案是 Chaoset）——这就是上报可信度的闸门；2026-11-11 起不再用
+// GetForegroundWindow 的 pid 做第二道门限：UWP/ApplicationFrameHost 宿主的
+// 前台窗口属于另一个进程，旧门限会把合法上报丢弃（「托盘有的情况下不显示」）。
 //
-// 为什么必须在这里收口：TSF 会把 TIP 装进每个宿主进程（explorer 单进程实测
-// 4 个实例），后台实例的 Activate/焦点回调同样会走到上报路径。若不加闸门，
-// 后台实例用自己陈旧的 enMode_ 覆盖托盘 → 用户看到「托盘状态和当前窗口对不上」。
+// 上报失败不重发本次模式：下一次焦点/切换事件会再上报，UI 宿主
+// 启动后还有 HKCU 记忆的上次模式兜底。
 //
-// 判定放在函数入口而不是各调用点：调用点都散落在 Activate/OnSetFocus/
-// storeEnglish 里，逐个判断容易漏（2026-11-06 审计：4 个调用点原先只有 1 个
-// 判断了前台）。**所有**托盘更新都必须经过这里。
+// 仍然只入队：管道写/重试/拉起 UI 宿主全部在 worker（零阻塞审计 T7）。
 bool reportModeToUi(bool english, bool allowSpawn) {
-    // 调用方必须已确认 inputActive_（本 TIP 是前台激活输入法）。**不在 TIP 线程
-    // 判前台**：焦点事件到达时 GetForegroundWindow 往往还是旧进程，立刻判会
-    // 把刚获得焦点的实例误拦掉——那正是 2026-11-07「切 app 后托盘还是旧状态」
-    // 的根因。前台校验交给 ShellWorker（可等 150ms 再发）。
-    // 仍然只入队：管道写/重试/拉起 UI 宿主全部在 worker（零阻塞审计 T7）。
     postModeReport(english, allowSpawn);
     return true;
 }
@@ -108,7 +98,7 @@ struct ShellTask {
     };
     Kind kind = Kind::kWriteLog;
     int arg = 0;
-    int arg2 = 0;  // kReportActive：当前中英模式（0=中文 1=英文），供懒启动 UI 宿主 --mode 用
+    int arg2 = 0;  // kReportMode/kReportActive：当前中英模式（0=中文 1=英文）
     bool allowSpawn = false;
     DWORD notifyThread = 0;
     std::string text;
@@ -154,20 +144,6 @@ static bool daemonMutexPresent() {
     if (h == nullptr) return false;
     CloseHandle(h);
     return true;
-}
-
-// worker 线程用：最多等 ms 让「本进程成为前台」。返回 true = 本进程是前台。
-// 不在 TSF 线程调用（那里只看一次，绝不等待）。
-static bool workerWaitForegroundSelf(int ms) {
-    const DWORD start = GetTickCount();
-    for (;;) {
-        const HWND fg = GetForegroundWindow();
-        DWORD fgPid = 0;
-        if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
-        if (fgPid == GetCurrentProcessId()) return true;
-        if (static_cast<int>(GetTickCount() - start) >= ms) return false;
-        Sleep(20);
-    }
 }
 
 class ShellWorker {
@@ -263,18 +239,25 @@ private:
                 diagWrite(L"tsf.log", task.text.data(), static_cast<int>(task.text.size()));
                 break;
             case ShellTask::Kind::kReportMode: {
-                // 只有**本进程确实是前台**才允许改托盘：焦点事件到达时前台窗口
-                // 可能还没切完（GetForegroundWindow 仍是旧进程），在 worker 里
-                // 最多等 150ms 让前台稳定，再发命令；仍不是前台则丢弃（下一次
-                // 焦点/按键上报会再发）。这修 2026-11-07「切 app 后托盘还是旧
-                // 状态」：TIP 线程上的前台闸门会把刚获得焦点的实例误拦掉。
-                if (!workerWaitForegroundSelf(150)) break;
-                const char* cmd = task.arg != 0 ? "mode 1" : "mode 0";
+                // 命令协议：mode <0|1> <pid>（发送进程 pid 由 TIP 侧进程附上，
+                // UI 宿主按 pid 聚合可见性）。上报可信度由 TIP 的 TSF 焦点 +
+                // 激活档案（inputActive_）决定，这里**不再**用 GetForegroundWindow
+                // 的 pid 做门限：UWP/ApplicationFrameHost 宿主的前台窗口 pid
+                // 与 TIP 进程 pid 不同，旧门限会丢弃合法上报。
+                char cmd[64];
+                wsprintfA(cmd, "mode %d %lu", task.arg != 0 ? 1 : 0,
+                          static_cast<unsigned long>(GetCurrentProcessId()));
                 if (uiSendCommandFast(cmd)) break;
                 if (!task.allowSpawn) break;
-                // UI 宿主没跑：带当前模式懒启动（首实例同时收到 active 1）。
+                // UI 宿主没跑/被杀：事件驱动恢复（无定时器）——带当前模式懒启动
+                // 首实例，并短重试本次命令；AC 宿主不能 CreateProcess，走 daemon
+                // 代拉起。下一个 TSF 事件也会重发（active/mode 失败不丢状态）。
                 const bool english = task.arg != 0;
-                ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0");
+                if (isAppContainer()) {
+                    ensureUiHostByDaemonWorker(/*settings=*/false);
+                } else {
+                    ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0");
+                }
                 for (int i = 0; i < 10; ++i) {  // worker 线程：短等首实例监听管道
                     if (uiSendCommandFast(cmd)) break;
                     Sleep(20);
@@ -291,23 +274,36 @@ private:
                 break;
             }
             case ShellTask::Kind::kReportActive: {
-                // active 命令控制托盘可见性（2026-11-07 用户要求：输入法没激活
-                // 就不该显示托盘）。active=1 同样要求本进程是前台；active=0 是
-                // 「刚才那个前台上下文离开了」，任何实例发都安全（UI 宿主有防抖，
-                // 且下一条 active=1 会取消隐藏）。
+                // 命令协议：active 1 <0|1> <pid>（激活 + 当前模式 + pid，激活
+                // 迁移时立即发一次） / active 0 <pid>（失活）。UI 宿主只认单活跃
+                // owner：active 1 设 owner 并显示，active 0 仅当 pid==owner 才隐藏。
+                // 发送失败且 allowSpawn 时重新拉起被杀/未启动的 UI 宿主（事件驱动
+                // 恢复，无定时器；下一次 TSF 事件也会重发）。
+                char cmd[64];
                 if (task.arg != 0) {
-                    if (!workerWaitForegroundSelf(150)) break;
-                    if (task.allowSpawn) {
-                        ensureUiHostStarted(task.arg2 != 0 ? L"--mode 1" : L"--mode 0");
+                    const bool english = task.arg2 != 0;
+                    wsprintfA(cmd, "active 1 %d %lu", english ? 1 : 0,
+                              static_cast<unsigned long>(GetCurrentProcessId()));
+                    if (uiSendCommandFast(cmd)) break;
+                    if (!task.allowSpawn) break;
+                    // 事件驱动恢复：UI 宿主被杀/未启动时懒启动并重试本次 active。
+                    // AC 宿主走 daemon 代拉起（不能 CreateProcessW）。
+                    if (isAppContainer()) {
+                        ensureUiHostByDaemonWorker(/*settings=*/false);
+                    } else {
+                        ensureUiHostStarted(english ? L"--mode 1" : L"--mode 0");
                     }
-                    uiSendCommand("active 1", 4);
-                    // UI 宿主刚起来时管道监听还没就绪，补几次短等（仅 worker）。
-                    for (int i = 0; i < 10; ++i) {
-                        if (uiSendCommandFast("active 1")) break;
-                        Sleep(20);
+                    // 首实例冷启动（CreateProcess + LoadLibrary + 管道监听）可能
+                    // 超过 200ms：worker 线程一次性等最多 1s（不是轮询；失败后下一次
+                    // TSF 事件会重发 active，事件驱动恢复）。
+                    for (int i = 0; i < 40; ++i) {
+                        if (uiSendCommandFast(cmd)) break;
+                        Sleep(25);
                     }
                 } else {
-                    uiSendCommand("active 0", 4);
+                    wsprintfA(cmd, "active 0 %lu",
+                              static_cast<unsigned long>(GetCurrentProcessId()));
+                    uiSendCommand(cmd, 4);
                 }
                 break;
             }
@@ -368,9 +364,10 @@ void postModeReport(bool english, bool allowSpawn) {
     shellWorker().post(std::move(task));
 }
 
-// 托盘可见性上报：active=1 只在该 TIP 真正成为「前台激活输入法」时入队；
-// active=0 在失焦/停用/前台离开时入队。worker 里 active=1 仍会校验前台，
-// active=0 直接发（UI 宿主防抖；下一条 active=1 取消隐藏）。
+// 托盘可见性上报：active=1 只在该 TIP 真正成为「前台激活输入法」时入队
+//（激活迁移/模式变化/焦点事件时发一次；english 为当前模式，供 UI 宿主按 pid
+// 聚合显示）；active=0 在失焦/停用/前台离开时入队。命令由 worker 线程附上
+// 本进程 pid 后发送。
 void postActiveReport(bool active, bool english, bool allowSpawn) {
     ShellTask task;
     task.kind = ShellTask::Kind::kReportActive;

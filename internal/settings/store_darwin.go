@@ -31,7 +31,8 @@ const (
 )
 
 // Load 读取 macOS 设置。键不存在 = 缺省（AssociateEnabled 缺省 true、
-// ChaosetModeScope 缺省 system）；UiEnglish 恒为缺省 false（macOS 无此持久化）。
+// ChaosetModeScope 缺省 system）；读取时归一化旧三档值（window→process，
+// 见 parseStoredModeScope）；UiEnglish 恒为缺省 false（macOS 无此持久化）。
 func Load() (Settings, error) {
 	s := Defaults()
 	associate, ok, err := readDefaultsBool(macKeyAssociate)
@@ -67,7 +68,7 @@ func SetAssociate(on bool) error {
 // SetModeScope 写 UserDefaults 的 ChaosetModeScope（string）。
 func SetModeScope(scope ModeScope) error {
 	if !scope.Valid() {
-		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process|window）", string(scope))
+		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(scope))
 	}
 	if _, err := defaultsRunner("write", defaultsDomain, macKeyModeScope, "-string", string(scope)); err != nil {
 		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyModeScope, err)

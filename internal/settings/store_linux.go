@@ -14,7 +14,8 @@ import (
 )
 
 // Linux 存储：$XDG_CONFIG_HOME/chaoset/config.json，与 shims/linux/setup/
-// setup_ctl.c 逐字兼容（键名 "associate"/"mode_scope"、缺省 true/system）。
+// setup_ctl.c 逐字兼容（键名 "associate"/"mode_scope"、缺省 true/system；
+// 读取时归一化旧三档值 window→process）。
 // 路径解析复用 internal/appdirs.LinuxConfigPath，与 chaoset-userdict
 // -print-paths 给壳的 config 路径同源。
 const (
@@ -79,7 +80,7 @@ func SetAssociate(on bool) error {
 // 读取无影响）。这是本包与现有 C 写入实现的唯一有意差异，已写进 A1 报告。
 func SetModeScope(scope ModeScope) error {
 	if !scope.Valid() {
-		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process|window）", string(scope))
+		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(scope))
 	}
 	path, err := linuxConfigPath()
 	if err != nil {

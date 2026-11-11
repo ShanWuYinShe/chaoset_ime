@@ -360,18 +360,30 @@ volatile LONG g_liveTrayWindows = 0;
 // g_uiTray。
 static constexpr UINT kUiOpenSettingsMsg = WM_APP + 71;
 static constexpr UINT kUiSetModeMsg = WM_APP + 72;
-// TIP→UI 的 active 上报（2026-11-07 协议定稿）：托盘可见性的唯一开关。
-// 命令管道收到纯文本 "active 1"/"active 0" 后 PostMessage 到这里；
-// active=1 取消待隐藏定时器并 show(g_uiEnglish)，active=0 防抖 300ms 后 hide()。
+// TIP→UI 的 active 上行（2026-11-11 协议定稿，TSF 信号事件驱动）：托盘可见性
+// 的唯一开关。命令管道收到纯文本 "active 1 <0|1> <pid>" / "active 0 <pid>" 后
+// PostMessage 到这里（wParam=pid、lParam 打包 active|english）。UI 宿主只维护
+// **单活跃 owner pid**：active 1 设 owner 并 show（System 档显示权威 mode，
+// Process 档显示该 pid 的 mode）；active 0 只有 sender==owner 才清 owner 并
+// 300ms 防抖 hide（后台实例的 active 0 不得误隐藏）。**没有任何轮询定时器**：
+// owner 进程退出用 OpenProcess+RegisterWaitForSingleObject 回调清理。
 // 占 WM_APP+74（原「打开设置→关于」消息顺延到 +75，避免撞号）。
 static constexpr UINT kUiActiveMsg = WM_APP + 74;
 // 打开设置窗并切到「关于」页（托盘右键菜单用，2026-11-06）。
 static constexpr UINT kUiOpenSettingsAboutMsg = WM_APP + 75;
+// owner 进程退出（线程池 wait 回调 → 主线程清理托盘）：事件驱动兜底进程崩溃。
+static constexpr UINT kUiOwnerExitedMsg = WM_APP + 76;
 // kUiToggleModeMsg 定义见文件前部（TIP 侧托盘点击也要用）。
 // 托盘隐藏防抖（active=0 后 300ms 才真正隐藏，期间 active=1 取消）：焦点在同一
-// 进程多个 TIP 实例/多个窗口间抖动时不会闪图标。定时器挂在 UI 宿主隐藏窗口上。
+// 进程多个 TIP 实例间抖动时不会闪图标。定时器只用于这 300ms 防抖（非轮询）。
 static constexpr UINT_PTR kUiHideTimerId = 1;
 static constexpr UINT kUiHideDelayMs = 300;
+// 单活跃 owner（只有 UI 主线程读写）：pid + 该进程最近一次上报的中英；进程
+// 句柄与退出 wait 用于崩溃清理（active 0/owner 变更时释放）。
+static DWORD g_uiOwnerPid = 0;
+static bool g_uiOwnerEnglish = false;
+static HANDLE g_uiOwnerProcess = nullptr;
+static HANDLE g_uiOwnerWait = nullptr;
 HWND g_uiHostWnd = nullptr;
 static UiTray* g_uiTray = nullptr;  // 进程生命周期内唯一托盘实例（仅 UI 主线程使用）
 static HANDLE g_uiStopEvent = nullptr;
@@ -410,17 +422,84 @@ static void showTrayMenu(HWND owner) {
     }
 }
 
-// 权威中英状态（system 作用域下的唯一真相）。
+// 权威中英状态（System 作用域下的唯一真相）。
 //
 // 为什么放在 UI 宿主：它每用户会话唯一、常驻、中等完整性（能写 HKCU），
 // 而 TIP 会被装进任意宿主进程（含 AppContainer，写不了 HKCU）。
 // g_uiEnglish 只在 UI 主线程读写（托盘/菜单/管道消息都由主线程处理）。
 //
-// process/window 作用域下它不是全局权威：只表示「最近一次激活 app 的模式」，
-// 供托盘图标显示（托盘跟 app），不写 HKCU（2026-11-07 bug3 修复）。
+// Process 作用域下它不是全局权威：托盘显示当前活跃 pid 条目自己的模式，
+// 不写 HKCU。
 static bool g_uiEnglish = false;
 
 static bool uiCurrentEnglish() { return g_uiEnglish; }
+
+// 解析命令里的十进制 pid（0 = 缺省/非法）。pid 由 TIP 自己附在命令里，不用
+// 服务端取客户端 pid 的 API（老 SDK/头文件缺该 API，且管道线程取客户端 pid
+// 对短连接没有必要）。
+static DWORD uiCommandPid(const char* text) {
+    if (text == nullptr) return 0;
+    while (*text == ' ' || *text == '\t') ++text;
+    unsigned long pid = 0;
+    const char* p = text;
+    while (*p >= '0' && *p <= '9') {
+        pid = pid * 10 + static_cast<unsigned long>(*p - '0');
+        ++p;
+        if (pid > 0x7FFFFFFFul) return 0;  // 防御异常输入（命令只有几十字节）
+    }
+    return (p == text) ? 0 : static_cast<DWORD>(pid);
+}
+
+// 托盘当前应显示的中英：System 档 = 权威 g_uiEnglish（app 跟托盘）；
+// Process 档 = 当前 owner 进程最近一次上报的模式（托盘跟当前进程）。
+static bool uiDisplayEnglish() {
+    if (uiLoadModeScope() == ModeScope::System) return g_uiEnglish;
+    return g_uiOwnerEnglish;
+}
+
+
+// 释放 owner 进程句柄与退出 wait（幂等；只在 UI 主线程调用）。
+static void uiClearOwner() {
+    if (g_uiOwnerWait != nullptr) {
+        // 非阻塞注销：回调可能已在线程池排队，消息处理里会按「当前 owner 进程
+        // 句柄是否已 signaled」二次确认，陈旧消息不会误清新接管的 owner。
+        UnregisterWaitEx(g_uiOwnerWait, nullptr);
+        g_uiOwnerWait = nullptr;
+    }
+    if (g_uiOwnerProcess != nullptr) {
+        CloseHandle(g_uiOwnerProcess);
+        g_uiOwnerProcess = nullptr;
+    }
+    g_uiOwnerPid = 0;
+    g_uiOwnerEnglish = false;
+}
+
+// owner 进程退出（线程池 wait 回调）：**只能 PostMessage**——UI 状态/托盘只能
+// 由拥有消息循环的主线程修改。
+static VOID CALLBACK uiOwnerExitedCallback(PVOID context, BOOLEAN /*timerOrWaitFired*/) {
+    HWND wnd = reinterpret_cast<HWND>(context);
+    if (wnd != nullptr) PostMessageW(wnd, kUiOwnerExitedMsg, 0, 0);
+}
+
+// 把 pid 设为唯一 owner 并注册进程退出监听（事件驱动兜底崩溃，不轮询）。
+// 换 owner 时先释放旧监听。OpenProcess(SYNCHRONIZE) 失败（更高完整性进程/
+// AppContainer 权限受限）时只记录 owner：崩溃清理交给下一次 active 1 接管，
+// 不影响正常的 active 0 隐藏。
+static void uiSetOwnerProcess(DWORD pid, HWND wnd) {
+    uiClearOwner();
+    g_uiOwnerPid = pid;
+    HANDLE proc = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    if (proc == nullptr) return;
+    HANDLE wait = nullptr;
+    if (RegisterWaitForSingleObject(&wait, proc, uiOwnerExitedCallback,
+                                    reinterpret_cast<void*>(wnd), INFINITE,
+                                    WT_EXECUTEONLYONCE)) {
+        g_uiOwnerProcess = proc;
+        g_uiOwnerWait = wait;
+    } else {
+        CloseHandle(proc);
+    }
+}
 
 
 // 管道线程只解析命令并 PostMessage 到 UI 主线程：托盘图标（icon_/shown_/窗口）
@@ -428,20 +507,38 @@ static bool uiCurrentEnglish() { return g_uiEnglish; }
 // 处理一条命令，返回要回给调用方的应答（空串 = 不回应答）。
 //
 // 应答是双向管道的核心用途（2026-11-06）：托盘左键切中英后，TIP 需要立刻知道
-// 新状态；system 作用域下任何 TIP 也都可能来查权威状态。
+// 新状态；System 作用域下任何 TIP 也都可能来查权威状态。
 static std::string uiHandleCommand(const char* command, DWORD len) {
+    // mode <0|1> <pid>：wParam=pid、lParam=english。
     if (len >= 6 && strncmp(command, "mode ", 5) == 0) {
+        const int english = command[5] == '1' ? 1 : 0;
+        const DWORD pid = uiCommandPid(command + 6);
         if (g_uiHostWnd != nullptr) {
-            PostMessageW(g_uiHostWnd, kUiSetModeMsg, command[5] == '1' ? 1 : 0, 0);
+            PostMessageW(g_uiHostWnd, kUiSetModeMsg, static_cast<WPARAM>(pid),
+                         static_cast<LPARAM>(english));
         }
         return std::string();
     }
-    // active 1/0：托盘可见性的唯一开关（2026-11-07 用户反馈「托盘永不休眠」）。
-    // mode 只更新图标/状态，active 才决定显示还是隐藏；解析后投递 UI 主线程
-    //（Shell_NotifyIcon/窗口操作只能由拥有消息循环的主线程做）。
+    // active 1 <0|1> <pid>（激活） / active 0 <pid>（失活）：托盘可见性的
+    // 唯一开关（2026-11-07 用户反馈「托盘永不休眠」）。解析后投递 UI 主线程
+    //（Shell_NotifyIcon/窗口操作只能由拥有消息循环的主线程做），wParam=pid，
+    // lParam = bit0 active | bit1 english。
     if (len >= 8 && strncmp(command, "active ", 7) == 0) {
+        const char* rest = command + 7;
+        const bool active = rest[0] == '1';
+        int english = 0;
+        const char* tail = rest + 1;
+        if (active) {
+            while (*tail == ' ') ++tail;
+            if (*tail == '0' || *tail == '1') {
+                english = (*tail == '1') ? 1 : 0;
+                ++tail;
+            }
+        }
+        const DWORD pid = uiCommandPid(tail);
         if (g_uiHostWnd != nullptr) {
-            PostMessageW(g_uiHostWnd, kUiActiveMsg, command[7] == '1' ? 1 : 0, 0);
+            const LPARAM packed = static_cast<LPARAM>((active ? 1 : 0) | (english << 1));
+            PostMessageW(g_uiHostWnd, kUiActiveMsg, static_cast<WPARAM>(pid), packed);
         }
         return std::string();
     }
@@ -465,8 +562,8 @@ static std::string uiHandleCommand(const char* command, DWORD len) {
 }
 
 // 设置权威中英状态（只在 UI 主线程调用）：写 HKCU + 同步托盘图标。
-// **不改变托盘可见性**：可见性只由 active 命令控制（2026-11-07）。system
-// scope 下托盘是全局权威（app 跟托盘）；process/window scope 见 kUiSetModeMsg。
+// **不改变托盘可见性**：可见性只由 active 控制（2026-11-07）。System
+// 档托盘是全局权威（app 跟托盘）；Process 档托盘只跟随当前进程（见 kUiSetModeMsg）。
 static void uiApplyEnglish(bool english) {
     g_uiEnglish = english;
     if (g_uiTray != nullptr) {
@@ -478,46 +575,69 @@ static void uiApplyEnglish(bool english) {
 static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case kUiSetModeMsg: {
-            // TIP 上报它当前 app 的中英模式（激活/切换时）。**不改变托盘可见性**：
-            //   - system scope：托盘是全局权威，写 HKCU（app 跟托盘）；
-            //   - process/window scope：托盘只是当前 app 的指示器（托盘跟 app），
-            //     只更新内存与图标，不写 HKCU（后果由 docs/ui-parity.md 记录）。
-            const bool english = wParam != 0;
+            // TIP 上报它当前进程的中英模式（激活/切换，wParam=pid、
+            // lParam=english）。**不改变托盘可见性**（可见性只由 active 控制）：
+            //   - System 档：托盘是全局权威，写 HKCU（app 跟托盘）；
+            //   - Process 档：托盘跟随当前进程，只更新 owner 的图标，不写 HKCU。
+            // 非 owner 的 mode 忽略：后台实例不得污染托盘。
+            const bool english = lParam != 0;
+            const DWORD pid = static_cast<DWORD>(wParam);
+            if (pid == 0 || pid != g_uiOwnerPid) return 0;
             if (uiLoadModeScope() == ModeScope::System) {
                 uiApplyEnglish(english);
-            } else {
-                g_uiEnglish = english;
-                if (g_uiTray != nullptr) g_uiTray->setMode(english);  // 只在 UI 主线程碰托盘
+                return 0;
             }
+            g_uiOwnerEnglish = english;
+            if (g_uiTray != nullptr) g_uiTray->setMode(english);  // 只在 UI 主线程碰托盘
             return 0;
         }
         case kUiToggleModeMsg:
             // 托盘左键 / 管道 "toggle"：翻转权威状态。
-            // 只在 system scope 生效：process/window scope 下托盘只是「当前 app
-            // 实际状态」的指示器，不能反向改全局（2026-11-07 用户反馈 bug3：
-            // 托盘与 app 中英不一致；scope 语义见 docs/ui-parity.md）。
+            // 只在 System 档生效：Process 档托盘只是「当前进程实际状态」的指示器，
+            // 不能反向改进程状态（进程各自独立由 Shift/各进程自己决定）。
             if (uiLoadModeScope() == ModeScope::System) uiApplyEnglish(!g_uiEnglish);
             return 0;
-        case kUiActiveMsg:
-            // TIP→UI active 上报：托盘可见性的唯一开关（2026-11-07 用户反馈
-            // bug1「托盘永不休眠」）。所有托盘操作只在 UI 主线程。
-            if (wParam != 0) {
-                // 前台有激活的 Chaoset TIP：取消待隐藏并显示当前模式。
+        case kUiActiveMsg: {
+            // TIP→UI active（wParam=pid，lParam=bit0 active|bit1 english）：
+            // 纯 TSF 信号事件驱动，无心跳。UI 宿主只维护单活跃 owner pid。
+            const bool active = (lParam & 1) != 0;
+            const bool english = (lParam & 2) != 0;
+            const DWORD pid = static_cast<DWORD>(wParam);
+            if (active) {
+                if (pid == 0) return 0;
+                // 新的活跃进程接管 owner：托盘可见性只取决于它（进程崩溃/UI 宿主
+                // 重启后靠下一次 TSF 事件重发 active 恢复，无定时器）。
+                if (pid != g_uiOwnerPid) uiSetOwnerProcess(pid, hwnd);
+                g_uiOwnerEnglish = english;
                 KillTimer(hwnd, kUiHideTimerId);
-                if (g_uiTray != nullptr) g_uiTray->show(g_uiEnglish);
-            } else {
-                // 激活上下文失焦/停用/前台离开：防抖 300ms 后隐藏；期间若收到
-                // active=1（焦点在同一进程多 TIP 实例间抖动）会被 KillTimer 取消。
+                if (g_uiTray != nullptr) g_uiTray->show(uiDisplayEnglish());
+            } else if (pid != 0 && pid == g_uiOwnerPid) {
+                // 只有 owner 的失活才隐藏；后台实例的 active 0 不得误隐藏托盘。
+                // owner 暂不清除：防抖窗内同一进程另一个 TIP 实例的 active 1 会
+                // 取消隐藏（同进程焦点抖动不闪图标）；真正隐藏时才清 owner。
                 if (SetTimer(hwnd, kUiHideTimerId, kUiHideDelayMs, nullptr) == 0) {
-                    // 定时器创建失败（资源耗尽等）：立刻隐藏——绝不能留下一个
-                    // 「未激活却永不消失」的托盘图标（用户反馈的 bug1）。
+                    uiClearOwner();
+                    if (g_uiTray != nullptr) g_uiTray->hide();
+                }
+            }
+            return 0;
+        }
+        case kUiOwnerExitedMsg:
+            // owner 进程退出（线程池 wait 回调只 PostMessage）。这里在主线程确认
+            // 当前 owner 进程句柄确实已 signaled（防陈旧消息误清刚接管的 owner）。
+            if (g_uiOwnerProcess != nullptr &&
+                WaitForSingleObject(g_uiOwnerProcess, 0) == WAIT_OBJECT_0) {
+                if (SetTimer(hwnd, kUiHideTimerId, kUiHideDelayMs, nullptr) == 0) {
+                    uiClearOwner();
                     if (g_uiTray != nullptr) g_uiTray->hide();
                 }
             }
             return 0;
         case WM_TIMER:
             if (wParam == kUiHideTimerId) {
+                // 防抖窗内没有新的 active 1：真正失活——清 owner 并隐藏托盘。
                 KillTimer(hwnd, kUiHideTimerId);
+                uiClearOwner();
                 if (g_uiTray != nullptr) g_uiTray->hide();
                 return 0;
             }
@@ -533,6 +653,7 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, kUiHideTimerId);
+            uiClearOwner();  // 注销 owner 进程退出 wait，避免回调打到已销毁窗口
             g_uiHostWnd = nullptr;
             PostQuitMessage(0);
             return 0;
@@ -756,8 +877,8 @@ int runUiHost(LPCWSTR cmdLine) {
         }
     }
     if (haveMode) {
-        // 只同步模式（system scope 写 HKCU），**不显示托盘**：此后 TIP 的
-        // active=1 上报才会真正 show()，模式上报会再校准图标。
+        // 只同步模式（System 档写 HKCU），**不显示托盘**：此后 TIP 的
+        // active 1 才会真正 show()，模式上报会再校准图标。
         g_uiEnglish = modeEnglish;
         if (uiLoadModeScope() == ModeScope::System) uiSaveEnglish(modeEnglish);
     }

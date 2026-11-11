@@ -58,9 +58,9 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
 
 - 把程序安装到 `C:\Program Files\Chaoset`；
 - 注册 64 位与 32 位 TSF COM 组件；
-- 写两条 HKLM `Run` 项：`ChaosetDaemon`（daemon，`REG_EXPAND_SZ`，`%LOCALAPPDATA%`
-  由每个登录用户展开）与 `ChaosetUi`（`chaoset-ui.exe`，单例 UI 宿主：托盘中英状态
-  + 设置窗）；
+- 写 `ChaosetDaemon` 登录 `Run` 项（daemon，`REG_EXPAND_SZ`，`%LOCALAPPDATA%`
+  由每个登录用户展开）；不写 `ChaosetUi` Run 项——单例 UI 宿主（托盘中英状态 +
+  设置窗）由 TIP 首次输入激活时懒启动，安装器/升级只负责清掉旧版 `ChaosetUi` Run 项；
 - 用 Go 导入器把随包底库合并到当前用户 `%LOCALAPPDATA%\Chaoset\dict.tsv`
   （保留已导入词，旧文件备份）；
 - 写入标准卸载信息。
@@ -113,7 +113,7 @@ CreateProcess），先在记事本等普通程序里打一次字，或手动运�
 升级/替换 DLL 后，**已打开的程序仍加载旧版 DLL**：旧版 TIP 进程里的多余托盘图标
 会一直留到那些进程重启。升级后请注销/重启一次（或至少重启资源管理器与相关
 应用），任务栏中英图标才会回到「每会话唯一」。旧 UI 进程由安装器在升级时结束，
-新 UI 宿主随登录 Run 项或下一次普通程序输入启动。
+新 UI 宿主由下一次普通程序里的 TIP 激活懒启动。
 
 ### 从源码手动注册
 
@@ -158,13 +158,31 @@ Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的
 
 因此 `chaoset-ui.exe` 是**每用户会话唯一**的后台 UI 进程：
 
-- 登录 `Run` 项常驻；TIP 需要时按需拉起（AppContainer 宿主不能 CreateProcess，
-  只连接已运行实例）。
-- 持有唯一托盘图标（中/英），并创建设置窗（候选栏齿轮或托盘图标左键单击都打开它）。
-- TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>` 上报模式（`mode 0/1`）或请求
-  设置窗（`settings`）。管道安全描述符与 daemon 完全同规则（当前用户 + SYSTEM +
-  ALL APPLICATION PACKAGES + 低完整性标签 `S:(ML;;NW;;;LW)`），否则开始菜单/
+- 不写登录 `Run` 项（开机不显示图标）；TIP 在普通程序里首次激活时带 `--mode` 懒启动
+  （AppContainer 宿主不能 CreateProcess，只连接已运行实例）。
+- 持有唯一托盘图标（中/英），并创建设置窗（候选栏齿轮或托盘右键菜单「打开设置…」都打开它）。
+- **中英状态作用域两档（设置项 `mode_scope`）**：`system`（全局共享，默认）——托盘是权威，
+  TIP 获得焦点时从托盘同步，托盘左键切换全局中英，状态在所有程序间共享；`process`（每进程
+  独立）——每个程序各自记住中英状态（同一程序的多个 TIP 实例共享），TIP 激活/切进程时把本
+  进程状态上报到托盘，托盘左键只显示、不切换。旧三档值读取时归一化（window→process，
+  未知→system），新写入只写 `system`/`process`。
+- **托盘可见性（TSF 事件驱动，无周期定时器/心跳）**：激活/失活完全由 `Activate`/
+  `Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink` 等 TSF 信号
+  驱动，TIP 在状态变化时上报 `active 1 <0|1> <pid>`（`Shell_NotifyIcon(NIM_ADD)` 显示托盘、
+  把该上报进程设为 owner、更新图标）或 `active 0 <pid>`（仅当 pid 是当前 owner 时
+  `NIM_DELETE` 隐藏）。UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
+  监听 owner 进程退出并清理；隐藏保留 300ms 防抖（同一进程多 TIP 实例焦点抖动时不闪图标）；
+  UI 宿主重启后靠下一次 TSF 事件重发恢复。没有输入焦点（桌面/任务栏）或切到其它输入法即
+  隐藏；启动 `--mode` 不点亮托盘。TIP 上报可信度由 TSF 焦点 + 激活档案决定，不再用前台窗口
+  pid 门限（UWP/ApplicationFrameHost 宿主的前台 pid 不等于 TIP 进程 pid，曾导致上报被丢、
+  托盘不显示）。
+- TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>` 上报模式/激活状态（`mode <0|1> <pid>` /
+  `active ...`）或请求设置窗（`settings`）。管道安全描述符与 daemon 完全同规则（当前用户
+  + SYSTEM + ALL APPLICATION PACKAGES + 低完整性标签 `S:(ML;;NW;;;LW)`），否则开始菜单/
   搜索框（低完整性）能连不能写。
+- 中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语，不代管中英模式）；用户切换
+  输入法由系统/TSF 触发，TIP 在 `Activate`/`Deactivate` 与
+  `ITfActiveLanguageProfileNotifySink` 中响应，回调只做内存记录与命令入队，不阻塞 TSF 线程。
 - 设置窗/托盘实现全部在 `ChaosetIME.dll` 内（导出 `ChaosetRunUi`），
   `chaoset-ui.exe` 只是 LoadLibrary 壳——不存在第二套 UI 代码。
 - 单实例用 `Local\ChaosetUi-<SID>` 互斥体；第二个实例带 `--settings` 时把请求
@@ -265,14 +283,15 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | 64/32 位 TSF COM，注册/卸载/类别配置 | 已实现；CI 校验导出 |
 | 命名管道、当前用户按需启动、AppContainer ACL | 已实现；Windows 真机需验收 |
 | 原生 GDI 候选窗、学习标记、鼠标点选、翻页 | 已实现；视觉静态契约由 `checkuiparity` 校验 |
-| 中英状态指示器（任务栏「中/英」） | 单例 UI 宿主 `chaoset-ui.exe` 的唯一托盘图标；TIP 经命名管道上报；无浮动提示兜底 |
+| 中英状态指示器（任务栏「中/英」） | 单例 UI 宿主 `chaoset-ui.exe` 的唯一托盘图标；托盘显示当前输入上下文实际状态（system 权威 / process 镜像）；TIP 经命名管道在 TSF 事件下上报激活状态与模式，UI 宿主按 owner 事件驱动显示/隐藏（无周期定时器）；无浮动提示兜底 |
 | 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 由单例 UI 宿主创建（开始菜单/搜索等 AC 宿主里也能打开）；交互需真机验收 |
 | Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
 | 游戏/全屏、UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
 候选窗默认全屏抑制由 `HKCU\Software\Chaoset\FullscreenSuppress` 控制（DWORD，缺省 1）。
-设置窗入口：候选栏齿轮，或左键单击托盘「中/英」图标（由 `chaoset-ui.exe` 打开）；
+设置窗入口：候选栏齿轮，或右键单击托盘「中/英」图标 →「打开设置…」（由
+`chaoset-ui.exe` 打开；system 档托盘左键切换中英，process 档左键只显示不切换）；
 设置项存 `HKCU\Software\Chaoset`。
 
 ## 已知限制

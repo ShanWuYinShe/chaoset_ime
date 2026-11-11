@@ -109,14 +109,6 @@ void removeTipFromThreadHookList(TipThreadSink* tip) {
 // 对象，只能 PostMessage 到这个窗口；窗口过程在 TIP 线程上分发。
 static LRESULT CALLBACK tipMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_TIMER:
-            if (wParam == kActiveWatchTimerId) {
-                for (TipThreadSink* tip : g_tlFgTips) {
-                    if (tip != nullptr) tip->onActiveWatchTimer();
-                }
-                return 0;
-            }
-            break;
         case WM_NCDESTROY:
             if (g_tlTipMsgWnd == hwnd) g_tlTipMsgWnd = nullptr;
             unregTipWnd(hwnd);

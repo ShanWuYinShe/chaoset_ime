@@ -54,7 +54,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | :--- | :--- |
 | `chaoset-settingsctl get` | 单行 JSON：`{"associate":true,"mode_scope":"system","ui_english":false}` |
 | `chaoset-settingsctl set associate on\|off` | 写 Associate，成功退出 0 |
-| `chaoset-settingsctl set mode-scope system\|process\|window` | 写作用域，成功退出 0 |
+| `chaoset-settingsctl set mode-scope system\|process` | 写作用域（两档；旧值 window 也接受并归一化为 process），成功退出 0 |
 | `chaoset-settingsctl set ui-english on\|off` | 写 UI 宿主持久化中英状态（内部用） |
 
 退出码：0 成功；1 运行错误（存储不可用等）；2 参数非法。错误写 stderr，stdout 只放 JSON。

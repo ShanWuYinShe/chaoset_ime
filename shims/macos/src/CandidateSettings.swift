@@ -24,19 +24,29 @@ enum AssociateSetting {
     }
 }
 
-/// 中英状态的共享作用域（2026-11-06 用户要求可配置，与 Windows
-/// HKCU\Software\Chaoset\ModeScope 同语义）。
+/// 中英状态的共享作用域（与 Windows HKCU\Software\Chaoset\ModeScope、
+/// Linux config.json mode_scope 同语义，三端统一两档）。
 ///
-/// - system：全系统共享（默认）——切一次所有程序都生效。
-/// - process：每个程序各自独立。
-/// - window：每个窗口/输入上下文独立。
+/// - system：全局共享（默认）——切一次所有程序都生效。
+/// - process：每进程独立——每个程序各自记住中英状态。
 ///
-/// macOS 侧由本进程（IMK 输入法）持有模式状态，三档分别落到：
-/// system → UserDefaults（跨进程共享）；process → 静态量；window → 按 client 标识。
+/// macOS 壳的中英模式由输入法自己维护（本进程本地持有）；本枚举负责设置窗渲染与
+/// UserDefaults 持久化，schema 与另外两端保持同一份契约（旧三档值读取时归一化）。
 enum ModeScope: String, CaseIterable {
     case system
     case process
-    case window
+
+    /// 存储读取的宽容归一化（三端一致）：system/process 保持原值；
+    /// 旧版本三档值 window 并入 process；大小写与首尾空白容忍；未知/空值
+    /// 回退缺省 system。
+    static func normalized(raw: String) -> ModeScope {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "process", "window":
+            return .process
+        default:
+            return .system
+        }
+    }
 }
 
 enum ModeScopeSetting {
@@ -44,11 +54,10 @@ enum ModeScopeSetting {
 
     static var current: ModeScope {
         get {
-            if let raw = UserDefaults.standard.string(forKey: key),
-               let scope = ModeScope(rawValue: raw) {
-                return scope
+            guard let raw = UserDefaults.standard.string(forKey: key) else {
+                return .system
             }
-            return .system
+            return ModeScope.normalized(raw: raw)
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
     }

@@ -12,7 +12,8 @@ import (
 // （按 docs/architecture.md 拆分后归 config.cpp）的
 //   - RegGetAssociate / RegSetAssociate（DWORD "Associate"，缺省 1）；
 //   - uiLoadModeScope / uiSaveModeScope（REG_SZ "ModeScope"，缺省 "system"；
-//     读取 _wcsicmp 大小写不敏感，未知值按 system）；
+//     只写入 system|process，读取 _wcsicmp 大小写不敏感并归一化旧值
+//     window→process，未知值按 system）；
 //   - readHkcuEnglish / uiSaveEnglish（DWORD "UiEnglish"，缺省 0）
 //
 // 逐字兼容：键名、类型、缺省值、写入格式都不得改。
@@ -84,11 +85,11 @@ func SetAssociate(on bool) error {
 	return nil
 }
 
-// SetModeScope 只写 REG_SZ ModeScope（小写 system|process|window，C 壳写入
-// 同样是小写、带结尾 NUL）。
+// SetModeScope 只写 REG_SZ ModeScope（小写 system|process，C 壳写入同样是
+// 小写、带结尾 NUL）；旧三档值 window 只在读取/CLI 解析时归一化，不写入存储。
 func SetModeScope(scope ModeScope) error {
 	if !scope.Valid() {
-		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process|window）", string(scope))
+		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(scope))
 	}
 	h, err := winCreateKey()
 	if err != nil {
@@ -181,8 +182,9 @@ func winQueryString(h syscall.Handle, name string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	// ModeScope 只需要 "system"/"process"/"window"；128 个 UTF-16 足够，
-	// 更长的值视为异常配置回退缺省（C 壳的 32 字节缓冲同样会回退 system）。
+	// ModeScope 只需要 "system"/"process"（旧值 "window" 也需读出来做归一化）；
+	// 128 个 UTF-16 足够，更长的值视为异常配置回退缺省（C 壳的 32 字节缓冲
+	// 同样会回退 system）。
 	var buf [128]uint16
 	var typ uint32
 	size := uint32(len(buf) * 2)

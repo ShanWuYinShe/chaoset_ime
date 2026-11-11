@@ -69,6 +69,43 @@ func TestStoreDarwinLoad(t *testing.T) {
 	}
 }
 
+// 存量值读取归一化：system/process 保持原值；旧三档 window→process；
+// 未知/空→system。
+func TestStoreDarwinLoadLegacyModeScope(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want ModeScope
+	}{
+		{"system", ModeScopeSystem},
+		{"SYSTEM", ModeScopeSystem},
+		{"process", ModeScopeProcess},
+		{"PROCESS", ModeScopeProcess},
+		{"window", ModeScopeProcess}, // 旧值迁移
+		{"WINDOW", ModeScopeProcess},
+		{"bogus", ModeScopeSystem},
+		{"", ModeScopeSystem},
+	}
+	for _, c := range cases {
+		withDefaultsRunner(t, func(args ...string) (string, error) {
+			switch args[2] {
+			case macKeyAssociate:
+				return "1", nil
+			case macKeyModeScope:
+				return "\"" + c.raw + "\"", nil
+			}
+			t.Fatalf("意外的 defaults 读取键: %v", args)
+			return "", nil
+		})
+		got, err := Load()
+		if err != nil {
+			t.Fatalf("Load() 报错: %v", err)
+		}
+		if got.ModeScope != c.want {
+			t.Errorf("ChaosetModeScope=%q 归一化后 = %q，期望 %q", c.raw, got.ModeScope, c.want)
+		}
+	}
+}
+
 func TestStoreDarwinDefaultsWhenUnset(t *testing.T) {
 	unsetErr := exitStatusError(t, 1)
 	withDefaultsRunner(t, func(args ...string) (string, error) { return "", unsetErr })
@@ -112,15 +149,15 @@ func TestStoreDarwinWrites(t *testing.T) {
 	if err := SetAssociate(false); err != nil {
 		t.Fatalf("SetAssociate(false) 报错: %v", err)
 	}
-	if err := SetModeScope(ModeScopeWindow); err != nil {
-		t.Fatalf("SetModeScope(window) 报错: %v", err)
+	if err := SetModeScope(ModeScopeProcess); err != nil {
+		t.Fatalf("SetModeScope(process) 报错: %v", err)
 	}
 	if err := SetUiEnglish(true); err == nil {
 		t.Fatal("macOS 没有 UiEnglish 持久化，SetUiEnglish 应返回错误")
 	}
 	want := [][]string{
 		{"write", defaultsDomain, macKeyAssociate, "-bool", "false"},
-		{"write", defaultsDomain, macKeyModeScope, "-string", "window"},
+		{"write", defaultsDomain, macKeyModeScope, "-string", "process"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("defaults 写入调用 = %v，期望 %v", calls, want)
@@ -167,7 +204,7 @@ func TestStoreDarwinParseDefaultsOutput(t *testing.T) {
 	strCases := []struct{ in, want string }{
 		{"system", "system"},
 		{"  process  ", "process"},
-		{"\"window\"", "window"},
+		{"\"process\"", "process"},
 		{"\"\"", ""},
 	}
 	for _, c := range strCases {

@@ -4,6 +4,40 @@
 
 ## 未发布
 
+- **中英状态作用域简化为两档（system/process）+ 托盘中英状态按作用域同步（用户反馈「托盘状态不反映当前程序」）**：
+  - 设置项 `mode_scope` 只保留两档：`system`（全局共享，默认）/ `process`（每进程独立）。
+    存量迁移（三端一致，大小写/首尾空白容忍）：system→system、process→process；
+    旧三档 window→process（「每窗口」并入「每进程」）；未知/空→system。新写入只写
+    system/process（CLI `set mode-scope` 接受旧值 window 并归一化）。Go 单一真源
+    `internal/settings` 与 `chaoset-settingsctl`、macOS `CandidateSettings.swift`
+    （UserDefaults 旧值读取归一化）、Linux `setup_ctl.c`（`valid_mode_scope` 两档 +
+    旧值读取归一化）与三端设置窗文案/单测同步；JSON 契约字段名与顺序不变，缺省值仍为 system。
+  - 托盘状态 = 当前输入上下文的实际状态，按作用域决定同步方向：`system` 下托盘是权威
+    （TIP 获得焦点时从托盘同步，托盘左键切换全局中英，状态在所有程序间共享）；`process`
+    下托盘是镜像（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/切进程
+    时把本进程状态上报到托盘，托盘左键只显示、不切换）。中英状态由输入法自己维护，TSF 只
+    提供线程隔间与焦点/激活原语；不实现 `GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION`
+    写入（mingw 头缺该 GUID），保留 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`。
+  - 托盘可见性改为**TSF 信号事件驱动（无周期定时器/心跳）**：激活/失活完全由
+    `Activate`/`Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink`
+    驱动，TIP 在状态变化时发 `active 1 <0|1> <pid>`（显示托盘、把该进程设为 owner、更新
+    图标）或 `active 0 <pid>`（仅当 pid 是当前 owner 时隐藏）；`mode <0|1> <pid>` 只更新
+    图标。UI 宿主不轮询：用 `OpenProcess`+`RegisterWaitForSingleObject` 监听 owner 进程
+    退出并清理，隐藏保留 300ms 防抖，UI 宿主重启后靠下一次 TSF 事件重发恢复。没有输入焦点
+    （桌面/任务栏）或切到其它输入法即隐藏。
+  - 输入法切换链路：用户切换输入法（切走/切回）由系统/TSF 触发，TIP 在 `Activate`/`Deactivate`
+    与 `ITfActiveLanguageProfileNotifySink` 中响应，据此更新激活态与托盘可见性。去掉 worker 中
+    `workerWaitForegroundSelf(150)` 的前台 pid 门限——UWP/ApplicationFrameHost 宿主的前台
+    窗口 pid ≠ TIP 进程 pid，上报曾被静默丢弃，这是「托盘有时不显示」的根因；上报可信度改由
+    TIP 的激活档案 + `isActiveTip()` 决定。
+  - 验证：`go test ./internal/settings ./cmd/chaoset-settingsctl`、`go build ./...`、
+    `gofmt`、macOS `swiftc -typecheck` 通过；`go run ./tools/checkuiparity .`（47 组）、
+    `go test ./tools/checkuiparity/ ./tools/checkgdi/`、Windows 双架构 mingw
+    `-fsyntax-only` 与 `shims/windows/build.sh` 由 A/B 合并后的提交门禁统一复核。Linux
+    GTK3 构建与 `test_setup_ctl` 由 CI linux-e2e 复核。Windows 真机（托盘事件驱动
+    可见性/owner 退出清理、system/process 同步方向、UWP/ApplicationFrameHost 宿主、
+    输入法切换链路、每进程独立状态）待用户验收。
+
 - **Windows 壳拆分 wave2（审计 P1-1 收尾，TIP 类拆分完成，≤2000 目标达成）**：
   win32.cpp 2994→129 行，把 `class ChaosetTIP`（类内 inline 定义 2564 行）按职责拆成
   `tip.hpp`（完整类声明 + kVk*/kPageSize 常量 + mingw 缺失的 ITfTextInputProcessorEx

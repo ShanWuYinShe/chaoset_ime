@@ -21,6 +21,7 @@ func TestRunUsageErrors(t *testing.T) {
 		{"set", "associate", "on", "off"},   // 多余参数
 		{"set", "mode-scope"},               // 缺取值
 		{"set", "mode-scope", "auto"},       // 非法枚举
+		{"set", "mode-scope", "bogus"},      // 非法枚举
 		{"set", "mode-scope", "system", ""}, // 多余参数
 		{"set", "ui-english", "maybe"},      // 非法开关
 	}

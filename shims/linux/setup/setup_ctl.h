@@ -29,8 +29,9 @@ SetupResult setup_import_dicts(gchar **paths, gsize n_paths);
 gboolean setup_config_load(gboolean *associate);
 gboolean setup_config_save(gboolean associate);
 
-/* 中英状态作用域（2026-11-06 与 Windows/macOS 设置窗对齐）：
- * "system"（默认，全系统共享）/ "process"（每程序）/ "window"（每窗口）。 */
+/* 中英状态作用域（与 Windows/macOS 设置窗对齐，两档）：
+ * "system"（默认，全局共享）/ "process"（每进程独立）。写入只接受这两值；
+ * 读取时把旧三档 window→process、未知/空→system 归一化。 */
 const char *setup_config_load_mode_scope(void);
 gboolean setup_config_save_mode_scope(const char *scope);
 

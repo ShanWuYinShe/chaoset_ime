@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// 三端一致的缺省值：联想开启、作用域 system、UiEnglish 关闭。
+// 三端一致的缺省值：联想开启、作用域 system（全局共享）、UiEnglish 关闭。
 func TestDefaults(t *testing.T) {
 	d := Defaults()
 	if !d.Associate {
@@ -38,24 +38,29 @@ func TestDefaultsJSONContract(t *testing.T) {
 }
 
 func TestJSONContractAllValues(t *testing.T) {
-	s := Settings{Associate: false, ModeScope: ModeScopeWindow, UiEnglish: true}
+	s := Settings{Associate: false, ModeScope: ModeScopeProcess, UiEnglish: true}
 	got, err := s.JSON()
 	if err != nil {
 		t.Fatalf("JSON() 报错: %v", err)
 	}
-	want := `{"associate":false,"mode_scope":"window","ui_english":true}`
+	want := `{"associate":false,"mode_scope":"process","ui_english":true}`
 	if got != want {
 		t.Errorf("JSON 契约不符：got = %s，want = %s", got, want)
 	}
 }
 
 func TestJSONRejectsInvalidModeScope(t *testing.T) {
-	s := Settings{Associate: true, ModeScope: "auto"}
-	if _, err := s.JSON(); err == nil {
-		t.Fatal("mode_scope 非法时 JSON() 应报错（不得输出非法契约）")
+	// 旧三档值（含 window）只允许「读取/CLI 解析」归一化，不得进入 JSON 写入契约。
+	for _, raw := range []ModeScope{"auto", "window", "Window"} {
+		s := Settings{Associate: true, ModeScope: raw}
+		if _, err := s.JSON(); err == nil {
+			t.Errorf("mode_scope=%q 非法时 JSON() 应报错（不得输出非法契约）", raw)
+		}
 	}
 }
 
+// ParseModeScope：只写新值 system|process；旧三档值 window 也接受并归一化
+// （window→process），大小写/首尾空白容忍。
 func TestParseModeScope(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -64,9 +69,10 @@ func TestParseModeScope(t *testing.T) {
 	}{
 		{"system", ModeScopeSystem, true},
 		{"process", ModeScopeProcess, true},
-		{"window", ModeScopeWindow, true},
 		{" SYSTEM ", ModeScopeSystem, true}, // CLI 容忍空白/大小写
-		{"Window", ModeScopeWindow, true},
+		{"Process", ModeScopeProcess, true},
+		{"window", ModeScopeProcess, true}, // 旧值迁移：window→process
+		{" WINDOW ", ModeScopeProcess, true},
 		{"auto", "", false},
 		{"", "", false},
 		{"1", "", false},
@@ -115,21 +121,21 @@ func TestParseOnOff(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	valid := []ModeScope{ModeScopeSystem, ModeScopeProcess, ModeScopeWindow}
+	valid := []ModeScope{ModeScopeSystem, ModeScopeProcess}
 	for _, scope := range valid {
 		if err := (Settings{Associate: true, ModeScope: scope}).Validate(); err != nil {
 			t.Errorf("Validate(%q) = %v，期望 nil", scope, err)
 		}
 	}
-	for _, scope := range []ModeScope{"", "SYSTEM", "auto"} {
+	for _, scope := range []ModeScope{"", "SYSTEM", "PROCESS", "window", "Window", "auto"} {
 		if err := (Settings{ModeScope: scope}).Validate(); err == nil {
 			t.Errorf("Validate(%q) 期望报错", scope)
 		}
 	}
 }
 
-// parseStoredModeScope：Windows 壳用 _wcsicmp（大小写不敏感）、未知值回退
-// system；macOS/Linux 的存储读取也统一成这个语义。
+// parseStoredModeScope：三端存储读取统一语义——大小写不敏感；system/process
+// 保持原值、旧三档 window→process；未知/空回退缺省 system。
 func TestParseStoredModeScope(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -137,9 +143,11 @@ func TestParseStoredModeScope(t *testing.T) {
 	}{
 		{"system", ModeScopeSystem},
 		{"process", ModeScopeProcess},
-		{"window", ModeScopeWindow},
+		{"SYSTEM", ModeScopeSystem},
 		{"PROCESS", ModeScopeProcess},
-		{" Window ", ModeScopeWindow},
+		{" Process ", ModeScopeProcess},
+		{"window", ModeScopeProcess}, // 旧值迁移
+		{"WINDOW", ModeScopeProcess},
 		{"", ModeScopeSystem},
 		{"auto", ModeScopeSystem},
 	}
@@ -166,10 +174,11 @@ func TestWindowsRegistrySubKey(t *testing.T) {
 }
 
 func TestModeScopeValid(t *testing.T) {
-	if !ModeScopeSystem.Valid() || !ModeScopeProcess.Valid() || !ModeScopeWindow.Valid() {
-		t.Error("三个合法 ModeScope 都应 Valid()")
+	if !ModeScopeSystem.Valid() || !ModeScopeProcess.Valid() {
+		t.Error("两个合法 ModeScope 都应 Valid()")
 	}
-	if ModeScope("").Valid() || ModeScope("System").Valid() || ModeScope("auto").Valid() {
+	if ModeScope("").Valid() || ModeScope("System").Valid() || ModeScope("WINDOW").Valid() ||
+		ModeScope("window").Valid() || ModeScope("auto").Valid() {
 		t.Error("非法 ModeScope 不应 Valid()")
 	}
 }

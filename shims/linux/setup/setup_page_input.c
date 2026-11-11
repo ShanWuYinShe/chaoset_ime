@@ -1,4 +1,4 @@
-// Linux 设置窗「输入」页：词组联想开关、中英状态作用域三选一
+// Linux 设置窗「输入」页：词组联想开关、中英状态作用域二选一
 // （2026-11-06 按页面拆分）。页面构建函数返回 GtkBox；控件信号回调留在
 // 本文件。共享 AppCtx/提示框见 setup_pages.h，设置项读写委托 setup_ctl.h。
 
@@ -59,8 +59,8 @@ GtkWidget *setup_page_input_build(AppCtx *ctx) {
     gtk_style_context_add_class(gtk_widget_get_style_context(hint), "dim-label");
     gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 0);
 
-    /* 中英状态作用域（2026-11-06 与 Windows/macOS 设置窗对齐）：
-     * 三选一，写入配置文件，引擎下次启动读取。 */
+    /* 中英状态作用域（与 Windows/macOS 设置窗对齐）：二选一
+     * （全局共享 / 每进程独立），写入配置文件，引擎下次启动读取。 */
     GtkWidget *mode_group = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(mode_group), "<b>中英状态</b>");
     gtk_label_set_xalign(GTK_LABEL(mode_group), 0.0);
@@ -70,15 +70,14 @@ GtkWidget *setup_page_input_build(AppCtx *ctx) {
     const char *current_scope = setup_config_load_mode_scope();
     /* 单选组首成员：GTK3 用「组内某个 radio」作为后续成员的创建参数。
      * 2026-11-06 修复回归：此前把组列表指针当成 radio 成员做类型转换后传构造器，
-     * 每个 radio 各自成组、三个可同时选中（中英状态三选一失效）。 */
+     * 每个 radio 各自成组、两个可同时选中（中英状态二选一失效）。 */
     GtkRadioButton *mode_group_first = NULL;
     const struct {
         const char *label;
         const char *scope;
     } kScopes[] = {
-        {"系统共享", "system"},
-        {"每程序", "process"},
-        {"每窗口", "window"},
+        {"全局共享", "system"},
+        {"每进程独立", "process"},
     };
     for (gsize i = 0; i < G_N_ELEMENTS(kScopes); i++) {
         GtkWidget *rb;
@@ -98,7 +97,7 @@ GtkWidget *setup_page_input_build(AppCtx *ctx) {
     }
     gtk_box_pack_start(GTK_BOX(input_page), mode_row, FALSE, FALSE, 0);
 
-    GtkWidget *mode_hint = gtk_label_new("切一次所有程序都生效（推荐）；后两者仅当前程序/窗口独立。");
+    GtkWidget *mode_hint = gtk_label_new("切一次所有程序都生效（推荐）；每进程则各自独立。");
     gtk_label_set_xalign(GTK_LABEL(mode_hint), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(mode_hint), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(mode_hint), 40);
