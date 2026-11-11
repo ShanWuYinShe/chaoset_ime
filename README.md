@@ -100,7 +100,7 @@ engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可
 ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
 docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内联在 visual-parity.sh）：
                    无运行时消费者——实际渲染是 macOS CandidatePanelView.swift 与
-                   Windows win32.cpp 两份实现；Go↔macOS 的布局/色值一致性由
+                   Windows candidate_window.cpp 两份实现；Go↔macOS 的布局/色值一致性由
                    shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
                    渲染链路
 cmd/

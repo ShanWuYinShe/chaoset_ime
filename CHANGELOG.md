@@ -4,6 +4,29 @@
 
 ## 未发布
 
+- **Windows 壳拆分 wave1 续（审计 P1-1 第二步）**：win32.cpp 4701→2994 行，把候选窗、
+  后台 worker、COM 注册与 CLSID/GUID 常量拆成独立 TU：
+  `candidate_window.{hpp,cpp}`（候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/
+  齿轮圆头笔/防卸载计数 + 交互 handler，类体 872 行逐字迁出）、
+  `shell_worker.{hpp,cpp}`（每进程后台 worker 任务队列、post* 投递、daemon 懒启动/
+  连接、设置窗拉起、tsf.log 异步落盘）、`tip_registration.{hpp,cpp}`（COM/TSF 注册与
+  反注册冷路径）、`tip_ids.hpp`（CLSID/GUID/TSF 接口与类别常量，C++17 inline const
+  GUID）、`tip_thread.{hpp,cpp}`（kTip* 消息常量与 worker→TIP 线程 message-only 窗口
+  注册表；窗口过程仍留 win32.cpp 待 wave2 随 tip.hpp 迁移）。
+  候选窗对 TIP 的唯一接触收敛为 `CandidateWindowHost` 抽象接口（7 个方法，
+  showSettingsWindow/selectCandidateByIndex/deleteCandidateByIndex/flipPage/
+  flipAssociateFromPanel/isAssociatePanel/clearAssociateFromSettings），`ChaosetTIP`
+  继承实现（同 DLL 内部类型，不影响 COM QI 返回的接口指针）；DllCanUnloadNow 的候选窗
+  计数改为跨 TU extern。checker 预算 win32.cpp 4800→3200 并登记 9 个新文件；3 处函数体
+  签名 needle 同步到新定义处（show 的 CandidateWindowHost 参数、去 static 的
+  ensureDaemonFast/reportModeToUi），未删除/放宽任何断言，变异测试仍能抓住回退。
+  docs/architecture.md 模块地图、docs/ui-parity.md、README、shims/windows/README、
+  build.sh 注释与 AGENTS.md 同步。验证：双架构（x86_64/i686）mingw
+  `-fsyntax-only -Wall -Wextra` 零警告、`go run ./tools/checkuiparity .`、
+  `go test ./tools/checkuiparity/ ./tools/checkgdi/`、`sh shims/windows/build.sh`
+  完整构建（DLL 导出表/UIA 动态加载断言/UI 宿主/原生 core_test）与 `make vet` 通过。
+  注：TIP 类本身（~2.5k 行）仍未拆分，是 ≤2000 目标的剩余前置。
+
 ## v0.3.19（2026-11-11）
 
 本版本为**模块重构进行中**的 patch 发版：按 `docs/architecture.md` 拆分三端壳大文件的重构尚未完成（Windows `win32.cpp` 拆 TIP 类、macOS/Linux 设置窗接 `chaoset-settingsctl` 等仍在进行），因此**重构完成前只递增 patch 版本号、minor 保持 0.3 不变**，不发布 `v0.4.x`。本版累计 `v0.3.18` 之后 14 个提交的代码质量重构与缺陷修复，具体条目如下。

@@ -1,8 +1,8 @@
 // daemon 懒启动/连接/熔断原语（只有 worker 线程/设置窗调用）。
 //
 // 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
-// TIP 侧（win32.cpp）的类型。TSF 线程的零等待版本 ensureDaemonFast 留在
-// win32.cpp（它要入队后台任务，属于 TIP TU 的编排）。实现见 daemon.cpp。
+// TIP 侧（win32.cpp）的类型。TSF 线程的零等待版本 ensureDaemonFast 在
+// shell_worker.cpp（只入队后台任务，不阻塞）。实现见 daemon.cpp。
 
 #ifndef CHAOSET_WIN_DAEMON_HPP_
 #define CHAOSET_WIN_DAEMON_HPP_

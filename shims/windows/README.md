@@ -8,8 +8,17 @@
 ```
 ../common/ipc/core.hpp|cpp  跨平台 IPC 核心：4 字节大端长度 + JSON、会话控制；
                              Windows/Linux 原生壳共用。
-src/win32.cpp               TSF COM、键盘/文本编辑会话、候选窗、传输、设置窗实现，
-                             以及单例 UI 宿主（托盘状态 + 设置窗 + 命令管道）的实现。
+src/win32.cpp               TSF COM/TIP 主体、键盘/文本编辑会话、TIP 线程
+                             message-only 窗口过程、类厂与 DllMain/导出（DLL 生命周期编排）。
+src/candidate_window.cpp|hpp 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA/齿轮绘制；
+                             TIP 侧只经 CandidateWindowHost 抽象接口。
+src/shell_worker.cpp|hpp    每进程后台 worker：daemon 懒启动、UI 宿主命令、tsf.log 异步落盘。
+src/tip_thread.cpp|hpp      kTip* 消息常量与 worker→TIP 线程 message-only 窗口注册表。
+src/tip_registration.cpp|hpp COM/TSF 注册与反注册（regsvr32 冷路径）。
+src/tip_ids.hpp             CLSID/GUID/TSF 接口与类别常量。
+src/mode_toast.cpp|hpp      模式切换提示条。
+src/winutil|theme|config|transport|daemon|ui_client|settings_window|ui_host|diagnostics
+                            叶子模块（职责/预算见 docs/architecture.md §3.1）。
 src/ui_main.cpp              chaoset-ui.exe 入口：几十行 LoadLibrary 壳，调用
                               ChaosetIME.dll 导出 ChaosetRunUi（无第二套 UI 代码）。
 tests/core_test.cpp         核心层行为测试（Linux/CI 原生编译，真实 daemon）。

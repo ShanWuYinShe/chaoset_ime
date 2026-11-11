@@ -2,7 +2,7 @@
 //
 // 叶子模块（docs/architecture.md §3.1）：不得 include/引用 win32.cpp 的
 // TIP 侧（win32.cpp）的类型。worker 调度/orchestrator（reportModeToUi /
-// openSettingsViaUi）留在 win32.cpp，由 TIP TU 调用这里的原语。实现见
+// openSettingsViaUi）在 shell_worker.cpp，由 TIP TU 调用这里的原语。实现见
 // ui_client.cpp。
 //
 // 为什么托盘指示器与设置窗必须放进独立进程（2026-11-05 用户反馈的根因）：

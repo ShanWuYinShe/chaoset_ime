@@ -62,9 +62,19 @@ type shimModuleBudget struct {
 }
 
 var shimModuleBudgets = []shimModuleBudget{
-	// win32.cpp 拆分 wave1（2026-11-08）：ModeToast 已迁到 mode_toast.cpp，
-	// owner/DPI 判定迁到 winutil；预算从 5300 收紧到 4800 锁定进度。
-	{"shims/windows/src/win32.cpp", 4800},
+	// win32.cpp 拆分 wave1（2026-11-08 起）：ModeToast/浮窗 owner 已拆出；wave1 续
+	// 把 CandidateWindow / ShellWorker / TIP 注册 / CLSID-GUID 常量拆成独立 TU，
+	// 预算从 4800 收紧到 3200 锁定进度（≤2000 目标需 wave2 拆 TIP 类本身）。
+	{"shims/windows/src/win32.cpp", 3200},
+	{"shims/windows/src/candidate_window.cpp", 1200},
+	{"shims/windows/src/candidate_window.hpp", 300},
+	{"shims/windows/src/shell_worker.cpp", 600},
+	{"shims/windows/src/shell_worker.hpp", 250},
+	{"shims/windows/src/tip_registration.cpp", 300},
+	{"shims/windows/src/tip_registration.hpp", 120},
+	{"shims/windows/src/tip_ids.hpp", 150},
+	{"shims/windows/src/tip_thread.cpp", 150},
+	{"shims/windows/src/tip_thread.hpp", 200},
 	{"shims/windows/src/mode_toast.hpp", 150},
 	{"shims/windows/src/mode_toast.cpp", 400},
 	{"shims/windows/src/diagnostics.cpp", 700},

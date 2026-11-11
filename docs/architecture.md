@@ -76,7 +76,12 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
-| `win32.cpp` | TIP 主体、CandidateWindow、ShellWorker、DllMain/类厂/导出（ModeToast 已拆出，见下） | 全部叶子模块 | ≤4800（当前 ~4700；目标 ≤2000 需继续拆 TIP 类，未完成） |
+| `win32.cpp` | TIP 主体（class ChaosetTIP）、TIP 线程 message-only 窗口过程、类厂、DllMain/DllGetClassObject/DllCanUnloadNow、ChaosetRunUi 导出 | 全部叶子模块 + candidate_window/shell_worker/tip_ids/tip_thread | ≤3200（当前 ~2994；目标 ≤2000 需 wave2 拆 TIP 类本身，未完成） |
+| `candidate_window.cpp` `.hpp` | 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/齿轮笔/防卸载计数；TIP 侧只经 CandidateWindowHost 抽象接口 | winutil, theme, config, diagnostics, candidate_layout, core | ≤1200 / ≤300 |
+| `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
+| `tip_thread.cpp` `.hpp` | kTip* 消息常量、worker→TIP 线程 message-only 窗口注册表原语（窗口过程仍留 win32.cpp，wave2 迁） | — | ≤150 / ≤200 |
+| `tip_registration.cpp` `.hpp` | COM/TSF 注册与反注册（DllRegisterServer/DllUnregisterServer/DllUninstallServer，冷路径） | tip_ids, winutil | ≤300 / ≤120 |
+| `tip_ids.hpp` | CLSID/GUID/TSF 接口与类别常量（C++17 inline const GUID，namespace chaoset::win） | — | ≤150 |
 | `mode_toast.cpp` `.hpp` | 模式切换提示条（窗口生命周期/绘制/防卸载计数） | winutil, theme, diagnostics | ≤400 / ≤150 |
 | `diagnostics.cpp` `.hpp` | tsf.log/crash.log 诊断、VEH 崩溃取证 | — | ≤700 |
 | `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换、浮窗 owner 判定 | — | ≤500 |

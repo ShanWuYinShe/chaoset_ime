@@ -267,7 +267,7 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	// 删掉 show 里的判断时上面的 checkContains 仍然通过）。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
 		text := string(data)
-		sig := "void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip) {"
+		sig := "void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, CandidateWindowHost* host) {"
 		i := strings.Index(text, sig)
 		if i < 0 {
 			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少候选窗 show() 入口", group, winShell))
@@ -443,7 +443,7 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	// （焦点事件早于 GetForegroundWindow 更新，TIP 线程判会误拦），断言改锁
 	// workerWaitForegroundSelf 的实现。
 	checkContains(fsys, problems, group, winShell,
-		"static bool reportModeToUi(bool english, bool allowSpawn) {",
+		"bool reportModeToUi(bool english, bool allowSpawn) {",
 		"workerWaitForegroundSelf", "if (fgPid == GetCurrentProcessId()) return true;")
 
 	// 设置窗卡片式布局：左导航三页 + 卡片 + 页脚 + 滚动。
@@ -543,7 +543,7 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 		{"deleteCandidateByIndex", "void deleteCandidateByIndex(int index)"},
 		{"flipPage", "void flipPage(bool next)"},
 		{"CandidateWindow::show",
-			"void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, ChaosetTIP* tip)"},
+			"void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, CandidateWindowHost* host)"},
 	}
 	banned := []string{
 		"Sleep(", "WaitNamedPipeW", "WaitForSingleObject", "CreateProcessW",
@@ -596,7 +596,7 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 	// c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 调用点用 ensureDaemonFast
 	// （单次非阻塞探测 + fail-open）。
 	checkContains(fsys, problems, group, winShell, "ensureDaemonFast(")
-	if body, line, ok := cppFunctionBody(src, "static bool ensureDaemonFast(PipeTransport& transport)"); ok {
+	if body, line, ok := cppFunctionBody(src, "bool ensureDaemonFast(PipeTransport& transport)"); ok {
 		if strings.Contains(stripCppComments(body), "ensureDaemonConnected(") {
 			*problems = append(*problems, fmt.Sprintf(
 				"%s：%s 的 ensureDaemonFast（约第 %d 行）又回退到 ensureDaemonConnected（会阻塞）",
