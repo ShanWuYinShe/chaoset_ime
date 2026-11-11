@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.3.19（2026-11-11）
+
+本版本为**模块重构进行中**的 patch 发版：按 `docs/architecture.md` 拆分三端壳大文件的重构尚未完成（Windows `win32.cpp` 拆 TIP 类、macOS/Linux 设置窗接 `chaoset-settingsctl` 等仍在进行），因此**重构完成前只递增 patch 版本号、minor 保持 0.3 不变**，不发布 `v0.4.x`。本版累计 `v0.3.18` 之后 14 个提交的代码质量重构与缺陷修复，具体条目如下。
+
 - **架构/代码质量：拆分 engine 组词核心与 checkuiparity 检查器（代码质量专项）**：
   - `engine/session.go` 2188→1193 行：`compose()` 1009 行按职责拆为
     `compose_state/shape/continuation/typo/query/rank.go` + 142 行编排 `compose.go`；
