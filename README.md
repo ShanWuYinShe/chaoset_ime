@@ -1042,7 +1042,7 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 gofmt -l $(git ls-files '*.go')   # 应无输出；make fmt 可自动格式化
 go build ./...                    # 秒级
 make vet                          # go vet + workflow/版本/GDI/三端一致性静态检查
-# 单测、race、三端构建与打包由 CI 执行（见 AGENTS.md「验证交给 CI」）
+# 单测、race、三端构建与打包由 CI 执行（见 AGENTS.md「CI 门禁与本地验证分工」）
 ```
 
 ### 词库相关的测试
