@@ -290,6 +290,9 @@ fi
 MON="$WORK/monitor.log"
 dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON" 2>&1 &
 MON_PID=$!
+# 等 dbus-monitor 连上私有总线并注册 eavesdrop match：CI 上曾因「启动后立即按键」
+# 偶发漏抓 UpdateLookupTable 信号而误报 flake（同 run 重跑即过）。只加等待，不放宽断言。
+sleep 0.7
 for kv in 99 101 115 104 105 99 105; do press "$P1" "$kv" 0; done  # ceshici
 sleep 0.5
 kill "$MON_PID" 2>/dev/null || true
@@ -310,6 +313,7 @@ press "$P1" 65307 0  # Esc 清空
 MON2="$WORK/click-monitor.log"
 dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON2" 2>&1 &
 MON2_PID=$!
+sleep 0.7  # 同上：等 monitor 就绪再按键
 for kv in 110 105 104 97 111; do press "$P1" "$kv" 0; done  # nihao
 dbus-send --session --print-reply --dest="$UN" "$P1" \
   org.freedesktop.IBus.Engine.CandidateClicked uint32:0 uint32:1 uint32:0 >/dev/null 2>&1
@@ -332,6 +336,7 @@ press "$P1" 65307 0  # Esc 保险
 MON3="$WORK/click-page2-monitor.log"
 dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON3" 2>&1 &
 MON3_PID=$!
+sleep 0.7  # 同上：等 monitor 就绪再按键
 for kv in 110 105; do press "$P1" "$kv" 0; done  # ni
 press "$P1" 65366 0  # PageDown
 dbus-send --session --print-reply --dest="$UN" "$P1" \
