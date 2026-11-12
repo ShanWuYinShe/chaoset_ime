@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -174,6 +175,49 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 			*problems = append(*problems, group+"：onRButtonUp 必须处理 menuOwnerWindow() 返回空（不弹菜单、不删除）")
 		} else if delIdx >= 0 && nullIdx > delIdx {
 			*problems = append(*problems, group+"：onRButtonUp 的空 owner 分支必须在删除调用之前（安全优先）")
+		}
+	}
+
+	// ---- 独立 review 加固（M1/M3）：函数体级断言（只查聚合串会漏掉「整段删除/优先级反转」）----
+	if winErr == nil {
+		if body, _, ok := cppFunctionBody(winSrc, "HWND ChaosetTIP::menuOwnerWindow()"); !ok {
+			*problems = append(*problems, group+"：无法抽取 ChaosetTIP::menuOwnerWindow 函数体（issue #1 菜单 owner 契约失效）")
+		} else {
+			code := noSpace(stripCppComments(body))
+			fgIdx := strings.Index(code, "GetForegroundWindow()")
+			ctxIdx := strings.Index(code, "contextHostWindow(")
+			composeIdx := strings.Index(code, "composeHostWnd_")
+			if fgIdx < 0 || ctxIdx < 0 || composeIdx < 0 || !(fgIdx < ctxIdx && ctxIdx < composeIdx) {
+				*problems = append(*problems, group+"：menuOwnerWindow 的 owner 优先级必须是「本进程前台窗口 → TSF 上下文宿主窗口 → composeHostWnd_」（顺序反转/缺项会让菜单抢宿主焦点，issue #1 根因）")
+			}
+			if !strings.Contains(code, "candidateWnd_.hwnd()") {
+				*problems = append(*problems, group+"：menuOwnerWindow 必须显式排除候选窗自身（candidateWnd_.hwnd()）")
+			}
+			if !strings.Contains(code, "returnnullptr") {
+				*problems = append(*problems, group+"：menuOwnerWindow 取不到本进程宿主窗口时必须返回 nullptr（不弹菜单，安全优先）")
+			}
+		}
+	}
+	// M1：OnCompositionTerminated 的残留拼音清理是 issue#1 症状 b 的最后保护，必须
+	// 「先 GetText 比对、内容一致才 SetText 保留已确认段」，整段删除/判据反转都要 FAIL。
+	if winErr == nil {
+		if body, _, ok := cppFunctionBody(winSrc, "ChaosetTIP::OnCompositionTerminated("); !ok {
+			*problems = append(*problems, group+"：无法抽取 OnCompositionTerminated 函数体（合成终止清理契约失效）")
+		} else {
+			code := noSpace(stripCppComments(body))
+			getIdx := strings.Index(code, "GetText(")
+			setIdx := strings.Index(code, "SetText(ec,0,keep.c_str()")
+			if getIdx < 0 || setIdx < 0 || getIdx > setIdx {
+				*problems = append(*problems, group+"：OnCompositionTerminated 必须先 GetText 取合成文本、内容一致后再 SetText 保留已确认段")
+			}
+			for _, needle := range []string{"GetRange(", "actual==wideExpected", "pComposition==composition_", "confirmedPreedit_"} {
+				if !strings.Contains(code, needle) {
+					*problems = append(*problems, group+"：OnCompositionTerminated 清理缺少 "+needle+"（内容比对/指针身份守卫/已确认段保留）")
+				}
+			}
+			if strings.Contains(code, "EndComposition(") {
+				*problems = append(*problems, group+"：OnCompositionTerminated 不得调用 EndComposition（合成已被 TSF 终止）")
+			}
 		}
 	}
 }
@@ -511,6 +555,29 @@ func checkCandidatePageArrows(fsys fs.FS, problems *[]string) {
 	// 与方向键语义，禁止假装三端自绘一致。
 	checkContains(fsys, problems, group, linuxReadme,
 		"双箭头可用性", "ibus 面板", "方向键预选")
+	// 独立 review 加固（M2）：只查「dirDown: true/false 字符串存在」会漏掉首页/末页
+	// 语义反转（把 if hasPrev 改成 if hasNext 仍能通过）。这里断言箭头绘制与可用性
+	// 守卫的**关联**：上箭头由 hasPrev 守卫且 dirDown:false；下箭头由 hasNext 守卫且
+	// dirDown:true。
+	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
+		text := string(data)
+		upArrow := regexp.MustCompile(`(?s)if hasPrev \{\s*drawChevron\([^\n]*dirDown: false`)
+		downArrow := regexp.MustCompile(`(?s)if hasNext \{\s*drawChevron\([^\n]*dirDown: true`)
+		if !upArrow.MatchString(text) {
+			*problems = append(*problems, group+"：macOS 上箭头必须由 hasPrev 守卫且 dirDown: false（首页只有下箭头、末页只有上箭头，语义反转/删除会被抓）")
+		}
+		if !downArrow.MatchString(text) {
+			*problems = append(*problems, group+"：macOS 下箭头必须由 hasNext 守卫且 dirDown: true（首页只有下箭头、末页只有上箭头）")
+		}
+		if !strings.Contains(text, "? arrowH * 2 + pageH : arrowH * 2") {
+			*problems = append(*problems, group+"：macOS 单页也须按两枚箭头合计 12pt 居中（blockH 单页分支为 arrowH * 2，与 Windows 同公式）")
+		}
+	}
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if !strings.Contains(string(data), "? arrowH * 2 + flipPageH_ : arrowH * 2") {
+			*problems = append(*problems, group+"：Windows 单页也须按两枚箭头合计 12pt 居中（flipBlockMetrics 单页分支为 arrowH * 2，与 macOS 同公式）")
+		}
+	}
 }
 
 // checkCandidateDirectionKeys 方向键页内预选契约（issue#2，2026-11-12）：
@@ -564,6 +631,22 @@ func checkCandidateDirectionKeys(fsys fs.FS, problems *[]string) {
 					"%s：%s 的 wouldHandle 未把方向键消费限制在 hasCandidates()（无候选时必须放行宿主）",
 					group, winShell))
 			}
+		}
+	}
+	// 独立 review 加固（L2）：候选窗/面板不可见（全屏免打扰/建窗失败/渲染失败）时
+	// 方向键不得被吞并触发不可见的翻页——消费条件必须带 itemCount 可见性守卫。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		if n := strings.Count(string(data), "candidateWnd_.itemCount() > 0"); n < 2 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的方向键消费只有 %d 处带 candidateWnd_.itemCount() > 0（组词/联想两处都要：面板不可见时必须放行）",
+				group, winShell, n))
+		}
+	}
+	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
+		if n := strings.Count(string(data), "CandidatePanelController.itemCount > 0"); n < 2 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的方向键消费只有 %d 处带 CandidatePanelController.itemCount > 0（组词/联想两处都要：面板不可见时必须放行）",
+				group, macPanel, n))
 		}
 	}
 	// macOS：KeyRouter 方向键路由 + 预选移动/跨页 + 空格确认预选项 +

@@ -36,7 +36,9 @@
   owner 进程退出只清 owner/句柄、不隐藏托盘；无周期定时器/心跳不变。切到没有输入焦点的
   桌面/任务栏/无文本框窗口时托盘保持显示。
 - 验证：`gofmt`、`go build ./...`、`go test ./tools/checkuiparity/`、`make vet`（49 组
-  check-uiparity 含新增「候选窗翻页箭头」「候选窗方向键预选」组与托盘新契约）、
+  check-uiparity 含新增「候选窗翻页箭头」「候选窗方向键预选」组、托盘新契约，以及
+  独立 review 后补的菜单 owner 优先级/合成终止清理/箭头可用性/方向键隐藏时放行等
+  函数体级断言）、
   `./shims/windows/build.sh`（core_test + mingw 交叉编译）、`./shims/macos/build.sh` +
   `visual-parity.sh`（新增 E 段双箭头/预选契约）+ `key_routing`（43 项，新增方向键/空格
   确认/跨页/联想断言）、Linux ibus 引擎容器内编译。**Windows 像素与 TSF 运行期行为仍
