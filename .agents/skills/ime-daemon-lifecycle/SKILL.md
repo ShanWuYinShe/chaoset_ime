@@ -93,12 +93,20 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 
 两个独立原因，都要查：
 
-1. **TIS 表里有重复实例**（同一 InputSourceID 出现两条属性相同、指针不同的记录）：
+1. **TIS 表里有重复实例**（同一 InputSourceID 出现多条属性相同、指针不同的记录）：
    ```bash
-   cd shims/macos && ./build/tis list | grep -c chaoset   # 应为 2
+   cd shims/macos && ./build/tis list | grep -c chaoset   # 应为 2（父容器 + Pinyin）
    ```
-   修复：`./build/tis dedupe`。原理是**全部 disable 让 TIS 合并记录，再只启用
-   一个**——直接 enable 无效。
+   根因是重复调用 `TISRegisterInputSource`：TIS 没有反注册 API，同一 bundle 每多调
+   一次，**当前登录会话**的输入源表就多一条记录。预防靠安装/升级幂等：`tis register`
+   先按 bundle id 查 TIS 表、已登记则跳过；`install.sh` / GUI 安装器 / `reregister.sh`
+   统一走随包 `tis register`，**不要在安装/重注册代码里直接调 `TISRegisterInputSource`**
+   （由 `checkuiparity` 的「macOS 输入源登记幂等」组断言）。
+   已出现重复时：`./build/tis dedupe` 是尽力而为（全部 disable 让 TIS 合并、再只启用
+   一个，直接 enable 无效）；**部分 macOS 版本上 disable/enable 不合并（条目数不变）**，
+   此时唯一可靠修法是**注销重登**——登录扫描会按「已装 app + HIToolbox 首选项」重建表。
+   重登前先确认 `AppleEnabledInputSources` 里只有 1 个父容器 + 1 个 Pinyin 条目：
+   `defaults export com.apple.HIToolbox - | grep -c Chaoset`（备份用同一命令导出到文件）。
 2. **父容器被禁用**：反例是 `tis sync` 把父容器 `ime.chaoset.inputmethod.ChaosetIME`
    也 disable——它是 TIS 骨架节点（系统「简体拼音」同样是 mode+container
    两条且都启用）。禁用会触发系统清空 `AppleEnabledThirdPartyInputSources`，
@@ -164,7 +172,7 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 cd shims/macos
 ./verify.sh                    # 退出码 0=通过
 ./tests/equivalence.sh         # A 同源 / B 导入等价 / C 判定等价 / D 图标 / E 渲染尺寸 / F 双端视觉
-./build/tis dedupe             # TIS 重复实例合并
+./build/tis dedupe             # TIS 重复实例尽力合并（无效则注销重登）
 ```
 
 ## 五、CI 相关
@@ -257,7 +265,7 @@ enabled=false，检查第三方输入源启用记录：
 
 - 返回空数组（或没有 Chaoset）时，菜单不会真正选中本输入法。父容器被
   disable、安装/刷新竞态或系统设置重写都可能清空该列表。
-- 仅靠 TIS 命令不够：install.sh / reregister.sh 可以把 TIS 表恢复到 2 条并
+- 仅靠 TIS 命令不够：install.sh / reregister.sh 会幂等刷新输入源表与首选项并
   把菜单项画出来，但不负责把条目重新加入这个系统列表。完成修复必须在
   **系统设置 → 键盘 → 输入法 → 编辑 → +** 里重新添加 Chaoset，或注销重登让
   登录扫描重建。
