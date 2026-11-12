@@ -153,7 +153,14 @@ public:
         return worker;
     }
 
+    // 启动/停止的并发保护：TSF 在同进程里按**线程**各建一个 TIP 实例（explorer
+    // 实测 4 个），每个实例的回调跑在各自的宿主线程上，而 worker 是进程级单例
+    //——首次激活/首次托盘上报可能由两个宿主线程同时触发 start()。只靠 alive_
+    // 快照不是幂等：两边都看到 false 会各建一个线程/事件（重复 worker、句柄泄漏、
+    // stopEvent_ 数据竞争）。这里用一把只在生命周期路径上用的锁串行化；不进入
+    // 任务队列热路径（post/loop 仍走 mu_），零阻塞语义不变。
     void start() {
+        std::lock_guard<std::mutex> lk(lifecycleMu_);
         if (alive_.load()) return;
         if (stopEvent_ == nullptr) stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (stopEvent_ == nullptr) return;
@@ -169,6 +176,7 @@ public:
     }
 
     void stop() {
+        std::lock_guard<std::mutex> lk(lifecycleMu_);
         if (!alive_.load() || stopEvent_ == nullptr) return;
         stopRequested_.store(true);
         SetEvent(stopEvent_);
@@ -274,9 +282,10 @@ private:
                 break;
             }
             case ShellTask::Kind::kReportActive: {
-                // 命令协议：active 1 <0|1> <pid>（激活 + 当前模式 + pid，激活
-                // 迁移时立即发一次） / active 0 <pid>（失活）。UI 宿主只认单活跃
-                // owner：active 1 设 owner 并显示，active 0 仅当 pid==owner 才隐藏。
+                // 命令协议（issue #3 语义）：active 1 <0|1> <pid> = 本输入法被系统
+                // 选中（显示托盘并把该 pid 设为 owner）；active 0 <pid> = 用户切到了
+                // 其它输入法（唯一隐藏入口，300ms 防抖）。失焦/停用/前台离开**不**
+                // 发 active 0：托盘可见性与输入焦点解耦。
                 // 发送失败且 allowSpawn 时重新拉起被杀/未启动的 UI 宿主（事件驱动
                 // 恢复，无定时器；下一次 TSF 事件也会重发）。
                 char cmd[64];
@@ -332,7 +341,8 @@ private:
         }
     }
 
-    std::mutex mu_;
+    std::mutex mu_;           // 任务队列保护（post/loop/flushLogs）
+    std::mutex lifecycleMu_;  // start/stop 保护（同进程多宿主线程并发首次启动）
     std::deque<ShellTask> queue_;
     HANDLE stopEvent_ = nullptr;
     std::atomic<bool> alive_{false};
@@ -364,11 +374,19 @@ void postModeReport(bool english, bool allowSpawn) {
     shellWorker().post(std::move(task));
 }
 
-// 托盘可见性上报：active=1 只在该 TIP 真正成为「前台激活输入法」时入队
-//（激活迁移/模式变化/焦点事件时发一次；english 为当前模式，供 UI 宿主按 pid
-// 聚合显示）；active=0 在失焦/停用/前台离开时入队。命令由 worker 线程附上
-// 本进程 pid 后发送。
+// 托盘可见性上报（issue #3）：active=1 = 本输入法被系统选中（激活迁移 / 模式
+// 变化 / 输入法切回 / 前台回到本进程时上报；english 为当前模式，供 UI 宿主按
+// pid 聚合显示）；active=0 = 用户切到了其它输入法（唯一隐藏入口）。失焦/停用/
+// 前台离开**不**上报。命令由 worker 线程附上本进程 pid 后发送。
+//
+// 上报前按需启动 worker：这两个方向都可能来自「本实例还没有被激活迁移过」的
+// TSF 事件——显示可能是「切回本输入法但窗口没有 TSF 文本焦点」（inputActive_
+// 仍为 false），隐藏可能是「切走通知落在从未输入过的实例上」（如桌面/任务栏
+// 线程的预激活实例）。只入队不启动就永远发不出去：托盘该出现时不出、该隐藏时
+// 残留。启动的只是每进程一个 worker 线程（不建进程、不等管道，零阻塞契约内），
+// 且每个进程最多一次。
 void postActiveReport(bool active, bool english, bool allowSpawn) {
+    if (!shellWorkerAlive()) shellWorkerStart();
     ShellTask task;
     task.kind = ShellTask::Kind::kReportActive;
     task.arg = active ? 1 : 0;

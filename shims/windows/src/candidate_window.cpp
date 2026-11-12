@@ -82,6 +82,21 @@ HPEN createRoundCapPen(int width, COLORREF color) {
     return pen;
 }
 
+// 两次 show 的候选集合是否相同（页内预选归零判据）：输入串/页码/候选文本与
+// 学习标记都参与比较。比较对象是「上一帧已显示的 comp_」与「本次要显示的
+// comp」，与 TIP 的 comp_ 无关。
+bool sameCandidateSet(const chaoset::Comp& a, const chaoset::Comp& b) {
+    if (a.page != b.page || a.pageCount != b.pageCount || a.input != b.input) return false;
+    if (a.candidates.size() != b.candidates.size()) return false;
+    for (std::size_t i = 0; i < a.candidates.size(); ++i) {
+        if (a.candidates[i].text != b.candidates[i].text ||
+            a.candidates[i].fromUser != b.candidates[i].fromUser) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // 当前存活的候选窗口数量。用于 DllCanUnloadNow —— 候选窗的窗口过程指向
@@ -148,7 +163,12 @@ void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::
         }
         return;
     }
+    // 候选集合/页码/输入串变化 = 新输入、翻页、选词或删除刷新：页内预选
+    // 归零（方向键预选的生命周期契约）。仅移动预选不会重新 show（TIP 直接
+    // 调 moveSelection 重绘），因此这里不会把用户的选择重置掉。
+    const bool keepSelection = sameCandidateSet(comp_, comp);
     comp_ = comp;
+    if (!keepSelection) selectedIndex_ = 0;
     tip_ = host;
     targetPos_ = pt;
     targetLineHeight_ = lineH;
@@ -175,10 +195,53 @@ void CandidateWindow::hide() {
     //（按下后鼠标移出或被 TSF 收起，收不到对应 mouseup）。
     gearPressed_ = false;
     pressedItemIndex_ = -1;
-    chevronPressed_ = false;
+    chevronPressed_ = 0;
+    // 收起即丢弃页内预选与布局缓存：下次 show 重新布局后从第一项开始。
+    selectedIndex_ = 0;
+    items_.clear();
     if (hwnd_ != nullptr && IsWindow(hwnd_)) {
         ShowWindow(hwnd_, SW_HIDE);
     }
+}
+
+
+// ---- 页内预选：状态由候选窗持有，TIP 经这些方法移动/读取 ----
+
+int CandidateWindow::selectedIndex() const {
+    if (items_.empty()) return 0;
+    if (selectedIndex_ < 0) return 0;
+    const int last = static_cast<int>(items_.size()) - 1;
+    return selectedIndex_ > last ? last : selectedIndex_;
+}
+
+
+int CandidateWindow::itemCount() const { return static_cast<int>(items_.size()); }
+
+
+// 页内移动。返回 false 表示已到页首/页尾——调用方（TIP）据此决定是否
+// 翻上一页/下一页并在新页里选末项/首项。
+bool CandidateWindow::moveSelection(int delta) {
+    if (delta == 0 || items_.empty()) return false;
+    const int next = selectedIndex_ + delta;
+    if (next < 0 || next >= static_cast<int>(items_.size())) return false;
+    selectedIndex_ = next;
+    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
+}
+
+
+// 跨页后指定新的页内序号（内部钳制到已布局的可见项）。
+void CandidateWindow::setSelectedIndex(int index) {
+    if (items_.empty()) {
+        selectedIndex_ = 0;
+        return;
+    }
+    int clamped = index < 0 ? 0 : index;
+    const int last = static_cast<int>(items_.size()) - 1;
+    if (clamped > last) clamped = last;
+    if (clamped == selectedIndex_) return;
+    selectedIndex_ = clamped;
+    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 
@@ -252,7 +315,8 @@ bool CandidateWindow::isInteractiveArea() const {
         for (const auto& it : items_) {
             if (PtInRect(&it.itemRect, pt)) return true;
         }
-        if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) return true;
+        // 两枚翻页箭头各自的命中区（不可用方向不注册矩形，点空白处无效）。
+        if (PtInRect(&chevronUpRect_, pt) || PtInRect(&chevronDownRect_, pt)) return true;
         // 齿轮也算可点区域：悬停显示手型光标，与翻页/候选一致。
         if (PtInRect(&settingsRect_, pt)) return true;
     }
@@ -415,6 +479,21 @@ LRESULT CALLBACK CandidateWindow::CandidateWndProc(HWND hwnd, UINT msg, WPARAM w
 }
 
 
+// 折叠区翻页块的垂直几何（layoutAndPosition 与 onPaint 共用同一公式，
+// 避免「命中区与绘制」两处各自实现导致漂移；与 mac CandidatePanelView.draw
+// 同几何）：上箭头块 6pt + 页码高 + 下箭头块 6pt，整块在窗口内垂直居中。
+// 单页（pageCount<=1）没有翻页动作：blockH=0（不注册命中区）。
+void CandidateWindow::flipBlockMetrics(int dpi, int h, int* blockTop, int* blockH,
+                                       int* upCy, int* downCy, int* pageTop) const {
+    const int arrowH = pt(6, dpi);
+    *blockH = comp_.pageCount > 1 ? arrowH * 2 + flipPageH_ : 0;
+    *blockTop = (h - *blockH) / 2;
+    *upCy = *blockTop + arrowH / 2;
+    *pageTop = *blockTop + arrowH;
+    *downCy = *blockTop + arrowH + flipPageH_ + arrowH / 2;
+}
+
+
 void CandidateWindow::layoutAndPosition() {
     const int dpi = dpiForPoint(targetPos_);
     layoutDpi_ = dpi;
@@ -563,12 +642,11 @@ void CandidateWindow::layoutAndPosition() {
             item.itemRect.right = x + boxRect.w;
             item.itemRect.bottom = rowTop + contentH;
 
-            if (item.isFirst) {
-                item.pillRect.left = x - pillMargin;
-                item.pillRect.top = rowTop - pillMargin;
-                item.pillRect.right = x + boxRect.w + pillMargin;
-                item.pillRect.bottom = rowTop + contentH + pillMargin;
-            }
+            // 高亮胶囊几何对每一项都算：pill 跟随页内预选项（不再固定第一项）。
+            item.pillRect.left = x - pillMargin;
+            item.pillRect.top = rowTop - pillMargin;
+            item.pillRect.right = x + boxRect.w + pillMargin;
+            item.pillRect.bottom = rowTop + contentH + pillMargin;
 
             const int chipLeft = x + box.padX;
             const int chipTop = rowTop + (contentH - chipH) / 2;
@@ -598,17 +676,51 @@ void CandidateWindow::layoutAndPosition() {
     int minW = pad * 2 + chevronBoxW + gearBoxW + pt(8, dpi);
     int winW = (std::max)(totalW, minW);
 
-    chevronRect_.left = winW - chevronBoxW;
-    chevronRect_.top = 0;
-    chevronRect_.right = winW;
-    chevronRect_.bottom = winH;
-
     settingsRect_.left = winW - chevronBoxW - gearBoxW;
     settingsRect_.top = 0;
     settingsRect_.right = winW - chevronBoxW;
     settingsRect_.bottom = winH;
 
     dividerX_ = settingsRect_.left + pt(2, dpi);
+
+    // 折叠区翻页块：上/下两枚箭头分列页码上下（单页不翻页，blockH=0）。
+    // 命中区按**可用性**分别记录：首页只有下箭头、末页只有上箭头、中间页
+    // 两枚都有；不可用方向不注册命中区（点击无效），与 mac 面板同语义。
+    int pageH = 0;
+    if (comp_.pageCount > 1) {
+        const std::wstring pageStr =
+            std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
+        SelectObject(memDC, fontIndex);
+        SIZE szPage{};
+        GetTextExtentPoint32W(memDC, pageStr.c_str(), static_cast<int>(pageStr.size()), &szPage);
+        pageH = szPage.cy;
+    }
+    flipPageH_ = pageH;
+    int blockTop = 0, blockH = 0, upCy = 0, downCy = 0, pageTop = 0;
+    flipBlockMetrics(dpi, winH, &blockTop, &blockH, &upCy, &downCy, &pageTop);
+    (void)upCy;
+    (void)downCy;
+    (void)pageTop;
+    chevronUpRect_ = {};
+    chevronDownRect_ = {};
+    const int flipZoneX = dividerX_ + gearBoxW;
+    if (comp_.pageCount > 1) {
+        const int halfH = blockH / 2;
+        if (comp_.page > 0) {
+            chevronUpRect_ = RECT{flipZoneX, blockTop, winW, blockTop + halfH};
+        }
+        if (comp_.page + 1 < comp_.pageCount) {
+            chevronDownRect_ = RECT{flipZoneX, blockTop + halfH, winW, blockTop + blockH};
+        }
+    }
+
+    // 预选序号钳制到本次实际布局出来的可见候选数（候选变少或被 3 行上限
+    // 截断时不能越界；新一页的归零由 show() 的候选集合比较负责）。
+    if (items_.empty()) {
+        selectedIndex_ = 0;
+    } else if (selectedIndex_ >= static_cast<int>(items_.size())) {
+        selectedIndex_ = static_cast<int>(items_.size()) - 1;
+    }
 
     SelectObject(memDC, oldFont);
     DeleteDC(memDC);
@@ -696,26 +808,30 @@ void CandidateWindow::onPaint(HWND hwnd) {
                                   CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
     HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
 
-    // 绘制候选列表
+    // 页内预选高亮：蓝胶囊跟随**预选项**（此前固定画在第一项）。先统一画
+    // 胶囊、再逐项画内容，避免后画的胶囊盖住相邻项文本边缘。
+    // GDI 对象必须先摘出 DC 再 DeleteObject：仍被 DC 持有期间 DeleteObject
+    // 会失败并泄漏句柄，候选窗每次重绘都漏一个。
     for (const auto& item : items_) {
-        if (item.isFirst) {
-            // 首选：Apple 风格高亮蓝胶囊
-            // GDI 对象必须先摘出 DC 再 DeleteObject：仍被 DC 持有期间
-            // DeleteObject 会失败并泄漏句柄，候选窗每次重绘都漏一个。
-            HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
-            HGDIOBJ prevBrush = SelectObject(memDC, pillBrush);
-            HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
-            RoundRect(memDC, item.pillRect.left, item.pillRect.top,
-                      item.pillRect.right, item.pillRect.bottom,
-                      pt(12, dpi), pt(12, dpi));
-            SelectObject(memDC, prevBrush);
-            SelectObject(memDC, prevPen);
-            DeleteObject(pillBrush);
+        if (item.index != selectedIndex_) continue;
+        HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
+        HGDIOBJ prevBrush = SelectObject(memDC, pillBrush);
+        HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
+        RoundRect(memDC, item.pillRect.left, item.pillRect.top,
+                  item.pillRect.right, item.pillRect.bottom,
+                  pt(12, dpi), pt(12, dpi));
+        SelectObject(memDC, prevBrush);
+        SelectObject(memDC, prevPen);
+        DeleteObject(pillBrush);
+    }
 
+    // 绘制候选列表：预选项用蓝胶囊 + 半透白键帽 + 白字，其余用普通键帽。
+    for (const auto& item : items_) {
+        if (item.index == selectedIndex_) {
             // 蓝胶囊内键帽：半透白单层填充，无边框
             HBRUSH chipBrush = CreateSolidBrush(theme.highlightChipBg);
-            prevBrush = SelectObject(memDC, chipBrush);
-            prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
+            HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
+            HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
             RoundRect(memDC, item.chipRect.left, item.chipRect.top,
                       item.chipRect.right, item.chipRect.bottom,
                       pt(6, dpi), pt(6, dpi));
@@ -729,7 +845,7 @@ void CandidateWindow::onPaint(HWND hwnd) {
             DrawTextW(memDC, item.indexStr.c_str(), -1, const_cast<RECT*>(&item.chipRect),
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-            // 首选文本：白色
+            // 预选项文本：白色
             SetTextColor(memDC, theme.highlightText);
             SelectObject(memDC, fontNormal);
             DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
@@ -745,7 +861,7 @@ void CandidateWindow::onPaint(HWND hwnd) {
                 DrawTextW(memDC, L"*", 1, &markRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             }
         } else {
-            // 次选键帽：外边框 + 内部底色
+            // 非预选项键帽：外边框 + 内部底色
             HBRUSH chipBrush = CreateSolidBrush(theme.chipBg);
             HPEN chipPen = CreatePen(PS_SOLID, strokePx(dpi), theme.chipBorder);
             HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
@@ -770,7 +886,7 @@ void CandidateWindow::onPaint(HWND hwnd) {
             DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-            // 学习标记 *（见首选分支注释）
+            // 学习标记 *（见预选分支注释）
             if (item.fromUser) {
                 SetTextColor(memDC, theme.userMark);
                 RECT markRc = item.textRect;
@@ -838,60 +954,77 @@ void CandidateWindow::onPaint(HWND hwnd) {
         if (spokePen != nullptr) DeleteObject(spokePen);
     }
 
-    // 折叠子区（齿轮右侧的翻页/页码区）：chevron 与页码的水平中心都取
-    // 该子区中点——与 mac CandidatePanel.draw 的 flipZoneX/chevX 公式一致
+    // 折叠子区（齿轮右侧的翻页/页码区）：两枚箭头与页码的水平中心都取
+    // 该子区中点——与 mac CandidatePanelView.draw 的 flipZoneX/chevX 公式一致
     // （flipZoneX = dividerX + gearBoxW，chevX = flipZoneX + (w-flipZoneX)/2）。
     // 2026-10-30 审计 R17：此前页码 RECT 从 dividerX_ 到窗口右缘居中，
     // 中心落在 w-30，比 mac 的 chevX 左移约 13px，且与代码自身注释矛盾。
     const int flipZoneX = dividerX_ + (settingsRect_.right - settingsRect_.left);
     const int chevX = flipZoneX + (w - flipZoneX) / 2;
-    bool hasNext = comp_.page + 1 < comp_.pageCount;
-    bool hasPrev = comp_.page > 0;
-    bool dirDown = hasNext || !hasPrev;
+    const bool hasNext = comp_.page + 1 < comp_.pageCount;
+    const bool hasPrev = comp_.page > 0;
     std::wstring pageStr;
     int pageW = 0;
-    int pageH = 0;
     if (comp_.pageCount > 1) {
         pageStr = std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
         SelectObject(memDC, fontIndex);
         SIZE szPage{};
         GetTextExtentPoint32W(memDC, pageStr.c_str(), static_cast<int>(pageStr.size()), &szPage);
         pageW = szPage.cx;
-        pageH = szPage.cy;
     }
-    // blockH = 箭头块 8pt + 3pt 间隔 + 页码高；整体垂直居中（mac blockTop）。
-    const int blockH = pt(8, dpi) + (comp_.pageCount > 1 ? pt(3, dpi) + pageH : 0);
-    const int blockTop = (h - blockH) / 2;
+    int blockTop = 0, blockH = 0, upCy = 0, downCy = 0, pageTop = 0;
+    flipBlockMetrics(dpi, h, &blockTop, &blockH, &upCy, &downCy, &pageTop);
     const int arm = pt(3, dpi);
-    const int chevY = blockTop + pt(4, dpi);
     const int chevDy = pt(2, dpi);  // mac arm*0.7 ≈ 2.1pt
-    // 单页置灰：mac chevron.withAlphaComponent(alpha/3)；GDI 无 alpha，按
-    // 同一混合几何折算为向面板底色回退 2/3 的等效不透明色（保留 1/3）。
-    const COLORREF chevronColor = (comp_.pageCount <= 1)
-        ? CandidateColors::fadeToward(theme.chevron, theme.panelBg, 85)
-        : theme.chevron;
     // mac 线宽 1.5pt：pt(3)/2 四舍五入，保证任意 DPI 下 ≥1px。
     int chevPenW = (pt(3, dpi) + 1) / 2;
     if (chevPenW < 1) chevPenW = 1;
-    HPEN chevPen = CreatePen(PS_SOLID, chevPenW, chevronColor);
-    prevPen = chevPen != nullptr ? SelectObject(memDC, chevPen) : nullptr;
-    if (dirDown) {
-        MoveToEx(memDC, chevX - arm, chevY - chevDy, nullptr);
-        LineTo(memDC, chevX, chevY + chevDy);
-        LineTo(memDC, chevX + arm, chevY - chevDy);
-    } else {
-        MoveToEx(memDC, chevX - arm, chevY + chevDy, nullptr);
-        LineTo(memDC, chevX, chevY - chevDy);
-        LineTo(memDC, chevX + arm, chevY + chevDy);
-    }
-    if (prevPen != nullptr) SelectObject(memDC, prevPen);
-    if (chevPen != nullptr) DeleteObject(chevPen);
-
-    // 页码：水平居中于 chevron（mac x = chevX - pageW/2），
-    // 垂直位置 = blockTop + 8pt + 3pt。
+    // 箭头可用性即绘制条件（与 mac 一致）：
+    //   * 多页：首页只画下箭头、末页只画上箭头、中间页两枚都画——正是
+    //     issue#2 用户要求（此前只画一枚，中间页看不到上箭头）；
+    //   * 单页：没有翻页动作，两枚都画成置灰色（不可点，保留控制区形态）。
     if (comp_.pageCount > 1) {
-        RECT pageRc{ chevX - pageW / 2, blockTop + pt(11, dpi),
-                     chevX - pageW / 2 + pageW, blockTop + pt(11, dpi) + pageH + 2 };
+        HPEN chevPen = CreatePen(PS_SOLID, chevPenW, theme.chevron);
+        if (chevPen != nullptr) {
+            prevPen = SelectObject(memDC, chevPen);
+            auto drawChevron = [&](bool down, int cy) {
+                if (down) {
+                    MoveToEx(memDC, chevX - arm, cy - chevDy, nullptr);
+                    LineTo(memDC, chevX, cy + chevDy);
+                    LineTo(memDC, chevX + arm, cy - chevDy);
+                } else {
+                    MoveToEx(memDC, chevX - arm, cy + chevDy, nullptr);
+                    LineTo(memDC, chevX, cy - chevDy);
+                    LineTo(memDC, chevX + arm, cy + chevDy);
+                }
+            };
+            if (hasPrev) drawChevron(false, upCy);
+            if (hasNext) drawChevron(true, downCy);
+            if (prevPen != nullptr) SelectObject(memDC, prevPen);
+            DeleteObject(chevPen);
+        }
+    } else {
+        // 单页置灰：mac chevron.withAlphaComponent(alpha/3)；GDI 无 alpha，
+        // 按同一混合几何折算为向面板底色回退 2/3 的等效不透明色（保留 1/3）。
+        const COLORREF dimColor = CandidateColors::fadeToward(theme.chevron, theme.panelBg, 85);
+        HPEN dimPen = CreatePen(PS_SOLID, chevPenW, dimColor);
+        if (dimPen != nullptr) {
+            prevPen = SelectObject(memDC, dimPen);
+            MoveToEx(memDC, chevX - arm, upCy + chevDy, nullptr);
+            LineTo(memDC, chevX, upCy - chevDy);
+            LineTo(memDC, chevX + arm, upCy + chevDy);
+            MoveToEx(memDC, chevX - arm, downCy - chevDy, nullptr);
+            LineTo(memDC, chevX, downCy + chevDy);
+            LineTo(memDC, chevX + arm, downCy - chevDy);
+            if (prevPen != nullptr) SelectObject(memDC, prevPen);
+            DeleteObject(dimPen);
+        }
+    }
+
+    // 页码：两枚箭头之间水平居中（mac x = chevX - pageW/2）。
+    if (comp_.pageCount > 1) {
+        RECT pageRc{ chevX - pageW / 2, pageTop,
+                     chevX - pageW / 2 + pageW, pageTop + flipPageH_ + 2 };
         SetTextColor(memDC, theme.pageColor);
         SelectObject(memDC, fontIndex);
         DrawTextW(memDC, pageStr.c_str(), -1, &pageRc,
@@ -921,7 +1054,7 @@ void CandidateWindow::onLButtonDown(int x, int y) {
     const POINT pt{ x, y };
     gearPressed_ = false;
     pressedItemIndex_ = -1;
-    chevronPressed_ = false;
+    chevronPressed_ = 0;
     if (tip_ == nullptr) return;
     if (PtInRect(&settingsRect_, pt)) {
         gearPressed_ = true;
@@ -933,7 +1066,12 @@ void CandidateWindow::onLButtonDown(int x, int y) {
             return;
         }
     }
-    if (comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) chevronPressed_ = true;
+    // 两枚箭头各自的命中区（不可用方向没有矩形，点空白不生效）。
+    if (PtInRect(&chevronUpRect_, pt)) {
+        chevronPressed_ = -1;
+        return;
+    }
+    if (PtInRect(&chevronDownRect_, pt)) chevronPressed_ = 1;
 }
 
 void CandidateWindow::onLButtonUp(int x, int y) {
@@ -941,10 +1079,10 @@ void CandidateWindow::onLButtonUp(int x, int y) {
     const POINT pt{ x, y };
     const bool wasGear = gearPressed_;
     const int wasItem = pressedItemIndex_;
-    const bool wasChevron = chevronPressed_;
+    const int wasChevron = chevronPressed_;  // -1 上箭头 / +1 下箭头 / 0 无
     gearPressed_ = false;
     pressedItemIndex_ = -1;
-    chevronPressed_ = false;
+    chevronPressed_ = 0;
     if (tip_ == nullptr) return;
     if (wasGear) {
         if (PtInRect(&settingsRect_, pt)) tip_->showSettingsWindow();
@@ -959,25 +1097,36 @@ void CandidateWindow::onLButtonUp(int x, int y) {
         }
         return;
     }
-    if (wasChevron && comp_.pageCount > 1 && PtInRect(&chevronRect_, pt)) {
-        bool hasNext = comp_.page + 1 < comp_.pageCount;
-        bool hasPrev = comp_.page > 0;
-        bool dirDown = hasNext || !hasPrev;
-        // 面板当前展示的可能是**联想**分页（showAssociatePage 传进来的是
-        // 联想页切片），此时必须翻联想页。2026-10-29 修复：此前无条件走
-        // flipPage（翻组词页）——而联想时组词态 comp_ 是空的，flipPage
-        // 首行 hasCandidates() 直接 return，**点箭头完全没反应**
-        // （macOS 面板箭头在联想态走 associateFlip、Linux 同理）。
-        if (tip_->isAssociatePanel()) {
-            tip_->flipAssociateFromPanel(dirDown);
-        } else {
-            tip_->flipPage(dirDown);
+    if (wasChevron != 0) {
+        const RECT& rc = wasChevron > 0 ? chevronDownRect_ : chevronUpRect_;
+        if (PtInRect(&rc, pt)) {
+            const bool dirDown = wasChevron > 0;
+            // 面板当前展示的可能是**联想**分页（showAssociatePage 传进来的是
+            // 联想页切片），此时必须翻联想页。2026-10-29 修复：此前无条件走
+            // flipPage（翻组词页）——而联想时组词态 comp_ 是空的，flipPage
+            // 首行 hasCandidates() 直接 return，**点箭头完全没反应**
+            // （macOS 面板箭头在联想态走 associateFlip、Linux 同理）。
+            if (tip_->isAssociatePanel()) {
+                tip_->flipAssociateFromPanel(dirDown);
+            } else {
+                tip_->flipPage(dirDown);
+            }
         }
     }
 }
 
 void CandidateWindow::onRButtonUp(int x, int y) {
-    if (tip_ == nullptr) return;
+    // issue #1 根因：候选窗是 WS_EX_NOACTIVATE，但 TrackPopupMenu 前对它调用
+    // SetForegroundWindow 会**程序化激活**它（微软文档明确 NOACTIVATE 仍可被
+    // SetForegroundWindow 激活）——候选窗与宿主文档同进程/同线程，宿主文档因此
+    // 收到 WM_KILLFOCUS → TSF 文本服务失去键盘焦点 → inputActive_ 闸门关闭
+    // （打字变英文、Shift 失效）、合成被外部终止（未上屏拼音留在文档）。
+    // 因此菜单 owner 一律取 TIP 返回的**本进程宿主窗口**：它本来就是前台，
+    // SetForegroundWindow 等于零变化，同时满足 KB135788（owner 必须是前台窗口，
+    // 否则点菜单外菜单不消失）。取不到 owner 时**不弹菜单**：安全优先于可用性，
+    // 绝不为了弹菜单去抢焦点把输入法搞死（真机排障看 tsf.log 的 menu skipped 行）。
+    CandidateWindowHost* host = tip_;
+    if (host == nullptr) return;
     POINT pt{ x, y };
     const int index = [&]() {
         for (const auto& it : items_) {
@@ -991,18 +1140,32 @@ void CandidateWindow::onRButtonUp(int x, int y) {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) return;
     AppendMenuW(menu, MF_STRING, 1, L"删除该词");
-    // MSDN KB135788：TrackPopupMenu 前 SetForegroundWindow，否则点菜单外
-    // 菜单不消失。候选窗是 WS_EX_NOACTIVATE（不抢焦点），SetForegroundWindow
-    // 可能被系统忽略，返回后补发 WM_NULL 让菜单循环正常退出。
-    SetForegroundWindow(hwnd_);
+    HWND owner = host->menuOwnerWindow();
+    if (owner == nullptr) {
+        DestroyMenu(menu);
+        if (diagBudget()) diagPrintf(L"tsf.log", "candidate menu skipped: no host owner\n");
+        return;
+    }
+    SetForegroundWindow(owner);
     const UINT cmd = TrackPopupMenu(
         menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
-        screen.x, screen.y, 0, hwnd_, nullptr);
+        screen.x, screen.y, 0, owner, nullptr);
     DestroyMenu(menu);
-    PostMessageW(hwnd_, WM_NULL, 0, 0);
+    PostMessageW(owner, WM_NULL, 0, 0);
+    if (cmd != 1) return;
+    // B1（issue #1）：菜单是模态的，期间 TSF 焦点回调可能已 retireUiCompletely()
+    //（tip_ 置空、hwnd_ 销毁、hide() 清空 items_）或 TIP 已 Deactivate。任一校验
+    // 失败都放弃本次删除，绝不操作悬垂 host/失效窗口。
     // TPM_RETURNCMD：命令在返回后同步执行；候选在菜单跟踪期间不刷新，
     // index 仍是当前页切片内的序号（与 onLButtonDown 的点击语义一致）。
-    if (cmd == 1) tip_->deleteCandidateByIndex(index);
+    if (host != tip_ || !IsWindow(hwnd_) || index < 0 ||
+        index >= static_cast<int>(items_.size())) {
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "candidate menu stale after close: skip delete\n");
+        }
+        return;
+    }
+    host->deleteCandidateByIndex(index);
 }
 
 // 候选窗收到「联想开关变化」广播：关闭时立即收起联想；只查注册表，

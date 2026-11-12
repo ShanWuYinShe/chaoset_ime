@@ -180,6 +180,22 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
     // 仍保持非激活）；之后所有按键/焦点回调都以 inputActive_ 为闸门。
     focused_ = true;
     updateInputActive(false);
+    // ---- 托盘显示上报（issue #3）----
+    // 托盘可见性＝「系统当前选中的输入法是不是本输入法」，与有没有输入焦点解耦：
+    //   * 激活迁移（inputActive_ 变 true）已在上面的 updateInputActive 里上报过
+    //     active 1，这里只补「本线程没有 TSF 文本焦点（窗口抓不到可编辑上下文/
+    //     桌面窗口）但本输入法被选中」的场景——否则用户切回本输入法后托盘不会
+    //     重新出现；
+    //   * 判据 = 本线程激活档案确实是本输入法 + 本进程就是前台进程。TSF 会把 TIP
+    //     预激活进任意宿主进程，后台实例不满足前台条件，不会误点亮托盘；
+    //   * 只入队（ShellWorker），不跨进程等待：零阻塞契约。worker 尚未创建时由
+    //     postActiveReport 按需启动（见 shell_worker.cpp 的同名注释）。
+    if (!inputActive_ && isActiveTip() && foregroundIsSelf()) {
+        // 先按作用域应用模式（System 从权威同步 / Process 取本进程状态），
+        // 与 updateInputActive 的激活路径保持一致，再上报 active 1。
+        applyModeForCurrentScope();
+        postActiveReport(true, enMode_, true);
+    }
     return S_OK;
 }
 
@@ -214,13 +230,13 @@ DWORD dwFlags) {
 
 
 HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate() {
-    // 停用即「非激活」：只有本实例确实处于激活态才上报 active 0（UI 宿主只认
-    // owner pid；同进程多实例下，后台/从未激活的实例发失活事件会把当前 owner
-    // 的托盘误隐藏——无心跳兜底时尤其危险）。再从线程注册表/钩子表摘掉并退场。
-    const bool wasActive = inputActive_;
+    // 停用（宿主关闭 / TSF 卸载本实例）**只退场，不上报 active 0**：
+    // 托盘可见性＝「本输入法是否被系统选中」（issue #3），与输入焦点、与某个宿主
+    // 里的实例是否被停用无关——关掉正在用的程序后托盘必须继续显示。真正切到
+    // 其它输入法由 ITfActiveLanguageProfileNotifySink::OnActivated(FALSE) 上报
+    // active 0（见 OnActivated）。这里清激活闸门、摘 sink、销毁浮窗即可。
     inputActive_ = false;
     focused_ = false;
-    if (wasActive) postActiveReport(false, enMode_, false);
     unregisterTipFromThread(this);
     // 焦点 sink 必须在 tm_ 释放前成对摘除（幂等：Activate 失败/重复调用安全）。
     unadviseThreadSinks();
@@ -272,7 +288,10 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
         focused_ = false;
         // 从未激活的实例：**零动作**（不比较 goal、不清理、不上报）。
         if (!inputActive_) return S_OK;
-        // 失焦 = 非激活：updateInputActive 内部上报 active 0、销毁浮窗、撤钩子。
+        // 失焦只退场：关闭按键/候选窗闸门、销毁浮窗、撤钩子，**不上报 active 0**。
+        // 托盘可见性＝「本输入法是否被系统选中」（issue #3），与当前窗口是否持有
+        // 输入焦点无关——切到没有输入焦点的进程（桌面/任务栏/无文本框窗口）时
+        // 托盘必须继续显示。隐藏只由输入法切换通知 OnActivated(FALSE) 触发。
         updateInputActive(false);
         if (isComposing() || !confirmedPreedit_.empty()) {
             resetSession();
@@ -299,6 +318,11 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
             candidateWnd_.hide();
         }
         shiftHoldSuspended_ = false;  // 焦点回来：按住的 Shift 松开时仍可切换
+    } else if (isActiveTip() && foregroundIsSelf()) {
+        // 焦点事件没有让 inputActive_ 变 true（本上下文不可合成/没有文本焦点），
+        // 但本输入法被选中且本进程在前台——托盘必须显示（issue #3）。
+        applyModeForCurrentScope();
+        postActiveReport(true, enMode_, true);
     }
     return S_OK;
 }
@@ -363,12 +387,22 @@ void ChaosetTIP::unadviseThreadSinks() {
 
 // ITfThreadFocusSink：TSF 线程 UI 焦点。回调在宿主 TSF 线程同步执行——只做
 // 内存操作 + 入队（零阻塞契约：不等待、不建进程、不同步写盘）。
+//
+// 焦点获得时 updateInputActive(true) 只在 focused_ + 激活档案是本输入法 + 线程
+// 焦点三者同时成立时才上报 active 1（后台预激活实例不会误报）；没有 TSF 文本
+// 焦点的窗口（桌面/无文本框）走下面的独立托盘显示上报。
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus() {
     focused_ = true;
     updateInputActive(true);
+    if (!inputActive_ && isActiveTip() && foregroundIsSelf()) {
+        applyModeForCurrentScope();
+        postActiveReport(true, enMode_, true);
+    }
     return S_OK;
 }
 
+// 线程焦点丢失**只退场、不隐藏托盘**（issue #3）：托盘看的是「系统选中的
+// 输入法是不是本输入法」，不是「当前线程有没有焦点」。
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus() {
     focused_ = false;
     updateInputActive(false);
@@ -390,28 +424,75 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(REFCLSID clsid, REFGUID /*guid
         // 先走激活状态迁移（建 worker/窗口、上报 active 1）；再按作用域应用
         // 模式：System 从权威同步、Process 上报本进程模式（与焦点事件同语义）。
         updateInputActive(true);
-        if (inputActive_) applyModeForCurrentScope();
+        if (inputActive_) {
+            applyModeForCurrentScope();
+        } else if (isActiveTip() && foregroundIsSelf()) {
+            // 用户从其它输入法切回本输入法（上一次切走已隐藏托盘）：本窗口可能
+            // 没有 TSF 文本焦点（没有文本框/桌面），仍然必须让托盘重新出现。
+            applyModeForCurrentScope();
+            postActiveReport(true, enMode_, true);
+        }
         return S_OK;
     }
-    // 本输入法被切走：立即收口（不依赖宿主是否调用 Deactivate）。只有本实例
-    // 确实激活时才上报 active 0（同进程多实例下避免误隐藏 owner 的托盘）；
+    // 本输入法被切走（用户选了别的输入法/英文键盘）= **托盘唯一的隐藏入口**：
+    // 无条件上报 active 0，不依赖宿主是否调用 Deactivate，也不再用 active 守卫。
+    // 为什么去掉守卫：失焦路径已不再上报 active 0（见 updateInputActive），现在
+    // 这条 TSF 通知是「系统当前选中的输入法已经不是本输入法」的权威信号；同进程
+    // 其它实例/后台预激活实例也可能收到该通知，UI 宿主对 active 0 统一走 300ms
+    // 防抖（期间任何 active 1 会取消），不会因为多实例重复上报而闪/误隐藏。
     // 清理/Shift 挂起与 switchToInactiveProfile 同语义（幂等）。
-    const bool wasActive = inputActive_;
     inputActive_ = false;
     focused_ = false;
-    if (wasActive) {
-        postActiveReport(false, enMode_, false);
-        retireUiCompletely();
-        suspendShiftHoldOnFocusLost();
-    }
+    postActiveReport(false, enMode_, false);
+    retireUiCompletely();
+    suspendShiftHoldOnFocusLost();
     return S_OK;
 }
 
 
 // ITfCompositionSink：合成被外部终止（焦点切换等）
-HRESULT STDMETHODCALLTYPE ChaosetTIP::OnCompositionTerminated(TfEditCookie /*ec*/,
-ITfComposition* /*pComposition*/) {
+HRESULT STDMETHODCALLTYPE ChaosetTIP::OnCompositionTerminated(TfEditCookie ec,
+ITfComposition* pComposition) {
     g_lastOp = kOpCompositionTerminated;
+    // 方案 C（issue #1 症状 b 的最后保护）：TSF 外部终止合成时会默认把合成内文本
+    //（含未上屏拼音）当正文留在文档里（ITfCompositionSink::OnCompositionTerminated
+    // 文档：text service 可用该通知把部分合成文本转成可读文本或整体擦除）。
+    // 我们只在**内容与最后一次写入完全一致**时清理：保留 confirmedPreedit_（用户
+    // 确认过的字不能丢）、清掉未上屏拼音；取不到/内容被宿主改过/写失败都只记日志，
+    // 绝不强改。自己 EndComposition 的路径 composition_ 已置空（或 endTarget_ 非空）
+    // 会自然跳过。
+    if (composition_ != nullptr && pComposition == composition_ && endTarget_ == nullptr) {
+        const std::string expected = confirmedPreedit_ + comp_.preedit;
+        if (!expected.empty() && expected.size() <= 4096) {
+            ITfRange* range = nullptr;
+            if (SUCCEEDED(pComposition->GetRange(&range)) && range != nullptr) {
+                // 多留 1 个 wchar 给 GetText 的边界；正常预编辑远小于该上限。
+                std::wstring actual(expected.size() + 2, L'\0');
+                ULONG fetched = 0;
+                const HRESULT hrGet = range->GetText(ec, 0, &actual[0],
+                                                     static_cast<ULONG>(actual.size()), &fetched);
+                const std::wstring wideExpected = toWide(expected);
+                actual.resize(SUCCEEDED(hrGet) ? fetched : 0);
+                const bool same = SUCCEEDED(hrGet) && actual == wideExpected;
+                bool cleaned = false;
+                if (same) {
+                    const std::wstring keep = toWide(confirmedPreedit_);
+                    cleaned = SUCCEEDED(range->SetText(ec, 0, keep.c_str(),
+                                                       static_cast<LONG>(keep.size())));
+                }
+                range->Release();
+                if (diagBudget()) {
+                    diagPrintf(L"tsf.log",
+                               "composition terminated externally same=%d cleaned=%d exp_len=%lu keep_len=%lu\n",
+                               same ? 1 : 0, cleaned ? 1 : 0,
+                               static_cast<unsigned long>(expected.size()),
+                               static_cast<unsigned long>(confirmedPreedit_.size()));
+                }
+            } else if (diagBudget()) {
+                diagPrintf(L"tsf.log", "composition terminated: GetRange failed, cleanup skipped\n");
+            }
+        }
+    }
     candidateWnd_.hide();
     // 引用所有权：TSF 只在「本服务以外的人」结束合成时回调（Microsoft
     // SampleIME Composition.cpp 注释原文：whenever someone other than
@@ -577,9 +658,30 @@ DWORD, DWORD) {
 }
 
 
+namespace {
+
+// P3（issue #1）：本 DLL 自己的浮窗（候选窗/模式提示条）成为前台，是本 TIP 自身
+// 程序化激活浮窗的副作用（正常用户点击不会激活 WS_EX_NOACTIVATE 浮窗），不是宿主
+// 焦点信号；前台钩子必须忽略，别据此改 focused_/inputActive_（否则会把自身激活误判
+// 成「前台回到本进程」而重播激活，或把真正的宿主切换误判成离开）。类名基串与
+// candidate_window.cpp / mode_toast.cpp 的 windowClassName() 保持一致。
+bool isOwnFloatingWindowClass(HWND wnd) {
+    if (wnd == nullptr) return false;
+    wchar_t cls[96] = {};
+    if (GetClassNameW(wnd, cls, 96) <= 0) return false;
+    const std::wstring candidateCls = windowClassName(L"ChaosetCandidateWndClass", g_hInst);
+    if (candidateCls == cls) return true;
+    const std::wstring toastCls = windowClassName(L"ChaosetModeToastWndClass", g_hInst);
+    return toastCls == cls;
+}
+
+}  // namespace
+
+
 // 在 TIP 线程处理前台变化（由 message-only 窗口回调）。
 void ChaosetTIP::onForegroundChanged(HWND fg) {
     if (fg == nullptr) return;
+    if (isOwnFloatingWindowClass(fg)) return;
     if (composeHostWnd_ != nullptr && fg == composeHostWnd_) return;
     DWORD fgPid = 0;
     GetWindowThreadProcessId(fg, &fgPid);
@@ -588,14 +690,20 @@ void ChaosetTIP::onForegroundChanged(HWND fg) {
         //（Process 作用域下托盘跟 app 对齐）。
         focused_ = true;
         updateInputActive(true);
+        if (!inputActive_ && isActiveTip() && foregroundIsSelf()) {
+            // 前台回到本进程但没有 TSF 文本焦点：仍然必须显示托盘（issue #3）。
+            applyModeForCurrentScope();
+            postActiveReport(true, enMode_, true);
+        }
         return;
     }
     // 前台离开本进程：开始菜单/搜索等宿主不投递 OnSetFocus(FALSE)，靠这里收口。
+    // **只退场、不隐藏托盘**（issue #3）：前台换到别的进程（含桌面/任务栏）不代表
+    // 用户切走了输入法，托盘必须继续显示；隐藏只由 OnActivated(FALSE) 触发。
     const bool wasActive = inputActive_;
     inputActive_ = false;
     focused_ = false;
     if (wasActive) {
-        postActiveReport(false, enMode_, false);
         retireUiCompletely();
         suspendShiftHoldOnFocusLost();
     }
@@ -665,7 +773,7 @@ bool ChaosetTIP::foregroundIsSelf() {
 }
 
 
-// 唯一的激活状态迁移出口。
+// 唯一的**按键/候选窗**激活状态迁移出口（inputActive_ 闸门）。
 //
 // 焦点判定改用 TSF 原语（spec §2.5）：ITfThreadMgr::IsThreadFocus 是「本线程
 // 是否持有 TSF 焦点」的权威答案；取代 GetForegroundWindow 的 pid 启发式
@@ -673,6 +781,11 @@ bool ChaosetTIP::foregroundIsSelf() {
 // IsThreadFocus 失败（tm_ 为空/老系统）才回退旧判据；fromFocusEvent 只在
 // 回退路径里使用（OnSetFocus(TRUE) 时 TSF 已把焦点交给本上下文，允许不等
 // GetForegroundWindow 更新）。
+//
+// 托盘可见性（issue #3）：这里的激活迁移会顺带上报 active 1，但**失活分支绝不
+// 上报 active 0**——失焦/停用/前台离开只退场，托盘继续显示（系统当前选中的
+// 输入法仍是本输入法）。隐藏只由输入法切换路径 OnActivated(FALSE) /
+// switchToInactiveProfile 触发。
 void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
     bool threadFocused = false;
     bool haveThreadFocus = false;
@@ -684,6 +797,20 @@ void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
         }
     }
     if (!haveThreadFocus) threadFocused = fromFocusEvent || foregroundIsSelf();
+    // B3（issue #1）：焦点事件是 TSF 明确告知「本服务接收键盘焦点」的信号
+    //（OnSetFocus(TRUE)/OnSetThreadFocus/OnActivated(TRUE)，以及前台回到本进程的
+    // onForegroundChanged）；IsThreadFocus 的更新时机可能晚于事件派发，此时不能丢弃
+    // 事件结论，否则恢复会被永久卡住
+    //（用户表现为「切回应用后仍打英文、要多切几次/点托盘才恢复」）。事件路径只
+    // 把 focused_ 之后的状态推向激活，失焦路径仍由 focused_=false 主导，不会
+    // 恢复 issue#3 已修掉的「失焦上报 active 0」语义（本函数失活分支不上报）。
+    if (fromFocusEvent && !threadFocused) {
+        static volatile LONG loggedTrustFocusEvent = 0;
+        if (InterlockedCompareExchange(&loggedTrustFocusEvent, 1, 0) == 0 && diagBudget()) {
+            diagPrintf(L"tsf.log", "focus gain event: IsThreadFocus=0, trust event\n");
+        }
+        threadFocused = true;
+    }
     const bool next = focused_ && isActiveTip() && threadFocused;
     if (next == inputActive_) {
         if (!next) {
@@ -720,8 +847,8 @@ void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
                        static_cast<unsigned long>(0));
         }
     } else {
-        // 失焦/停用/前台离开：先通知托盘隐藏，再彻底退场。
-        postActiveReport(false, enMode_, false);
+        // 失焦/停用/前台离开：**只退场、不上报 active 0**（托盘继续显示，
+        // 因为系统当前选中的输入法仍是本输入法——issue #3 用户要求）。
         retireUiCompletely();
         // 保留旧的「焦点抖一下不丢 Shift 会话」语义：物理键仍按着则挂起，
         // 释放后由下一次按键按「挂起」规则收口（真切走应用时不会误切中英）。
@@ -770,7 +897,9 @@ void ChaosetTIP::retireUiCompletely() {
 }
 
 
-// 切换到其它输入法（TSF 未调 Deactivate）时的统一收口：托盘隐藏 + 彻底退场。
+// 切换到其它输入法（TSF 未调 Deactivate / 未发失活通知）时的统一收口：
+// 上报 active 0（托盘隐藏）+ 彻底退场。按键路径复核激活档案发现「已经不是我」
+// 即走这里，是 OnActivated(FALSE) 之外的兜底隐藏入口（事件驱动，无心跳）。
 void ChaosetTIP::switchToInactiveProfile() {
     inputActive_ = false;
     focused_ = false;
@@ -931,9 +1060,13 @@ void ChaosetTIP::toggleEnMode(ITfContext* pic) {
 
 // ---- worker 消息回投入口（message-only 窗口 → TIP 线程）----
 // 托盘可见性与中英状态完全由 TSF 信号事件驱动（无周期定时器/心跳）：
-// Activate/Deactivate、ITfThreadFocusSink、ITfActiveLanguageProfileNotifySink、
-// ITfKeyEventSink::OnSetFocus、前台钩子回调分别在激活/失活迁移时上报一次
-// active 1/0（见 updateInputActive），模式变化上报 mode。
+//   * 显示（active 1）：Activate / ITfActiveLanguageProfileNotifySink 激活通知 /
+//     ITfThreadFocusSink / ITfKeyEventSink::OnSetFocus(TRUE) / 前台回到本进程，
+//     在「激活档案是本输入法 + 本进程在前台」或激活迁移时上报（见 updateInputActive
+//     与 Activate 的托盘显示上报注释）；重复事件重播用于 UI 宿主重启后自愈；
+//   * 隐藏（active 0）：只有输入法被切走——OnActivated(FALSE) 与按键复核兜底
+//     switchToInactiveProfile；失焦/停用/前台离开一律不上报（issue #3）。
+// 模式变化另发 mode 命令。
 void ChaosetTIP::onWorkerForeground(HWND fg) { onForegroundChanged(fg); }
 
 // worker 异步查到的权威模式（System 档校准）：只在没有「本地刚切换」时采纳。

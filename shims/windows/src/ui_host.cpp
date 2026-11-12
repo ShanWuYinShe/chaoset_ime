@@ -49,6 +49,8 @@ void uiHostSetWorkerHooks(UiHostWorkerFn start, UiHostWorkerFn stop,
 // 为什么是独立进程的自绘托盘图标：中英模式虽已写进 TSF 线程隔间
 // GUID_COMPARTMENT_KEYBOARD_OPENCLOSE（回读成功），但 Windows 不会为第三方
 // TIP 绘制任务栏「中/英」（任务栏输入指示器只显示 profile 图标，实测是蓝色 C）。
+// 可见性语义（issue #3）：只要系统当前选中的输入法是本输入法就显示，失焦/没有
+// 输入焦点/前台换到别的进程都保持显示，只有切到其它输入法才隐藏。
 // 搜狗等输入法同样是自建托盘图标。
 //
 // **绝不能在 TIP 进程里创建**：TSF 把 TIP 加载进每个宿主进程，explorer.exe 单进程
@@ -63,10 +65,10 @@ public:
     UiTray& operator=(const UiTray&) = delete;
     ~UiTray() { destroy(); }
 
-    // 显示并刷新图标（由 TIP 的 active=1 命令驱动，2026-11-07 用户要求：
-    // 输入法未激活时托盘必须隐藏、激活时才出现）。visible_ 表示「用户期望
-    // 可见」：active=0 隐藏后置 false，explorer 重启（TaskbarCreated）不会
-    // 把用户已经不期望的图标提前点亮。
+    // 显示并刷新图标（由 TIP 的 active=1 命令驱动）：语义是「本输入法被系统
+    // 选中」（issue #3），与输入焦点/本进程是否前台无关。visible_ 表示「用户
+    // 期望可见」：active=0（切到其它输入法）隐藏后置 false，explorer 重启
+    //（TaskbarCreated）不会把用户已经不期望的图标提前点亮。
     void show(bool english) {
         visible_ = true;
         if (!ensureWindow()) {
@@ -119,8 +121,9 @@ public:
     bool isShown() const { return shown_; }
 
     // 隐藏：NIM_DELETE 把图标从任务栏移除并清 shown_；之后 active=1 的 show()
-    // 会重新 NIM_ADD（用户要求：未激活必须消失，切回来必须能再出现）。
-    // 由 UI 主线程的 active=0 防抖定时器调用。
+    // 会重新 NIM_ADD（用户要求：切到其它输入法必须消失，切回来必须能再出现）。
+    // **只有** UI 主线程的 active=0（输入法被切走）防抖定时器调用；失焦/停用/
+    // 前台离开/owner 进程退出都不隐藏（issue #3）。
     void hide() {
         visible_ = false;
         if (hwnd_ != nullptr) KillTimer(hwnd_, kRetryTimerId);
@@ -360,18 +363,23 @@ volatile LONG g_liveTrayWindows = 0;
 // g_uiTray。
 static constexpr UINT kUiOpenSettingsMsg = WM_APP + 71;
 static constexpr UINT kUiSetModeMsg = WM_APP + 72;
-// TIP→UI 的 active 上行（2026-11-11 协议定稿，TSF 信号事件驱动）：托盘可见性
-// 的唯一开关。命令管道收到纯文本 "active 1 <0|1> <pid>" / "active 0 <pid>" 后
-// PostMessage 到这里（wParam=pid、lParam 打包 active|english）。UI 宿主只维护
-// **单活跃 owner pid**：active 1 设 owner 并 show（System 档显示权威 mode，
-// Process 档显示该 pid 的 mode）；active 0 只有 sender==owner 才清 owner 并
-// 300ms 防抖 hide（后台实例的 active 0 不得误隐藏）。**没有任何轮询定时器**：
-// owner 进程退出用 OpenProcess+RegisterWaitForSingleObject 回调清理。
+// TIP→UI 的 active 上行（2026-11-11 协议定稿，TSF 信号事件驱动；issue #3 语义
+// 修订）：托盘可见性的唯一开关。命令管道收到纯文本 "active 1 <0|1> <pid>" /
+// "active 0 <pid>" 后 PostMessage 到这里（wParam=pid、lParam 打包 active|english）。
+// 语义＝「本输入法是否被系统选中」，与输入焦点解耦：
+//   * active 1：显示托盘（取消待隐藏）并设单活跃 owner pid（System 档显示权威
+//     mode，Process 档显示该 pid 的 mode）；
+//   * active 0：**唯一隐藏入口**（用户切到其它输入法），300ms 防抖后 NIM_DELETE；
+//     不再要求 sender==owner——owner 进程刚退出（owner 已清）或 owner 不是当前
+//     前台进程时，切走信号也必须能隐藏；防抖窗内任何 active 1 会取消隐藏。
+// **没有任何轮询定时器**：owner 进程退出用 OpenProcess+RegisterWaitForSingleObject
+// 回调清理（只清 owner，不隐藏托盘）。
 // 占 WM_APP+74（原「打开设置→关于」消息顺延到 +75，避免撞号）。
 static constexpr UINT kUiActiveMsg = WM_APP + 74;
 // 打开设置窗并切到「关于」页（托盘右键菜单用，2026-11-06）。
 static constexpr UINT kUiOpenSettingsAboutMsg = WM_APP + 75;
-// owner 进程退出（线程池 wait 回调 → 主线程清理托盘）：事件驱动兜底进程崩溃。
+// owner 进程退出（线程池 wait 回调 → 主线程清理 owner/句柄）：事件驱动兜底，
+// **不隐藏托盘**（issue #3：关掉应用不代表切走输入法，托盘必须常显）。
 static constexpr UINT kUiOwnerExitedMsg = WM_APP + 76;
 // kUiToggleModeMsg 定义见文件前部（TIP 侧托盘点击也要用）。
 // 托盘隐藏防抖（active=0 后 300ms 才真正隐藏，期间 active=1 取消）：焦点在同一
@@ -484,7 +492,8 @@ static VOID CALLBACK uiOwnerExitedCallback(PVOID context, BOOLEAN /*timerOrWaitF
 // 把 pid 设为唯一 owner 并注册进程退出监听（事件驱动兜底崩溃，不轮询）。
 // 换 owner 时先释放旧监听。OpenProcess(SYNCHRONIZE) 失败（更高完整性进程/
 // AppContainer 权限受限）时只记录 owner：崩溃清理交给下一次 active 1 接管，
-// 不影响正常的 active 0 隐藏。
+// 不影响正常的 active 0 隐藏。owner 进程退出回调**只清 owner/句柄、不隐藏托盘**
+//（issue #3：关掉应用后本输入法仍被系统选中，托盘必须常显）。
 static void uiSetOwnerProcess(DWORD pid, HWND wnd) {
     uiClearOwner();
     g_uiOwnerPid = pid;
@@ -562,8 +571,9 @@ static std::string uiHandleCommand(const char* command, DWORD len) {
 }
 
 // 设置权威中英状态（只在 UI 主线程调用）：写 HKCU + 同步托盘图标。
-// **不改变托盘可见性**：可见性只由 active 控制（2026-11-07）。System
-// 档托盘是全局权威（app 跟托盘）；Process 档托盘只跟随当前进程（见 kUiSetModeMsg）。
+// **不改变托盘可见性**：可见性只由 active 控制（2026-11-07；issue #3 后 active 0
+// 仅来自输入法切换）。System 档托盘是全局权威（app 跟托盘）；Process 档托盘只
+// 跟随当前进程（见 kUiSetModeMsg）。
 static void uiApplyEnglish(bool english) {
     g_uiEnglish = english;
     if (g_uiTray != nullptr) {
@@ -611,10 +621,14 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 g_uiOwnerEnglish = english;
                 KillTimer(hwnd, kUiHideTimerId);
                 if (g_uiTray != nullptr) g_uiTray->show(uiDisplayEnglish());
-            } else if (pid != 0 && pid == g_uiOwnerPid) {
-                // 只有 owner 的失活才隐藏；后台实例的 active 0 不得误隐藏托盘。
-                // owner 暂不清除：防抖窗内同一进程另一个 TIP 实例的 active 1 会
-                // 取消隐藏（同进程焦点抖动不闪图标）；真正隐藏时才清 owner。
+            } else if (pid != 0) {
+                // 用户切到其它输入法（active 0 现在只来自 TSF 的输入法失活通知与
+                // 按键复核兜底，见 tip_core.cpp 的 OnActivated/switchToInactiveProfile）：
+                // **唯一隐藏入口**。不按 owner 过滤——owner 进程可能刚退出（owner
+                // 已被清空）或不是当前前台进程，此时若仍要求 sender==owner，切走的
+                // active 0 会被丢弃、托盘残留。仍保留 300ms 防抖：同进程多 TIP 实例
+                // 重复上报只隐藏一次，防抖窗内任何 active 1 会取消隐藏（快速切回/
+                // 焦点抖动不闪图标）。owner 在真正隐藏时才清（见 WM_TIMER 分支）。
                 if (SetTimer(hwnd, kUiHideTimerId, kUiHideDelayMs, nullptr) == 0) {
                     uiClearOwner();
                     if (g_uiTray != nullptr) g_uiTray->hide();
@@ -625,17 +639,18 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         case kUiOwnerExitedMsg:
             // owner 进程退出（线程池 wait 回调只 PostMessage）。这里在主线程确认
             // 当前 owner 进程句柄确实已 signaled（防陈旧消息误清刚接管的 owner）。
+            // **只清 owner/句柄，绝不隐藏托盘**（issue #3）：应用关闭不等于用户切走
+            // 输入法——托盘可见性＝「本输入法是否被系统选中」，必须常显；下一次
+            // active 1（TSF 激活/焦点事件）会重新认领 owner。
             if (g_uiOwnerProcess != nullptr &&
                 WaitForSingleObject(g_uiOwnerProcess, 0) == WAIT_OBJECT_0) {
-                if (SetTimer(hwnd, kUiHideTimerId, kUiHideDelayMs, nullptr) == 0) {
-                    uiClearOwner();
-                    if (g_uiTray != nullptr) g_uiTray->hide();
-                }
+                uiClearOwner();
             }
             return 0;
         case WM_TIMER:
             if (wParam == kUiHideTimerId) {
-                // 防抖窗内没有新的 active 1：真正失活——清 owner 并隐藏托盘。
+                // 防抖窗内没有新的 active 1：用户确实切到了其它输入法——清 owner
+                // 并隐藏托盘（这是托盘唯一的隐藏去向，见 kUiActiveMsg 注释）。
                 KillTimer(hwnd, kUiHideTimerId);
                 uiClearOwner();
                 if (g_uiTray != nullptr) g_uiTray->hide();
@@ -838,9 +853,10 @@ int runUiHost(LPCWSTR cmdLine) {
     }
 
     // 托盘中英指示器：整个用户会话唯一。**启动时一律不显示**（2026-11-07 用户
-    // 要求：输入法未激活时托盘必须隐藏）。可见性只由 TIP 的 active 上报控制：
-    // 收到 active=1 才 show()，active=0 防抖后 hide()；UI 宿主不写登录 Run 项，
-    // 由 TIP 首次激活时带 --mode 懒启动（见 ensureUiHostStarted）。
+    // 要求：开机/没选中本输入法时不显示）。可见性只由 TIP 的 active 上报控制：
+    // 收到 active=1（本输入法被系统选中）才 show()，active=0（切到其它输入法）
+    // 防抖后 hide()；失焦/停用/owner 退出不隐藏（issue #3）。UI 宿主不写登录
+    // Run 项，由 TIP 首次激活时带 --mode 懒启动（见 ensureUiHostStarted）。
     g_uiTray = new UiTray();
     // 权威状态初始化：优先 HKCU 记忆（上次托盘显示的状态），否则中文。
     g_uiEnglish = uiLoadSavedEnglish();

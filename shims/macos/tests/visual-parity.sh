@@ -15,6 +15,10 @@
 #      的静默漂移必须在这里 FAIL。divider 导出此前无人消费，C 段是它的消费者）
 #   D. 色值 Go↔Swift 逐色比对：浅色 + 深色各 13 项（此前 Swift 端色值从未
 #      导出/参与比对，D 段只自证 Go 侧 4 个浅色）
+#   E. 折叠区双箭头与页内预选高亮契约（源码级，issue#2）：首页只有下箭头、
+#      末页只有上箭头、中间页两枚都有；两枚箭头命中区分开（-2 上 / -1 下）；
+#      高亮 pill 跟随页内预选。macOS 是视觉参考实现，语义被删会让 Windows
+#      端静态契约失去对照。
 #
 # 未覆盖（事实声明，勿在文档里夸大）：Windows 候选窗只有源码契约检查
 # （tools/checkgdi 的 ExtCreatePen 非空指针）；Linux 用 ibus 原生面板、无自绘
@@ -175,3 +179,34 @@ if fails:
     sys.exit(1)
 print("视觉一致性检查通过")
 PY
+
+note ""
+note "== E. 折叠区双箭头与预选高亮契约（源码级，issue#2）=="
+# 期望值来源：docs/ui-parity.md「折叠区几何」+ issue#2 用户要求。
+# 多页：首页只画下箭头、末页只画上箭头、中间页两枚都画；两枚箭头命中区分开
+# （-2 翻上一页 / -1 翻下一页）；高亮 pill 跟随页内预选（不再固定第一项）。
+# 单页没有翻页动作：两枚置灰且不注册命中区。
+VIEW=src/CandidatePanelView.swift
+CTRL=src/CandidatePanel.swift
+fail_e=0
+expect_src() {
+  if grep -qF -- "$2" "$1"; then
+    note "ok   $3"
+  else
+    note "FAIL $3（$1 缺少：$2）"
+    fail_e=1
+  fi
+}
+expect_src "$VIEW" "if hasPrev {" "上箭头绘制分支"
+expect_src "$VIEW" "color: theme.chevron, dirDown: false" "多页上箭头（⌃）"
+expect_src "$VIEW" "color: theme.chevron, dirDown: true" "多页下箭头（⌄）"
+expect_src "$VIEW" "height: half), -2" "上箭头独立命中区（-2 翻上一页）"
+expect_src "$VIEW" "height: blockH - half), -1" "下箭头独立命中区（-1 翻下一页）"
+expect_src "$VIEW" "frame.index == selectedIndex" "高亮 pill 跟随页内预选"
+expect_src "$CTRL" "static var selectedIndex" "候选面板页内预选状态"
+expect_src "$CTRL" "static func moveSelection" "页内预选移动 API"
+if [ "$fail_e" -ne 0 ]; then
+  note "折叠区/预选契约检查失败"
+  exit 1
+fi
+note "折叠区双箭头与预选高亮契约通过"

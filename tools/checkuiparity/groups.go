@@ -58,6 +58,9 @@ const (
 	groupCandidateClick       = "候选点选"
 	groupCandidateDelete      = "候选右键删除"
 	groupCandidateGearMouseUp = "候选窗齿轮 mouseUp"
+	// issue#2：方向键页内预选与上下双翻页箭头（Windows/macOS/Linux 按键语义）。
+	groupCandidatePageArrows    = "候选窗翻页箭头"
+	groupCandidateDirectionKeys = "候选窗方向键预选"
 
 	// 跨端行为与 daemon 生命周期。
 	groupDaemonSingleton = "daemon 单实例"

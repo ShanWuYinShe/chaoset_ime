@@ -41,6 +41,14 @@ public:
     virtual void flipAssociateFromPanel(bool next) = 0;
     virtual bool isAssociatePanel() const = 0;
     virtual void clearAssociateFromSettings() = 0;
+    // 右键菜单 owner：由 TIP 返回「TSF 焦点上下文所属的**本进程**宿主窗口」。
+    // 候选窗必须用它做 TrackPopupMenu 的 owner（并只对它 SetForegroundWindow）——
+    // 绝不能把 WS_EX_NOACTIVATE 候选窗自身设为前台/owner：SetForegroundWindow 会
+    // 程序化激活它（微软文档明确 NOACTIVATE 仍可被程序化激活），宿主文档因此失去
+    // TSF 键盘焦点 → 激活闸门关闭（打字变英文、Shift 失效）、合成被外部终止
+    //（未上屏拼音留在文档，issue #1）。
+    // 返回 nullptr = 当前上下文取不到可用宿主窗口，候选窗应放弃弹菜单（安全优先）。
+    virtual HWND menuOwnerWindow() = 0;
 };
 
 // 存活中的候选窗口数量（定义在 candidate_window.cpp）。用于 DllCanUnloadNow——
@@ -89,6 +97,20 @@ public:
     // 由 TIP 删除学习记录并刷新候选；详见候选窗 TU 内定义与 docs/ui-parity.md）。
     void onRButtonUp(int x, int y);
 
+    // ---- 页内预选（方向键 / 空格确认 / 高亮 pill 共用，2026-11 修复 issue#2）----
+    // 预选序号是**当前页切片内**的 0 起序号（组词候选与联想候选共用同一个
+    // 候选窗）。状态由候选窗持有：TIP 方向键经 moveSelection/setSelectedIndex
+    // 移动，空格确认时经 selectedIndex 取值；show() 在候选集合变化（新输入/
+    // 翻页/选词/删除刷新）时自动重置为 0，TIP 无需在每个按键分支重复清理。
+    int selectedIndex() const;
+    // 已布局（可见）的候选数；方向键只在可见项内移动。
+    int itemCount() const;
+    // 页内移动：成功返回 true；已在页首/页尾返回 false（调用方据此决定是否
+    // 翻页）。移动后立即重绘高亮 pill。
+    bool moveSelection(int delta);
+    // 跨页后由 TIP 指定新的页内序号（上翻选末项 / 下翻选首项），内部钳制。
+    void setSelectedIndex(int index);
+
 private:
     struct ItemPos {
         int index = 0;
@@ -122,6 +144,10 @@ private:
     static LRESULT CALLBACK CandidateWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     void layoutAndPosition();
     void onPaint(HWND hwnd);
+    // 折叠区翻页块的垂直几何（layoutAndPosition 与 onPaint 共用同一公式，
+    // 避免两处各自实现导致命中区与绘制漂移）。单页 blockH=0。
+    void flipBlockMetrics(int dpi, int h, int* blockTop, int* blockH, int* upCy,
+                          int* downCy, int* pageTop) const;
 
     HWND hwnd_ = nullptr;
     // 只在输入法真正激活时才允许显示（见 setActiveGate）。默认 false：
@@ -139,7 +165,14 @@ private:
     int targetLineHeight_ = 20;
 
     std::vector<ItemPos> items_;
-    RECT chevronRect_{};
+    // 页内预选序号（当前页切片内 0 起）与翻页块页码高（layoutAndPosition
+    // 测量、onPaint 复用，保证绘制与命中区几何一致）。
+    int selectedIndex_ = 0;
+    int flipPageH_ = 0;
+    // 两枚翻页箭头各自的命中矩形：只有该方向**可用**时才非空
+    //（首页无上箭头、末页无下箭头、单页都没有），点击不可用方向无动作。
+    RECT chevronUpRect_{};
+    RECT chevronDownRect_{};
     int dividerX_ = 0;
     RECT settingsRect_{};  // 设置齿轮命中区
     // 鼠标左键按下命中的目标，抬起时才真正执行（2026-11-06 用户要求：
@@ -147,7 +180,7 @@ private:
     // 同一目标上才触发；按下后拖走再松开不触发。
     bool gearPressed_ = false;     // 按在设置齿轮上
     int pressedItemIndex_ = -1;    // 按在候选词上（当前页切片内序号）
-    bool chevronPressed_ = false;  // 按在翻页箭头上
+    int chevronPressed_ = 0;       // -1 上箭头 / +1 下箭头 / 0 无
 };
 
 }  // namespace chaoset::win

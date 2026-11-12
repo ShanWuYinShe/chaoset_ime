@@ -5,8 +5,9 @@ import InputMethodKit
 //
 // 从 ChaosetController.swift 拆出（2026-11-06 架构拆分，纯移动、行为零改动）：
 // Shift 空按切中英、Esc/退格/Ctrl+U/Ctrl+Backspace、Cmd/Ctrl/Option 放行、
-// 联想键位、空格选词/全半角、数字选词、翻页、双拼 ';'、标点与字母组词等
-// 判定全部在此；控制器状态与候选/联想呈现见 ChaosetController.swift。
+// 联想键位、空格选词/全半角、数字选词、方向键页内预选、翻页、双拼 ';'、
+// 标点与字母组词等判定全部在此；控制器状态与候选/联想呈现见
+// ChaosetController.swift。
 
 extension ChaosetController {
 
@@ -164,6 +165,14 @@ extension ChaosetController {
 
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
 
+        // 方向键预选（issue#2）：组词有候选时移动页内预选（上/左=前一项、
+        // 下/右=后一项；页首/页尾跨页选末项/首项，无对应页保持不动）。
+        // 无组词/无候选时**不消费**，落到下方 passThrough 放行给宿主。
+        if isComposing, hasCandidates, let delta = Self.arrowDelta(event.keyCode) {
+            moveCompositionSelection(delta: delta, client: client)
+            return true
+        }
+
         // 联想模式：数字键选联想词直接上屏（并继续联想）；空格/回车结束
         // 联想放行；字母键退出联想进入正常组词（落到下方常规流程）。
         if associateCandidates != nil {
@@ -171,12 +180,22 @@ extension ChaosetController {
             // （同空格选词修复的口径），数字/字母改用 event 自带的键值判定。
             let rawChars = event.charactersIgnoringModifiers ?? ""
             let firstScalar = rawChars.unicodeScalars.first?.value ?? 0
+            // 方向键：移动联想页内预选（页首/页尾跨页）。联想面板可见时
+            // 方向键属于输入法，不再「退出联想并透传」。
+            if let delta = Self.arrowDelta(event.keyCode) {
+                moveAssociateSelection(delta: delta, client: client)
+                return true
+            }
             if event.keyCode == 49 || event.keyCode == 36 {
                 // 空格：**默认选当前页第一个联想词上屏**（市面输入法惯例，
                 // 渐进组句闭环——上屏后继续弹续接联想；2026-10-28 用户反馈
                 // 联想时空格不能默认选第一个很不方便）。回车：结束联想（消费）。
                 if event.keyCode == 49, let list = associateCandidates, !list.isEmpty {
-                    let pick = associatePage * Self.associatePageSize
+                    // 空格确认**联想页内预选项**（默认第 0 项；方向键可移动预选）。
+                    let start = associatePage * Self.associatePageSize
+                    let count = min(Self.associatePageSize, list.count - start)
+                    let sel = min(max(CandidatePanelController.selectedIndex, 0), max(count - 1, 0))
+                    let pick = start + sel
                     if pick < list.count {
                         if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
                             client?.insertText(
@@ -237,8 +256,8 @@ extension ChaosetController {
                 associateFlip(next: next, client: client)
                 return true
             } else {
-                // 其余按键（方向键/Tab/F 键等）：与 Windows/Linux 对齐，先收起
-                // 联想再落到下方正常流程/透传（此前面板会残留到下一次输入）。
+                // 其余按键（Tab/F 键等）：与 Windows/Linux 对齐，先收起联想再
+                // 落到下方正常流程/透传（此前面板会残留到下一次输入）。
                 exitAssociate()
             }
         }
@@ -275,7 +294,10 @@ extension ChaosetController {
         }
         if event.keyCode == 49, let cur = current, !cur.input.isEmpty {
             if hasCandidates {
-                commit(index: 0, client: client)
+                // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
+                let sel = min(max(CandidatePanelController.selectedIndex, 0),
+                              max(cur.candidates.count - 1, 0))
+                commit(index: sel, client: client)
             } else {
                 let raw = engine.commitRaw() ?? cur.input
                 current = nil
@@ -402,6 +424,52 @@ extension ChaosetController {
         }
 
         return passThrough(client)
+    }
+
+    // MARK: - 方向键页内预选（issue#2）
+
+    /// 方向键 keyCode → 页内预选位移：左/上 = -1（前一项），右/下 = +1。
+    private static func arrowDelta(_ keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 123, 126: return -1  // ← / ↑
+        case 124, 125: return 1   // → / ↓
+        default: return nil
+        }
+    }
+
+    /// 组词态页内预选移动：先页内移动；页首/页尾跨页选末项/首项；没有对应
+    /// 页时保持不动（仍消费按键）。
+    private func moveCompositionSelection(delta: Int, client: (any IMKTextInput)?) {
+        guard let cur = current, !cur.candidates.isEmpty else { return }
+        if CandidatePanelController.moveSelection(delta) { return }
+        if delta < 0 {
+            guard cur.page > 0 else { return }  // 首页页首：保持不动
+            current = engine.prevPage()
+            refresh(client)
+            CandidatePanelController.setSelectedIndex((current?.candidates.count ?? 1) - 1)
+            return
+        }
+        guard cur.page + 1 < cur.pageCount else { return }  // 末页页尾：保持不动
+        current = engine.nextPage()
+        refresh(client)
+        CandidatePanelController.setSelectedIndex(0)
+    }
+
+    /// 联想态页内预选移动（联想是壳本地分页：associatePage 起、每页 6 条）。
+    private func moveAssociateSelection(delta: Int, client: (any IMKTextInput)?) {
+        guard let list = associateCandidates, !list.isEmpty else { return }
+        if CandidatePanelController.moveSelection(delta) { return }
+        let pageCount = (list.count + Self.associatePageSize - 1) / Self.associatePageSize
+        if delta < 0 {
+            guard associatePage > 0 else { return }  // 首页页首：保持不动
+            associateFlip(next: false, client: client)
+            let start = associatePage * Self.associatePageSize
+            CandidatePanelController.setSelectedIndex(min(Self.associatePageSize, list.count - start) - 1)
+            return
+        }
+        guard associatePage + 1 < pageCount else { return }  // 末页页尾：保持不动
+        associateFlip(next: true, client: client)
+        CandidatePanelController.setSelectedIndex(0)
     }
 
     // 不可处理的按键：组词中先清空再放行，避免预编辑与实文脱节。

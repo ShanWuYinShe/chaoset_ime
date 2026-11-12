@@ -18,6 +18,9 @@ final class CandidatePanelView: NSView {
     private var items: [Item] = []
     private var page = 0
     private var pageCount = 0
+    /// 页内预选序号（0 起，当前页切片内）。方向键移动、空格确认与高亮 pill
+    /// 共用；每次 show（新输入/翻页/选词刷新）由 controller 重置为 0。
+    var selectedIndex = 0
     /// 点击命中的候选回调（index 即数字序号-1，等于 daemon select 的候选索引）。
     var onSelect: ((Int) -> Void)?
     /// 点击右侧折叠区触发翻下一页。
@@ -48,11 +51,20 @@ final class CandidatePanelView: NSView {
     var axChildren: [CandidateAXItem] = []
     override var isFlipped: Bool { true }
 
+    /// 已布局的候选数（方向键只在可见项内移动）。
+    var itemCount: Int { items.count }
+
     /// 用组词状态刷新内容；返回内容尺寸（pt）。items 为空时返回 .zero。
     func layout(candidates: [Item], page: Int, pageCount: Int) -> NSSize {
         self.items = candidates
         self.page = page
         self.pageCount = pageCount
+        // 预选序号钳制到本页可见候选（候选变少/被 maxRows 截断时防越界）。
+        if items.isEmpty {
+            selectedIndex = 0
+        } else if selectedIndex >= items.count {
+            selectedIndex = items.count - 1
+        }
         displayTexts = [:] // 每次布局重算截断文本
         let (rows, lineH) = layoutRows()
         cachedRows = rows
@@ -209,10 +221,11 @@ final class CandidatePanelView: NSView {
             var x = Layout.padding
             for frame in row.frames {
                 let item = items[frame.index]
-                // 首选判定用全局候选索引：行内枚举的 i 每行归零，会让每行
-                // 首项都误画高亮胶囊（实机截图已复现）。
-                let p = frame.index == 0
-                // 首选：蓝色高亮胶囊（圆角承接面板圆角）
+                // 预选判定用全局候选索引：行内枚举的 i 每行归零，会让每行
+                // 首项都误画高亮胶囊（实机截图已复现）。高亮 pill 跟随页内
+                // 预选项（此前固定画在第一项）。
+                let p = frame.index == selectedIndex
+                // 预选项：蓝色高亮胶囊（圆角承接面板圆角）
                 if p {
                     let box = frame.rect.insetBy(dx: -Layout.pillMargin, dy: -Layout.pillMargin)
                     let leftR = max(panelR - Layout.pillMargin, 4)
@@ -300,38 +313,52 @@ final class CandidatePanelView: NSView {
         // 差分见 tests/visual-parity.sh。
         NSRect(x: dividerX, y: (bounds.height - divH) / 2, width: 1, height: divH).fill()
 
-        // 折叠区内容整体垂直居中：chevron（翻页指示）在上、页码在下。
-        // divider 右侧依次为齿轮区 → 翻页区，chevron 以翻页子区的中点居中
-        //（此前误用「divider 到右缘」的中点，正好落回齿轮位置——齿轮与
-        // 翻页箭头/页码重叠，2026-10-28 实机截图确认）。
+        // 折叠区内容整体垂直居中：上箭头 / 页码 / 下箭头（issue#2：两枚
+        // 箭头分别反映上一页/下一页是否可用）。divider 右侧依次为齿轮区 →
+        // 翻页区，箭头与页码以翻页子区的中点居中（此前误用「divider 到右缘」
+        // 的中点，正好落回齿轮位置——齿轮与翻页箭头/页码重叠，2026-10-28 实机确认）。
         let flipZoneX = dividerX + SettingsGear.boxW
         let chevX = flipZoneX + (width - flipZoneX) / 2
         let pageText = pageCount > 1 ? "\(page + 1)/\(pageCount)" : nil
         let pageAttrs: [NSAttributedString.Key: Any] = [.font: indexFont, .foregroundColor: theme.pageColor]
         let pageSize = pageText.map { ($0 as NSString).size(withAttributes: pageAttrs) }
         let pageH = pageSize.map { ceil($0.height) } ?? 0
-        let blockH: CGFloat = 8 + (pageText != nil ? 3 + pageH : 0)
+        // 上/下箭头块各 6pt，页码夹在中间；整块垂直居中。
+        let arrowH: CGFloat = 6
+        let blockH = pageCount > 1 ? arrowH * 2 + pageH : 0
         let blockTop = (bounds.height - blockH) / 2
-        // 折叠区：箭头方向反映实际可用动作——有下一页 ⌄（点击翻下页）；
-        // 已在末页但有上一页 ⌃（点击翻上页）；单页 ⌄ 低对比度（不可点）。
         let hasNext = page + 1 < pageCount
         let hasPrev = page > 0
-        let dirDown = hasNext || !hasPrev
-        let dim = pageCount <= 1
-        let chevronColor = dim
-            ? theme.chevron.withAlphaComponent(theme.chevron.alphaComponent / 3)
-            : theme.chevron
-        drawChevron(x: chevX, y: blockTop + 4, arm: 3, color: chevronColor, dirDown: dirDown)
-        if let pageText, let pageSize {
-            let pageW = ceil(pageSize.width)
-            (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + 8 + 3), withAttributes: pageAttrs)
+        if pageCount <= 1 {
+            // 单页：没有上一页/下一页，两枚箭头置灰（不可点，保留控制区形态）。
+            let dimColor = theme.chevron.withAlphaComponent(theme.chevron.alphaComponent / 3)
+            drawChevron(x: chevX, y: blockTop + arrowH / 2, arm: 3, color: dimColor, dirDown: false)
+            drawChevron(x: chevX, y: blockTop + arrowH + arrowH / 2, arm: 3, color: dimColor, dirDown: true)
+        } else {
+            // 多页：首页只画下箭头、末页只画上箭头、中间页两枚都画——正是
+            // issue#2 用户要求（此前只画一枚，中间页看不到上箭头）。
+            if hasPrev {
+                drawChevron(x: chevX, y: blockTop + arrowH / 2, arm: 3, color: theme.chevron, dirDown: false)
+            }
+            if let pageText, let pageSize {
+                let pageW = ceil(pageSize.width)
+                (pageText as NSString).draw(at: NSPoint(x: chevX - pageW / 2, y: blockTop + arrowH), withAttributes: pageAttrs)
+            }
+            if hasNext {
+                drawChevron(x: chevX, y: blockTop + arrowH + pageH + arrowH / 2, arm: 3, color: theme.chevron, dirDown: true)
+            }
         }
 
-        // 折叠区点击 → 按箭头方向翻页（仅多页时有意义；命中区从齿轮
-        // 右侧开始，齿轮点击单独走 onSettings）
+        // 两枚箭头各自的命中区（只有可用方向可点）：上箭头 -2 翻上一页、
+        // 下箭头 -1 翻下一页；单页/不可用方向不注册（点空白无动作）。
         if pageCount > 1 {
-            let flipRect = NSRect(x: flipZoneX, y: 0, width: width - flipZoneX, height: bounds.height)
-            hitAreas.append((flipRect, dirDown ? -1 : -2))
+            let half = blockH / 2
+            if hasPrev {
+                hitAreas.append((NSRect(x: flipZoneX, y: blockTop, width: width - flipZoneX, height: half), -2))
+            }
+            if hasNext {
+                hitAreas.append((NSRect(x: flipZoneX, y: blockTop + half, width: width - flipZoneX, height: blockH - half), -1))
+            }
         }
 
         // 设置齿轮：手绘矢量（见 drawGear），hitArea -3 由 mouseDown 记录、

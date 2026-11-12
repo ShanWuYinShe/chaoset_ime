@@ -46,6 +46,12 @@ constexpr DWORD kVkReturn = 0x0D;
 constexpr DWORD kVkSpace = 0x20;
 constexpr DWORD kVkPrior = 0x21;           // Page Up
 constexpr DWORD kVkNext = 0x22;            // Page Down
+// 方向键（issue#2）：组词/联想有候选时移动页内预选（上/左=前一项、
+// 下/右=后一项），空格确认；无组词/无候选时一律放行给宿主。
+constexpr DWORD kVkLeft = 0x25;            // VK_LEFT
+constexpr DWORD kVkUp = 0x26;              // VK_UP
+constexpr DWORD kVkRight = 0x27;           // VK_RIGHT
+constexpr DWORD kVkDown = 0x28;            // VK_DOWN
 constexpr DWORD kVkFirstLetter = 0x41;  // 'A'
 constexpr DWORD kVkLastLetter = 0x5A;   // 'Z'
 constexpr DWORD kVkFirstDigit = 0x31;   // '1'
@@ -266,6 +272,12 @@ private:
     static int digitIndex(WPARAM vk);
     static bool shiftActive();
     static bool isModifierKey(WPARAM vk);
+    // 方向键预选（issue#2）：预选序号由候选窗持有（CandidateWindow 的
+    // selectedIndex_/moveSelection），TIP 只负责「组词/联想态消费方向键、
+    // 页首/页尾跨页、空格确认预选项」的路由；无候选时方向键必须放行。
+    static bool isArrowKey(WPARAM vk);
+    void moveCompositionSelection(int delta, ITfContext* pic);
+    void moveAssociateSelection(int delta);
     bool wouldHandle(WPARAM vk) const;
     bool handleKey(WPARAM vk, ITfContext* pic);
     ITfContext* focusContext();
@@ -399,6 +411,11 @@ public:
     // 定义见 tip_candidates.cpp）。
     void showSettingsWindow() override;
     bool isAssociatePanel() const override;
+
+    // 右键菜单 owner（候选窗右键删除用，issue #1）：返回本进程的宿主窗口，
+    // 让菜单以「本来就是前台的宿主窗口」为 owner，避免激活候选窗自身导致宿主
+    // 文档失去 TSF 焦点（实现见 tip_candidates.cpp）。
+    HWND menuOwnerWindow() override;
 
     // 联想翻页入口（供候选窗箭头调用；实现见 tip_candidates.cpp 的 flipAssociate）。
     void flipAssociateFromPanel(bool next) override;

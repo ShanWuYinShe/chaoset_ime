@@ -78,6 +78,21 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
 //     候选列表）；联想态按同一联想来源音节重新查询，删空则收起面板。
 void ChaosetTIP::deleteCandidateByIndex(int index) {
     g_lastOp = kOpCandidateClick;
+    // B2（issue #1）：右键菜单是模态的，菜单期间 TSF 焦点回调可能已把本实例退场
+    //（inputActive_=false、候选窗 destroy；OnKillThreadFocus 路径不保证清 comp_）。
+    // 非激活时**不删、不刷新、不 render**：否则会在已失效的上下文里重建候选/合成，
+    // 违反「非激活零副作用」并可能留下悬空预编辑。
+    if (diagBudget()) {
+        diagPrintf(L"tsf.log",
+                   "candidate delete enter active=%d focused=%d composing=%d candidates=%lu raw_len=%lu\n",
+                   inputActive_ ? 1 : 0, focused_ ? 1 : 0, isComposing() ? 1 : 0,
+                   static_cast<unsigned long>(comp_.candidates.size()),
+                   static_cast<unsigned long>(comp_.input.size()));
+    }
+    if (!inputActive_) {
+        if (diagBudget()) diagPrintf(L"tsf.log", "candidate delete skipped: inactive\n");
+        return;
+    }
     if (!assoc_.candidates.empty()) {
         const int global = assocPage_ * kPageSize + index;
         if (index < 0 || global >= static_cast<int>(assoc_.candidates.size())) return;
@@ -120,6 +135,21 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         showToast(L"未找到该词的学习记录", true);
         return;
     }
+    if (composition_ == nullptr) {
+        // 菜单期间 TSF 已外部终止合成：旧预编辑文本已按 TSF 语义留在文档里。
+        // **绝不能** flushOrCancel/commit（会把 confirmedPreedit_ 重复写进文档）或
+        // render 重建合成（会把旧输入重新插进可能已变化的文档位置）。只清本地/
+        // 引擎会话并收起候选窗；学习记录已删除，给用户 toast。
+        resetComposition();
+        comp_ = chaoset::Comp();
+        confirmedPreedit_.clear();
+        candidateWnd_.hide();
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "candidate delete refresh: composition terminated, state dropped\n");
+        }
+        showToast(L"已删除该词", true);
+        return;
+    }
     // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
     ContextRef ctx(focusContext());
     const std::string raw = comp_.input;
@@ -141,7 +171,44 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         comp_ = std::move(rest);
         render(ctx.get());
     }
+    // 刷新后一致性兜底（P2 与 B2 配套）：render 失败（预编辑没写进文档）时按
+    // bailOutNoComposition 语义收口，绝不留「候选窗显示但文档无预编辑」的状态。
+    if (!comp_.input.empty() && (composition_ == nullptr || !preeditWritten_)) {
+        bailOutNoComposition();
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "candidate delete refresh inconsistent, bail out\n");
+        }
+        showToast(L"删除后刷新候选失败", true);
+        return;
+    }
     showToast(L"已删除该词", true);
+}
+
+
+// 候选窗右键菜单的 owner（issue #1 修复核心）：优先用本进程的**前台窗口**——
+// 它本来就是前台，SetForegroundWindow 等于零变化，最满足 KB135788「菜单 owner
+// 必须是前台窗口，否则点菜单外不消失」，且绝不会把焦点从宿主文档移走。
+// 绝不能用候选窗自身（WS_EX_NOACTIVATE 但仍会被 SetForegroundWindow 程序化激活，
+// 宿主文档失去 TSF 键盘焦点 → 按键闸门关闭、合成被外部终止）。
+HWND ChaosetTIP::menuOwnerWindow() {
+    auto sameProcess = [](HWND wnd) -> bool {
+        if (wnd == nullptr || !IsWindow(wnd)) return false;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(wnd, &pid);
+        return pid == GetCurrentProcessId();
+    };
+    // 1) 本进程的前台窗口：普通宿主 = 文档顶层窗口；沉浸式 shell 宿主 = shell 窗口。
+    //    （candidateWnd_.hwnd() 只在异常情况下才可能成为前台，显式排除。）
+    const HWND fg = GetForegroundWindow();
+    if (fg != candidateWnd_.hwnd() && sameProcess(fg)) return fg;
+    // 2) TSF 焦点上下文的宿主窗口：前台窗口属于别的进程（UWP/宿主桥接窗口）时兜底。
+    ContextRef ctx(focusContext());
+    const HWND host = contextHostWindow(ctx.get());
+    if (sameProcess(host)) return host;
+    // 3) render 缓存的合成宿主窗口（合成仍有效时的快速兜底，免一次 COM 查询）。
+    if (sameProcess(composeHostWnd_)) return composeHostWnd_;
+    // 取不到：候选窗放弃弹菜单（绝不退回候选窗自身当 owner/前台）。
+    return nullptr;
 }
 
 

@@ -25,6 +25,8 @@ constexpr guint kKeysymReturn = 0xFF0D;
 constexpr guint kKeysymEscape = 0xFF1B;
 constexpr guint kKeysymPageUp = 0xFF55;
 constexpr guint kKeysymPageDown = 0xFF56;
+// 方向键（issue#2）：候选 lookup 显示时移动页内预选，空格确认 cursor 候选。
+constexpr guint kKeysymLeft = 0xFF51, kKeysymUp = 0xFF52, kKeysymRight = 0xFF53, kKeysymDown = 0xFF54;
 constexpr guint kKeysymKP1 = 0xFFB1;
 constexpr guint kKeysymKP9 = 0xFFB9;
 
@@ -34,6 +36,10 @@ void logLine(const std::string& text) {
 
 bool isShiftKeyval(guint keyval) {
     return keyval == kKeysymShiftLeft || keyval == kKeysymShiftRight;
+}
+
+bool isArrowKey(guint keyval) {
+    return keyval == kKeysymLeft || keyval == kKeysymUp || keyval == kKeysymRight || keyval == kKeysymDown;
 }
 
 bool isPunctKey(guint keyval) {
@@ -226,8 +232,12 @@ public:
                 exitAssociate();
                 return true;
             }
+            if (isArrowKey(keyval)) {
+                moveLookup((keyval == kKeysymUp || keyval == kKeysymLeft) ? -1 : 1);
+                return true;
+            }
             if (keyval == ' ') {
-                if (selectCandidate(0)) return true;
+                if (selectCandidate(lookupIndex_)) return true;
                 exitAssociate();
                 return true;
             }
@@ -318,7 +328,7 @@ public:
             }
             if (!isComposing()) return false;
             if (!last_.candidates.empty()) {
-                if (selectCandidate(0)) return true;
+                if (selectCandidate(lookupIndex_)) return true;
                 const std::string raw = last_.input;
                 const std::string conf = confirmed_;
                 confirmed_.clear();
@@ -335,6 +345,10 @@ public:
             hidePreedit();
             hideLookupTable();
             commit(conf + raw);
+            return true;
+        }
+        if (isArrowKey(keyval) && isComposing() && !last_.candidates.empty()) {
+            moveLookup((keyval == kKeysymUp || keyval == kKeysymLeft) ? -1 : 1);
             return true;
         }
         if (keyval == kKeysymPageUp || keyval == kKeysymPageDown) {
@@ -468,9 +482,10 @@ private:
         if (ensure()) (void)daemon_.session().resetComposition();
         last_ = chaoset::Comp();
     }
-
-    void refresh(chaoset::Comp comp) {
+    // cursor：页内预选序号（默认 0 = 新输入/翻页/选词后回到第一项）。
+    void refresh(chaoset::Comp comp, int cursor = 0) {
         last_ = std::move(comp);
+        lookupIndex_ = cursor;
         const std::string preedit = confirmed_ + last_.preedit;
         updatePreedit(preedit, !preedit.empty());
         updateLookupTable(last_);
@@ -492,13 +507,15 @@ private:
     }
 
     void updateLookupTable(const chaoset::Comp& comp) {
-        showLookup(comp.candidates, comp.page, comp.pageCount);
+        showLookup(comp.candidates, comp.page, comp.pageCount, lookupIndex_);
     }
 
-    void showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount) {
+    void showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount, int cursor) {
         if (engine_ == nullptr) return;
         if (cands.empty()) { hideLookupTable(); return; }
-        IBusLookupTable* table = ibus_lookup_table_new(kPageSize, 0, TRUE, FALSE);
+        if (cursor < 0) cursor = 0;
+        if (cursor >= static_cast<int>(cands.size())) cursor = static_cast<int>(cands.size()) - 1;
+        IBusLookupTable* table = ibus_lookup_table_new(kPageSize, cursor, TRUE, FALSE);
         for (std::size_t i = 0; i < cands.size(); ++i) {
             // IBusText 是 floating；append 取得/沉没引用后不能再 unref，否则
             // 表里留下悬垂指针，序列化时触发 IBUS_IS_SERIALIZABLE critical。
@@ -509,7 +526,7 @@ private:
             IBusText* l = ibus_text_new_from_string(label);
             ibus_lookup_table_append_label(table, l);
         }
-        ibus_lookup_table_set_cursor_pos(table, 0);
+        ibus_lookup_table_set_cursor_pos(table, cursor);
         ibus_lookup_table_set_page_size(table, kPageSize);
         (void)page;
         (void)pageCount;
@@ -565,6 +582,7 @@ private:
         if (comp.candidates.empty()) return;
         assoc_ = std::move(comp.candidates);
         assocPage_ = 0;
+        lookupIndex_ = 0;
         showAssociateTable();
     }
 
@@ -582,7 +600,7 @@ private:
         const int start = assocPage_ * static_cast<int>(kPageSize);
         const int end = std::min(total, start + static_cast<int>(kPageSize));
         std::vector<chaoset::Candidate> page(assoc_.begin() + start, assoc_.begin() + end);
-        showLookup(page, assocPage_, pageCount);
+        showLookup(page, assocPage_, pageCount, lookupIndex_);
     }
 
     bool flipAssociate(bool next) {
@@ -595,10 +613,44 @@ private:
         return true;
     }
 
+    // 方向键预选：页内移动 lookup cursor；页首/页尾跨页选末项/首项；无对应页不动。
+    void moveLookup(int delta) {
+        if (!assoc_.empty()) {
+            const int total = static_cast<int>(assoc_.size());
+            const int count = std::min(static_cast<int>(kPageSize), total - assocPage_ * static_cast<int>(kPageSize));
+            if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < count) {
+                lookupIndex_ += delta;
+                showAssociateTable();
+            } else if (delta < 0 && assocPage_ > 0) {
+                lookupIndex_ = static_cast<int>(kPageSize) - 1;  // 上一页必为满页
+                flipAssociate(false);
+            } else if (delta > 0 && (assocPage_ + 1) * static_cast<int>(kPageSize) < total) {
+                lookupIndex_ = 0;
+                flipAssociate(true);
+            }
+            return;
+        }
+        if (last_.candidates.empty()) return;
+        if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < static_cast<int>(last_.candidates.size())) {
+            lookupIndex_ += delta;
+            updateLookupTable(last_);
+            return;
+        }
+        if (delta < 0 && last_.page > 0) {
+            chaoset::Comp comp = callComp([&] { return daemon_.session().prevPage(); });
+            const int lastIndex = static_cast<int>(comp.candidates.size()) - 1;
+            refresh(std::move(comp), lastIndex);
+        } else if (delta > 0 && last_.page + 1 < last_.pageCount) {
+            chaoset::Comp comp = callComp([&] { return daemon_.session().nextPage(); });
+            refresh(std::move(comp), 0);
+        }
+    }
+
     void exitAssociate() {
-        if (assoc_.empty()) return;
+        if (assoc_.empty() && lookupIndex_ == 0) return;
         assoc_.clear();
         assocPage_ = 0;
+        lookupIndex_ = 0;
         hideLookupTable();
     }
 
@@ -674,6 +726,7 @@ private:
     std::string dpScheme_;
     std::vector<chaoset::Candidate> assoc_;
     int assocPage_ = 0;
+    int lookupIndex_ = 0;  // 页内预选序号（lookup cursor，0 起）
     std::string confirmed_;
     std::vector<std::string> selectedSylls_;
     chaoset::Comp last_;

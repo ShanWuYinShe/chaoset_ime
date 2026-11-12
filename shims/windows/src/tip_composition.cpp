@@ -148,6 +148,11 @@ void ChaosetTIP::render(ITfContext* pic) {
         toast_.hide();
         return;
     }
+    // P2（issue #1）：本帧请求编辑会话前先清「预编辑已写入」标志。旧值可能是上一次
+    // 成功渲染留下的 true；若本次 RequestEditSession/SetText 失败，字母键与删除刷新
+    // 路径的兜底判据（composition_ == nullptr || !preeditWritten_）会漏判，
+    // 表现为「键被吃掉、字没出来 / 候选窗有候选而文档无预编辑」。
+    preeditWritten_ = false;
     ContextRef owned(nullptr);
     ITfContext* ctx = pic;
     if (ctx == nullptr) {
@@ -174,6 +179,18 @@ void ChaosetTIP::render(ITfContext* pic) {
 
     // 缓存承载本合成的宿主窗口（供前台事件回调做无 COM 的比较）。
     composeHostWnd_ = contextHostWindow(ctx);
+
+    // 预编辑没写进文档（编辑会话失败/上下文只读/合成被拒）：绝不能显示候选窗，
+    // 否则出现「候选窗有候选、文档无预编辑」的不一致状态。收口交给调用方按各自
+    // 语义处理（字母键/删除刷新路径会走 bailOutNoComposition）。
+    if (!comp_.input.empty() && (composition_ == nullptr || !preeditWritten_)) {
+        candidateWnd_.hide();
+        if (diagBudget()) {
+            diagPrintf(L"tsf.log", "render: preedit not written composition=%d, hide candidate wnd\n",
+                       composition_ != nullptr ? 1 : 0);
+        }
+        return;
+    }
 
     if (comp_.candidates.empty()) {
         candidateWnd_.hide();

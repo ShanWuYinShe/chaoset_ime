@@ -363,6 +363,59 @@ bool ChaosetTIP::shiftActive() {
 }
 
 
+// 方向键：上/左=前一项，下/右=后一项（三端一致的预选移动语义）。
+bool ChaosetTIP::isArrowKey(WPARAM vk) {
+    return vk == kVkLeft || vk == kVkUp || vk == kVkRight || vk == kVkDown;
+}
+
+
+// 组词态页内预选移动：先让候选窗在页内移动；已在页首/页尾时按
+// 「上翻选末项、下翻选首项」跨页；没有对应页时保持不动（仍消费该键）。
+void ChaosetTIP::moveCompositionSelection(int delta, ITfContext* pic) {
+    if (!hasCandidates()) return;
+    if (candidateWnd_.moveSelection(delta)) return;
+    if (delta < 0) {
+        if (comp_.page <= 0) return;  // 首页页首：保持不动
+        comp_ = session_.prevPage();
+        if (!comp_.ok) {
+            diagDaemonRequestFailure(transport_, "page(dir)");
+            flushOrCancel(pic);  // daemon 故障：已确认段先落盘，不吞键
+            return;
+        }
+        syncDpScheme(comp_);
+        render(pic);
+        candidateWnd_.setSelectedIndex(static_cast<int>(comp_.candidates.size()) - 1);
+        return;
+    }
+    if (comp_.page + 1 >= comp_.pageCount) return;  // 末页页尾：保持不动
+    comp_ = session_.nextPage();
+    if (!comp_.ok) {
+        diagDaemonRequestFailure(transport_, "page(dir)");
+        flushOrCancel(pic);
+        return;
+    }
+    syncDpScheme(comp_);
+    render(pic);
+    candidateWnd_.setSelectedIndex(0);
+}
+
+
+// 联想态页内预选移动（联想候选是壳本地分页：assocPage_ 起、每页 kPageSize）。
+void ChaosetTIP::moveAssociateSelection(int delta) {
+    if (assoc_.candidates.empty()) return;
+    if (candidateWnd_.moveSelection(delta)) return;
+    if (delta < 0) {
+        if (assocPage_ <= 0) return;  // 首页页首：保持不动
+        if (flipAssociate(false)) candidateWnd_.setSelectedIndex(kPageSize - 1);
+        return;
+    }
+    const int total = static_cast<int>(assoc_.candidates.size());
+    const int pageCount = (total + kPageSize - 1) / kPageSize;
+    if (assocPage_ + 1 >= pageCount) return;  // 末页页尾：保持不动
+    if (flipAssociate(true)) candidateWnd_.setSelectedIndex(0);
+}
+
+
 bool ChaosetTIP::isModifierKey(WPARAM vk) {
     return vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ||
            vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ||
@@ -391,12 +444,12 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     if (ctrl) return isComposing() && vk == 'U' && !shiftActive();
     if (alt || win) return false;
 
-    // 联想模式：数字（有对应项）/空格（选第一个）/回车/Esc/Backspace
-    //（收起）由联想分支消费；- / = 收起联想放行；其余按键退出联想后
-    // 按正常流程判定（继续往下走）。
+    // 联想模式：数字（有对应项）/空格（选预选项）/方向键（移动页内预选）/
+    // 回车/Esc/Backspace（收起）由联想分支消费；其余按键退出联想后按正常
+    // 流程判定（继续往下走）。
     if (!assoc_.candidates.empty()) {
         if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-            vk == kVkBackspace) return true;
+            vk == kVkBackspace || isArrowKey(vk)) return true;
         // 联想翻页键：PageUp/PageDown 不判 Shift（与 mac/Linux 一致：
         // 联想态 Shift+PageUp/PageDown 同样翻联想页，2026-10-30 审计 A7）。
         if (vk == kVkPrior || vk == kVkNext) return true;
@@ -452,7 +505,10 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）。
     // 小键盘 1-9（VK_NUMPAD1-9）同样可选词，且不受 Shift 影响。
     const int digit = digitIndex(vk);
+    // 方向键只在组词态**有候选**时消费（页内预选）；无候选时放行给宿主，
+    // 与「输入法没有理由拦截应用自己的方向键」一致。
     return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
+           (isArrowKey(vk) && hasCandidates()) ||
            (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive()) &&
             digit < static_cast<int>(comp_.candidates.size()));
 }
@@ -492,11 +548,16 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             clearAssociate();
             return true;
         }
-        // 空格：**默认选当前页第一个联想词上屏**（渐进组句闭环，
-        // 与 macOS 端一致），不再是透传
+        // 空格：确认**联想页内预选项**（默认第 0 项；方向键可移动预选，
+        // 渐进组句闭环，与 macOS 端一致），不再是透传
         if (vk == kVkSpace) {
             if (!assoc_.candidates.empty()) {
-                const chaoset::Candidate pick = assoc_.candidates[assocPage_ * kPageSize];
+                const int start = assocPage_ * kPageSize;
+                int count = static_cast<int>(assoc_.candidates.size()) - start;
+                if (count > kPageSize) count = kPageSize;
+                int sel = candidateWnd_.selectedIndex();
+                if (sel < 0 || sel >= count) sel = 0;
+                const chaoset::Candidate pick = assoc_.candidates[start + sel];
                 std::string committed;
                 if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
                     const std::string sylls = pick.syllables;
@@ -507,6 +568,12 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                 }
             }
             clearAssociate();
+            return true;
+        }
+        // 方向键：移动联想页内预选（上/左前一项，下/右后一项；页首/页尾
+        // 跨页）。联想面板可见时方向键属于输入法，不再「退出联想并透传」。
+        if (isArrowKey(vk)) {
+            moveAssociateSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1);
             return true;
         }
         // - / =：联想翻页（边界页保持当前页）
@@ -683,6 +750,14 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         }
         syncDpScheme(comp_);
         render(pic);
+        return true;
+    }
+
+    // 方向键预选（issue#2）：组词有候选时移动页内预选（页首/页尾跨页），
+    // 与翻页键语义不同、互不影响；空格随后确认预选项。无候选/无组词时
+    // wouldHandle 已放行，不会走到这里。
+    if (isArrowKey(vk) && isComposing() && hasCandidates()) {
+        moveCompositionSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1, pic);
         return true;
     }
 
@@ -866,10 +941,13 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // 实机反馈的同族问题）。Shift+空格已在前面的全半角分支处理。
     if (vk == kVkSpace) {
         if (hasCandidates()) {
+            // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
+            int sel = candidateWnd_.selectedIndex();
+            if (sel < 0 || sel >= static_cast<int>(comp_.candidates.size())) sel = 0;
             // 同数字选词：音节奏必须在 selectPrefix 之前取（见上）
-            const std::string pickedSyllables = comp_.candidates[0].syllables;
+            const std::string pickedSyllables = comp_.candidates[sel].syllables;
             chaoset::Comp rest;
-            if (session_.selectPrefix(0, &rest) && !rest.committed.empty()) {
+            if (session_.selectPrefix(sel, &rest) && !rest.committed.empty()) {
                 syncDpScheme(rest);
                 // 单合成渐进（见 confirmedPreedit_ 注释，与数字选词一致）
                 confirmedPreedit_ += rest.committed;
@@ -886,7 +964,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                 return true;
             }
             std::string committed;
-            if (session_.select(0, &committed)) {
+            if (session_.select(sel, &committed)) {
                 const std::string all = confirmedPreedit_ + committed;
                 confirmedPreedit_.clear();
                 commit(pic, all);
@@ -903,7 +981,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return true;
     }
 
-    // 不可处理的按键（方向键 / F 键 / 数字 0 / Shift+数字的 @# 等字符）：
+    // 不可处理的按键（F 键 / 数字 0 / Shift+数字的 @# 等字符）：
     // 组词中先收尾再放行，避免预编辑与实文脱节（对齐 macOS 壳 passThrough；
     // 已确认段随透传落盘，用户确认过的字不能丢）
     if (isComposing() || !confirmedPreedit_.empty()) {
