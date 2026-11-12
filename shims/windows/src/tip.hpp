@@ -276,8 +276,11 @@ private:
     // selectedIndex_/moveSelection），TIP 只负责「组词/联想态消费方向键、
     // 页首/页尾跨页、空格确认预选项」的路由；无候选时方向键必须放行。
     static bool isArrowKey(WPARAM vk);
-    void moveCompositionSelection(int delta, ITfContext* pic);
+    // 方向键语义（用户反馈）：上/下 = 翻页，左/右 = 页内预选移动。
+    void moveCompositionSelection(int delta);
+    void flipCompositionPage(bool next, ITfContext* pic);
     void moveAssociateSelection(int delta);
+    void flipAssociatePage(bool next);
     bool wouldHandle(WPARAM vk) const;
     bool handleKey(WPARAM vk, ITfContext* pic);
     ITfContext* focusContext();

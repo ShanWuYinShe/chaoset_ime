@@ -363,35 +363,32 @@ bool ChaosetTIP::shiftActive() {
 }
 
 
-// 方向键：上/左=前一项，下/右=后一项（三端一致的预选移动语义）。
+// 方向键语义（用户反馈）：上/下 = 翻页，左/右 = 页内预选移动。
 bool ChaosetTIP::isArrowKey(WPARAM vk) {
     return vk == kVkLeft || vk == kVkUp || vk == kVkRight || vk == kVkDown;
 }
 
 
-// 组词态页内预选移动：先让候选窗在页内移动；已在页首/页尾时按
-// 「上翻选末项、下翻选首项」跨页；没有对应页时保持不动（仍消费该键）。
-void ChaosetTIP::moveCompositionSelection(int delta, ITfContext* pic) {
+// 组词态页内预选移动：只在当前页内前/后移动；页边界保持不动（仍消费该键）。
+void ChaosetTIP::moveCompositionSelection(int delta) {
     if (!hasCandidates()) return;
-    if (candidateWnd_.moveSelection(delta)) return;
-    if (delta < 0) {
-        if (comp_.page <= 0) return;  // 首页页首：保持不动
-        comp_ = session_.prevPage();
-        if (!comp_.ok) {
-            diagDaemonRequestFailure(transport_, "page(dir)");
-            flushOrCancel(pic);  // daemon 故障：已确认段先落盘，不吞键
-            return;
-        }
-        syncDpScheme(comp_);
-        render(pic);
-        candidateWnd_.setSelectedIndex(static_cast<int>(comp_.candidates.size()) - 1);
-        return;
+    candidateWnd_.moveSelection(delta);
+}
+
+
+// 组词态翻页：上=上一页、下=下一页；翻页后页内预选归零。
+// 边界页保持不动（仍消费该键）；daemon 故障时先落盘已确认段，不吞键。
+void ChaosetTIP::flipCompositionPage(bool next, ITfContext* pic) {
+    if (!hasCandidates()) return;
+    if (next) {
+        if (comp_.page + 1 >= comp_.pageCount) return;  // 末页：保持不动
+    } else {
+        if (comp_.page <= 0) return;  // 首页：保持不动
     }
-    if (comp_.page + 1 >= comp_.pageCount) return;  // 末页页尾：保持不动
-    comp_ = session_.nextPage();
+    comp_ = next ? session_.nextPage() : session_.prevPage();
     if (!comp_.ok) {
         diagDaemonRequestFailure(transport_, "page(dir)");
-        flushOrCancel(pic);
+        flushOrCancel(pic);  // daemon 故障：已确认段先落盘，不吞键
         return;
     }
     syncDpScheme(comp_);
@@ -403,16 +400,22 @@ void ChaosetTIP::moveCompositionSelection(int delta, ITfContext* pic) {
 // 联想态页内预选移动（联想候选是壳本地分页：assocPage_ 起、每页 kPageSize）。
 void ChaosetTIP::moveAssociateSelection(int delta) {
     if (assoc_.candidates.empty()) return;
-    if (candidateWnd_.moveSelection(delta)) return;
-    if (delta < 0) {
-        if (assocPage_ <= 0) return;  // 首页页首：保持不动
-        if (flipAssociate(false)) candidateWnd_.setSelectedIndex(kPageSize - 1);
-        return;
-    }
+    candidateWnd_.moveSelection(delta);
+}
+
+
+// 联想态翻页：上=上一页、下=下一页；翻页后页内预选归零。
+// 边界页保持不动（仍消费该键）。
+void ChaosetTIP::flipAssociatePage(bool next) {
+    if (assoc_.candidates.empty()) return;
     const int total = static_cast<int>(assoc_.candidates.size());
     const int pageCount = (total + kPageSize - 1) / kPageSize;
-    if (assocPage_ + 1 >= pageCount) return;  // 末页页尾：保持不动
-    if (flipAssociate(true)) candidateWnd_.setSelectedIndex(0);
+    if (next) {
+        if (assocPage_ + 1 >= pageCount) return;  // 末页：保持不动
+    } else {
+        if (assocPage_ <= 0) return;  // 首页：保持不动
+    }
+    if (flipAssociate(next)) candidateWnd_.setSelectedIndex(0);
 }
 
 
@@ -572,10 +575,14 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             clearAssociate();
             return true;
         }
-        // 方向键：移动联想页内预选（上/左前一项，下/右后一项；页首/页尾
-        // 跨页）。联想面板可见时方向键属于输入法，不再「退出联想并透传」。
+        // 方向键：上/下翻页、左/右页内预选移动。联想面板可见时方向键
+        // 属于输入法，不再「退出联想并透传」。
         if (isArrowKey(vk) && candidateWnd_.itemCount() > 0) {
-            moveAssociateSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1);
+            if (vk == kVkUp || vk == kVkDown) {
+                flipAssociatePage(vk == kVkDown);
+            } else {
+                moveAssociateSelection(vk == kVkRight ? 1 : -1);
+            }
             return true;
         }
         // - / =：联想翻页（边界页保持当前页）
@@ -755,12 +762,15 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return true;
     }
 
-    // 方向键预选（issue#2）：组词有候选时移动页内预选（页首/页尾跨页），
-    // 与翻页键语义不同、互不影响；空格随后确认预选项。无候选/无组词时
-    // wouldHandle 已放行，不会走到这里。
+    // 方向键（用户反馈）：上/下 = 翻页，左/右 = 页内预选移动；空格随后
+    // 确认预选项。无候选/无组词时 wouldHandle 已放行，不会走到这里。
     if (isArrowKey(vk) && isComposing() && hasCandidates() &&
         candidateWnd_.itemCount() > 0) {
-        moveCompositionSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1, pic);
+        if (vk == kVkUp || vk == kVkDown) {
+            flipCompositionPage(vk == kVkDown, pic);
+        } else {
+            moveCompositionSelection(vk == kVkRight ? 1 : -1);
+        }
         return true;
     }
 
