@@ -103,7 +103,7 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 		"var onDelete", "menu(for event: NSEvent)", "删除该词")
 	checkContains(fsys, problems, group, macController,
 		"onDelete", "deleteCandidate", "deleteAssociateCandidate", "userDelete",
-		"recompose", "associateSylls", "已删除该词")
+		"recompose", "associateSylls")
 	checkContains(fsys, problems, group, macEngine, "func userDelete", "retryOnFailure: false")
 	// Windows：候选窗右键消息 + TrackPopupMenu + TIP 删除/刷新 + core 封装。
 	checkContains(fsys, problems, group, winShell,
@@ -118,11 +118,14 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, ipcClient, "func (c *Client) UserDelete")
 	checkContains(fsys, problems, group, userdictCLI,
 		"case \"delete\":", "DeleteWord", "UserDelete", "已删除「%s」的学习记录")
-	// 三端文案逐字一致：菜单文案在两端壳内，状态提示在 mac/Windows 壳内。
-	for _, text := range []string{"已删除该词", "未找到该词的学习记录", "删除失败：daemon 不可达"} {
+	// 三端文案逐字一致：菜单文案在两端壳内；失败提示保留，**删除成功静默**
+	// （用户反馈「已删除该词」成功提示多余）：只刷新候选窗，不弹 toast。
+	for _, text := range []string{"未找到该词的学习记录", "删除失败：daemon 不可达"} {
 		checkContains(fsys, problems, group, macController, text)
 		checkContains(fsys, problems, group, winShell, text)
 	}
+	checkExcludes(fsys, problems, group, macController, "已删除该词")
+	checkExcludes(fsys, problems, group, winShell, "已删除该词")
 	// Linux：ibus 面板不适用，必须记录理由与替代入口，禁止假装已支持。
 	checkContains(fsys, problems, group, linuxReadme,
 		"右键删除", "不适用", "chaoset-userdict delete")
@@ -580,9 +583,10 @@ func checkCandidatePageArrows(fsys fs.FS, problems *[]string) {
 	}
 }
 
-// checkCandidateDirectionKeys 方向键页内预选契约（issue#2，2026-11-12）：
-//  1. 组词有候选 / 联想有候选时，上/左=前一项、下/右=后一项；页首继续上移
-//     翻上一页选末项、页尾继续下移翻下一页选首项，无对应页保持不动；
+// checkCandidateDirectionKeys 方向键契约（issue#2 + 用户反馈调整）：
+//  1. 组词有候选 / 联想有候选时，**上/下 = 翻页**（上一页/下一页，翻页后
+//     预选归零，边界页保持不动且仍消费）；**左/右 = 页内预选移动**
+//     （前一项/后一项，页边界保持不动）；
 //  2. 无组词/无候选时方向键必须放行宿主（绝不消费）——组词分支必须带
 //     hasCandidates() 守卫，联想分支只在联想候选非空时消费；
 //  3. 空格确认**页内预选项**（不再固定第 0 项），数字键仍按序号直选；
@@ -590,13 +594,16 @@ func checkCandidatePageArrows(fsys fs.FS, problems *[]string) {
 //  5. 三端都要有：Windows TIP 按键路由、macOS KeyRouter、Linux ibus lookup cursor。
 func checkCandidateDirectionKeys(fsys fs.FS, problems *[]string) {
 	const group = groupCandidateDirectionKeys
-	// Windows：键位常量、消费/放行判定、页内移动与跨页、空格确认预选项。
+	// Windows：键位常量、消费/放行判定、上/下翻页与左/右页内移动、空格确认预选项。
 	checkContains(fsys, problems, group, winShell,
 		"kVkLeft", "kVkUp", "kVkRight", "kVkDown",
 		"bool ChaosetTIP::isArrowKey(WPARAM vk)",
 		"isArrowKey(vk) && hasCandidates()",
 		"isArrowKey(vk) && isComposing() && hasCandidates()",
 		"moveCompositionSelection(", "moveAssociateSelection(",
+		"flipCompositionPage(", "flipAssociatePage(",
+		"flipCompositionPage(vk == kVkDown, pic)",
+		"flipAssociatePage(vk == kVkDown)",
 		"candidateWnd_.moveSelection(", "candidateWnd_.setSelectedIndex(",
 		"item.index == selectedIndex_",
 	)
@@ -649,28 +656,31 @@ func checkCandidateDirectionKeys(fsys fs.FS, problems *[]string) {
 				group, macPanel, n))
 		}
 	}
-	// macOS：KeyRouter 方向键路由 + 预选移动/跨页 + 空格确认预选项 +
+	// macOS：KeyRouter 方向键路由（上/下翻页、左/右页内移动）+ 空格确认预选项 +
 	// 候选面板的预选状态与 pill 跟随。
 	checkContains(fsys, problems, group, macPanel,
-		"arrowDelta", "moveCompositionSelection", "moveAssociateSelection",
+		"arrowDirection", "ArrowDirection",
+		"flipCompositionPage", "flipAssociatePage",
 		"static var selectedIndex", "static func moveSelection",
 		"CandidatePanelController.moveSelection(", "CandidatePanelController.setSelectedIndex(",
 		"frame.index == selectedIndex",
 		"isComposing, hasCandidates",
-		"case 123, 126", "case 124, 125",
+		"case 126: return .prevPage", "case 125: return .nextPage",
+		"case 123: return .prevItem", "case 124: return .nextItem",
 	)
-	// 联想态方向键必须由联想分支消费（两个 arrowDelta 调用点：组词 + 联想）。
+	// 联想态方向键必须由联想分支消费（两个 arrowDirection 调用点：组词 + 联想）。
 	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
-		if n := strings.Count(string(data), "Self.arrowDelta(event.keyCode)"); n < 2 {
+		if n := strings.Count(string(data), "Self.arrowDirection(event.keyCode)"); n < 2 {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 中 Self.arrowDelta(event.keyCode) 只有 %d 处（组词态与联想态都要消费方向键）",
+				"%s：%s 中 Self.arrowDirection(event.keyCode) 只有 %d 处（组词态与联想态都要消费方向键）",
 				group, macPanel, n))
 		}
 	}
 	// Linux：ibus lookup cursor 预选 + 空格确认 cursor 候选 + README 记录。
 	checkContains(fsys, problems, group, linuxEngine,
 		"kKeysymLeft", "kKeysymUp", "kKeysymRight", "kKeysymDown",
-		"moveLookup(", "ibus_lookup_table_new(kPageSize, cursor, TRUE, FALSE)",
+		"moveLookup(", "flipPage(", "flipAssociate(",
+		"ibus_lookup_table_new(kPageSize, cursor, TRUE, FALSE)",
 		"ibus_lookup_table_set_cursor_pos(table, cursor)",
 		"selectCandidate(lookupIndex_)",
 	)

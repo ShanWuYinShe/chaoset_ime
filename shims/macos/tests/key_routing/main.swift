@@ -221,9 +221,9 @@ check("正常客户端：第 3 次退格被消费", rJinNormal3 == true, "ret=\(
 let rJinNormal4 = c.handle(ev("\u{7F}", 51), client: m)
 check("正常客户端：删空后再次退格放行给宿主", rJinNormal4 == false, "ret=\(rJinNormal4)")
 
-// ---- 方向键页内预选 + 空格确认（issue#2，2026-11-12）----
-// 组词态：上/左=前一项、下/右=后一项；页首继续上移保持不动（仍消费）；
-// 页尾继续下移翻下一页选首项、页首继续上移翻上一页选末项；空格确认预选项。
+// ---- 方向键：上/下翻页、左/右页内预选 + 空格确认（2026-11-12 用户反馈）----
+// 上/下 = 上一页/下一页（翻页后预选归零；边界页保持不动，仍消费按键）；
+// 左/右 = 页内前/后一项（页边界保持不动，仍消费按键）；空格确认预选项。
 func typeYi() {
     _ = c.handle(ev("", 53), client: m) // Esc 清空
     for (ch, code) in [("y", 16), ("i", 34)] {
@@ -237,51 +237,47 @@ let rightArrow = ev("\u{F703}", 124)
 typeYi()
 check("方向键前置：yi 有候选", !(c.current?.candidates.isEmpty ?? true),
       "candidates=\(c.current?.candidates.count ?? 0)")
-check("下方向键移动预选并消费",
-      c.handle(downArrow, client: m) == true && CandidatePanelController.selectedIndex == 1,
+let yiPageCount = c.current?.pageCount ?? 0
+var firstPageStaysOk = true
+var nextPageOk = true
+var lastPageStaysOk = true
+if yiPageCount > 1 {
+    firstPageStaysOk = c.handle(upArrow, client: m) == true
+        && (c.current?.page ?? -1) == 0
+    nextPageOk = c.handle(downArrow, client: m) == true
+        && (c.current?.page ?? -1) == 1
+        && CandidatePanelController.selectedIndex == 0
+    for _ in 1..<yiPageCount { _ = c.handle(downArrow, client: m) }
+    lastPageStaysOk = c.handle(downArrow, client: m) == true
+        && (c.current?.page ?? -1) == yiPageCount - 1
+    for _ in 0..<(yiPageCount - 1) { _ = c.handle(upArrow, client: m) }
+} else {
+    print("skip 词库 yi 单页，跳过上下翻页断言")
+}
+check("首页继续上移保持不动（仍消费）", firstPageStaysOk,
+      "page=\(c.current?.page ?? -1)")
+check("下方向键翻下一页（预选归零）", nextPageOk,
+      "page=\(c.current?.page ?? -1) index=\(CandidatePanelController.selectedIndex)")
+check("末页继续下移保持不动（仍消费）", lastPageStaysOk,
+      "page=\(c.current?.page ?? -1) pageCount=\(yiPageCount)")
+// 左/右：页内预选移动
+typeYi()
+check("右方向键移动预选并消费",
+      c.handle(rightArrow, client: m) == true && CandidatePanelController.selectedIndex == 1,
       "index=\(CandidatePanelController.selectedIndex)")
 check("左方向键回到前一项",
       c.handle(leftArrow, client: m) == true && CandidatePanelController.selectedIndex == 0,
       "index=\(CandidatePanelController.selectedIndex)")
-check("页首继续上移保持不动（仍消费）",
-      c.handle(upArrow, client: m) == true && CandidatePanelController.selectedIndex == 0,
-      "index=\(CandidatePanelController.selectedIndex)")
-check("右方向键与下方向键同义",
-      c.handle(rightArrow, client: m) == true && CandidatePanelController.selectedIndex == 1,
+check("页首继续左移保持不动（仍消费）",
+      c.handle(leftArrow, client: m) == true && CandidatePanelController.selectedIndex == 0,
       "index=\(CandidatePanelController.selectedIndex)")
 // 空格确认当前预选项（不再固定第 0 项）
+typeYi()
+_ = c.handle(rightArrow, client: m)
 let secondText = c.current?.candidates[1].text ?? ""
 _ = c.handle(ev(" ", 49), client: m)
-// 注意：提交后 refresh 会再发一次 insertText("") 清标记区，所以取最后一个非空插入。
 check("空格确认预选项", m.inserted.last(where: { !$0.isEmpty }) == secondText,
       "inserted=\(m.inserted.last(where: { !$0.isEmpty }) ?? "nil") want=\(secondText)")
-// 页尾继续下移翻下一页选首项；页首继续上移翻上一页选末项
-// （用布尔变量收集结果，断言统一放在顶层，静态检查按行首 check( 计数）。
-typeYi()
-let pageSize = c.current?.candidates.count ?? 0
-let pageCount = c.current?.pageCount ?? 0
-var pageEndOk = true
-var crossNextOk = true
-var crossPrevOk = true
-if pageCount > 1, pageSize > 1 {
-    for _ in 0..<(pageSize - 1) {
-        _ = c.handle(downArrow, client: m)
-    }
-    pageEndOk = CandidatePanelController.selectedIndex == pageSize - 1
-    _ = c.handle(downArrow, client: m)
-    crossNextOk = (c.current?.page ?? 0) == 1 && CandidatePanelController.selectedIndex == 0
-    _ = c.handle(upArrow, client: m)
-    crossPrevOk = (c.current?.page ?? -1) == 0
-        && CandidatePanelController.selectedIndex == pageSize - 1
-} else {
-    print("skip 词库 yi 单页，跳过跨页方向键断言")
-}
-check("页内下移到底选末项", pageEndOk,
-      "index=\(CandidatePanelController.selectedIndex) pageSize=\(pageSize)")
-check("页尾继续下移翻下一页选首项", crossNextOk,
-      "page=\(c.current?.page ?? -1) index=\(CandidatePanelController.selectedIndex)")
-check("页首继续上移翻上一页选末项", crossPrevOk,
-      "page=\(c.current?.page ?? -1) index=\(CandidatePanelController.selectedIndex)")
 // 无组词时方向键必须放行宿主（绝不消费）
 _ = c.handle(ev("", 53), client: m)
 check("无组词时方向键放行宿主", c.handle(upArrow, client: m) == false)
@@ -289,7 +285,7 @@ check("无组词时方向键放行宿主", c.handle(upArrow, client: m) == false
 typeYi()
 check("Cmd+方向键放行（宿主快捷键）", c.handle(ev("\u{F702}", 123, [.command]), client: m) == false)
 _ = c.handle(ev("", 53), client: m)
-// 联想态：方向键移动联想预选，空格确认预选联想词
+// 联想态：左/右移动联想预选，空格确认预选联想词
 typeZhongguo()
 _ = c.handle(ev(" ", 49), client: m) // 空格选首选 → 进入联想
 let assocList = c.associateCandidates ?? []
@@ -297,21 +293,21 @@ var assocMoveOk = true
 var assocSpaceOk = true
 if assocList.count >= 2 {
     let assocSecond = assocList[1].text
-    assocMoveOk = c.handle(downArrow, client: m) == true
+    assocMoveOk = c.handle(rightArrow, client: m) == true
         && CandidatePanelController.selectedIndex == 1
     _ = c.handle(ev(" ", 49), client: m)
     assocSpaceOk = m.inserted.last == assocSecond
 } else {
     print("skip 该词库联想候选不足 2 条，跳过方向键断言")
 }
-check("联想态下方向键移动预选并消费", assocMoveOk,
+check("联想态下右方向键移动预选并消费", assocMoveOk,
       "index=\(CandidatePanelController.selectedIndex)")
 check("联想态空格确认预选联想词", assocSpaceOk,
       "inserted=\(m.inserted.last(where: { !$0.isEmpty }) ?? "nil")")
 
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 43
+let expectedChecks = 42
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

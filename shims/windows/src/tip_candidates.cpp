@@ -120,7 +120,6 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         } else {
             candidateWnd_.hide();
         }
-        showToast(L"已删除该词", true);
         return;
     }
     if (!hasCandidates()) return;
@@ -147,7 +146,6 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         if (diagBudget()) {
             diagPrintf(L"tsf.log", "candidate delete refresh: composition terminated, state dropped\n");
         }
-        showToast(L"已删除该词", true);
         return;
     }
     // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
@@ -181,7 +179,6 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         showToast(L"删除后刷新候选失败", true);
         return;
     }
-    showToast(L"已删除该词", true);
 }
 
 

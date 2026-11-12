@@ -208,7 +208,6 @@ final class ChaosetController: IMKInputController {
             return
         }
         recompose(client)
-        showToast("已删除该词", client: client)
     }
 
     /// 删除学习记录后重新组词：daemon 不缓存候选列表，reset 后重放当前剩余
@@ -247,7 +246,6 @@ final class ChaosetController: IMKInputController {
             associateCandidates = comp.candidates
         }
         refresh(client)
-        showToast("已删除该词", client: client)
     }
 
     // MARK: - 联想模式

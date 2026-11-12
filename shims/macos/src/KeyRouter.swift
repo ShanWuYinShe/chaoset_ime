@@ -165,13 +165,19 @@ extension ChaosetController {
 
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
 
-        // 方向键预选（issue#2）：组词有候选时移动页内预选（上/左=前一项、
-        // 下/右=后一项；页首/页尾跨页选末项/首项，无对应页保持不动）。
-        // 无组词/无候选时**不消费**，落到下方 passThrough 放行给宿主。
-        // 面板实际可见（itemCount > 0）才消费方向键；隐藏/全屏抑制时放行宿主。
+        // 方向键（用户反馈调整）：**上/下 = 翻页**，左/右 = 页内预选移动
+        // （前/后一项）。无组词/无候选时**不消费**，落到下方 passThrough
+        // 放行给宿主；面板实际可见（itemCount > 0）才消费，隐藏/全屏抑制时放行。
         if isComposing, hasCandidates, CandidatePanelController.itemCount > 0,
-           let delta = Self.arrowDelta(event.keyCode) {
-            moveCompositionSelection(delta: delta, client: client)
+           let dir = Self.arrowDirection(event.keyCode) {
+            switch dir {
+            case .prevPage, .nextPage:
+                flipCompositionPage(next: dir == .nextPage, client: client)
+            case .prevItem:
+                _ = CandidatePanelController.moveSelection(-1)
+            case .nextItem:
+                _ = CandidatePanelController.moveSelection(1)
+            }
             return true
         }
 
@@ -182,11 +188,18 @@ extension ChaosetController {
             // （同空格选词修复的口径），数字/字母改用 event 自带的键值判定。
             let rawChars = event.charactersIgnoringModifiers ?? ""
             let firstScalar = rawChars.unicodeScalars.first?.value ?? 0
-            // 方向键：移动联想页内预选（页首/页尾跨页）。联想面板可见时
+            // 方向键：上/下翻页、左/右页内预选移动。联想面板可见时
             // 方向键属于输入法，不再「退出联想并透传」。
             if CandidatePanelController.itemCount > 0,
-               let delta = Self.arrowDelta(event.keyCode) {
-                moveAssociateSelection(delta: delta, client: client)
+               let dir = Self.arrowDirection(event.keyCode) {
+                switch dir {
+                case .prevPage, .nextPage:
+                    flipAssociatePage(next: dir == .nextPage, client: client)
+                case .prevItem:
+                    _ = CandidatePanelController.moveSelection(-1)
+                case .nextItem:
+                    _ = CandidatePanelController.moveSelection(1)
+                }
                 return true
             }
             if event.keyCode == 49 || event.keyCode == 36 {
@@ -429,49 +442,48 @@ extension ChaosetController {
         return passThrough(client)
     }
 
-    // MARK: - 方向键页内预选（issue#2）
+    // MARK: - 方向键（上/下翻页，左/右页内预选）
 
-    /// 方向键 keyCode → 页内预选位移：左/上 = -1（前一项），右/下 = +1。
-    private static func arrowDelta(_ keyCode: UInt16) -> Int? {
+    /// 方向键语义（用户反馈）：上/下 = 翻页，左/右 = 页内预选移动。
+    enum ArrowDirection: Equatable {
+        case prevPage, nextPage, prevItem, nextItem
+    }
+
+    private static func arrowDirection(_ keyCode: UInt16) -> ArrowDirection? {
         switch keyCode {
-        case 123, 126: return -1  // ← / ↑
-        case 124, 125: return 1   // → / ↓
+        case 126: return .prevPage   // ↑
+        case 125: return .nextPage   // ↓
+        case 123: return .prevItem   // ←
+        case 124: return .nextItem   // →
         default: return nil
         }
     }
 
-    /// 组词态页内预选移动：先页内移动；页首/页尾跨页选末项/首项；没有对应
-    /// 页时保持不动（仍消费按键）。
-    private func moveCompositionSelection(delta: Int, client: (any IMKTextInput)?) {
+    /// 组词态翻页：翻页后页内预选归零；边界页保持不动（仍消费按键）。
+    private func flipCompositionPage(next: Bool, client: (any IMKTextInput)?) {
         guard let cur = current, !cur.candidates.isEmpty else { return }
-        if CandidatePanelController.moveSelection(delta) { return }
-        if delta < 0 {
-            guard cur.page > 0 else { return }  // 首页页首：保持不动
+        if next {
+            guard cur.page + 1 < cur.pageCount else { return }  // 末页：保持不动
+            current = engine.nextPage()
+        } else {
+            guard cur.page > 0 else { return }  // 首页：保持不动
             current = engine.prevPage()
-            refresh(client)
-            CandidatePanelController.setSelectedIndex((current?.candidates.count ?? 1) - 1)
-            return
         }
-        guard cur.page + 1 < cur.pageCount else { return }  // 末页页尾：保持不动
-        current = engine.nextPage()
         refresh(client)
         CandidatePanelController.setSelectedIndex(0)
     }
 
-    /// 联想态页内预选移动（联想是壳本地分页：associatePage 起、每页 6 条）。
-    private func moveAssociateSelection(delta: Int, client: (any IMKTextInput)?) {
+    /// 联想态翻页（联想是壳本地分页：associatePage 起、每页 6 条）。
+    /// 翻页后页内预选归零；边界页保持不动（仍消费按键）。
+    private func flipAssociatePage(next: Bool, client: (any IMKTextInput)?) {
         guard let list = associateCandidates, !list.isEmpty else { return }
-        if CandidatePanelController.moveSelection(delta) { return }
         let pageCount = (list.count + Self.associatePageSize - 1) / Self.associatePageSize
-        if delta < 0 {
-            guard associatePage > 0 else { return }  // 首页页首：保持不动
-            associateFlip(next: false, client: client)
-            let start = associatePage * Self.associatePageSize
-            CandidatePanelController.setSelectedIndex(min(Self.associatePageSize, list.count - start) - 1)
-            return
+        if next {
+            guard associatePage + 1 < pageCount else { return }  // 末页：保持不动
+        } else {
+            guard associatePage > 0 else { return }  // 首页：保持不动
         }
-        guard associatePage + 1 < pageCount else { return }  // 末页页尾：保持不动
-        associateFlip(next: true, client: client)
+        associateFlip(next: next, client: client)
         CandidatePanelController.setSelectedIndex(0)
     }
 

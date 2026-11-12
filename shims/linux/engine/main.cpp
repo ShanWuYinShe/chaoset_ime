@@ -233,7 +233,11 @@ public:
                 return true;
             }
             if (isArrowKey(keyval)) {
-                moveLookup((keyval == kKeysymUp || keyval == kKeysymLeft) ? -1 : 1);
+                if (keyval == kKeysymUp || keyval == kKeysymDown) {
+                    if (flipAssociate(keyval == kKeysymDown)) { lookupIndex_ = 0; showAssociateTable(); }
+                } else {
+                    moveLookup(keyval == kKeysymRight ? 1 : -1);
+                }
                 return true;
             }
             if (keyval == ' ') {
@@ -348,7 +352,11 @@ public:
             return true;
         }
         if (isArrowKey(keyval) && isComposing() && !last_.candidates.empty()) {
-            moveLookup((keyval == kKeysymUp || keyval == kKeysymLeft) ? -1 : 1);
+            if (keyval == kKeysymUp || keyval == kKeysymDown) {
+                flipPage(keyval == kKeysymDown);
+            } else {
+                moveLookup(keyval == kKeysymRight ? 1 : -1);
+            }
             return true;
         }
         if (keyval == kKeysymPageUp || keyval == kKeysymPageDown) {
@@ -613,37 +621,27 @@ private:
         return true;
     }
 
-    // 方向键预选：页内移动 lookup cursor；页首/页尾跨页选末项/首项；无对应页不动。
+    // 方向键（用户反馈）：上/下翻页、左/右页内预选移动；页边界保持不动（仍消费）。
     void moveLookup(int delta) {
         if (!assoc_.empty()) {
             const int total = static_cast<int>(assoc_.size());
             const int count = std::min(static_cast<int>(kPageSize), total - assocPage_ * static_cast<int>(kPageSize));
-            if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < count) {
-                lookupIndex_ += delta;
-                showAssociateTable();
-            } else if (delta < 0 && assocPage_ > 0) {
-                lookupIndex_ = static_cast<int>(kPageSize) - 1;  // 上一页必为满页
-                flipAssociate(false);
-            } else if (delta > 0 && (assocPage_ + 1) * static_cast<int>(kPageSize) < total) {
-                lookupIndex_ = 0;
-                flipAssociate(true);
-            }
+            if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < count) { lookupIndex_ += delta; showAssociateTable(); }
             return;
         }
         if (last_.candidates.empty()) return;
         if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < static_cast<int>(last_.candidates.size())) {
             lookupIndex_ += delta;
             updateLookupTable(last_);
-            return;
         }
-        if (delta < 0 && last_.page > 0) {
-            chaoset::Comp comp = callComp([&] { return daemon_.session().prevPage(); });
-            const int lastIndex = static_cast<int>(comp.candidates.size()) - 1;
-            refresh(std::move(comp), lastIndex);
-        } else if (delta > 0 && last_.page + 1 < last_.pageCount) {
-            chaoset::Comp comp = callComp([&] { return daemon_.session().nextPage(); });
-            refresh(std::move(comp), 0);
-        }
+    }
+
+    // 组词态翻页：上=上一页、下=下一页；边界页保持不动（仍消费按键）。
+    void flipPage(bool next) {
+        if (last_.candidates.empty()) return;
+        if (next ? (last_.page + 1 >= last_.pageCount) : (last_.page <= 0)) return;
+        chaoset::Comp comp = callComp([&] { return next ? daemon_.session().nextPage() : daemon_.session().prevPage(); });
+        refresh(std::move(comp));
     }
 
     void exitAssociate() {
