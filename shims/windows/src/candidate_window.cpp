@@ -482,11 +482,14 @@ LRESULT CALLBACK CandidateWindow::CandidateWndProc(HWND hwnd, UINT msg, WPARAM w
 // 折叠区翻页块的垂直几何（layoutAndPosition 与 onPaint 共用同一公式，
 // 避免「命中区与绘制」两处各自实现导致漂移；与 mac CandidatePanelView.draw
 // 同几何）：上箭头块 6pt + 页码高 + 下箭头块 6pt，整块在窗口内垂直居中。
-// 单页（pageCount<=1）没有翻页动作：blockH=0（不注册命中区）。
+// 单页（pageCount<=1）没有翻页动作：两枚置灰、不注册命中区，blockH=12pt
+//（两枚箭头以面板中线对称，与 mac 同公式）。
 void CandidateWindow::flipBlockMetrics(int dpi, int h, int* blockTop, int* blockH,
                                        int* upCy, int* downCy, int* pageTop) const {
     const int arrowH = pt(6, dpi);
-    *blockH = comp_.pageCount > 1 ? arrowH * 2 + flipPageH_ : 0;
+    // 单页没有页码，但仍按「两枚箭头合计 12pt」居中（blockH=12pt），两枚箭头以
+    // 面板中线对称；置灰绘制与 mac 同几何。
+    *blockH = comp_.pageCount > 1 ? arrowH * 2 + flipPageH_ : arrowH * 2;
     *blockTop = (h - *blockH) / 2;
     *upCy = *blockTop + arrowH / 2;
     *pageTop = *blockTop + arrowH;

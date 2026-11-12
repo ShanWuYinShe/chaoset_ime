@@ -448,8 +448,10 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     // 回车/Esc/Backspace（收起）由联想分支消费；其余按键退出联想后按正常
     // 流程判定（继续往下走）。
     if (!assoc_.candidates.empty()) {
+        // 方向键只在联想面板**实际可见**时消费（全屏免打扰/建窗失败/渲染失败时
+        // 面板不可见，方向键应放行宿主，绝不做不可见的翻页/预选）。
         if (vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-            vk == kVkBackspace || isArrowKey(vk)) return true;
+            vk == kVkBackspace || (isArrowKey(vk) && candidateWnd_.itemCount() > 0)) return true;
         // 联想翻页键：PageUp/PageDown 不判 Shift（与 mac/Linux 一致：
         // 联想态 Shift+PageUp/PageDown 同样翻联想页，2026-10-30 审计 A7）。
         if (vk == kVkPrior || vk == kVkNext) return true;
@@ -508,7 +510,7 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     // 方向键只在组词态**有候选**时消费（页内预选）；无候选时放行给宿主，
     // 与「输入法没有理由拦截应用自己的方向键」一致。
     return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-           (isArrowKey(vk) && hasCandidates()) ||
+           (isArrowKey(vk) && hasCandidates() && candidateWnd_.itemCount() > 0) ||
            (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive()) &&
             digit < static_cast<int>(comp_.candidates.size()));
 }
@@ -572,7 +574,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         }
         // 方向键：移动联想页内预选（上/左前一项，下/右后一项；页首/页尾
         // 跨页）。联想面板可见时方向键属于输入法，不再「退出联想并透传」。
-        if (isArrowKey(vk)) {
+        if (isArrowKey(vk) && candidateWnd_.itemCount() > 0) {
             moveAssociateSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1);
             return true;
         }
@@ -756,7 +758,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // 方向键预选（issue#2）：组词有候选时移动页内预选（页首/页尾跨页），
     // 与翻页键语义不同、互不影响；空格随后确认预选项。无候选/无组词时
     // wouldHandle 已放行，不会走到这里。
-    if (isArrowKey(vk) && isComposing() && hasCandidates()) {
+    if (isArrowKey(vk) && isComposing() && hasCandidates() &&
+        candidateWnd_.itemCount() > 0) {
         moveCompositionSelection((vk == kVkUp || vk == kVkLeft) ? -1 : 1, pic);
         return true;
     }

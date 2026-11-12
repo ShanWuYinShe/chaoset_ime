@@ -168,7 +168,9 @@ extension ChaosetController {
         // 方向键预选（issue#2）：组词有候选时移动页内预选（上/左=前一项、
         // 下/右=后一项；页首/页尾跨页选末项/首项，无对应页保持不动）。
         // 无组词/无候选时**不消费**，落到下方 passThrough 放行给宿主。
-        if isComposing, hasCandidates, let delta = Self.arrowDelta(event.keyCode) {
+        // 面板实际可见（itemCount > 0）才消费方向键；隐藏/全屏抑制时放行宿主。
+        if isComposing, hasCandidates, CandidatePanelController.itemCount > 0,
+           let delta = Self.arrowDelta(event.keyCode) {
             moveCompositionSelection(delta: delta, client: client)
             return true
         }
@@ -182,7 +184,8 @@ extension ChaosetController {
             let firstScalar = rawChars.unicodeScalars.first?.value ?? 0
             // 方向键：移动联想页内预选（页首/页尾跨页）。联想面板可见时
             // 方向键属于输入法，不再「退出联想并透传」。
-            if let delta = Self.arrowDelta(event.keyCode) {
+            if CandidatePanelController.itemCount > 0,
+               let delta = Self.arrowDelta(event.keyCode) {
                 moveAssociateSelection(delta: delta, client: client)
                 return true
             }

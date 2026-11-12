@@ -323,9 +323,10 @@ final class CandidatePanelView: NSView {
         let pageAttrs: [NSAttributedString.Key: Any] = [.font: indexFont, .foregroundColor: theme.pageColor]
         let pageSize = pageText.map { ($0 as NSString).size(withAttributes: pageAttrs) }
         let pageH = pageSize.map { ceil($0.height) } ?? 0
-        // 上/下箭头块各 6pt，页码夹在中间；整块垂直居中。
+        // 上/下箭头块各 6pt，页码夹在中间；整块垂直居中。单页没有页码，
+        // 但仍按「两枚箭头合计 12pt」居中（blockH=12），两枚箭头以面板中线对称。
         let arrowH: CGFloat = 6
-        let blockH = pageCount > 1 ? arrowH * 2 + pageH : 0
+        let blockH = pageCount > 1 ? arrowH * 2 + pageH : arrowH * 2
         let blockTop = (bounds.height - blockH) / 2
         let hasNext = page + 1 < pageCount
         let hasPrev = page > 0
