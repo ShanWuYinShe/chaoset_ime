@@ -123,7 +123,22 @@ case "register":
         FileHandle.standardError.write(Data("用法: tis register <app 路径>\n".utf8))
         exit(2)
     }
-    let url = URL(fileURLWithPath: args[2]) as CFURL
+    let appURL = URL(fileURLWithPath: args[2])
+    guard let bundle = Bundle(url: appURL), let bundleID = bundle.bundleIdentifier else {
+        FileHandle.standardError.write(Data(("不是有效 app bundle（缺 CFBundleIdentifier）：" + args[2]).utf8))
+        exit(2)
+    }
+    // 幂等（安装/升级的硬约束）：TIS 没有反注册 API，同一 bundle 每多调用一次
+    // TISRegisterInputSource，当前登录会话的输入源表就追加一条记录——系统设置/
+    // 输入源菜单出现多行「Chaoset」，而且只有注销重登才能重建表。
+    // 因此先按 bundle id 查 TIS 表：已登记就绝不重复注册。换新版 app 拷到同一路径
+    // 不需要重新登记（TIS 按路径读 bundle；旧图标/缓存由安装器清缓存刷新）。
+    let existing = allSources().contains { prop($0, kTISPropertyBundleID) == bundleID }
+    if existing {
+        print("register: 已登记（" + bundleID + "），跳过 TISRegisterInputSource（幂等）")
+        exit(0)
+    }
+    let url = appURL as CFURL
     let status = TISRegisterInputSource(url)
     print("register status: \(status) \(status == noErr ? "(成功)" : "(失败)")")
     exit(status == noErr ? 0 : 1)

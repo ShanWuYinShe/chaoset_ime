@@ -93,17 +93,13 @@ if [ -x build/tis ]; then
   "$LSREGISTER" -u "/private/tmp/ChaosetIME.app/ChaosetIME.app" 2>/dev/null || true
   rm -rf /private/tmp/ChaosetIME.app 2>/dev/null || true
 
-  # 登记是幂等的：系统表里已有就跳过，避免重复 TISRegisterInputSource 触发多余通知。
-  if ! build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
-    for i in 1 2 3; do
-      build/tis register "$IM/ChaosetIME.app" || true
-      sleep 1
-      if build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then
-        break
-      fi
-      echo "（第 $i 次登记后系统表仍未见本输入法，重试…）"
-    done
-  fi
+  # 登记必须幂等（安装/升级的硬约束）：TIS 没有反注册 API，同一 bundle 每多调一次
+  # TISRegisterInputSource，当前登录会话的输入源表就多一条记录（系统设置出现多行
+  # 「Chaoset」，只能注销重登重建）。幂等由 `tis register` 自身保证（先按 bundle id
+  # 查 TIS 表、已登记则跳过），这里无条件调用即可。
+  # **不要**在这里用 `tis list | grep` 判定「是否已登记」：TIS 缓存按进程一份，受限/
+  # 沙盒进程读到的表可能为空，会误判成未登记而重复注册——这正是重复条目的根因。
+  build/tis register "$IM/ChaosetIME.app" || true
 
   # 只禁用历史 .Hans 旧模式；**父容器必须和 Pinyin 模式一起启用**。
   # 2026-10-26 实测：父容器是 TIS 的骨架节点（系统「简体拼音」同样是
@@ -138,7 +134,8 @@ if [ -x build/tis ]; then
     echo "✓ TIS 输入源表：恰好 2 条（父容器 + Pinyin 模式）"
   elif [ "$CHAOSET_COUNT" -gt 2 ]; then
     echo "⚠ TIS 输入源表里出现 ${CHAOSET_COUNT} 条 Chaoset 条目（预期 2）。"
-    echo "  已清缓存并重启系统设置进程；若仍见重复，请注销重登一次重建输入源表。"
+    echo "  已清缓存并重启系统设置进程；本版本安装/升级已幂等，不会新增重复条目，"
+    echo "  残留来自旧版本的重复登记，请注销重登一次重建输入源表。"
   else
     echo "⚠ TIS 输入源表里只有 ${CHAOSET_COUNT} 条 Chaoset 条目（预期 2），可能尚未登记完成。"
   fi

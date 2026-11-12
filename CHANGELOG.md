@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **修复 macOS 重复安装/升级在系统设置里累积多行「Chaoset」输入源**：根因是 TIS 没有
+  反注册 API——同一 bundle 每次调用 `TISRegisterInputSource` 都会在**当前登录会话**的
+  输入源表追加一条记录，只有注销重登才能重建表；而 GUI 安装器（Setup.app）每次
+  「一键安装/更新」都无条件注册、`tis register` 也无幂等保护，CLI 安装器用 `tis list`
+  预判在受限进程里读不到权威表会误判成未登记而重复注册。修复：`tis register` 先按
+  bundle id 查 TIS 表、已登记则跳过；CLI 安装器/GUI 安装器/reregister 统一走随包
+  `tis register`，删除 `tis list | grep` 预判；README 记录契约，`checkuiparity` 新增
+  「macOS 输入源登记幂等」组机器断言（注册调用必须在判重之后、安装器不得无条件注册）。
 - **修复 Windows 删除候选词后中英状态/数字选词异常（issue #1）**：根因是候选窗右键
   「删除该词」菜单前对 `WS_EX_NOACTIVATE` 候选窗调用 `SetForegroundWindow`——微软文档
   明确该调用仍会**程序化激活** NOACTIVATE 窗口，候选窗与宿主文档同进程同线程，宿主文档

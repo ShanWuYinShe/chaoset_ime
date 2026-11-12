@@ -80,6 +80,11 @@ func findSource() -> TISInputSource? {
 func chaosetSourceCount() -> Int {
     allSources().filter { sourceProp($0, kTISPropertyInputSourceID).hasPrefix(sourceID) }.count
 }
+/// TIS 表里是否已登记该 bundle：登记幂等判据（随包 tis 缺失时的兜底用）。
+/// 与 tools/tis.swift 的 register 同一口径：按 kTISPropertyBundleID 匹配。
+func tisSourceRegistered(bundleID: String) -> Bool {
+    allSources().contains { sourceProp($0, kTISPropertyBundleID) == bundleID }
+}
 
 // ---- 系统 UI / TIS 缓存刷新（与 install.sh 同一套动作，保持 GUI 与 CLI 等价） ----
 // TIS 输入源缓存是「每进程一份」的 IntlDataCache.le[.kbdx]。只重启进程不删缓存，
@@ -398,9 +403,21 @@ func installIME() -> String {
     clearTISCache()
     Thread.sleep(forTimeInterval: 1.0)
 
-    let st = TISRegisterInputSource(URL(fileURLWithPath: dst) as CFURL)
-    out += st == noErr ? "已向系统登记（TISRegisterInputSource）\n" : "登记失败（状态码 \(st)）\n"
+    // 登记必须幂等：TIS 没有反注册 API，重复 TISRegisterInputSource 会在当前登录
+    // 会话里累积重复输入源条目（系统设置出现多行「Chaoset」，只能注销重登恢复）。
+    // 统一走随包 tis register（先按 bundle id 查 TIS 表、已登记则跳过）；随包 tis
+    // 缺失时用内嵌判据兜底，仍然禁止无条件注册。
+    if fm.isExecutableFile(atPath: res("tis")) {
+        let r = runTool(res("tis"), ["register", dst])
+        let line = r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !line.isEmpty { out += line + "\n" }
+    } else if tisSourceRegistered(bundleID: sourceID) {
+        out += "已登记，跳过重复 TISRegisterInputSource（幂等）\n"
+    } else {
+        let st = TISRegisterInputSource(URL(fileURLWithPath: dst) as CFURL)
+        out += st == noErr ? "已向系统登记（TISRegisterInputSource）\n" : "登记失败（状态码 \(st)）\n"
 
+    }
     let support = supportDir()
     try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
     // 运行组件已随 ChaosetIME.app 安装；Application Support 只放用户数据。

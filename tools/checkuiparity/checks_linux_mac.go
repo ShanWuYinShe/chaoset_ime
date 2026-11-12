@@ -269,3 +269,103 @@ func checkDaemonSingleton(fsys fs.FS, problems *[]string) {
 		"CreateMutex", `Local\ChaosetDaemon`)
 	checkContains(fsys, problems, groupDaemonSingleton, linuxE2E, "chaosetd 单实例")
 }
+
+// checkMacTisRegisterIdempotent 锁住「安装/升级不得重复登记输入源」的 macOS 契约。
+//
+// 背景：TIS 没有公开的反注册 API，同一 bundle 每多调用一次 TISRegisterInputSource，
+// 当前登录会话的输入源表就追加一条记录——系统设置/输入源菜单出现多行「Chaoset」，
+// 而且只有注销重登才能重建表。因此登记必须幂等：先按 bundle id 查 TIS 表，已登记
+// 绝不重复注册；CLI 安装器、GUI 安装器（Setup.app）与 reregister 统一走随包
+// `tis register`（幂等实现）。禁止用 `tis list | grep` 预判是否已登记：TIS 缓存按
+// 进程一份，受限/沙盒进程读到的表可能为空，会误判成未登记而重复注册。
+func checkMacTisRegisterIdempotent(fsys fs.FS, problems *[]string) {
+	const group = groupMacTisIdempotent
+
+	tis, err := readText(fsys, macTis)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, macTis, err))
+		return
+	}
+	regStart := strings.Index(tis, `case "register":`)
+	if regStart < 0 {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 register 子命令", group, macTis))
+		return
+	}
+	reg := tis[regStart:]
+	if end := strings.Index(reg, `case "enable":`); end > 0 {
+		reg = reg[:end]
+	}
+	if !strings.Contains(reg, "kTISPropertyBundleID") {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 register 没有按 bundle id 查 TIS 表——重复安装/升级会累积重复输入源条目", group, macTis))
+	}
+	if !strings.Contains(reg, "if existing {") {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 register 缺少「已登记则跳过」分支（幂等）", group, macTis))
+	}
+	regCode := stripCppComments(reg)
+	alreadyIdx := strings.Index(regCode, "已登记")
+	registerIdx := strings.Index(regCode, "TISRegisterInputSource")
+	if alreadyIdx < 0 {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 register 缺少「已登记则跳过」分支（幂等）", group, macTis))
+	} else if registerIdx < 0 {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 register 不再调用 TISRegisterInputSource——首次安装无法登记", group, macTis))
+	} else if registerIdx < alreadyIdx {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 register 先注册后判重——顺序反了，重复注册无法避免", group, macTis))
+	}
+
+	// GUI 安装器（唯一「一键安装/更新」入口）必须走随包幂等 register；
+	// 内嵌兜底也必须在查表判重之后，不得再无条件直接注册。
+	setup, err := readText(fsys, macSetup)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, macSetup, err))
+	} else if instBody, ok := swiftFunctionBody(setup, "func installIME() -> String"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 installIME()", group, macSetup))
+	} else {
+		body := stripCppComments(instBody)
+		if !strings.Contains(body, `["register", dst]`) || !strings.Contains(body, `res("tis")`) {
+			*problems = append(*problems, fmt.Sprintf(`%s：%s 的 installIME 没有走随包 tis register（应先 runTool(res("tis"), ["register", dst])）`, group, macSetup))
+		}
+		guardIdx := strings.Index(body, "tisSourceRegistered(")
+		regIdx := strings.Index(body, "TISRegisterInputSource")
+		if regIdx >= 0 && (guardIdx < 0 || guardIdx > regIdx) {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 的 installIME 仍有无条件 TISRegisterInputSource（必须先用 tisSourceRegistered 判重）", group, macSetup))
+		}
+	}
+
+	// CLI 安装器 / reregister：无条件走幂等 register，禁止再用 tis list 预判。
+	checkContains(fsys, problems, group, macInstall, `build/tis register "$IM/ChaosetIME.app"`, "幂等")
+	checkExcludes(fsys, problems, group, macInstall, `if ! build/tis list 2>/dev/null | grep -q "ime.chaoset.inputmethod"; then`)
+	checkContains(fsys, problems, group, macReregister, `build/tis register "$APP"`, "幂等")
+	checkExcludes(fsys, problems, group, macReregister, `if build/tis list 2>/dev/null | grep -q "$ID"; then`)
+
+	// 文档契约：重复安装的产品约束与兜底（注销重登）必须写在 macOS README。
+	checkContains(fsys, problems, group, macReadme, "幂等", "TISRegisterInputSource", "注销重登")
+}
+
+// swiftFunctionBody 取 Swift 函数体（签名后的第一个 { 到配对 }）。
+func swiftFunctionBody(src, signature string) (string, bool) {
+	start := strings.Index(src, signature)
+	if start < 0 {
+		return "", false
+	}
+	i := start + len(signature)
+	for i < len(src) && src[i] != '{' {
+		i++
+	}
+	if i >= len(src) {
+		return "", false
+	}
+	depth := 0
+	begin := i
+	for ; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return src[begin : i+1], true
+			}
+		}
+	}
+	return "", false
+}
