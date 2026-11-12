@@ -94,6 +94,7 @@ var checkGroups = []checkGroup{
 	{groupCandidatePageArrows, onLogical(checkCandidatePageArrows)},
 	{groupCandidateDirectionKeys, onLogical(checkCandidateDirectionKeys)},
 	// shell 转义/文档对照/设置核心/Linux 装配/模块布局/架构文档。
+	{groupMacTisIdempotent, onLogical(checkMacTisRegisterIdempotent)},
 	{groupShellEscaping, onLogical(checkShellVarEscaping)},
 	{groupDocParity, onLogical(checkDocParity)},
 	{groupSettingsCore, onLogical(checkSettingsCore)},

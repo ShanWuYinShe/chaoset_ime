@@ -70,6 +70,21 @@ CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.s
 `ARCHS=arm64 ./shims/macos/build.sh`。图标由 `tools/make-icon.swift` 现场绘制，
 不依赖外部素材。
 
+### 登记幂等（重复安装/升级不得重复 TISRegisterInputSource）
+
+TIS 没有公开的反注册 API：同一 bundle 每多调用一次 `TISRegisterInputSource`，**当前
+登录会话**的输入源表就追加一条记录——系统设置/输入源菜单出现多行「Chaoset」，而且
+只有**注销重登**才能重建输入源表。因此：
+
+- `tis register` 先按 bundle id 查 TIS 表，**已登记则跳过注册**（幂等）；
+- `install.sh`、GUI 安装器（`setup/main.swift`）、`reregister.sh` 统一走随包
+  `tis register`，不得无条件直接调用 `TISRegisterInputSource`；
+- 禁止用 `tis list | grep` 预判「是否已登记」再决定注册：TIS 缓存每进程一份，受限/
+  沙盒进程读到的表可能为空，会误判成未登记而重复注册（那正是重复条目的根因）；
+- `tis dedupe` 只对同一 ID 的多条记录做尽力合并（部分系统版本无效），兜底仍是注销重登。
+
+契约由 `make check-uiparity` 的「macOS 输入源登记幂等」组机器断言。
+
 ## 输入源标识与显示名
 
 | 项 | 值 |

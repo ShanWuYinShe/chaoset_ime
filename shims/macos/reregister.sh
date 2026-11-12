@@ -35,12 +35,11 @@ kill_input_source_ui() {
   rm -rf /private/tmp/ChaosetIME.app 2>/dev/null || true
 }
 
-printf '== 1) 重新登记 bundle ==\n'
-if build/tis list 2>/dev/null | grep -q "$ID"; then
-  printf '  系统表已有登记，跳过重复注册\n'
-else
-  build/tis register "$APP" || true
-fi
+printf '== 1) 重新登记 bundle（幂等：已登记则跳过）==\n'
+# 判重放在 `tis register` 内部（先按 bundle id 查 TIS 表）。不要在这里再用
+# `tis list | grep` 判一次：TIS 缓存按进程一份，受限进程读到的表可能为空，会误判
+# 成未登记而重复注册——那是系统设置出现多行「Chaoset」的根因（只能注销重登恢复）。
+build/tis register "$APP" || true
 
 printf '== 2) 系统输入源表里是否可见 ==\n'
 if build/tis list | grep -q "$ID"; then

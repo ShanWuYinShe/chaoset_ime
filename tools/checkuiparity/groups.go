@@ -65,4 +65,7 @@ const (
 	// 跨端行为与 daemon 生命周期。
 	groupDaemonSingleton = "daemon 单实例"
 	groupShellEscaping   = "shell 变量转义"
+
+	// macOS 安装/升级：TIS 输入源登记必须幂等（重复注册会累积重复条目）。
+	groupMacTisIdempotent = "macOS 输入源登记幂等"
 )

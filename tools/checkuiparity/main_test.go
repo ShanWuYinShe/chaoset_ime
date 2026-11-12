@@ -701,3 +701,30 @@ func TestCheckCandidatePageSize(t *testing.T) {
 		t.Fatalf("macOS 页容量漂移应被捕获，实际：%v", problems)
 	}
 }
+
+// TestCheckMacTisRegisterIdempotent 用真实源码验证 macOS 输入源登记幂等契约，
+// 并做变异：删掉 register 的「已登记则跳过」分支必须被捕获。
+func TestCheckMacTisRegisterIdempotent(t *testing.T) {
+	paths := []string{macTis, macSetup, macInstall, macReregister, macReadme}
+	fsys := fstest.MapFS{}
+	for _, p := range paths {
+		fsys[p] = &fstest.MapFile{Data: readRepo(t, p)}
+	}
+	var problems []string
+	checkMacTisRegisterIdempotent(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实 macOS 安装/登记实现未通过幂等契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	tis := string(fsys[macTis].Data)
+	mutated := strings.Replace(tis, "if existing {", "if false {", 1)
+	if mutated == tis {
+		t.Fatal("变异未生效：tis.swift 里找不到 register 的跳过分支")
+	}
+	fsys[macTis] = &fstest.MapFile{Data: []byte(mutated)}
+	problems = nil
+	checkMacTisRegisterIdempotent(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "幂等") {
+		t.Fatalf("删除幂等分支应被捕获，实际：%v", problems)
+	}
+}
