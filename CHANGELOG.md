@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.3.20（2026-11-12）
+
+本版本为**模块重构进行中**的 patch 发版：按 `docs/architecture.md` 拆分三端壳大文件的重构尚未全部完成（macOS/Linux 设置窗接 `chaoset-settingsctl` 仍在进行），因此**重构完成前只递增 patch 版本号、minor 保持 0.3 不变**，不发布 `v0.4.x`。本版累计 `v0.3.19` 之后 4 个提交：Windows 壳拆分 wave1 续与 wave2（`ChaosetTIP` 类拆分完成）、中英状态作用域简化为两档并改为 TSF 事件驱动的托盘同步，以及配套的 checker/文档同步。
+
 - **中英状态作用域简化为两档（system/process）+ 托盘中英状态按作用域同步（用户反馈「托盘状态不反映当前程序」）**：
   - 设置项 `mode_scope` 只保留两档：`system`（全局共享，默认）/ `process`（每进程独立）。
     存量迁移（三端一致，大小写/首尾空白容忍）：system→system、process→process；
@@ -12,6 +16,17 @@
     `internal/settings` 与 `chaoset-settingsctl`、macOS `CandidateSettings.swift`
     （UserDefaults 旧值读取归一化）、Linux `setup_ctl.c`（`valid_mode_scope` 两档 +
     旧值读取归一化）与三端设置窗文案/单测同步；JSON 契约字段名与顺序不变，缺省值仍为 system。
+  - **设置窗中英状态从三选一变二选一（用户可见）**：Windows `settings_window.cpp` 的
+    单选按钮由「系统共享 / 每程序 / 每窗口」改为「全局共享 / 每进程独立」（控件 ID
+    121/122 映射 system/process），macOS `SettingsWindowPages.swift` 与 Linux
+    `setup_page_input.c` 同步为同一组逐字文案；原来的「每窗口」选项消失，存量值按上面
+    的迁移规则并入「每进程独立」。checkuiparity 锁住三端这两条文案逐字一致。
+  - **撤销上一版「每窗口独立」的实现**：`windowModes`/`focusWindowKey`/
+    `ITfThreadMgrEventSink`（GetFocus→GetActiveView→GetWnd 取前台窗口）已在全仓
+    无引用；`TipThreadSink` 的 `onActiveWatchTimer()`/`tipInputActive()` 两个
+    窗口级方法与 `kActiveWatchTimerId`（`WM_TIMER` 500ms 复核激活档案）一并删除。
+    中英状态改为进程粒度（同进程多 TIP 实例共享），托盘可见性改由 TSF 信号事件驱动
+    （见下条），不再靠周期定时器兜底。
   - 托盘状态 = 当前输入上下文的实际状态，按作用域决定同步方向：`system` 下托盘是权威
     （TIP 获得焦点时从托盘同步，托盘左键切换全局中英，状态在所有程序间共享）；`process`
     下托盘是镜像（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/切进程
@@ -23,8 +38,14 @@
     驱动，TIP 在状态变化时发 `active 1 <0|1> <pid>`（显示托盘、把该进程设为 owner、更新
     图标）或 `active 0 <pid>`（仅当 pid 是当前 owner 时隐藏）；`mode <0|1> <pid>` 只更新
     图标。UI 宿主不轮询：用 `OpenProcess`+`RegisterWaitForSingleObject` 监听 owner 进程
-    退出并清理，隐藏保留 300ms 防抖，UI 宿主重启后靠下一次 TSF 事件重发恢复。没有输入焦点
-    （桌面/任务栏）或切到其它输入法即隐藏。
+    退出并清理，隐藏保留 300ms 防抖，没有输入焦点（桌面/任务栏）或切到其它输入法即隐
+    藏。**UI 宿主被杀/未启动时能自动回来（用户可感知）**：worker 发命令失败且允许拉起
+    时懒启动 `chaoset-ui.exe`（带当前 `--mode`）并短重试本次事件（非 AppContainer
+    宿主 40×25ms≈1s；AppContainer 宿主不能 `CreateProcessW`，改由 daemon
+    `ensureUiHostByDaemonWorker` 代拉起）；下一次 TSF 事件也会重发，因此不需要定时器/
+    心跳。System 档的按键热路径另有两个时序窗：权威值 TTL 复读 300ms（超时才补一次
+    HKCU `UiEnglish` 镜像读，不跨进程），本地 Shift 切换后 500ms 防回抖（不被尚未
+    异步写回的旧权威值翻回去）。
   - 输入法切换链路：用户切换输入法（切走/切回）由系统/TSF 触发，TIP 在 `Activate`/`Deactivate`
     与 `ITfActiveLanguageProfileNotifySink` 中响应，据此更新激活态与托盘可见性。去掉 worker 中
     `workerWaitForegroundSelf(150)` 的前台 pid 门限——UWP/ApplicationFrameHost 宿主的前台
@@ -39,13 +60,17 @@
     输入法切换链路、每进程独立状态）待用户验收。
 
 - **Windows 壳拆分 wave2（审计 P1-1 收尾，TIP 类拆分完成，≤2000 目标达成）**：
-  win32.cpp 2994→129 行，把 `class ChaosetTIP`（类内 inline 定义 2564 行）按职责拆成
+  win32.cpp 2994→129 行，把 `class ChaosetTIP`（类体 2564 行，第 232–2795 行）按职责拆成
   `tip.hpp`（完整类声明 + kVk*/kPageSize 常量 + mingw 缺失的 ITfTextInputProcessorEx
-  补声明，396 行）、`tip_core.cpp`（生命周期/激活状态机/中英模式/前台钩子/worker
-  回投入口，830 行）、`tip_keys.cpp`（ITfKeyEventSink 五入口/Shift 状态机/键位映射/
-  wouldHandle/handleKey，913 行）、`tip_composition.cpp`（EditSession/光标/预编辑/
-  提交/结束合成/双拼会话收尾，587 行）、`tip_candidates.cpp`（候选点选/删除/翻页/
-  showToast/设置窗入口/联想面板，278 行）。`tip_thread.{hpp,cpp}`（hpp 36→68 行、cpp 68→189 行）迁入
+  补声明）、`tip_core.cpp`（生命周期/激活状态机/中英模式/前台钩子/worker
+  回投入口）、`tip_keys.cpp`（ITfKeyEventSink 五入口/Shift 状态机/键位映射/
+  wouldHandle/handleKey）、`tip_composition.cpp`（EditSession/光标/预编辑/
+  提交/结束合成/双拼会话收尾）、`tip_candidates.cpp`（候选点选/删除/翻页/
+  showToast/设置窗入口/联想面板）。拆分当次行数：tip.hpp 396、tip_core.cpp 830、
+  tip_keys.cpp 913、tip_composition.cpp 587、tip_candidates.cpp 278；本版末
+  （拆分后本批又补了两档作用域/事件驱动托盘）为 tip.hpp 416、tip_core.cpp 955，
+  tip_keys/composition/candidates 不变。`tip_thread.{hpp,cpp}`（hpp 36→68 行、
+  cpp 68→189 行，本版末 61/181 行）迁入
   TIP 线程 message-only 窗口过程/创建销毁/按线程 TIP 注册表/前台钩子表；窗口过程对 TIP
   的分发改为 `TipThreadSink` 抽象接口（tip_thread.cpp 不 include tip.hpp，依赖方向仍
   单向）。win32.cpp 只留类厂/ChaosetRunUi/DllMain/DllGetClassObject/DllCanUnloadNow 与
@@ -54,8 +79,8 @@
   方法体逐字迁移（脚本生成 + 连续行审计 0 失配；唯一接口化调整是 refreshActiveWatchTimer
   改经 `tipInputActive()` 查询、线程注册表指针类型 `ChaosetTIP*→TipThreadSink*`）。
   checker 同步（同一 commit）：预算 win32.cpp 3200→1200、新增 5 个 TIP 文件预算、
-  tip_thread.cpp 150→350；checks_tsf 的 25 个不同函数体/入口签名 needle（34 处断言匹配点）全部更新为类外定义的
-  完整签名（如 `HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim,
+  tip_thread.cpp 150→350；checks_tsf 的 23 个不同函数体/入口签名 needle（34 处断言匹配点）
+  全部更新为类外定义的完整签名（如 `HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim,
   TfClientId tid)`、`void CALLBACK ChaosetTIP::fgHookProc(...)`、
   `bool ChaosetTIP::bailOutIfInactive()`），未删除/放宽任何断言；main_test.go 变异锚点
   （`g_lastOp = kOpActivate;` / `PostMessageW(g_tlTipMsgWnd, kTipForegroundMsg,` /
@@ -81,7 +106,8 @@
   showSettingsWindow/selectCandidateByIndex/deleteCandidateByIndex/flipPage/
   flipAssociateFromPanel/isAssociatePanel/clearAssociateFromSettings），`ChaosetTIP`
   继承实现（同 DLL 内部类型，不影响 COM QI 返回的接口指针）；DllCanUnloadNow 的候选窗
-  计数改为跨 TU extern。checker 预算 win32.cpp 4800→3200 并登记 9 个新文件；4 条函数体签名 needle
+  计数改为跨 TU extern。checker 预算 win32.cpp 4800→3200 并登记 9 个新文件（+10 条预算：
+  9 个新文件 + win32.cpp 改值）；4 条函数体签名 needle
   （3 种签名，CandidateWindow::show 出现两处）同步到新定义处（show 的
   CandidateWindowHost 参数、去 static 的 ensureDaemonFast/reportModeToUi），
   未删除/放宽任何断言，变异测试仍能抓住回退。
