@@ -397,8 +397,10 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 //  4. TSF 焦点原语：ITfThreadFocusSink（线程 UI 焦点）+
 //     ITfActiveLanguageProfileNotifySink（输入法之间切换），focused_ 判定不再
 //     用 GetForegroundWindow 的 pid 启发式。
-//  5. 托盘可见性由 TSF 信号事件驱动：active 1/0 <pid> 命令（去掉 worker 前台
-//     pid 门限），UI 宿主只维护单活跃 owner（无心跳/轮询定时器）。
+//  5. 托盘可见性由 TSF 信号事件驱动（issue #3 后语义＝本输入法是否被系统选中，
+//     与输入焦点解耦）：active 1（显示并设 owner）/ active 0（只在输入法被切走
+//     时上报，是唯一隐藏入口）；UI 宿主保留单活跃 owner 记账与 300ms 防抖，
+//     无心跳/轮询定时器。
 func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	const group = groupTrayModeScope
 	checkContains(fsys, problems, group, winShell,
@@ -521,30 +523,42 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 					group, winShell, cb.sig, line, cb.need))
 			}
 		}
-		// 同进程多实例：失活上报必须有 wasActive 守卫（非 owner 实例的 active 0
-		// 会误隐藏 owner 的托盘）；OnActivated(false) 还要与 switchToInactiveProfile
-		// 一样挂起 Shift 记账，避免切输入法后 Shift 会话残留。
+		// Deactivate（宿主关闭/TSF 卸载本实例）只退场、不得上报 active 0（issue #3：
+		// 托盘可见性＝本输入法被系统选中，关掉应用或失焦都不该让托盘消失）。
 		if body, line, ok := cppFunctionBody(text, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()"); ok {
 			code := stripCppComments(body)
-			for _, need := range []string{"const bool wasActive = inputActive_", "if (wasActive) postActiveReport(false"} {
+			if strings.Contains(code, "postActiveReport(") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 Deactivate（约第 %d 行）仍上报 active——停用只退场，托盘可见性与输入焦点/实例生命周期解耦（issue #3）",
+					group, winShell, line))
+			}
+			for _, need := range []string{"retireUiCompletely()", "inputActive_ = false"} {
 				if !strings.Contains(code, need) {
 					*problems = append(*problems, fmt.Sprintf(
-						"%s：%s 的 Deactivate（约第 %d 行）缺少 %q（同进程多实例下非激活实例不得发 active 0）",
+						"%s：%s 的 Deactivate（约第 %d 行）缺少 %q（停用必须彻底退场）",
 						group, winShell, line, need))
 				}
 			}
 		}
+		// OnActivated(false) 是唯一隐藏入口之一：必须无条件上报 active 0 并退场
+		//（不再用 wasActive 守卫——焦点丢失路径已不再产生 active 0，重复上报由
+		// UI 宿主 300ms 防抖 + active 1 取消处理）。
 		if body, line, ok := cppFunctionBody(text, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated("); ok {
 			code := stripCppComments(body)
 			for _, need := range []string{
-				"const bool wasActive = inputActive_", "if (wasActive)",
-				"postActiveReport(false", "suspendShiftHoldOnFocusLost()",
+				"postActiveReport(false", "retireUiCompletely()",
+				"suspendShiftHoldOnFocusLost()",
 			} {
 				if !strings.Contains(code, need) {
 					*problems = append(*problems, fmt.Sprintf(
-						"%s：%s 的 OnActivated（约第 %d 行）缺少 %q（切走输入法必须只对激活实例收口）",
+						"%s：%s 的 OnActivated（约第 %d 行）缺少 %q（切走输入法必须上报 active 0 并退场）",
 						group, winShell, line, need))
 				}
+			}
+			if strings.Contains(code, "const bool wasActive = inputActive_") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 OnActivated（约第 %d 行）仍用 wasActive 守卫——失焦不再产生 active 0 后，切走必须无条件隐藏",
+					group, winShell, line))
 			}
 		}
 		// QueryInterface 必须真的暴露两个新 sink 接口（AdviseSink 的字面量会
@@ -668,10 +682,12 @@ func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
 				"%s：%s 缺少 reg delete ... ChaosetUi（便携包升级清旧 Run 项）", group, winInstallBat))
 		}
 	}
-	// 文档必须保留新的 UI 宿主生命周期描述。
+	// 文档必须保留新的 UI 宿主生命周期描述（issue #3：可见性＝本输入法被系统
+	// 选中，失焦/停用/owner 退出都不隐藏；只有切到其它输入法才隐藏）。
 	checkContains(fsys, problems, group, uiParityDoc,
 		"不写登录 Run 项", "TIP 首次激活带 --mode 懒启动",
-		"active 1", "active 0", "输入法未激活时隐藏")
+		"active 1", "active 0",
+		"只要系统当前选中的输入法是本输入法就显示", "切到其它输入法才隐藏")
 }
 
 // checkTsfZeroBlockContract 锁住 2026-11-06 用户要求（「输入法在任何情况下都
@@ -932,10 +948,12 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 				"%s：%s 的 bailOutIfInactive（约第 %d 行）缺少 isActiveTip() 兜底（切输入法不调 Deactivate 的宿主会漏判）",
 				group, winShell, line))
 		}
+		// 托盘显示上报只放在 Activate/OnActivated/OnSetFocus 等事件入口，绝不放进
+		// 非激活按键闸门（Issue #3 后 inputActive_ 仍只管按键/候选窗，不管托盘）。
 		for _, bad := range []string{
 			"retireUiCompletely", "candidateWnd_.hide", "toast_.hide",
 			"resetShiftTracking", "GetForegroundWindow",
-			"GetAsyncKeyState", "GetCursorPos", "PostMessageW",
+			"GetAsyncKeyState", "GetCursorPos", "PostMessageW", "postActiveReport",
 		} {
 			if strings.Contains(code, bad) {
 				*problems = append(*problems, fmt.Sprintf(
@@ -1001,9 +1019,9 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 			}
 		}
 	}
-	// active 生命周期（托盘只在真正激活时显示）：命令带 pid + 当前模式，
-	// 且不带旧的前台窗口 pid 门限（UWP/ApplicationFrameHost 宿主会误判）。
-	// 纯 TSF 信号事件驱动：不允许回退到轮询定时器/心跳。
+	// active 生命周期（issue #3：显示＝本输入法被系统选中，隐藏＝切到其它输入法）：
+	// 命令带 pid + 当前模式，且不带旧的前台窗口 pid 门限（UWP/ApplicationFrameHost
+	// 宿主会误判）。纯 TSF 信号事件驱动：不允许回退到轮询定时器/心跳。
 	checkContains(fsys, problems, group, winShell,
 		"case ShellTask::Kind::kReportActive:",
 		`"active 1 %d %lu"`, `"active 0 %lu"`, "postActiveReport(",
@@ -1019,19 +1037,24 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 		"if (!isAppContainer() && !daemonMutexPresent()) ensureDaemonStarted();")
 }
 
-// checkTrayActiveLifecycle 锁住 2026-11-07 用户要求（bug1/bug3）+ 2026-11-11
-// TSF 事件驱动 + 单活跃 owner（用户明确要求「不要定时器轮询」）：
-//  1. 托盘可见性只由 TIP 的 active 上行控制：active 1 <0|1> <pid> 设 owner 并
-//     显示；active 0 <pid> 仅当 sender==owner 才在防抖后 NIM_DELETE；mode 命令
-//     只更新 owner 的图标、绝不显示；
-//  2. 启动参数 --mode 不得点亮托盘（开机不显示）；
-//  3. 切换输入法但 TSF 未调用 Deactivate 的宿主，靠 TSF 信号
-//     （OnKillThreadFocus / OnActivated(false)）+ bailOutIfInactive 按键复核兜底，
-//     **没有任何轮询定时器/心跳**；
+// checkTrayActiveLifecycle 锁住 issue #3 的托盘可见性契约（2026-11-12 修订）：
+//  1. 可见性语义＝「系统当前选中的输入法是不是本输入法」，与输入焦点解耦：
+//     active 1 <0|1> <pid> 设 owner 并显示；active 0 <pid> 是**唯一隐藏入口**
+//     （用户切到其它输入法），300ms 防抖、active 1 取消；mode 命令只更新 owner
+//     的图标、绝不显示；
+//  2. 失焦/停用/前台离开**不得上报 active 0**（updateInputActive 失活分支 /
+//     OnSetFocus(FALSE) / OnKillThreadFocus / onForegroundChanged / Deactivate
+//     只退场）；OnActivated(CLSID_ChaosetTIP, FALSE) 与 switchToInactiveProfile
+//     必须上报 active 0；显示上报点（Activate/OnActivated(TRUE)/OnSetFocus(TRUE)/
+//     OnSetThreadFocus/前台回到本进程）必须带「激活档案是本输入法 + 本进程在前台」
+//     判据，防 TSF 后台预激活实例误点亮托盘；
+//  3. 启动参数 --mode 不得点亮托盘（开机不显示）；
 //  4. Process 档托盘跟随当前进程（mode 命令不写 HKCU），System 档托盘是权威
 //     （写 HKCU）；Process 档托盘左键不反向改进程状态；
 //  5. owner 进程崩溃用 OpenProcess+RegisterWaitForSingleObject 事件清理
-//     （不是定时器 prune）。
+//     （不是定时器 prune），且**只清 owner、不隐藏托盘**；
+//  6. 没有任何轮询定时器/心跳——切走信号只来自 TSF 事件与按键复核兜底；
+//  7. 文档必须记录新语义与边界（逐应用输入法/无 TSF 切走事件不轮询）。
 func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	const group = groupTrayActive
 	data, err := fs.ReadFile(fsys, winShell)
@@ -1081,6 +1104,16 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		`"active 1 %d %lu"`, `"active 0 %lu"`,
 		"postActiveReport(true, mode, true)")
+	// 上报入口必须按需启动 worker：显示可能来自「切回本输入法但窗口没有 TSF 文本
+	// 焦点」（inputActive_ 仍 false），隐藏可能落在「从未输入过的预激活实例」——
+	// 只入队不启动就永远发不出去（托盘不出现 / 切走后不隐藏）。
+	if body, line, ok := cppFunctionBody(src, "void postActiveReport(bool active, bool english, bool allowSpawn)"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 postActiveReport 定义", group, winShell))
+	} else if !strings.Contains(stripCppComments(body), "if (!shellWorkerAlive()) shellWorkerStart();") {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 postActiveReport（约第 %d 行）未按需启动 worker（未激活迁移过的实例上报会被静默丢弃）",
+			group, winShell, line))
+	}
 	// 线程池 wait 回调只能 PostMessage（UI 状态/托盘只能由主线程修改）。
 	if body, line, ok := cppFunctionBody(src, "static VOID CALLBACK uiOwnerExitedCallback("); !ok {
 		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 owner 进程退出回调", group, winShell))
@@ -1112,20 +1145,145 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 				"%s：%s 的 uiApplyEnglish（约第 %d 行）未调 setMode（只更新图标）", group, winShell, line))
 		}
 	}
-	// active 1 必须设 owner 并 show（取消隐藏定时器）；active 0 只有 owner 才
-	// 防抖 hide（后台实例的 active 0 不得误隐藏）；owner 退出事件清理。
+	// active 1 必须设 owner 并 show（取消隐藏定时器）；active 0 防抖 hide；
+	// owner 退出只清 owner/句柄、不隐藏托盘（issue #3）。
 	if body, line, ok := cppFunctionBody(src, "static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)"); ok {
 		code := stripCppComments(body)
 		for _, need := range []string{
 			"kUiActiveMsg", "SetTimer(hwnd, kUiHideTimerId", "->show(", "->hide()",
 			"g_uiOwnerPid", "uiSetOwnerProcess(pid, hwnd)",
-			"pid == g_uiOwnerPid", "uiClearOwner()", "kUiOwnerExitedMsg",
+			"uiClearOwner()", "kUiOwnerExitedMsg",
 		} {
 			if !strings.Contains(code, need) {
 				*problems = append(*problems, fmt.Sprintf(
 					"%s：%s 的 uiHostWndProc（约第 %d 行）缺少 %q（active 事件显示/隐藏/单 owner 契约）",
 					group, winShell, line, need))
 			}
+		}
+	}
+	// ---- issue #3：托盘可见性＝本输入法被系统选中，与输入焦点解耦 ----
+	// 失焦/停用/前台离开只退场，**不得上报 active 0**（否则又回到「切到没有输入
+	// 焦点的进程托盘消失」的原 bug）。
+	for _, cb := range []struct{ name, sig string }{
+		{"updateInputActive", "void ChaosetTIP::updateInputActive(bool fromFocusEvent)"},
+		{"Deactivate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)"},
+		{"OnKillThreadFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus()"},
+		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
+	} {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %s 定义", group, winShell, cb.name))
+			continue
+		}
+		if strings.Contains(stripCppComments(body), "postActiveReport(false") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 %s（约第 %d 行）上报了 active 0——失焦/停用/前台离开只退场，托盘可见性与输入焦点解耦（issue #3）",
+				group, winShell, cb.name, line))
+		}
+	}
+	// 失焦路径必须仍然彻底退场（候选窗/钩子/闸门收口），不能只隐藏。
+	for _, cb := range []struct{ name, sig, need string }{
+		{"updateInputActive", "void ChaosetTIP::updateInputActive(bool fromFocusEvent)", "retireUiCompletely()"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)", "updateInputActive(false)"},
+		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)", "retireUiCompletely()"},
+		{"Deactivate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()", "retireUiCompletely()"},
+	} {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			continue
+		}
+		if !strings.Contains(stripCppComments(body), cb.need) {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 %s（约第 %d 行）缺少 %q（失焦/停用只隐藏不清理会残留浮窗/钩子）",
+				group, winShell, cb.name, line, cb.need))
+		}
+	}
+	// 隐藏入口只有两条，且都必须上报 active 0：
+	//   OnActivated(CLSID_ChaosetTIP, FALSE)（TSF 输入法失活通知，权威事件）
+	//   switchToInactiveProfile（按键复核发现激活档案已不是本输入法的兜底）
+	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated("); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 OnActivated 定义", group, winShell))
+	} else if !strings.Contains(stripCppComments(body), "postActiveReport(false") {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 OnActivated（约第 %d 行）未上报 active 0（切到其它输入法是唯一隐藏入口）",
+			group, winShell, line))
+	}
+	if body, line, ok := cppFunctionBody(src, "void ChaosetTIP::switchToInactiveProfile()"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 switchToInactiveProfile 定义", group, winShell))
+	} else if !strings.Contains(stripCppComments(body), "postActiveReport(false") {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 switchToInactiveProfile（约第 %d 行）未上报 active 0（宿主不投递失活通知时的兜底隐藏）",
+			group, winShell, line))
+	}
+	// 显示上报点：五个 TSF 事件入口都必须带「激活档案是本输入法 + 本进程在前台」
+	// 判据（TSF 会把 TIP 预激活进后台宿主，后台实例不得点亮托盘）。
+	for _, cb := range []struct{ name, sig string }{
+		{"Activate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"},
+		{"OnActivated", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(REFCLSID clsid,"},
+		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)"},
+		{"OnSetThreadFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus()"},
+		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
+	} {
+		body, line, ok := cppFunctionBody(src, cb.sig)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 %s 定义", group, winShell, cb.name))
+			continue
+		}
+		code := stripCppComments(body)
+		for _, need := range []string{"postActiveReport(true", "isActiveTip()", "foregroundIsSelf()"} {
+			if !strings.Contains(code, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 %s（约第 %d 行）缺少 %q（显示上报必须带「本输入法被选中 + 本进程在前台」判据）",
+					group, winShell, cb.name, line, need))
+			}
+		}
+	}
+	// 按「分支到下一个 return 0;」截取 switch 分支，避免把相邻分支的代码算进来。
+	branchUntilReturn := func(needle string) (string, bool) {
+		i := strings.Index(src, needle)
+		if i < 0 {
+			return "", false
+		}
+		rest := src[i:]
+		j := strings.Index(rest, "return 0;")
+		if j < 0 {
+			return "", false
+		}
+		return stripCppComments(rest[:j+len("return 0;")]), true
+	}
+	// UI 宿主：owner 进程退出只清 owner/句柄，绝不隐藏托盘（issue #3：关掉应用
+	// 不等于用户切走输入法）。
+	if branch, ok := branchUntilReturn("case kUiOwnerExitedMsg:"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 kUiOwnerExitedMsg 分支", group, winShell))
+	} else {
+		if !strings.Contains(branch, "uiClearOwner()") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 kUiOwnerExitedMsg 分支未清 owner/句柄（uiClearOwner）", group, winShell))
+		}
+		for _, bad := range []string{"->hide()", "kUiHideTimerId"} {
+			if strings.Contains(branch, bad) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 kUiOwnerExitedMsg 分支出现 %q——owner 进程退出不得隐藏托盘（只清 owner）",
+					group, winShell, bad))
+			}
+		}
+	}
+	// UI 宿主：active 0 是唯一隐藏入口，且不再按 owner 门限过滤（owner 刚退出/
+	// 不是当前前台进程时，切走的 active 0 也必须能隐藏托盘）。
+	if branch, ok := branchUntilReturn("} else if (pid != 0"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 的 kUiActiveMsg 缺少 active 0 分支", group, winShell))
+	} else {
+		for _, need := range []string{"SetTimer(hwnd, kUiHideTimerId", "g_uiTray->hide()"} {
+			if !strings.Contains(branch, need) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 active 0 分支缺少 %q（切走输入法必须在防抖后隐藏托盘）", group, winShell, need))
+			}
+		}
+		if strings.Contains(branch, "== g_uiOwnerPid") {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 的 active 0 分支仍按 owner 门限过滤——owner 刚退出/不是前台进程时切走无法隐藏（issue #3）",
+				group, winShell))
 		}
 	}
 	// mode 命令分支只走 setMode（不显示）。
@@ -1169,9 +1327,10 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	checkExcludes(fsys, problems, group, winShell,
 		"kActiveWatchTimerId", "onActiveWatchTimer", "refreshActiveWatchTimer",
 		"kUiPruneTimerId", "kUiActiveStaleMs", "g_uiActivePids", "g_uiLastActivePid")
-	// 文档必须记录 active 生命周期与 scope 对齐语义。
+	// 文档必须记录新可见性语义（issue #3：失焦不隐藏、只有切走才隐藏）与边界。
 	checkContains(fsys, problems, group, uiParityDoc,
-		"active 1", "active 0", "输入法未激活时隐藏")
+		"active 1", "active 0",
+		"只要系统当前选中的输入法是本输入法就显示", "切到其它输入法才隐藏")
 }
 
 // checkDaemonSpawnGuard 锁住 2026-11-07 审计确认的「重复 spawn chaosetd」根因修复：

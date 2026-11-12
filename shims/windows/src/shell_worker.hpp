@@ -40,11 +40,14 @@ void enqueueLogLine(const char* text, int len);
 //
 // 命令协议（UI 宿主 ui_host.cpp 服务端解析，pid 由 worker 附 GetCurrentProcessId()）：
 //   mode <0|1> <pid>         模式变化即时上报
-//   active 1 <0|1> <pid>     激活 + 当前中英 + pid（激活迁移/焦点事件时立即发）
-//   active 0 <pid>           失活/失焦/停用
+//   active 1 <0|1> <pid>     本输入法被系统选中（显示托盘、设 owner；激活迁移/
+//                            输入法切回/焦点获得/前台回到本进程时上报）
+//   active 0 <pid>           用户切到其它输入法（唯一隐藏入口；失焦/停用/前台离开
+//                            一律不发 active 0——托盘可见性与输入焦点解耦）
 //   query / toggle / settings  不变
 // english：当前中英模式（0=中文 1=英文）；allowSpawn：UI 宿主不可用时是否允许
-// 在 worker 线程懒启动（调用方必须已确认 TSF 焦点 + 激活档案为真）。
+// 在 worker 线程懒启动（调用方必须已确认「本输入法被选中 + 本进程在前台」或
+// 激活迁移；后台预激活实例不得上报）。
 void postModeReport(bool english, bool allowSpawn);
 void postActiveReport(bool active, bool english, bool allowSpawn);
 void postModeQuery();

@@ -90,6 +90,9 @@ var checkGroups = []checkGroup{
 	{groupCICoverage, onLogical(checkCICoverage)},
 	{groupCandidateClick, onLogical(checkCandidateClick)},
 	{groupCandidateDelete, onLogical(checkCandidateDelete)},
+	// issue#2：翻页箭头可用性与方向键页内预选（三端按键语义 + 双端绘制）。
+	{groupCandidatePageArrows, onLogical(checkCandidatePageArrows)},
+	{groupCandidateDirectionKeys, onLogical(checkCandidateDirectionKeys)},
 	// shell 转义/文档对照/设置核心/Linux 装配/模块布局/架构文档。
 	{groupShellEscaping, onLogical(checkShellVarEscaping)},
 	{groupDocParity, onLogical(checkDocParity)},

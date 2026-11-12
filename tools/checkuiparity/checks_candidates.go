@@ -128,6 +128,54 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 	// 文档：语义/入口/文案必须有对照，防止文档悄悄变成「三端都支持」。
 	checkContains(fsys, problems, group, uiParityDoc,
 		"学习数据按词删除", "右键删除", "删除该词", "chaoset-userdict delete")
+
+	// ---- issue #1（2026-11-12）：右键菜单 owner 安全契约 ----
+	// 根因：对 WS_EX_NOACTIVATE 候选窗调用 SetForegroundWindow 会程序化激活它
+	//（微软文档明确），候选窗与宿主文档同进程/同线程，宿主文档因此失去 TSF 键盘
+	// 焦点 → 按键闸门关闭（打字变英文、Shift 失效）、合成被外部终止（拼音留在
+	// 文档）。锁死：菜单 owner 必须来自 TIP 返回的**本进程宿主窗口**（前台窗口
+	// 优先）；onRButtonUp 内不得再对候选窗自身 SetForegroundWindow；菜单返回后
+	// 必须重校验 tip_/窗口/index 再删除（B1 重入防护）。
+	checkContains(fsys, problems, group, winShell,
+		"virtual HWND menuOwnerWindow() = 0;",
+		"HWND menuOwnerWindow() override;",
+		"HWND ChaosetTIP::menuOwnerWindow()",
+		"GetForegroundWindow()",
+		"GetWindowThreadProcessId(",
+		"pid == GetCurrentProcessId()",
+		"contextHostWindow(",
+		"composeHostWnd_")
+	winSrc, winErr := readText(fsys, winShell)
+	if winErr != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, winShell, winErr))
+	} else if body, _, ok := cppFunctionBody(winSrc, "void CandidateWindow::onRButtonUp(int x, int y)"); !ok {
+		*problems = append(*problems, group+"：无法抽取 CandidateWindow::onRButtonUp 函数体（实现可能已重构，需同步更新检查器）")
+	} else {
+		code := noSpace(stripCppComments(body))
+		if strings.Contains(code, "SetForegroundWindow(hwnd_)") {
+			*problems = append(*problems, group+"：onRButtonUp 不得对候选窗自身调用 SetForegroundWindow（会激活 WS_EX_NOACTIVATE 候选窗、夺走宿主 TSF 焦点，issue #1 根因）")
+		}
+		for _, needle := range []string{
+			"host->menuOwnerWindow()",
+			"SetForegroundWindow(owner)",
+			"TrackPopupMenu(",
+			"PostMessageW(owner,WM_NULL",
+			"host!=tip_",
+			"IsWindow(hwnd_)",
+			"deleteCandidateByIndex(index)",
+		} {
+			if !strings.Contains(code, needle) {
+				*problems = append(*problems, group+"：onRButtonUp 缺少 "+needle)
+			}
+		}
+		nullIdx := strings.Index(code, "owner==nullptr")
+		delIdx := strings.Index(code, "deleteCandidateByIndex(index)")
+		if nullIdx < 0 {
+			*problems = append(*problems, group+"：onRButtonUp 必须处理 menuOwnerWindow() 返回空（不弹菜单、不删除）")
+		} else if delIdx >= 0 && nullIdx > delIdx {
+			*problems = append(*problems, group+"：onRButtonUp 的空 owner 分支必须在删除调用之前（安全优先）")
+		}
+	}
 }
 
 // checkCandidateGearMouseUp 锁住 2026-11-06 用户要求：候选栏设置齿轮必须
@@ -409,4 +457,146 @@ func checkCandidatePageSize(fsys fs.FS, problems *[]string) {
 			*problems = append(*problems, fmt.Sprintf("%s：%s 每页候选数 = %d，但引擎 pageSize = %d（数字键指位/联想翻页会错位）", group, e.name, got, engineSize))
 		}
 	}
+}
+
+// checkCandidatePageArrows 双翻页箭头契约（issue#2，2026-11-12）：
+//  1. 首页只显示/可用下箭头、末页只显示/可用上箭头、中间页两枚都有；
+//     单页没有翻页动作（mac/Windows 都画置灰双箭头且不注册命中区）；
+//  2. 两枚箭头命中区分开：Windows chevronUpRect_/chevronDownRect_，
+//     macOS hitAreas -2（上）/ -1（下），点击分别翻上一页/下一页；
+//  3. 禁止退回旧「单箭头 dirDown = hasNext || !hasPrev 二选一」实现——
+//     那正是用户抱怨「中间页看不到上箭头」的根因。
+//
+// 像素级渲染仍需真机；这里锁住可用性判断被删、命中区合并、单箭头回归。
+func checkCandidatePageArrows(fsys fs.FS, problems *[]string) {
+	const group = groupCandidatePageArrows
+	// Windows：双箭头命中矩形 + 可用性条件 + 两方向分别绘制。
+	checkContains(fsys, problems, group, winShell,
+		"chevronUpRect_", "chevronDownRect_",
+		"if (hasPrev) drawChevron(false, upCy);",
+		"if (hasNext) drawChevron(true, downCy);",
+		"comp_.page > 0", "comp_.page + 1 < comp_.pageCount",
+		"chevronPressed_ = -1", "chevronPressed_ = 1",
+	)
+	// Windows：onLButtonUp 必须按记录的箭头方向翻页，不能又合并成单方向。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		if body, _, ok := cppFunctionBody(text, "void CandidateWindow::onLButtonUp(int x, int y)"); ok {
+			code := stripCppComments(body)
+			if !strings.Contains(code, "wasChevron > 0") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 onLButtonUp 未按上/下箭头区分翻页方向（chevronPressed_ 需区分 -1/+1）",
+					group, winShell))
+			}
+		} else {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 CandidateWindow::onLButtonUp", group, winShell))
+		}
+	}
+	// macOS：两枚箭头 + 可用性 + 分开的命中区（-2 上 / -1 下）。
+	checkContains(fsys, problems, group, macPanel,
+		"if hasPrev {", "if hasNext {",
+		// 多页分支两枚箭头必须一上一下（单页置灰分支用 dimColor，不参与）。
+		"color: theme.chevron, dirDown: false",
+		"color: theme.chevron, dirDown: true",
+		"height: half), -2", "height: blockH - half), -1",
+	)
+	// 旧单箭头实现不得回归（两端都查）。
+	checkExcludes(fsys, problems, group, winShell, "dirDown = hasNext || !hasPrev")
+	checkExcludes(fsys, problems, group, macPanel, "let dirDown = hasNext || !hasPrev")
+	// 单页必须显式处理（两端都要有分支，不允许「单页也画可点箭头」）。
+	checkContains(fsys, problems, group, winShell, "pageCount <= 1")
+	checkContains(fsys, problems, group, macPanel, "pageCount <= 1")
+	// Linux 用 ibus 原生面板，不自绘箭头：README 必须记录「双箭头可用性不可控」
+	// 与方向键语义，禁止假装三端自绘一致。
+	checkContains(fsys, problems, group, linuxReadme,
+		"双箭头可用性", "ibus 面板", "方向键预选")
+}
+
+// checkCandidateDirectionKeys 方向键页内预选契约（issue#2，2026-11-12）：
+//  1. 组词有候选 / 联想有候选时，上/左=前一项、下/右=后一项；页首继续上移
+//     翻上一页选末项、页尾继续下移翻下一页选首项，无对应页保持不动；
+//  2. 无组词/无候选时方向键必须放行宿主（绝不消费）——组词分支必须带
+//     hasCandidates() 守卫，联想分支只在联想候选非空时消费；
+//  3. 空格确认**页内预选项**（不再固定第 0 项），数字键仍按序号直选；
+//  4. 预选状态生命周期：新输入/翻页/选词后归零（候选窗/面板 show 侧负责）；
+//  5. 三端都要有：Windows TIP 按键路由、macOS KeyRouter、Linux ibus lookup cursor。
+func checkCandidateDirectionKeys(fsys fs.FS, problems *[]string) {
+	const group = groupCandidateDirectionKeys
+	// Windows：键位常量、消费/放行判定、页内移动与跨页、空格确认预选项。
+	checkContains(fsys, problems, group, winShell,
+		"kVkLeft", "kVkUp", "kVkRight", "kVkDown",
+		"bool ChaosetTIP::isArrowKey(WPARAM vk)",
+		"isArrowKey(vk) && hasCandidates()",
+		"isArrowKey(vk) && isComposing() && hasCandidates()",
+		"moveCompositionSelection(", "moveAssociateSelection(",
+		"candidateWnd_.moveSelection(", "candidateWnd_.setSelectedIndex(",
+		"item.index == selectedIndex_",
+	)
+	// Windows：handleKey 的空格分支必须读取预选序号，不能写死 0；
+	// 预选 pill 必须按 selectedIndex_ 判定（不再固定 item.isFirst）。
+	if data, err := fs.ReadFile(fsys, winShell); err == nil {
+		text := string(data)
+		if body, _, ok := cppFunctionBody(text, "bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic)"); ok {
+			code := stripCppComments(body)
+			if n := strings.Count(code, "candidateWnd_.selectedIndex()"); n < 2 {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 handleKey 中 candidateWnd_.selectedIndex() 只有 %d 处（联想态与组词态空格都要确认预选项）",
+					group, winShell, n))
+			}
+			for _, bad := range []string{"selectPrefix(0, &rest)", "session_.select(0, &committed)"} {
+				if strings.Contains(code, bad) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 handleKey 仍固定选第 0 项（%s）——空格应确认预选项",
+						group, winShell, bad))
+				}
+			}
+		} else {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 缺少 ChaosetTIP::handleKey", group, winShell))
+		}
+		// 无候选/无组词时方向键必须放行：组词分支的消费条件必须同时带
+		// hasCandidates()（只有联想分支可以只看 assoc_.candidates 非空）。
+		if body, _, ok := cppFunctionBody(text, "bool ChaosetTIP::wouldHandle(WPARAM vk) const"); ok {
+			code := stripCppComments(body)
+			if !strings.Contains(code, "isArrowKey(vk) && hasCandidates()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 wouldHandle 未把方向键消费限制在 hasCandidates()（无候选时必须放行宿主）",
+					group, winShell))
+			}
+		}
+	}
+	// macOS：KeyRouter 方向键路由 + 预选移动/跨页 + 空格确认预选项 +
+	// 候选面板的预选状态与 pill 跟随。
+	checkContains(fsys, problems, group, macPanel,
+		"arrowDelta", "moveCompositionSelection", "moveAssociateSelection",
+		"static var selectedIndex", "static func moveSelection",
+		"CandidatePanelController.moveSelection(", "CandidatePanelController.setSelectedIndex(",
+		"frame.index == selectedIndex",
+		"isComposing, hasCandidates",
+		"case 123, 126", "case 124, 125",
+	)
+	// 联想态方向键必须由联想分支消费（两个 arrowDelta 调用点：组词 + 联想）。
+	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
+		if n := strings.Count(string(data), "Self.arrowDelta(event.keyCode)"); n < 2 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 中 Self.arrowDelta(event.keyCode) 只有 %d 处（组词态与联想态都要消费方向键）",
+				group, macPanel, n))
+		}
+	}
+	// Linux：ibus lookup cursor 预选 + 空格确认 cursor 候选 + README 记录。
+	checkContains(fsys, problems, group, linuxEngine,
+		"kKeysymLeft", "kKeysymUp", "kKeysymRight", "kKeysymDown",
+		"moveLookup(", "ibus_lookup_table_new(kPageSize, cursor, TRUE, FALSE)",
+		"ibus_lookup_table_set_cursor_pos(table, cursor)",
+		"selectCandidate(lookupIndex_)",
+	)
+	if data, err := fs.ReadFile(fsys, linuxEngine); err == nil {
+		if n := strings.Count(string(data), "selectCandidate(lookupIndex_)"); n < 2 {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 中 selectCandidate(lookupIndex_) 只有 %d 处（联想态与组词态空格都要确认 lookup cursor 候选）",
+				group, linuxEngine, n))
+		}
+	}
+	checkContains(fsys, problems, group, linuxReadme, "方向键预选", "lookup cursor")
 }

@@ -4,6 +4,45 @@
 
 ## 未发布
 
+- **修复 Windows 删除候选词后中英状态/数字选词异常（issue #1）**：根因是候选窗右键
+  「删除该词」菜单前对 `WS_EX_NOACTIVATE` 候选窗调用 `SetForegroundWindow`——微软文档
+  明确该调用仍会**程序化激活** NOACTIVATE 窗口，候选窗与宿主文档同进程同线程，宿主文档
+  因此失去 TSF 键盘焦点：`OnSetFocus(FALSE)` 迁移把 `inputActive_` 闸门关闭（后续按键
+  全部直通 → 打字变英文、Shift 分支不可达），合成被 TSF 外部终止时未上屏拼音留在文档
+  （数字键选不中、拼音被原样确认），只有重新聚焦（点托盘/切窗口）才恢复。修复：
+  菜单 owner 改 TIP 返回的**本进程宿主窗口**（前台窗口优先，TSF 焦点上下文宿主窗口/
+  合成缓存窗口兜底，pid 必须本进程；取不到 owner 时不弹菜单），删除对候选窗的
+  `SetForegroundWindow`；菜单返回后重校验候选窗/TIP 状态与序号再删除；前台钩子忽略
+  本进程自身候选窗/提示条窗口；`OnCompositionTerminated` 在「文档合成文本 == 最后写入的
+  `confirmedPreedit_ + comp_.preedit`」时把残留拼音改写成已确认段（保留已确认段、清掉未
+  上屏拼音，任何失败只记日志）；删除刷新在合成已外部终止时只清本地/引擎会话，刷新后
+  校验预编辑一致性；焦点事件（`OnSetFocus(TRUE)` 等）参与激活恢复，修 `IsThreadFocus`
+  更新滞后导致切回应用仍英文直通。macOS 静态排查无同类焦点破坏（NSMenu + nonactivating
+  panel），Linux 无面板右键菜单（替代入口 `chaoset-userdict delete`）。
+- **候选窗方向键预选 + 空格确认 + 上下双翻页箭头（issue #2，三端）**：组词/联想有候选时
+  `↑/←` 前一项、`↓/→` 后一项；页首继续上移翻上一页选末项、页尾继续下移翻下一页选首项，
+  无对应页保持不动；空格确认**页内预选项**（数字键仍按序号直选，不移动预选）；无组词/
+  无候选时方向键放行宿主；新输入/翻页/选词后预选归零。候选窗蓝色高亮胶囊从「固定第一项」
+  改为跟随页内预选项。翻页箭头改为上下两枚：首页只有下箭头、末页只有上箭头、中间页两枚
+  都有、单页两枚置灰不可点，两枚命中区上下分开（仍遵守 mouseup 触发契约），macOS/Windows
+  同几何（6pt 箭头块 + 页码垂直居中）。Linux ibus 用 lookup cursor 实现方向键预选与空格
+  确认 cursor 候选（箭头显隐由 ibus 面板自绘、壳不可控，README 记录）。
+- **Windows 托盘中英图标改为「系统当前选中本输入法即显示」（issue #3）**：托盘可见性与
+  输入焦点解耦——`OnSetFocus(FALSE)`/`OnKillThreadFocus`/前台离开本进程/`Deactivate` 只
+  退场（关按键/候选窗闸门、销毁浮窗、撤钩子）不再隐藏托盘；显示由 `Activate`、
+  `ITfActiveLanguageProfileNotifySink` 激活通知、焦点获得与前台回到本进程驱动（条件 =
+  本线程激活档案是本输入法 + 本进程是前台进程，上报 `active 1`）；只有切到其它输入法
+  （失活通知，或按键复核发现激活档案变化）才上报 `active 0`，UI 宿主 300ms 防抖后隐藏；
+  owner 进程退出只清 owner/句柄、不隐藏托盘；无周期定时器/心跳不变。切到没有输入焦点的
+  桌面/任务栏/无文本框窗口时托盘保持显示。
+- 验证：`gofmt`、`go build ./...`、`go test ./tools/checkuiparity/`、`make vet`（49 组
+  check-uiparity 含新增「候选窗翻页箭头」「候选窗方向键预选」组与托盘新契约）、
+  `./shims/windows/build.sh`（core_test + mingw 交叉编译）、`./shims/macos/build.sh` +
+  `visual-parity.sh`（新增 E 段双箭头/预选契约）+ `key_routing`（43 项，新增方向键/空格
+  确认/跨页/联想断言）、Linux ibus 引擎容器内编译。**Windows 像素与 TSF 运行期行为仍
+  需用户真机验收**（菜单 owner 不抢焦点、删除后状态、托盘常显/切走隐藏、方向键两阶段
+  投递、DPI 下箭头/pill 几何、UWP/开始菜单边界）。
+
 ## v0.3.20（2026-11-12）
 
 本版本为**模块重构进行中**的 patch 发版：按 `docs/architecture.md` 拆分三端壳大文件的重构尚未全部完成（macOS/Linux 设置窗接 `chaoset-settingsctl` 仍在进行），因此**重构完成前只递增 patch 版本号、minor 保持 0.3 不变**，不发布 `v0.4.x`。本版累计 `v0.3.19` 之后 4 个提交：Windows 壳拆分 wave1 续与 wave2（`ChaosetTIP` 类拆分完成）、中英状态作用域简化为两档并改为 TSF 事件驱动的托盘同步，以及配套的 checker/文档同步。

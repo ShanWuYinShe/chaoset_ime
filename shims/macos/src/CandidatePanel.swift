@@ -44,6 +44,32 @@ enum CandidatePanelController {
     static var onSettings: (() -> Void)?
     /// 右键候选「删除该词」回调，与 onSelect 同约定。
     static var onDelete: ((Int) -> Void)?
+    /// 页内预选序号（0 起，当前页切片内）。方向键移动、空格确认与高亮 pill
+    /// 共用；show()（新输入/翻页/选词刷新）时归零。
+    static var selectedIndex = 0
+
+    /// 已布局（可见）候选数：方向键只在可见项内移动。
+    static var itemCount: Int { view?.itemCount ?? 0 }
+
+    /// 页内移动预选：成功返回 true；已在页首/页尾返回 false（调用方据此翻页）。
+    static func moveSelection(_ delta: Int) -> Bool {
+        let count = itemCount
+        guard count > 0 else { return false }
+        let next = selectedIndex + delta
+        guard next >= 0, next < count else { return false }
+        setSelectedIndex(next)
+        return true
+    }
+
+    /// 指定页内预选（内部钳制到可见候选范围），立即重绘高亮 pill。
+    static func setSelectedIndex(_ index: Int) {
+        let count = itemCount
+        let clamped = count <= 0 ? 0 : min(max(index, 0), count - 1)
+        selectedIndex = clamped
+        guard let v = view else { return }
+        v.selectedIndex = clamped
+        v.needsDisplay = true
+    }
 
     /// 显示候选窗。originProvider 在内容尺寸确定后被调用，返回面板左上角
     /// 屏幕坐标（Controller 用它把候选窗钉在光标下方）。
@@ -65,6 +91,10 @@ enum CandidatePanelController {
         v.onPageUp = { onPageUp?() }
         v.onSettings = { onSettings?() }
         v.onDelete = { onDelete?($0) }
+        // 新输入/翻页/选词后的刷新：页内预选归零（方向键跨页移动时由
+        // KeyRouter 在 show 之后用 setSelectedIndex 指定末项/首项）。
+        selectedIndex = 0
+        v.selectedIndex = 0
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
@@ -74,6 +104,7 @@ enum CandidatePanelController {
 
     static func hide() {
         panel?.orderOut(nil)
+        selectedIndex = 0
         onSelect = nil
         onPageDown = nil
         onPageUp = nil

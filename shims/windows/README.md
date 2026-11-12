@@ -166,16 +166,24 @@ Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的
   独立）——每个程序各自记住中英状态（同一程序的多个 TIP 实例共享），TIP 激活/切进程时把本
   进程状态上报到托盘，托盘左键只显示、不切换。旧三档值读取时归一化（window→process，
   未知→system），新写入只写 `system`/`process`。
-- **托盘可见性（TSF 事件驱动，无周期定时器/心跳）**：激活/失活完全由 `Activate`/
-  `Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink` 等 TSF 信号
-  驱动，TIP 在状态变化时上报 `active 1 <0|1> <pid>`（`Shell_NotifyIcon(NIM_ADD)` 显示托盘、
-  把该上报进程设为 owner、更新图标）或 `active 0 <pid>`（仅当 pid 是当前 owner 时
-  `NIM_DELETE` 隐藏）。UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
-  监听 owner 进程退出并清理；隐藏保留 300ms 防抖（同一进程多 TIP 实例焦点抖动时不闪图标）；
-  UI 宿主重启后靠下一次 TSF 事件重发恢复。没有输入焦点（桌面/任务栏）或切到其它输入法即
-  隐藏；启动 `--mode` 不点亮托盘。TIP 上报可信度由 TSF 焦点 + 激活档案决定，不再用前台窗口
-  pid 门限（UWP/ApplicationFrameHost 宿主的前台 pid 不等于 TIP 进程 pid，曾导致上报被丢、
-  托盘不显示）。
+- **托盘可见性（TSF 事件驱动，无周期定时器/心跳）**：语义＝**系统当前选中的输入法
+  是不是本输入法**，与输入焦点解耦（issue #3 用户要求：切到没有输入焦点的进程时托盘不能
+  消失）。显示由 `Activate`、`ITfActiveLanguageProfileNotifySink` 激活通知、
+  `ITfThreadFocusSink`/`OnSetFocus(TRUE)`、前台回到本进程等 TSF 事件驱动：TIP 上报
+  `active 1 <0|1> <pid>`（`Shell_NotifyIcon(NIM_ADD)` 显示托盘、把该上报进程设为 owner、
+  更新图标）。没有 TSF 文本焦点的场景（桌面/任务栏/无文本框窗口）要求「本线程激活档案是
+  本输入法 + 本进程是前台进程」才上报——TSF 会把 TIP 预激活进后台宿主，后台实例不满足前台
+  条件，不会误显示托盘；有 TSF 文本焦点的场景（含 UWP/ApplicationFrameHost）由线程焦点
+  判据显示。隐藏只有一条路径：用户切到其它输入法时 `ITfActiveLanguageProfileNotifySink`
+  失活通知上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`（期间任何
+  `active 1` 取消，多实例/焦点抖动不闪图标）；`OnSetFocus(FALSE)`、`OnKillThreadFocus`、
+  前台离开本进程、`Deactivate` **只退场不隐藏**（关按键/候选窗闸门、销毁浮窗、撤钩子，
+  不得上报 active 0）。UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
+  监听 owner 进程退出并**只清 owner/句柄、不隐藏托盘**（关掉应用不代表切走输入法）；
+  UI 宿主重启后靠下一次 TSF 激活/焦点事件重发恢复。启动 `--mode` 不点亮托盘。边界：
+  逐应用输入法（Windows 可选特性）下其它应用自己的输入法选择不是切走信号；宿主既不投递
+  失活通知也不把按键下沉给 TIP 时 TSF 侧没有可用的切走事件（事件驱动、无心跳，不为它加
+  轮询），由按键路径复核激活档案兜底（`switchToInactiveProfile` 上报 active 0）。
 - TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>` 上报模式/激活状态（`mode <0|1> <pid>` /
   `active ...`）或请求设置窗（`settings`）。管道安全描述符与 daemon 完全同规则（当前用户
   + SYSTEM + ALL APPLICATION PACKAGES + 低完整性标签 `S:(ML;;NW;;;LW)`），否则开始菜单/
@@ -282,8 +290,8 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | :--- | :--- |
 | 64/32 位 TSF COM，注册/卸载/类别配置 | 已实现；CI 校验导出 |
 | 命名管道、当前用户按需启动、AppContainer ACL | 已实现；Windows 真机需验收 |
-| 原生 GDI 候选窗、学习标记、鼠标点选、翻页 | 已实现；视觉静态契约由 `checkuiparity` 校验 |
-| 中英状态指示器（任务栏「中/英」） | 单例 UI 宿主 `chaoset-ui.exe` 的唯一托盘图标；托盘显示当前输入上下文实际状态（system 权威 / process 镜像）；TIP 经命名管道在 TSF 事件下上报激活状态与模式，UI 宿主按 owner 事件驱动显示/隐藏（无周期定时器）；无浮动提示兜底 |
+| 原生 GDI 候选窗、页内预选（方向键移动/空格确认）、上下双翻页箭头、学习标记、鼠标点选 | 已实现；视觉/交互静态契约由 `checkuiparity` 校验 |
+| 中英状态指示器（任务栏「中/英」） | 单例 UI 宿主 `chaoset-ui.exe` 的唯一托盘图标；托盘显示当前输入上下文实际状态（system 权威 / process 镜像）；**可见性＝系统当前选中的输入法是否为本输入法**（失焦/无输入焦点不隐藏，切到其它输入法才隐藏）；TIP 经命名管道在 TSF 事件下上报 active 与模式，UI 宿主按 owner 事件驱动显示/隐藏（无周期定时器）；无浮动提示兜底 |
 | 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 由单例 UI 宿主创建（开始菜单/搜索等 AC 宿主里也能打开）；交互需真机验收 |
 | Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
@@ -299,6 +307,11 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 中文输入法激活时字母键会进入组词，这是 IME 固有行为；游戏前应切英文模式。
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
+- **候选窗右键菜单不得激活候选窗自身（issue#1）**：候选窗是 `WS_EX_NOACTIVATE`，
+  但 `SetForegroundWindow` 仍会**程序化激活**它（微软文档明确），激活会夺走宿主文档的
+  键盘/TSF 焦点并终止合成（表现为打字变英文直通、Shift 失效、未上屏拼音留在文档）。
+  菜单 owner 必须取本进程前台宿主窗口（TSF 上下文宿主窗口兜底），`TPM_NONOTIFY` 保证
+  宿主窗口收不到菜单消息；`onRButtonUp` 不得对候选窗调用 `SetForegroundWindow`。
 - **浮窗 owner 只给沉浸式 shell 宿主**（explorer/SearchApp/开始菜单/搜索/文本服务）：
   这些宿主自带独立 z 序 band，无主 topmost 会被压住。普通桌面宿主（浏览器/编辑器/
   终端）一律不设 owner——带 owner 的 TOPMOST 窗口显示时会调整 owner 所在窗口组
@@ -318,6 +331,11 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   ~7 秒）；`ICONINFO.hbmMask` 必须非空，且掩码缓冲按 DPI 动态分配（250%/300%
   缩放下 `SM_CXSMICON` 会到 40/48 像素）。`diagBudget()` 每进程仅 200 次，
   高频日志会把预算烧光并吞掉失败原因——关键失败路径的日志必须绕开预算。
+- **托盘可见性跟「系统选中的输入法」走、不跟焦点走**（issue #3）：失焦、切到桌面/
+  任务栏/无文本框窗口、关闭宿主程序都不得隐藏托盘；只有切到其它输入法才隐藏。逐应用输入法
+  （Windows 可选特性）下其它应用自己的选择不是切走信号；没有 TSF 切走事件的宿主靠按键
+  路径复核激活档案兜底，不要为它加轮询/心跳。托盘显示上报只放 TSF 事件入口
+  （`Activate`/`OnActivated`/`OnSetFocus` 等），不能塞进 `bailOutIfInactive`（非激活零副作用）。
 - **设置窗由 UI 宿主创建**（`openSettingsWindowStandalone` 在 `ChaosetRunUi` 的
   消息循环线程调用）：TIP 内只许发管道请求，不要退回「宿主进程内建设置窗」——
   AC 宿主里既会被 z 序 band 压住，也无法启动导入器/文件对话框/重启 daemon。
@@ -391,9 +409,11 @@ make package-windows          # ZIP + NSIS 安装器（含 chaoset-ui.exe 自检
 ```
 
 单例 UI 宿主可脱离 TSF 单独冒烟：把 `ChaosetIME.dll` + `chaoset-ui.exe` 放同一目录，
-运行 `chaoset-ui.exe`；应出现唯一托盘「中/英」图标，向管道
-`\\.\pipe\chaoset-ui-<SID>` 写 `mode 1\n` 图标应变为「英」，写 `settings\n`
-应弹出设置窗，再运行一次 `chaoset-ui.exe --settings` 不应产生第二个进程/窗口。
+运行 `chaoset-ui.exe`；**启动时托盘不显示**（不随登录/启动点亮）。向管道
+`\\.\pipe\chaoset-ui-<SID>` 写 `active 1 0 <当前 shell 的 pid>\n` 应出现唯一托盘
+「中/英」图标，写 `mode 1 <pid>\n` 图标应变为「英」，写 `active 0 <pid>\n` 300ms 后
+图标消失；写 `settings\n` 应弹出设置窗，再运行一次 `chaoset-ui.exe --settings` 不应
+产生第二个进程/窗口。
 
 CI 的 `windows-build` 每次 push/PR 运行上述构建与包内容自检；Release 工作流在打 tag 时
 重新构建并上传 `ChaosetSetup.exe` / `chaoset-windows-x64.zip`。
