@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.3.22（2026-11-13）
+
+本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.21` 之后 2 个提交：修复 Windows 切走输入法后任务栏「中/英」托盘图标不消失——此前隐藏只依赖 `ITfActiveLanguageProfileNotifySink`，但该 sink 不覆盖「切到键盘布局」（美式键盘等），托盘永久残留；补挂 `ITfInputProcessorProfileActivationSink`（微软文档明确覆盖键盘布局与输入处理器两类）与 `Deactivate` 档案复核，TSF 信号 sink 按职责拆出新模块 `tip_profiles.cpp`。另将按键热路径收敛为「状态迁移只用 TSF 档案信号」：移除每键激活档案查询，热路径零 COM 查询。
+
 - **修复 Windows 切走输入法后任务栏「中/英」托盘图标不消失（托盘常显）**：此前隐藏
   只依赖 `ITfActiveLanguageProfileNotifySink` 失活通知与按键复核兜底，但该 sink
   **不覆盖「切到键盘布局」**（美式键盘等，`TF_PROFILETYPE_KEYBOARDLAYOUT`），且多数
