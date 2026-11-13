@@ -174,23 +174,30 @@ Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的
   更新图标）。没有 TSF 文本焦点的场景（桌面/任务栏/无文本框窗口）要求「本线程激活档案是
   本输入法 + 本进程是前台进程」才上报——TSF 会把 TIP 预激活进后台宿主，后台实例不满足前台
   条件，不会误显示托盘；有 TSF 文本焦点的场景（含 UWP/ApplicationFrameHost）由线程焦点
-  判据显示。隐藏只有一条路径：用户切到其它输入法时 `ITfActiveLanguageProfileNotifySink`
-  失活通知上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`（期间任何
-  `active 1` 取消，多实例/焦点抖动不闪图标）；`OnSetFocus(FALSE)`、`OnKillThreadFocus`、
-  前台离开本进程、`Deactivate` **只退场不隐藏**（关按键/候选窗闸门、销毁浮窗、撤钩子，
-  不得上报 active 0）。UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
+  判据显示。隐藏只在用户切到其它输入法时发生，四个事件源统一收口
+  `switchToInactiveProfile` 上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`
+  （期间任何 `active 1` 取消，多实例/焦点抖动不闪图标）：①`ITfActiveLanguageProfileNotifySink`
+  失活通知（TIP 之间切换）；②`ITfInputProcessorProfileActivationSink`（2026-11-13 托盘常显
+  收口：切**键盘布局**（美式键盘等）只有它会通知——①不覆盖 `TF_PROFILETYPE_KEYBOARDLAYOUT`，
+  此前该路径托盘永久残留；其它输入法/布局激活以「本进程是前台 + 激活档案复核已不是本输入法」
+  为准，语音/手写类 TIP 激活不挤占键盘槽位、不得误隐藏）；③`Deactivate` 档案复核（宿主在
+  切换输入法时也会调用 Deactivate，此时激活档案已换人即补上报；档案仍是本输入法＝宿主关闭/
+  TSF 卸载，只退场）；④按键闸门复核兜底。`OnSetFocus(FALSE)`、`OnKillThreadFocus`、
+  前台离开本进程**只退场不隐藏**（关按键/候选窗闸门、销毁浮窗、撤钩子，不得上报 active 0）。
+  UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
   监听 owner 进程退出并**只清 owner/句柄、不隐藏托盘**（关掉应用不代表切走输入法）；
   UI 宿主重启后靠下一次 TSF 激活/焦点事件重发恢复。启动 `--mode` 不点亮托盘。边界：
   逐应用输入法（Windows 可选特性）下其它应用自己的输入法选择不是切走信号；宿主既不投递
-  失活通知也不把按键下沉给 TIP 时 TSF 侧没有可用的切走事件（事件驱动、无心跳，不为它加
-  轮询），由按键路径复核激活档案兜底（`switchToInactiveProfile` 上报 active 0）。
+  任何失活/档案事件也不把按键下沉给 TIP 时 TSF 侧没有可用的切走事件（事件驱动、无心跳，
+  不为它加轮询）。
 - TIP 通过命名管道 `\\.\pipe\chaoset-ui-<SID>` 上报模式/激活状态（`mode <0|1> <pid>` /
   `active ...`）或请求设置窗（`settings`）。管道安全描述符与 daemon 完全同规则（当前用户
   + SYSTEM + ALL APPLICATION PACKAGES + 低完整性标签 `S:(ML;;NW;;;LW)`），否则开始菜单/
   搜索框（低完整性）能连不能写。
 - 中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语，不代管中英模式）；用户切换
-  输入法由系统/TSF 触发，TIP 在 `Activate`/`Deactivate` 与
-  `ITfActiveLanguageProfileNotifySink` 中响应，回调只做内存记录与命令入队，不阻塞 TSF 线程。
+  输入法由系统/TSF 触发，TIP 在 `Activate`/`Deactivate`、
+  `ITfActiveLanguageProfileNotifySink` 与 `ITfInputProcessorProfileActivationSink` 中响应，
+  回调只做内存记录与命令入队，不阻塞 TSF 线程。
 - 设置窗/托盘实现全部在 `ChaosetIME.dll` 内（导出 `ChaosetRunUi`），
   `chaoset-ui.exe` 只是 LoadLibrary 壳——不存在第二套 UI 代码。
 - 单实例用 `Local\ChaosetUi-<SID>` 互斥体；第二个实例带 `--settings` 时把请求

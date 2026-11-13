@@ -469,11 +469,16 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"ITfThreadFocusSink", "ITfActiveLanguageProfileNotifySink", "IID_ITfSource",
 		"IID_ITfThreadFocusSink", "IID_ITfActiveLanguageProfileNotifySink",
+		// 2026-11-13 托盘常显收口：键盘布局切换只有激活档案 sink 会通知。
+		"IID_ITfInputProcessorProfileActivationSink",
 		"AdviseSink(IID_ITfThreadFocusSink", "AdviseSink(IID_ITfActiveLanguageProfileNotifySink",
+		"AdviseSink(IID_ITfInputProcessorProfileActivationSink",
 		"UnadviseSink(threadFocusCookie_)", "UnadviseSink(languageProfileCookie_)",
+		"UnadviseSink(inputProcessorCookie_)",
 		"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus()",
 		"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus()",
 		"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(",
+		"HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(DWORD dwProfileType,",
 	)
 	// Advise/Unadvise 生命周期必须成对：Deactivate 与析构都调 unadviseThreadSinks。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
@@ -500,7 +505,7 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 			code := stripCppComments(body)
 			for _, need := range []string{
 				"CLSID_ChaosetTIP", "focused_ = true", "updateInputActive(true)",
-				"applyModeForCurrentScope()", "postActiveReport(false", "retireUiCompletely()",
+				"applyModeForCurrentScope()", "switchToInactiveProfile()",
 			} {
 				if !strings.Contains(code, need) {
 					*problems = append(*problems, fmt.Sprintf(
@@ -523,31 +528,36 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 					group, winShell, cb.sig, line, cb.need))
 			}
 		}
-		// Deactivate（宿主关闭/TSF 卸载本实例）只退场、不得上报 active 0（issue #3：
-		// 托盘可见性＝本输入法被系统选中，关掉应用或失焦都不该让托盘消失）。
-		if body, line, ok := cppFunctionBody(text, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()"); ok {
-			code := stripCppComments(body)
-			if strings.Contains(code, "postActiveReport(") {
+		// Deactivate（2026-11-13 托盘常显收口）：宿主在「切换输入法」时也会调用
+		// Deactivate——此时激活档案已换人、失活通知不会再发，必须按档案复核补
+		// active 0；档案仍是本输入法（宿主关闭/TSF 卸载）则只退场不上报
+		//（issue #3：关掉应用不代表切走输入法）。
+		if body, line, ok := cppFunctionBody(text, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()"); !ok {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 Deactivate 定义", group, winShell))
+		} else {
+			raw := stripCppComments(body)
+			if !strings.Contains(noSpace(raw), "if(tm_!=nullptr&&!isActiveTip())") ||
+				!strings.Contains(raw, "postActiveReport(false") {
 				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 的 Deactivate（约第 %d 行）仍上报 active——停用只退场，托盘可见性与输入焦点/实例生命周期解耦（issue #3）",
+					"%s：%s 的 Deactivate（约第 %d 行）缺少「tm_!=nullptr && !isActiveTip() → "+
+						"postActiveReport(false…)」——切走型 Deactivate 不上报 active 0 会让托盘常显",
 					group, winShell, line))
 			}
 			for _, need := range []string{"retireUiCompletely()", "inputActive_ = false"} {
-				if !strings.Contains(code, need) {
+				if !strings.Contains(raw, need) {
 					*problems = append(*problems, fmt.Sprintf(
 						"%s：%s 的 Deactivate（约第 %d 行）缺少 %q（停用必须彻底退场）",
 						group, winShell, line, need))
 				}
 			}
 		}
-		// OnActivated(false) 是唯一隐藏入口之一：必须无条件上报 active 0 并退场
-		//（不再用 wasActive 守卫——焦点丢失路径已不再产生 active 0，重复上报由
-		// UI 宿主 300ms 防抖 + active 1 取消处理）。
+		// OnActivated(false) 是隐藏入口之一：必须收口到 switchToInactiveProfile
+		//（统一上报 active 0 + 退场；不再用 wasActive 守卫——焦点丢失路径已不再
+		// 产生 active 0，重复上报由 UI 宿主 300ms 防抖 + active 1 取消处理）。
 		if body, line, ok := cppFunctionBody(text, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated("); ok {
 			code := stripCppComments(body)
 			for _, need := range []string{
-				"postActiveReport(false", "retireUiCompletely()",
-				"suspendShiftHoldOnFocusLost()",
+				"switchToInactiveProfile()",
 			} {
 				if !strings.Contains(code, need) {
 					*problems = append(*problems, fmt.Sprintf(
@@ -567,7 +577,8 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 QueryInterface 定义", group, winShell))
 		} else {
 			code := stripCppComments(body)
-			for _, need := range []string{"IID_ITfThreadFocusSink", "IID_ITfActiveLanguageProfileNotifySink"} {
+			for _, need := range []string{"IID_ITfThreadFocusSink", "IID_ITfActiveLanguageProfileNotifySink",
+				"IID_ITfInputProcessorProfileActivationSink"} {
 				if !strings.Contains(code, need) {
 					*problems = append(*problems, fmt.Sprintf(
 						"%s：%s 的 QueryInterface（约第 %d 行）未暴露 %s（TSF AdviseSink 会 QI 该接口）",
@@ -727,6 +738,9 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 		{"OnSetThreadFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus()"},
 		{"OnKillThreadFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus()"},
 		{"OnActivated", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(REFCLSID clsid,"},
+		// ITfInputProcessorProfileActivationSink 回调同样在宿主 UI 线程同步执行
+		//（2026-11-13 托盘常显收口）：只允许内存判断 + 入队（零阻塞契约）。
+		{"OnActivated(activation sink)", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(DWORD dwProfileType,"},
 		{"OnTestKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
 		{"OnKeyDown", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM"},
 		{"OnTestKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
@@ -1164,9 +1178,10 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	// ---- issue #3：托盘可见性＝本输入法被系统选中，与输入焦点解耦 ----
 	// 失焦/停用/前台离开只退场，**不得上报 active 0**（否则又回到「切到没有输入
 	// 焦点的进程托盘消失」的原 bug）。
+	// （Deactivate 不在此列：2026-11-13 起它按激活档案复核，切走型 Deactivate
+	// 必须上报 active 0，见下方专项断言。）
 	for _, cb := range []struct{ name, sig string }{
 		{"updateInputActive", "void ChaosetTIP::updateInputActive(bool fromFocusEvent)"},
-		{"Deactivate", "HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate()"},
 		{"OnSetFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground)"},
 		{"OnKillThreadFocus", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus()"},
 		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
@@ -1199,14 +1214,25 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 				group, winShell, cb.name, line, cb.need))
 		}
 	}
-	// 隐藏入口只有两条，且都必须上报 active 0：
+	// 隐藏入口（2026-11-13 托盘常显收口后共三条，最终都必须上报 active 0）：
 	//   OnActivated(CLSID_ChaosetTIP, FALSE)（TSF 输入法失活通知，权威事件）
-	//   switchToInactiveProfile（按键复核发现激活档案已不是本输入法的兜底）
+	//   OnActivated(DWORD…)（ITfInputProcessorProfileActivationSink：键盘布局切换
+	//     只有它通知——ITfActiveLanguageProfileNotifySink 不覆盖布局，是托盘常显根因）
+	//   switchToInactiveProfile（按键/档案复核发现已不是本输入法的统一收口，
+	//     前两条与 Deactivate 的档案复核都汇到这里）
 	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated("); !ok {
 		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 OnActivated 定义", group, winShell))
-	} else if !strings.Contains(stripCppComments(body), "postActiveReport(false") {
+	} else if !strings.Contains(stripCppComments(body), "switchToInactiveProfile()") {
 		*problems = append(*problems, fmt.Sprintf(
-			"%s：%s 的 OnActivated（约第 %d 行）未上报 active 0（切到其它输入法是唯一隐藏入口）",
+			"%s：%s 的 OnActivated（约第 %d 行）未收口到 switchToInactiveProfile（切到其它输入法必须隐藏托盘）",
+			group, winShell, line))
+	}
+	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(DWORD dwProfileType,"); !ok {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少激活档案 sink 的 OnActivated 定义", group, winShell))
+	} else if !strings.Contains(stripCppComments(body), "switchToInactiveProfile()") {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的激活档案 sink OnActivated（约第 %d 行）未收口到 switchToInactiveProfile"+
+				"（键盘布局切换是托盘常显根因，2026-11-13）",
 			group, winShell, line))
 	}
 	if body, line, ok := cppFunctionBody(src, "void ChaosetTIP::switchToInactiveProfile()"); !ok {

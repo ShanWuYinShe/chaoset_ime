@@ -184,19 +184,27 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   `ITfActiveLanguageProfileNotifySink` 激活通知、`ITfThreadFocusSink`/`OnSetFocus(TRUE)`
   焦点获得驱动（条件是本线程激活档案是本输入法且前台属于本进程，防 TSF 后台预激活误报），
   TIP 上报 `active 1 <0|1> <pid>`（显示托盘并把该进程设为 owner）；`OnSetFocus(FALSE)`、
-  `OnKillThreadFocus`、前台离开本进程、`Deactivate` 只退场（关按键/候选窗闸门、销毁浮窗、
-  撤钩子），**不再隐藏托盘**。只有切到其它输入法（失活通知，或按键复核发现激活档案已不是
-  本输入法）才上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`（期间 `active 1`
-  取消）。**只要系统当前选中的输入法是本输入法就显示**，没有输入焦点的桌面/任务栏/无文本框
-  窗口保持显示；**切到其它输入法才隐藏**。边界：逐应用输入法（Windows 可选特性）下其它应用
-  自己的选择不是切走信号；宿主既不投递失活通知也不把按键下沉给 TIP 时，TSF 侧没有可用的
-  切走事件（事件驱动、无心跳）。UI 宿主不轮询，owner 进程退出用
+  `OnKillThreadFocus`、前台离开本进程只退场（关按键/候选窗闸门、销毁浮窗、撤钩子），
+  **不隐藏托盘**。切到其它输入法才上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`
+  （期间 `active 1` 取消）。**只要系统当前选中的输入法是本输入法就显示**，没有输入焦点的
+  桌面/任务栏/无文本框窗口保持显示；**切到其它输入法才隐藏**。
+  **隐藏事件源（2026-11-13 托盘常显收口，共四条）**：① `ITfActiveLanguageProfileNotifySink`
+  失活通知（TIP 之间切换）；② `ITfInputProcessorProfileActivationSink`（键盘布局切换**只有
+  它通知**——①不覆盖 `TF_PROFILETYPE_KEYBOARDLAYOUT`，此前「切到美式键盘」托盘永久残留；
+  两个 sink 统一收口到 `switchToInactiveProfile`）；③ `Deactivate` 档案复核：宿主在切换输入法
+  时也会调用 Deactivate，此时激活档案已换人、失活通知不会再发，按「`tm_ != nullptr &&
+  !isActiveTip()` → 上报 active 0」补一次（档案仍是本输入法即宿主关闭/TSF 卸载，只退场，
+  issue#3 关掉应用不代表切走）；④ `switchToInactiveProfile` 按键复核兜底。边界：逐应用输入法
+  （Windows 可选特性）下其它应用自己的选择不是切走信号（②④都以「本进程是前台 + 档案复核
+  已不是本输入法」为准）；宿主既不投递任何失活/档案事件也不把按键下沉给 TIP 时，TSF 侧没有
+  可用的切走事件（事件驱动、无心跳）。UI 宿主不轮询，owner 进程退出用
   `OpenProcess`+`RegisterWaitForSingleObject` 只清 owner/句柄（不隐藏）；UI 宿主重启后靠
   下一次 TSF 激活/焦点事件重发恢复。`mode <0|1> <pid>` 只更新图标，启动 `--mode` 不显示。
 - **中英状态归属与输入法切换链路**：中英模式由输入法自己维护（TSF 只提供线程隔间
   与焦点/激活原语，不代管中英模式）；用户切换输入法（切走/切回）由系统/TSF 触发，
-  TIP 在 `Activate`/`Deactivate` 与 `ITfActiveLanguageProfileNotifySink` 中响应，
-  据此更新按键/候选窗激活态；托盘只在切走（失活通知）时隐藏。
+  TIP 在 `Activate`/`Deactivate`、`ITfActiveLanguageProfileNotifySink` 与
+  `ITfInputProcessorProfileActivationSink` 中响应，据此更新按键/候选窗激活态；
+  托盘只在切走（失活/档案事件，见上）时隐藏。
 - **自身浮窗不算前台信号（issue#1）**：Windows 前台钩子回调忽略本进程自身的候选窗/
   提示条窗口（按 `windowClassName` 生成的类名匹配）：它们成为前台是本 TIP 程序化激活
   自身浮窗的副作用，不是宿主焦点信号，不得据此修改 `focused_`/`inputActive_` 或重播

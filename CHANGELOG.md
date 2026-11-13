@@ -4,6 +4,20 @@
 
 ## 未发布
 
+- **修复 Windows 切走输入法后任务栏「中/英」托盘图标不消失（托盘常显）**：此前隐藏
+  只依赖 `ITfActiveLanguageProfileNotifySink` 失活通知与按键复核兜底，但该 sink
+  **不覆盖「切到键盘布局」**（美式键盘等，`TF_PROFILETYPE_KEYBOARDLAYOUT`），且多数
+  宿主切走后按键也不再下沉给本 TIP——两条隐藏路径同时失效，托盘永久残留。修复：
+  ①新增挂载 `ITfInputProcessorProfileActivationSink`（与既有 sink 同一 `ITfSource`，
+  微软文档明确覆盖键盘布局与输入处理器两类、`TF_IPSINK_FLAG_ACTIVE` 区分激活/失活；
+  其它输入法/布局激活以「本进程是前台 + 档案复核已不是本输入法」为准，防逐应用/语音
+  手写误隐藏）；②`Deactivate` 档案复核：宿主切换输入法时也会调用 Deactivate，此时
+  激活档案已换人即补报 `active 0`（档案仍是本输入法＝宿主关闭/TSF 卸载，只退场，
+  保持 issue#3「关掉应用不代表切走」语义）；③失活通知收口统一到
+  `switchToInactiveProfile`。sink 组按职责拆出到新模块 `tip_profiles.cpp`（模块地图
+  与 checker 预算同步登记），tsf.log 增加 sink 挂载与首个档案事件的一次性日志便于
+  真机排障；`checkuiparity` 托盘/零阻塞契约同步更新断言。
+
 ## v0.3.21（2026-11-13）
 
 本版本为**模块重构进行中**的 patch 发版（macOS/Linux 设置窗接 `chaoset-settingsctl` 仍在进行，重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.20` 之后 8 个提交：修复三个用户反馈 issue——Windows 删除候选词后中英状态/数字选词异常（issue #1）、候选窗方向键改上/下翻页与左/右预选 + 上下双翻页箭头（issue #2，三端）、托盘中英图标「系统选中本输入法即显示」与输入焦点解耦（issue #3）；macOS 输入源登记幂等（重复安装/升级不再累积重复 Chaoset 条目）；右键「删除该词」成功改为静默刷新。另含 Linux ibus E2E 稳定性修复（dbus-monitor 启动竞态）与 CI 门禁/文档口径修正。
