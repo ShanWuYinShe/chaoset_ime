@@ -763,9 +763,9 @@ void ChaosetTIP::retireUiCompletely() {
 }
 
 
-// 切换到其它输入法（TSF 未调 Deactivate / 未发失活通知）时的统一收口：
-// 上报 active 0（托盘隐藏）+ 彻底退场。按键路径复核激活档案发现「已经不是我」
-// 即走这里，是 OnActivated(FALSE) 之外的兜底隐藏入口（事件驱动，无心跳）。
+// TSF 档案信号确认切走时的统一收口：上报 active 0（托盘隐藏）+ 彻底退场
+//（事件驱动，无心跳）。调用方只有两个档案 sink 的失活/其它档案激活分支
+//（tip_profiles.cpp）；激活状态迁移只由通知驱动，按键路径零查询。
 void ChaosetTIP::switchToInactiveProfile() {
     inputActive_ = false;
     focused_ = false;
@@ -782,13 +782,6 @@ void ChaosetTIP::switchToInactiveProfile() {
 
 bool ChaosetTIP::bailOutIfInactive() {
     if (inputActive_) {
-        // 双保险：TSF 在部分宿主里切走输入法后仍把按键下沉给本 TIP 且不调用
-        // Deactivate（2026-11-05 实测）。必须每键复核激活档案，否则用户已经
-        // 换到别的输入法时我们还会吃键/显示托盘（用户 2026-11-07 的 bug1/2）。
-        if (!isActiveTip()) {
-            switchToInactiveProfile();
-            return true;
-        }
         candidateWnd_.setActiveGate(true);
         return false;
     }
@@ -930,7 +923,8 @@ void ChaosetTIP::toggleEnMode(ITfContext* pic) {
 //     ITfThreadFocusSink / ITfKeyEventSink::OnSetFocus(TRUE) / 前台回到本进程，
 //     在「激活档案是本输入法 + 本进程在前台」或激活迁移时上报（见 updateInputActive
 //     与 Activate 的托盘显示上报注释）；重复事件重播用于 UI 宿主重启后自愈；
-//   * 隐藏（active 0）：只有输入法被切走——OnActivated(FALSE) 与按键复核兜底
+//   * 隐藏（active 0）：只有输入法被切走——档案 sink（失活通知 /
+//     ITfInputProcessorProfileActivationSink）与 Deactivate 档案复核收口到
 //     switchToInactiveProfile；失焦/停用/前台离开一律不上报（issue #3）。
 // 模式变化另发 mode 命令。
 void ChaosetTIP::onWorkerForeground(HWND fg) { onForegroundChanged(fg); }

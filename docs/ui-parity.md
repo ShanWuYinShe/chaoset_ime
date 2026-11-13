@@ -170,8 +170,9 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 
 - **非激活零动作**：TSF 回调只在 `inputActive_`（本线程激活档案是 Chaoset +
   TSF 焦点在本上下文）为真时处理按键；否则立即 `*pfEaten = FALSE` 放行，不查询、
-  不清理、不挂/撤钩子、不读鼠标、不写盘、不起进程。切换输入法后即使宿主不投递
-  Deactivate，也会在按键路径复核激活档案兜底。**例外（issue#3 托盘可见性）**：
+  不清理、不挂/撤钩子、不读鼠标、不写盘、不起进程。切换输入法由 TSF 档案信号驱动
+  （失活通知 / 激活档案 sink / Deactivate 档案复核），按键路径零查询、不做每键复核
+  （2026-11-13 用户决策：用对的通知）。**例外（issue#3 托盘可见性）**：
   `OnSetFocus(TRUE)`/`OnSetThreadFocus`/`OnActivated(TRUE)`/前台回到本进程等 TSF
   焦点事件入口，在 `!inputActive_` 但本输入法被选中且本进程在前台时，允许按作用域
   同步一次中英模式并仅入队托盘显示上报（必要时启动每进程一次的 worker）；不得借此
@@ -188,14 +189,14 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   **不隐藏托盘**。切到其它输入法才上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`
   （期间 `active 1` 取消）。**只要系统当前选中的输入法是本输入法就显示**，没有输入焦点的
   桌面/任务栏/无文本框窗口保持显示；**切到其它输入法才隐藏**。
-  **隐藏事件源（2026-11-13 托盘常显收口，共四条）**：① `ITfActiveLanguageProfileNotifySink`
+  **隐藏事件源（2026-11-13 托盘常显收口，共三条）**：① `ITfActiveLanguageProfileNotifySink`
   失活通知（TIP 之间切换）；② `ITfInputProcessorProfileActivationSink`（键盘布局切换**只有
   它通知**——①不覆盖 `TF_PROFILETYPE_KEYBOARDLAYOUT`，此前「切到美式键盘」托盘永久残留；
   两个 sink 统一收口到 `switchToInactiveProfile`）；③ `Deactivate` 档案复核：宿主在切换输入法
   时也会调用 Deactivate，此时激活档案已换人、失活通知不会再发，按「`tm_ != nullptr &&
   !isActiveTip()` → 上报 active 0」补一次（档案仍是本输入法即宿主关闭/TSF 卸载，只退场，
-  issue#3 关掉应用不代表切走）；④ `switchToInactiveProfile` 按键复核兜底。边界：逐应用输入法
-  （Windows 可选特性）下其它应用自己的选择不是切走信号（②④都以「本进程是前台 + 档案复核
+  issue#3 关掉应用不代表切走）。边界：逐应用输入法
+  （Windows 可选特性）下其它应用自己的选择不是切走信号（②都以「本进程是前台 + 档案复核
   已不是本输入法」为准）；宿主既不投递任何失活/档案事件也不把按键下沉给 TIP 时，TSF 侧没有
   可用的切走事件（事件驱动、无心跳）。UI 宿主不轮询，owner 进程退出用
   `OpenProcess`+`RegisterWaitForSingleObject` 只清 owner/句柄（不隐藏）；UI 宿主重启后靠

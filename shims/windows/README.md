@@ -174,7 +174,7 @@ Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的
   更新图标）。没有 TSF 文本焦点的场景（桌面/任务栏/无文本框窗口）要求「本线程激活档案是
   本输入法 + 本进程是前台进程」才上报——TSF 会把 TIP 预激活进后台宿主，后台实例不满足前台
   条件，不会误显示托盘；有 TSF 文本焦点的场景（含 UWP/ApplicationFrameHost）由线程焦点
-  判据显示。隐藏只在用户切到其它输入法时发生，四个事件源统一收口
+  判据显示。隐藏只在用户切到其它输入法时发生，三个事件源统一收口
   `switchToInactiveProfile` 上报 `active 0 <pid>`，UI 宿主 300ms 防抖后 `NIM_DELETE`
   （期间任何 `active 1` 取消，多实例/焦点抖动不闪图标）：①`ITfActiveLanguageProfileNotifySink`
   失活通知（TIP 之间切换）；②`ITfInputProcessorProfileActivationSink`（2026-11-13 托盘常显
@@ -182,7 +182,7 @@ Windows 上「中/英」托盘图标与设置窗**不能放在 TIP DLL 所在的
   此前该路径托盘永久残留；其它输入法/布局激活以「本进程是前台 + 激活档案复核已不是本输入法」
   为准，语音/手写类 TIP 激活不挤占键盘槽位、不得误隐藏）；③`Deactivate` 档案复核（宿主在
   切换输入法时也会调用 Deactivate，此时激活档案已换人即补上报；档案仍是本输入法＝宿主关闭/
-  TSF 卸载，只退场）；④按键闸门复核兜底。`OnSetFocus(FALSE)`、`OnKillThreadFocus`、
+  TSF 卸载，只退场）。`OnSetFocus(FALSE)`、`OnKillThreadFocus`、
   前台离开本进程**只退场不隐藏**（关按键/候选窗闸门、销毁浮窗、撤钩子，不得上报 active 0）。
   UI 宿主不轮询，用 `OpenProcess`+`RegisterWaitForSingleObject`
   监听 owner 进程退出并**只清 owner/句柄、不隐藏托盘**（关掉应用不代表切走输入法）；
@@ -327,10 +327,12 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   带 owner 的 TOPMOST 窗口显示时会把 owner 所在窗口组抬到前面，用别的窗口
   当 owner 会让用户看到「弹到另一个窗口但焦点不动」（2026-11-05 用户反馈）。
   owner 不能去掉——开始菜单/搜索是沉浸式 z 序 band，无主 topmost 会被压住。
-- **非激活时必须整键放行**（2026-11-05）：TSF 在某些宿主里会把按键继续投给未激活
-  的 TIP 按键下沉，导致「选定的输入法不是 chaoset 时按 Shift 仍出中英提示」。
-  四个按键入口都要先查 `ITfInputProcessorProfileMgr::GetActiveProfile
-  (GUID_TFCAT_TIP_KEYBOARD)` 的 clsid 是否为 `CLSID_ChaosetTIP`，不是则 `pfEaten=FALSE`。
+- **非激活时必须整键放行**（2026-11-05；2026-11-13 收敛）：按键是否处理只看本地
+  `inputActive_` 闸门（非激活时 `pfEaten=FALSE` 原样放行、零动作）。`inputActive_`
+  的迁移只由 TSF 档案信号驱动：`ITfActiveLanguageProfileNotifySink` /
+  `ITfInputProcessorProfileActivationSink`（键盘布局切换只有后者通知）失活分支与
+  `Deactivate` 档案复核统一收口 `switchToInactiveProfile`；按键路径不做每键
+  `GetActiveProfile` 查询（热路径零 COM 调用）。
 - **中英状态指示器由单例 UI 宿主持有**（`UiTray`）：TIP 绝不能自绘托盘——TSF
   会为一个进程的多个线程各创建一个 TIP 实例（实测 explorer 单进程 4 个），
   每实例一个图标就是任务栏多个「中/英」。`Shell_NotifyIconW` 必须在 UI 宿主

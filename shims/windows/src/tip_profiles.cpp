@@ -131,8 +131,8 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus() {
 //
 // 为什么需要：用户从 Chaoset 切到其它输入法时，很多宿主**不调用 Deactivate**
 //（2026-11-05 实测：按键仍下沉给本 TIP），托盘会一直显示、按键闸门也不收口。
-// 这个 sink 在语言档案激活/失活时同步回调，是拍平这条路径的权威事件源；
-// bailOutIfInactive 的按键复核仍保留作兜底。它**不通知键盘布局切换**——那条
+// 这个 sink 在语言档案激活/失活时同步回调，是拍平这条路径的权威事件源
+//（激活状态迁移只由通知驱动，按键路径零查询）。它**不通知键盘布局切换**——那条
 // 路径由下面的 ITfInputProcessorProfileActivationSink 覆盖。
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated(REFCLSID clsid, REFGUID /*guidProfile*/,
                                                    BOOL fActivated) {
