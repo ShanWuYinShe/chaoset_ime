@@ -15,6 +15,16 @@ func BenchmarkLoadCommonDict(b *testing.B) {
 	}
 }
 
+func BenchmarkLoadCommonDict_Binary(b *testing.B) {
+	path := filepath.Join("..", "data", "dict_common.bin")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := LoadDictFiles([]string{path}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkComposeCommonDict(b *testing.B) {
 	d, err := LoadDictFiles([]string{filepath.Join("..", "data", "dict_common.tsv")})
 	if err != nil {

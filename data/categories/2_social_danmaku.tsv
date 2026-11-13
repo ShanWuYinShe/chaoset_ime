@@ -1,0 +1,280 @@
+# chaoset 中文互联网分类词库 - 社交互动与评论弹幕
+# 说明：社区、弹幕视频网站、社交媒体高频互动词与评论区常用语
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+一键三连	yi jian san lian	1000
+投币	tou bi	800
+催更	cui geng	800
+投喂	tou wei	700
+互关	hu guan	800
+回关	hui guan	800
+吃瓜	chi gua	900
+吃瓜群众	chi gua qun zhong	800
+围观	wei guan	800
+前排	qian pai	800
+蹲一个	dun yi ge	800
+蹲后续	dun hou xu	700
+留爪	liu zhua	600
+杠精	gang jing	800
+键盘侠	jian pan xia	800
+控评	kong ping	800
+洗白	xi bai	800
+撕逼	si bi	800
+带节奏	dai jie zou	800
+抄作业	chao zuo ye	800
+考古	kao gu	800
+避雷	bi lei	800
+踩雷	cai lei	800
+闭眼入	bi yan ru	700
+吹爆	chui bao	700
+劝退	quan tui	800
+智商税	zhi shang shui	900
+捞一下	lao yi xia	700
+捞帖	lao tie	600
+爆料	bao liao	800
+互粉	hu fen	700
+掉粉	diao fen	700
+涨粉	zhang fen	800
+水帖	shui tie	600
+镇楼	zhen lou	600
+楼主	lou zhu	800
+层主	ceng zhu	700
+抢沙发	qiang sha fa	700
+顶帖	ding tie	600
+沉帖	chen tie	600
+封帖	feng tie	600
+删帖	shan tie	700
+禁言	jin yan	700
+关小黑屋	guan xiao hei wu	600
+开盒	kai he	700
+挂人	gua ren	700
+冲了	chong le	700
+冲塔	chong ta	600
+挖坟	wa fen	600
+拔草	ba cao	500
+种草	zhong cao	600
+探店	tan dian	500
+测评	ce ping	600
+攻略	gong lve	500
+安利	an li	500
+饭圈	fan quan	600
+追星	zhui xing	600
+应援	ying yuan	500
+打榜	da bang	500
+自媒体	zi mei ti	900
+网红	wang hong	900
+带货	dai huo	800
+带货主播	dai huo zhu bo	900
+直播带货	zhi bo dai huo	900
+粉丝经济	fen si jing ji	700
+知识付费	zhi shi fu fei	800
+盲盒	mang he	600
+网络文学	wang luo wen xue	600
+网络直播	wang luo zhi bo	800
+直播平台	zhi bo ping tai	900
+短视频平台	duan shi pin ping tai	800
+社交平台	she jiao ping tai	800
+社区团购	she qu tuan gou	700
+直播电商	zhi bo dian shang	800
+跨境电商	kua jing dian shang	800
+新零售	xin ling shou	700
+即时零售	ji shi ling shou	500
+电子书	dian zi shu	600
+有声书	you sheng shu	500
+网约车	wang yue che	800
+共享单车	gong xiang dan che	1000
+电商	dian shang	800
+双十一	shuang shi yi	900
+优惠券	you hui quan	700
+拼单	pin dan	500
+团购	tuan gou	700
+线上	xian shang	700
+线下	xian xia	700
+弹幕护体	dan mu hu ti	700
+空降成功	kong jiang cheng gong	800
+进度条撑住	jin du tiao cheng zhu	700
+进度条阵亡	jin du tiao zhen wang	700
+催更狂魔	cui geng kuang mo	700
+日更	ri geng	800
+周更	zhou geng	700
+月更	yue geng	600
+年更	nian geng	600
+咕咕咕	gu gu gu	700
+鸽子精	ge zi jing	700
+放鸽子	fang ge zi	800
+投币支持	tou bi zhi chi	700
+点赞收藏	dian zan shou cang	800
+三连支持	san lian zhi chi	700
+求三连	qiu san lian	800
+粉丝团	fen si tuan	700
+榜一大哥	bang yi da ge	800
+榜一	bang yi	800
+榜二	bang er	700
+刷火箭	shua huo jian	700
+刷游艇	shua you ting	700
+刷礼物	shua li wu	800
+嘉年华	jia nian hua	800
+连麦互动	lian mai hu dong	700
+闭麦	bi mai	700
+开麦	kai mai	700
+炸麦	zha mai	600
+关麦	guan mai	700
+房管	fang guan	700
+禁言套餐	jin yan tao can	700
+踢出房间	ti chu fang jian	700
+打赏	da shang	800
+赞赏	zan shang	700
+爆更	bao geng	700
+连更	lian geng	700
+纯路人	chun lu ren	800
+路人粉	lu ren fen	700
+黑粉	hei fen	800
+铁粉	tie fen	800
+脑残粉	nao can fen	700
+亲妈粉	qin ma fen	700
+事业粉	shi ye fen	700
+唯粉	wei fen	700
+团粉	tuan fen	700
+毒唯	du wei	700
+站姐	zhan jie	700
+站哥	zhan ge	600
+代拍	dai pai	700
+接机	jie ji	700
+送机	song ji	700
+私生饭	si sheng fan	700
+反黑站	fan hei zhan	600
+澄清贴	cheng qing tie	700
+实锤	shi chui	900
+求锤得锤	qiu chui de chui	800
+塌房现场	ta fang xian chang	800
+吃大瓜	chi da gua	800
+巡回吃瓜	xun hui chi gua	700
+蹲瓜	dun gua	700
+蹲贴	dun tie	700
+占楼	zhan lou	700
+盖楼	gai lou	700
+水经验	shui jing yan	700
+签到	qian dao	800
+补签	bu qian	700
+求资源	qiu zi yuan	800
+资源分享	zi yuan fen xiang	700
+网盘见	wang pan jian	700
+解压密码	jie ya mi ma	700
+炸链	zha lian	600
+补链	bu lian	600
+链接失效	lian jie shi xiao	700
+好评返现	hao ping fan xian	700
+刷单	shua dan	800
+晒图	shai tu	700
+拔草日记	ba cao ri ji	600
+种草清单	zhong cao qing dan	700
+红黑榜	hong hei bang	700
+避雷针	bi lei zhen	700
+闭眼冲	bi yan chong	700
+无脑冲	wu nao chong	700
+冲就完了	chong jiu wan le	800
+全款拿下	quan kuan na xia	700
+剁手	duo shou	800
+剁手党	duo shou dang	800
+尾款人	wei kuan ren	800
+满减	man jian	800
+满减券	man jian quan	800
+凑单	cou dan	800
+凑单神器	cou dan shen qi	700
+薅羊毛	hao yang mao	900
+羊毛党	yang mao dang	800
+神价	shen jia	700
+稳如老狗	wen ru lao gou	700
+车门焊死	che men han si	700
+借一部说话	jie yi bu shuo hua	700
+愿者上钩	yuan zhe shang gou	700
+给个姬会	gei ge ji hui	600
+点赞关注	dian zan guan zhu	800
+关注主播	guan zhu zhu bo	800
+不迷路	bu mi lu	800
+关注不迷路	guan zhu bu mi lu	800
+进粉丝群	jin fen si qun	700
+粉丝福利	fen si fu li	800
+福袋	fu dai	800
+抢福袋	qiang fu dai	800
+弹幕抽奖	dan mu chou jiang	700
+盲猜	mang cai	800
+占个前排	zhan ge qian pai	800
+抢先看	qiang xian kan	800
+热评第一	re ping di yi	800
+被翻牌	bei fan pai	800
+翻牌	fan pai	800
+喜提热搜	xi ti re sou	800
+上热搜	shang re sou	900
+冲上热搜	chong shang re sou	800
+撤热搜	che re sou	700
+降热搜	jiang re sou	700
+压热度	ya re du	700
+危机公关	wei ji gong guan	800
+严正声明	yan zheng sheng ming	800
+律师函	lv shi han	800
+报警了	bao jing le	800
+已报警	yi bao jing	800
+法庭见	fa ting jian	800
+全网封杀	quan wang feng sha	800
+凉透了	liang tou le	800
+彻底凉了	che di liang le	800
+退网	tui wang	800
+退博	tui bo	700
+销号	xiao hao	800
+小号	xiao hao	800
+切大号	qie da hao	700
+切小号	qie xiao hao	700
+掉马	diao ma	800
+掉马甲	diao ma jia	800
+披马甲	pi ma jia	700
+炸号	zha hao	800
+封号十年	feng hao shi nian	700
+永久封禁	yong jiu feng jin	800
+解封	jie feng	800
+申诉成功	shen su cheng gong	800
+小黑屋	xiao hei wu	800
+关禁闭	guan jin bi	700
+一键举报	yi jian ju bao	800
+违规内容	wei gui nei rong	800
+违规封禁	wei gui feng jin	800
+涉嫌违规	she xian wei gui	800
+审核中	shen he zhong	800
+审核通过	shen he tong guo	800
+限流	xian liu	800
+被限流了	bei xian liu le	800
+流量密码	liu liang mi ma	900
+掌握密码	zhang wo mi ma	800
+流量爆炸	liu liang bao zha	800
+爆粉	bao fen	800
+爆赞	bao zan	800
+点赞过万	dian zan guo wan	800
+播放过亿	bo fang guo yi	800
+播放量	bo fang liang	900
+完播率	wan bo lv	900
+互动率	hu dong lv	900
+点赞率	dian zan lv	800
+转发量	zhuan fa liang	800
+评论量	ping lun liang	800
+弹幕量	dan mu liang	800
+收藏夹	shou cang jia	800
+吃灰	chi hui	800
+收藏吃灰	shou cang chi hui	800
+买书吃灰	mai shu chi hui	700
+脑子会了	nao zi hui le	800
+手不会	shou bu hui	800
+知识进脑子	zhi shi jin nao zi	700
+长按点赞	chang an dian zan	800
+强烈推荐	qiang lie tui jian	800
+良心推荐	liang xin tui jian	800
+全网第一	quan wang di yi	800
+镇站之宝	zhen zhan zhi bao	800
+入站必刷	ru zhan bi shua	800
+全站第一	quan zhan di yi	800
+宝藏博主	bao zang bo zhu	800
+神仙博主	shen xian bo zhu	800
+宝藏视频	bao zang shi pin	800
+宝藏音乐	bao zang yin yue	800
+全曲高能	quan qu gao neng	700
+开口跪	kai kou gui	800
+单曲循环	dan qu xun huan	900

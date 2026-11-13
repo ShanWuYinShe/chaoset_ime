@@ -1,0 +1,148 @@
+# chaoset 中文互联网分类词库 - 网络特有字与语气拟声
+# 说明：当代网络常用特殊单字（罕见字/火星字/情绪字）及拟声语气叠词
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+槑	mei	10
+烎	yin	10
+嫑	biao	12
+叒	ruo	10
+叕	zhuo	10
+燚	yi	10
+犇	ben	10
+鱻	xian	10
+龘	da	10
+肏	cao	12
+嘦	jiao	10
+氼	ni	10
+砳	le	10
+兲	tian	10
+猹	cha	15
+绝了	jue le	800
+稳了	wen le	800
+凉凉	liang liang	800
+慌了	huang le	700
+麻了	ma le	800
+搞快点	gao kuai dian	700
+溜了	liu le	700
+顶不住	ding bu zhu	700
+冲鸭	chong ya	700
+么么哒	me me da	800
+嘤嘤嘤	ying ying ying	700
+好哒	hao da	700
+好捏	hao nie	700
+芜湖	wu hu	700
+起飞	qi fei	800
+搞起	gao qi	700
+妥了	tuo le	800
+走起	zou qi	800
+歇了	xie le	700
+散了	san le	700
+跪了	gui le	800
+醉了	zui le	800
+嗨翻	hai fan	700
+冲冲冲	chong chong chong	700
+买买买	mai mai mai	800
+哈哈哈	ha ha ha	900
+呵呵呵	he he he	800
+嘿嘿嘿	hei hei hei	800
+嘻嘻嘻	xi xi xi	800
+呜呜呜	wu wu wu	800
+嗷嗷嗷	ao ao ao	700
+啧啧啧	ze ze ze	700
+嘎嘎香	ga ga xiang	800
+嘎嘎乱杀	ga ga luan sha	800
+芜湖起飞	wu hu qi fei	800
+蚌埠住	beng bu zhu	700
+绷不住	beng bu zhu	800
+绷不住了	beng bu zhu le	800
+破大防了	po da fang le	800
+救大命了	jiu da ming le	800
+笑发财了	xiao fa cai le	700
+人麻了	ren ma le	800
+人傻了	ren sha le	800
+彻底疯狂	che di feng kuang	800
+原地起飞	yuan di qi fei	700
+瞬间起飞	shun jian qi fei	700
+直接带走	zhi jie dai zou	700
+走好不送	zou hao bu song	700
+拜拜了	bai bai le	700
+溜了溜了	liu le liu le	800
+撤了撤了	che le che le	700
+散了散了	san le san le	700
+妥妥的	tuo tuo de	800
+稳稳的	wen wen de	800
+安排上了	an pai shang le	800
+拿来吧你	na lai ba ni	700
+嘟嘟囔囔	du du nang nang	700
+嘤嘤怪	ying ying guai	700
+酸了酸了	suan le suan le	700
+怼	dui	25
+怂	song	25
+氪	ke	25
+润	run	25
+撩	liao	25
+卷	juan	25
+躺	tang	25
+摆	bai	25
+烂	lan	25
+薅	hao	25
+嗑	ke	25
+盘	pan	25
+蹲	dun	25
+锤	chui	25
+杠	gang	25
+撕	si	25
+秀	xiu	25
+苟	gou	25
+飒	sa	25
+嗨	hai	25
+尬	ga	25
+贼	zei	25
+糊	hu	25
+炸	zha	25
+虐	nve	25
+蹭	ceng	25
+拽	zhuai	25
+萌	meng	25
+废	fei	25
+燃	ran	25
+稳	wen	25
+塌	ta	25
+懵	meng	25
+淦	gan	25
+喵	miao	25
+汪	wang	25
+哒	da	25
+捏	nie	25
+酱	jiang	25
+鸭	ya	25
+呐	na	25
+嗷	ao	25
+呜	wu	25
+哇	wa	25
+呦	you	25
+嘤	ying	25
+嘟	du	25
+噜	lu	25
+嘞	lei	25
+咕	gu	25
+叭	ba	25
+咩	mie	25
+啵	bo	25
+顶顶顶	ding ding ding	700
+赞赞赞	zan zan zan	700
+棒棒棒	bang bang bang	700
+冲啊	chong a	800
+绝绝	jue jue	700
+嘎嘎甜	ga ga tian	700
+嘎嘎脆	ga ga cui	700
+嘎嘎好	ga ga hao	700
+嘎嘎猛	ga ga meng	700
+人傻了呀	ren sha le ya	700
+裂开来	lie kai lai	700
+原地炸裂	yuan di zha lie	700
+瞬间炸裂	shun jian zha lie	700
+妥妥哒	tuo tuo da	600
+好哒好哒	hao da hao da	700
+好捏好捏	hao nie hao nie	700
+芜湖起飞呀	wu hu qi fei ya	700

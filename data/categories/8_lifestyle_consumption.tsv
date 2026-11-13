@@ -1,0 +1,167 @@
+# chaoset 中文互联网分类词库 - 现代生活与网红消费
+# 说明：新茶饮、网红美食、户外潮流、年轻消费与打卡生活方式
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+围炉煮茶	wei lu zhu cha	800
+脆皮炸鸡	cui pi zha ji	700
+空气炸锅	kong qi zha guo	800
+开箱	kai xiang	800
+探店打卡	tan dian da ka	800
+城市漫步	cheng shi man bu	800
+穷游	qiong you	800
+露营	lu ying	900
+剧本杀	ju ben sha	900
+密室逃脱	mi shi tao tuo	900
+飞盘	fei pan	800
+骑行	qi xing	800
+溯溪	su xi	700
+徒步	tu bu	800
+桨板	jiang ban	700
+飞盘运动	fei pan yun dong	700
+摇摆舞	yao bai wu	700
+陆冲	lu chong	700
+攀岩	pan yan	800
+露营装备	lu ying zhuang bei	700
+帐篷	zhang peng	800
+折叠椅	zhe die yi	800
+蛋卷桌	dan juan zhuo	700
+卡式炉	ka shi lu	700
+挂耳咖啡	gua er ka fei	800
+胶囊咖啡	jiao nang ka fei	800
+冷萃	leng cui	800
+生椰拿铁	sheng ye na tie	900
+燕麦拿铁	yan mai na tie	800
+厚乳拿铁	hou ru na tie	800
+脏脏包	zang zang bao	700
+肉松小贝	rou song xiao bei	800
+奶酪包	nai lao bao	700
+瑞士卷	rui shi juan	800
+芋泥波波	yu ni bo bo	700
+杨枝甘露	yang zhi gan lu	800
+多肉葡萄	duo rou pu tao	800
+鸭屎香	ya shi xiang	800
+手打柠檬茶	shou da ning meng cha	800
+暴打柠檬茶	bao da ning meng cha	700
+泰绿	tai lv	700
+冰美式	bing mei shi	900
+热美式	re mei shi	800
+馥芮白	fu rui bai	800
+卡布奇诺	ka bu qi nuo	800
+精酿啤酒	jing niang pi jiu	800
+小酒馆	xiao jiu guan	800
+微醺时刻	wei xun shi ke	700
+日咖夜酒	ri ka ye jiu	700
+早咖晚酒	zao ka wan jiu	700
+罐罐奶茶	guan guan nai cha	700
+烤棉花糖	kao mian hua tang	700
+手办	shou ban	800
+谷子	gu zi	800
+痛包	tong bao	800
+吧唧	ba ji	800
+亚克力	ya ke li	800
+挂件	gua jian	800
+扭蛋机	niu dan ji	800
+潮玩	chao wan	800
+盲盒抽奖	mang he chou jiang	700
+隐藏款	yin cang kuan	800
+稀有款	xi you kuan	700
+端盒	duan he	700
+棉花娃娃	mian hua wa wa	700
+娃圈	wa quan	700
+漫展	man zhan	800
+同人展	tong ren zhan	700
+面基	mian ji	800
+网友见面	wang you jian mian	700
+约拍	yue pai	800
+互免	hu mian	700
+约稿	yue gao	800
+探店博主	tan dian bo zhu	700
+穿搭博主	chuan da bo zhu	700
+美妆博主	mei zhuang bo zhu	700
+健身博主	jian shen bo zhu	700
+知识博主	zhi shi bo zhu	700
+美食博主	mei shi bo zhu	700
+围炉	wei lu	800
+溯溪鞋	su xi xie	700
+徒步鞋	tu bu xie	800
+冲锋衣	chong feng yi	900
+山系穿搭	shan xi chuan da	800
+硬壳	ying ke	800
+软壳	ruan ke	800
+抓绒	zhua rong	800
+羽绒服	yu rong fu	900
+排汗衣	pai han yi	700
+速干衣	su gan yi	800
+登山杖	deng shan zhang	800
+保温杯	bao wen bei	900
+钛杯	tai bei	700
+气炉	qi lu	700
+酒精炉	jiu jing lu	700
+柴火炉	chai huo lu	700
+天幕	tian mu	800
+防潮垫	fang chao dian	800
+充气床垫	chong qi chuang dian	700
+睡袋	shui dai	800
+营地灯	ying di deng	700
+露营车	lu ying che	800
+后备箱集市	hou bei xiang ji shi	700
+跳蚤市场	tiao zao shi chang	800
+文创	wen chuang	800
+文创雪糕	wen chuang xue gao	700
+盖章打卡	gai zhang da ka	800
+集章册	ji zhang ce	700
+博物馆打卡	bo wu guan da ka	800
+古镇游	gu zhen you	700
+自驾游	zi jia you	900
+房车游	fang che you	700
+川藏线	chuan zang xian	800
+滇藏线	dian zang xian	700
+青藏线	qing zang xian	700
+独库公路	du ku gong lu	800
+环湖骑行	huan hu qi xing	700
+夜骑	ye qi	800
+公路车	gong lu che	800
+山地车	shan di che	800
+折叠车	zhe die che	800
+小布	xiao bu	700
+骑行服	qi xing fu	700
+骑行头盔	qi xing tou kui	800
+锁鞋	suo xie	700
+功率计	gong lv ji	700
+码表	ma biao	800
+手冲咖啡	shou chong ka fei	800
+咖啡豆	ka fei dou	900
+浅烘	qian hong	700
+中烘	zhong hong	700
+深烘	shen hong	700
+水洗	shui xi	700
+日晒	ri shai	700
+蜜处理	mi chu li	700
+厌氧发酵	yan yang fa jiao	700
+耶加雪菲	ye jia xue fei	800
+瑰夏	gui xia	800
+曼特宁	man te ning	800
+蓝山	lan shan	800
+意式浓缩	yi shi nong suo	800
+拿铁	na tie	900
+摩卡	mo ka	800
+玛奇朵	ma qi duo	800
+阿芙佳朵	a fu jia duo	700
+生酪拿铁	sheng lao na tie	800
+丝绒拿铁	si rong na tie	700
+茶拿铁	cha na tie	700
+抹茶拿铁	mo cha na tie	800
+原叶鲜奶茶	yuan ye xian nai cha	800
+轻乳茶	qing ru cha	800
+果茶	guo cha	800
+霸气橙子	ba qi cheng zi	700
+芝芝莓莓	zhi zhi mei mei	700
+芋泥啵啵	yu ni bo bo	700
+烤地瓜	kao di gua	800
+围炉烤红薯	wei lu kao hong shu	700
+热红酒	re hong jiu	800
+煮红酒	zhu hong jiu	700
+便利店调酒	bian li dian tiao jiu	700
+微醺之夜	wei xun zhi ye	700
+特调	te tiao	800
+无酒精特调	wu jiu jing te tiao	700

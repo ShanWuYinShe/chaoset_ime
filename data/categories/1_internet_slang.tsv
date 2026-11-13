@@ -1,0 +1,316 @@
+# chaoset 中文互联网分类词库 - 网络流行语与热梗
+# 说明：中文互联网高频热梗、流行缩写、日常网络金句与流行表达
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+显眼包	xian yan bao	800
+绝绝子	jue jue zi	800
+尊嘟假嘟	zun du jia du	700
+电子榨菜	dian zi zha cai	700
+纯爱战士	chun ai zhan shi	700
+意难平	yi nan ping	700
+泰裤辣	tai ku la	600
+蚌埠住了	beng bu zhu le	800
+疯狂星期四	feng kuang xing qi si	700
+芭比扣了	ba bi kou le	600
+芭比球了	ba bi qiu le	600
+大冤种	da yuan zhong	800
+怨种	yuan zhong	800
+离大谱	li da pu	800
+离谱	li pu	800
+凡尔赛	fan er sai	800
+凡学	fan xue	600
+懂的都懂	dong de dou dong	800
+降维打击	jiang wei da ji	800
+爷青回	ye qing hui	800
+爷青结	ye qing jie	700
+细思极恐	xi si ji kong	700
+细思恐极	xi si kong ji	700
+虾仁猪心	xia ren zhu xin	600
+奥利给	ao li gei	700
+柠檬精	ning meng jing	700
+盘他	pan ta	600
+拿捏	na nie	800
+拿捏了	na nie le	800
+翻车	fan che	900
+打脸	da lian	900
+逆天	ni tian	800
+摆烂	bai lan	900
+硬核	ying he	900
+沉浸式	chen jin shi	900
+扎心	zha xin	800
+扎心了	zha xin le	800
+秀儿	xiu er	600
+画饼	hua bing	900
+破大防	po da fang	800
+塑料姐妹花	su liao jie mei hua	600
+雨女无瓜	yu nv wu gua	600
+小丑竟是我	xiao chou jing shi wo	700
+栓扣	shuan kou	600
+针不戳	zhen bu chuo	600
+集美	ji mei	700
+集美们	ji mei men	700
+蓝瘦香菇	lan shou xiang gu	600
+酱紫	jiang zi	700
+鸭梨山大	ya li shan da	600
+喜大普奔	xi da pu ben	700
+人艰不拆	ren jian bu chai	700
+累觉不爱	lei jue bu ai	600
+也是拼了	ye shi pin le	600
+走花路	zou hua lu	600
+偷着乐	tou zhe le	700
+真香	zhen xiang	800
+我太难了	wo tai nan le	700
+小鲜肉	xiao xian rou	700
+老司机	lao si ji	800
+油腻	you ni	800
+不讲武德	bu jiang wu de	700
+耗子尾汁	hao zi wei zhi	600
+不按套路	bu an tao lu	600
+搞子	gao zi	600
+出圈	chu quan	600
+国潮	guo chao	800
+夺笋	duo sun	700
+多笋啊	duo sun a	700
+社交悍匪	she jiao han fei	800
+发疯文学	fa feng wen xue	800
+废话文学	fei hua wen xue	800
+窝囊废文学	wo nang fei wen xue	700
+贴贴	tie tie	800
+蹭热度	ceng re du	800
+抓马	zhua ma	800
+太抓马了	tai zhua ma le	700
+上大号	shang da hao	600
+抽象	chou xiang	800
+太抽象了	tai chou xiang le	800
+大无语	da wu yu	800
+大无语事件	da wu yu shi jian	700
+狠狠爱了	hen hen ai le	700
+狠狠心动	hen hen xin dong	700
+氛围感	fen wei gan	800
+宿命感	su ming gan	700
+碎碎念	sui sui nian	700
+纯欲	chun yu	700
+纯欲风	chun yu feng	700
+多巴胺	duo ba an	800
+多巴胺穿搭	duo ba an chuan da	700
+美拉德	mei la de	800
+美拉德风	mei la de feng	700
+特种兵旅游	te zhong bing lv you	800
+命运的齿轮	ming yun de chi lun	800
+挖呀挖	wa ya wa	600
+泼天富贵	po tian fu gui	800
+赛博	sai bo	800
+赛博朋克	sai bo peng ke	800
+赛博功德	sai bo gong de	800
+电子木鱼	dian zi mu yu	700
+功德加一	gong de jia yi	800
+扣一	kou yi	700
+扣一送	kou yi song	600
+战术后仰	zhan shu hou yang	700
+歪头杀	wai tou sha	700
+眼神杀	yan shen sha	700
+摸头杀	mo tou sha	700
+梦幻联动	meng huan lian dong	800
+神仙打架	shen xian da jia	800
+封神	feng shen	800
+直接封神	zhi jie feng shen	800
+封神之作	feng shen zhi zuo	800
+封心锁爱	feng xin suo ai	700
+大受震撼	da shou zhen han	800
+疯狂心动	feng kuang xin dong	700
+杀疯了	sha feng le	800
+直接杀疯	zhi jie sha feng	700
+洗脑神曲	xi nao shen qu	700
+见证奇迹	jian zheng qi ji	700
+别太荒谬	bie tai huang miu	800
+狠狠拿捏	hen hen na nie	800
+狠狠爱住	hen hen ai zhu	700
+泪目	lei mu	800
+瞳孔地震	tong kong di zhen	800
+头皮发麻	tou pi fa ma	800
+血压飙升	xue ya biao sheng	800
+当场去世	dang chang qu shi	800
+笑不活了	xiao bu huo le	800
+笑裂了	xiao lie le	700
+笑死我了	xiao si wo le	800
+救大命	jiu da ming	800
+家人们	jia ren men	900
+家人们谁懂	jia ren men shei dong	800
+咱就是说	zan jiu shi shuo	800
+属于是	shu yu shi	800
+一整个	yi zheng ge	800
+一整个爱住	yi zheng ge ai zhu	700
+狠狠共情	hen hen gong qing	800
+猛男必看	meng nan bi kan	700
+猛男落泪	meng nan luo lei	700
+全体起立	quan ti qi li	800
+开幕雷击	kai mu lei ji	800
+闭幕雷击	bi mu lei ji	700
+前方高能	qian fang gao neng	900
+高能预警	gao neng yu jing	800
+见证历史	jian zheng li shi	800
+活久见	huo jiu jian	800
+涨姿势	zhang zi shi	700
+脑洞大开	nao dong da kai	800
+不明觉厉	bu ming jue li	700
+喜闻乐见	xi wen le jian	800
+十动然拒	shi dong ran ju	600
+普天同庆	pu tian tong qing	700
+奔走相告	ben zou xiang gao	700
+锦鲤体质	jin li ti zhi	700
+吸欧气	xi ou qi	700
+逆风翻盘	ni feng fan pan	800
+向阳而生	xiang yang er sheng	700
+元气满满	yuan qi man man	800
+早安打工人	zao an da gong ren	700
+人间值得	ren jian zhi de	800
+人间不值得	ren jian bu zhi de	800
+万物皆可	wan wu jie ke	700
+格局打开	ge ju da kai	800
+格局小了	ge ju xiao le	800
+格局大了	ge ju da le	800
+狠狠期待	hen hen qi dai	800
+狠狠破防	hen hen po fang	800
+全网刷屏	quan wang shua ping	800
+火爆全网	huo bao quan wang	800
+现象级	xian xiang ji	800
+爆款	bao kuan	900
+爆款视频	bao kuan shi pin	800
+出圈爆款	chu quan bao kuan	700
+网感	wang gan	700
+造梗	zao geng	700
+接梗	jie geng	700
+热梗	re geng	800
+烂梗	lan geng	700
+玩烂梗	wan lan geng	700
+谐音梗	xie yin geng	800
+谐音梗扣钱	xie yin geng kou qian	700
+神回复	shen hui fu	800
+神评	shen ping	800
+热评	re ping	800
+神仙文笔	shen xian wen bi	700
+文笔封神	wen bi feng shen	600
+原地封神	yuan di feng shen	700
+太绝了	tai jue le	800
+真的绝了	zhen de jue le	800
+真的会谢	zhen de hui xie	800
+我真的会谢	wo zhen de hui xie	800
+拴扣了	shuan kou le	600
+栓扣了	shuan kou le	600
+无语子	wu yu zi	700
+大无语子	da wu yu zi	700
+真香定律	zhen xiang ding lv	800
+大型双标	da xing shuang biao	700
+双标现场	shuang biao xian chang	700
+大型真香	da xing zhen xiang	700
+大型翻车	da xing fan che	700
+大型社死	da xing she si	800
+社死现场	she si xian chang	800
+社死瞬间	she si shun jian	800
+当场石化	dang chang shi hua	700
+尴尬癌	gan ga ai	700
+尴尬癌犯了	gan ga ai fan le	700
+替人尴尬	ti ren gan ga	700
+脚趾抠地	jiao zhi kou di	800
+抠出三室	kou chu san shi	700
+抠出魔仙堡	kou chu mo xian bao	700
+抠出别墅	kou chu bie shu	700
+原地抠脚	yuan di kou jiao	600
+太扎心了	tai zha xin le	800
+老铁没毛病	lao tie mei mao bing	800
+双击六六六	shuang ji liu liu liu	800
+带飞	dai fei	800
+躺赢	tang ying	800
+躺平任嘲	tang ping ren chao	700
+硬撑	ying cheng	700
+强撑	qiang cheng	700
+死撑	si cheng	700
+硬控	ying kong	800
+被硬控了	bei ying kong le	700
+硬控三秒	ying kong san miao	700
+硬控整场	ying kong zheng chang	700
+硬控我	ying kong wo	700
+狠狠破大防	hen hen po da fang	700
+笑死不偿命	xiao si bu chang ming	700
+一秒入戏	yi miao ru xi	700
+一秒破防	yi miao po fang	800
+瞬间破防	shun jian po fang	800
+原地去世	yuan di qu shi	700
+直接裂开	zhi jie lie kai	800
+狠狠拿捏住	hen hen na nie zhu	700
+格局	ge ju	900
+蚌埠	beng bu	700
+走心了	zou xin le	800
+搞事情	gao shi qing	800
+搞心态	gao xin tai	800
+搞破防	gao po fang	700
+搞钱要紧	gao qian yao jin	800
+疯狂输出	feng kuang shu chu	800
+二极管	er ji guan	800
+扣帽子	kou mao zi	800
+甩锅	shuai guo	800
+背锅	bei guo	800
+甩锅侠	shuai guo xia	700
+背锅侠	bei guo xia	800
+接盘侠	jie pan xia	800
+老实人	lao shi ren	800
+逆天操作	ni tian cao zuo	800
+骚操作	sao cao zuo	900
+离谱操作	li pu cao zuo	800
+封神时刻	feng shen shi ke	800
+名场面	ming chang mian	900
+高光时刻	gao guang shi ke	800
+打工魂	da gong hun	800
+打工人冲鸭	da gong ren chong ya	700
+芜湖大司马	wu hu da si ma	700
+闪电五连鞭	shan dian wu lian bian	700
+大写加粗	da xie jia cu	700
+画面太美	hua mian tai mei	800
+伤害不高	shang hai bu gao	800
+侮辱性极强	wu ru xing ji qiang	800
+无懈可击	wu xie ke ji	700
+破案了	po an le	800
+原来是你	yuan lai shi ni	800
+没想到吧	mei xiang dao ba	800
+纯纯	chun chun	800
+纯纯搞子	chun chun gao zi	700
+戏精本精	xi jing ben jing	800
+戏精附体	xi jing fu ti	800
+戏瘾大发	xi yin da fa	700
+影帝	ying di	800
+小作文	xiao zuo wen	800
+发小作文	fa xiao zuo wen	800
+傲娇怪	ao jiao guai	700
+懂王	dong wang	800
+懂哥	dong ge	800
+理中客	li zhong ke	800
+圣母心	sheng mu xin	800
+圣母婊	sheng mu biao	700
+白莲花	bai lian hua	800
+普信	pu xin	800
+脆皮青年	cui pi qing nian	700
+追剧必备	zhui ju bi bei	800
+熬夜追剧	ao ye zhui ju	800
+狂飙	kuang biao	900
+强哥	qiang ge	800
+人间蒸发	ren jian zheng fa	700
+现场教学	xian chang jiao xue	700
+教科书式	jiao ke shu shi	800
+天花板级别	tian hua ban ji bie	800
+绝绝子本绝	jue jue zi ben jue	600
+尊嘟很懂	zun du hen dong	700
+泰酷辣呀	tai ku la ya	600
+疯狂星期五	feng kuang xing qi wu	600
+怨种朋友	yuan zhong peng you	700
+怨种闺蜜	yuan zhong gui mi	700
+怨种兄弟	yuan zhong xiong di	700
+显眼包本包	xian yan bao ben bao	700
+纯爱战神	chun ai zhan shen	800
+爱意随风起	ai yi sui feng qi	600
+风止意难平	feng zhi yi nan ping	600
+山水有相逢	shan shui you xiang feng	700
+来日方长	lai ri fang chang	800
+未来可期	wei lai ke qi	800
+不负韶华	bu fu shao hua	800
+岁月静好	sui yue jing hao	800
+负重前行	fu zhong qian xing	800

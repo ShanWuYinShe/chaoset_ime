@@ -1,5 +1,5 @@
 # chaoset 现代/热词补充词表（由 cmd/chaoset-dictgen -hot 合并进内置词库，手工维护）
-# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+# 格式：词 	 拼音（空格分隔，无声调，ü 以 v 输入） 	 权重
 #
 # 用途：随 app 版本内置的「现代/热词」清单。这些词在词频语料与字/词典里覆盖很差
 # （2026-11-01 调研：98 个现代词探针里 22 个在所有候选词表都不存在），只能人工
@@ -14,43 +14,392 @@
 # 与其他来源的关系：与 dict_extra.tsv 合并（同 词+拼音 取较大词频）；与主词表
 # 重复的词由生成器取较大词频，不需要从本表删除。
 #
-# ---- 2026-11-01 首次建立：调研 98 词探针中「所有候选源都缺」的 22 个 ----
-智能家居	zhi neng jia ju	1200
-新能源汽车	xin neng yuan qi che	1500
-自动驾驶	zi dong jia shi	1200
-移动支付	yi dong zhi fu	1500
-在线教育	zai xian jiao yu	1200
-居家办公	ju jia ban gong	800
-远程办公	yuan cheng ban gong	800
-项目经理	xiang mu jing li	1000
-大模型	da mo xing	1500
-开放平台	kai fang ping tai	1000
-用户体验	yong hu ti yan	1200
-知识付费	zhi shi fu fei	800
-粉丝经济	fen si jing ji	700
-带货主播	dai huo zhu bo	900
-手机支付	shou ji zhi fu	1000
-扫一扫	sao yi sao	1200
-健康码	jian kang ma	3000
-行程码	xing cheng ma	2000
-微信支付	wei xin zhi fu	3000
-拼多多	pin duo duo	2000
-饿了么	e le me	1500
-苹果手机	ping guo shou ji	1500
+# 分类词库来源详见 data/categories/ 目录（共 8 大分类）。
 #
-# ---- 现代生活/科技高频词（上游词表普遍缺失）----
-共享单车	gong xiang dan che	1000
+# ---- 网络流行语与热梗（详见 data/categories/1_internet_slang.tsv）----
+显眼包	xian yan bao	800
+绝绝子	jue jue zi	800
+尊嘟假嘟	zun du jia du	700
+电子榨菜	dian zi zha cai	700
+纯爱战士	chun ai zhan shi	700
+意难平	yi nan ping	700
+泰裤辣	tai ku la	600
+蚌埠住了	beng bu zhu le	800
+疯狂星期四	feng kuang xing qi si	700
+芭比扣了	ba bi kou le	600
+芭比球了	ba bi qiu le	600
+大冤种	da yuan zhong	800
+怨种	yuan zhong	800
+离大谱	li da pu	800
+离谱	li pu	800
+凡尔赛	fan er sai	800
+凡学	fan xue	600
+懂的都懂	dong de dou dong	800
+降维打击	jiang wei da ji	800
+爷青回	ye qing hui	800
+爷青结	ye qing jie	700
+细思极恐	xi si ji kong	700
+细思恐极	xi si kong ji	700
+虾仁猪心	xia ren zhu xin	600
+奥利给	ao li gei	700
+柠檬精	ning meng jing	700
+盘他	pan ta	600
+拿捏	na nie	800
+拿捏了	na nie le	800
+翻车	fan che	900
+打脸	da lian	900
+逆天	ni tian	800
+摆烂	bai lan	900
+硬核	ying he	900
+沉浸式	chen jin shi	900
+扎心	zha xin	800
+扎心了	zha xin le	800
+秀儿	xiu er	600
+画饼	hua bing	900
+破大防	po da fang	800
+塑料姐妹花	su liao jie mei hua	600
+雨女无瓜	yu nv wu gua	600
+小丑竟是我	xiao chou jing shi wo	700
+栓扣	shuan kou	600
+针不戳	zhen bu chuo	600
+集美	ji mei	700
+集美们	ji mei men	700
+蓝瘦香菇	lan shou xiang gu	600
+酱紫	jiang zi	700
+鸭梨山大	ya li shan da	600
+喜大普奔	xi da pu ben	700
+人艰不拆	ren jian bu chai	700
+累觉不爱	lei jue bu ai	600
+也是拼了	ye shi pin le	600
+走花路	zou hua lu	600
+偷着乐	tou zhe le	700
+真香	zhen xiang	800
+我太难了	wo tai nan le	700
+小鲜肉	xiao xian rou	700
+老司机	lao si ji	800
+油腻	you ni	800
+不讲武德	bu jiang wu de	700
+耗子尾汁	hao zi wei zhi	600
+不按套路	bu an tao lu	600
+搞子	gao zi	600
+出圈	chu quan	600
 国潮	guo chao	800
-移动互联网	yi dong hu lian wang	900
-视频通话	shi pin tong hua	900
-刷脸支付	shua lian zhi fu	600
-智能音箱	zhi neng yin xiang	600
-智能客服	zhi neng ke fu	600
-智慧城市	zhi hui cheng shi	700
-数字经济	shu zi jing ji	900
-网络直播	wang luo zhi bo	800
-在线会议	zai xian hui yi	800
+夺笋	duo sun	700
+多笋啊	duo sun a	700
+社交悍匪	she jiao han fei	800
+发疯文学	fa feng wen xue	800
+废话文学	fei hua wen xue	800
+窝囊废文学	wo nang fei wen xue	700
+贴贴	tie tie	800
+蹭热度	ceng re du	800
+抓马	zhua ma	800
+太抓马了	tai zhua ma le	700
+上大号	shang da hao	600
+抽象	chou xiang	800
+太抽象了	tai chou xiang le	800
+大无语	da wu yu	800
+大无语事件	da wu yu shi jian	700
+狠狠爱了	hen hen ai le	700
+狠狠心动	hen hen xin dong	700
+氛围感	fen wei gan	800
+宿命感	su ming gan	700
+碎碎念	sui sui nian	700
+纯欲	chun yu	700
+纯欲风	chun yu feng	700
+多巴胺	duo ba an	800
+多巴胺穿搭	duo ba an chuan da	700
+美拉德	mei la de	800
+美拉德风	mei la de feng	700
+特种兵旅游	te zhong bing lv you	800
+命运的齿轮	ming yun de chi lun	800
+挖呀挖	wa ya wa	600
+泼天富贵	po tian fu gui	800
+赛博	sai bo	800
+赛博朋克	sai bo peng ke	800
+赛博功德	sai bo gong de	800
+电子木鱼	dian zi mu yu	700
+功德加一	gong de jia yi	800
+扣一	kou yi	700
+扣一送	kou yi song	600
+战术后仰	zhan shu hou yang	700
+歪头杀	wai tou sha	700
+眼神杀	yan shen sha	700
+摸头杀	mo tou sha	700
+梦幻联动	meng huan lian dong	800
+神仙打架	shen xian da jia	800
+封神	feng shen	800
+直接封神	zhi jie feng shen	800
+封神之作	feng shen zhi zuo	800
+封心锁爱	feng xin suo ai	700
+大受震撼	da shou zhen han	800
+疯狂心动	feng kuang xin dong	700
+杀疯了	sha feng le	800
+直接杀疯	zhi jie sha feng	700
+洗脑神曲	xi nao shen qu	700
+见证奇迹	jian zheng qi ji	700
+别太荒谬	bie tai huang miu	800
+狠狠拿捏	hen hen na nie	800
+狠狠爱住	hen hen ai zhu	700
+泪目	lei mu	800
+瞳孔地震	tong kong di zhen	800
+头皮发麻	tou pi fa ma	800
+血压飙升	xue ya biao sheng	800
+当场去世	dang chang qu shi	800
+笑不活了	xiao bu huo le	800
+笑裂了	xiao lie le	700
+笑死我了	xiao si wo le	800
+救大命	jiu da ming	800
+家人们	jia ren men	900
+家人们谁懂	jia ren men shei dong	800
+咱就是说	zan jiu shi shuo	800
+属于是	shu yu shi	800
+一整个	yi zheng ge	800
+一整个爱住	yi zheng ge ai zhu	700
+狠狠共情	hen hen gong qing	800
+猛男必看	meng nan bi kan	700
+猛男落泪	meng nan luo lei	700
+全体起立	quan ti qi li	800
+开幕雷击	kai mu lei ji	800
+闭幕雷击	bi mu lei ji	700
+前方高能	qian fang gao neng	900
+高能预警	gao neng yu jing	800
+见证历史	jian zheng li shi	800
+活久见	huo jiu jian	800
+涨姿势	zhang zi shi	700
+脑洞大开	nao dong da kai	800
+不明觉厉	bu ming jue li	700
+喜闻乐见	xi wen le jian	800
+十动然拒	shi dong ran ju	600
+普天同庆	pu tian tong qing	700
+奔走相告	ben zou xiang gao	700
+锦鲤体质	jin li ti zhi	700
+吸欧气	xi ou qi	700
+逆风翻盘	ni feng fan pan	800
+向阳而生	xiang yang er sheng	700
+元气满满	yuan qi man man	800
+早安打工人	zao an da gong ren	700
+人间值得	ren jian zhi de	800
+人间不值得	ren jian bu zhi de	800
+万物皆可	wan wu jie ke	700
+格局打开	ge ju da kai	800
+格局小了	ge ju xiao le	800
+格局大了	ge ju da le	800
+狠狠期待	hen hen qi dai	800
+狠狠破防	hen hen po fang	800
+全网刷屏	quan wang shua ping	800
+火爆全网	huo bao quan wang	800
+现象级	xian xiang ji	800
+爆款	bao kuan	900
+爆款视频	bao kuan shi pin	800
+出圈爆款	chu quan bao kuan	700
+网感	wang gan	700
+造梗	zao geng	700
+接梗	jie geng	700
+热梗	re geng	800
+烂梗	lan geng	700
+玩烂梗	wan lan geng	700
+谐音梗	xie yin geng	800
+谐音梗扣钱	xie yin geng kou qian	700
+神回复	shen hui fu	800
+神评	shen ping	800
+热评	re ping	800
+神仙文笔	shen xian wen bi	700
+文笔封神	wen bi feng shen	600
+原地封神	yuan di feng shen	700
+太绝了	tai jue le	800
+真的绝了	zhen de jue le	800
+真的会谢	zhen de hui xie	800
+我真的会谢	wo zhen de hui xie	800
+拴扣了	shuan kou le	600
+栓扣了	shuan kou le	600
+无语子	wu yu zi	700
+大无语子	da wu yu zi	700
+真香定律	zhen xiang ding lv	800
+大型双标	da xing shuang biao	700
+双标现场	shuang biao xian chang	700
+大型真香	da xing zhen xiang	700
+大型翻车	da xing fan che	700
+大型社死	da xing she si	800
+社死现场	she si xian chang	800
+社死瞬间	she si shun jian	800
+当场石化	dang chang shi hua	700
+尴尬癌	gan ga ai	700
+尴尬癌犯了	gan ga ai fan le	700
+替人尴尬	ti ren gan ga	700
+脚趾抠地	jiao zhi kou di	800
+抠出三室	kou chu san shi	700
+抠出魔仙堡	kou chu mo xian bao	700
+抠出别墅	kou chu bie shu	700
+原地抠脚	yuan di kou jiao	600
+太扎心了	tai zha xin le	800
+老铁没毛病	lao tie mei mao bing	800
+双击六六六	shuang ji liu liu liu	800
+带飞	dai fei	800
+躺赢	tang ying	800
+躺平任嘲	tang ping ren chao	700
+硬撑	ying cheng	700
+强撑	qiang cheng	700
+死撑	si cheng	700
+硬控	ying kong	800
+被硬控了	bei ying kong le	700
+硬控三秒	ying kong san miao	700
+硬控整场	ying kong zheng chang	700
+硬控我	ying kong wo	700
+狠狠破大防	hen hen po da fang	700
+笑死不偿命	xiao si bu chang ming	700
+一秒入戏	yi miao ru xi	700
+一秒破防	yi miao po fang	800
+瞬间破防	shun jian po fang	800
+原地去世	yuan di qu shi	700
+直接裂开	zhi jie lie kai	800
+狠狠拿捏住	hen hen na nie zhu	700
+格局	ge ju	900
+蚌埠	beng bu	700
+走心了	zou xin le	800
+搞事情	gao shi qing	800
+搞心态	gao xin tai	800
+搞破防	gao po fang	700
+搞钱要紧	gao qian yao jin	800
+疯狂输出	feng kuang shu chu	800
+二极管	er ji guan	800
+扣帽子	kou mao zi	800
+甩锅	shuai guo	800
+背锅	bei guo	800
+甩锅侠	shuai guo xia	700
+背锅侠	bei guo xia	800
+接盘侠	jie pan xia	800
+老实人	lao shi ren	800
+逆天操作	ni tian cao zuo	800
+骚操作	sao cao zuo	900
+离谱操作	li pu cao zuo	800
+封神时刻	feng shen shi ke	800
+名场面	ming chang mian	900
+高光时刻	gao guang shi ke	800
+打工魂	da gong hun	800
+打工人冲鸭	da gong ren chong ya	700
+芜湖大司马	wu hu da si ma	700
+闪电五连鞭	shan dian wu lian bian	700
+大写加粗	da xie jia cu	700
+画面太美	hua mian tai mei	800
+伤害不高	shang hai bu gao	800
+侮辱性极强	wu ru xing ji qiang	800
+无懈可击	wu xie ke ji	700
+破案了	po an le	800
+原来是你	yuan lai shi ni	800
+没想到吧	mei xiang dao ba	800
+纯纯	chun chun	800
+纯纯搞子	chun chun gao zi	700
+戏精本精	xi jing ben jing	800
+戏精附体	xi jing fu ti	800
+戏瘾大发	xi yin da fa	700
+影帝	ying di	800
+小作文	xiao zuo wen	800
+发小作文	fa xiao zuo wen	800
+傲娇怪	ao jiao guai	700
+懂王	dong wang	800
+懂哥	dong ge	800
+理中客	li zhong ke	800
+圣母心	sheng mu xin	800
+圣母婊	sheng mu biao	700
+白莲花	bai lian hua	800
+普信	pu xin	800
+脆皮青年	cui pi qing nian	700
+追剧必备	zhui ju bi bei	800
+熬夜追剧	ao ye zhui ju	800
+狂飙	kuang biao	900
+强哥	qiang ge	800
+人间蒸发	ren jian zheng fa	700
+现场教学	xian chang jiao xue	700
+教科书式	jiao ke shu shi	800
+天花板级别	tian hua ban ji bie	800
+绝绝子本绝	jue jue zi ben jue	600
+尊嘟很懂	zun du hen dong	700
+泰酷辣呀	tai ku la ya	600
+疯狂星期五	feng kuang xing qi wu	600
+怨种朋友	yuan zhong peng you	700
+怨种闺蜜	yuan zhong gui mi	700
+怨种兄弟	yuan zhong xiong di	700
+显眼包本包	xian yan bao ben bao	700
+纯爱战神	chun ai zhan shen	800
+爱意随风起	ai yi sui feng qi	600
+风止意难平	feng zhi yi nan ping	600
+山水有相逢	shan shui you xiang feng	700
+来日方长	lai ri fang chang	800
+未来可期	wei lai ke qi	800
+不负韶华	bu fu shao hua	800
+岁月静好	sui yue jing hao	800
+负重前行	fu zhong qian xing	800
+#
+# ---- 社交互动与评论弹幕（详见 data/categories/2_social_danmaku.tsv）----
+一键三连	yi jian san lian	1000
+投币	tou bi	800
+催更	cui geng	800
+投喂	tou wei	700
+互关	hu guan	800
+回关	hui guan	800
+吃瓜	chi gua	900
+吃瓜群众	chi gua qun zhong	800
+围观	wei guan	800
+前排	qian pai	800
+蹲一个	dun yi ge	800
+蹲后续	dun hou xu	700
+留爪	liu zhua	600
+杠精	gang jing	800
+键盘侠	jian pan xia	800
+控评	kong ping	800
+洗白	xi bai	800
+撕逼	si bi	800
+带节奏	dai jie zou	800
+抄作业	chao zuo ye	800
+考古	kao gu	800
+避雷	bi lei	800
+踩雷	cai lei	800
+闭眼入	bi yan ru	700
+吹爆	chui bao	700
+劝退	quan tui	800
+智商税	zhi shang shui	900
+捞一下	lao yi xia	700
+捞帖	lao tie	600
+爆料	bao liao	800
+互粉	hu fen	700
+掉粉	diao fen	700
+涨粉	zhang fen	800
+水帖	shui tie	600
+镇楼	zhen lou	600
+楼主	lou zhu	800
+层主	ceng zhu	700
+抢沙发	qiang sha fa	700
+顶帖	ding tie	600
+沉帖	chen tie	600
+封帖	feng tie	600
+删帖	shan tie	700
+禁言	jin yan	700
+关小黑屋	guan xiao hei wu	600
+开盒	kai he	700
+挂人	gua ren	700
+冲了	chong le	700
+冲塔	chong ta	600
+挖坟	wa fen	600
+拔草	ba cao	500
+种草	zhong cao	600
+探店	tan dian	500
+测评	ce ping	600
+攻略	gong lve	500
+安利	an li	500
+饭圈	fan quan	600
+追星	zhui xing	600
+应援	ying yuan	500
+打榜	da bang	500
+自媒体	zi mei ti	900
+网红	wang hong	900
+带货	dai huo	800
+带货主播	dai huo zhu bo	900
+直播带货	zhi bo dai huo	900
+粉丝经济	fen si jing ji	700
+知识付费	zhi shi fu fei	800
+盲盒	mang he	600
 网络文学	wang luo wen xue	600
+网络直播	wang luo zhi bo	800
 直播平台	zhi bo ping tai	900
 短视频平台	duan shi pin ping tai	800
 社交平台	she jiao ping tai	800
@@ -58,12 +407,886 @@
 直播电商	zhi bo dian shang	800
 跨境电商	kua jing dian shang	800
 新零售	xin ling shou	700
-灵活就业	ling huo jiu ye	600
-在线学习	zai xian xue xi	700
-互联网医院	hu lian wang yi yuan	600
 即时零售	ji shi ling shou	500
-数字化转型	shu zi hua zhuan xing	700
+电子书	dian zi shu	600
+有声书	you sheng shu	500
+网约车	wang yue che	800
+共享单车	gong xiang dan che	1000
+电商	dian shang	800
+双十一	shuang shi yi	900
+优惠券	you hui quan	700
+拼单	pin dan	500
+团购	tuan gou	700
+线上	xian shang	700
+线下	xian xia	700
+弹幕护体	dan mu hu ti	700
+空降成功	kong jiang cheng gong	800
+进度条撑住	jin du tiao cheng zhu	700
+进度条阵亡	jin du tiao zhen wang	700
+催更狂魔	cui geng kuang mo	700
+日更	ri geng	800
+周更	zhou geng	700
+月更	yue geng	600
+年更	nian geng	600
+咕咕咕	gu gu gu	700
+鸽子精	ge zi jing	700
+放鸽子	fang ge zi	800
+投币支持	tou bi zhi chi	700
+点赞收藏	dian zan shou cang	800
+三连支持	san lian zhi chi	700
+求三连	qiu san lian	800
+粉丝团	fen si tuan	700
+榜一大哥	bang yi da ge	800
+榜一	bang yi	800
+榜二	bang er	700
+刷火箭	shua huo jian	700
+刷游艇	shua you ting	700
+刷礼物	shua li wu	800
+嘉年华	jia nian hua	800
+连麦互动	lian mai hu dong	700
+闭麦	bi mai	700
+开麦	kai mai	700
+炸麦	zha mai	600
+关麦	guan mai	700
+房管	fang guan	700
+禁言套餐	jin yan tao can	700
+踢出房间	ti chu fang jian	700
+打赏	da shang	800
+赞赏	zan shang	700
+爆更	bao geng	700
+连更	lian geng	700
+纯路人	chun lu ren	800
+路人粉	lu ren fen	700
+黑粉	hei fen	800
+铁粉	tie fen	800
+脑残粉	nao can fen	700
+亲妈粉	qin ma fen	700
+事业粉	shi ye fen	700
+唯粉	wei fen	700
+团粉	tuan fen	700
+毒唯	du wei	700
+站姐	zhan jie	700
+站哥	zhan ge	600
+代拍	dai pai	700
+接机	jie ji	700
+送机	song ji	700
+私生饭	si sheng fan	700
+反黑站	fan hei zhan	600
+澄清贴	cheng qing tie	700
+实锤	shi chui	900
+求锤得锤	qiu chui de chui	800
+塌房现场	ta fang xian chang	800
+吃大瓜	chi da gua	800
+巡回吃瓜	xun hui chi gua	700
+蹲瓜	dun gua	700
+蹲贴	dun tie	700
+占楼	zhan lou	700
+盖楼	gai lou	700
+水经验	shui jing yan	700
+签到	qian dao	800
+补签	bu qian	700
+求资源	qiu zi yuan	800
+资源分享	zi yuan fen xiang	700
+网盘见	wang pan jian	700
+解压密码	jie ya mi ma	700
+炸链	zha lian	600
+补链	bu lian	600
+链接失效	lian jie shi xiao	700
+好评返现	hao ping fan xian	700
+刷单	shua dan	800
+晒图	shai tu	700
+拔草日记	ba cao ri ji	600
+种草清单	zhong cao qing dan	700
+红黑榜	hong hei bang	700
+避雷针	bi lei zhen	700
+闭眼冲	bi yan chong	700
+无脑冲	wu nao chong	700
+冲就完了	chong jiu wan le	800
+全款拿下	quan kuan na xia	700
+剁手	duo shou	800
+剁手党	duo shou dang	800
+尾款人	wei kuan ren	800
+满减	man jian	800
+满减券	man jian quan	800
+凑单	cou dan	800
+凑单神器	cou dan shen qi	700
+薅羊毛	hao yang mao	900
+羊毛党	yang mao dang	800
+神价	shen jia	700
+稳如老狗	wen ru lao gou	700
+车门焊死	che men han si	700
+借一部说话	jie yi bu shuo hua	700
+愿者上钩	yuan zhe shang gou	700
+给个姬会	gei ge ji hui	600
+点赞关注	dian zan guan zhu	800
+关注主播	guan zhu zhu bo	800
+不迷路	bu mi lu	800
+关注不迷路	guan zhu bu mi lu	800
+进粉丝群	jin fen si qun	700
+粉丝福利	fen si fu li	800
+福袋	fu dai	800
+抢福袋	qiang fu dai	800
+弹幕抽奖	dan mu chou jiang	700
+盲猜	mang cai	800
+占个前排	zhan ge qian pai	800
+抢先看	qiang xian kan	800
+热评第一	re ping di yi	800
+被翻牌	bei fan pai	800
+翻牌	fan pai	800
+喜提热搜	xi ti re sou	800
+上热搜	shang re sou	900
+冲上热搜	chong shang re sou	800
+撤热搜	che re sou	700
+降热搜	jiang re sou	700
+压热度	ya re du	700
+危机公关	wei ji gong guan	800
+严正声明	yan zheng sheng ming	800
+律师函	lv shi han	800
+报警了	bao jing le	800
+已报警	yi bao jing	800
+法庭见	fa ting jian	800
+全网封杀	quan wang feng sha	800
+凉透了	liang tou le	800
+彻底凉了	che di liang le	800
+退网	tui wang	800
+退博	tui bo	700
+销号	xiao hao	800
+小号	xiao hao	800
+切大号	qie da hao	700
+切小号	qie xiao hao	700
+掉马	diao ma	800
+掉马甲	diao ma jia	800
+披马甲	pi ma jia	700
+炸号	zha hao	800
+封号十年	feng hao shi nian	700
+永久封禁	yong jiu feng jin	800
+解封	jie feng	800
+申诉成功	shen su cheng gong	800
+小黑屋	xiao hei wu	800
+关禁闭	guan jin bi	700
+一键举报	yi jian ju bao	800
+违规内容	wei gui nei rong	800
+违规封禁	wei gui feng jin	800
+涉嫌违规	she xian wei gui	800
+审核中	shen he zhong	800
+审核通过	shen he tong guo	800
+限流	xian liu	800
+被限流了	bei xian liu le	800
+流量密码	liu liang mi ma	900
+掌握密码	zhang wo mi ma	800
+流量爆炸	liu liang bao zha	800
+爆粉	bao fen	800
+爆赞	bao zan	800
+点赞过万	dian zan guo wan	800
+播放过亿	bo fang guo yi	800
+播放量	bo fang liang	900
+完播率	wan bo lv	900
+互动率	hu dong lv	900
+点赞率	dian zan lv	800
+转发量	zhuan fa liang	800
+评论量	ping lun liang	800
+弹幕量	dan mu liang	800
+收藏夹	shou cang jia	800
+吃灰	chi hui	800
+收藏吃灰	shou cang chi hui	800
+买书吃灰	mai shu chi hui	700
+脑子会了	nao zi hui le	800
+手不会	shou bu hui	800
+知识进脑子	zhi shi jin nao zi	700
+长按点赞	chang an dian zan	800
+强烈推荐	qiang lie tui jian	800
+良心推荐	liang xin tui jian	800
+全网第一	quan wang di yi	800
+镇站之宝	zhen zhan zhi bao	800
+入站必刷	ru zhan bi shua	800
+全站第一	quan zhan di yi	800
+宝藏博主	bao zang bo zhu	800
+神仙博主	shen xian bo zhu	800
+宝藏视频	bao zang shi pin	800
+宝藏音乐	bao zang yin yue	800
+全曲高能	quan qu gao neng	700
+开口跪	kai kou gui	800
+单曲循环	dan qu xun huan	900
+#
+# ---- 职场打工人与商业互联网（详见 data/categories/3_workplace.tsv）----
+摸鱼	mo yu	1000
+搞钱	gao qian	900
+赋能	fu neng	1000
+闭环	bi huan	1000
+抓手	zhua shou	900
+颗粒度	ke li du	900
+痛点	tong dian	900
+链路	lian lu	800
+复盘	fu pan	1000
+打通	da tong	800
+协同	xie tong	800
+落地	luo di	900
+壁垒	bi lei	800
+对齐	dui qi	1000
+底层逻辑	di ceng luo ji	800
+顶层设计	ding ceng she ji	800
+组合拳	zu he quan	800
+降本增效	jiang ben zeng xiao	1000
+提离职	ti li zhi	700
+跑路	pao lu	800
+润了	run le	800
+裁员	cai yuan	900
+卷王	juan wang	800
+薪水小偷	xin shui xiao tou	600
+狼性	lang xing	700
+狼性文化	lang xing wen hua	700
+大厂	da chang	900
+外包	wai bao	800
+跳槽	tiao cao	900
+试用期	shi yong qi	800
+转正	zhuan zheng	800
+年终奖	nian zhong jiang	900
+绩效	ji xiao	900
+报销	bao xiao	800
+差旅	cha lv	700
+周报	zhou bao	900
+月报	yue bao	800
+晨会	chen hui	700
+例会	li hui	700
+加班费	jia ban fei	700
+调休	tiao xiu	800
+倒班	dao ban	600
+调薪	tiao xin	700
+画大饼	hua da bing	800
+精神离职	jing shen li zhi	700
+优化	you hua	900
+毕业	bi ye	800
+裁撤	cai che	700
+拉通	la tong	700
+矩阵	ju zhen	800
+内卷	nei juan	800
+社畜	she chu	600
+打工人	da gong ren	700
+灵活就业	ling huo jiu ye	600
+副业	fu ye	600
+居家办公	ju jia ban gong	800
+远程办公	yuan cheng ban gong	800
 无障碍	wu zhang ai	500
+项目经理	xiang mu jing li	1000
+产品经理	chan pin jing li	900
+程序员	cheng xu yuan	900
+沉淀	chen dian	800
+抓总	zhua zong	700
+穿透	chuan tou	700
+聚焦	ju jiao	800
+击穿	ji chuan	700
+赛道	sai dao	900
+玩法	wan fa	800
+玩转	wan zhuan	700
+打法	da fa	800
+杠杆	gang gan	800
+抓落实	zhua luo shi	700
+切入点	qie ru dian	800
+突破口	tu po kou	800
+业务线	ye wu xian	800
+护城河	hu cheng he	800
+商业模式	shang ye mo shi	900
+商业变现	shang ye bian xian	800
+流量池	liu liang chi	800
+私域流量	si yu liu liang	800
+公域流量	gong yu liu liang	800
+私域	si yu	800
+公域	gong yu	800
+转化率	zhuan hua lv	900
+获客	huo ke	800
+获客成本	huo ke cheng ben	800
+留存率	liu cun lv	800
+促活	cu huo	800
+拉新	la xin	800
+召回	zhao hui	800
+裂变	lie bian	800
+用户画像	yong hu hua xiang	800
+精准推送	jing zhun tui song	800
+个性化推荐	ge xing hua tui jian	800
+信息流	xin xi liu	800
+信息茧房	xin xi jian fang	800
+冷启动	leng qi dong	800
+灰度发布	hui du fa bu	800
+灰度测试	hui du ce shi	800
+全量上线	quan liang shang xian	800
+敏捷开发	min jie kai fa	800
+快速迭代	kuai su die dai	800
+需求池	xu qiu chi	800
+需求变更	xu qiu bian geng	800
+提需求	ti xu qiu	800
+砍需求	kan xu qiu	800
+排期	pai qi	800
+提测	ti ce	800
+冒烟测试	mao yan ce shi	800
+联调	lian tiao	800
+接口人	jie kou ren	800
+端到端	duan dao duan	800
+抓痛点	zhua tong dian	800
+爽点	shuang dian	700
+扁平化	bian ping hua	800
+战报	zhan bao	800
+攻坚战	gong jian zhan	700
+团建	tuan jian	800
+降薪	jiang xin	800
+冻薪	dong xin	700
+锁编制	suo bian zhi	700
+缩招	suo zhao	800
+停招	ting zhao	700
+骑驴找马	qi lv zhao ma	800
+空窗期	kong chuang qi	800
+背调	bei diao	800
+薪资证明	xin zi zheng ming	700
+离职证明	li zhi zheng ming	800
+赔偿金	pei chang jin	800
+大礼包	da li bao	800
+裁员大礼包	cai yuan da li bao	700
+工位	gong wei	800
+工牌	gong pai	800
+带薪拉屎	dai xin la shi	800
+摸鱼技巧	mo yu ji qiao	700
+划水	hua shui	800
+等下班	deng xia ban	800
+准时下班	zhun shi xia ban	800
+拒绝加班	ju jue jia ban	800
+无条件服从	wu tiao jian fu cong	600
+服从安排	fu cong an pai	700
+进大厂	jin da chang	800
+大厂实习	da chang shi xi	800
+校招	xiao zhao	900
+社招	she zhao	900
+秋招	qiu zhao	900
+春招	chun zhao	900
+补录	bu lu	800
+提前批	ti qian pi	800
+正式批	zheng shi pi	800
+白菜价	bai cai jia	800
+签字费	qian zi fei	800
+股票期权	gu piao qi quan	800
+期权归属	qi quan gui shu	700
+现金流	xian jin liu	900
+独角兽	du jiao shou	800
+创业团队	chuang ye tuan dui	800
+初创企业	chu chuang qi ye	800
+种子轮	zhong zi lun	700
+天使轮	tian shi lun	800
+融资金额	rong zi jin e	800
+领投	ling tou	700
+跟投	gen tou	700
+估值	gu zhi	900
+商业计划书	shang ye ji hua shu	800
+路演	lu yan	800
+投资人	tou zi ren	900
+对赌协议	dui du xie yi	800
+上市敲钟	shang shi qiao zhong	800
+破发	po fa	800
+市值暴跌	shi zhi bao die	800
+裁员降薪	cai yuan jiang xin	800
+裁员名单	cai yuan ming dan	800
+优化名单	you hua ming dan	800
+业务收缩	ye wu shou suo	800
+缩减开支	suo jian kai zhi	800
+砍预算	kan yu suan	800
+预算归零	yu suan gui ling	700
+降薪潮	jiang xin chao	800
+裁员潮	cai yuan chao	800
+倒闭潮	dao bi chao	800
+破产重组	po chan chong zu	800
+清算	qing suan	800
+讨薪	tao xin	800
+劳动仲裁	lao dong zhong cai	900
+仲裁委	zhong cai wei	800
+仲裁胜诉	zhong cai sheng su	800
+二倍工资	er bei gong zi	800
+加班打卡	jia ban da ka	800
+加班文化	jia ban wen hua	800
+隐形加班	yin xing jia ban	800
+随时待命	sui shi dai ming	800
+调休申请	tiao xiu shen qing	800
+请假申请	qing jia shen qing	800
+带薪年假	dai xin nian jia	900
+年假清零	nian jia qing ling	800
+产假	chan jia	800
+陪产假	pei chan jia	800
+育儿假	yu er jia	800
+病假条	bing jia tiao	800
+全勤奖	quan qin jiang	800
+迟到扣钱	chi dao kou qian	800
+补打卡	bu da ka	800
+指纹打卡	zhi wen da ka	800
+人脸打卡	ren lian da ka	800
+工伤认定	gong shang ren ding	700
+五险一金	wu xian yi jin	900
+社保公积金	she bao gong ji jin	900
+个税申报	ge shui shen bao	800
+专项附加	zhuan xiang fu jia	800
+退税	tui shui	900
+年度汇算	nian du hui suan	800
+#
+# ---- 游戏电竞与二次元ACG（详见 data/categories/4_gaming_acg.tsv）----
+偷家	tou jia	800
+偷塔	tou ta	700
+送人头	song ren tou	800
+暴击	bao ji	900
+破甲	po jia	700
+残血	can xue	900
+满血	man xue	800
+补刀	bu dao	800
+顺风局	shun feng ju	700
+逆风局	ni feng ju	700
+翻盘	fan pan	800
+绝杀	jue sha	800
+落地成盒	luo di cheng he	800
+跑毒	pao du	800
+苟分	gou fen	700
+氪金	ke jin	1000
+抽卡	chou ka	900
+保底	bao di	900
+欧皇	ou huang	900
+非酋	fei qiu	800
+肝帝	gan di	800
+上分	shang fen	900
+掉分	diao fen	800
+炸鱼	zha yu	700
+虐菜	nve cai	800
+团灭	tuan mie	800
+封号	feng hao	800
+穿模	chuan mo	700
+锁血	suo xue	700
+挂逼	gua bi	700
+掉段	diao duan	700
+代练	dai lian	800
+陪玩	pei wan	800
+萌新	meng xin	900
+大佬	da lao	1000
+巨佬	ju lao	700
+连招	lian zhao	800
+大招	da zhao	900
+追番	zhui fan	800
+补番	bu fan	700
+番剧	fan ju	800
+塌房	ta fang	800
+厨力	chu li	600
+产粮	chan liang	600
+磕糖	ke tang	700
+嗑糖	ke tang	700
+发糖	fa tang	700
+刀子	dao zi	700
+现充	xian chong	600
+傲娇	ao jiao	700
+呆萌	dai meng	700
+腹黑	fu hei	700
+治愈番	zhi yu fan	600
+致郁	zhi yu	600
+战力	zhan li	800
+联机	lian ji	800
+单机	dan ji	800
+手游	shou you	900
+端游	duan you	800
+页游	ye you	700
+乙女	yi nv	700
+网络游戏	wang luo you xi	600
+电子竞技	dian zi jing ji	700
+电竞	dian jing	800
+二次元	er ci yuan	700
+绝地求生	jue di qiu sheng	800
+吃鸡	chi ji	900
+今晚吃鸡	jin wan chi ji	800
+空投	kong tou	800
+舔包	tian bao	800
+盒子精	he zi jing	700
+伏地魔	fu di mo	800
+压枪	ya qiang	800
+甩狙	shuai ju	700
+瞬狙	shun ju	700
+盲狙	mang ju	700
+爆头	bao tou	800
+预瞄	yu miao	700
+封烟	feng yan	800
+闪光弹	shan guang dan	800
+红点	hong dian	800
+全息	quan xi	800
+八倍镜	ba bei jing	800
+对线	dui xian	800
+控线	kong xian	800
+推线	tui xian	800
+兵线	bing xian	800
+补兵	bu bing	800
+单杀	dan sha	800
+双杀	shuang sha	800
+三杀	san sha	800
+四杀	si sha	800
+五杀	wu sha	900
+超神	chao shen	900
+辅助	fu zhu	900
+射手	she shou	900
+法师	fa shi	900
+刺客	ci ke	900
+坦克	tan ke	900
+打野	da ye	900
+抓人	zhua ren	800
+反野	fan ye	800
+控龙	kong long	800
+开大	kai da	800
+闪现	shan xian	900
+净化	jing hua	800
+惩戒	cheng jie	800
+引燃	yin ran	800
+治疗	zhi liao	800
+护盾	hu dun	800
+霸体	ba ti	800
+击飞	ji fei	800
+击退	ji tui	800
+眩晕	xuan yun	800
+沉默	chen mo	800
+禁锢	jin gu	800
+减速	jian su	800
+移速	yi su	800
+攻速	gong su	800
+暴击率	bao ji lv	800
+吸血	xi xue	800
+真实伤害	zhen shi shang hai	800
+法术伤害	fa shu shang hai	800
+物理伤害	wu li shang hai	800
+冷却时间	leng que shi jian	800
+蓝条	lan tiao	800
+血条	xue tiao	800
+掉血	diao xue	800
+回血	hui xue	800
+泉水	quan shui	800
+回城	hui cheng	800
+守塔	shou ta	800
+拆塔	chai ta	800
+水晶	shui jing	800
+点水晶	dian shui jing	800
+偷水晶	tou shui jing	800
+越塔强杀	yue ta qiang sha	800
+拉扯	la che	800
+走位	zou wei	800
+蹲草	dun cao	800
+排位赛	pai wei sai	900
+巅峰赛	dian feng sai	800
+大乱斗	da luan dou	800
+觉醒	jue xing	800
+命座	ming zuo	800
+专武	zhuan wu	800
+圣遗物	sheng yi wu	800
+词条	ci tiao	800
+抽歪了	chou wai le	700
+大保底	da bao di	800
+小保底	xiao bao di	800
+十连抽	shi lian chou	800
+单抽	dan chou	800
+出金	chu jin	800
+双黄蛋	shuang huang dan	700
+攒原石	zan yuan shi	700
+原石	yuan shi	800
+仓鼠党	cang shu dang	700
+零氪	ling ke	800
+微氪	wei ke	800
+重氪	zhong ke	800
+白嫖	bai piao	800
+白嫖党	bai piao dang	800
+月卡	yue ka	800
+月卡党	yue ka dang	800
+炸服	zha fu	700
+停机维护	ting ji wei hu	700
+兑换码	dui huan ma	800
+物理引擎	wu li yin qing	800
+卡关	ka guan	800
+通关	tong guan	800
+一周目	yi zhou mu	800
+全收集	quan shou ji	800
+白金奖杯	bai jin jiang bei	700
+支线任务	zhi xian ren wu	800
+主线任务	zhu xian ren wu	800
+隐藏任务	yin cang ren wu	800
+彩蛋	cai dan	800
+伏笔	fu bi	800
+填坑	tian keng	800
+烂尾	lan wei	800
+剧透	ju tou	800
+剧透预警	ju tou yu jing	800
+纯爱党	chun ai dang	700
+治愈神作	zhi yu shen zuo	700
+催泪神作	cui lei shen zuo	700
+官配	guan pei	800
+磕死我了	ke si wo le	800
+太好磕了	tai hao ke le	800
+神仙太太	shen xian tai tai	700
+入坑	ru keng	800
+退坑	tui keng	800
+二刷	er shua	800
+黑神话	hei shen hua	900
+天命人	tian ming ren	800
+大圣	da sheng	900
+金箍棒	jin gu bang	900
+紧箍咒	jin gu zhou	800
+筋斗云	jin dou yun	800
+根器	gen qi	800
+广智	guang zhi	800
+虎先锋	hu xian feng	800
+黄风怪	huang feng guai	800
+二郎神	er lang shen	900
+哮天犬	xiao tian quan	800
+闪避	shan bi	900
+完美闪避	wan mei shan bi	800
+弹反	tan fan	800
+识破	shi po	800
+重棍	zhong gun	800
+劈棍	pi gun	800
+立棍	li gun	800
+戳棍	chuo gun	800
+定身法	ding shen fa	800
+安身法	an shen fa	700
+铜头铁臂	tong tou tie bi	800
+法宝	fa bao	900
+避火罩	bi huo zhao	800
+定风珠	ding feng zhu	800
+绣花针	xiu hua zhen	800
+芭蕉扇	ba jiao shan	800
+土地庙	tu di miao	800
+传火点	chuan huo dian	800
+魂类	hun lei	800
+魂系	hun xi	800
+魂游	hun you	800
+宫崎英高	gong qi ying gao	800
+动作游戏	dong zuo you xi	900
+角色扮演	jue se ban yan	900
+第一人称	di yi ren cheng	800
+第三人称	di san ren cheng	800
+开放世界	kai fang shi jie	900
+肉鸽	rou ge	800
+卡牌	ka pai	900
+牌佬	pai lao	800
+决斗	jue dou	800
+我的回合	wo de hui he	800
+抽牌	chou pai	800
+墓地	mu di	800
+陷阱卡	xian jing ka	800
+魔法卡	mo fa ka	800
+连锁	lian suo	800
+展开	zhan kai	800
+终场	zhong chang	800
+特殊召唤	te shu zhao huan	800
+融合召唤	rong he zhao huan	800
+同调召唤	tong tiao zhao huan	800
+超量召唤	chao liang zhao huan	800
+灵摆召唤	ling bai zhao huan	700
+链接召唤	lian jie zhao huan	800
+自走棋	zi zou qi	800
+吃鸡模式	chi ji mo shi	800
+沙盒游戏	sha he you xi	800
+建造模式	jian zao mo shi	800
+生存模式	sheng cun mo shi	800
+硬核玩家	ying he wan jia	800
+休闲玩家	xiu xian wan jia	800
+剧情党	ju qing dang	800
+强度党	qiang du dang	800
+颜值党	yan zhi dang	800
+收集党	shou ji dang	800
+图鉴全开	tu jian quan kai	800
+满级大佬	man ji da lao	800
+毕业装备	bi ye zhuang bei	800
+强力推荐	qiang li tui jian	800
+版本之子	ban ben zhi zi	800
+下水道	xia shui dao	800
+一代补丁	yi dai bu ding	700
+一代版本	yi dai ban ben	700
+一代神	yi dai shen	700
+#
+# ---- 情绪心理与人设标签（详见 data/categories/5_emotions_personas.tsv）----
+情绪价值	qing xu jia zhi	900
+恋爱脑	lian ai nao	900
+事业脑	shi ye nao	700
+社恐	she kong	900
+社牛	she niu	900
+社死	she si	900
+脆皮大学生	cui pi da xue sheng	700
+普信男	pu xin nan	800
+普信女	pu xin nv	700
+绿茶婊	lv cha biao	700
+暖男	nuan nan	800
+直男	zhi nan	900
+直女	zhi nv	700
+直男癌	zhi nan ai	700
+戏精	xi jing	800
+咸鱼	xian yu	800
+佛系	fo xi	800
+搞钱女孩	gao qian nv hai	600
+精神内耗	jing shen nei hao	800
+碎了	sui le	700
+心态崩了	xin tai beng le	800
+走心	zou xin	800
+治愈系	zhi yu xi	700
+解压	jie ya	800
+空巢青年	kong chao qing nian	600
+孤勇者	gu yong zhe	700
+摆烂人	bai lan ren	700
+伤不起	shang bu qi	700
+裂开	lie kai	800
+破防了	po fang le	800
+暴风吸入	bao feng xi ru	700
+救命	jiu ming	800
+救命啊	jiu ming a	700
+我酸了	wo suan le	700
+柠檬树	ning meng shu	600
+破防	po fang	600
+躺平	tang ping	800
+预制菜	yu zhi cai	600
+讨好型人格	tao hao xing ren ge	800
+回避型依恋	hui bi xing yi lian	700
+假装坚强	jia zhuang jian qiang	700
+情绪内耗	qing xu nei hao	800
+精神状态	jing shen zhuang tai	800
+精神稳定	jing shen wen ding	800
+发疯日常	fa feng ri chang	700
+疯批美人	feng pi mei ren	700
+病娇	bing jiao	700
+白切黑	bai qie hei	700
+黑切白	hei qie bai	700
+天然呆	tian ran dai	700
+爹系男友	die xi nan you	700
+妈系女友	ma xi nv you	700
+小狗系	xiao gou xi	700
+猫系	mao xi	700
+钓系美人	diao xi mei ren	700
+深情男二	shen qing nan er	700
+海王	hai wang	800
+鱼塘管理	yu tang guan li	700
+万年备胎	wan nian bei tai	700
+舔狗日记	tian gou ri ji	700
+单身贵族	dan shen gui zu	800
+母胎单身	mu tai dan shen	800
+孤寡老人	gu gua lao ren	700
+孤独终老	gu du zhong lao	700
+赛博孤儿	sai bo gu er	600
+心态平稳	xin tai ping wen	700
+佛系青年	fo xi qing nian	800
+躺平青年	tang ping qing nian	800
+摆烂大师	bai lan da shi	700
+拖延症晚期	tuo yan zheng wan qi	800
+熬夜冠军	ao ye guan jun	800
+朋克养生	peng ke yang sheng	700
+啤酒泡枸杞	pi jiu pao gou qi	700
+养生达人	yang sheng da ren	700
+早睡早起	zao shui zao qi	800
+控糖	kong tang	800
+减脂	jian zhi	800
+增肌	zeng ji	800
+容貌焦虑	rong mao jiao lv	800
+身材焦虑	shen cai jiao lv	800
+年龄焦虑	nian ling jiao lv	800
+同辈压力	tong bei ya li	800
+滤镜破碎	lv jing po sui	700
+人间清醒	ren jian qing xing	800
+放过自己	fang guo zi ji	800
+与自己和解	yu zi ji he jie	800
+焦虑型	jiao lv xing	800
+述情障碍	shu qing zhang ai	700
+精神美丽	jing shen mei li	700
+疯批	feng pi	800
+盐系	yan xi	800
+甜系	tian xi	800
+姬圈	ji quan	700
+弯男	wan nan	700
+纯直男	chun zhi nan	800
+渣男	zha nan	900
+渣女	zha nv	900
+养鱼	yang yu	800
+鱼塘	yu tang	800
+备胎	bei tai	900
+舔狗	tian gou	900
+舔到最后	tian dao zui hou	800
+一无所有	yi wu suo you	800
+单身犬	dan shen quan	700
+单身狗	dan shen gou	900
+万年单身	wan nian dan shen	800
+孤独患者	gu du huan zhe	800
+四不青年	si bu qing nian	700
+焦虑症	jiao lv zheng	800
+抑郁症	yi yu zheng	800
+强迫症	qiang po zheng	900
+拖延症	tuo yan zheng	900
+熬夜伤身	ao ye shang shen	700
+养生朋克	yang sheng peng ke	700
+早睡早起好	zao shui zao qi hao	700
+戒糖	jie tang	800
+去魅	qu mei	800
+幻灭	huan mie	800
+治愈瞬间	zhi yu shun jian	800
+暖心瞬间	nuan xin shun jian	800
+释怀	shi huai	800
+终于释怀	zhong yu shi huai	800
+情绪稳定	qing xu wen ding	900
+情绪失控	qing xu shi kong	800
+放飞自我	fang fei zi wo	800
+重塑自我	chong su zi wo	800
+自我疗愈	zi wo liao yu	800
+接纳自己	jie na zi ji	800
+#
+# ---- 现代科技与数码AI（详见 data/categories/6_tech_ai.tsv）----
+提示词	ti shi ci	1000
+算力	suan li	1000
+智能体	zhi neng ti	900
+知识库	zhi shi ku	900
+向量数据库	xiang liang shu ju ku	800
+微调	wei tiao	800
+量化	liang hua	800
+蒸馏	zheng liu	700
+跑分	pao fen	800
+投屏	tou ping	800
+刷机	shua ji	700
+越狱	yue yu	700
+极客	ji ke	700
+固件	gu jian	800
+降噪	jiang zao	800
+超频	chao pin	700
+功耗	gong hao	800
+续航	xu hang	900
+堆料	dui liao	700
+散热	san re	800
+水冷	shui leng	700
+折叠屏	zhe die ping	800
+生产力	sheng chan li	900
+开源模型	kai yuan mo xing	800
+闭源模型	bi yuan mo xing	700
+多模态	duo mo tai	900
+强化学习	qiang hua xue xi	800
+自动生成	zi dong sheng cheng	800
+智能助手	zhi neng zhu shou	800
+神经渲染	shen jing xuan ran	600
+机器视觉	ji qi shi jue	800
+自然语言	zi ran yu yan	800
+对话系统	dui hua xi tong	800
+深度模型	shen du mo xing	700
+卷积	juan ji	700
+神经网络	shen jing wang luo	800
+预训练	yu xun lian	800
+提示工程	ti shi gong cheng	800
+智能家居	zhi neng jia ju	1200
+新能源汽车	xin neng yuan qi che	1500
+自动驾驶	zi dong jia shi	1200
+移动支付	yi dong zhi fu	1500
+在线教育	zai xian jiao yu	1200
+在线学习	zai xian xue xi	700
+大模型	da mo xing	1500
+开放平台	kai fang ping tai	1000
+用户体验	yong hu ti yan	1200
+手机支付	shou ji zhi fu	1000
+扫一扫	sao yi sao	1200
+健康码	jian kang ma	3000
+行程码	xing cheng ma	2000
+微信支付	wei xin zhi fu	3000
+移动互联网	yi dong hu lian wang	900
+视频通话	shi pin tong hua	900
+刷脸支付	shua lian zhi fu	600
+智能音箱	zhi neng yin xiang	600
+智能客服	zhi neng ke fu	600
+智慧城市	zhi hui cheng shi	700
+数字经济	shu zi jing ji	900
+在线会议	zai xian hui yi	800
+互联网医院	hu lian wang yi yuan	600
+数字化转型	shu zi hua zhuan xing	700
 碳中和	tan zhong he	900
 新能源	xin neng yuan	900
 芯片	xin pian	800
@@ -79,56 +1302,9 @@
 云盘	yun pan	600
 浏览器	liu lan qi	700
 视频会议	shi pin hui yi	800
-电子书	dian zi shu	600
-有声书	you sheng shu	500
-网络游戏	wang luo you xi	600
-电子竞技	dian zi jing ji	700
-#
-# ---- 网络/社交流行语（近两年高频，词频语料更新滞后）----
-电竞	dian jing	800
-饭圈	fan quan	600
-追星	zhui xing	600
-应援	ying yuan	500
-打榜	da bang	500
-拔草	ba cao	500
-种草	zhong cao	600
-探店	tan dian	500
-测评	ce ping	600
-攻略	gong lve	500
-安利	an li	500
-出圈	chu quan	600
-破防	po fang	600
-副业	fu ye	600
-预制菜	yu zhi cai	600
-直播带货	zhi bo dai huo	900
-自媒体	zi mei ti	900
-网红	wang hong	900
-内卷	nei juan	800
-躺平	tang ping	800
-社畜	she chu	600
-打工人	da gong ren	700
-带货	dai huo	800
-二次元	er ci yuan	700
 网盘	wang pan	700
-电商	dian shang	800
-双十一	shuang shi yi	900
-优惠券	you hui quan	700
-拼单	pin dan	500
-团购	tuan gou	700
-线上	xian shang	700
-线下	xian xia	700
-#
-# ---- 品牌/平台（词表与语料都可能缺，输入高频）----
-特斯拉	te si la	900
-蔚来	wei lai	500
-华为	hua wei	1200
-小米	xiao mi	1200
-
-# ---- 2026-11-01 补充：平台/科技类现代词（词表与词频源都缺）----
 云计算	yun ji suan	900
 区块链	qu kuai lian	1000
-网约车	wang yue che	800
-盲盒	mang he	600
 元宇宙	yuan yu zhou	800
 虚拟现实	xu ni xian shi	700
 机器学习	ji qi xue xi	900
@@ -136,8 +1312,448 @@
 语音识别	yu yin shi bie	700
 人脸识别	ren lian shi bie	700
 操作系统	cao zuo xi tong	800
-程序员	cheng xu yuan	900
-产品经理	chan pin jing li	900
+拼多多	pin duo duo	2000
+饿了么	e le me	1500
+苹果手机	ping guo shou ji	1500
+特斯拉	te si la	900
+蔚来	wei lai	500
+华为	hua wei	1200
+小米	xiao mi	1200
 小红书	xiao hong shu	1500
 滴滴	di di	1500
-
+智能座舱	zhi neng zuo cang	800
+车机系统	che ji xi tong	800
+高阶智驾	gao jie zhi jia	800
+激光雷达	ji guang lei da	800
+纯视觉	chun shi jue	700
+智驾领航	zhi jia ling hang	700
+自动泊车	zi dong bo che	800
+遥控泊车	yao kong bo che	700
+哨兵模式	shao bing mo shi	800
+动能回收	dong neng hui shou	700
+单踏板	dan ta ban	700
+零百加速	ling bai jia su	800
+超充站	chao chong zhan	700
+无线充电	wu xian chong dian	800
+反向充电	fan xiang chong dian	700
+刀片电池	dao pian dian chi	800
+三元锂	san yuan li	700
+磷酸铁锂	lin suan tie li	700
+固态电池	gu tai dian chi	800
+超算中心	chao suan zhong xin	700
+智算中心	zhi suan zhong xin	700
+光刻机	guang ke ji	800
+晶圆代工	jing yuan dai gong	700
+先进封装	xian jin feng zhuang	700
+氮化镓	dan hua jia	700
+充电头	chong dian tou	800
+扩展坞	kuo zhan wu	800
+机械键盘	ji xie jian pan	800
+热插拔	re cha ba	800
+客制化	ke zhi hua	800
+麻将音	ma jiang yin	700
+石子音	shi zi yin	700
+高刷屏	gao shua ping	800
+护眼屏	hu yan ping	800
+高频调光	gao pin tiao guang	700
+杜比全景声	du bi quan jing sheng	700
+空间音频	kong jian yin pin	800
+主动降噪	zhu dong jiang zao	800
+通透模式	tong tou mo shi	800
+骨传导	gu chuan dao	700
+开放式耳机	kai fang shi er ji	700
+智能手表	zhi neng shou biao	800
+智能眼镜	zhi neng yan jing	800
+空间计算	kong jian ji suan	800
+手势追踪	shou shi zhui zong	700
+眼动追踪	yan dong zhui zong	700
+云原生	yun yuan sheng	800
+微服务	wei fu wu	800
+边缘计算	bian yuan ji suan	800
+车机互联	che ji hu lian	800
+多屏协同	duo ping xie tong	800
+一碰传	yi peng chuan	700
+便携屏	bian xie ping	700
+墨水屏	mo shui ping	800
+电纸书	dian zhi shu	800
+人体工学椅	ren ti gong xue yi	800
+升降桌	sheng jiang zhuo	800
+协同办公	xie tong ban gong	800
+在线文档	zai xian wen dang	800
+飞书	fei shu	800
+钉钉	ding ding	800
+企业微信	qi ye wei xin	800
+生成式	sheng cheng shi	800
+生成式模型	sheng cheng shi mo xing	800
+多模态模型	duo mo tai mo xing	800
+文生图	wen sheng tu	900
+文生视频	wen sheng shi pin	900
+图生图	tu sheng tu	800
+视频生成	shi pin sheng cheng	800
+基座模型	ji zuo mo xing	800
+垂直模型	chui zhi mo xing	800
+行业大模型	hang ye da mo xing	800
+涌现	yong xian	800
+涌现能力	yong xian neng li	800
+消除幻觉	xiao chu huan jue	800
+检索增强	jian suo zeng qiang	800
+上下文	shang xia wen	900
+长文本	chang wen ben	800
+推理成本	tui li cheng ben	800
+吞吐量	tun tu liang	800
+首字延迟	shou zi yan chi	800
+蒸馏模型	zheng liu mo xing	800
+量化加速	liang hua jia su	800
+显存占用	xian cun zhan yong	800
+离线推理	li xian tui li	800
+端侧推理	duan ce tui li	800
+本地部署	ben di bu shu	900
+私有化部署	si you hua bu shu	800
+算力集群	suan li ji qun	800
+智算集群	zhi suan ji qun	800
+高速互联	gao su hu lian	800
+光模块	guang mo kuai	800
+液冷	ye leng	800
+能效比	neng xiao bi	800
+绿色算力	lv se suan li	700
+算力券	suan li quan	700
+具身智能	ju shen zhi neng	900
+人形机器人	ren xing ji qi ren	900
+机械臂	ji xie bi	800
+灵巧手	ling qiao shou	800
+减速器	jian su qi	800
+伺服电机	si fu dian ji	800
+机器狗	ji qi gou	800
+四足机器人	si zu ji qi ren	800
+外骨骼	wai gu ge	800
+脑机接口	nao ji jie kou	900
+侵入式	qin ru shi	800
+非侵入式	fei qin ru shi	800
+生物传感器	sheng wu chuan gan qi	800
+基因编辑	ji yin bian ji	800
+量子计算	liang zi ji suan	900
+量子通信	liang zi tong xin	800
+卫星通信	wei xing tong xin	900
+直连卫星	zhi lian wei xing	800
+卫星通话	wei xing tong hua	800
+星链	xing lian	800
+商业航天	shang ye hang tian	800
+火箭回收	huo jian hui shou	800
+发射场	fa she chang	800
+空间站	kong jian zhan	900
+天宫	tian gong	900
+探月	tan yue	800
+火星探测	huo xing tan ce	800
+深空探测	shen kong tan ce	800
+#
+# ---- 网络特有字与语气拟声（详见 data/categories/7_characters_particles.tsv）----
+槑	mei	10
+烎	yin	10
+嫑	biao	12
+叒	ruo	10
+叕	zhuo	10
+燚	yi	10
+犇	ben	10
+鱻	xian	10
+龘	da	10
+肏	cao	12
+嘦	jiao	10
+氼	ni	10
+砳	le	10
+兲	tian	10
+猹	cha	15
+绝了	jue le	800
+稳了	wen le	800
+凉凉	liang liang	800
+慌了	huang le	700
+麻了	ma le	800
+搞快点	gao kuai dian	700
+溜了	liu le	700
+顶不住	ding bu zhu	700
+冲鸭	chong ya	700
+么么哒	me me da	800
+嘤嘤嘤	ying ying ying	700
+好哒	hao da	700
+好捏	hao nie	700
+芜湖	wu hu	700
+起飞	qi fei	800
+搞起	gao qi	700
+妥了	tuo le	800
+走起	zou qi	800
+歇了	xie le	700
+散了	san le	700
+跪了	gui le	800
+醉了	zui le	800
+嗨翻	hai fan	700
+冲冲冲	chong chong chong	700
+买买买	mai mai mai	800
+哈哈哈	ha ha ha	900
+呵呵呵	he he he	800
+嘿嘿嘿	hei hei hei	800
+嘻嘻嘻	xi xi xi	800
+呜呜呜	wu wu wu	800
+嗷嗷嗷	ao ao ao	700
+啧啧啧	ze ze ze	700
+嘎嘎香	ga ga xiang	800
+嘎嘎乱杀	ga ga luan sha	800
+芜湖起飞	wu hu qi fei	800
+蚌埠住	beng bu zhu	700
+绷不住	beng bu zhu	800
+绷不住了	beng bu zhu le	800
+破大防了	po da fang le	800
+救大命了	jiu da ming le	800
+笑发财了	xiao fa cai le	700
+人麻了	ren ma le	800
+人傻了	ren sha le	800
+彻底疯狂	che di feng kuang	800
+原地起飞	yuan di qi fei	700
+瞬间起飞	shun jian qi fei	700
+直接带走	zhi jie dai zou	700
+走好不送	zou hao bu song	700
+拜拜了	bai bai le	700
+溜了溜了	liu le liu le	800
+撤了撤了	che le che le	700
+散了散了	san le san le	700
+妥妥的	tuo tuo de	800
+稳稳的	wen wen de	800
+安排上了	an pai shang le	800
+拿来吧你	na lai ba ni	700
+嘟嘟囔囔	du du nang nang	700
+嘤嘤怪	ying ying guai	700
+酸了酸了	suan le suan le	700
+怼	dui	25
+怂	song	25
+氪	ke	25
+润	run	25
+撩	liao	25
+卷	juan	25
+躺	tang	25
+摆	bai	25
+烂	lan	25
+薅	hao	25
+嗑	ke	25
+盘	pan	25
+蹲	dun	25
+锤	chui	25
+杠	gang	25
+撕	si	25
+秀	xiu	25
+苟	gou	25
+飒	sa	25
+嗨	hai	25
+尬	ga	25
+贼	zei	25
+糊	hu	25
+炸	zha	25
+虐	nve	25
+蹭	ceng	25
+拽	zhuai	25
+萌	meng	25
+废	fei	25
+燃	ran	25
+稳	wen	25
+塌	ta	25
+懵	meng	25
+淦	gan	25
+喵	miao	25
+汪	wang	25
+哒	da	25
+捏	nie	25
+酱	jiang	25
+鸭	ya	25
+呐	na	25
+嗷	ao	25
+呜	wu	25
+哇	wa	25
+呦	you	25
+嘤	ying	25
+嘟	du	25
+噜	lu	25
+嘞	lei	25
+咕	gu	25
+叭	ba	25
+咩	mie	25
+啵	bo	25
+顶顶顶	ding ding ding	700
+赞赞赞	zan zan zan	700
+棒棒棒	bang bang bang	700
+冲啊	chong a	800
+绝绝	jue jue	700
+嘎嘎甜	ga ga tian	700
+嘎嘎脆	ga ga cui	700
+嘎嘎好	ga ga hao	700
+嘎嘎猛	ga ga meng	700
+人傻了呀	ren sha le ya	700
+裂开来	lie kai lai	700
+原地炸裂	yuan di zha lie	700
+瞬间炸裂	shun jian zha lie	700
+妥妥哒	tuo tuo da	600
+好哒好哒	hao da hao da	700
+好捏好捏	hao nie hao nie	700
+芜湖起飞呀	wu hu qi fei ya	700
+#
+# ---- 现代生活与网红消费（详见 data/categories/8_lifestyle_consumption.tsv）----
+围炉煮茶	wei lu zhu cha	800
+脆皮炸鸡	cui pi zha ji	700
+空气炸锅	kong qi zha guo	800
+开箱	kai xiang	800
+探店打卡	tan dian da ka	800
+城市漫步	cheng shi man bu	800
+穷游	qiong you	800
+露营	lu ying	900
+剧本杀	ju ben sha	900
+密室逃脱	mi shi tao tuo	900
+飞盘	fei pan	800
+骑行	qi xing	800
+溯溪	su xi	700
+徒步	tu bu	800
+桨板	jiang ban	700
+飞盘运动	fei pan yun dong	700
+摇摆舞	yao bai wu	700
+陆冲	lu chong	700
+攀岩	pan yan	800
+露营装备	lu ying zhuang bei	700
+帐篷	zhang peng	800
+折叠椅	zhe die yi	800
+蛋卷桌	dan juan zhuo	700
+卡式炉	ka shi lu	700
+挂耳咖啡	gua er ka fei	800
+胶囊咖啡	jiao nang ka fei	800
+冷萃	leng cui	800
+生椰拿铁	sheng ye na tie	900
+燕麦拿铁	yan mai na tie	800
+厚乳拿铁	hou ru na tie	800
+脏脏包	zang zang bao	700
+肉松小贝	rou song xiao bei	800
+奶酪包	nai lao bao	700
+瑞士卷	rui shi juan	800
+芋泥波波	yu ni bo bo	700
+杨枝甘露	yang zhi gan lu	800
+多肉葡萄	duo rou pu tao	800
+鸭屎香	ya shi xiang	800
+手打柠檬茶	shou da ning meng cha	800
+暴打柠檬茶	bao da ning meng cha	700
+泰绿	tai lv	700
+冰美式	bing mei shi	900
+热美式	re mei shi	800
+馥芮白	fu rui bai	800
+卡布奇诺	ka bu qi nuo	800
+精酿啤酒	jing niang pi jiu	800
+小酒馆	xiao jiu guan	800
+微醺时刻	wei xun shi ke	700
+日咖夜酒	ri ka ye jiu	700
+早咖晚酒	zao ka wan jiu	700
+罐罐奶茶	guan guan nai cha	700
+烤棉花糖	kao mian hua tang	700
+手办	shou ban	800
+谷子	gu zi	800
+痛包	tong bao	800
+吧唧	ba ji	800
+亚克力	ya ke li	800
+挂件	gua jian	800
+扭蛋机	niu dan ji	800
+潮玩	chao wan	800
+盲盒抽奖	mang he chou jiang	700
+隐藏款	yin cang kuan	800
+稀有款	xi you kuan	700
+端盒	duan he	700
+棉花娃娃	mian hua wa wa	700
+娃圈	wa quan	700
+漫展	man zhan	800
+同人展	tong ren zhan	700
+面基	mian ji	800
+网友见面	wang you jian mian	700
+约拍	yue pai	800
+互免	hu mian	700
+约稿	yue gao	800
+探店博主	tan dian bo zhu	700
+穿搭博主	chuan da bo zhu	700
+美妆博主	mei zhuang bo zhu	700
+健身博主	jian shen bo zhu	700
+知识博主	zhi shi bo zhu	700
+美食博主	mei shi bo zhu	700
+围炉	wei lu	800
+溯溪鞋	su xi xie	700
+徒步鞋	tu bu xie	800
+冲锋衣	chong feng yi	900
+山系穿搭	shan xi chuan da	800
+硬壳	ying ke	800
+软壳	ruan ke	800
+抓绒	zhua rong	800
+羽绒服	yu rong fu	900
+排汗衣	pai han yi	700
+速干衣	su gan yi	800
+登山杖	deng shan zhang	800
+保温杯	bao wen bei	900
+钛杯	tai bei	700
+气炉	qi lu	700
+酒精炉	jiu jing lu	700
+柴火炉	chai huo lu	700
+天幕	tian mu	800
+防潮垫	fang chao dian	800
+充气床垫	chong qi chuang dian	700
+睡袋	shui dai	800
+营地灯	ying di deng	700
+露营车	lu ying che	800
+后备箱集市	hou bei xiang ji shi	700
+跳蚤市场	tiao zao shi chang	800
+文创	wen chuang	800
+文创雪糕	wen chuang xue gao	700
+盖章打卡	gai zhang da ka	800
+集章册	ji zhang ce	700
+博物馆打卡	bo wu guan da ka	800
+古镇游	gu zhen you	700
+自驾游	zi jia you	900
+房车游	fang che you	700
+川藏线	chuan zang xian	800
+滇藏线	dian zang xian	700
+青藏线	qing zang xian	700
+独库公路	du ku gong lu	800
+环湖骑行	huan hu qi xing	700
+夜骑	ye qi	800
+公路车	gong lu che	800
+山地车	shan di che	800
+折叠车	zhe die che	800
+小布	xiao bu	700
+骑行服	qi xing fu	700
+骑行头盔	qi xing tou kui	800
+锁鞋	suo xie	700
+功率计	gong lv ji	700
+码表	ma biao	800
+手冲咖啡	shou chong ka fei	800
+咖啡豆	ka fei dou	900
+浅烘	qian hong	700
+中烘	zhong hong	700
+深烘	shen hong	700
+水洗	shui xi	700
+日晒	ri shai	700
+蜜处理	mi chu li	700
+厌氧发酵	yan yang fa jiao	700
+耶加雪菲	ye jia xue fei	800
+瑰夏	gui xia	800
+曼特宁	man te ning	800
+蓝山	lan shan	800
+意式浓缩	yi shi nong suo	800
+拿铁	na tie	900
+摩卡	mo ka	800
+玛奇朵	ma qi duo	800
+阿芙佳朵	a fu jia duo	700
+生酪拿铁	sheng lao na tie	800
+丝绒拿铁	si rong na tie	700
+茶拿铁	cha na tie	700
+抹茶拿铁	mo cha na tie	800
+原叶鲜奶茶	yuan ye xian nai cha	800
+轻乳茶	qing ru cha	800
+果茶	guo cha	800
+霸气橙子	ba qi cheng zi	700
+芝芝莓莓	zhi zhi mei mei	700
+芋泥啵啵	yu ni bo bo	700
+烤地瓜	kao di gua	800
+围炉烤红薯	wei lu kao hong shu	700
+热红酒	re hong jiu	800
+煮红酒	zhu hong jiu	700
+便利店调酒	bian li dian tiao jiu	700
+微醺之夜	wei xun zhi ye	700
+特调	te tiao	800
+无酒精特调	wu jiu jing te tiao	700
+#

@@ -1,0 +1,224 @@
+# chaoset 中文互联网分类词库 - 现代科技与数码AI
+# 说明：大模型、人工智能算法、数码硬件设备与平台科技新词
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+提示词	ti shi ci	1000
+算力	suan li	1000
+智能体	zhi neng ti	900
+知识库	zhi shi ku	900
+向量数据库	xiang liang shu ju ku	800
+微调	wei tiao	800
+量化	liang hua	800
+蒸馏	zheng liu	700
+跑分	pao fen	800
+投屏	tou ping	800
+刷机	shua ji	700
+越狱	yue yu	700
+极客	ji ke	700
+固件	gu jian	800
+降噪	jiang zao	800
+超频	chao pin	700
+功耗	gong hao	800
+续航	xu hang	900
+堆料	dui liao	700
+散热	san re	800
+水冷	shui leng	700
+折叠屏	zhe die ping	800
+生产力	sheng chan li	900
+开源模型	kai yuan mo xing	800
+闭源模型	bi yuan mo xing	700
+多模态	duo mo tai	900
+强化学习	qiang hua xue xi	800
+自动生成	zi dong sheng cheng	800
+智能助手	zhi neng zhu shou	800
+神经渲染	shen jing xuan ran	600
+机器视觉	ji qi shi jue	800
+自然语言	zi ran yu yan	800
+对话系统	dui hua xi tong	800
+深度模型	shen du mo xing	700
+卷积	juan ji	700
+神经网络	shen jing wang luo	800
+预训练	yu xun lian	800
+提示工程	ti shi gong cheng	800
+智能家居	zhi neng jia ju	1200
+新能源汽车	xin neng yuan qi che	1500
+自动驾驶	zi dong jia shi	1200
+移动支付	yi dong zhi fu	1500
+在线教育	zai xian jiao yu	1200
+在线学习	zai xian xue xi	700
+大模型	da mo xing	1500
+开放平台	kai fang ping tai	1000
+用户体验	yong hu ti yan	1200
+手机支付	shou ji zhi fu	1000
+扫一扫	sao yi sao	1200
+健康码	jian kang ma	3000
+行程码	xing cheng ma	2000
+微信支付	wei xin zhi fu	3000
+移动互联网	yi dong hu lian wang	900
+视频通话	shi pin tong hua	900
+刷脸支付	shua lian zhi fu	600
+智能音箱	zhi neng yin xiang	600
+智能客服	zhi neng ke fu	600
+智慧城市	zhi hui cheng shi	700
+数字经济	shu zi jing ji	900
+在线会议	zai xian hui yi	800
+互联网医院	hu lian wang yi yuan	600
+数字化转型	shu zi hua zhuan xing	700
+碳中和	tan zhong he	900
+新能源	xin neng yuan	900
+芯片	xin pian	800
+半导体	ban dao ti	800
+传感器	chuan gan qi	600
+无人机	wu ren ji	700
+机器人	ji qi ren	800
+电动车	dian dong che	800
+充电桩	chong dian zhuang	600
+蓝牙	lan ya	700
+智能手机	zhi neng shou ji	900
+平板电脑	ping ban dian nao	700
+云盘	yun pan	600
+浏览器	liu lan qi	700
+视频会议	shi pin hui yi	800
+网盘	wang pan	700
+云计算	yun ji suan	900
+区块链	qu kuai lian	1000
+元宇宙	yuan yu zhou	800
+虚拟现实	xu ni xian shi	700
+机器学习	ji qi xue xi	900
+深度学习	shen du xue xi	800
+语音识别	yu yin shi bie	700
+人脸识别	ren lian shi bie	700
+操作系统	cao zuo xi tong	800
+拼多多	pin duo duo	2000
+饿了么	e le me	1500
+苹果手机	ping guo shou ji	1500
+特斯拉	te si la	900
+蔚来	wei lai	500
+华为	hua wei	1200
+小米	xiao mi	1200
+小红书	xiao hong shu	1500
+滴滴	di di	1500
+智能座舱	zhi neng zuo cang	800
+车机系统	che ji xi tong	800
+高阶智驾	gao jie zhi jia	800
+激光雷达	ji guang lei da	800
+纯视觉	chun shi jue	700
+智驾领航	zhi jia ling hang	700
+自动泊车	zi dong bo che	800
+遥控泊车	yao kong bo che	700
+哨兵模式	shao bing mo shi	800
+动能回收	dong neng hui shou	700
+单踏板	dan ta ban	700
+零百加速	ling bai jia su	800
+超充站	chao chong zhan	700
+无线充电	wu xian chong dian	800
+反向充电	fan xiang chong dian	700
+刀片电池	dao pian dian chi	800
+三元锂	san yuan li	700
+磷酸铁锂	lin suan tie li	700
+固态电池	gu tai dian chi	800
+超算中心	chao suan zhong xin	700
+智算中心	zhi suan zhong xin	700
+光刻机	guang ke ji	800
+晶圆代工	jing yuan dai gong	700
+先进封装	xian jin feng zhuang	700
+氮化镓	dan hua jia	700
+充电头	chong dian tou	800
+扩展坞	kuo zhan wu	800
+机械键盘	ji xie jian pan	800
+热插拔	re cha ba	800
+客制化	ke zhi hua	800
+麻将音	ma jiang yin	700
+石子音	shi zi yin	700
+高刷屏	gao shua ping	800
+护眼屏	hu yan ping	800
+高频调光	gao pin tiao guang	700
+杜比全景声	du bi quan jing sheng	700
+空间音频	kong jian yin pin	800
+主动降噪	zhu dong jiang zao	800
+通透模式	tong tou mo shi	800
+骨传导	gu chuan dao	700
+开放式耳机	kai fang shi er ji	700
+智能手表	zhi neng shou biao	800
+智能眼镜	zhi neng yan jing	800
+空间计算	kong jian ji suan	800
+手势追踪	shou shi zhui zong	700
+眼动追踪	yan dong zhui zong	700
+云原生	yun yuan sheng	800
+微服务	wei fu wu	800
+边缘计算	bian yuan ji suan	800
+车机互联	che ji hu lian	800
+多屏协同	duo ping xie tong	800
+一碰传	yi peng chuan	700
+便携屏	bian xie ping	700
+墨水屏	mo shui ping	800
+电纸书	dian zhi shu	800
+人体工学椅	ren ti gong xue yi	800
+升降桌	sheng jiang zhuo	800
+协同办公	xie tong ban gong	800
+在线文档	zai xian wen dang	800
+飞书	fei shu	800
+钉钉	ding ding	800
+企业微信	qi ye wei xin	800
+生成式	sheng cheng shi	800
+生成式模型	sheng cheng shi mo xing	800
+多模态模型	duo mo tai mo xing	800
+文生图	wen sheng tu	900
+文生视频	wen sheng shi pin	900
+图生图	tu sheng tu	800
+视频生成	shi pin sheng cheng	800
+基座模型	ji zuo mo xing	800
+垂直模型	chui zhi mo xing	800
+行业大模型	hang ye da mo xing	800
+涌现	yong xian	800
+涌现能力	yong xian neng li	800
+消除幻觉	xiao chu huan jue	800
+检索增强	jian suo zeng qiang	800
+上下文	shang xia wen	900
+长文本	chang wen ben	800
+推理成本	tui li cheng ben	800
+吞吐量	tun tu liang	800
+首字延迟	shou zi yan chi	800
+蒸馏模型	zheng liu mo xing	800
+量化加速	liang hua jia su	800
+显存占用	xian cun zhan yong	800
+离线推理	li xian tui li	800
+端侧推理	duan ce tui li	800
+本地部署	ben di bu shu	900
+私有化部署	si you hua bu shu	800
+算力集群	suan li ji qun	800
+智算集群	zhi suan ji qun	800
+高速互联	gao su hu lian	800
+光模块	guang mo kuai	800
+液冷	ye leng	800
+能效比	neng xiao bi	800
+绿色算力	lv se suan li	700
+算力券	suan li quan	700
+具身智能	ju shen zhi neng	900
+人形机器人	ren xing ji qi ren	900
+机械臂	ji xie bi	800
+灵巧手	ling qiao shou	800
+减速器	jian su qi	800
+伺服电机	si fu dian ji	800
+机器狗	ji qi gou	800
+四足机器人	si zu ji qi ren	800
+外骨骼	wai gu ge	800
+脑机接口	nao ji jie kou	900
+侵入式	qin ru shi	800
+非侵入式	fei qin ru shi	800
+生物传感器	sheng wu chuan gan qi	800
+基因编辑	ji yin bian ji	800
+量子计算	liang zi ji suan	900
+量子通信	liang zi tong xin	800
+卫星通信	wei xing tong xin	900
+直连卫星	zhi lian wei xing	800
+卫星通话	wei xing tong hua	800
+星链	xing lian	800
+商业航天	shang ye hang tian	800
+火箭回收	huo jian hui shou	800
+发射场	fa she chang	800
+空间站	kong jian zhan	900
+天宫	tian gong	900
+探月	tan yue	800
+火星探测	huo xing tan ce	800
+深空探测	shen kong tan ce	800

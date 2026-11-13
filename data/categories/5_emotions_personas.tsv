@@ -1,0 +1,132 @@
+# chaoset 中文互联网分类词库 - 情绪心理与人设标签
+# 说明：心理状态、情绪共鸣、当代青年社交人设与生活方式词汇
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+情绪价值	qing xu jia zhi	900
+恋爱脑	lian ai nao	900
+事业脑	shi ye nao	700
+社恐	she kong	900
+社牛	she niu	900
+社死	she si	900
+脆皮大学生	cui pi da xue sheng	700
+普信男	pu xin nan	800
+普信女	pu xin nv	700
+绿茶婊	lv cha biao	700
+暖男	nuan nan	800
+直男	zhi nan	900
+直女	zhi nv	700
+直男癌	zhi nan ai	700
+戏精	xi jing	800
+咸鱼	xian yu	800
+佛系	fo xi	800
+搞钱女孩	gao qian nv hai	600
+精神内耗	jing shen nei hao	800
+碎了	sui le	700
+心态崩了	xin tai beng le	800
+走心	zou xin	800
+治愈系	zhi yu xi	700
+解压	jie ya	800
+空巢青年	kong chao qing nian	600
+孤勇者	gu yong zhe	700
+摆烂人	bai lan ren	700
+伤不起	shang bu qi	700
+裂开	lie kai	800
+破防了	po fang le	800
+暴风吸入	bao feng xi ru	700
+救命	jiu ming	800
+救命啊	jiu ming a	700
+我酸了	wo suan le	700
+柠檬树	ning meng shu	600
+破防	po fang	600
+躺平	tang ping	800
+预制菜	yu zhi cai	600
+讨好型人格	tao hao xing ren ge	800
+回避型依恋	hui bi xing yi lian	700
+假装坚强	jia zhuang jian qiang	700
+情绪内耗	qing xu nei hao	800
+精神状态	jing shen zhuang tai	800
+精神稳定	jing shen wen ding	800
+发疯日常	fa feng ri chang	700
+疯批美人	feng pi mei ren	700
+病娇	bing jiao	700
+白切黑	bai qie hei	700
+黑切白	hei qie bai	700
+天然呆	tian ran dai	700
+爹系男友	die xi nan you	700
+妈系女友	ma xi nv you	700
+小狗系	xiao gou xi	700
+猫系	mao xi	700
+钓系美人	diao xi mei ren	700
+深情男二	shen qing nan er	700
+海王	hai wang	800
+鱼塘管理	yu tang guan li	700
+万年备胎	wan nian bei tai	700
+舔狗日记	tian gou ri ji	700
+单身贵族	dan shen gui zu	800
+母胎单身	mu tai dan shen	800
+孤寡老人	gu gua lao ren	700
+孤独终老	gu du zhong lao	700
+赛博孤儿	sai bo gu er	600
+心态平稳	xin tai ping wen	700
+佛系青年	fo xi qing nian	800
+躺平青年	tang ping qing nian	800
+摆烂大师	bai lan da shi	700
+拖延症晚期	tuo yan zheng wan qi	800
+熬夜冠军	ao ye guan jun	800
+朋克养生	peng ke yang sheng	700
+啤酒泡枸杞	pi jiu pao gou qi	700
+养生达人	yang sheng da ren	700
+早睡早起	zao shui zao qi	800
+控糖	kong tang	800
+减脂	jian zhi	800
+增肌	zeng ji	800
+容貌焦虑	rong mao jiao lv	800
+身材焦虑	shen cai jiao lv	800
+年龄焦虑	nian ling jiao lv	800
+同辈压力	tong bei ya li	800
+滤镜破碎	lv jing po sui	700
+人间清醒	ren jian qing xing	800
+放过自己	fang guo zi ji	800
+与自己和解	yu zi ji he jie	800
+焦虑型	jiao lv xing	800
+述情障碍	shu qing zhang ai	700
+精神美丽	jing shen mei li	700
+疯批	feng pi	800
+盐系	yan xi	800
+甜系	tian xi	800
+姬圈	ji quan	700
+弯男	wan nan	700
+纯直男	chun zhi nan	800
+渣男	zha nan	900
+渣女	zha nv	900
+养鱼	yang yu	800
+鱼塘	yu tang	800
+备胎	bei tai	900
+舔狗	tian gou	900
+舔到最后	tian dao zui hou	800
+一无所有	yi wu suo you	800
+单身犬	dan shen quan	700
+单身狗	dan shen gou	900
+万年单身	wan nian dan shen	800
+孤独患者	gu du huan zhe	800
+四不青年	si bu qing nian	700
+焦虑症	jiao lv zheng	800
+抑郁症	yi yu zheng	800
+强迫症	qiang po zheng	900
+拖延症	tuo yan zheng	900
+熬夜伤身	ao ye shang shen	700
+养生朋克	yang sheng peng ke	700
+早睡早起好	zao shui zao qi hao	700
+戒糖	jie tang	800
+去魅	qu mei	800
+幻灭	huan mie	800
+治愈瞬间	zhi yu shun jian	800
+暖心瞬间	nuan xin shun jian	800
+释怀	shi huai	800
+终于释怀	zhong yu shi huai	800
+情绪稳定	qing xu wen ding	900
+情绪失控	qing xu shi kong	800
+放飞自我	fang fei zi wo	800
+重塑自我	chong su zi wo	800
+自我疗愈	zi wo liao yu	800
+接纳自己	jie na zi ji	800

@@ -611,3 +611,60 @@ func TestCommonDictDiaoSingleQuality(t *testing.T) {
 		t.Fatalf("屌应按常用度排序（掉/调 在前），实际位次: %v", pos)
 	}
 }
+
+// TestCommonDictInternetSlang 验证常见中文互联网词组与网络特有字能够正常候选出词。
+func TestCommonDictInternetSlang(t *testing.T) {
+	d := mustCommonDict(t)
+	s := NewSession(d, nil)
+
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{"xianyanbao", "显眼包"},
+		{"juejuezi", "绝绝子"},
+		{"zundujiadu", "尊嘟假嘟"},
+		{"dianzizhacai", "电子榨菜"},
+		{"moyu", "摸鱼"},
+		{"funeng", "赋能"},
+		{"bihuan", "闭环"},
+		{"kelidu", "颗粒度"},
+		{"yijiansanlian", "一键三连"},
+		{"chigua", "吃瓜"},
+		{"kejin", "氪金"},
+		{"ouhuang", "欧皇"},
+		{"feiqiu", "非酋"},
+		{"shesi", "社死"},
+		{"shekong", "社恐"},
+		{"qingxujiazhi", "情绪价值"},
+		{"tishici", "提示词"},
+		{"suanli", "算力"},
+		{"heishenhua", "黑神话"},
+		{"tianmingren", "天命人"},
+		{"shengyenatie", "生椰拿铁"},
+		{"weiluzhucha", "围炉煮茶"},
+		{"wuhuqifei", "芜湖起飞"},
+		{"saibopengke", "赛博朋克"},
+		{"bengbuzhule", "蚌埠住了"},
+		{"gongdejiayi", "功德加一"},
+		{"mei", "槑"},
+		{"biao", "嫑"},
+		{"ruo", "叒"},
+		{"da", "龘"},
+	}
+
+	for _, tc := range testCases {
+		s.Reset()
+		all := allCandidates(s, mustComp(s, tc.input))
+		found := false
+		for _, c := range all {
+			if c.Text == tc.expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("输入 %q 候选列表应包含 %q，实际前 6 选: %v", tc.input, tc.expected, firstTexts(all, 6))
+		}
+	}
+}
