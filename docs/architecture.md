@@ -79,7 +79,8 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | :--- | :--- | :--- | :--- |
 | `win32.cpp` | DLL 生命周期编排：ChaosetFactory、ChaosetRunUi 导出、DllMain/DllGetClassObject/DllCanUnloadNow、g_liveObjects 存活计数 | 全部 Windows 壳模块（含 tip.hpp） | ≤1200（当前 129；≤2000 目标已达成） |
 | `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink）、kVk*/kPageSize 常量、mingw 缺失的 ITfTextInputProcessorEx 补声明 | candidate_window, mode_toast, tip_thread, tip_ids, shell_worker, winutil, config, transport, daemon, diagnostics, core | ≤500 |
-| `tip_core.cpp` | TIP 生命周期/激活状态机/中英模式与激活档案/前台钩子/worker 回投入口 | tip.hpp | ≤1100（当前 1088，接近上限；后续改动先按职责拆分） |
+| `tip_core.cpp` | TIP 生命周期/激活状态机/中英模式/前台钩子/worker 回投入口 | tip.hpp | ≤1100（当前 ~955） |
+| `tip_profiles.cpp` | TSF 信号 sink：ITfThreadFocusSink/ITfActiveLanguageProfileNotifySink/ITfInputProcessorProfileActivationSink（键盘布局切换只有它通知，托盘隐藏权威事件）的挂载与回调、isActiveTip 激活档案查询 | tip.hpp | ≤300 |
 | `tip_keys.cpp` | ITfKeyEventSink 五入口、Shift 状态机、修饰键/键位映射、wouldHandle/handleKey | tip.hpp | ≤1100 |
 | `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾 | tip.hpp, core | ≤900 |
 | `tip_candidates.cpp` | 候选点选/删除/翻页、showToast、设置窗入口、联想面板与 CandidateWindowHost 转发 | tip.hpp | ≤500 |

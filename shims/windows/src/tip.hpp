@@ -115,6 +115,7 @@ class ChaosetTIP : public chaoset::win::ITfTextInputProcessorEx,
                   public ITfCompositionSink,
                   public ITfThreadFocusSink,
                   public ITfActiveLanguageProfileNotifySink,
+                  public ITfInputProcessorProfileActivationSink,
                   public chaoset::win::CandidateWindowHost,
                   public chaoset::win::TipThreadSink {
 public:
@@ -136,6 +137,14 @@ public:
     // 宿主在用户切走本输入法时常常不调用 Deactivate，靠它立即收口。
     HRESULT STDMETHODCALLTYPE OnActivated(REFCLSID clsid, REFGUID guidProfile,
                                           BOOL fActivated) override;
+    // ITfInputProcessorProfileActivationSink（2026-11-13 托盘常显收口）：上面的
+    // sink 不通知「切到键盘布局」（美式键盘等，TF_PROFILETYPE_KEYBOARDLAYOUT、
+    // clsid=CLSID_NULL），此前该路径托盘永久残留。本 sink 覆盖键盘布局 + 其它
+    // profile 类型，且 TF_IPSINK_FLAG_ACTIVE 明确区分激活/失活。
+    HRESULT STDMETHODCALLTYPE OnActivated(DWORD dwProfileType, LANGID langid,
+                                          REFCLSID clsid, REFGUID catid,
+                                          REFGUID guidProfile, HKL hkl,
+                                          DWORD dwFlags) override;
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                             BOOL* pfEaten) override;
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
@@ -338,12 +347,15 @@ private:
     ITfThreadMgr* tm_ = nullptr;
     TfClientId clientId_ = 0;
     bool keySinkAdvised_ = false;
-    // TSF 两个 sink 的 ITfSource cookie（Activate 里 AdviseSink 保存，
+    // TSF 三个 sink 的 ITfSource cookie（Activate 里 AdviseSink 保存，
     // Deactivate/析构成对 UnadviseSink；幂等、初始为无效 cookie）：
     //   threadFocusCookie_    ITfThreadFocusSink（线程 UI 焦点）
     //   languageProfileCookie_ ITfActiveLanguageProfileNotifySink（输入法切换）
+    //   inputProcessorCookie_ ITfInputProcessorProfileActivationSink（输入法/键盘
+    //     布局激活档案切换；键盘布局切换只有它会通知，2026-11-13 托盘常显收口）
     DWORD threadFocusCookie_ = TF_INVALID_COOKIE;
     DWORD languageProfileCookie_ = TF_INVALID_COOKIE;
+    DWORD inputProcessorCookie_ = TF_INVALID_COOKIE;
     void adviseThreadSinks();
     void unadviseThreadSinks();
 

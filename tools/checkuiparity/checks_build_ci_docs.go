@@ -70,6 +70,10 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/win32.cpp", 1200},
 	{"shims/windows/src/tip.hpp", 500},
 	{"shims/windows/src/tip_core.cpp", 1100},
+	// tip_profiles.cpp：2026-11-13 从 tip_core.cpp 按「TSF 信号 sink 与激活档案」
+	// 职责拆出（键盘布局切换只有 ITfInputProcessorProfileActivationSink 通知，
+	// 托盘常显收口新增）。
+	{"shims/windows/src/tip_profiles.cpp", 300},
 	{"shims/windows/src/tip_keys.cpp", 1100},
 	{"shims/windows/src/tip_composition.cpp", 900},
 	{"shims/windows/src/tip_candidates.cpp", 500},
