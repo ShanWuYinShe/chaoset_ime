@@ -93,6 +93,25 @@ func TestDictHotValidAndMerged(t *testing.T) {
 	checkSupplementTable(t, filepath.Join("..", "data", "dict_hot.tsv"), "dict_hot")
 }
 
+func TestCategoriesValidAndMerged(t *testing.T) {
+	catDir := filepath.Join("..", "data", "categories")
+	entries, err := os.ReadDir(catDir)
+	if err != nil {
+		t.Fatalf("读取分类词库目录失败: %v", err)
+	}
+	var count int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
+			continue
+		}
+		checkSupplementTable(t, filepath.Join(catDir, e.Name()), e.Name())
+		count++
+	}
+	if count < 5 {
+		t.Fatalf("分类词库文件数偏少: %d（期望至少 5 组分类）", count)
+	}
+}
+
 func checkSupplementTable(t *testing.T, path, name string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

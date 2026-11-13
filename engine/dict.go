@@ -637,7 +637,14 @@ func (s *parseStats) skip(lineNo int, reason string) {
 // 20、词频压缩到 1..99（用户学习权重远高于静态词频，压缩不影响「越用越
 // 顺手」的调频效果）。
 func parseInto(d *Dictionary, r io.Reader, strict bool) (st parseStats, err error) {
-	sc := bufio.NewScanner(r)
+	br := bufio.NewReader(r)
+	if head, _ := br.Peek(4); IsBinaryDict(head) {
+		if err := ReadBinaryDict(br, d); err != nil {
+			return st, err
+		}
+		return st, nil
+	}
+	sc := bufio.NewScanner(br)
 	lineNo := 0
 	for sc.Scan() {
 		lineNo++

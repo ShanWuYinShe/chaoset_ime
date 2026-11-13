@@ -416,3 +416,45 @@ func TestRefreshSinglesUsesShareWithoutFloor(t *testing.T) {
 		t.Fatalf("补充字屌应按手工词频入库（%d），实际 %v", manualFreq(5000), got)
 	}
 }
+
+func TestMergeManualPreservesBaseAndAddsNewWords(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.tsv")
+	if err := os.WriteFile(base, []byte(""+
+		"# header\n"+
+		"的\tde\t80\n"+
+		"经常\tjing chang\t70\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hot := filepath.Join(dir, "hot.tsv")
+	if err := os.WriteFile(hot, []byte("显眼包\txian yan bao\t800\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(dir, "extra.tsv")
+	if err := os.WriteFile(extra, []byte("摸鱼\tmo yu\t1000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.tsv")
+	o := options{
+		basePath:  base,
+		hotPath:   hot,
+		extraPath: extra,
+		outPath:   out,
+	}
+	if err := runMergeManual(o); err != nil {
+		t.Fatalf("增量合并失败: %v", err)
+	}
+	d := parseDict(t, out)
+	if got := d.entries["的"]["de"]; got != 80 {
+		t.Fatalf("基线单字「的」应保留词频 80，实际 %d", got)
+	}
+	if got := d.entries["经常"]["jing chang"]; got != 70 {
+		t.Fatalf("基线多字词「经常」应保留词频 70，实际 %d", got)
+	}
+	if got := d.entries["显眼包"]["xian yan bao"]; got != manualFreq(800) {
+		t.Fatalf("新热词「显眼包」词频应为 %d，实际 %d", manualFreq(800), got)
+	}
+	if got := d.entries["摸鱼"]["mo yu"]; got != manualFreq(1000) {
+		t.Fatalf("补充词「摸鱼」词频应为 %d，实际 %d", manualFreq(1000), got)
+	}
+}

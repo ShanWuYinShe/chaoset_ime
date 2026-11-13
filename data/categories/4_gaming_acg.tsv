@@ -1,0 +1,274 @@
+# chaoset 中文互联网分类词库 - 游戏电竞与二次元ACG
+# 说明：电子竞技、战术术语、抽卡养成游戏以及动漫ACG文化流行词
+# 格式：词 \t 拼音（空格分隔，无声调，ü 以 v 输入） \t 权重
+#
+偷家	tou jia	800
+偷塔	tou ta	700
+送人头	song ren tou	800
+暴击	bao ji	900
+破甲	po jia	700
+残血	can xue	900
+满血	man xue	800
+补刀	bu dao	800
+顺风局	shun feng ju	700
+逆风局	ni feng ju	700
+翻盘	fan pan	800
+绝杀	jue sha	800
+落地成盒	luo di cheng he	800
+跑毒	pao du	800
+苟分	gou fen	700
+氪金	ke jin	1000
+抽卡	chou ka	900
+保底	bao di	900
+欧皇	ou huang	900
+非酋	fei qiu	800
+肝帝	gan di	800
+上分	shang fen	900
+掉分	diao fen	800
+炸鱼	zha yu	700
+虐菜	nve cai	800
+团灭	tuan mie	800
+封号	feng hao	800
+穿模	chuan mo	700
+锁血	suo xue	700
+挂逼	gua bi	700
+掉段	diao duan	700
+代练	dai lian	800
+陪玩	pei wan	800
+萌新	meng xin	900
+大佬	da lao	1000
+巨佬	ju lao	700
+连招	lian zhao	800
+大招	da zhao	900
+追番	zhui fan	800
+补番	bu fan	700
+番剧	fan ju	800
+塌房	ta fang	800
+厨力	chu li	600
+产粮	chan liang	600
+磕糖	ke tang	700
+嗑糖	ke tang	700
+发糖	fa tang	700
+刀子	dao zi	700
+现充	xian chong	600
+傲娇	ao jiao	700
+呆萌	dai meng	700
+腹黑	fu hei	700
+治愈番	zhi yu fan	600
+致郁	zhi yu	600
+战力	zhan li	800
+联机	lian ji	800
+单机	dan ji	800
+手游	shou you	900
+端游	duan you	800
+页游	ye you	700
+乙女	yi nv	700
+网络游戏	wang luo you xi	600
+电子竞技	dian zi jing ji	700
+电竞	dian jing	800
+二次元	er ci yuan	700
+绝地求生	jue di qiu sheng	800
+吃鸡	chi ji	900
+今晚吃鸡	jin wan chi ji	800
+空投	kong tou	800
+舔包	tian bao	800
+盒子精	he zi jing	700
+伏地魔	fu di mo	800
+压枪	ya qiang	800
+甩狙	shuai ju	700
+瞬狙	shun ju	700
+盲狙	mang ju	700
+爆头	bao tou	800
+预瞄	yu miao	700
+封烟	feng yan	800
+闪光弹	shan guang dan	800
+红点	hong dian	800
+全息	quan xi	800
+八倍镜	ba bei jing	800
+对线	dui xian	800
+控线	kong xian	800
+推线	tui xian	800
+兵线	bing xian	800
+补兵	bu bing	800
+单杀	dan sha	800
+双杀	shuang sha	800
+三杀	san sha	800
+四杀	si sha	800
+五杀	wu sha	900
+超神	chao shen	900
+辅助	fu zhu	900
+射手	she shou	900
+法师	fa shi	900
+刺客	ci ke	900
+坦克	tan ke	900
+打野	da ye	900
+抓人	zhua ren	800
+反野	fan ye	800
+控龙	kong long	800
+开大	kai da	800
+闪现	shan xian	900
+净化	jing hua	800
+惩戒	cheng jie	800
+引燃	yin ran	800
+治疗	zhi liao	800
+护盾	hu dun	800
+霸体	ba ti	800
+击飞	ji fei	800
+击退	ji tui	800
+眩晕	xuan yun	800
+沉默	chen mo	800
+禁锢	jin gu	800
+减速	jian su	800
+移速	yi su	800
+攻速	gong su	800
+暴击率	bao ji lv	800
+吸血	xi xue	800
+真实伤害	zhen shi shang hai	800
+法术伤害	fa shu shang hai	800
+物理伤害	wu li shang hai	800
+冷却时间	leng que shi jian	800
+蓝条	lan tiao	800
+血条	xue tiao	800
+掉血	diao xue	800
+回血	hui xue	800
+泉水	quan shui	800
+回城	hui cheng	800
+守塔	shou ta	800
+拆塔	chai ta	800
+水晶	shui jing	800
+点水晶	dian shui jing	800
+偷水晶	tou shui jing	800
+越塔强杀	yue ta qiang sha	800
+拉扯	la che	800
+走位	zou wei	800
+蹲草	dun cao	800
+排位赛	pai wei sai	900
+巅峰赛	dian feng sai	800
+大乱斗	da luan dou	800
+觉醒	jue xing	800
+命座	ming zuo	800
+专武	zhuan wu	800
+圣遗物	sheng yi wu	800
+词条	ci tiao	800
+抽歪了	chou wai le	700
+大保底	da bao di	800
+小保底	xiao bao di	800
+十连抽	shi lian chou	800
+单抽	dan chou	800
+出金	chu jin	800
+双黄蛋	shuang huang dan	700
+攒原石	zan yuan shi	700
+原石	yuan shi	800
+仓鼠党	cang shu dang	700
+零氪	ling ke	800
+微氪	wei ke	800
+重氪	zhong ke	800
+白嫖	bai piao	800
+白嫖党	bai piao dang	800
+月卡	yue ka	800
+月卡党	yue ka dang	800
+炸服	zha fu	700
+停机维护	ting ji wei hu	700
+兑换码	dui huan ma	800
+物理引擎	wu li yin qing	800
+卡关	ka guan	800
+通关	tong guan	800
+一周目	yi zhou mu	800
+全收集	quan shou ji	800
+白金奖杯	bai jin jiang bei	700
+支线任务	zhi xian ren wu	800
+主线任务	zhu xian ren wu	800
+隐藏任务	yin cang ren wu	800
+彩蛋	cai dan	800
+伏笔	fu bi	800
+填坑	tian keng	800
+烂尾	lan wei	800
+剧透	ju tou	800
+剧透预警	ju tou yu jing	800
+纯爱党	chun ai dang	700
+治愈神作	zhi yu shen zuo	700
+催泪神作	cui lei shen zuo	700
+官配	guan pei	800
+磕死我了	ke si wo le	800
+太好磕了	tai hao ke le	800
+神仙太太	shen xian tai tai	700
+入坑	ru keng	800
+退坑	tui keng	800
+二刷	er shua	800
+黑神话	hei shen hua	900
+天命人	tian ming ren	800
+大圣	da sheng	900
+金箍棒	jin gu bang	900
+紧箍咒	jin gu zhou	800
+筋斗云	jin dou yun	800
+根器	gen qi	800
+广智	guang zhi	800
+虎先锋	hu xian feng	800
+黄风怪	huang feng guai	800
+二郎神	er lang shen	900
+哮天犬	xiao tian quan	800
+闪避	shan bi	900
+完美闪避	wan mei shan bi	800
+弹反	tan fan	800
+识破	shi po	800
+重棍	zhong gun	800
+劈棍	pi gun	800
+立棍	li gun	800
+戳棍	chuo gun	800
+定身法	ding shen fa	800
+安身法	an shen fa	700
+铜头铁臂	tong tou tie bi	800
+法宝	fa bao	900
+避火罩	bi huo zhao	800
+定风珠	ding feng zhu	800
+绣花针	xiu hua zhen	800
+芭蕉扇	ba jiao shan	800
+土地庙	tu di miao	800
+传火点	chuan huo dian	800
+魂类	hun lei	800
+魂系	hun xi	800
+魂游	hun you	800
+宫崎英高	gong qi ying gao	800
+动作游戏	dong zuo you xi	900
+角色扮演	jue se ban yan	900
+第一人称	di yi ren cheng	800
+第三人称	di san ren cheng	800
+开放世界	kai fang shi jie	900
+肉鸽	rou ge	800
+卡牌	ka pai	900
+牌佬	pai lao	800
+决斗	jue dou	800
+我的回合	wo de hui he	800
+抽牌	chou pai	800
+墓地	mu di	800
+陷阱卡	xian jing ka	800
+魔法卡	mo fa ka	800
+连锁	lian suo	800
+展开	zhan kai	800
+终场	zhong chang	800
+特殊召唤	te shu zhao huan	800
+融合召唤	rong he zhao huan	800
+同调召唤	tong tiao zhao huan	800
+超量召唤	chao liang zhao huan	800
+灵摆召唤	ling bai zhao huan	700
+链接召唤	lian jie zhao huan	800
+自走棋	zi zou qi	800
+吃鸡模式	chi ji mo shi	800
+沙盒游戏	sha he you xi	800
+建造模式	jian zao mo shi	800
+生存模式	sheng cun mo shi	800
+硬核玩家	ying he wan jia	800
+休闲玩家	xiu xian wan jia	800
+剧情党	ju qing dang	800
+强度党	qiang du dang	800
+颜值党	yan zhi dang	800
+收集党	shou ji dang	800
+图鉴全开	tu jian quan kai	800
+满级大佬	man ji da lao	800
+毕业装备	bi ye zhuang bei	800
+强力推荐	qiang li tui jian	800
+版本之子	ban ben zhi zi	800
+下水道	xia shui dao	800
+一代补丁	yi dai bu ding	700
+一代版本	yi dai ban ben	700
+一代神	yi dai shen	700

@@ -83,6 +83,8 @@ type options struct {
 	hotPath   string
 	reviewOut string
 	outPath   string
+	binPath   string
+	compile   bool
 
 	// basePath 非空时进入「单字刷新」模式：保留基线词库的多字词，
 	// 只按最新 pinyin-data/large_pinyin 重算单字读音与词频，并追加
@@ -141,6 +143,8 @@ func main() {
 	flag.StringVar(&o.hotPath, "hot", "", "现代/热词补充词表 data/dict_hot.tsv（必填）")
 	flag.StringVar(&o.reviewOut, "review-out", "", "补拼音人工校对清单输出路径（可选）")
 	flag.StringVar(&o.outPath, "o", "", "输出 TSV 路径（必填）")
+	flag.StringVar(&o.binPath, "bin", "", "同时输出紧凑二进制格式词库路径（.bin/CDB1，用于发布与极速加载）")
+	flag.BoolVar(&o.compile, "compile", false, "独立编译模式：将 -base 指定的 TSV 编译为 -o 指定的二进制词库")
 	flag.IntVar(&o.highfreqTop, "highfreqtop", 20000, "词频源里按词频取前 N 个词进入词表（高频用法）")
 	flag.Float64Var(&o.highfreqConf, "highfreqconf", 0.9, "高频用法词只用字读音统计补拼音时的最低置信度（低于此值不收录）")
 	flag.Float64Var(&o.freqGamma, "freqgamma", 1.15, "词频归一化后的幂次（>1 拉开高频差距；默认 1.15 由固定词表扫描定型，见 README）")
@@ -153,8 +157,14 @@ func main() {
 		os.Exit(2)
 	}
 	var err error
-	if o.basePath != "" {
-		err = runRefreshSingles(o)
+	if o.compile {
+		err = runCompile(o)
+	} else if o.basePath != "" {
+		if o.pinyinPath == "" && o.singlePath == "" && o.charfreqPath == "" {
+			err = runMergeManual(o)
+		} else {
+			err = runRefreshSingles(o)
+		}
 	} else {
 		err = run(o)
 	}
@@ -168,12 +178,21 @@ func validateOptions(o options) error {
 	if o.outPath == "" {
 		return fmt.Errorf("-o 必填")
 	}
+	if o.compile {
+		if o.basePath == "" {
+			return fmt.Errorf("-compile 模式需要 -base <input.tsv>")
+		}
+		return nil
+	}
 	if o.readingShare < 0 || o.readingShare > 1 {
 		return fmt.Errorf("-readingshare 必须在 0..1 之间")
 	}
 	if o.basePath != "" {
+		if o.pinyinPath == "" && o.singlePath == "" && o.charfreqPath == "" {
+			return nil
+		}
 		if o.pinyinPath == "" || o.singlePath == "" || o.charfreqPath == "" {
-			return fmt.Errorf("单字刷新模式需要 -pinyin / -single / -charfreq")
+			return fmt.Errorf("单字刷新模式需要 -pinyin / -single / -charfreq（手工补充表合并模式可全部留空）")
 		}
 		return nil
 	}
@@ -500,6 +519,11 @@ func run(o options) error {
 	sortEntries(entries)
 	if err := writeTSV(o.outPath, entries, o); err != nil {
 		return err
+	}
+	if o.binPath != "" {
+		if err := writeBin(o.binPath, entries); err != nil {
+			return err
+		}
 	}
 
 	multi := len(entries) - singleEntries
@@ -1570,8 +1594,93 @@ func runRefreshSingles(o options) error {
 	if err := writeTSV(o.outPath, entries, o); err != nil {
 		return err
 	}
+	if o.binPath != "" {
+		if err := writeBin(o.binPath, entries); err != nil {
+			return err
+		}
+	}
 	fmt.Printf("单字刷新完成：%d → %d 条（丢弃次读音 %d；补充词表新增 %d）\n",
 		len(baseMulti)+countSingles(baseSingles), len(entries), dropped, manualAdded)
+	return nil
+}
+
+// runMergeManual 在没有原始字频与拼音大表时，以现有词库为基线，
+// 保持基线单字与多字词不变，将 dict_extra / dict_hot 中的新词按手工词频追加合并。
+func runMergeManual(o options) error {
+	baseMulti, baseSingles, existing, err := readBaseDict(o.basePath)
+	if err != nil {
+		return err
+	}
+
+	var manualRows []manualRow
+	manualSingles := make(map[rune]int)
+	for _, path := range []string{o.extraPath, o.hotPath} {
+		if path == "" {
+			continue
+		}
+		rows, err := parseManualTable(path)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			manualRows = append(manualRows, r)
+			if len([]rune(r.word)) == 1 {
+				ch := []rune(r.word)[0]
+				if fr := manualFreq(r.weight); fr > manualSingles[ch] {
+					manualSingles[ch] = fr
+				}
+			}
+		}
+	}
+
+	entries := append([]entry(nil), baseMulti...)
+	chars := make([]rune, 0, len(baseSingles))
+	for ch := range baseSingles {
+		chars = append(chars, ch)
+	}
+	sort.Slice(chars, func(i, j int) bool { return chars[i] < chars[j] })
+	for _, ch := range chars {
+		cur := baseSingles[ch]
+		syls := make([]string, 0, len(cur))
+		for syl := range cur {
+			syls = append(syls, syl)
+		}
+		sort.Strings(syls)
+		for _, syl := range syls {
+			fr := cur[syl]
+			if mFr, ok := manualSingles[ch]; ok && mFr > fr {
+				fr = mFr
+			}
+			entries = append(entries, entry{word: string(ch), sylls: []string{syl}, freq: fr})
+		}
+	}
+
+	manualAdded := 0
+	for _, r := range manualRows {
+		key := r.word + "\x00" + strings.Join(r.sylls, " ")
+		if existing[key] {
+			continue
+		}
+		entries = append(entries, entry{
+			word:  r.word,
+			sylls: append([]string(nil), r.sylls...),
+			freq:  manualFreq(r.weight),
+		})
+		existing[key] = true
+		manualAdded++
+	}
+
+	sortEntries(entries)
+	if err := writeTSV(o.outPath, entries, o); err != nil {
+		return err
+	}
+	if o.binPath != "" {
+		if err := writeBin(o.binPath, entries); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("补充词表增量合并完成：%d 条（基线 %d 条；新增 %d 条）\n",
+		len(entries), len(baseMulti)+countSingles(baseSingles), manualAdded)
 	return nil
 }
 
@@ -1626,7 +1735,52 @@ func readBaseDict(path string) ([]entry, map[rune]map[string]int, map[string]boo
 }
 
 // writeTSV 写出三列 TSV；文件头按词频模式声明来源与许可，并附再生成命令。
+func runCompile(o options) error {
+	d, err := engine.LoadDictFiles([]string{o.basePath})
+	if err != nil {
+		return fmt.Errorf("加载源词库 %s 失败: %w", o.basePath, err)
+	}
+	f, err := os.Create(o.outPath)
+	if err != nil {
+		return fmt.Errorf("创建目标二进制词库 %s 失败: %w", o.outPath, err)
+	}
+	defer f.Close()
+	if err := engine.WriteBinaryDict(f, d.Entries()); err != nil {
+		return fmt.Errorf("写入二进制词库失败: %w", err)
+	}
+	fmt.Printf("已编译二进制词库 %s（共 %d 条）\n", o.outPath, d.Len())
+	return nil
+}
+
+func writeBin(path string, entries []entry) error {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("创建二进制词库 %s 失败: %w", path, err)
+	}
+	defer f.Close()
+	engEntries := make([]*engine.Entry, len(entries))
+	for i, e := range entries {
+		engEntries[i] = &engine.Entry{
+			Word:      e.word,
+			Syllables: e.sylls,
+			Freq:      e.freq,
+		}
+	}
+	if err := engine.WriteBinaryDict(f, engEntries); err != nil {
+		return fmt.Errorf("写入二进制词库 %s 失败: %w", path, err)
+	}
+	fmt.Printf("已写出二进制词库: %s（共 %d 条）\n", path, len(entries))
+	return nil
+}
+
 func writeTSV(path string, entries []entry, o options) error {
+
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -1680,18 +1834,30 @@ func writeTSV(path string, entries []entry, o options) error {
 		"#   kHanyuPinlu/kFrequency（Unicode License）或取得授权。",
 	)
 	if o.basePath != "" {
-		header = append(header,
-			"#",
-			"# 本次为单字读音质量刷新（-base）：多字词沿基线原样保留；单字读音按",
-			"#   pinyin-data + large_pinyin 占比重新筛选：首读音必留，其余读音占比",
-			fmt.Sprintf("#   < %g 的丢弃；词频 = Jun Da 字频 × 读音占比（无下限）；", o.readingShare),
-			"#   data/dict_extra.tsv / dict_hot.tsv 里基线尚未包含的新词按手工词频追加。",
-			"#",
-			"# 刷新命令（在仓库根目录）：",
-			"#   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \\",
-			"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
-			"#     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv",
-		)
+		if o.pinyinPath == "" && o.singlePath == "" && o.charfreqPath == "" {
+			header = append(header,
+				"#",
+				"# 本次为补充词表增量合并（-base）：基线词库条目原样保留；",
+				"#   data/dict_extra.tsv / dict_hot.tsv 里基线尚未包含的新词按手工词频追加。",
+				"#",
+				"# 合并命令（在仓库根目录）：",
+				"#   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \\",
+				"#     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv",
+			)
+		} else {
+			header = append(header,
+				"#",
+				"# 本次为单字读音质量刷新（-base）：多字词沿基线原样保留；单字读音按",
+				"#   pinyin-data + large_pinyin 占比重新筛选：首读音必留，其余读音占比",
+				fmt.Sprintf("#   < %g 的丢弃；词频 = Jun Da 字频 × 读音占比（无下限）；", o.readingShare),
+				"#   data/dict_extra.tsv / dict_hot.tsv 里基线尚未包含的新词按手工词频追加。",
+				"#",
+				"# 刷新命令（在仓库根目录）：",
+				"#   go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \\",
+				"#     -pinyin large_pinyin.txt -single pinyin.txt -charfreq hanzi_db.csv \\",
+				"#     -extra data/dict_extra.tsv -hot data/dict_hot.tsv -o data/dict_common.tsv",
+			)
+		}
 	} else {
 		header = append(header,
 			"#",
