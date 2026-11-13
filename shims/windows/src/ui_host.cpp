@@ -622,8 +622,9 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 KillTimer(hwnd, kUiHideTimerId);
                 if (g_uiTray != nullptr) g_uiTray->show(uiDisplayEnglish());
             } else if (pid != 0) {
-                // 用户切到其它输入法（active 0 现在只来自 TSF 的输入法失活通知与
-                // 按键复核兜底，见 tip_core.cpp 的 OnActivated/switchToInactiveProfile）：
+                // 用户切到其它输入法（active 0 现在只来自 TSF 档案信号：失活通知 /
+                // ITfInputProcessorProfileActivationSink / Deactivate 档案复核，统一收口
+                // switchToInactiveProfile，见 tip_profiles.cpp）：
                 // **唯一隐藏入口**。不按 owner 过滤——owner 进程可能刚退出（owner
                 // 已被清空）或不是当前前台进程，此时若仍要求 sender==owner，切走的
                 // active 0 会被丢弃、托盘残留。仍保留 300ms 防抖：同进程多 TIP 实例

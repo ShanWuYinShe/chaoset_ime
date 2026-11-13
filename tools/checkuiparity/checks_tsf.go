@@ -955,11 +955,11 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 				"%s：%s 的 bailOutIfInactive（约第 %d 行）未判 inputActive_（激活闸门失效）",
 				group, winShell, line))
 		}
-		// 每键复核激活档案：部分宿主切换输入法后不调用 Deactivate，只有这里
-		// 能保证「已经换到别的输入法后不再吃键/不再显示托盘」。
-		if !strings.Contains(code, "isActiveTip()") {
+		// 激活状态迁移只由 TSF 档案信号驱动（2026-11-13 用户决策：用对的通知）：
+		// 按键热路径只读本地 inputActive_，不得每键查询激活档案（GetActiveProfile）。
+		if strings.Contains(code, "isActiveTip()") {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 的 bailOutIfInactive（约第 %d 行）缺少 isActiveTip() 兜底（切输入法不调 Deactivate 的宿主会漏判）",
+				"%s：%s 的 bailOutIfInactive（约第 %d 行）出现 isActiveTip()——按键热路径不得查询激活档案（状态迁移只由 TSF 档案信号驱动）",
 				group, winShell, line))
 		}
 		// 托盘显示上报只放在 Activate/OnActivated/OnSetFocus 等事件入口，绝不放进
@@ -968,6 +968,7 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 			"retireUiCompletely", "candidateWnd_.hide", "toast_.hide",
 			"resetShiftTracking", "GetForegroundWindow",
 			"GetAsyncKeyState", "GetCursorPos", "PostMessageW", "postActiveReport",
+			"switchToInactiveProfile",
 		} {
 			if strings.Contains(code, bad) {
 				*problems = append(*problems, fmt.Sprintf(
@@ -1067,7 +1068,7 @@ func checkInactiveZeroSideEffects(fsys fs.FS, problems *[]string) {
 //     （写 HKCU）；Process 档托盘左键不反向改进程状态；
 //  5. owner 进程崩溃用 OpenProcess+RegisterWaitForSingleObject 事件清理
 //     （不是定时器 prune），且**只清 owner、不隐藏托盘**；
-//  6. 没有任何轮询定时器/心跳——切走信号只来自 TSF 事件与按键复核兜底；
+//  6. 没有任何轮询定时器/心跳——切走信号只来自 TSF 档案信号（激活/失活 sink 与 Deactivate 生命周期）；
 //  7. 文档必须记录新语义与边界（逐应用输入法/无 TSF 切走事件不轮询）。
 func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	const group = groupTrayActive
@@ -1218,8 +1219,8 @@ func checkTrayActiveLifecycle(fsys fs.FS, problems *[]string) {
 	//   OnActivated(CLSID_ChaosetTIP, FALSE)（TSF 输入法失活通知，权威事件）
 	//   OnActivated(DWORD…)（ITfInputProcessorProfileActivationSink：键盘布局切换
 	//     只有它通知——ITfActiveLanguageProfileNotifySink 不覆盖布局，是托盘常显根因）
-	//   switchToInactiveProfile（按键/档案复核发现已不是本输入法的统一收口，
-	//     前两条与 Deactivate 的档案复核都汇到这里）
+	//   switchToInactiveProfile（档案 sink 确认切走的统一收口，前两条与
+	//     Deactivate 的档案复核都汇到这里）
 	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnActivated("); !ok {
 		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 OnActivated 定义", group, winShell))
 	} else if !strings.Contains(stripCppComments(body), "switchToInactiveProfile()") {

@@ -17,6 +17,11 @@
   `switchToInactiveProfile`。sink 组按职责拆出到新模块 `tip_profiles.cpp`（模块地图
   与 checker 预算同步登记），tsf.log 增加 sink 挂载与首个档案事件的一次性日志便于
   真机排障；`checkuiparity` 托盘/零阻塞契约同步更新断言。
+- **按键热路径去掉每键激活档案查询（用户决策：状态迁移只用对的通知）**：`bailOutIfInactive`
+  不再每键 `GetActiveProfile`，只读本地 `inputActive_` 闸门（非激活整键放行、零动作）；
+  `inputActive_` 的迁移完全由 TSF 档案信号驱动——失活通知 / `ITfInputProcessorProfileActivationSink`
+  （键盘布局切换只有它通知）/ `Deactivate` 档案复核。通知齐备后每键复核是通知出现前的旧兜底
+  （a95f2c6），已由 0273303 起的通知驱动状态迁移取代；checker 同步改为禁止按键热路径查询档案。
 
 ## v0.3.21（2026-11-13）
 
