@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.3.21（2026-11-13）
+
+本版本为**模块重构进行中**的 patch 发版（macOS/Linux 设置窗接 `chaoset-settingsctl` 仍在进行，重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.20` 之后 8 个提交：修复三个用户反馈 issue——Windows 删除候选词后中英状态/数字选词异常（issue #1）、候选窗方向键改上/下翻页与左/右预选 + 上下双翻页箭头（issue #2，三端）、托盘中英图标「系统选中本输入法即显示」与输入焦点解耦（issue #3）；macOS 输入源登记幂等（重复安装/升级不再累积重复 Chaoset 条目）；右键「删除该词」成功改为静默刷新。另含 Linux ibus E2E 稳定性修复（dbus-monitor 启动竞态）与 CI 门禁/文档口径修正。
+
 - **修复 macOS 重复安装/升级在系统设置里累积多行「Chaoset」输入源**：根因是 TIS 没有
   反注册 API——同一 bundle 每次调用 `TISRegisterInputSource` 都会在**当前登录会话**的
   输入源表追加一条记录，只有注销重登才能重建表；而 GUI 安装器（Setup.app）每次
