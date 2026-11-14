@@ -535,62 +535,11 @@ TSV，每行三列（`#` 开头为注释）：
 靠 500×次数×时间衰减排到前面。反过来说，把词库词频写成几百上千既没有收益，
 还会让调频效果被静态分淹没。
 
-### 内置词库与再生成
+### 内置词库
 
-仓库自带 `data/dict_common.tsv`（内置常用词库），是 daemon 与测试台的默认词库；
-`data/dict_seed.tsv` 退化为演示/回归用的小词库（数百条，跑测试与容器验证时够用）。
-
-当前这份的实测规模：**200,000 条 / 4.6 MB（紧凑二进制格式 CDB1 约 3.3 MB）**，词频区间 **1–99**。按词长分布：
-1 字 8,710、2 字 86,370、3 字 47,951、4 字 51,287、5 字 3,826、6 字 1,856。
-覆盖通用规范汉字表 8105 全部单字，以及现代日常生活、职场工作、信息科技AI、社会政务、医疗健康与现代消费各领域常用词汇。
-数据规模与候选质量基线以上方「实测数据（可复现）」为准（同一 1,071 采样口径）。
-`engine/data_contract_test.go` 另保证：内置词库 ≥6 万条、单字 ≥8,000、音节数等于
-字数、`dict_extra`/`dict_hot` 全部合并；当前词库实际覆盖通用规范汉字表 8105 全部单字。
-规范常用词覆盖/精度与 98 热词探针属于词库生成期的固定词表评估（脚本未入库），
-不作为候选排序回归指标。
-
-**只收简体**：内置词库只收简体字、常用简体字词组；繁体、异体、粤语/方言用字
-**不内置**。需要时通过额外词库加载——daemon `-dict` 可重复叠加多个 TSV，
-或设置窗「词库导入」/`chaoset-import` 把自备词库合并进用户词库；额外词库
-在运行时合并，不写进内置产物。
-
-**词表（常用性门槛）**：
-
-- 《现代汉语常用词表》（约 5.3 万词）+ HSK 3.0 词表；
-- 所选词频源的高频用法 top 20,000——必须被 phrase-pinyin-data / THUOCL / HanLP
-  词典交叉验证为「真词」，否则 wordfreq 等语料词表里的分词噪声（这是/这我/一给）
-  会被挡在词库外；
-- `data/dict_hot.tsv`（现代/热词）+ `data/dict_extra.tsv`（口语补充）里的所有词；
-- 以上词表与 phrase-pinyin-data 求交后，**不在 phrase 表里的词不再整词丢弃**：
-  生成器按「词内已知词组拼音 → HanLP 拼音词典 → 大词表字读音统计 → pinyin-data
-  首读音」逐级补拼音，并输出人工校对清单（`-review-out`）。
-
-**单字**：通用规范汉字表 8105 字（一级/二级/三级）∩ Jun Da 现代汉语字频排名；
-多音字**首读音必留**，其余读音只有在 large_pinyin 词条里占比 ≥ 1%
-（`-readingshare`，默认 0.01）时才保留——pinyin-data 中混有
-「刀 diāo」「跳 diāo」这类词条中零出现的误收读音。单字词频严格按
-**「字频 × 该读音在 large_pinyin 词条里的占比」**折算，不设任何下限：
-占比 1% 的读音只有字频的 1%（≤1 分），不会靠固定下限抬进高优先候选。
-口语助词（吗/呢/吧）小幅补偿；输入 lue 时「略」排在「率」前。
-
-**GSC 漏收的常用字**：原始单字表是通用规范汉字表 8105（国家标准，不在仓库内、
-不修改），其中确实没有「屌/囧/艹/诶/磺」等字。生成前用 wordfreq 中文前 5 万词
-扫出非 GSC 字，剔除繁体/异体/粤语/日文新字体后人工确认，写进
-`data/dict_extra.tsv` 随词库生成合并；词频按 wordfreq 字符常用度折算
-（屌≈22、囧≈19、艹≈20、诶≈21、磺≈13），**不特殊置顶**，与同音常用字
-正常竞争（diao 下 掉27/调26/屌22/雕19…）。
-
-**词频**（统一压缩到 1–99，静态词频只是基础分，见「词库格式」）：
-
-| 模式 | flag | 词频源 | 许可 |
-|---|---|---|---|
-| 方案 A（默认） | `-freq wf` | wordfreq 中文词频为主 + THUOCL 领域兜底 + 词长先验兜底 | 代码 Apache-2.0；**数据 CC BY-SA 4.0** |
-| 方案 B（后备） | `-freq hanlp` | HanLP CoreNatureDictionary（full+mini 取 max）+ THUOCL | 全 Apache-2.0/MIT |
-
-方案 A 的归一化：zipf → `(zipf-1)/6.5` → 按 `-freqgamma`（默认 **1.15**，由固定
-词表扫描定型：1.0/1.15/1.3 三档中 1.15 在 full/tail1 上最优且简拼不退化）拉开高频
-差距 → 映射 1..99。手工词表权重按 `ln(w)/ln(1e6)` 压缩到常用词中高区间
-（4000≈60 分），与主词频源取较大值。
+仓库自带 `data/dict_common.tsv`（内置常用词库，约 20 万条），是 daemon 与测试台的
+默认词库；规模、生成管线、手工补充词表、校验规则与相关测试见
+[docs/dict.md](docs/dict.md)。
 
 **许可（重要）**：
 
@@ -601,137 +550,6 @@ TSV，每行三列（`#` 开头为注释）：
   应替换为 Unihan `kHanyuPinlu`/`kFrequency`（Unicode License）或取得授权。
 - phrase-pinyin-data 的 large_pinyin 由汉典 zdic + CC-CEDICT（CC BY-SA 4.0）等
   来源合并，再分发需保留来源说明。
-
-生成源文件（不随仓库分发；下载地址）：
-
-- 《现代汉语常用词表》副本（词表门槛，正式发布请确认授权来源）：
-  <https://github.com/liangqi/chinese-frequency-word-list>
-- HSK 3.0 词表（MIT）：<https://github.com/elkmovie/hsk30>
-- 通用规范汉字表 8105（一级/二级/三级字表）：
-  <https://github.com/shengdoushi/common-standard-chinese-characters-table>
-- wordfreq 中文词频（方案 A；导出格式「词<tab>zipf」）：
-  <https://github.com/rspeer/wordfreq>
-- HanLP CoreNatureDictionary + 拼音词典（方案 B / 高频词校验 / 补拼音，Apache-2.0）：
-  <https://github.com/hankcs/HanLP/tree/1.x/data/dictionary>
-- THUOCL 领域词表（MIT）：<https://github.com/THUNLP/THUOCL>
-- phrase-pinyin-data `large_pinyin.txt`（MIT）：
-  <https://raw.githubusercontent.com/mozillazg/phrase-pinyin-data/master/large_pinyin.txt>
-- pinyin-data `pinyin.txt`（MIT）：
-  <https://raw.githubusercontent.com/mozillazg/pinyin-data/master/pinyin.txt>
-- Jun Da 现代汉语字频 `hanzi_db.csv`：<https://github.com/ruddfawcett/hanziDB.csv>
-  （许可风险见上）
-
-再生成（在仓库根目录；方案 A 为主交付）：
-
-    go run ./cmd/chaoset-dictgen -freq wf \
-      -norm changyongcibiao.txt -hsk hsk30_words.txt \
-      -wordfreq wordfreq_zh.tsv -thucl THUOCL_data \
-      -hanlp CoreNatureDictionary.txt -hanlpmini CoreNatureDictionary.mini.txt \
-      -pinyin large_pinyin.txt -single pinyin.txt \
-      -charfreq hanzi_db.csv -hanlppinyin hanlp_pinyin.txt \
-      -gsc1 level-1.txt -gsc2 level-2.txt -gsc3 level-3.txt \
-      -extra data/dict_extra.tsv -hot data/dict_hot.tsv \
-      -review-out .workwork/pinyin_review.tsv \
-      -o data/dict_common.tsv
-
-方案 B 把 `-freq wf ... -wordfreq ...` 换成 `-freq hanlp`（`-hanlp/-hanlpmini`
-同时作为词频源）即可，其余参数相同。
-
-单字读音质量刷新（没有完整生成源时）：以现有词库为基线，保留全部多字词，
-只按 pinyin-data 读音 + large_pinyin 占比筛选单字读音，并按
-「Jun Da 字频 × 读音占比（无下限）」重算词频，追加 `data/dict_extra.tsv` /
-`dict_hot.tsv` 里基线还没有的新词：
-
-    go run ./cmd/chaoset-dictgen -base data/dict_common.tsv \
-      -pinyin large_pinyin.txt -single pinyin.txt \
-      -charfreq hanzi_db.csv \
-      -extra data/dict_extra.tsv -hot data/dict_hot.tsv \
-      -o data/dict_common.tsv
-
-刷新只删除误收/极低占比读音并重算单字词频，多字词原样保留（候选质量扫描口径不变）。
-
-flag 说明：
-
-| flag | 作用 | 必填 |
-|---|---|---|
-| `-freq` | 词频源：`wf`（wordfreq，数据 CC BY-SA）或 `hanlp`（Apache-2.0） | 否（默认 wf） |
-| `-norm` | 《现代汉语常用词表》TSV（首列词） | 是 |
-| `-hsk` | HSK 3.0 词表（「编号 词」或每行一个词） | 是 |
-| `-wordfreq` | wordfreq 中文词频 TSV（`-freq wf` 必填） | 否 |
-| `-hanlp` / `-hanlpmini` | HanLP 词典（`-freq hanlp` 必填；wf 模式用作高频词交叉验证） | 否 |
-| `-thucl` | THUOCL 目录（领域词频兜底） | 否 |
-| `-pinyin` | phrase-pinyin-data large_pinyin.txt | 是 |
-| `-single` | pinyin-data pinyin.txt（单字读音） | 是 |
-| `-charfreq` | Jun Da 字频表（单字词频排名） | 是 |
-| `-hanlppinyin` | HanLP 拼音词典（补多音字/个别字读音） | 否 |
-| `-gsc1/-gsc2/-gsc3` | 通用规范汉字表 一级/二级/三级字表 | `-gsc1` 必填 |
-| `-extra` | 手工口语补充词表 `data/dict_extra.tsv` | 是 |
-| `-hot` | 现代/热词补充词表 `data/dict_hot.tsv` | 是 |
-| `-review-out` | 补拼音人工校对清单输出路径 | 否 |
-| `-highfreqtop` | 高频用法取前 N 词（默认 20000） | 否 |
-| `-highfreqconf` | 高频词只用字读音统计补拼音时的最低置信度（默认 0.9） | 否 |
-| `-freqgamma` | 词频归一化幂次（默认 1.15，由固定词表扫描定型） | 否 |
-| `-readingshare` | 单字次读音保留门槛（默认 0.01；低于占比的读音丢弃，首读音必留） | 否 |
-| `-base` | 单字刷新模式：以该词库为基线，只重算单字、保留多字词 | 否 |
-| `-o` | 输出 TSV | 是 |
-
-生成过程约 2 秒；同一输入重复运行逐字节一致（`TestGenIdempotent` 兜底）。
-`-review-out` 输出的补拼音校对清单只包含不在 phrase-pinyin-data 的词，重点复核
-`confidence < 0.9` 与含多音字的行。
-
-生成规则（实现见 `cmd/chaoset-dictgen`）：
-
-- 只收纯 CJK 汉字词条——基本区、扩展 A、兼容表意区与「〇」，长度 1–6 字；
-- 拼音经 `engine.NormalizePinyin` 归一化并逐音节 `IsSyllable` 校验，音节数必须
-  等于字数，否则丢弃（防止错位拼音进词库）；
-- 高频用法词必须通过词表交叉验证（phrase-pinyin-data / THUOCL / HanLP），
-  wordfreq 的分词噪声（这是/这我/一给）不会入库；
-- 繁体变体剔除**只对高频用法来源生效**：`engine.ToSimplified` 是 OpenCC 简→繁表
-  的反向映射，对「像/象」这类简繁同形字会误判（好像→好象），规范词表/HSK/
-  手工词表不做该过滤，避免误删常用词；
-- 输出按词频降序、同频按词、再按音节排序，确定性可复现。
-
-### 手工补充词表 `data/dict_extra.tsv` 与 `data/dict_hot.tsv`
-
-这两个是词库链路里**允许手工编辑**的词表（格式：词 / 拼音 / 权重，一行一条）：
-
-- `data/dict_extra.tsv`：口语高频词与常用组合（真好/来不及/对不起/很多/坐着 等），
-  补词表与拼音链路漏收的词；
-- `data/dict_hot.tsv`：**现代/热词**（智能家居/健康码/微信支付/大模型/内卷 等），
-  **随 app 版本内置更新**（聚合自 `data/categories/` 8 大分类词库：流行语、社交互动、
-  职场打工人、游戏二次元、情绪心理、现代科技AI、网络特有字、现代生活网红消费）；每次发版前复核一次（新增热词、下架过时词）。
-
-权重是「估算原始词频」量级，生成器按 `ln(w)/ln(1e6)`
-压缩到常用词中高区间（4000≈60 分、1000≈50 分、100≈35 分）；与主词表重复时取
-较大词频，不需要从词表删除重复词。改完必须重新生成 `data/dict_common.tsv` 并
-提交两者，生成产物仍禁止手改；`engine/data_contract_test.go` 会在 CI 断言
-「手工词条格式合法 + 已合并进内置词库」。
-
-维护规则：只收「确实常用、且上游词表/词频源没有或明显偏低」的词；拼音必须逐条
-核对（生成器会用 `engine.IsSyllable` + 音节数==字数强校验，非法即让生成失败）。
-
-### 词库校验：构建期严格，运行期健壮
-
-两件事分开处理，不混为一谈：
-
-| 阶段 | 对象 | 策略 | 保证方式 |
-|---|---|---|---|
-| 构建期 | 内置词库（生成产物 + extra 补充表） | **严格**：一行脏数据即失败 | `cmd/chaoset-dictgen` 生成时强校验；`engine/data_contract_test.go` 在 CI 严格解析 `data/dict_common.tsv` 与 `data/dict_extra.tsv`/`data/dict_hot.tsv`（规模、音节数==字数、词频区间、手工词表必须已合并） |
-| 运行期 | 用户自备的第三方词库（`-dict`） | **健壮**：跳过坏行并汇总警告 | `engine.LoadDictFilesLenient`：坏行跳过、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20；daemon 把汇总写日志 |
-
-为什么这样分：内置词库是**我们的**产物，脏数据必须在构建期暴露，不能靠运行时
-宽容掩盖；而用户从网上下载或手写的词库，一行编码/格式问题不该让整个输入法起
-不来——那是可用性问题，不是数据质量问题。
-
-两条硬边界：
-- 文件**打不开**（路径写错、权限不足）仍然报错退出——配置错误要立刻暴露，
-  静默少加载一个词库只会让用户以为输入法坏了；
-- 所有词库都加载不出词条（`Len()==0`）也报错退出——给用户一个静默打不出字
-  的输入法比明确报错更糟。
-
-另外保证：内置词库经宽松加载与严格加载得到**完全相同的词条集合**（宽松路径
-先按严格规则校验、通过则原样保留音节），因此 daemon 在用户机器上的候选行为
-与 CI 验证过的行为一致。
 
 ### 接入 CC-CEDICT 开源词库
 
@@ -751,98 +569,12 @@ CC-CEDICT 约 12 万词条，导入耗时亚秒；词条按固定词频 30 合�
 CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享，
 请一并查阅文件头部声明。
 
-### 规模基准
-
-测量方式（**数据来自这里，可复现**）：
-
-```sh
-# 环境：Apple M1 / macOS，Go 版本见 go.mod（go 1.27）
-# 四个基准都在 engine/scale_bench_test.go，词库为代码合成的 10 万条双音节词，
-# 不依赖任何外部词库文件，因此在任何机器上都能复跑。
-go test ./engine/ -bench . -benchtime 3x
-```
-
-基准项与测量对象（参考量级；复跑以本机结果为准）：
-
-| 基准函数 | 测的是什么 | 参考量级 |
-|---|---|---|
-| `BenchmarkLoadDict100k` | 解析 10 万行 TSV 建索引（daemon 启动路径，只跑一次） | 数十 ms |
-| `BenchmarkCompose100k` | 单次组词，含全量候选排序 + 分页切片 | 亚毫秒/键 |
-| `BenchmarkQueryPrefix100k` | 残缺音节前缀查询（线性扫描） | 亚毫秒/键 |
-
-> 复跑会受机器负载、Go 版本与电源策略影响；判断回归时请在**同一环境**前后对比。
-> 120,282 条 CC-CEDICT 合并词库下 daemon 秒级就绪，逐键链路在毫秒级
-> （含进程启动），翻页在数千候选下正常。
-
-#### 内置词库（真实数据）
-
-上面那组是代码合成的词库。默认加载的 `data/dict_common.tsv` 是**真实数据**，另有
-两个基准直接读仓库里的词库文件、测的就是用户实际启动路径（`engine/common_dict_bench_test.go`）：
-
-```sh
-go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
-```
-
-| 基准函数 | 测的是什么 | 参考量级 |
-|---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 200,000 条真实 TSV 词库建索引（daemon 启动时跑一次） | 约 350–420ms |
-| `BenchmarkLoadCommonDict_Binary` | 解析 200,000 条紧凑二进制词库（CDB1 格式） | 约 250–290ms；体积 3.3MB |
-| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | 约 70–120µs/键 |
-
-词库自身规模：**200,000 条**（TSV 4.6 MB / CDB1 二进制 3.3 MB），词频区间 1–99；按词长分布为
-1 字 8,710、2 字 86,370、3 字 47,951、4 字 51,287、5 字 3,826、6 字 1,856。
-日常维护使用纯文本 TSV（Git 友好可审计），发布分发支持一键编译为二进制 `dict_common.bin`；引擎内置双模魔数自动识别，透明无感加载。
-
 ## IPC 协议
 
-帧格式：4 字节大端长度 + JSON 载荷（上限 1 MiB）。
-
-- 请求：`{"id":1,"method":"input","params":{"text":"nihao","half":false}}`
-  （`half` 可选：壳侧全/半角标点状态，**每次请求随参数下发，daemon 不保存**
-  ——壳是该状态的唯一真源。省略时按全角处理（历史默认），不会回落到任何
-  会话残留值。双拼 dpPending==0 的 `;` 走 Punct 语义，宽度必须用本次壳状态，
-  否则会有 1 键瞬态；2026-11-05 起改为纯传参后，这种不同步在结构上不可能发生。）
-- 响应：`{"id":1,"result":{...}}` 或 `{"id":1,"error":"..."}`
-
-方法（17 个）：`ping` / `input` / `backspace` / `backspaceWord`（按音节回退） /
-`reset`（清组词**与**学习上下文：Esc/失焦/新会话）/ `resetComposition`（只清组词、
-**保留** prev/history：切中英、透传等「用户还会继续打字」的场景）/ `commitRaw`
-（回车：返回原始拼音并清空组词）/ `select`（`{"index":0}`，
-返回 `{"committed":"你好"}`）/ `selectPrefix`（`{"index":0}`，**渐进上屏**：只消耗
-候选音节对应的 input 前缀，返回剩余组词状态 + `committed`，壳据此上屏前缀段并
-用剩余 `preedit` 继续组词——三端选词走此路径）/ `nextPage` / `prevPage`（候选翻页，
-返回当前组词状态，含 `page`/`page_count`）/ `punct`（`{"key":","}` 中文标点：
-组词中返回 `{"committed":"你好，"}`，空组词返回 `{"committed":"，"}`）/
-`associate`（`{"sylls":["xian","zai"]}`，返回与 Composition 同构的联想候选列表）/
-`associateSelect`（`{"word":"现在时间","sylls":[...]}`，联想词上屏）/
-`userStats` / `userClear` / `userExport`（用户词典导出：可选 `offset`/`limit`
-按行分页，返回 `{"tsv":"...","next":N}`，`next=-1` 表示已导出完；客户端
-自动循环拼接，词典再大也不会撞 1 MiB 帧上限）。
-`Candidate` 新增可选 `segments`（仅整句式候选携带，引擎学习用的分段词文本；
-壳无需渲染，解码时忽略即可），学习记录在 Words/Phrases 表内以 `segs` 持久化。
-`Composition` 另有 `shuangpin`（双拼方案名，全拼为空；壳据此把双拼模式下的
-`;` 键路由到 `input` 而不是 `punct`——mspy 的 ing 韵母键是 `;`）与顶层
-`committed`（本次调用需壳写入文档的文本：渐进上屏段，或双拼 `;` 触发的
-「首选词+标点」）。
-IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
-候选窗由 mac/Windows 壳原生自绘（macOS 用 AppKit，见
-`shims/macos/src/CandidatePanelView.swift`；Windows 用 GDI），Linux 不重绘面板、
-用 ibus 原生 LookupTable/Preedit 呈现；daemon 不提供贴图渲染。
-
-视觉参数（几何 + 浅/深配色）的基准期望值内联在 `shims/macos/tests/visual-parity.sh`（
-**无运行时消费者**）；mac/Windows 两份壳实现按它手写。Go↔macOS 的布局常量
-（5 项）+ macOS 参考常量（含 divider）+ 浅/深各 13 色由
-`shims/macos/tests/visual-parity.sh` 逐项机器断言；Windows 侧目前只有 pt
-口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
-「机器检查覆盖」）。
-
-传输形态：macOS 用 Unix socket；Linux 用 Unix socket（`$XDG_RUNTIME_DIR/chaoset/chaoset.sock`）；
-Windows daemon 使用命名管道（`-pipe`，按当前用户 SID 生成、ACL 限当前用户）；
-安装器 Run 项与 TSF 懒启动均用命名管道。没有网络端口，也没有回退传输。
-命名管道的安全描述符除 DACL（当前用户 + SYSTEM + ALL APPLICATION PACKAGES）外
-还带低完整性标签 `S:(ML;;NW;;;LW)`：Windows 11 的开始菜单/搜索框/UWP 是
-AppContainer（低完整性）进程，缺这个标签时它们只能连、写不进，表现为「按了键、
-daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，只连已在运行的 daemon。
+帧格式为 4 字节大端长度 + JSON 载荷（上限 1 MiB）。`reset`（清组词与学习上下文：Esc/
+失焦/新会话）与 `resetComposition`（只清组词、保留学习上下文：切中英、透传等）的
+双轨重置语义是三端壳契约；17 个方法的请求/响应参考、候选窗纯数据契约、传输形态
+与命名管道安全描述符见 [docs/ipc.md](docs/ipc.md)。
 
 ## 下载与安装（GitHub Release）
 
@@ -878,45 +610,10 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
 | Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态（显示当前输入上下文实际状态）与设置窗 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
 
-Windows 的中英状态指示器由单例 UI 宿主 `chaoset-ui.exe` 托管，托盘显示**当前输入上下文的实际状态**。中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语），用户切换输入法由系统/TSF 触发，TIP 在 `Activate`/`Deactivate` 与 `ITfActiveLanguageProfileNotifySink` 中响应。设置项 `mode_scope` 只有两档：`system`（全局共享，默认；托盘是权威，TIP 获得焦点时从托盘同步，托盘左键切换全局中英）与 `process`（每进程独立；每个程序各自记住中英状态，TIP 激活时把本进程状态上报到托盘，托盘左键只显示不切换）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process。托盘可见性由 TSF 事件驱动（无周期定时器/心跳）：TIP 在 `Activate`/`Deactivate`、`ITfThreadFocusSink`、`ITfActiveLanguageProfileNotifySink` 信号下上报 `active 1 <0|1> <pid>`（显示托盘、设为 owner）或 `active 0 <pid>`（仅 owner 生效隐藏），UI 宿主用 `OpenProcess`+`RegisterWaitForSingleObject` 在 owner 进程退出时清理，隐藏保留 300ms 防抖；没有输入焦点（桌面/任务栏）或切到其它输入法即隐藏。
+### 渐进上屏
 
-### 渐进上屏的跨程序兼容模型
-
-三端壳对「逐段渐进拼句」（`jintianxingqiyi` 选「今天」→ 剩余继续组词）采用
-**同一模型：已确认段并入预编辑/合成，整条组词结束才一次落盘**：
-
-- macOS：已确认段并入 marked text——壳对文档只做两类操作：「`setMarkedText`
-  更新」（与逐键输入同原语）与「组词结束 `insertText` 终态落盘」（与整句
-  上屏同原语），不再在 marked 区激活期间插入正文；
-- Windows：已确认段并入**当前合成**（同一条合成内 `SetText`），不再
-  「`EndComposition` → 立刻 `StartComposition`」；落盘 = 同一合成
-  `SetText` + `EndComposition` 一次完成；
-- Linux：已确认段并入 `UpdatePreeditText`，不再在预编辑激活期间发
-  `CommitText`；落盘 = 整串一次 `CommitText`。
-
-为什么：逐段选择若「先写正文、再刷新预编辑」，会对宿主产生**两步文档变更**，
-部分程序处理不好——刚选的字被丢掉、候选清空、剩余拼音卡在文档里（Notes/
-Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部分宿主对
-合成结束/重建的选区记账有缺陷；Linux XIM 桥接/自绘输入同理）。逐键输入只有
-一步预编辑更新，因此把渐进上屏也收进同一条合成，兼容面与逐键输入一致，
-并与 macOS 系统拼音/微软拼音「合成内已转换段」的行为对齐。
-
-随之统一的行为（三端一致，矩阵见 `docs/ui-parity.md`）：已确认段在预编辑里
-以**已转换形态**（汉字而非拼音）随剩余拼音一起显示；Esc / 全部删除取消整条
-组词（含未落盘的已确认段）；回车 = 已确认段按确认文本 + 剩余按原始拼音
-上屏；退格只回退剩余拼音，剩余删空时已确认段立即落盘收尾；失焦 / 透传键 /
-切换输入法时已确认段先落盘（用户确认过的字不丢）。引擎侧不变：
-`SelectPrefix` 依旧只消耗候选音节对应的前缀、剩余回灌、即时学习（纯算法，
-与平台无关）。
-
-Windows 薄壳健壮性落实情况：daemon 未就绪时按键直接放行（已实现，核心层
-行为验证）；传输失败即断开降级、不卡宿主（已实现）；传输优先命名管道
-（无端口、ACL 限当前用户 + 低完整性标签），安装版 Run 项与 TSF 懒启动均用
-`-pipe`，没有回退传输；daemon 未运行时 TSF 在首次输入以当前用户身份懒启动
-（`-seeddict` 首次初始化用户词库），不再由管理员安装器启动；安装/升级不关闭
-用户程序。AppContainer 宿主（开始菜单/搜索框/UWP）只连接已运行的 daemon、不发起
-进程，靠 DACL + 低完整性标签互通；该链路的候选窗显示**待真机验证**。逐项状态见
-shims/windows/README。
+三端壳对「逐段渐进拼句」采用同一模型：已确认段并入预编辑/合成，整条组词结束才
+一次落盘；统一行为矩阵与跨程序兼容性论证见 [docs/ui-parity.md](docs/ui-parity.md)。
 
 > **macOS 输入源标识**：输入源 ID / `CFBundleIdentifier` 为
 > `ime.chaoset.inputmethod.ChaosetIME`，输入模式为
@@ -1048,35 +745,5 @@ make vet                          # go vet + workflow/版本/GDI/三端一致性
 # 单测、race、三端构建与打包由 CI 执行（见 AGENTS.md「CI 门禁与本地验证分工」）
 ```
 
-### 词库相关的测试
+推送后由 GitHub Actions（`.github/workflows/ci.yml`）自动执行上述重活。
 
-内置词库是**生成产物**，所以它本身也被测试守着（都读真实的 `data/dict_common.tsv`）：
-
-| 测试 | 守什么 |
-|---|---|
-| `engine.TestCommonDictJingchang` | 用户反馈的原始场景：输入 `jingchang` 第一候选必须是「经常」 |
-| `engine.TestCommonDictSingleSyllableRanksCommonChar` | 单音节 `jing` 第一候选是常用字「经」，不被生僻字淹没 |
-| `engine.TestExactSyllableCountPreferred` | 完全匹配优先：「经常」排在「经常化」前 |
-| `engine.TestUserBoostBeatsExactMatch` | 反向约束：用户选过的长词要能压过「完全匹配优先」 |
-| `engine.TestCommonDictScale` | 规模与完整性回归：≥6 万条、常用词都在、词频全部落在 1..99 |
-
-生成工具自身（`cmd/chaoset-dictgen/main_test.go`，用小样本，不依赖那三个大源文件）：
-
-| 测试 | 守什么 |
-|---|---|
-| `TestGenBuildsCommonDictWithPinyinGapFilled` | 常用性门槛词表 + 补拼音链路（phrase/词内词组/字读音统计）都能出词，不整词丢弃 |
-| `TestGenWritesPinyinReviewList` | 补拼音人工校对清单内容和来源标记正确 |
-| `TestGenSingleCharsFromGSC` | 单字只收通用规范汉字表内字，多音字降权 |
-| `TestGenFreqMappingAndFallback` | 词频映射单调、落在 1..99，无词频词用长度先验 |
-| `TestGenManualWeightWinsWhenHigher` | 手工词表权重优先于主词频源 |
-| `TestGenHanLPMode` / `TestGenWFHeaderLicense` | 方案 B 可用、两种模式文件头许可声明正确 |
-| `TestGenIdempotent` | 同一输入重复生成逐字节一致 |
-| `TestGenDropsWordWithoutPinyin` | 查不到拼音的词整条丢弃（不猜读音） |
-| `TestGenDropsSyllableCountMismatch` | 音节数与字数不符的整条丢弃 |
-| `TestGenIdempotent` | 同一输入跑两次输出逐字节一致 |
-| `TestCJKWordOK` | CJK 范围判定（基本区/扩展 A/兼容区/〇 与长度上限） |
-
-改了生成逻辑后请同时跑：`go test ./cmd/chaoset-dictgen/ ./engine/`。
-
-推送后由 GitHub Actions（`.github/workflows/ci.yml`）自动执行
-fmt 检查、vet、`-race` 测试与构建。
