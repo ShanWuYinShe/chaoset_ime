@@ -111,20 +111,18 @@ if [ "$fails" -eq 0 ]; then
   if mean >= 0.60 && holes >= 10 && corner < 0.5 && edge > 0.9 { exit(0) } else { exit(2) }
   ' && ok "D.input.tiff 符合「22×16 实心圆角按键 + 挖空 C」扁平 keycap 契约" || fail "D.input.tiff 不是 22×16 扁平 keycap"
 
-  # 2) 应用图标 icns 必须包含方案 3+4 结合版特征（极光蓝底 + 白色 C + 霓虹青 s）
+  # 2) 应用图标 icns 必须包含生活艺术风特征（晨曦焦糖赤陶底 + 白瓷浮雕 C + 晨曦暖金星 ✦）
   swift -e '
   import AppKit
   let p = "build/Resources/ChaosetIME.icns"
   guard let img = NSImage(contentsOfFile: p),
         let rep = img.representations.first(where: { $0.pixelsWide == 256 }) as? NSBitmapImageRep else { exit(1) }
   let bgCol = rep.colorAt(x: 128, y: 200)!
-  let cCol = rep.colorAt(x: 84, y: 128)!
-  let sCol = rep.colorAt(x: 156, y: 128)!
-  let isBgBlue = bgCol.blueComponent > 0.7 && bgCol.redComponent < 0.3
-  let isWhiteC = cCol.redComponent > 0.9 && cCol.greenComponent > 0.9 && cCol.blueComponent > 0.9
-  let isCyanS = sCol.greenComponent > 0.7 && sCol.blueComponent > 0.8 && sCol.redComponent < 0.5
-  if isBgBlue && isWhiteC && isCyanS { exit(0) } else { exit(2) }
-  ' && ok "D.ChaosetIME.icns 符合「方案3与方案4结合版」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
+  let cCol = rep.colorAt(x: 110, y: 128)!
+  let isBgWarm = bgCol.redComponent > 0.6 && bgCol.blueComponent < 0.4
+  let isWhiteC = cCol.redComponent > 0.8 && cCol.greenComponent > 0.8 && cCol.blueComponent > 0.8
+  if isBgWarm && isWhiteC { exit(0) } else { exit(2) }
+  ' && ok "D.ChaosetIME.icns 符合「日式生活风白瓷焦糖赤陶」契约" || fail "D.ChaosetIME.icns 未通过契约检查"
 
   # 4) Info.plist 五个图标键必须全部指向同一份模板图（全场景统一 keycap）
   PB=/usr/libexec/PlistBuddy

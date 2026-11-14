@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="azureGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#2494FF"/>
-      <stop offset="52%" stop-color="#145AF0"/>
-      <stop offset="100%" stop-color="#0F2AAD"/>
+    <linearGradient id="terracottaGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F08F42"/>
+      <stop offset="48%" stop-color="#D16B29"/>
+      <stop offset="100%" stop-color="#994014"/>
     </linearGradient>
     <filter id="shadow" x="0" y="8" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.36"/>
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#401808" flood-opacity="0.35"/>
     </filter>
-    <filter id="toneGlow" x="120" y="90" width="200" height="80" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#4DE2FF" flood-opacity="0.9"/>
+    <filter id="starGlow" x="280" y="100" width="160" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#FFA838" flood-opacity="0.8"/>
     </filter>
-    <filter id="glyphShadow" x="100" y="100" width="350" height="300" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#051052" flood-opacity="0.65"/>
+    <filter id="glyphShadow" x="80" y="80" width="360" height="360" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#4A1806" flood-opacity="0.65"/>
     </filter>
     <clipPath id="squircleClip">
       <rect x="41" y="41" width="430" height="430" rx="96" ry="96"/>
@@ -21,30 +21,29 @@
   </defs>
 
   <!-- 1. Squircle Base with Soft Drop Shadow -->
-  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#azureGrad)" filter="url(#shadow)"/>
+  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#terracottaGrad)" filter="url(#shadow)"/>
 
   <!-- 2. Clipped Texture & Highlights -->
   <g clip-path="url(#squircleClip)">
-    <!-- Acoustic Wave Ripples -->
-    <circle cx="256" cy="256" r="120" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="189" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="258" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
+    <!-- Washi Concentric Micro-Rings -->
+    <circle cx="256" cy="256" r="120" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="189" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="258" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
     
     <!-- Top-edge Specular Rim Line -->
-    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="2" fill="none"/>
+    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFF8F0" stroke-opacity="0.50" stroke-width="2" fill="none"/>
   </g>
 
-  <!-- 3. Glowing Macron Pinyin Tone Mark -->
-  <g filter="url(#toneGlow)">
-    <rect x="180" y="132" width="94" height="9" rx="4.5" ry="4.5" fill="#D8F6FF"/>
-  </g>
-
-  <!-- 4. Monogram "Cs" Typography -->
+  <!-- 3. Monogram "C" White Porcelain Typography -->
   <g filter="url(#glyphShadow)">
-    <text x="216" y="322" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="220" font-weight="900" fill="#FFFFFF">C</text>
-    <text x="328" y="318" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="154" font-weight="bold" fill="#59E0FF">s</text>
+    <text x="240" y="335" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="240" font-weight="900" fill="#FAF6F0">C</text>
   </g>
 
-  <!-- 5. Bottom Subtext "PINYIN" -->
-  <text x="256" y="424" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="17" font-weight="bold" letter-spacing="4" fill="#FFFFFF" fill-opacity="0.75">PINYIN</text>
+  <!-- 4. Morning Sun Golden Star (✦) -->
+  <g filter="url(#starGlow)">
+    <text x="360" y="210" text-anchor="middle" font-family="system-ui, sans-serif" font-size="96" font-weight="bold" fill="#FFE08A">✦</text>
+  </g>
+
+  <!-- 5. Bottom Subtext "CHAOS" -->
+  <text x="256" y="428" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="18" font-weight="bold" letter-spacing="4.5" fill="#FFF0E0" fill-opacity="0.80">CHAOS</text>
 </svg>

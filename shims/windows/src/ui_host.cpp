@@ -245,7 +245,7 @@ private:
         return true;
     }
 
-    // 画一个 16×16 的小图标：深色圆角底 + 白色「中」/「英」。
+    // 画一个 3D 拟物微实体键帽图标（中：晨曦焦糖琉璃 / 英：象牙白瓷微雕）。
     static HICON makeGlyphIcon(bool english) {
         const int sz = GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16;
         BITMAPV5HEADER bi{};
@@ -274,25 +274,56 @@ private:
         }
         HGDIOBJ old = SelectObject(dc, color);
         ZeroMemory(bits, static_cast<size_t>(sz) * sz * 4);
-        HBRUSH bg = CreateSolidBrush(RGB(24, 24, 24));
-        HBRUSH oldBrush = static_cast<HBRUSH>(SelectObject(dc, bg));
-        HPEN pen = CreatePen(PS_SOLID, 1, RGB(24, 24, 24));
-        HPEN oldPen = static_cast<HPEN>(SelectObject(dc, pen));
-        RoundRect(dc, 0, 0, sz, sz, sz / 3, sz / 3);
+
+        // 3D 拟物键帽配色（全平台设计系统同构 tokens）：
+        // 中文模式：3D 晨曦焦糖琉璃键帽（底色 RGB(205,115,48)，边框阴影 RGB(155,78,25)，高光 RGB(245,175,115)）
+        // 英文模式：3D 象牙白瓷微雕键帽（底色 RGB(246,243,238)，边框阴影 RGB(200,195,185)，高光 RGB(255,255,255)）
+        const COLORREF clrBody = english ? RGB(246, 243, 238) : RGB(205, 115, 48);
+        const COLORREF clrBorder = english ? RGB(200, 195, 185) : RGB(155, 78, 25);
+        const COLORREF clrHi = english ? RGB(255, 255, 255) : RGB(245, 175, 115);
+        const COLORREF clrText = english ? RGB(30, 27, 24) : RGB(255, 255, 255);
+
+        const int cr = (sz >= 24) ? 5 : 3;
+        // 1. 底层微阴影与倒角边框
+        HBRUSH brShadow = CreateSolidBrush(clrBorder);
+        HPEN penShadow = CreatePen(PS_SOLID, 1, clrBorder);
+        HGDIOBJ oldBrush = SelectObject(dc, brShadow);
+        HGDIOBJ oldPen = SelectObject(dc, penShadow);
+        RoundRect(dc, 0, 1, sz, sz, cr, cr);
+
+        // 2. 键帽主体（稍向上偏移 1px 凸显微立体厚度）
+        HBRUSH brBody = CreateSolidBrush(clrBody);
+        HPEN penBody = CreatePen(PS_SOLID, 1, clrBody);
+        SelectObject(dc, brBody);
+        SelectObject(dc, penBody);
+        RoundRect(dc, 0, 0, sz, sz - 1, cr, cr);
+
+        // 3. 顶边高光微倒角细线
+        HPEN penHi = CreatePen(PS_SOLID, 1, clrHi);
+        SelectObject(dc, penHi);
+        MoveToEx(dc, cr, 1, nullptr);
+        LineTo(dc, sz - cr, 1);
+
+        // 清理画刷与画笔
         SelectObject(dc, oldBrush);
         SelectObject(dc, oldPen);
-        DeleteObject(bg);
-        DeleteObject(pen);
+        DeleteObject(brShadow);
+        DeleteObject(penShadow);
+        DeleteObject(brBody);
+        DeleteObject(penBody);
+        DeleteObject(penHi);
+
+        // 4. 文字排版
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(255, 255, 255));
+        SetTextColor(dc, clrText);
         LOGFONTW lf{};
-        lf.lfHeight = -MulDiv(sz, 72, 96) * 9 / 10;
-        lf.lfWeight = FW_SEMIBOLD;
+        lf.lfHeight = -MulDiv(sz, 72, 96) * 85 / 100;
+        lf.lfWeight = FW_BOLD;
         lf.lfCharSet = DEFAULT_CHARSET;
         wcscpy_s(lf.lfFaceName, L"Microsoft YaHei");
         HFONT font = CreateFontIndirectW(&lf);
         HGDIOBJ oldFont = SelectObject(dc, font);
-        RECT rc{0, 0, sz, sz};
+        RECT rc{0, 0, sz, sz - 1};
         DrawTextW(dc, english ? L"英" : L"中", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, oldFont);
         DeleteObject(font);

@@ -92,7 +92,7 @@ TIS 没有公开的反注册 API：同一 bundle 每多调用一次 `TISRegister
 | `CFBundleIdentifier` / `TISInputSourceID` | `ime.chaoset.inputmethod.ChaosetIME`（两者必须一致；id 中间必须含 `.inputmethod.` 段） |
 | 输入模式 | `ime.chaoset.inputmethod.ChaosetIME.Pinyin`（父 ID + `.Pinyin`） |
 | 显示名 | **Chaoset**（中英同名），由 `Resources/{en,zh-Hans,zh_CN}.lproj/InfoPlist.strings` 提供 |
-| 应用图标 | `ChaosetIME.icns`：极光电光蓝底板 + 白/霓虹青「Cs」+ 声调符号 + PINYIN 字标 |
+| 应用图标 | `ChaosetIME.icns`：晨曦焦糖赤陶温润底板 + 3D 白瓷浮雕「C」+ 晨曦暖金星 ✦ |
 
 `.Hans` 是旧输入模式别名，`install.sh` 会禁用并清理残留。
 

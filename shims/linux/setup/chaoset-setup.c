@@ -90,6 +90,23 @@ static GtkWidget *build_window(AppCtx *ctx) {
     gtk_widget_set_margin_bottom(footer, 8);
     gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);
 
+    /* 注入日式生活风与焦糖琥珀主题 CSS（全平台设计系统同构 tokens） */
+    GtkCssProvider *provider = gtk_css_provider_new();
+    const gchar *css =
+        ".dim-label { opacity: 0.65; }\n"
+        "switch:checked { background-color: #D16B29; border-color: #994014; }\n"
+        "sidebar row:selected { background-color: #D16B29; color: #FFFFFF; border-radius: 8px; }\n"
+        "button:checked { background-color: #D16B29; color: #FFFFFF; }\n";
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    GdkScreen *screen = gdk_screen_get_default();
+    if (screen != NULL) {
+        gtk_style_context_add_provider_for_screen(
+            screen,
+            GTK_STYLE_PROVIDER(provider),
+            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    g_object_unref(provider);
+
     gtk_widget_show_all(window);
     setup_page_dict_refresh(ctx);
     return window;
