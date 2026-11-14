@@ -348,3 +348,33 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 macOS/Windows 候选数据都来自 daemon 的纯数据 IPC；daemon 单键处理基准在
 engine/scale_bench_test.go，用 go test ./engine -bench . 复跑，不以固定数字作为
 硬指标。壳侧回归跑 macOS visual-parity.sh、Windows core_test 与 release 冒烟。
+
+## 渐进上屏的跨程序兼容模型
+
+三端壳对「逐段渐进拼句」（`jintianxingqiyi` 选「今天」→ 剩余继续组词）采用
+**同一模型：已确认段并入预编辑/合成，整条组词结束才一次落盘**：
+
+- macOS：已确认段并入 marked text——壳对文档只做两类操作：「`setMarkedText`
+  更新」（与逐键输入同原语）与「组词结束 `insertText` 终态落盘」（与整句
+  上屏同原语），不再在 marked 区激活期间插入正文；
+- Windows：已确认段并入**当前合成**（同一条合成内 `SetText`），不再
+  「`EndComposition` → 立刻 `StartComposition`」；落盘 = 同一合成
+  `SetText` + `EndComposition` 一次完成；
+- Linux：已确认段并入 `UpdatePreeditText`，不再在预编辑激活期间发
+  `CommitText`；落盘 = 整串一次 `CommitText`。
+
+为什么：逐段选择若「先写正文、再刷新预编辑」，会对宿主产生**两步文档变更**，
+部分程序处理不好——刚选的字被丢掉、候选清空、剩余拼音卡在文档里（Notes/
+Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部分宿主对
+合成结束/重建的选区记账有缺陷；Linux XIM 桥接/自绘输入同理）。逐键输入只有
+一步预编辑更新，因此把渐进上屏也收进同一条合成，兼容面与逐键输入一致，
+并与 macOS 系统拼音/微软拼音「合成内已转换段」的行为对齐。
+
+随之统一的行为（三端一致，矩阵见本文各节）：已确认段在预编辑里
+以**已转换形态**（汉字而非拼音）随剩余拼音一起显示；Esc / 全部删除取消整条
+组词（含未落盘的已确认段）；回车 = 已确认段按确认文本 + 剩余按原始拼音
+上屏；退格只回退剩余拼音，剩余删空时已确认段立即落盘收尾；失焦 / 透传键 /
+切换输入法时已确认段先落盘（用户确认过的字不丢）。引擎侧不变：
+`SelectPrefix` 依旧只消耗候选音节对应的前缀、剩余回灌、即时学习（纯算法，
+与平台无关）。
+
