@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.3.23（2026-11-14）
+
+本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.22` 之后 2 个提交：内置词库扩充至 20 万条，并新增发布期紧凑二进制词库格式（CDB1，双模透明加载）与中文互联网 8 大分类词库；macOS 壳把 Cmd/Option/Ctrl/CapsLock/Fn 的非 Shift 修饰键改为零捕获，修远程桌面（RDP/ToDesk）下按 Ctrl+↑ 切 app 后远端 Ctrl 卡键的输入法侧根因。
+
 - **macOS 非 Shift 修饰键零捕获：修远程桌面下 Ctrl 卡键的输入法侧根因**：macOS 全局
   快捷键（如 Ctrl+↑ 进 Mission Control）与远程桌面客户端（RDP/ToDesk）叠加时，输入法
   原先会把非 Shift 修饰键的 `flagsChanged` 当普通按键继续处理：① 会访问
