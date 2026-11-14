@@ -177,9 +177,15 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   焦点事件入口，在 `!inputActive_` 但本输入法被选中且本进程在前台时，允许按作用域
   同步一次中英模式并仅入队托盘显示上报（必要时启动每进程一次的 worker）；不得借此
   改按键闸门或做清理/钩子/键鼠读取。
-- **修饰键永不消费**：所有 KeyUp 恒返回 FALSE（含 Shift/Ctrl/Alt/Win），避免 OS
-  出现「修饰键卡住」；Ctrl 组合键（除组词中 Ctrl+U）一律透传宿主。RDP/macOS 本地
-  快捷键吞掉 Ctrl keyup 属于远端输入通道问题，IME 不得注入按键去"修复"。
+- **修饰键永不消费、零捕获**：Windows 所有 KeyUp 恒返回 FALSE（含 Shift/Ctrl/Alt/Win）；
+  macOS 非 Shift 修饰键（Cmd/Option/Ctrl/CapsLock/Fn）的 `flagsChanged`/`keyDown` 必须
+  **入口即早退**原样放行——修饰键状态事件不得消费、不得进入组词/联想主流程、不得访问
+  `charactersIgnoringModifiers`（AppKit 只允许 keyDown/keyUp 访问，flagsChanged 上会抛
+  `NSInternalInconsistencyException`，事件处理中断会让远程桌面客户端收不到 Ctrl keyUp）、
+  也不得触发 `passThrough` 的同步 daemon IPC/清组词；Ctrl 组合键（除组词中 Ctrl+U）
+  一律透传宿主。RDP/远程桌面下 macOS 全局快捷键（如 Ctrl+↑ Mission Control）会在客户端
+  之前吞掉 keyup，远端 Windows 显示修饰键卡住属系统/客户端按键通道问题，IME 不得注入
+  按键去"修复"（应改 Mission Control 快捷键或改用 Cmd+Tab）。
 - **托盘可见性（TSF 事件驱动，无周期定时器/心跳）**：托盘可见性＝系统当前选中的
   输入法是不是本输入法，与是否有输入焦点解耦。显示由 `Activate`、
   `ITfActiveLanguageProfileNotifySink` 激活通知、`ITfThreadFocusSink`/`OnSetFocus(TRUE)`

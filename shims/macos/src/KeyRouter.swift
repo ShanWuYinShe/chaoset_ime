@@ -15,6 +15,11 @@ extension ChaosetController {
     /// 投递，两种都按"按下→装填、松开→判定"处理，不依赖具体投递方式。
     private static let shiftKeyCodes: Set<UInt16> = [56, 60]
 
+    /// 非 Shift 修饰键的 keyCode（Command 54/55、CapsLock 57、Option 58/61、
+    /// Control 59/62、Fn 63）：除 Shift 空按外的修饰键状态事件一律立即透传，
+    /// 绝不进入组词/联想/passThrough 主流程（见 handle 里的早退分支）。
+    private static let nonShiftModifierKeyCodes: Set<UInt16> = [54, 55, 57, 58, 59, 61, 62, 63]
+
     // MARK: - 按键路由
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -55,6 +60,19 @@ extension ChaosetController {
             return false // 放行 Shift 释放事件，绝不吞掉宿主应用的按键状态机
         }
         shiftArmed = false // 出现其它按键 → 不是"空按"，取消待判定
+
+        // 非 Shift 修饰键（Command/Option/Control/CapsLock/Fn）的状态事件必须**立即
+        // 原样放行、零副作用**：不得进入下方组词/联想/透传流程。两个必须修的理由：
+        // 1) AppKit 只允许在 keyDown/keyUp 上访问 charactersIgnoringModifiers，
+        //    对 flagsChanged 访问会抛 NSInternalInconsistencyException——修饰键状态
+        //    事件在 IMK 的 handle 里抛异常会中断本次事件处理，远程桌面（RDP/ToDesk）
+        //    场景下客户端可能因此收不到 Ctrl keyUp，远端 Windows 出现 Ctrl 卡住；
+        // 2) 主流程末尾的 passThrough 会做同步 daemon IPC 并清掉进行中的组词
+        //    （按 Ctrl 触发系统/宿主快捷键不该破坏输入状态），且延迟修饰键事件投递。
+        // 修饰键「永不消费、零捕获」与 Windows 壳的契约对齐。
+        if event.type == .flagsChanged || Self.nonShiftModifierKeyCodes.contains(event.keyCode) {
+            return false
+        }
 
         // 英文模式：全部放行（passThrough 会先清掉未上屏的组词），
         // 同时收起联想窗（中英切换时不得残留）

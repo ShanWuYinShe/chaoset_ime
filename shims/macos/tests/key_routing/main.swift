@@ -76,6 +76,16 @@ func ev(_ chars: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [],
                      isARepeat: false, keyCode: code)!
 }
 
+/// 合成 flagsChanged 事件：NSEvent.keyEvent(with: .flagsChanged…) 返回 nil，
+/// 与真机 IMK 投递路径对齐需要用 CGEvent 桥接（修饰键状态变化正是本组断言的输入）。
+func flagsEv(_ code: UInt16, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
+    let cg = CGEvent(source: nil)!
+    cg.type = .flagsChanged
+    cg.setIntegerValueField(.keyboardEventKeycode, value: Int64(code))
+    cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+    return NSEvent(cgEvent: cg)!
+}
+
 let c = ChaosetController()
 let m = MockClient()
 var pass = 0, fail = 0
@@ -305,9 +315,34 @@ check("联想态下右方向键移动预选并消费", assocMoveOk,
 check("联想态空格确认预选联想词", assocSpaceOk,
       "inserted=\(m.inserted.last(where: { !$0.isEmpty }) ?? "nil")")
 
+// ---- 非 Shift 修饰键：立即原样放行、不改输入状态（远程桌面 Ctrl 卡键的 IME 侧加固）----
+// macOS 全局快捷键（Ctrl+↑ 进 Mission Control 等）会与远程桌面客户端的按键转发叠加。
+// 输入法若把修饰键 flagsChanged 当普通按键走完整流程，`passThrough` 会同步 daemon IPC
+// 并清掉组词——修饰键事件被延迟/打乱后，远端 Windows 可能收不到 Ctrl keyUp → Ctrl 卡住。
+// 契约：Cmd/Option/Ctrl/CapsLock/Fn 的状态事件一律 false 且零副作用（不改组词/联想）。
+_ = c.handle(ev("", 53), client: m) // Esc：清掉上一条断言留下的组词/联想
+let modBase = c.handle(ev("n", 45), client: m)
+check("修饰键断言前：字母重新进组词", modBase && m.marked.contains("n"),
+      "ret=\(modBase) marked=\(m.marked)")
+let modInputBefore = c.current?.input ?? ""
+check("Ctrl 按下 flagsChanged 放行",
+      c.handle(flagsEv(59, [.control]), client: m) == false)
+check("Ctrl 按下不清组词", (c.current?.input ?? "") == modInputBefore,
+      "before=\(modInputBefore) after=\(c.current?.input ?? "nil")")
+check("Ctrl 释放 flagsChanged 放行",
+      c.handle(flagsEv(59), client: m) == false)
+check("Ctrl 释放不清组词", (c.current?.input ?? "") == modInputBefore)
+check("Option 按下 flagsChanged 放行",
+      c.handle(flagsEv(58, [.option]), client: m) == false)
+check("Cmd 按下 flagsChanged 放行",
+      c.handle(flagsEv(55, [.command]), client: m) == false)
+check("CapsLock flagsChanged 放行",
+      c.handle(flagsEv(57, [.capsLock]), client: m) == false)
+_ = c.handle(ev("", 53), client: m) // Esc：恢复干净状态，供后续断言使用
+
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 42
+let expectedChecks = 50
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")
