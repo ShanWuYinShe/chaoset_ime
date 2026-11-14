@@ -120,13 +120,13 @@ void ModeToast::measure() {
     SelectObject(dc, old);
     DeleteObject(font);
     ReleaseDC(hwnd_, dc);
-    // mac ModeToastView.size：宽 = ceil(文本宽)+28，高 = ceil(文本高)+14
-    w_ = sz.cx + pt(28);
-    h_ = sz.cy + pt(14);
+    // mac ModeToastView.size：宽 = ceil(文本宽)+30，高 = ceil(文本高)+16（与 15pt 字体协调配比）
+    w_ = sz.cx + pt(30);
+    h_ = sz.cy + pt(16);
 }
 
 HFONT ModeToast::makeFont() const {
-    return CreateFontW(-MulDiv(13, dpi_, 72), 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+    return CreateFontW(-MulDiv(15, dpi_, 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
 }
