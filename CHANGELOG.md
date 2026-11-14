@@ -4,6 +4,21 @@
 
 ## 未发布
 
+- **macOS 非 Shift 修饰键零捕获：修远程桌面下 Ctrl 卡键的输入法侧根因**：macOS 全局
+  快捷键（如 Ctrl+↑ 进 Mission Control）与远程桌面客户端（RDP/ToDesk）叠加时，输入法
+  原先会把非 Shift 修饰键的 `flagsChanged` 当普通按键继续处理：① 会访问
+  `charactersIgnoringModifiers`（AppKit 只允许在 keyDown/keyUp 上访问，对 flagsChanged
+  访问抛 `NSInternalInconsistencyException`——本次事件处理被中断，远程客户端可能收不到
+  Ctrl keyUp，远端 Windows 表现为 Ctrl 一直被按下）；② 主流程 `passThrough` 会同步
+  daemon IPC 并清掉进行中的组词，延迟修饰键事件投递。英文模式会提前 `passThrough`、
+  中文模式才会走到异常路径，所以现象时有时无。修复：Cmd/Option/Ctrl/CapsLock/Fn 的
+  `flagsChanged`/`keyDown` 在 `KeyRouter.handle` 入口直接 `return false`——零消费、
+  零副作用、零 IPC，与 Windows 壳「修饰键永不消费」契约对齐。远程桌面下 macOS 全局
+  快捷键在客户端之前吞掉 keyup 属系统/客户端按键通道问题，输入法不得注入按键；把
+  Mission Control 快捷键改掉或改用 Cmd+Tab 可规避。新增 key_routing 8 条断言（50 项）
+  与 checkuiparity「修饰键映射」组机器断言（含「修饰键早退必须先于
+  charactersIgnoringModifiers」的顺序检查）。
+
 - **词库规模全景扩充至 200,000 条，全面覆盖现代日常生活与工作语境**：
   - **真实现代语境与全领域覆盖**：摒弃机械照搬陈旧繁简转换库，基于真实中文互联网环境与现代高频使用场景，构建涵盖现代职场工作（敏捷开发、工作流、代码审查、社保卡、不动产权、营业执照、劳动争议等）、数码科技与AI（大语言模型、智能体、提示词、向量数据库、折叠屏、潜望长焦、空间音频等）、现代消费与餐饮（美式咖啡、生椰拿铁、燕麦奶、杨枝甘露、空气炸锅、洗地机等）、医疗常识与药物（阿莫西林、布洛芬、左氧氟沙星、核磁共振等）、电竞游戏（王者荣耀、和平精英、英雄联盟、原神、星穹铁道、无畏契约、黑神话等）、政务公文与常用成语俗语等宏大词库体系。
   - **词法规范与前缀树防抢断保护**：根据汉语词汇学严格区分词汇与临时句式，过滤代词谓语短句、动宾/助词临时拼合碎片，保证输入法动态造词前缀与回退单字链路完全顺畅。

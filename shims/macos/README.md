@@ -131,6 +131,9 @@ macOS 第三方输入法只有 bundle 级与 mode 级两套图标键：
     （页边界保持不动）；无组词/无候选时放行宿主；空格确认预选项；
   - `-` `=` `[` `]` PageUp/PageDown 翻页；无候选时 `[` `]` 是标点；
   - Shift 空按切中英（已确认段先落盘）；Shift+空格在组词态切全/半角；
+  - 修饰键：仅 Shift 参与中英切换；Cmd/Option/Ctrl/CapsLock/Fn 的状态事件一律入口即
+    原样放行（零消费、零副作用、零 IPC，不打断组词/联想）。远程桌面下 Ctrl+↑ 等
+    macOS 全局快捷键会抢走 keyup，远端 Windows 可能显示 Ctrl 卡住，属系统/客户端行为；
   - 双拼 mspy 的 `;` 是 ing 韵母键，非双拼/Shift+`;` 仍输出标点；
   - 退格逐字符，Option+Delete 按音节，Shift/Ctrl+Delete 取消整条；
   - Esc 取消整条组词。

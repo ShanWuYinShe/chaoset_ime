@@ -242,9 +242,14 @@ func checkBackspaceSemantics(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupBackspaceSemantics, uiParityDoc, "按音节回退")
 }
 
-// checkModifierMapping 修饰键映射（2026-10-31 用户要求）：macOS Command↔Windows Win↔
-// Linux Super、Control↔Ctrl、Option↔Alt，三端壳必须识别对应修饰键，且 ui-parity
-// 必须保留映射表（防止文档漂移后习惯不可迁移）。
+// checkModifierMapping 修饰键映射：macOS Command↔Windows Win↔Linux Super、
+// Control↔Ctrl、Option↔Alt，三端壳必须识别对应修饰键，且 ui-parity 必须保留
+// 映射表（防止文档漂移后习惯不可迁移）。另锁住 macOS「非 Shift 修饰键零捕获」：
+// AppKit 只允许在 keyDown/keyUp 上访问 charactersIgnoringModifiers，对 flagsChanged
+// 访问会抛 NSInternalInconsistencyException——修饰键事件在 IMK handle 里抛异常会中断
+// 本次事件处理，远程桌面（RDP/ToDesk）客户端因此可能收不到 Ctrl keyUp，远端 Windows
+// 表现为 Ctrl 卡住；同时主流程 passThrough 会同步 daemon IPC 并清组词。因此非 Shift
+// 修饰键必须早退原样放行（与 Windows 壳「修饰键永不消费」契约对齐）。
 func checkModifierMapping(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupModifierMapping, "shims/macos/src/ChaosetController.swift",
 		".command", ".control", ".option")
@@ -253,6 +258,35 @@ func checkModifierMapping(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupModifierMapping, linuxEngine,
 		"IBUS_CONTROL_MASK", "IBUS_MOD1_MASK", "IBUS_MOD4_MASK")
 	checkContains(fsys, problems, groupModifierMapping, uiParityDoc, groupModifierMapping, "Command")
+
+	// macOS：非 Shift 修饰键（Cmd/Option/Ctrl/CapsLock/Fn）的 flagsChanged 必须早退
+	// 原样放行，且在早退之前不得访问 charactersIgnoringModifiers。
+	const macKeyRouter = "shims/macos/src/KeyRouter.swift"
+	kr, err := readText(fsys, macKeyRouter)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", groupModifierMapping, macKeyRouter, err))
+		return
+	}
+	code := stripCppComments(kr)
+	early := strings.Index(code, "event.type == .flagsChanged")
+	chars := strings.Index(code, "charactersIgnoringModifiers")
+	if early < 0 {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少「非 Shift 修饰键 flagsChanged 早退放行」——修饰键状态事件会落进组词主流程", groupModifierMapping, macKeyRouter))
+	} else {
+		end := early + 320
+		if end > len(code) {
+			end = len(code)
+		}
+		if !strings.Contains(code[early:end], "return false") {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 的修饰键早退分支没有立即 return false（仍会走主流程）", groupModifierMapping, macKeyRouter))
+		} else if chars >= 0 && chars < early {
+			*problems = append(*problems, fmt.Sprintf("%s：%s 在修饰键早退之前访问 charactersIgnoringModifiers（flagsChanged 上会抛异常）", groupModifierMapping, macKeyRouter))
+		}
+	}
+	if !strings.Contains(code, "nonShiftModifierKeyCodes") {
+		*problems = append(*problems, fmt.Sprintf("%s：%s 缺少 nonShiftModifierKeyCodes 集合（Cmd/Option/Ctrl/CapsLock/Fn 必须全覆盖）", groupModifierMapping, macKeyRouter))
+	}
+	checkContains(fsys, problems, groupModifierMapping, uiParityDoc, "修饰键状态事件")
 }
 
 // checkDaemonSingleton daemon 单实例：安装器不能和 LaunchAgent 同时拉起 daemon。旧实现会在
