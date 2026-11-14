@@ -62,16 +62,20 @@ final class PageSwitchTarget: NSObject {
         }
     }
 
-    /// 选中项：accent 胶囊底 + 白字；未选中：透明底 + 主文本色。
+    /// 选中项：焦糖琥珀 accent 胶囊底 + 白字 + 微立体投影；未选中：透明底 + 主文本色。
     private func styleNavButton(_ button: NSButton, selected: Bool) {
-        let accent = NSColor(srgbRed: 0x0A / 255.0, green: 0x84 / 255.0, blue: 0xFF / 255.0, alpha: 1)
+        let accent = NSColor(srgbRed: 0xD1 / 255.0, green: 0x6B / 255.0, blue: 0x29 / 255.0, alpha: 1)
         button.wantsLayer = true
         button.layer?.cornerRadius = 8
         button.layer?.backgroundColor = selected ? accent.cgColor : NSColor.clear.cgColor
+        button.layer?.shadowColor = NSColor(srgbRed: 0x80 / 255.0, green: 0x30 / 255.0, blue: 0x10 / 255.0, alpha: 0.35).cgColor
+        button.layer?.shadowOffset = CGSize(width: 0, height: -1)
+        button.layer?.shadowRadius = 2
+        button.layer?.shadowOpacity = selected ? 1.0 : 0.0
         button.attributedTitle = NSAttributedString(
             string: button.title,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 13),
+                .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .regular),
                 .foregroundColor: selected ? NSColor.white : NSColor.labelColor,
             ])
     }

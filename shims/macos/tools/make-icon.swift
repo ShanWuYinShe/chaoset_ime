@@ -18,10 +18,10 @@ import ImageIO
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 
-// MARK: - 应用图标（.icns，极光蓝全幅底板 + Cs 组合标志 + 拼音声调）
+// MARK: - 应用图标（.icns，日式温润白瓷与晨曦焦糖赤陶徽章）
 
-/// 应用图标：极光电光蓝渐变底板 + 声波光环 + 纯白立体「C」+ 霓虹青「s」+ 顶部拼音声调标志 + 底部 PINYIN。
-/// 完美融合现代双字母品牌标识（Cs）与输入法专属声调语言，质感通透、层次丰富、兼具视觉辨识度。
+/// 应用图标：晨曦赤陶温润渐变底板 + 和纸微米光环 + 3D 白瓷浮雕「C」+ 晨曦暖金四芒星 (✦)。
+/// 彻底根除冷电光蓝极客风，全平台同构日式手账与器物生活美学。
 func drawAppIcon(_ s: CGFloat) {
     let inset = s * 0.08
     let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
@@ -31,30 +31,30 @@ func drawAppIcon(_ s: CGFloat) {
     // 1. 底板柔和环境多层阴影
     if s >= 128 {
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.035), blur: s * 0.05, color: NSColor(white: 0, alpha: 0.38).cgColor)
+        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.035), blur: s * 0.05, color: NSColor(srgbRed: 0.25, green: 0.10, blue: 0.04, alpha: 0.35).cgColor)
         let bgPath = CGPath(roundedRect: rect, cornerWidth: squircleR, cornerHeight: squircleR, transform: nil)
         ctx.addPath(bgPath)
         ctx.fillPath()
         ctx.restoreGState()
     }
 
-    // 2. 底板极光渐变 (Electric Azure -> Royal Blue -> Deep Sapphire)
+    // 2. 底板晨曦焦糖与赤陶渐变 (Warm Amber -> Caramel Amber -> Deep Terracotta)
     ctx.saveGState()
     let bgPath = CGPath(roundedRect: rect, cornerWidth: squircleR, cornerHeight: squircleR, transform: nil)
     ctx.addPath(bgPath)
     ctx.clip()
     let bgGrad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                             colors: [
-                                NSColor(srgbRed: 0.14, green: 0.58, blue: 1.0, alpha: 1.0).cgColor,  // #2494FF
-                                NSColor(srgbRed: 0.08, green: 0.35, blue: 0.94, alpha: 1.0).cgColor, // #145AF0
-                                NSColor(srgbRed: 0.06, green: 0.16, blue: 0.68, alpha: 1.0).cgColor  // #0F2AAD
-                            ] as CFArray, locations: [0.0, 0.52, 1.0])!
+                                NSColor(srgbRed: 0.94, green: 0.56, blue: 0.26, alpha: 1.0).cgColor,  // #F08F42
+                                NSColor(srgbRed: 0.82, green: 0.42, blue: 0.16, alpha: 1.0).cgColor,  // #D16B29
+                                NSColor(srgbRed: 0.60, green: 0.25, blue: 0.08, alpha: 1.0).cgColor   // #994014
+                            ] as CFArray, locations: [0.0, 0.48, 1.0])!
     ctx.drawLinearGradient(bgGrad, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
 
-    // 3. 背景同心声波扩散光弧 (大于 64 像素时呈现精密纹理，小尺寸保持纯净)
+    // 3. 背景温润和纸微米光环 (大于 64 像素时呈现精密纹理，小尺寸保持纯净)
     if s >= 64 {
         ctx.setLineWidth(max(0.8, s * 0.005))
-        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.13).cgColor)
+        ctx.setStrokeColor(NSColor(srgbRed: 1.0, green: 0.95, blue: 0.88, alpha: 0.15).cgColor)
         for rStep in [0.28, 0.44, 0.60] {
             let arcR = rect.width * CGFloat(rStep)
             let arcRect = CGRect(x: rect.midX - arcR, y: rect.midY - arcR, width: arcR * 2, height: arcR * 2)
@@ -63,90 +63,71 @@ func drawAppIcon(_ s: CGFloat) {
         }
     }
 
-    // 顶沿透光玻璃细线
+    // 顶沿透光玻璃微高光细线
     let rim = CGPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerWidth: squircleR - 1, cornerHeight: squircleR - 1, transform: nil)
     ctx.setLineWidth(max(1.0, s * 0.008))
-    ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.45).cgColor)
+    ctx.setStrokeColor(NSColor(srgbRed: 1.0, green: 0.96, blue: 0.90, alpha: 0.50).cgColor)
     ctx.addPath(rim)
     ctx.strokePath()
     ctx.restoreGState()
 
-    // 4. 「Cs」核心字母排版（大写立体纯白 C + 荧光霓虹青 s）
-    let cFontSize = rect.height * 0.50
+    // 4. 「C」核心白瓷微浮雕字母排版
+    let cFontSize = rect.height * 0.54
     let cFont = NSFont(name: "AvenirNext-Heavy", size: cFontSize)
         ?? NSFont(name: "HelveticaNeue-Bold", size: cFontSize)
         ?? NSFont.boldSystemFont(ofSize: cFontSize)
 
     let cShadow = NSShadow()
     if s >= 64 {
-        cShadow.shadowBlurRadius = max(2.0, s * 0.03)
-        cShadow.shadowOffset = NSSize(width: 0, height: -max(1.0, s * 0.012))
-        cShadow.shadowColor = NSColor(srgbRed: 0.02, green: 0.06, blue: 0.45, alpha: 0.65)
+        cShadow.shadowBlurRadius = max(2.5, s * 0.035)
+        cShadow.shadowOffset = NSSize(width: 0, height: -max(1.2, s * 0.016))
+        cShadow.shadowColor = NSColor(srgbRed: 0.35, green: 0.12, blue: 0.04, alpha: 0.65)
     }
 
     let cAttr: [NSAttributedString.Key: Any] = [
         .font: cFont,
-        .foregroundColor: NSColor.white,
+        .foregroundColor: NSColor(srgbRed: 0.98, green: 0.97, blue: 0.95, alpha: 1.0),
         .shadow: cShadow
     ]
     let cText = NSAttributedString(string: "C", attributes: cAttr)
     let cSize = cText.size()
 
-    let sFontSize = cFontSize * 0.70
-    let sFont = NSFont(name: "AvenirNext-Bold", size: sFontSize)
-        ?? NSFont.systemFont(ofSize: sFontSize, weight: .bold)
-    let sShadow = NSShadow()
-    if s >= 64 {
-        sShadow.shadowBlurRadius = max(1.5, s * 0.025)
-        sShadow.shadowOffset = NSSize(width: 0, height: -max(0.8, s * 0.01))
-        sShadow.shadowColor = NSColor(srgbRed: 0.02, green: 0.06, blue: 0.45, alpha: 0.55)
-    }
-
-    let sAttr: [NSAttributedString.Key: Any] = [
-        .font: sFont,
-        .foregroundColor: NSColor(srgbRed: 0.35, green: 0.88, blue: 1.0, alpha: 1.0),
-        .shadow: sShadow
-    ]
-    let sText = NSAttributedString(string: "s", attributes: sAttr)
-    let sSize = sText.size()
-
-    let totalW = cSize.width + sSize.width * 0.90
-    let startX = (s - totalW) / 2
+    let cX = rect.midX - cSize.width / 2 - s * 0.02
     let cY = rect.midY - cSize.height / 2 + s * 0.012
-    let sY = rect.midY - sSize.height / 2 - s * 0.005
 
-    cText.draw(at: NSPoint(x: startX, y: cY))
-    sText.draw(at: NSPoint(x: startX + cSize.width - sSize.width * 0.10, y: sY))
+    cText.draw(at: NSPoint(x: cX, y: cY))
 
-    // 5. 顶部拼音声调标志（Macron 平声音调 `¯`）
-    let toneW = cSize.width * 0.60
-    let toneH = max(3.5, s * 0.018)
-    let toneX = startX + (cSize.width - toneW) / 2
-    let toneY = cY + cSize.height * 0.88
-    let toneRect = CGRect(x: toneX, y: toneY, width: toneW, height: toneH)
-    let tonePath = CGPath(roundedRect: toneRect, cornerWidth: toneH / 2, cornerHeight: toneH / 2, transform: nil)
-
-    ctx.saveGState()
+    // 5. 镶嵌晨曦暖金四芒星 (✦)
+    let starFontSize = cFontSize * 0.40
+    let starFont = NSFont.systemFont(ofSize: starFontSize, weight: .bold)
+    let starShadow = NSShadow()
     if s >= 64 {
-        ctx.setShadow(offset: CGSize(width: 0, height: 0), blur: s * 0.02, color: NSColor(srgbRed: 0.3, green: 0.85, blue: 1.0, alpha: 0.85).cgColor)
+        starShadow.shadowBlurRadius = max(2.0, s * 0.03)
+        starShadow.shadowOffset = NSSize(width: 0, height: 0)
+        starShadow.shadowColor = NSColor(srgbRed: 1.0, green: 0.78, blue: 0.38, alpha: 0.75)
     }
-    ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.96, blue: 1.0, alpha: 1.0).cgColor)
-    ctx.addPath(tonePath)
-    ctx.fillPath()
-    ctx.restoreGState()
+    let starAttr: [NSAttributedString.Key: Any] = [
+        .font: starFont,
+        .foregroundColor: NSColor(srgbRed: 1.0, green: 0.88, blue: 0.54, alpha: 1.0), // #FFE08A
+        .shadow: starShadow
+    ]
+    let starText = NSAttributedString(string: "✦", attributes: starAttr)
+    let starX = cX + cSize.width * 0.78
+    let starY = cY + cSize.height * 0.56
+    starText.draw(at: NSPoint(x: starX, y: starY))
 
-    // 6. 底部微标「PINYIN」字标（在大于等于 128 像素尺寸显示，小尺寸自动隐去以保清晰）
+    // 6. 底部微标「CHAOS」字标（在大于等于 128 像素尺寸显示，小尺寸自动隐去以保清晰）
     if s >= 128 {
-        let subFont = NSFont(name: "SF Pro Text Bold", size: s * 0.038)
-            ?? NSFont.systemFont(ofSize: s * 0.038, weight: .bold)
+        let subFont = NSFont(name: "AvenirNext-Bold", size: s * 0.040)
+            ?? NSFont.systemFont(ofSize: s * 0.040, weight: .bold)
         let subAttr: [NSAttributedString.Key: Any] = [
             .font: subFont,
-            .foregroundColor: NSColor(white: 1.0, alpha: 0.75),
-            .kern: 3.0
+            .foregroundColor: NSColor(srgbRed: 1.0, green: 0.94, blue: 0.88, alpha: 0.80),
+            .kern: 3.5
         ]
-        let subText = NSAttributedString(string: "PINYIN", attributes: subAttr)
+        let subText = NSAttributedString(string: "CHAOS", attributes: subAttr)
         let subSize = subText.size()
-        subText.draw(at: NSPoint(x: (s - subSize.width) / 2, y: rect.minY + rect.height * 0.11))
+        subText.draw(at: NSPoint(x: (s - subSize.width) / 2, y: rect.minY + rect.height * 0.10))
     }
 }
 
@@ -492,19 +473,19 @@ func writeLinuxSvg(to path: String) {
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="azureGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#2494FF"/>
-      <stop offset="52%" stop-color="#145AF0"/>
-      <stop offset="100%" stop-color="#0F2AAD"/>
+    <linearGradient id="terracottaGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F08F42"/>
+      <stop offset="48%" stop-color="#D16B29"/>
+      <stop offset="100%" stop-color="#994014"/>
     </linearGradient>
     <filter id="shadow" x="0" y="8" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.36"/>
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#401808" flood-opacity="0.35"/>
     </filter>
-    <filter id="toneGlow" x="120" y="90" width="200" height="80" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#4DE2FF" flood-opacity="0.9"/>
+    <filter id="starGlow" x="280" y="100" width="160" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#FFA838" flood-opacity="0.8"/>
     </filter>
-    <filter id="glyphShadow" x="100" y="100" width="350" height="300" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#051052" flood-opacity="0.65"/>
+    <filter id="glyphShadow" x="80" y="80" width="360" height="360" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#4A1806" flood-opacity="0.65"/>
     </filter>
     <clipPath id="squircleClip">
       <rect x="41" y="41" width="430" height="430" rx="96" ry="96"/>
@@ -512,32 +493,31 @@ func writeLinuxSvg(to path: String) {
   </defs>
 
   <!-- 1. Squircle Base with Soft Drop Shadow -->
-  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#azureGrad)" filter="url(#shadow)"/>
+  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#terracottaGrad)" filter="url(#shadow)"/>
 
   <!-- 2. Clipped Texture & Highlights -->
   <g clip-path="url(#squircleClip)">
-    <!-- Acoustic Wave Ripples -->
-    <circle cx="256" cy="256" r="120" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="189" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="258" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="2.5" fill="none"/>
+    <!-- Washi Concentric Micro-Rings -->
+    <circle cx="256" cy="256" r="120" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="189" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="258" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
     
     <!-- Top-edge Specular Rim Line -->
-    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="2" fill="none"/>
+    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFF8F0" stroke-opacity="0.50" stroke-width="2" fill="none"/>
   </g>
 
-  <!-- 3. Glowing Macron Pinyin Tone Mark -->
-  <g filter="url(#toneGlow)">
-    <rect x="180" y="132" width="94" height="9" rx="4.5" ry="4.5" fill="#D8F6FF"/>
-  </g>
-
-  <!-- 4. Monogram "Cs" Typography -->
+  <!-- 3. Monogram "C" White Porcelain Typography -->
   <g filter="url(#glyphShadow)">
-    <text x="216" y="322" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="220" font-weight="900" fill="#FFFFFF">C</text>
-    <text x="328" y="318" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="154" font-weight="bold" fill="#59E0FF">s</text>
+    <text x="240" y="335" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="240" font-weight="900" fill="#FAF6F0">C</text>
   </g>
 
-  <!-- 5. Bottom Subtext "PINYIN" -->
-  <text x="256" y="424" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="17" font-weight="bold" letter-spacing="4" fill="#FFFFFF" fill-opacity="0.75">PINYIN</text>
+  <!-- 4. Morning Sun Golden Star (✦) -->
+  <g filter="url(#starGlow)">
+    <text x="360" y="210" text-anchor="middle" font-family="system-ui, sans-serif" font-size="96" font-weight="bold" fill="#FFE08A">✦</text>
+  </g>
+
+  <!-- 5. Bottom Subtext "CHAOS" -->
+  <text x="256" y="428" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="18" font-weight="bold" letter-spacing="4.5" fill="#FFF0E0" fill-opacity="0.80">CHAOS</text>
 </svg>
 """
     try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)

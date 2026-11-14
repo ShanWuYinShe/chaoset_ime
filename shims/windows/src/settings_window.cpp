@@ -179,11 +179,11 @@ struct SettingsColors {
 // 深浅色与 macOS SettingsWindow 的语义色对应（label / secondaryLabel / accent）。
 static SettingsColors settingsColors(bool dark) {
     if (dark) {
-        return {RGB(0x1E, 0x1E, 0x20), RGB(0xF2, 0xF2, 0xF4), RGB(0x9E, 0x9E, 0xA6),
-                RGB(0x0A, 0x84, 0xFF), RGB(0x4A, 0x4A, 0x4F)};
+        return {RGB(0x1A, 0x18, 0x16), RGB(0xF4, 0xF2, 0xEE), RGB(0xA0, 0x9B, 0x94),
+                RGB(0xE2, 0x7B, 0x38), RGB(0x44, 0x3E, 0x38)};
     }
-    return {RGB(0xFF, 0xFF, 0xFF), RGB(0x1D, 0x1D, 0x1F), RGB(0x6E, 0x6E, 0x73),
-            RGB(0x0A, 0x84, 0xFF), RGB(0xC8, 0xC8, 0xCC)};
+    return {RGB(0xF6, 0xF3, 0xEC), RGB(0x1D, 0x1D, 0x1F), RGB(0x78, 0x73, 0x6C),
+            RGB(0xD1, 0x6B, 0x29), RGB(0xE2, 0xDC, 0xD2)};
 }
 
 static int settingsPt(int v) { return MulDiv(v, g_settingsDpi, 72); }
@@ -225,7 +225,7 @@ static void settingsApplyDarkTitleBar(HWND wnd, bool dark) {
 // 卡片（0x2A2A2E）上会留下一条窗口底色（0x1E1E20）的横条——用户截图里
 // 「设置项标题被挡住」的观感就是它（2026-11-06）。
 static COLORREF settingsCardColor() {
-    return g_settingsDark ? RGB(0x2A, 0x2A, 0x2E) : RGB(0xFA, 0xFA, 0xFC);
+    return g_settingsDark ? RGB(0x25, 0x22, 0x1F) : RGB(0xFF, 0xFF, 0xFF);
 }
 
 // 子控件（Static / 自绘按钮）擦除背景统一用它；刷子还没建好时退回窗口刷。
@@ -370,7 +370,7 @@ static void settingsPaint(HDC dc, HWND wnd) {
 
     // 2) 左侧导航栏底色（比背景略深/略浅一档，形成分栏）
     RECT nav{0, 0, settingsPt(kNavWidth), H};
-    const COLORREF navBg = g_settingsDark ? RGB(0x24, 0x24, 0x27) : RGB(0xF5, 0xF5, 0xF7);
+    const COLORREF navBg = g_settingsDark ? RGB(0x20, 0x1E, 0x1B) : RGB(0xEF, 0xEB, 0xE2);
     HBRUSH navBrush = CreateSolidBrush(navBg);
     FillRect(dc, &nav, navBrush);
     DeleteObject(navBrush);
@@ -472,8 +472,8 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     else if (dis->CtlID == 122) selected = current == ModeScope::Process;
     RECT r = dis->rcItem;
     const COLORREF fillColor = selected
-                                   ? (g_settingsDark ? RGB(0x2A, 0x3A, 0x4A) : RGB(0xE3, 0xEF, 0xFB))
-                                   : (g_settingsDark ? RGB(0x2C, 0x2C, 0x30) : RGB(0xF2, 0xF2, 0xF5));
+                                   ? (g_settingsDark ? RGB(0x3E, 0x28, 0x18) : RGB(0xFD, 0xF3, 0xEB))
+                                   : (g_settingsDark ? RGB(0x2A, 0x26, 0x23) : RGB(0xFA, 0xF7, 0xF2));
     HBRUSH fill = CreateSolidBrush(fillColor);
     FillRect(dc, &r, fill);
     DeleteObject(fill);
@@ -508,7 +508,7 @@ static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
     const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
     RECT r = dis->rcItem;
     const COLORREF fillColor = pressed ? c.border
-                                      : (g_settingsDark ? RGB(0x2C, 0x2C, 0x30) : RGB(0xF2, 0xF2, 0xF5));
+                                      : (g_settingsDark ? RGB(0x2E, 0x2A, 0x26) : RGB(0xF6, 0xF2, 0xEA));
     HBRUSH fill = CreateSolidBrush(fillColor);
     HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(1)), c.border);
     HGDIOBJ ob = SelectObject(dc, fill);
