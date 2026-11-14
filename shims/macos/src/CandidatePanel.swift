@@ -148,7 +148,7 @@ final class ModeToastView: NSView {
         path.lineWidth = 1
         path.stroke()
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
             .foregroundColor: fg,
         ]
         let size = (text as NSString).size(withAttributes: attrs)
@@ -160,10 +160,10 @@ final class ModeToastView: NSView {
     /// 按文本内容计算胶囊尺寸。
     static func size(for text: String) -> NSSize {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium)
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold)
         ]
         let s = (text as NSString).size(withAttributes: attrs)
-        return NSSize(width: ceil(s.width) + 28, height: ceil(s.height) + 14)
+        return NSSize(width: ceil(s.width) + 30, height: ceil(s.height) + 16)
     }
 }
 

@@ -313,11 +313,11 @@ private:
         DeleteObject(penBody);
         DeleteObject(penHi);
 
-        // 4. 文字排版
+        // 4. 文字排版（取 96% 黄金比例：字形挺拔醒目，同时上下留出约 1.5~2px 呼吸留白与高光距离）
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, clrText);
         LOGFONTW lf{};
-        lf.lfHeight = -MulDiv(sz, 72, 96) * 85 / 100;
+        lf.lfHeight = -MulDiv(sz, 72, 96) * 96 / 100;
         lf.lfWeight = FW_BOLD;
         lf.lfCharSet = DEFAULT_CHARSET;
         wcscpy_s(lf.lfFaceName, L"Microsoft YaHei");
