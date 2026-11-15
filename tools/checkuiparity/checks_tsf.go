@@ -23,12 +23,18 @@ import (
 // UILessActivate，缺省 1）必须保留，宿主异常时可一键隐身。
 func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	const group = groupUILess
+	// 探测实证（2026-11-15）：只断言函数名 "cachedUilessActivate" 锁不住调用点——
+	// 定义留在 config.cpp 时，把 ActivateEx 里的调用删掉回归旧「不激活」行为，
+	// 断言仍绿。必须锁**调用形态**（开关被 ActivateEx 实际调用）与决策理由注释，
+	// 后来者删任一处都会红。
 	checkContains(fsys, problems, group, winShell,
 		"ITfTextInputProcessorEx",      // 接口声明（mingw 缺失，需自备）
 		"ActivateEx(",                  // 实现
 		"kIID_ITfTextInputProcessorEx", // 用自己的 IID 常量做 QI 匹配
 		"TF_TMAE_UIELEMENTENABLEDONLY", // 标志位判定入日志
-		"cachedUilessActivate",         // 回退开关：UILess 激活必须可经注册表关闭
+		// 回退开关必须在 ActivateEx 调用点使用（锁函数名锁不住调用被删，见上）：
+		"if (!cachedUilessActivate()) return S_OK;",
+		"照常激活", // 决策理由注释：UILess 线程照常激活，删注释即红
 	)
 	// 未实现 ITfUIElementMgr 前不得注册 UIELEMENTENABLED 类别。
 	// 只匹配**常量名**（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED），避免把解释性
