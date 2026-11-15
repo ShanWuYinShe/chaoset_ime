@@ -2,7 +2,9 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.3.25（2026-11-15）
+
+本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.24` 之后 6 个提交：修复 Windows 壳在 UILess 宿主（Dota 2 / CS2 / Deadlock 等 Source 2 与 SDL2 游戏及全屏应用）完全无法输入中文的问题——UILess 线程照常激活并按微软《UI less mode》官方协议实现 ITfUIElementMgr 候选协商（宿主可画时交宿主渲染，不画时按官方语义回退 GDI 自绘）；同步收紧 UILess 机器断言（改坏探测必红）并外置 README 维护者长文。
 
 - **重构(Windows壳/游戏输入)：UILess 候选按微软《UI less mode》官方协议重做（ITfUIElementMgr / ITfCandidateListUIElement）**：
   在「UILess 线程照常激活」的基础上补齐官方协商路径——新增 `ui_element` 叶子模块实现
