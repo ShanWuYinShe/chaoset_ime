@@ -93,7 +93,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `diagnostics.cpp` `.hpp` | tsf.log/crash.log 诊断、VEH 崩溃取证 | — | ≤700 |
 | `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换、浮窗 owner 判定 | — | ≤500 |
 | `theme.cpp` `.hpp` | 候选窗配色/主题判定（与 macOS 视觉契约） | winutil | ≤500 |
-| `config.cpp` `.hpp` | HKCU 设置读写、配置 TTL 缓存、全屏抑制 | winutil, diagnostics | ≤700 |
+| `config.cpp` `.hpp` | HKCU 设置读写、配置 TTL 缓存、全屏抑制、UILess 激活开关 | winutil, diagnostics | ≤700 |
 | `transport.cpp` `.hpp` | daemon 命名管道名/探测/PipeTransport | winutil | ≤500 |
 | `daemon.cpp` `.hpp` | daemon 懒启动/连接/熔断原语（仅 worker 调用） | winutil, transport, diagnostics | ≤500 |
 | `ui_client.cpp` `.hpp` | UI 宿主管道低层（命令/查询/拉起原语） | winutil, diagnostics | ≤700 |

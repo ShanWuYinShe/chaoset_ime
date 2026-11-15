@@ -11,12 +11,16 @@ import (
 	"strings"
 )
 
-// UILess 能力契约（2026-11-05）：
+// UILess 能力契约（2026-11-05 建立，2026-11-15 游戏输入改版）：
 // 微软《UILess Mode Overview》明确要求 TIP 实现 ITfTextInputProcessorEx，否则
 // 在 UILess 线程里**不会被激活**（连日志都不会有，所以「日志里 uiless=0」不是
 // 证据）。同时严禁在未实现 ITfUIElementMgr 的情况下注册
 // TFCAT_TIPCAP_UIELEMENTENABLED——声明了就必须让所有 UI 走 UI 元素管理器，
 // 否则正是 2026-10-30「开始菜单里候选窗完全消失」的事故。
+// 2026-11-15：UILess 线程（Dota 2/CS2 等 Source 2/SDL2 游戏宿主）必须**照常
+// 激活**并自绘候选窗——旧「不激活」行为让输入法在游戏里收不到任何按键
+// （用户反馈「只能输入字母」）。回退开关 cachedUilessActivate（HKCU
+// UILessActivate，缺省 1）必须保留，宿主异常时可一键隐身。
 func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	const group = groupUILess
 	checkContains(fsys, problems, group, winShell,
@@ -24,6 +28,7 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		"ActivateEx(",                  // 实现
 		"kIID_ITfTextInputProcessorEx", // 用自己的 IID 常量做 QI 匹配
 		"TF_TMAE_UIELEMENTENABLEDONLY", // 标志位判定入日志
+		"cachedUilessActivate",         // 回退开关：UILess 激活必须可经注册表关闭
 	)
 	// 未实现 ITfUIElementMgr 前不得注册 UIELEMENTENABLED 类别。
 	// 只匹配**常量名**（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED），避免把解释性
