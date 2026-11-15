@@ -184,4 +184,44 @@ HWND popupOwner() {
     return fg;
 }
 
+// 已知 UILess 游戏宿主（2026-11-15 用户实测 Dota 2 候选窗飞屏幕左上角）：
+//   * 进程名白名单：Valve Source 2 系列（Dota 2 / CS2 / Deadlock）；
+//   * 模块特征：engine2.dll + imemanager.dll（Source 2 的 TSF 桥）、
+//     SDL2.dll（SDL 文本输入宿主，含大量独立游戏）。
+// 该类宿主里：①候选窗协商（BeginUIElement）即使宿主表态接管，渲染位置也
+// 不跟随输入框（实测贴左上角）——跳过协商直接 GDI 自绘；②GetTextExt 常返回
+// 贴左上角的退化矩形，不能当锚点——强制走鼠标位置兜底（聊天框需先点击，
+// 鼠标就在输入行附近）。判定带进程级缓存（与 shellHostNeedsOwner 同款）。
+bool isKnownGameUiLessHost() {
+    static int cached = -1;  // -1 未判定，0 非游戏宿主，1 游戏宿主
+    if (cached >= 0) return cached != 0;
+    bool isGame = false;
+    wchar_t path[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
+        const wchar_t* base = wcsrchr(path, L'\\');
+        const wchar_t* name = base != nullptr ? base + 1 : path;
+        static const wchar_t* const kGameHosts[] = {
+            L"dota2.exe", L"cs2.exe", L"deadlock.exe",
+        };
+        for (const wchar_t* host : kGameHosts) {
+            if (lstrcmpiW(name, host) == 0) {
+                isGame = true;
+                break;
+            }
+        }
+    }
+    if (!isGame) {
+        // 模块特征（进程名改名/新游戏兜底）：Source 2 的 TSF 桥成对加载，
+        // SDL2 是 UILess 文本输入的通用宿主库。
+        if (GetModuleHandleW(L"engine2.dll") != nullptr &&
+            GetModuleHandleW(L"imemanager.dll") != nullptr) {
+            isGame = true;
+        } else if (GetModuleHandleW(L"SDL2.dll") != nullptr) {
+            isGame = true;
+        }
+    }
+    cached = isGame ? 1 : 0;
+    return isGame;
+}
+
 }  // namespace chaoset::win

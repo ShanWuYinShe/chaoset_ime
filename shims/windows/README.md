@@ -322,8 +322,10 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   （ui_element 模块的 ITfCandidateListUIElement，已注册 TFCAT_TIPCAP_UIELEMENTENABLED
   类别）：宿主不画时按官方语义回退 GDI 自绘候选窗，白名单不挡按键路由。CS2 Trusted
   Mode 只加载 `System32\IME\` 下带有效签名的 TIP DLL——未签名安装包在 CS2 无法
-  加载本输入法（Dota 2 无此限制）。游戏内 `GetTextExt` 常不可用，候选窗锚点退回
-  鼠标位置；游戏内输入需真机验收（CI 只做静态/编译验证）。
+  加载本输入法（Dota 2 无此限制）。已知游戏宿主（dota2/cs2/deadlock 及 Source 2
+  /SDL2 特征）跳过宿主渲染协商并强制鼠标锚点：候选窗跟随鼠标（聊天框需先点击，
+  鼠标就在输入行附近）；通用防线上 GetTextExt 贴主屏左上角的退化矩形一律不采信。
+  游戏内输入需真机验收（CI 只做静态/编译验证）。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
 - **候选窗右键菜单不得激活候选窗自身（issue#1）**：候选窗是 `WS_EX_NOACTIVATE`，
   但 `SetForegroundWindow` 仍会**程序化激活**它（微软文档明确），激活会夺走宿主文档的

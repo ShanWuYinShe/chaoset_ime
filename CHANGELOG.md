@@ -2,6 +2,16 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(Windows壳/游戏输入)：游戏内候选窗不再飞到屏幕左上角，跟随输入框（鼠标）**：
+  v0.3.25 实测 Dota 2 能打字后候选窗贴屏幕左上角——游戏 UILess 宿主的 GetTextExt
+  返回贴左上角的退化矩形（且 BeginUIElement 宿主表态接管后渲染位置也不跟随输入框）。
+  已知游戏宿主（dota2/cs2/deadlock 进程 + Source 2 `engine2.dll+imemanager.dll`、
+  `SDL2.dll` 模块特征）跳过宿主渲染协商直接 GDI 自绘，并强制鼠标锚点兜底；通用防线
+  上 GetTextExt 贴主屏左上角 32px 内的退化矩形一律不采信（正常宿主几乎不可能在该
+  区域返回合成矩形）。checkuiparity「UILess 能力」组同步断言游戏宿主检测。
+
 ## v0.3.25（2026-11-15）
 
 本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.24` 之后 6 个提交：修复 Windows 壳在 UILess 宿主（Dota 2 / CS2 / Deadlock 等 Source 2 与 SDL2 游戏及全屏应用）完全无法输入中文的问题——UILess 线程照常激活并按微软《UI less mode》官方协议实现 ITfUIElementMgr 候选协商（宿主可画时交宿主渲染，不画时按官方语义回退 GDI 自绘）；同步收紧 UILess 机器断言（改坏探测必红）并外置 README 维护者长文。
