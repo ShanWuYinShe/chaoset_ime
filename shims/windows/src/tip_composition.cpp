@@ -11,6 +11,11 @@
 
 #include "tip.hpp"
 
+// IMM32 兼容层（CUAS）互操作：UILess 宿主（SDL2/Dota 2 等）以 IMM32 方式承载
+// TSF，游戏经 ImmSetCompositionWindow/ImmSetCandidateWindow 把输入框位置写进
+// 窗口输入上下文——那是宿主自己给出的真实输入区坐标（见 updateGameCaretAnchor）。
+#include <imm.h>
+
 using namespace chaoset::win;
 
 namespace {
@@ -169,12 +174,14 @@ void ChaosetTIP::render(ITfContext* pic) {
         compCtx_ = ctx;
         ctx->AddRef();
     }
-    // UILess 宿主（游戏/全屏）锚点**保留上一轮位置**：GetTextExt 不可信
-    //（见 updateCaretFromRange 守卫），鼠标又会被用户在点开输入框后移走
-    //（2026-11-15 实测 Dota 2）——首键由鼠标兜底定位一次（点开聊天框时
-    // 鼠标就在输入框附近），之后整条组词稳定在该位置不跳变；组词结束/
-    // 退场（retireUiCompletely）才重置。非 UILess 宿主照旧每轮重新探测。
-    if (!uilessThread_) {
+    // UILess 宿主（游戏/全屏）锚点**取宿主给出的真实输入区**：这类宿主以
+    // IMM32 兼容方式承载 TSF（SDL2 的 UILess 模式即如此），游戏会把聊天输入框
+    // 的位置写进窗口输入上下文（见 updateGameCaretAnchor）。探测不到时保留
+    // 上一轮位置（GetTextExt 不可信、鼠标会被用户从输入框移走，2026-11-15
+    // Dota 2 实测）。非 UILess 宿主照旧每轮重新探测。
+    if (uilessThread_) {
+        updateGameCaretAnchor(ctx);
+    } else {
         caretFound_ = false;
         caretFromMouse_ = false;
     }
@@ -301,10 +308,30 @@ HWND ChaosetTIP::hostWindowOf(ITfContext* ctx) {
 // 必须按失败处理，等下一次渲染布局就绪后自然拿到真实位置。
 // UILess 宿主（uilessThread_，游戏/全屏）一律**不采信** GetTextExt：
 // 其返回值是宿主内部坐标系的垃圾值（2026-11-15 实测 Dota 2 首键贴原点、
-// 合成建立后漂移到非零垃圾坐标，候选窗随之飞到左上角）——锚点恒走
-// render 里的兜底链（GDI 光标 → 鼠标），与宿主渲染行为无关。
+// 合成建立后漂移到非零垃圾坐标，候选窗随之飞到左上角）——锚点恒走宿主经
+// IMM32 兼容层给出的输入区坐标（updateGameCaretAnchor）/兜底链，与宿主渲染
+// 行为无关。
 void ChaosetTIP::updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange* range) {
-    if (uilessThread_) return;
+    if (uilessThread_) {
+        // 诊断（不参与定位）：每实例/每条组词只记一次原始值，真机排障时用来
+        // 判断宿主是否其实给了可用矩形、还是彻底不可用。
+        if (!gameTextExtLogged_ && diagBudget()) {
+            gameTextExtLogged_ = true;
+            ITfContextView* view = nullptr;
+            RECT rc{};
+            BOOL fClipped = FALSE;
+            HRESULT hr = E_NOINTERFACE;
+            if (SUCCEEDED(ctx->GetActiveView(&view)) && view != nullptr) {
+                hr = view->GetTextExt(ec, range, &rc, &fClipped);
+                view->Release();
+            }
+            diagPrintf(L"tsf.log", "uiless gettextext hr=0x%08lX rc=%ld,%ld,%ld,%ld\n",
+                       static_cast<unsigned long>(hr), static_cast<long>(rc.left),
+                       static_cast<long>(rc.top), static_cast<long>(rc.right),
+                       static_cast<long>(rc.bottom));
+        }
+        return;
+    }
     ITfContextView* view = nullptr;
     if (FAILED(ctx->GetActiveView(&view)) || view == nullptr) return;
     RECT rc{};
@@ -326,6 +353,128 @@ void ChaosetTIP::updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange
         caretFromMouse_ = false;
     }
     view->Release();
+}
+
+
+// UILess 宿主（游戏/全屏，如 Dota 2）的输入区锚点与系统组字窗定位。
+//
+// 这类宿主常以 IMM32 兼容方式承载 TSF（SDL2 的 UILess 模式即如此）：游戏为了
+// 给 IME 定位输入框，会通过 ImmSetCompositionWindow / ImmSetCandidateWindow
+// 把输入框位置写进窗口的输入上下文（HIMC）——这是**宿主自己给出的真实输入区
+// 坐标**，比 GetTextExt（UILess 下返回宿主内部坐标系的垃圾值）和鼠标（点开
+// 聊天框后会被用户移走）都可靠。同时本 TIP 的合成在 IMM32 兼容宿主里由一个
+// 系统默认组字窗呈现，其位置也取 HIMC 的组字窗坐标：宿主只设了候选窗坐标时
+// 用它补写组字窗坐标，把贴在屏幕左上角的拼音组字窗挪到输入区（2026-11-15
+// 用户实测「拼音输入区在屏幕左上角」）。
+//
+// 返回 true 表示拿到可用坐标、caretPos_/caretLineHeight_ 已就位；false 时调用方
+// 保留上一轮锚点并走旧兜底链（探测失败绝不丢候选窗）。全部是进程内
+// Win32/IMM32 查询，无跨进程等待、无磁盘 I/O，符合 TSF 回调零阻塞契约。
+bool ChaosetTIP::updateGameCaretAnchor(ITfContext* ctx) {
+    HWND host = contextHostWindow(ctx);
+    if (host == nullptr) {
+        // 有的 UILess 宿主不提供 ITfContextView：前台窗口属于本进程时退回它。
+        const HWND fg = GetForegroundWindow();
+        DWORD pid = 0;
+        if (fg != nullptr) GetWindowThreadProcessId(fg, &pid);
+        if (fg != nullptr && pid == GetCurrentProcessId()) host = fg;
+    }
+    if (host == nullptr) return false;
+    RECT client{};
+    if (!GetClientRect(host, &client) || client.right <= client.left ||
+        client.bottom <= client.top) {
+        return false;
+    }
+
+    HIMC himc = ImmGetContext(host);
+    if (himc == nullptr) {
+        if (!gameAnchorLogged_ && diagBudget()) {
+            gameAnchorLogged_ = true;
+            diagPrintf(L"tsf.log", "gameanchor himc=0 host=%p\n",
+                       reinterpret_cast<void*>(host));
+        }
+        return false;
+    }
+
+    // 宿主给出的输入区位置：组字窗坐标优先（就是文本插入点），不可用时再试
+    // 候选窗坐标（同一来源，宿主可能只设了其中一个）。宿主没设置时 HIMC 里是
+    // 默认值 (0,0)，或坐标落在客户区外（含宿主用屏幕坐标而窗口不全屏的情况）
+    // ——一律视为不可用。
+    COMPOSITIONFORM cf{};
+    const bool haveCf = ImmGetCompositionWindow(himc, &cf) != FALSE;
+    CANDIDATEFORM caf{};
+    caf.dwIndex = 0;
+    const bool haveCaf = ImmGetCandidateWindow(himc, 0, &caf) != FALSE;
+    const auto insideClient = [&client](const POINT& p) {
+        return (p.x != 0 || p.y != 0) && p.x >= client.left && p.x < client.right &&
+               p.y >= client.top && p.y < client.bottom;
+    };
+    const bool cfOk = haveCf && insideClient(cf.ptCurrentPos);
+    const bool cafOk = haveCaf && insideClient(caf.ptCurrentPos);
+    if (!cfOk && !cafOk) {
+        if (!gameAnchorLogged_ && diagBudget()) {
+            gameAnchorLogged_ = true;
+            diagPrintf(L"tsf.log",
+                       "gameanchor unusable host=%p cf=%d pt=%ld,%ld rc=%ld,%ld,%ld,%ld "
+                       "caf=%d cpt=%ld,%ld client=%ld,%ld,%ld,%ld\n",
+                       reinterpret_cast<void*>(host), haveCf ? 1 : 0,
+                       static_cast<long>(cf.ptCurrentPos.x),
+                       static_cast<long>(cf.ptCurrentPos.y),
+                       static_cast<long>(cf.rcArea.left),
+                       static_cast<long>(cf.rcArea.top),
+                       static_cast<long>(cf.rcArea.right),
+                       static_cast<long>(cf.rcArea.bottom), haveCaf ? 1 : 0,
+                       static_cast<long>(caf.ptCurrentPos.x),
+                       static_cast<long>(caf.ptCurrentPos.y),
+                       static_cast<long>(client.left), static_cast<long>(client.top),
+                       static_cast<long>(client.right), static_cast<long>(client.bottom));
+        }
+        ImmReleaseContext(host, himc);
+        return false;
+    }
+    const POINT pt = cfOk ? cf.ptCurrentPos : caf.ptCurrentPos;
+    const LONG areaH = cfOk ? (cf.rcArea.bottom - cf.rcArea.top)
+                            : (caf.rcArea.bottom - caf.rcArea.top);
+
+    // 行高：宿主给了输入区矩形高度就沿用（SDL 系宿主按输入框矩形设置）；
+    // 否则按窗口 DPI 取 20px@96 兜底（与既有鼠标兜底同口径）。
+    UINT dpi = GetDpiForWindow(host);
+    if (dpi == 0) dpi = 96;
+    const int lineH = (areaH > 4 && areaH < 300)
+                          ? static_cast<int>(areaH)
+                          : MulDiv(20, static_cast<int>(dpi), 96);
+
+    // 系统默认组字窗定位：宿主已给出组字窗坐标时按原值回写（同一 HIMC 值，
+    // 不覆盖宿主的 dwStyle/rcArea 语义）；只有候选窗坐标时补写组字窗坐标，
+    // 把贴在屏幕左上角的拼音组字窗挪到输入区。
+    if (cfOk) {
+        ImmSetCompositionWindow(himc, &cf);
+    } else {
+        COMPOSITIONFORM form{};
+        form.dwStyle = CFS_POINT;
+        form.ptCurrentPos = pt;
+        ImmSetCompositionWindow(himc, &form);
+    }
+    ImmReleaseContext(host, himc);
+
+    POINT screen = pt;
+    ClientToScreen(host, &screen);
+    // 候选窗锚点 = 输入行底边（CandidateWindow 从锚点下方 6pt 起画）。
+    screen.y += lineH;
+    caretPos_ = screen;
+    caretLineHeight_ = lineH;
+    caretFound_ = true;
+    caretFromMouse_ = false;
+
+    if (!gameAnchorLogged_ && diagBudget()) {
+        gameAnchorLogged_ = true;
+        diagPrintf(L"tsf.log",
+                   "gameanchor host=%p cf=%d caf=%d pt=%ld,%ld lineH=%d screen=%ld,%ld\n",
+                   reinterpret_cast<void*>(host), cfOk ? 1 : 0, cafOk ? 1 : 0,
+                   static_cast<long>(pt.x), static_cast<long>(pt.y), lineH,
+                   static_cast<long>(screen.x), static_cast<long>(screen.y));
+    }
+    return true;
 }
 
 
@@ -626,6 +775,9 @@ void ChaosetTIP::releaseCompositionContext() {
     }
     composeHostWnd_ = nullptr;
     preeditWritten_ = false;
+    // 新一条组词重新采集锚点诊断（换输入框/换游戏的现场才有意义）。
+    gameAnchorLogged_ = false;
+    gameTextExtLogged_ = false;
 }
 
 

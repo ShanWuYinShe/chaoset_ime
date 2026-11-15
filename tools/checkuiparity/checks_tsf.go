@@ -23,6 +23,12 @@ import (
 // ui_element 模块落地后正牌注册，声明与实现一致。
 // 回退开关 cachedUilessActivate（HKCU UILessActivate，缺省 1）必须保留，
 // 宿主异常时可一键恢复「UILess 线程不激活」的旧行为。
+//
+// 锚点契约（2026-11-15 用户 Dota 2 真机反馈）：UILess 宿主的 GetTextExt 不可信，
+// 但游戏会经 IMM32 兼容层（ImmSetCompositionWindow / ImmSetCandidateWindow）把
+// 聊天输入框位置写进窗口输入上下文（HIMC）——那是宿主自己给出的真实输入区坐标。
+// 候选窗锚点必须先读它（updateGameCaretAnchor），并用同值回写组字窗位置，把固定
+// 贴在屏幕左上角的系统拼音组字窗挪到输入区；拿不到时才退回 GDI 光标/鼠标旧链。
 func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	const group = groupUILess
 	// 探测实证（2026-11-15）：只断言函数名 "cachedUilessActivate" 锁不住调用点——
@@ -52,13 +58,24 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		"cachedUiElementRender() && presentCandidatesUiElement()",
 		"if (!cachedUiElementRender()) {",
 		// UILess 宿主 GetTextExt 不可信（实测垃圾坐标致候选窗飞左上角）：
-		// 锚点必须跳过采信，恒走鼠标/GDI 兜底（updateCaretFromRange 入口守卫）。
-		"if (uilessThread_) return;",
+		// 锚点必须跳过采信，改走宿主经 IMM32 兼容层给出的真实输入区坐标
+		// （updateGameCaretAnchor：游戏用 ImmSetCompositionWindow /
+		// ImmSetCandidateWindow 把输入框位置写进 HIMC，SDL2 系宿主即如此），
+		// 并用同值回写组字窗位置——系统默认组字窗固定在屏幕左上角是
+		// 2026-11-15 用户实测的另一个问题。删任一实现/日志取证即红。
 		"一律**不采信** GetTextExt",
-		// UILess 宿主锚点保留上一轮位置（鼠标会被移走；GetTextExt 不可信）：
-		// 锁 render 条件重置形态，绕过即红。
-		"if (!uilessThread_) {",
-		"锚点**保留上一轮位置**",
+		"updateGameCaretAnchor(ctx)",
+		"宿主自己给出的真实输入区",
+		"ImmGetCompositionWindow(",
+		"ImmGetCandidateWindow(",
+		"ImmSetCompositionWindow(",
+		"ImmGetContext(",
+		"ImmReleaseContext(",
+		// 真机排障证据：锚点来源/宿主原始坐标与 GetTextExt 原始值各记一条
+		// （游戏内问题真机才能复现，日志是唯一取证通道，删掉即失去定位能力）。
+		"gameanchor host=%p",
+		"gameanchor unusable host=%p",
+		"uiless gettextext hr=0x%08lX",
 	)
 }
 

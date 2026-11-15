@@ -333,13 +333,13 @@ package-windows:
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
-		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
+		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
 	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
-		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
+		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
 	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
 	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。
 	# 版本资源链进 UI 宿主：独立 EXE 的属性页也要显示产品名/公司/版本。

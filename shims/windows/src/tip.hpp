@@ -337,6 +337,10 @@ private:
     static HWND contextHostWindow(ITfContext* ctx);
     static HWND hostWindowOf(ITfContext* ctx);
     void updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange* range);
+    // UILess 宿主（游戏/全屏）输入区锚点与系统组字窗定位：读宿主经 IMM32
+    // 兼容层给出的组字窗/候选窗坐标（真实输入框位置）并回写组字窗位置；
+    // 成功置 caretPos_/caretLineHeight_ 并返回 true（实现见 tip_composition.cpp）。
+    bool updateGameCaretAnchor(ITfContext* ctx);
     void applyPreedit(ITfContext* ctx, TfEditCookie ec);
     bool commit(ITfContext* pic, const std::string& text);
     void applyCommit(ITfContext* ctx, TfEditCookie ec);
@@ -373,6 +377,10 @@ private:
     // caretPos_ 是否来自鼠标兜底（宿主没有真实光标时）。提示条据此拒绝
     // 在鼠标位置显示，避免「提示跟着鼠标跑」（2026-11-05 用户反馈）。
     bool caretFromMouse_ = false;
+    // UILess 宿主锚点/GetTextExt 原始值的诊断记录开关：每条组词只记一次
+    // （真机排障用，不参与定位；在 releaseCompositionContext 重置）。
+    bool gameAnchorLogged_ = false;
+    bool gameTextExtLogged_ = false;
 
     chaoset::win::PipeTransport transport_;
     chaoset::Session session_{transport_};
