@@ -19,6 +19,7 @@ const (
 	groupShiftAccounting    = "Shift 记账"
 	groupResetSemantics     = "reset 语义"
 	groupSettingsContract   = "设置窗契约"
+	groupSettingsVisual     = "设置窗视觉令牌"
 	groupSettingsCore       = "设置核心（方案 A）"
 	groupLinuxSetupAssembly = "Linux 设置窗装配"
 

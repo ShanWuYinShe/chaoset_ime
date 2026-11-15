@@ -7,35 +7,32 @@
 
 GtkWidget *setup_page_about_build(AppCtx *ctx) {
     (void)ctx;
-    GtkWidget *about_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    GtkWidget *card = setup_card_new("<b>关于</b>");
 
-    /* 关于页分组标题与正文（2026-11-06 阶段2：与 Windows 卡片标题「关于」、
-     * macOS「关于」分组统一）；版本号统一放在窗口底部页脚，本页不再重复。 */
-    GtkWidget *about_group = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(about_group), "<b>关于</b>");
-    gtk_label_set_xalign(GTK_LABEL(about_group), 0.0);
-    gtk_box_pack_start(GTK_BOX(about_page), about_group, FALSE, FALSE, 0);
+    /* 头部横排：图标在左、名称与平台副标题在右（与另两端关于页一致）。
+     * 图标用 hicolor 里的 "chaoset"；CI/未安装环境没有图标主题，取不到就不占位，
+     * 避免破损图把标题列挤歪。 */
+    GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+    if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), "chaoset")) {
+        GtkWidget *icon = gtk_image_new_from_icon_name("chaoset", GTK_ICON_SIZE_DIALOG);
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), 44);
+        gtk_widget_set_valign(icon, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(header), icon, FALSE, FALSE, 0);
+    }
+    GtkWidget *titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    GtkWidget *app_name = setup_label_new("Chaoset 输入法", "title");
+    gtk_label_set_line_wrap(GTK_LABEL(app_name), FALSE);
+    gtk_box_pack_start(GTK_BOX(titles), app_name, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(titles),
+                       setup_hint_new("跨平台中文输入法（Linux ibus 前端）"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(header), titles, TRUE, TRUE, 0);
+    setup_card_add(card, header);
 
-    GtkWidget *about_desc = gtk_label_new("跨平台中文输入法（Linux IBus 壳）");
-    gtk_label_set_xalign(GTK_LABEL(about_desc), 0.0);
-    gtk_style_context_add_class(gtk_widget_get_style_context(about_desc), "dim-label");
-    gtk_box_pack_start(GTK_BOX(about_page), about_desc, FALSE, FALSE, 0);
-
-    GtkWidget *about_license = gtk_label_new("代码 MIT · 词库 CC BY-SA 4.0");
-    gtk_label_set_xalign(GTK_LABEL(about_license), 0.0);
-    gtk_style_context_add_class(gtk_widget_get_style_context(about_license), "dim-label");
-    gtk_box_pack_start(GTK_BOX(about_page), about_license, FALSE, FALSE, 0);
-
-    GtkWidget *more = gtk_label_new("更多设置将在后续版本提供");
-    gtk_label_set_xalign(GTK_LABEL(more), 0.0);
-    gtk_style_context_add_class(gtk_widget_get_style_context(more), "dim-label");
-    gtk_box_pack_start(GTK_BOX(about_page), more, FALSE, FALSE, 0);
-
-    GtkWidget *repo_label = gtk_label_new("https://github.com/ShanWuYinShe/chaoset_ime");
-    gtk_label_set_xalign(GTK_LABEL(repo_label), 0.0);
-    gtk_label_set_line_wrap(GTK_LABEL(repo_label), TRUE);
-    gtk_style_context_add_class(gtk_widget_get_style_context(repo_label), "dim-label");
-    gtk_box_pack_start(GTK_BOX(about_page), repo_label, FALSE, FALSE, 0);
-
-    return about_page;
+    setup_card_add(card, setup_hint_new("代码 MIT · 词库 CC BY-SA 4.0"));
+    setup_card_add(card, setup_label_new("更多设置将在后续版本提供", "tertiary"));
+    setup_card_add(card, setup_label_new(
+                             "https://github.com/ShanWuYinShe/chaoset_ime", "link"));
+    gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+    return page;
 }

@@ -14,11 +14,22 @@
 // `~/Applications/Chaoset.app`（安装与设置 app）并传 `--import`，
 // 由它弹出文件选择并完成合并/备份/原子替换/重启 daemon（入口与 Windows
 // 设置窗「词库」区对齐；导入实现仍只有 Setup.app 一份，避免复制粘贴）。
+//
+// 2026-11-16：视觉系统「暖陶纸感」——米白纸底 + 白瓷卡片 + 赤陶强调色，
+// 自绘开关/胶囊/按钮与左导航统一同一套令牌；深色为暖炭灰。令牌是三端共享
+// 设计系统的 macOS 实现（docs/ui-parity.md「设置窗视觉令牌」逐值机器断言，
+// 改色值必须三端同步）。
+//
+// 2026-11-06 架构拆分：设置窗拆分为窗口骨架 / 主题与自绘控件 / 三页视图 /
+// @objc target；2026-11-16「暖陶纸感」视觉升级把主题令牌与自绘控件抽到
+// SettingsTheme.swift（三端共享设计系统的 macOS 实现，docs/ui-parity.md
+// 「设置窗视觉令牌」逐值机器断言）。
 
 import AppKit
 
-// 2026-11-06 架构拆分：本文件只保留窗口/控制器骨架与左导航/页脚/约束；
-// 三页视图构建在 SettingsWindowPages.swift，@objc target/action 在
+// 本文件：设置窗窗口骨架与控制器（show / makeContentView：左侧导航、
+// 三页容器、页脚版本号）。主题令牌与自绘控件见 SettingsTheme.swift，
+// 三页视图构建见 SettingsWindowPages.swift，@objc target 见
 // SettingsWindowTargets.swift。
 
 // MARK: - 设置窗控制器
@@ -46,92 +57,20 @@ enum SettingsWindowController {
             return
         }
 
-        // 布局：左侧导航（输入 / 词库 / 关于）+ 右侧内容页（2026-11-06
-        // 卡片式重构，与 Windows 设置窗对齐；参照微信输入法设置窗的形态）。
-
-        // —— 输入页 ——（三页视图构建见 SettingsWindowPages.swift）
-        let inputPage = SettingsWindowPages.makeInputPage(
-            switchTarget: switchTarget, modeTarget: modeTarget)
-
-        // —— 词库页 ——
-        let dictPage = SettingsWindowPages.makeDictPage(
-            learningTarget: learningTarget, dictImportTarget: dictImportTarget)
-
-        // —— 关于页 ——
-        let aboutPage = SettingsWindowPages.makeAboutPage()
-
-        // —— 左侧导航 ——
-        // 宽度 132pt 与 Windows kNavWidth 一致；按钮固定 112×32pt，才能让
-        // 选中项的 accent 胶囊（layer 圆角底）形成稳定矩形（见
-        // PageSwitchTarget.styleNavButton）。
-        let sidebar = NSStackView()
-        sidebar.orientation = .vertical
-        sidebar.alignment = .leading
-        sidebar.spacing = 6
-        sidebar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-        sidebar.widthAnchor.constraint(equalToConstant: 132).isActive = true
-        let appTitle = NSTextField(labelWithString: "Chaoset 设置")
-        appTitle.font = .boldSystemFont(ofSize: 14)
-        sidebar.addArrangedSubview(appTitle)
-        PageSwitchTarget.shared.inputPage = inputPage
-        PageSwitchTarget.shared.dictPage = dictPage
-        PageSwitchTarget.shared.aboutPage = aboutPage
-        PageSwitchTarget.shared.navButtons.removeAll()
-        for (idx, title) in [("0", "输入"), ("1", "词库"), ("2", "关于")] {
-            let b = NSButton(title: title, target: PageSwitchTarget.shared,
-                             action: #selector(PageSwitchTarget.switchPage(_:)))
-            b.isBordered = false
-            b.identifier = NSUserInterfaceItemIdentifier(idx)
-            b.font = .systemFont(ofSize: 13)
-            b.widthAnchor.constraint(equalToConstant: 112).isActive = true
-            b.heightAnchor.constraint(equalToConstant: 32).isActive = true
-            sidebar.addArrangedSubview(b)
-            PageSwitchTarget.shared.navButtons.append(b)
-        }
-
-        // 整窗：横向 [导航 | 内容页]，初始只显示输入页；底部固定页脚版本号。
-        let content = NSStackView()
-        content.orientation = .horizontal
-        content.alignment = .top
-        content.spacing = 24
-        content.addArrangedSubview(sidebar)
-        content.addArrangedSubview(inputPage)
-        content.addArrangedSubview(dictPage)
-        content.addArrangedSubview(aboutPage)
-        dictPage.isHidden = true
-        aboutPage.isHidden = true
-        PageSwitchTarget.shared.select(0)
-
-        // 页脚版本号：2026-11-06 阶段2 与 Windows 对齐——三端设置窗底部固定显示
-        // 「Chaoset 版本 x.y.z」，不再只放在「关于」页（AGENTS.md:19 版本可见性）。
-        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
-        let footerLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
-        footerLabel.font = .systemFont(ofSize: 11)
-        footerLabel.textColor = .tertiaryLabelColor
-
-        // 内容与页脚分开：内容贴顶（20pt 边距），页脚贴底（12pt），中间不允许
-        // 重叠（页脚 top >= 内容 bottom + 8）。窗口固定 640×560pt（不可缩放）。
-        let root = NSView()
-        root.addSubview(content)
-        root.addSubview(footerLabel)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        footerLabel.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -28),
-            footerLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            footerLabel.topAnchor.constraint(greaterThanOrEqualTo: content.bottomAnchor, constant: 8),
-            footerLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
-        ])
-
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: SettingsTheme.windowSize.width,
+                                height: SettingsTheme.windowSize.height),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
         w.title = "Chaoset 设置"
-        w.contentView = root
+        // 透明标题栏 + 内容延伸到底：暖色窗口底与内容连成一片，避免
+        // 「灰白标题栏 + 暖色内容」的割裂感（Windows/Linux 同语义）。
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isMovableByWindowBackground = true
+        w.backgroundColor = SettingsTheme.windowBg
+        w.contentView = makeContentView()
         w.isReleasedWhenClosed = false
         w.center()
         w.makeKeyAndOrderFront(nil)
@@ -151,5 +90,106 @@ enum SettingsWindowController {
             forName: .chaosetAssociateDisabled, object: nil, queue: nil) { _ in
             CandidatePanelController.hide()
         }
+    }
+
+    /// 构建设置窗内容视图（窗口骨架与内容解耦：线上窗口与离屏视觉回归/截图
+    /// 共用同一份布局，避免「截图专用布局」漂移）。
+    static func makeContentView() -> NSView {
+        // —— 三页内容 ——（视图构建见 SettingsWindowPages.swift）
+        let inputPage = SettingsWindowPages.makeInputPage(
+            switchTarget: switchTarget, modeTarget: modeTarget)
+        let dictPage = SettingsWindowPages.makeDictPage(
+            learningTarget: learningTarget, dictImportTarget: dictImportTarget)
+        let aboutPage = SettingsWindowPages.makeAboutPage()
+
+        // —— 左侧导航：米色分栏 + 赤陶软胶囊选中态 ——
+        let sidebar = NSStackView()
+        sidebar.orientation = .vertical
+        sidebar.alignment = .leading
+        sidebar.spacing = 4
+        sidebar.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        // 导航标题 13pt semibold：132pt 导航列下 15pt 的 CJK 标题在 Windows/Linux
+        // 的 pt 口径（96dpi 下 20px）会超宽被裁切；三端统一 13pt 保证完整显示。
+        let appTitle = NSTextField(labelWithString: "Chaoset 设置")
+        appTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        appTitle.textColor = SettingsTheme.textPrimary
+        sidebar.addArrangedSubview(appTitle)
+        sidebar.setCustomSpacing(18, after: appTitle)
+
+        PageSwitchTarget.shared.inputPage = inputPage
+        PageSwitchTarget.shared.dictPage = dictPage
+        PageSwitchTarget.shared.aboutPage = aboutPage
+        PageSwitchTarget.shared.navButtons.removeAll()
+        for (idx, title) in [("0", "输入"), ("1", "词库"), ("2", "关于")] {
+            let button = WarmPillButton(title: title, kind: .nav)
+            button.target = PageSwitchTarget.shared
+            button.action = #selector(PageSwitchTarget.switchPage(_:))
+            button.identifier = NSUserInterfaceItemIdentifier(idx)
+            sidebar.addArrangedSubview(button)
+            PageSwitchTarget.shared.navButtons.append(button)
+        }
+
+        // —— 整窗：左侧导航列 | 内容页；底部固定页脚版本号 ——
+        let root = SettingsBackgroundView()
+        let navColumn = SettingsNavColumnView()
+        navColumn.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(navColumn)
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        navColumn.addSubview(sidebar)
+
+        let contentArea = NSView()
+        contentArea.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(contentArea)
+
+        let pageStack = NSStackView(views: [inputPage, dictPage, aboutPage])
+        pageStack.orientation = .vertical
+        pageStack.alignment = .leading
+        pageStack.spacing = 0
+        pageStack.translatesAutoresizingMaskIntoConstraints = false
+        contentArea.addSubview(pageStack)
+        for page in [inputPage, dictPage, aboutPage] {
+            page.widthAnchor.constraint(equalTo: pageStack.widthAnchor).isActive = true
+        }
+        dictPage.isHidden = true
+        aboutPage.isHidden = true
+        PageSwitchTarget.shared.select(0)
+
+        // 页脚版本号：三端设置窗底部固定显示「Chaoset 版本 x.y.z」。
+        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+        let footerLabel = NSTextField(labelWithString: "Chaoset 版本 \(version)")
+        footerLabel.font = .systemFont(ofSize: 11)
+        footerLabel.textColor = SettingsTheme.textSecondary
+        footerLabel.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(footerLabel)
+
+        NSLayoutConstraint.activate([
+            navColumn.topAnchor.constraint(equalTo: root.topAnchor),
+            navColumn.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            navColumn.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            navColumn.widthAnchor.constraint(equalToConstant: SettingsTheme.navWidth),
+
+            sidebar.topAnchor.constraint(equalTo: navColumn.topAnchor, constant: SettingsTheme.contentTop),
+            sidebar.leadingAnchor.constraint(equalTo: navColumn.leadingAnchor, constant: 12),
+            sidebar.trailingAnchor.constraint(lessThanOrEqualTo: navColumn.trailingAnchor, constant: -12),
+
+            contentArea.topAnchor.constraint(equalTo: root.topAnchor, constant: SettingsTheme.contentTop),
+            contentArea.leadingAnchor.constraint(equalTo: navColumn.trailingAnchor,
+                                                constant: SettingsTheme.contentLeftGap),
+            contentArea.trailingAnchor.constraint(equalTo: root.trailingAnchor,
+                                                 constant: -SettingsTheme.contentRight),
+            contentArea.bottomAnchor.constraint(equalTo: root.bottomAnchor,
+                                               constant: -SettingsTheme.footerBottom - 20),
+
+            pageStack.topAnchor.constraint(equalTo: contentArea.topAnchor),
+            pageStack.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+            pageStack.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+            pageStack.bottomAnchor.constraint(lessThanOrEqualTo: contentArea.bottomAnchor),
+
+            footerLabel.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+            footerLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor,
+                                               constant: -SettingsTheme.footerBottom),
+        ])
+        return root
     }
 }

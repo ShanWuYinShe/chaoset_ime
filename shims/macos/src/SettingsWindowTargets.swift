@@ -9,7 +9,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 @objc final class AssociateSwitchTarget: NSObject {
-    @objc func switchChanged(_ sender: NSSwitch) {
+    @objc func switchChanged(_ sender: WarmSwitch) {
         AssociateSetting.enabled = sender.state == .on
         if !AssociateSetting.enabled {
             NotificationCenter.default.post(
@@ -24,13 +24,21 @@ extension Notification.Name {
 }
 
 /// 中英状态作用域二选一的 target（与 Windows/Linux 设置窗对齐）。
+/// 2026-11-16：系统 radio 换成自绘软胶囊（三端同形态），互斥由这里维护。
 @objc final class ModeScopeTarget: NSObject {
-    @objc func scopeChanged(_ sender: NSButton) {
-        // radioButtonWithTitle 是自动互斥的；用标题反查 scope 最稳妥
-        // （tag 在初始化后绑定时容易与顺序耦合）。
+    /// 两个胶囊按钮（Pages 构建后登记，点击后同步选中态）。
+    var scopeButtons: [WarmPillButton] = []
+
+    @objc func scopeChanged(_ sender: WarmPillButton) {
+        // 用标题反查 scope 最稳妥（tag 在初始化后绑定时容易与顺序耦合）。
+        let scope: ModeScope
         switch sender.title {
-        case "每进程独立": ModeScopeSetting.current = .process
-        default: ModeScopeSetting.current = .system
+        case "每进程独立": scope = .process
+        default: scope = .system
+        }
+        ModeScopeSetting.current = scope
+        for button in scopeButtons {
+            button.setPillSelected(button.title == sender.title)
         }
     }
 }
@@ -46,7 +54,7 @@ final class PageSwitchTarget: NSObject {
     weak var dictPage: NSView?
     weak var aboutPage: NSView?
     /// 左导航三个按钮（窗口单例生命周期内复用，切换选中态用）。
-    var navButtons: [NSButton] = []
+    var navButtons: [WarmPillButton] = []
 
     @objc func switchPage(_ sender: NSButton) {
         select(Int(sender.identifier?.rawValue ?? "0") ?? 0)
@@ -62,22 +70,11 @@ final class PageSwitchTarget: NSObject {
         }
     }
 
-    /// 选中项：焦糖琥珀 accent 胶囊底 + 白字 + 微立体投影；未选中：透明底 + 主文本色。
-    private func styleNavButton(_ button: NSButton, selected: Bool) {
-        let accent = NSColor(srgbRed: 0xD1 / 255.0, green: 0x6B / 255.0, blue: 0x29 / 255.0, alpha: 1)
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 8
-        button.layer?.backgroundColor = selected ? accent.cgColor : NSColor.clear.cgColor
-        button.layer?.shadowColor = NSColor(srgbRed: 0x80 / 255.0, green: 0x30 / 255.0, blue: 0x10 / 255.0, alpha: 0.35).cgColor
-        button.layer?.shadowOffset = CGSize(width: 0, height: -1)
-        button.layer?.shadowRadius = 2
-        button.layer?.shadowOpacity = selected ? 1.0 : 0.0
-        button.attributedTitle = NSAttributedString(
-            string: button.title,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .regular),
-                .foregroundColor: selected ? NSColor.white : NSColor.labelColor,
-            ])
+    /// 选中项：赤陶软胶囊（accentSoft 底 + accent 描边 + accentText 半粗字）；
+    /// 未选中：透明底 + 主文本色，hover 时由按钮自绘 controlHover 胶囊。
+    /// 大面积实心橙会让整窗显得突兀，软胶囊更符合「温暖柔和」的基调。
+    private func styleNavButton(_ button: WarmPillButton, selected: Bool) {
+        button.setPillSelected(selected)
     }
 }
 

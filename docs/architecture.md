@@ -116,8 +116,9 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `CandidateSettings.swift` | Associate/ModeScope 设置模型 | ≤200 |
 | `EngineClient.swift` | 引擎 IPC 对外 API | ≤600 |
 | `DaemonTransport.swift` | Unix socket 连接/帧读写/重连 | ≤500 |
-| `SettingsWindow.swift` | 设置窗控制器 | ≤600 |
-| `SettingsWindowPages.swift` | 三页视图构建 | ≤700 |
+| `SettingsWindow.swift` | 设置窗窗口骨架与控制器（show/makeContentView：导航/三页容器/页脚） | ≤600 |
+| `SettingsTheme.swift` | 设置窗视觉令牌（三端共享设计系统）+ 自绘基础视图与控件（窗口底/导航列/卡片/开关/胶囊/按钮/焦点环） | ≤600 |
+| `SettingsWindowPages.swift` | 三页视图构建（卡片/行/说明/按钮） | ≤700 |
 | `SettingsWindowTargets.swift` | @objc target/action | ≤400 |
 | `main.swift` | 入口 | ≤100 |
 

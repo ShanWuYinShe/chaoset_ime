@@ -553,7 +553,7 @@ func TestCheckShimModuleLayoutAndDocs(t *testing.T) {
 }
 
 // TestCheckLinuxSetupAssembly 锁住 Linux 设置窗装配回归：
-// GtkStack 页面误用 gtk_box_pack_start、radio 组类型混用都必须被捕获。
+// GtkStack 页面误用 gtk_box_pack_start、胶囊导航不切 stack 页都必须被捕获。
 func TestCheckLinuxSetupAssembly(t *testing.T) {
 	text := string(readRepo(t, linuxSetup))
 	fsys := fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(text)}}
@@ -576,17 +576,16 @@ func TestCheckLinuxSetupAssembly(t *testing.T) {
 		t.Fatalf("GtkStack 页面误挂载应被捕获，实际：%v", problems)
 	}
 
-	// 变异 2：radio 首成员建组被删（模拟组类型混用回归）。
+	// 变异 2：胶囊导航不再切换 stack 页（模拟「点了导航内容不换」回归）。
 	mutated = strings.Replace(text,
-		"rb = gtk_radio_button_new_with_label_from_widget(",
-		"rb = gtk_radio_button_new_with_label(", 1)
+		"gtk_stack_set_visible_child", "gtk_stack_set_visible", 1)
 	if mutated == text {
-		t.Fatal("变异 2 未生效：找不到 from_widget")
+		t.Fatal("变异 2 未生效：找不到 gtk_stack_set_visible_child")
 	}
 	problems = nil
 	checkLinuxSetupAssembly(fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(mutated)}}, &problems)
-	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_radio_button_new_with_label_from_widget") {
-		t.Fatalf("radio 建组回归应被捕获，实际：%v", problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_stack_set_visible_child") {
+		t.Fatalf("导航切页回归应被捕获，实际：%v", problems)
 	}
 }
 

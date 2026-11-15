@@ -34,97 +34,106 @@ namespace chaoset::win {
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
 //
-// 候选栏齿轮 → 独立设置窗口。此前这里是 TrackPopupMenu 的单个勾选项，
-// 用户要求与 macOS 一致的专门设置窗口。布局与 macOS 逐项对应：标题
-// 「Chaoset 设置」/ 分组「输入行为」/「词组联想」开关 / 说明文字 /
-// 底部「更多设置将在后续版本提供」。开关即时写 HKCU\Software\Chaoset，
-// **不访问 TIP**（设置窗可活过 TIP，见 SettingsWndProc 的 UAF 注释）。
-// 窗口单例：已打开则前置。
-// 设置窗口视觉与 macOS SettingsWindow 对齐（2026-10-30 三端一致性整改 A9）：
-// 分组标题 13pt Bold / 标签 13pt / 说明文字 11pt（此前全部 9pt——明显小于
-// mac 的 13/11pt）。窗口客户区 380×190pt（mac contentRect 同尺寸），控件
-// 坐标统一 pt 口径。
+// 候选栏齿轮 / 托盘菜单 → 独立设置窗口（单例：已打开则切页前置）。设置窗只做
+// 设置项读写，**不访问 TIP**（可活过 TIP，见 SettingsWndProc 的 UAF 注释）；
+// 学习数据经独立 PipeTransport + core::Session 连 daemon，与输入法主连接互不影响。
 //
-// 2026-10-31：新增「学习数据」区（统计 / 清空 / 导出）——普通用户不再需要
-// 命令行（`chaoset-userdict` 降级为高级/排障兜底）。设置窗口不持有 TIP 指针，
-// 数据管理直接用独立的 PipeTransport（命名管道）+ core::Session 连 daemon，与输入法
-// 主连接互不影响（daemon 支持多连接，每个连接独立组词会话）。
-//
-// 2026-10-31 视觉对齐（编译级，需 Windows 真机验收）：
-// - 分组标题改为加粗 Static（与 macOS SettingsWindow 的 bold label 同构）；
-//   不再用 BS_GROUPBOX——Win32 分组框不跟随系统深色，深色下会留下浅色边框。
-// - 深浅色跟随系统：DWM 深色标题栏 + 自绘背景/文字/复选框/按钮；
-//   WM_SETTINGCHANGE / WM_THEMECHANGED 立即重绘。
-// - per-monitor DPI：按设置窗口所在显示器 DPI 布局，WM_DPICHANGED 重排。
+// 视觉：暖陶纸感令牌（SettingsColors）+ 自绘导航/卡片/页脚，跟随系统深浅色与
+// per-monitor DPI；交互控件用 BS_OWNERDRAW 子窗口保留原生可访问性，外观自绘。
 static HWND g_settingsWnd = nullptr;        // 单例句柄
 static int g_settingsDpi = 96;              // 设置窗所在显示器 DPI（per-monitor）
-static HFONT g_settingsFont = nullptr;      // 正文/标签 13pt
-static HFONT g_settingsFontBold = nullptr;  // 分组标题 13pt Bold
-static HFONT g_settingsFontHint = nullptr;  // 说明文字 11pt
+static HFONT g_settingsFont = nullptr;      // 正文/行标签 13pt
+static HFONT g_settingsFontBold = nullptr;  // 卡片标题/选中项 13pt semibold
+static HFONT g_settingsFontHint = nullptr;  // 说明/页脚/关于页正文 11pt
+static HFONT g_settingsFontTitle = nullptr; // 窗口标题/关于页标题 15pt semibold
+static HICON g_settingsIcon = nullptr;      // 关于页应用图标（资源 1，按 DPI 重取）
 static HBRUSH g_settingsBgBrush = nullptr;    // 窗口背景刷（主题切换时重建）
 static HBRUSH g_settingsCardBrush = nullptr; // 卡片背景刷（子控件擦除背景必须用它）
 static bool g_settingsDark = false;           // 当前系统是否深色
-static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘复选框）
+static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘开关）
+// 悬停状态：导航项由父窗口 WM_MOUSEMOVE 维护，自绘控件由窗口过程子类化维护。
+// 单独存 id/index 而不是每帧查鼠标位置——重绘是高频动作，查窗口代价更高。
+static int g_settingsHoverNav = -1;         // 悬停中的导航项（-1=无）
+static int g_settingsHoverId = 0;           // 悬停中的自绘控件 id（0=无）
+static bool g_settingsTrackingMouse = false;  // 父窗口是否已注册 TME_LEAVE
 // 中英状态作用域缓存（方案 A）：打开设置窗时从 chaoset-settingsctl get 读到，
 // 点选时经 set 写入。自绘控件每帧都读它——绝不能在 WM_DRAWITEM 里读注册表/
 // 起进程（每次重绘都发一次进程会明显拖慢设置窗）。
 static ModeScope g_settingsModeScope = ModeScope::System;
 
-// ---- 设置窗布局：左侧导航 + 右侧分组卡片 + 滚动（2026-11-06 重构）----
-//
-// 参照微信输入法设置窗的形态：左边是固定宽度的导航（输入/词库/关于），
-// 右边是按「卡片」分组的内容区，内容超出一页时可滚动。原来的实现是
-// 一张固定 pt 坐标表（380×490pt，12 个控件一个页面），加第三组控件就得
-// 整体挪坐标，且没有卡片/分组视觉。
-//
-// 关键取舍：**导航与卡片背景是自绘的**（Win32 标准控件不跟随系统深色，
-// 深色下会露浅色边框），内容行里的交互控件继续用 BS_OWNERDRAW 子窗口，
-// 这样既保留无障碍/键盘 Tab，又有统一外观。
+// ---- 设置窗布局：左侧导航 + 右侧分组卡片 + 滚动 ----
+// 导航/卡片背景自绘（Win32 标准控件不跟随系统深色），内容行用 BS_OWNERDRAW
+// 子窗口保留原生可访问性；卡片标题自绘，控件按「标题带 + 行」固定节奏摆放。
 
-
-static constexpr int kNavWidth = 132;      // 左侧导航宽度（pt）
-static constexpr int kContentPad = 20;     // 右侧内容区外边距（pt）
-static constexpr int kCardPad = 16;        // 卡片内边距（pt）
-static constexpr int kCardGap = 14;        // 卡片间距（pt）
-static constexpr int kCardRadius = 10;     // 卡片圆角（pt）
-static constexpr int kRowHeight = 34;      // 卡片内单行高度（pt）
+// 几何令牌（pt，规范 §2）。kWinW/kWinH/kFooterH 被 tools/checkuiparity 的
+// 「设置窗契约」逐字断言，改名或改值会让 make vet 变红。
+static constexpr int kNavWidth = 148;      // 左侧导航宽度（pt）
+static constexpr int kContentPadX = 24;    // 内容区左右外边距（pt）
+static constexpr int kContentTop = 44;     // 内容区顶部（pt）
+static constexpr int kFooterGap = 22;      // 内容区底边到页脚带（pt）
+static constexpr int kCardPad = 18;        // 卡片内边距（pt）
+static constexpr int kCardGap = 16;        // 卡片间距（pt）
+static constexpr int kCardRadius = 14;     // 卡片圆角（pt）
+static constexpr int kRowHeight = 36;      // 卡片内单行高度（pt）
 static constexpr int kWinW = 640;          // 客户区宽度（pt）
 static constexpr int kWinH = 560;          // 客户区高度（pt）
-static constexpr int kFooterH = 34;        // 页脚（版本号）高度（pt）
+static constexpr int kFooterH = 34;        // 页脚（版本号）带高度（pt）
+
+// 卡片内纵向节奏（规范 §3）：行与行 8、行与说明 10；控件高度按类型固定，
+// 标题带固定在 y+16..38、内容从 y+50 起——标题与控件永不重叠。
+static constexpr int kRowGap = 8;
+static constexpr int kHintGap = 10;
+static constexpr int kHintH = 18;
+static constexpr int kHintH2 = 36;   // 两行说明（词库导入说明较长，408pt 内宽下会换行）
+static constexpr int kChoiceH = 30;
+static constexpr int kButtonH = 32;
+static constexpr int kStatsH = 20;
+// 内容区/卡片内宽（pt）：卡片横跨内容区，控件按卡片内宽排布。
+static constexpr int kContentW = kWinW - 2 * kContentPadX - kNavWidth;  // 444
+static constexpr int kInnerW = kContentW - 2 * kCardPad;                // 408
 
 static SettingsPage g_settingsPage = SettingsPage::Input;
 static int g_settingsScroll = 0;           // 内容区滚动偏移（pt）
 
-// 当前页可用的内容区尺寸（已扣除导航/边距/页脚）。
+// 当前页可用的内容区尺寸（已扣除导航/边距/页脚带）。
 static RECT settingsContentRect() {
     RECT r{};
-    r.left = kNavWidth + kContentPad;
-    r.top = kContentPad;
-    r.right = kWinW - kContentPad;
-    r.bottom = kWinH - kFooterH;
+    r.left = kNavWidth + kContentPadX;
+    r.top = kContentTop;
+    r.right = kWinW - kContentPadX;
+    r.bottom = kWinH - kFooterH - kFooterGap;
     return r;
 }
 
 // 卡片定义（pt，y 相对内容区顶部、h 含上下内边距）。卡片标题由 settingsPaint
-// 绘制；卡片内控件按「标题带 + 行」固定节奏摆放（kSettingsCtl），标题带占
-// y+12..y+34，控件从 y+42 开始——两者不重叠。此前用一组固定坐标手摆控件，
-// 第二张卡的标题（中英状态）被作用域按钮压住（2026-11-06 用户截图）。
+// 绘制；控件按「标题带 + 行」摆放（kSettingsCtl），标题带 y+16..38、内容 y+50 起。
 struct SettingsCardDef {
     int y;
     int h;
     const wchar_t* caption;
 };
 
+// 卡片高度 = 内容起点 50 + 内容块高 + 底部内边距 kCardPad；第二张卡的 y 由
+// 第一张的 y+h 加 kCardGap 推导，控件表 kSettingsCtl 引用同一常量，改高度时
+// 坐标不会互相脱节。
+static constexpr int kInputCard1H = 50 + kRowHeight + kHintGap + kHintH + kCardPad;   // 132
+static constexpr int kInputCard2Y = kInputCard1H + kCardGap;                          // 148
+static constexpr int kInputCard2H = 50 + kChoiceH + kHintGap + kHintH + kCardPad;     // 126
+static constexpr int kDictCard1H = 50 + kStatsH + kRowGap + kButtonH + kHintGap + kHintH + kCardPad;  // 156
+static constexpr int kDictCard2Y = kDictCard1H + kCardGap;                            // 172
+static constexpr int kDictCard2H = 50 + kButtonH + kHintGap + kHintH2 + kCardPad;    // 146
+static constexpr int kAboutCardH = 50 + 44 + 16 + 3 * 22 + kCardPad;                  // 194
+
 static const SettingsCardDef kInputCards[] = {
-    {0, 108, L"输入行为"},
-    {122, 110, L"中英状态"},
+    {0, kInputCard1H, L"输入行为"},
+    {kInputCard2Y, kInputCard2H, L"中英状态"},
 };
 static const SettingsCardDef kDictionaryCards[] = {
-    {0, 134, L"学习数据"},
-    {146, 110, L"词库"},
+    {0, kDictCard1H, L"学习数据"},
+    {kDictCard2Y, kDictCard2H, L"词库"},
 };
 static const SettingsCardDef kAboutCards[] = {
-    {0, 150, L"关于"},
+    {0, kAboutCardH, L"关于"},
 };
 
 // 返回本页卡片表与数量（数组顺序即绘制顺序）。
@@ -168,47 +177,121 @@ static void settingsClampScroll() {
     if (g_settingsScroll < 0) g_settingsScroll = 0;
 }
 
+// 视觉令牌表（规范 §1：light/dark 两套 sRGB 值）。GDI 没有系统动态色，深色
+// 靠这里手工取两套值 + 系统深色判定切换；所有绘制只读令牌，不写散落色值。
+// 字段顺序与规范表一致，逐值对应（注释里的 hex 便于与文档核对）。
 struct SettingsColors {
-    COLORREF bg;
-    COLORREF text;
-    COLORREF secondary;
+    COLORREF windowBg;
+    COLORREF navBg;
+    COLORREF cardBg;
+    COLORREF cardBorder;
+    COLORREF divider;
+    COLORREF textPrimary;
+    COLORREF textSecondary;
+    COLORREF textTertiary;
     COLORREF accent;
-    COLORREF border;
+    COLORREF accentStrong;
+    COLORREF accentPressed;
+    COLORREF accentSoft;
+    COLORREF accentText;
+    COLORREF controlBg;
+    COLORREF controlHover;
+    COLORREF controlBorder;
+    COLORREF controlText;
+    COLORREF knob;
+    COLORREF danger;
+    COLORREF onAccent;
+    COLORREF shadow;  // 阴影基色（规范 §1）：GDI 无 alpha，按百分比混到窗口底
 };
 
-// 深浅色与 macOS SettingsWindow 的语义色对应（label / secondaryLabel / accent）。
 static SettingsColors settingsColors(bool dark) {
     if (dark) {
-        return {RGB(0x1A, 0x18, 0x16), RGB(0xF4, 0xF2, 0xEE), RGB(0xA0, 0x9B, 0x94),
-                RGB(0xE2, 0x7B, 0x38), RGB(0x44, 0x3E, 0x38)};
+        return {
+            RGB(0x1C, 0x19, 0x16),  // windowBg #1C1916
+            RGB(0x17, 0x14, 0x12),  // navBg #171412
+            RGB(0x26, 0x22, 0x1E),  // cardBg #26221E
+            RGB(0x3A, 0x33, 0x2C),  // cardBorder #3A332C
+            RGB(0x33, 0x2D, 0x27),  // divider #332D27
+            RGB(0xF3, 0xEC, 0xE3),  // textPrimary #F3ECE3
+            RGB(0xB4, 0xA7, 0x9A),  // textSecondary #B4A79A
+            RGB(0x8B, 0x7F, 0x73),  // textTertiary #8B7F73
+            RGB(0xE0, 0x91, 0x5F),  // accent #E0915F
+            RGB(0xE0, 0x91, 0x5F),  // accentStrong #E0915F
+            RGB(0xEB, 0xA5, 0x7A),  // accentPressed #EBA57A
+            RGB(0x3B, 0x2A, 0x20),  // accentSoft #3B2A20
+            RGB(0xE9, 0xA8, 0x7C),  // accentText #E9A87C
+            RGB(0x22, 0x1E, 0x1A),  // controlBg #221E1A
+            RGB(0x2B, 0x26, 0x21),  // controlHover #2B2621
+            RGB(0x40, 0x38, 0x30),  // controlBorder #403830
+            RGB(0xF3, 0xEC, 0xE3),  // controlText #F3ECE3
+            RGB(0xF6, 0xEF, 0xE6),  // knob #F6EFE6
+            RGB(0xD9, 0x77, 0x57),  // danger #D97757
+            RGB(0x2A, 0x1B, 0x12),  // onAccent #2A1B12
+            RGB(0x00, 0x00, 0x00),  // shadow #000000（rgba 0.38 的基色）
+        };
     }
-    return {RGB(0xF6, 0xF3, 0xEC), RGB(0x1D, 0x1D, 0x1F), RGB(0x78, 0x73, 0x6C),
-            RGB(0xD1, 0x6B, 0x29), RGB(0xE2, 0xDC, 0xD2)};
+    return {
+        RGB(0xF5, 0xEF, 0xE6),  // windowBg #F5EFE6
+        RGB(0xEF, 0xE7, 0xDB),  // navBg #EFE7DB
+        RGB(0xFF, 0xFC, 0xF7),  // cardBg #FFFCF7
+        RGB(0xE8, 0xDC, 0xCC),  // cardBorder #E8DCCC
+        RGB(0xED, 0xE3, 0xD6),  // divider #EDE3D6
+        RGB(0x2E, 0x29, 0x24),  // textPrimary #2E2924
+        RGB(0x6E, 0x65, 0x5A),  // textSecondary #6E655A
+        RGB(0x8A, 0x7E, 0x72),  // textTertiary #8A7E72
+        RGB(0xC9, 0x70, 0x3F),  // accent #C9703F
+        RGB(0xA8, 0x54, 0x27),  // accentStrong #A85427
+        RGB(0x96, 0x49, 0x1F),  // accentPressed #96491F
+        RGB(0xF6, 0xE6, 0xD9),  // accentSoft #F6E6D9
+        RGB(0x9C, 0x4A, 0x25),  // accentText #9C4A25
+        RGB(0xF1, 0xE9, 0xDD),  // controlBg #F1E9DD
+        RGB(0xF7, 0xF0, 0xE6),  // controlHover #F7F0E6
+        RGB(0xE0, 0xD4, 0xC4),  // controlBorder #E0D4C4
+        RGB(0x2E, 0x29, 0x24),  // controlText #2E2924
+        RGB(0xFF, 0xFC, 0xF7),  // knob #FFFCF7
+        RGB(0xA8, 0x48, 0x2F),  // danger #A8482F
+        RGB(0xFF, 0xFD, 0xF9),  // onAccent #FFFDF9
+        RGB(0x5A, 0x3C, 0x2A),  // shadow #5A3C2A（rgba 0.12 的基色）
+    };
+}
+
+// 颜色混合：把 fg 按 pct% 叠到 bg 上（等价 alpha 合成；GDI 无 alpha 只能预混）。
+static COLORREF settingsBlendColor(COLORREF fg, COLORREF bg, int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    const int r = GetRValue(bg) + (GetRValue(fg) - GetRValue(bg)) * pct / 100;
+    const int g = GetGValue(bg) + (GetGValue(fg) - GetGValue(bg)) * pct / 100;
+    const int b = GetBValue(bg) + (GetBValue(fg) - GetBValue(bg)) * pct / 100;
+    return RGB(r, g, b);
 }
 
 static int settingsPt(int v) { return MulDiv(v, g_settingsDpi, 72); }
+
+// 描边宽度 pt 化（下限 1px）：1pt 在 96dpi 下仍是 1px，高缩放才变粗。
+static int settingsStrokePx(int pt) { return (std::max)(1, MulDiv(pt, g_settingsDpi, 72)); }
 
 static void settingsDeleteFonts() {
     if (g_settingsFont != nullptr) { DeleteObject(g_settingsFont); g_settingsFont = nullptr; }
     if (g_settingsFontBold != nullptr) { DeleteObject(g_settingsFontBold); g_settingsFontBold = nullptr; }
     if (g_settingsFontHint != nullptr) { DeleteObject(g_settingsFontHint); g_settingsFontHint = nullptr; }
+    if (g_settingsFontTitle != nullptr) { DeleteObject(g_settingsFontTitle); g_settingsFontTitle = nullptr; }
+}
+
+static HFONT settingsMakeFont(int ptSize, int weight) {
+    return CreateFontW(-settingsPt(ptSize), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
 }
 
 static void settingsCreateFonts() {
-    g_settingsFont = CreateFontW(-settingsPt(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    g_settingsFontBold = CreateFontW(-settingsPt(13), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    g_settingsFontHint = CreateFontW(-settingsPt(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    g_settingsFont = settingsMakeFont(13, FW_NORMAL);        // 正文/行标签
+    g_settingsFontBold = settingsMakeFont(13, FW_SEMIBOLD);  // 卡片标题/选中导航/选中 choice
+    g_settingsFontHint = settingsMakeFont(11, FW_NORMAL);    // 说明/页脚/关于页正文
+    g_settingsFontTitle = settingsMakeFont(15, FW_SEMIBOLD); // 窗口标题/关于页标题
 }
 
-// DWM 深色标题栏（Win10 1903+ 属性 20；1809 用 19）。动态加载 dwmapi：旧系统
-// 或服务器核心没有该 API，失败静默忽略（标题栏保持系统默认）。
-static void settingsApplyDarkTitleBar(HWND wnd, bool dark) {
+// DWM 属性写入：dwmapi 动态加载（旧系统/服务器核心没有该 API，失败静默）。
+static bool settingsDwmSetAttribute(HWND wnd, DWORD attr, const void* value, DWORD size) {
     typedef HRESULT(WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
     static DwmSetWindowAttributeFn fn = []() -> DwmSetWindowAttributeFn {
         HMODULE mod = LoadLibraryW(L"dwmapi.dll");
@@ -216,31 +299,41 @@ static void settingsApplyDarkTitleBar(HWND wnd, bool dark) {
         return reinterpret_cast<DwmSetWindowAttributeFn>(
             reinterpret_cast<void*>(GetProcAddress(mod, "DwmSetWindowAttribute")));
     }();
-    if (fn == nullptr) return;
-    BOOL v = dark ? TRUE : FALSE;
-    if (FAILED(fn(wnd, 20, &v, sizeof(v)))) fn(wnd, 19, &v, sizeof(v));
+    return fn != nullptr && SUCCEEDED(fn(wnd, attr, value, size));
 }
 
-// 卡片底色：自绘子控件的背景必须与所在卡片一致。此前统一用窗口背景刷，
-// 卡片（0x2A2A2E）上会留下一条窗口底色（0x1E1E20）的横条——用户截图里
-// 「设置项标题被挡住」的观感就是它（2026-11-06）。
-static COLORREF settingsCardColor() {
-    return g_settingsDark ? RGB(0x25, 0x22, 0x1F) : RGB(0xFF, 0xFF, 0xFF);
+// 标题栏跟随暖色主题：Win10 1903+ 深色标题栏（属性 20，1809 用 19），Win11
+// 再用 35/36 把标题栏底/字染成 windowBg/textPrimary——否则系统灰白标题栏与
+// 暖色内容区割裂。35/36 在 Win10 上调用失败，静默忽略（不报错、不降级）。
+static void settingsApplyTitleBarTheme(HWND wnd) {
+    const BOOL dark = g_settingsDark ? TRUE : FALSE;
+    if (!settingsDwmSetAttribute(wnd, 20, &dark, sizeof(dark))) {
+        settingsDwmSetAttribute(wnd, 19, &dark, sizeof(dark));
+    }
+    const SettingsColors c = settingsColors(g_settingsDark);
+    COLORREF caption = c.windowBg;
+    COLORREF captionText = c.textPrimary;
+    settingsDwmSetAttribute(wnd, 35, &caption, sizeof(caption));
+    settingsDwmSetAttribute(wnd, 36, &captionText, sizeof(captionText));
 }
+
+// 卡片底色：自绘子控件的背景必须与所在卡片一致，否则卡片上会留下一条窗口
+// 底色的横条（子控件擦除背景用错刷子的经典观感 bug）。
+static COLORREF settingsCardColor() { return settingsColors(g_settingsDark).cardBg; }
 
 // 子控件（Static / 自绘按钮）擦除背景统一用它；刷子还没建好时退回窗口刷。
 static HBRUSH settingsControlBg() {
     return g_settingsCardBrush != nullptr ? g_settingsCardBrush : g_settingsBgBrush;
 }
 
-// 主题切换：重建背景/卡片刷、标题栏、重绘所有自绘控件（候选窗/Toast 另有实现）。
+// 主题切换：重建背景/卡片刷、标题栏着色、重绘所有自绘控件（候选窗/Toast 另有实现）。
 static void settingsUpdateTheme(HWND wnd) {
     g_settingsDark = isSystemDarkTheme();
     if (g_settingsBgBrush != nullptr) DeleteObject(g_settingsBgBrush);
-    g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+    g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).windowBg);
     if (g_settingsCardBrush != nullptr) DeleteObject(g_settingsCardBrush);
     g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
-    settingsApplyDarkTitleBar(wnd, g_settingsDark);
+    settingsApplyTitleBarTheme(wnd);
     for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 124}) {
         HWND c = GetDlgItem(wnd, id);
         if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
@@ -249,9 +342,8 @@ static void settingsUpdateTheme(HWND wnd) {
 }
 
 // 控件布局（pt 坐标；创建 / 切页 / 滚动 / WM_DPICHANGED 共用，单一口径）。
-//
-// 每个控件声明「所属页 + 在卡片内的相对位置」，这里统一加上内容区偏移与
-// 滚动量。未在当前页的控件直接 SWP_HIDEWINDOW，避免跨页串味。
+// 每个控件声明「所属页 + 卡片内相对位置」，这里统一加内容区偏移与滚动量；
+// 未在当前页的控件直接 SWP_HIDEWINDOW，避免跨页串味。
 struct SettingsCtlItem {
     int id;
     SettingsPage page;
@@ -259,23 +351,23 @@ struct SettingsCtlItem {
     int fontKind;     // 0=正文 1=加粗 2=提示
 };
 
-// 控件相对内容区左上角的坐标（pt），必须落在上面卡片定义的「标题带之下」：
-// 输入页卡 1 从 y=42 开始、卡 2 从 122+42=164 开始；词库页卡 1 从 42、卡 2 从
-// 146+42=188 开始。x=16 即卡片内边距 kCardPad。
+// 控件相对内容区左上角的坐标（pt），必须落在卡片标题带（y+16..38）之下：
+// 卡片内容统一从 y=50 起，x=kCardPad、宽按卡片内宽 kInnerW 排布；行与行 8、
+// 行与说明 10。第二张卡的 y 引用卡片常量，卡片高度改动时这里自动跟随。
 static const SettingsCtlItem kSettingsCtl[] = {
     // ---- 输入页 ----
-    {101, SettingsPage::Input, 16, 42, 240, 26, 0},   // 词组联想
-    {102, SettingsPage::Input, 16, 74, 436, 18, 2},   // 说明
-    {121, SettingsPage::Input, 16, 164, 110, 28, 0},  // 全局共享
-    {122, SettingsPage::Input, 134, 164, 110, 28, 0}, // 每进程独立
-    {124, SettingsPage::Input, 16, 198, 436, 18, 2},  // 说明
+    {101, SettingsPage::Input, kCardPad, 50, kInnerW, kRowHeight, 0},  // 词组联想（整行标签+开关）
+    {102, SettingsPage::Input, kCardPad, 50 + kRowHeight + kHintGap, kInnerW, kHintH, 2},  // 说明
+    {121, SettingsPage::Input, kCardPad, kInputCard2Y + 50, 110, kChoiceH, 0},             // 全局共享
+    {122, SettingsPage::Input, kCardPad + 110 + kRowGap, kInputCard2Y + 50, 110, kChoiceH, 0},  // 每进程独立
+    {124, SettingsPage::Input, kCardPad, kInputCard2Y + 50 + kChoiceH + kHintGap, kInnerW, kHintH, 2},  // 说明
     // ---- 词库页 ----
-    {105, SettingsPage::Dictionary, 16, 42, 436, 18, 0},   // 学习数据统计
-    {106, SettingsPage::Dictionary, 16, 66, 130, 28, 0},   // 清空
-    {107, SettingsPage::Dictionary, 158, 66, 130, 28, 0},  // 导出
-    {108, SettingsPage::Dictionary, 16, 100, 436, 18, 2},  // 说明
-    {110, SettingsPage::Dictionary, 16, 188, 150, 28, 0},  // 导入词库
-    {112, SettingsPage::Dictionary, 16, 222, 436, 18, 2},  // 说明
+    {105, SettingsPage::Dictionary, kCardPad, 50, kInnerW, kStatsH, 0},                    // 学习数据统计
+    {106, SettingsPage::Dictionary, kCardPad, 50 + kStatsH + kRowGap, 130, kButtonH, 0},   // 清空
+    {107, SettingsPage::Dictionary, kCardPad + 130 + kRowGap, 50 + kStatsH + kRowGap, 130, kButtonH, 0},  // 导出
+    {108, SettingsPage::Dictionary, kCardPad, 50 + kStatsH + kRowGap + kButtonH + kHintGap, kInnerW, kHintH, 2},  // 说明
+    {110, SettingsPage::Dictionary, kCardPad, kDictCard2Y + 50, 150, kButtonH, 0},         // 导入词库（主按钮）
+    {112, SettingsPage::Dictionary, kCardPad, kDictCard2Y + 50 + kButtonH + kHintGap, kInnerW, kHintH2, 2},  // 说明（两行）
 };
 
 static void settingsLayoutControls(HWND wnd) {
@@ -312,29 +404,76 @@ static void settingsLayoutControls(HWND wnd) {
                  SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// 关于页图标按 DPI 取对应尺寸；创建/DPI 变化时重建，避免每次重绘 LoadImage。
+static void settingsLoadIcon() {
+    if (g_settingsIcon != nullptr) { DestroyIcon(g_settingsIcon); g_settingsIcon = nullptr; }
+    const int size = settingsPt(44);
+    g_settingsIcon = static_cast<HICON>(LoadImageW(g_hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                   size, size, LR_DEFAULTCOLOR));
+}
+
 static void settingsApplyDpi(HWND wnd, int dpi) {
     if (dpi <= 0) dpi = systemDpi();
     g_settingsDpi = dpi;
     settingsDeleteFonts();
     settingsCreateFonts();
+    settingsLoadIcon();
     settingsLayoutControls(wnd);
     InvalidateRect(wnd, nullptr, TRUE);
 }
 
-// ---- 设置窗自绘：左侧导航 / 卡片背景 / 页脚（2026-11-06）----
+// ---- 设置窗自绘：导航 / 卡片 / 页脚 / 关于页（全部走暖色令牌）----
 //
-// 在 WM_PAINT 里一次性绘制「非交互」部分：导航栏、导航项（选中态高亮）、
-// 每张卡片的圆角底、卡片内标题、页脚版本号。交互控件是子窗口，自己重绘。
+// WM_PAINT 里一次性绘制非交互部分：导航列、导航项（选中/悬停）、卡片柔和阴影
+// 与 1pt 描边、卡片标题、关于页图文、页脚版本号、滚动条。交互控件是子窗口，
+// 自己重绘（见下方 settingsDraw*）。
 
-// 圆角填充矩形（卡片/导航选中项共用）。
+// 圆角填充矩形（卡片/胶囊/开关轨道共用）。radius 是圆角半径（pt）；GDI
+// RoundRect 的后两个参数是圆角椭圆直径，因此这里乘 2 才能得到规范的圆角。
 static void settingsFillRoundRect(HDC dc, const RECT& r, int radius, COLORREF fill) {
     HBRUSH brush = CreateSolidBrush(fill);
     HGDIOBJ oldBrush = SelectObject(dc, brush);
     HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
     SelectObject(dc, oldPen);
     SelectObject(dc, oldBrush);
     DeleteObject(brush);
+}
+
+// 圆角描边（卡片 1pt 边框 / 胶囊描边 / 焦点环共用；只描边不填充；radius 同口径）。
+static void settingsStrokeRoundRect(HDC dc, const RECT& r, int radius, COLORREF color, int widthPx) {
+    HPEN pen = CreatePen(PS_SOLID, widthPx, color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+// 卡片柔和阴影：GDI 没有 blur/alpha，用 3 层外扩的低对比圆角描边模拟
+// 「y+2、blur≈12pt」的投影；越外层越淡，叠加后接近真实软阴影（不引入 GDI+）。
+static void settingsDrawCardShadow(HDC dc, const RECT& card) {
+    const SettingsColors c = settingsColors(g_settingsDark);
+    const COLORREF shadow = c.shadow;
+    for (int i = 3; i >= 1; --i) {
+        RECT s = card;
+        const int grow = settingsPt(i * 2);
+        InflateRect(&s, grow, grow);
+        s.top += settingsPt(2);
+        s.bottom += settingsPt(2);
+        const int pct = (g_settingsDark ? 20 : 12) * (4 - i) / 3;
+        settingsStrokeRoundRect(dc, s, settingsPt(kCardRadius + i * 2),
+                                settingsBlendColor(shadow, c.windowBg, pct), settingsStrokePx(1));
+    }
+}
+
+// 焦点环：统一 accent 1.5pt 圆角描边（inset 2pt），替代系统点线 DrawFocusRect。
+static void settingsDrawFocusRing(HDC dc, const RECT& r, int radius) {
+    RECT fr = r;
+    InflateRect(&fr, -settingsPt(2), -settingsPt(2));
+    settingsStrokeRoundRect(dc, fr, radius, settingsColors(g_settingsDark).accent,
+                            (std::max)(1, MulDiv(3, g_settingsDpi, 144)));
 }
 
 // 导航项文案（顺序与 SettingsPage 一致）。
@@ -347,13 +486,13 @@ static const wchar_t* settingsNavLabel(int index) {
     }
 }
 
-// 导航项命中矩形（自绘 + 点击命中都用它，避免两套坐标）。
+// 导航项命中矩形（自绘 + 点击 + 悬停命中都用它，避免两套坐标）：112×34、间距 4。
 static RECT settingsNavItemRect(int index) {
     RECT r{};
-    r.left = 10;
-    r.top = 64 + index * 44;
-    r.right = kNavWidth - 10;
-    r.bottom = r.top + 36;
+    r.left = 12;
+    r.top = 64 + index * (34 + 4);
+    r.right = kNavWidth - 24;  // 112pt 胶囊（列宽 148、左右各 12 内边距）
+    r.bottom = r.top + 34;
     return r;
 }
 
@@ -365,42 +504,40 @@ static void settingsPaint(HDC dc, HWND wnd) {
     const int H = client.bottom - client.top;
     if (W <= 0 || H <= 0) return;
 
-    // 1) 整窗背景
+    // 1) 整窗背景 + 左侧导航列（navBg 比 windowBg 深一档，形成柔和分栏）
     FillRect(dc, &client, g_settingsBgBrush);
-
-    // 2) 左侧导航栏底色（比背景略深/略浅一档，形成分栏）
     RECT nav{0, 0, settingsPt(kNavWidth), H};
-    const COLORREF navBg = g_settingsDark ? RGB(0x20, 0x1E, 0x1B) : RGB(0xEF, 0xEB, 0xE2);
-    HBRUSH navBrush = CreateSolidBrush(navBg);
+    HBRUSH navBrush = CreateSolidBrush(c.navBg);
     FillRect(dc, &nav, navBrush);
     DeleteObject(navBrush);
 
-    // 3) 应用标题
+    // 2) 应用标题（13pt semibold textPrimary）。132pt 导航列下 15pt 的 CJK 标题
+    //    在 96dpi（20px）会超宽被裁切，三端统一 13pt；x=10 与导航胶囊左缘对齐。
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, c.text);
+    SetTextColor(dc, c.textPrimary);
     HGDIOBJ oldFont = SelectObject(dc, g_settingsFontBold);
-    RECT title{settingsPt(16), settingsPt(18), settingsPt(kNavWidth - 8), settingsPt(44)};
+    RECT title{settingsPt(12), settingsPt(20), settingsPt(kNavWidth - 8), settingsPt(46)};
     DrawTextW(dc, L"Chaoset 设置", -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
 
-    // 4) 导航项（选中项圆角高亮 + 强调色文字）
+    // 3) 导航项：选中=accentSoft 胶囊 + accentText semibold；悬停未选=controlHover
     for (int i = 0; i < 3; ++i) {
         RECT r = settingsNavItemRect(i);
         RECT pr{settingsPt(r.left), settingsPt(r.top), settingsPt(r.right), settingsPt(r.bottom)};
         const bool selected = (static_cast<int>(g_settingsPage) == i);
-        if (selected) {
-            settingsFillRoundRect(dc, pr, settingsPt(8), c.accent);
-        }
-        SetTextColor(dc, selected ? RGB(0xFF, 0xFF, 0xFF) : c.text);
-        HGDIOBJ of = SelectObject(dc, g_settingsFont);
+        const bool hovered = (g_settingsHoverNav == i);
+        if (selected) settingsFillRoundRect(dc, pr, settingsPt(10), c.accentSoft);
+        else if (hovered) settingsFillRoundRect(dc, pr, settingsPt(10), c.controlHover);
+        SetTextColor(dc, selected ? c.accentText : c.textPrimary);
+        HGDIOBJ of = SelectObject(dc, selected ? g_settingsFontBold : g_settingsFont);
         RECT tr = pr;
         tr.left += settingsPt(14);
         DrawTextW(dc, settingsNavLabel(i), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
     }
 
-    // 5) 右侧内容卡片：卡片底 + 卡片标题（自绘）；交互控件是子窗口、叠在卡片上。
-    //    标题带固定 top+12..top+34，卡片内控件从 top+42 起（kSettingsCtl 同口径）。
+    // 4) 卡片：柔和阴影 + cardBg 底 + 1pt cardBorder 描边 + 13pt semibold 标题；
+    //    交互控件是子窗口、叠在卡片上（标题带 y+16..38，内容从 y+50 起）。
     const RECT content = settingsContentRect();
     const int cardX = settingsPt(content.left);
     const int cardW = settingsPt(content.right - content.left);
@@ -411,38 +548,62 @@ static void settingsPaint(HDC dc, HWND wnd) {
         const SettingsCardDef& card = cards[i];
         RECT rc{cardX, settingsPt(baseY + card.y), cardX + cardW,
                 settingsPt(baseY + card.y + card.h)};
-        settingsFillRoundRect(dc, rc, settingsPt(kCardRadius), settingsCardColor());
-        SetTextColor(dc, c.secondary);
+        settingsDrawCardShadow(dc, rc);
+        settingsFillRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBg);
+        settingsStrokeRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBorder, settingsStrokePx(1));
+        SetTextColor(dc, c.textSecondary);
         HGDIOBJ of = SelectObject(dc, g_settingsFontBold);
-        RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(12),
-                 rc.right - settingsPt(kCardPad), rc.top + settingsPt(34)};
+        RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(16),
+                 rc.right - settingsPt(kCardPad), rc.top + settingsPt(38)};
         DrawTextW(dc, card.caption, -1, &cap, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
     }
+
+    // 5) 关于页：应用图标 + 标题/副标题 + 三行说明（版本号只在页脚，避免重复）
     if (g_settingsPage == SettingsPage::About) {
-        // 关于页没有交互控件：正文直接画在卡片里；版本号只在页脚出现，避免重复。
-        RECT dr{cardX + settingsPt(kCardPad), settingsPt(baseY + 44),
-                cardX + cardW - settingsPt(kCardPad), settingsPt(baseY + 136)};
-        SetTextColor(dc, c.text);
-        HGDIOBJ of = SelectObject(dc, g_settingsFontHint);
-        DrawTextW(dc, L"跨平台中文输入法（Windows TSF 壳）\n代码 MIT · 词库 CC BY-SA 4.0\n"
-                      L"更多设置将在后续版本提供\n"
-                      L"https://github.com/ShanWuYinShe/chaoset_ime",
-                  -1, &dr, DT_LEFT | DT_WORDBREAK);
+        const int x = cardX + settingsPt(kCardPad);
+        const int right = cardX + cardW - settingsPt(kCardPad);
+        const int icon = settingsPt(44);
+        const int y = baseY + 50;
+        if (g_settingsIcon != nullptr) {
+            DrawIconEx(dc, x, settingsPt(y), g_settingsIcon, icon, icon, 0, nullptr, DI_NORMAL);
+        }
+        SetTextColor(dc, c.textPrimary);
+        HGDIOBJ of = SelectObject(dc, g_settingsFontTitle);
+        RECT tr{x + icon + settingsPt(14), settingsPt(y), right, settingsPt(y + 24)};
+        DrawTextW(dc, L"Chaoset 输入法", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
+        SetTextColor(dc, c.textSecondary);
+        HGDIOBJ of2 = SelectObject(dc, g_settingsFontHint);
+        RECT sub{tr.left, settingsPt(y + 24), right, settingsPt(y + 44)};
+        DrawTextW(dc, L"跨平台中文输入法（Windows TSF 壳）", -1, &sub,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        const int ly = y + 44 + 16;
+        RECT l1{x, settingsPt(ly), right, settingsPt(ly + 18)};
+        DrawTextW(dc, L"代码 MIT · 词库 CC BY-SA 4.0", -1, &l1,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetTextColor(dc, c.textTertiary);
+        RECT l2{x, settingsPt(ly + 22), right, settingsPt(ly + 40)};
+        DrawTextW(dc, L"更多设置将在后续版本提供", -1, &l2,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetTextColor(dc, c.accentText);
+        RECT l3{x, settingsPt(ly + 44), right, settingsPt(ly + 62)};
+        DrawTextW(dc, L"https://github.com/ShanWuYinShe/chaoset_ime", -1, &l3,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, of2);
     }
 
-    // 6) 页脚版本号（固定在底部，不随滚动）
-    RECT footer{settingsPt(kNavWidth + kContentPad), settingsPt(kWinH - kFooterH + 8),
-                settingsPt(kWinW - kContentPad), settingsPt(kWinH - 6)};
-    SetTextColor(dc, c.secondary);
+    // 6) 页脚版本号（固定底部，不随滚动；11pt textSecondary）
+    RECT footer{settingsPt(kNavWidth + kContentPadX), settingsPt(kWinH - 46),
+                settingsPt(kWinW - kContentPadX), settingsPt(kWinH - 22)};
+    SetTextColor(dc, c.textSecondary);
     HGDIOBJ ff = SelectObject(dc, g_settingsFontHint);
     wchar_t footerVer[128];
     swprintf_s(footerVer, L"Chaoset 版本 %hs", CHAOSET_VERSION);
     DrawTextW(dc, footerVer, -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, ff);
 
-    // 7) 滚动条（内容超出一页时，右侧细条）
+    // 7) 滚动条（内容超出一页时右侧细条，暖色 textTertiary）
     const int maxScroll = settingsMaxScroll();
     if (maxScroll > 0) {
         const int trackTop = settingsPt(content.top);
@@ -451,118 +612,160 @@ static void settingsPaint(HDC dc, HWND wnd) {
                            (settingsPageContentHeight(g_settingsPage));
         const int thumbTop = trackTop + (trackH - thumbH) * g_settingsScroll / maxScroll;
         RECT thumb{settingsPt(kWinW - 8), thumbTop, settingsPt(kWinW - 4), thumbTop + thumbH};
-        const COLORREF thumbColor = g_settingsDark ? RGB(0x5A, 0x5A, 0x60) : RGB(0xC0, 0xC0, 0xC6);
-        settingsFillRoundRect(dc, thumb, settingsPt(2), thumbColor);
+        settingsFillRoundRect(dc, thumb, settingsPt(2), c.textTertiary);
     }
 }
 
-// 自绘「两档」按钮（中英状态作用域：全局共享 / 每进程独立）。选中项用主题
-// 强调色描边 + 浅底，与自绘按钮同一套配色，深浅色都跟随主题（Win32 标准按钮
-// 不跟随）。
+// 自绘开关整行（词组联想）：左侧 13pt 标签 + 右侧 38×22 开关轨道与 16pt 滑钮。
+// 关=controlBg 轨道 + controlBorder；开=accent 轨道；hover 分别用 controlHover /
+// accentPressed。整行都是点击热区（与旧复选框一致，点标签也能切换）。
+static void settingsDrawSwitch(const DRAWITEMSTRUCT* dis) {
+    const SettingsColors c = settingsColors(g_settingsDark);
+    HDC dc = dis->hDC;
+    FillRect(dc, &dis->rcItem, settingsControlBg());
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
+    const bool on = g_settingsAssociate;
+    const RECT row = dis->rcItem;
+    const int trackW = settingsPt(38);
+    const int trackH = settingsPt(22);
+    RECT track{row.right - trackW, row.top + (row.bottom - row.top - trackH) / 2, row.right, 0};
+    track.bottom = track.top + trackH;
+    const int radius = settingsPt(11);
+    const COLORREF trackFill = on ? (hovered ? c.accentPressed : c.accent)
+                                  : (hovered ? c.controlHover : c.controlBg);
+    settingsFillRoundRect(dc, track, radius, trackFill);
+    settingsStrokeRoundRect(dc, track, radius, on ? trackFill : c.controlBorder,
+                            settingsStrokePx(1));
+    const int knob = settingsPt(16);
+    const int pad = (trackH - knob) / 2;
+    const int knobX = on ? (track.right - pad - knob) : (track.left + pad);
+    RECT kr{knobX, track.top + pad, knobX + knob, track.top + pad + knob};
+    settingsFillRoundRect(dc, kr, knob / 2, c.knob);
+    wchar_t label[64] = {0};
+    GetWindowTextW(dis->hwndItem, label, _countof(label));
+    RECT tr = row;
+    tr.right = track.left - settingsPt(12);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c.textPrimary);
+    HGDIOBJ oldFont = SelectObject(dc, g_settingsFont);
+    DrawTextW(dc, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, oldFont);
+    if ((dis->itemState & ODS_FOCUS) != 0) {
+        // 焦点环画在开关外圈（accent 环画在 accent 轨道里会看不见）。
+        RECT fr = track;
+        InflateRect(&fr, settingsPt(2), settingsPt(2));
+        settingsStrokeRoundRect(dc, fr, settingsPt(13), c.accent,
+                                (std::max)(1, MulDiv(3, g_settingsDpi, 144)));
+    }
+}
+
+// 自绘 choice 胶囊（中英状态两档）：选中=accentSoft 底 + 1pt accent 描边 +
+// accentText semibold；未选=controlBg 底 + controlBorder 描边 + textPrimary；
+// 悬停未选=controlHover。共享设置读缓存 g_settingsModeScope（WM_DRAWITEM 里
+// 绝不读注册表/起进程，重绘是高频动作）。
 static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
     FillRect(dc, &dis->rcItem, settingsControlBg());
-    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
-    // 读打开窗口时缓存的共享设置（settingsLoadShared）：WM_DRAWITEM 里绝不
-    // 读注册表/起进程，重绘是高频动作（鼠标划过、主题切换都会触发）。
     const ModeScope current = g_settingsModeScope;
     bool selected = false;
     if (dis->CtlID == 121) selected = current == ModeScope::System;
     else if (dis->CtlID == 122) selected = current == ModeScope::Process;
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
     RECT r = dis->rcItem;
-    const COLORREF fillColor = selected
-                                   ? (g_settingsDark ? RGB(0x3E, 0x28, 0x18) : RGB(0xFD, 0xF3, 0xEB))
-                                   : (g_settingsDark ? RGB(0x2A, 0x26, 0x23) : RGB(0xFA, 0xF7, 0xF2));
-    HBRUSH fill = CreateSolidBrush(fillColor);
-    FillRect(dc, &r, fill);
-    DeleteObject(fill);
-    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(selected ? 2 : 1)),
-                         selected ? c.accent : c.border);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    const int rad = settingsPt(6);
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
+    const COLORREF fill = selected ? c.accentSoft : (hovered ? c.controlHover : c.controlBg);
+    settingsFillRoundRect(dc, r, settingsPt(9), fill);
+    settingsStrokeRoundRect(dc, r, settingsPt(9), selected ? c.accent : c.controlBorder,
+                            settingsStrokePx(1));
     wchar_t text[64] = {0};
     GetWindowTextW(dis->hwndItem, text, _countof(text));
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, selected ? c.accent : c.text);
-    HGDIOBJ oldFont = SelectObject(dc, g_settingsFont);
+    SetTextColor(dc, selected ? c.accentText : c.textPrimary);
+    HGDIOBJ oldFont = SelectObject(dc, selected ? g_settingsFontBold : g_settingsFont);
     DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
-    if (focused) {
-        RECT fr = r;
-        InflateRect(&fr, -settingsPt(2), -settingsPt(2));
-        DrawFocusRect(dc, &fr);
-    }
+    if ((dis->itemState & ODS_FOCUS) != 0) settingsDrawFocusRing(dc, r, settingsPt(9));
 }
 
-// 自绘按钮（深色模式下 Win32 标准按钮不跟随系统主题，故自绘）。
+// 自绘按钮：110 是主按钮（accentStrong 底 + onAccent 字），106/107 是次按钮
+// （controlBg + controlBorder + controlText，清空用 danger 字）；hover/按下
+// 主按钮 accentPressed、次按钮 controlHover。
 static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
     FillRect(dc, &dis->rcItem, settingsControlBg());
+    const bool primary = (dis->CtlID == 110);
     const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
     RECT r = dis->rcItem;
-    const COLORREF fillColor = pressed ? c.border
-                                      : (g_settingsDark ? RGB(0x2E, 0x2A, 0x26) : RGB(0xF6, 0xF2, 0xEA));
-    HBRUSH fill = CreateSolidBrush(fillColor);
-    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(1)), c.border);
-    HGDIOBJ ob = SelectObject(dc, fill);
-    HGDIOBJ op = SelectObject(dc, pen);
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, settingsPt(6), settingsPt(6));
-    SelectObject(dc, ob);
-    SelectObject(dc, op);
-    DeleteObject(fill);
-    DeleteObject(pen);
+    const COLORREF fill = primary ? ((pressed || hovered) ? c.accentPressed : c.accentStrong)
+                                  : ((pressed || hovered) ? c.controlHover : c.controlBg);
+    settingsFillRoundRect(dc, r, settingsPt(9), fill);
+    if (!primary) {
+        settingsStrokeRoundRect(dc, r, settingsPt(9), c.controlBorder, settingsStrokePx(1));
+    }
     wchar_t text[64] = {0};
-    GetWindowTextW(dis->hwndItem, text, 64);
+    GetWindowTextW(dis->hwndItem, text, _countof(text));
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, c.text);
-    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_settingsFont));
+    SetTextColor(dc, primary ? c.onAccent : (dis->CtlID == 106 ? c.danger : c.controlText));
+    HGDIOBJ oldFont = SelectObject(dc, g_settingsFont);
     DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
-    if ((dis->itemState & ODS_FOCUS) != 0) DrawFocusRect(dc, &r);
+    if ((dis->itemState & ODS_FOCUS) != 0) settingsDrawFocusRing(dc, r, settingsPt(9));
 }
 
-// 自绘复选框：14pt 圆角方框 + 勾 + 文本（深色/浅色都自绘，避免主题控件发白）。
-static void settingsDrawCheckbox(const DRAWITEMSTRUCT* dis) {
-    const SettingsColors c = settingsColors(g_settingsDark);
-    HDC dc = dis->hDC;
-    FillRect(dc, &dis->rcItem, settingsControlBg());
-    const int box = settingsPt(14);
-    const int top = dis->rcItem.top + ((dis->rcItem.bottom - dis->rcItem.top) - box) / 2;
-    RECT br{dis->rcItem.left, top, dis->rcItem.left + box, top + box};
-    HBRUSH fill = CreateSolidBrush(g_settingsAssociate ? c.accent : c.bg);
-    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(1)),
-                         g_settingsAssociate ? c.accent : c.border);
-    HGDIOBJ ob = SelectObject(dc, fill);
-    HGDIOBJ op = SelectObject(dc, pen);
-    RoundRect(dc, br.left, br.top, br.right, br.bottom, settingsPt(4), settingsPt(4));
-    SelectObject(dc, ob);
-    SelectObject(dc, op);
-    DeleteObject(fill);
-    DeleteObject(pen);
-    if (g_settingsAssociate) {
-        HPEN checkPen = CreatePen(PS_SOLID, (std::max)(1, settingsPt(2)), RGB(255, 255, 255));
-        HGDIOBJ old = SelectObject(dc, checkPen);
-        MoveToEx(dc, br.left + box * 28 / 100, br.top + box * 52 / 100, nullptr);
-        LineTo(dc, br.left + box * 44 / 100, br.top + box * 70 / 100);
-        LineTo(dc, br.left + box * 74 / 100, br.top + box * 32 / 100);
-        SelectObject(dc, old);
-        DeleteObject(checkPen);
+// ---- 自绘控件的 hover / 手型光标 ----
+//
+// BS_OWNERDRAW 的按钮不会把鼠标消息转发给父窗口，ODS_HOTLIGHT 又依赖主题
+// 行为，因此对每个自绘控件做窗口过程子类化：自己维护 hover id，并在
+// WM_SETCURSOR 里返回手型光标（否则整窗只有箭头，可点热区没有提示）。
+struct SettingsCtlProcEntry {
+    HWND hwnd;
+    WNDPROC old;
+};
+static SettingsCtlProcEntry g_ctlProcs[8] = {};
+static int g_ctlProcCount = 0;
+
+static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    WNDPROC old = DefWindowProcW;
+    for (int i = 0; i < g_ctlProcCount; ++i) {
+        if (g_ctlProcs[i].hwnd == hwnd) {
+            old = g_ctlProcs[i].old;
+            break;
+        }
     }
-    RECT tr = dis->rcItem;
-    tr.left = br.right + settingsPt(8);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, c.text);
-    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_settingsFont));
-    DrawTextW(dc, L"词组联想", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(dc, oldFont);
-    if ((dis->itemState & ODS_FOCUS) != 0) DrawFocusRect(dc, &tr);
+    const int id = GetDlgCtrlID(hwnd);
+    if (msg == WM_MOUSEMOVE) {
+        if (g_settingsHoverId != id) {
+            g_settingsHoverId = id;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        TRACKMOUSEEVENT tme{};
+        tme.cbSize = sizeof(tme);
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = hwnd;
+        TrackMouseEvent(&tme);
+    } else if (msg == WM_MOUSELEAVE) {
+        if (g_settingsHoverId == id) {
+            g_settingsHoverId = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+    } else if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT) {
+        // IDC_HAND 的宏是 ANSI 变体，本壳按 W 版 API 编译，直接用资源号 32649。
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)));
+        return TRUE;
+    }
+    return CallWindowProcW(old, hwnd, msg, wp, lp);
+}
+
+static void settingsSubclassControl(HWND ctl) {
+    if (ctl == nullptr || g_ctlProcCount >= 8) return;
+    const LONG_PTR oldRaw = SetWindowLongPtrW(ctl, GWLP_WNDPROC,
+                                              reinterpret_cast<LONG_PTR>(settingsCtlProc));
+    if (oldRaw == 0) return;
+    g_ctlProcs[g_ctlProcCount].hwnd = ctl;
+    g_ctlProcs[g_ctlProcCount].old = reinterpret_cast<WNDPROC>(oldRaw);
+    ++g_ctlProcCount;
 }
 
 // 学习数据区：统计刷新 / 清空 / 导出。全部经 IPC 连 daemon，不依赖 TIP。
@@ -1073,6 +1276,52 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         case WM_ERASEBKGND:
             return 1;  // 背景由 WM_PAINT 统一画，避免闪烁
+        // 导航项 hover：导航是自绘的（无子窗口），只能在这里按坐标命中；控件
+        // hover 由 settingsCtlProc 维护。TME_LEAVE 只在首次移动时注册一次。
+        case WM_MOUSEMOVE: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            int hover = -1;
+            for (int i = 0; i < 3; ++i) {
+                RECT r = settingsNavItemRect(i);
+                RECT pr{settingsPt(r.left), settingsPt(r.top), settingsPt(r.right),
+                        settingsPt(r.bottom)};
+                if (PtInRect(&pr, pt)) { hover = i; break; }
+            }
+            if (hover != g_settingsHoverNav) {
+                g_settingsHoverNav = hover;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (!g_settingsTrackingMouse) {
+                TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
+                TrackMouseEvent(&tme);
+                g_settingsTrackingMouse = true;
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            g_settingsTrackingMouse = false;
+            if (g_settingsHoverNav != -1) {
+                g_settingsHoverNav = -1;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        // 自绘导航项是点击热区：悬停时给手型光标（控件由 settingsCtlProc 处理）。
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT) {
+                POINT pt{};
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                for (int i = 0; i < 3; ++i) {
+                    RECT r = settingsNavItemRect(i);
+                    RECT pr{settingsPt(r.left), settingsPt(r.top), settingsPt(r.right),
+                            settingsPt(r.bottom)};
+                    if (PtInRect(&pr, pt)) {
+                        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)));
+                        return TRUE;
+                    }
+                }
+            }
+            break;
         // 左键点导航切换页（导航是自绘的，不是子窗口，只能在这里命中）。
         case WM_LBUTTONDOWN: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -1158,7 +1407,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             const DRAWITEMSTRUCT* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
             if (dis != nullptr) {
                 if (dis->CtlID == 101) {
-                    settingsDrawCheckbox(dis);
+                    settingsDrawSwitch(dis);
                     return TRUE;
                 }
                 if (dis->CtlID == 106 || dis->CtlID == 107 || dis->CtlID == 110) {
@@ -1178,7 +1427,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             // 背景返回**卡片刷**：这些 Static 都在卡片上，用窗口背景刷会画出
             // 一条深色横条（2026-11-06 用户截图）。
             if (g_settingsBgBrush == nullptr) {
-                g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).bg);
+                g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).windowBg);
             }
             if (g_settingsCardBrush == nullptr) {
                 g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
@@ -1187,7 +1436,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             const SettingsColors c = settingsColors(g_settingsDark);
             const bool secondary = (id == 102 || id == 108 || id == 112 || id == 124);
             HDC dc = reinterpret_cast<HDC>(wParam);
-            SetTextColor(dc, secondary ? c.secondary : c.text);
+            SetTextColor(dc, secondary ? c.textSecondary : c.textPrimary);
             SetBkMode(dc, TRANSPARENT);
             return reinterpret_cast<LRESULT>(settingsControlBg());
         }
@@ -1205,6 +1454,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             return 0;
         case WM_DESTROY:
             settingsDeleteFonts();
+            if (g_settingsIcon != nullptr) { DestroyIcon(g_settingsIcon); g_settingsIcon = nullptr; }
             if (g_settingsBgBrush != nullptr) { DeleteObject(g_settingsBgBrush); g_settingsBgBrush = nullptr; }
             if (g_settingsCardBrush != nullptr) { DeleteObject(g_settingsCardBrush); g_settingsCardBrush = nullptr; }
             g_settingsWnd = nullptr;
@@ -1251,6 +1501,7 @@ void openSettingsWindowStandalone(SettingsPage page) {
     // chaoset-ui.exe，与 TIP 进程无关）。
     settingsLoadShared();
     settingsCreateFonts();
+    settingsLoadIcon();
 
     // 居中于光标所在显示器的工作区（macOS center 同语义）
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
@@ -1301,6 +1552,8 @@ void openSettingsWindowStandalone(SettingsPage page) {
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导入词库…", 110);
     makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。", 112);
 
+    // 自绘控件的 hover/手型光标由窗口过程子类化维护（BS_OWNERDRAW 不转发鼠标消息）。
+    for (int id : {101, 106, 107, 110, 121, 122}) settingsSubclassControl(GetDlgItem(wnd, id));
     settingsLayoutControls(wnd);
     settingsUpdateTheme(wnd);
 
