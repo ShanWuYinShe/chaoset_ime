@@ -51,6 +51,10 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		// 绕过/默认启用都会红。
 		"cachedUiElementRender() && presentCandidatesUiElement()",
 		"if (!cachedUiElementRender()) {",
+		// UILess 宿主 GetTextExt 不可信（实测垃圾坐标致候选窗飞左上角）：
+		// 锚点必须跳过采信，恒走鼠标/GDI 兜底（updateCaretFromRange 入口守卫）。
+		"if (uilessThread_) return;",
+		"一律**不采信** GetTextExt",
 	)
 }
 

@@ -292,7 +292,12 @@ HWND ChaosetTIP::hostWindowOf(ITfContext* ctx) {
 // Chromium 系浏览器对刚建立的合成文本还没完成布局，GetTextExt 会返回
 // S_OK 但矩形全零（2026-10-29 实机反馈：候选窗因此飞到屏幕左上角），
 // 必须按失败处理，等下一次渲染布局就绪后自然拿到真实位置。
+// UILess 宿主（uilessThread_，游戏/全屏）一律**不采信** GetTextExt：
+// 其返回值是宿主内部坐标系的垃圾值（2026-11-15 实测 Dota 2 首键贴原点、
+// 合成建立后漂移到非零垃圾坐标，候选窗随之飞到左上角）——锚点恒走
+// render 里的兜底链（GDI 光标 → 鼠标），与宿主渲染行为无关。
 void ChaosetTIP::updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange* range) {
+    if (uilessThread_) return;
     ITfContextView* view = nullptr;
     if (FAILED(ctx->GetActiveView(&view)) || view == nullptr) return;
     RECT rc{};
