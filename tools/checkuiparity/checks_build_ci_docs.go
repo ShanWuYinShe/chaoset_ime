@@ -119,6 +119,9 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/macos/src/EngineClient.swift", 600},
 	{"shims/macos/src/DaemonTransport.swift", 500},
 	{"shims/macos/src/SettingsWindow.swift", 600},
+	// 2026-11-16「暖陶纸感」视觉升级把主题令牌与自绘控件抽成独立文件
+	// （三端共享设计系统 + 可被 checkuiparity 逐值断言）。
+	{"shims/macos/src/SettingsTheme.swift", 600},
 	{"shims/macos/src/SettingsWindowPages.swift", 700},
 	{"shims/macos/src/SettingsWindowTargets.swift", 400},
 	{"shims/macos/src/main.swift", 100},

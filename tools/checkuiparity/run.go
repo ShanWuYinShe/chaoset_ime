@@ -71,6 +71,8 @@ var checkGroups = []checkGroup{
 	{groupDllUnload, onLogical(checkDllUnloadSafety)},
 	{groupTrayModeScope, onLogical(checkTrayAndModeScope)},
 	{groupSettingsContract, onLogical(checkSettingsWindowContract)},
+	// 设置窗三端视觉令牌（docs/ui-parity.md 令牌表 = 单一事实源）。
+	{groupSettingsVisual, onLogical(checkSettingsVisualTokens)},
 	{groupCandidateGearMouseUp, onLogical(checkCandidateGearMouseUp)},
 	{groupTrayLifecycle, onLogical(checkTrayLazyLifecycle)},
 	{groupTrayActive, onLogical(checkTrayActiveLifecycle)},

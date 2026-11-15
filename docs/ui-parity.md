@@ -165,7 +165,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
 | 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 翻页箭头显示 | 双箭头：首页只有下箭头、末页只有上箭头、中间页都有；单页两枚置灰不可点 | 同左（同几何：6pt 箭头块 + 页码） | ibus 面板自绘，壳拿不到箭头绘制/命中回调，无法控制箭头显隐（按键语义一致） | Windows 像素效果需真机验收 |
-| 设置窗 | 左导航三页（输入/词库/关于，132pt）+ 内容页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器），选中项 accent 胶囊 | 左导航 132pt + 右侧圆角卡片 + 底部页脚版本号 + 滚动，640×560pt；深色/DPI 需真机验收 | GtkStackSidebar + 三页 + 底部固定页脚版本号，640×560pt；原生分组（无卡片容器） |
+| 设置窗 | 左导航三页（输入/词库/关于，148pt）+ 白瓷卡片 + 底部页脚版本号，640×560pt；窗口米白纸底 + 透明标题栏，自绘暖陶开关/软胶囊/按钮，选中项 accentSoft 胶囊 | 左导航 148pt + 白瓷卡片 + 底部页脚版本号 + 滚动，640×560pt；米白纸底 + 暖炭灰深色，DWM 标题栏跟随；深色/DPI 需真机验收 | 自绘胶囊导航（148pt）+ 三页卡片 + 底部页脚版本号，640×560pt；暖陶 GTK CSS 主题（深浅跟随系统），与 macOS/Windows 同令牌同形态 |
 
 ## 非激活与托盘可见性（2026-11-07 用户要求）
 
@@ -228,21 +228,64 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   当前进程状态（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/
   切进程时把本进程状态上报到托盘，托盘左键只显示、不切换）。
 
-## 设置窗契约（2026-11-06 阶段2）
+## 设置窗契约（三端同构 · 暖陶纸感）
 
-三端设置窗共享骨架、分组标题与文案；**卡片容器是 Windows 的视觉实现**，macOS/Linux
-用原生分组（AppKit/GTK 不做像素级卡片），但分组标题/顺序/组内行序/文案必须一致，
-由 tools/checkuiparity 静态断言。
+三端设置窗共享骨架、视觉令牌、控件形态、分组标题与文案；卡片容器三端都有
+（macOS `SettingsCardView` / Windows 自绘圆角卡片 / Linux `.card` CSS），
+由 tools/checkuiparity 的「设置窗视觉令牌」组逐值断言。
 
-- 尺寸与骨架：客户区 640×560pt；左侧导航宽 132pt，三项「输入 / 词库 / 关于」，
-  选中项 accent（RGB 0A84FF）胶囊高亮；右侧内容区左右各 20pt 边距；页脚固定
-  34pt 高，**所有页**显示「Chaoset 版本 x.y.z」。
-- 卡片外观（仅 Windows）：圆角 10pt，浅/深底色 #FAFAFC / #2A2A2E，卡片标题
-  13pt bold secondary；标题带 y+12..34pt，内容从 y+42pt 起（标题与控件不重叠，
-  控件背景按所在卡片颜色绘制）。macOS/Linux 必须满足：分组标题文案与顺序一致、
-  组内行序一致、无标题被控件遮挡。
-- 滚动：仅 Windows 实现（640×560pt 下三页都放得下，代码留作扩展）；macOS/Linux
-  不要求滚动。
+- 尺寸与骨架：客户区 640×560pt；左侧导航列宽 148pt（导航标题 13pt semibold、
+  胶囊 112×34 左右内边距 12），三项「输入 / 词库 / 关于」，选中项 accentSoft 软胶囊 +
+  accentText 半粗字（不再用大面积实心 accent 底）；
+  内容区左边 = 导航列右侧 +24pt、右边 24pt、顶部 44pt（macOS 透明标题栏下避开
+  红绿灯）；页脚固定 34pt 高，**所有页**左下显示「Chaoset 版本 x.y.z」。
+  macOS/Windows 窗口固定 640×560pt；Linux 初始同样 640×560（GTK 非 resizable
+  窗口会按内容自然宽撑大，所以保持可缩放——拖大后卡片/文字自适应，仍同骨架）。
+- 视觉令牌（**单一事实源**；三端实现逐值一致，浅色/深色两套 sRGB）：
+
+  | 令牌 | light | dark | 用途 |
+  | --- | --- | --- | --- |
+  | windowBg | #F5EFE6 | #1C1916 | 窗口底色 |
+  | navBg | #EFE7DB | #171412 | 左侧导航列 |
+  | cardBg | #FFFCF7 | #26221E | 卡片底 |
+  | cardBorder | #E8DCCC | #3A332C | 卡片/控件描边 |
+  | divider | #EDE3D6 | #332D27 | 行分隔线 |
+  | textPrimary | #2E2924 | #F3ECE3 | 主文字 |
+  | textSecondary | #6E655A | #B4A79A | 次文字（说明/卡片标题/页脚） |
+  | textTertiary | #8A7E72 | #8B7F73 | 仅装饰/弱提示 |
+  | accent | #C9703F | #E0915F | 开关开启轨道/焦点环 |
+  | accentStrong | #A85427 | #E0915F | 主按钮底 |
+  | accentPressed | #96491F | #EBA57A | 主按钮按下/hover |
+  | accentSoft | #F6E6D9 | #3B2A20 | 选中/悬停软底 |
+  | accentText | #9C4A25 | #E9A87C | 软底上的强调文字 |
+  | controlBg | #F1E9DD | #221E1A | 次按钮/未选胶囊/开关轨道关 |
+  | controlHover | #F7F0E6 | #2B2621 | hover 底 |
+  | controlBorder | #E0D4C4 | #403830 | 控件描边 |
+  | controlText | #2E2924 | #F3ECE3 | 控件文字 |
+  | knob | #FFFCF7 | #F6EFE6 | 开关滑钮 |
+  | danger | #A8482F | #D97757 | 危险操作文字 |
+  | onAccent | #FFFDF9 | #2A1B12 | accentStrong 上的文字 |
+  | shadow | #5A3C2A | #000000 | 卡片阴影（浅 12% / 深 38% 透明度；按平台绘制能力落地） |
+
+- 几何：卡片圆角 14pt、内边距 18pt、卡片间距 16pt；卡片标题 13pt semibold
+  textSecondary，标题带 y+16..38pt，内容从 y+50pt 起（标题与控件不重叠）；
+  行高 36pt；开关轨道 38×22pt（滑钮 16pt）；choice 胶囊高 30pt、圆角 9pt；
+  按钮高 32pt、圆角 9pt；说明 11pt textSecondary；页脚 11pt textSecondary。
+  文字与底色对比：正文 ≥4.5:1、大字号 ≥3:1；不引入纯黑纯白。
+- 控件形态（三端同构，绘制机制按平台落地）：
+  - 开关：标签左/开关右；开 = accent 轨道 + knob，关 = controlBg 轨道 + 1pt
+    controlBorder；hover 关 controlHover、开 accentPressed；
+  - 中英状态二选一：两个软胶囊（选中 accentSoft + 1pt accent 描边 + accentText
+    半粗，未选 controlBg + controlBorder + textPrimary，hover controlHover）；
+  - 按钮：主按钮 accentStrong 实底 + onAccent 文字（导入词库…），次按钮
+    controlBg + controlBorder + controlText（清空/导出；清空文字 danger）；
+  - 导航：选中 accentSoft 胶囊 + accentText；未选中透明底 + textPrimary，hover
+    controlHover 胶囊；focus 环统一 accent，不用系统蓝与系统虚线；
+  - 卡片：卡片底 + 1pt cardBorder + 柔和阴影，行/说明垂直排布（行间 8、行与
+    说明 10）。
+- 关于页：应用图标 44pt + 「Chaoset 输入法」+ 平台副标题 + 许可证
+  「代码 MIT · 词库 CC BY-SA 4.0」+「更多设置将在后续版本提供」+ 仓库地址
+  （accentText）；**版本号只在页脚**，关于卡片不放（避免重复）。
 - 分组与文案（三端统一）：
   - 输入页卡 1「输入行为」：行「词组联想」开关；说明「选词上屏后展示可续接的
     词组候选；关闭后不再弹出联想候选。」
@@ -253,10 +296,12 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   - 词库页卡 2「词库」：导入按钮 + 统一说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」
     （macOS 导入机制不同，统一句后补「会打开『Chaoset 安装与设置』完成导入」括注。）
   - 关于页卡「关于」：正文含「跨平台中文输入法」「代码 MIT · 词库 CC BY-SA 4.0」
-    「更多设置将在后续版本提供」+ 仓库链接；**版本号只在页脚**，关于卡片不放
-    （避免重复）。
+    「更多设置将在后续版本提供」+ 仓库链接。
 - 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
   Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
+- 禁止色：0A84FF / 007AFF / FAFAFC / 2A2A2E / C0C0C6 / F6F6F8 / D16B29 / 994014
+  不得出现在设置窗源码（系统蓝与冷灰是「突兀」的主要来源）。
+
 
 ## 零阻塞契约（Windows，2026-11-06）
 
@@ -333,7 +378,8 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
   可用性/命中区分开/预选高亮跟随。
 - shims/macos/tests/equivalence.sh：图标 keycap 契约、universal 架构、TIS 图标键。
 - tools/checkuiparity：三端设置窗文案/单例、设置窗契约（640×560pt、页脚版本号
-  所有页、卡片契约标识、关于页正文）、学习数据 GUI、词库导入安全、齿轮 mouseUp
+  所有页、三端卡片标识、关于页正文）、**设置窗视觉令牌（21 个令牌逐值三端比对 +
+  几何令牌 + 禁止色）**、学习数据 GUI、词库导入安全、齿轮 mouseUp
   （按下不得打开设置）、托盘生命周期（不写登录 Run 项、--mode 懒启动、首条模式
   上报后才显示图标）、**TSF 回调零跨进程等待（15 个回调函数体禁用语 + AsyncLog +
   熔断 + 钩子只 PostMessage + DllCanUnloadNow 计数）**、联想即时性、退格/修饰键

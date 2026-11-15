@@ -214,51 +214,39 @@ static void on_import_clicked(GtkButton *button, gpointer user_data) {
 }
 
 GtkWidget *setup_page_dict_build(AppCtx *ctx) {
-    GtkWidget *dict_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
 
-    GtkWidget *data_group = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(data_group), "<b>学习数据</b>");
-    gtk_label_set_xalign(GTK_LABEL(data_group), 0.0);
-    gtk_box_pack_start(GTK_BOX(dict_page), data_group, FALSE, FALSE, 0);
-
-    ctx->stats_label = gtk_label_new("读取中…");
-    gtk_label_set_xalign(GTK_LABEL(ctx->stats_label), 0.0);
-    gtk_label_set_line_wrap(GTK_LABEL(ctx->stats_label), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(ctx->stats_label), 40);
-    gtk_box_pack_start(GTK_BOX(dict_page), ctx->stats_label, FALSE, FALSE, 0);
+    GtkWidget *data_card = setup_card_new("<b>学习数据</b>");
+    ctx->stats_label = setup_label_new("读取中…", "row-label");
+    setup_card_add(data_card, ctx->stats_label);
 
     GtkWidget *data_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_set_size_request(data_row, -1, 36);
     GtkWidget *clear_btn = gtk_button_new_with_label("清空学习数据…");
+    GtkStyleContext *clear_style = gtk_widget_get_style_context(clear_btn);
+    gtk_style_context_add_class(clear_style, "secondary");
+    gtk_style_context_add_class(clear_style, "danger");
     GtkWidget *export_btn = gtk_button_new_with_label("导出学习数据…");
+    gtk_style_context_add_class(gtk_widget_get_style_context(export_btn), "secondary");
     gtk_box_pack_start(GTK_BOX(data_row), clear_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(data_row), export_btn, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(dict_page), data_row, FALSE, FALSE, 0);
+    setup_card_add(data_card, data_row);
+    setup_card_add(data_card,
+                   setup_hint_new("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。"));
+    gtk_box_pack_start(GTK_BOX(page), data_card, FALSE, FALSE, 0);
 
-    GtkWidget *data_hint = gtk_label_new("学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。");
-    gtk_label_set_xalign(GTK_LABEL(data_hint), 0.0);
-    gtk_label_set_line_wrap(GTK_LABEL(data_hint), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(data_hint), 40);
-    gtk_style_context_add_class(gtk_widget_get_style_context(data_hint), "dim-label");
-    gtk_box_pack_start(GTK_BOX(dict_page), data_hint, FALSE, FALSE, 0);
-
-    GtkWidget *dict_group = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(dict_group), "<b>词库</b>");
-    gtk_label_set_xalign(GTK_LABEL(dict_group), 0.0);
-    gtk_box_pack_start(GTK_BOX(dict_page), dict_group, FALSE, FALSE, 0);
-
+    GtkWidget *dict_card = setup_card_new("<b>词库</b>");
     GtkWidget *import_btn = gtk_button_new_with_label("导入词库…");
-    gtk_box_pack_start(GTK_BOX(dict_page), import_btn, FALSE, FALSE, 0);
-
-    /* 词库导入说明：2026-11-06 阶段2 三端统一句（Windows/macOS 同句）。 */
-    GtkWidget *dict_hint = gtk_label_new("支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。");
-    gtk_label_set_xalign(GTK_LABEL(dict_hint), 0.0);
-    gtk_label_set_line_wrap(GTK_LABEL(dict_hint), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(dict_hint), 40);
-    gtk_style_context_add_class(gtk_widget_get_style_context(dict_hint), "dim-label");
-    gtk_box_pack_start(GTK_BOX(dict_page), dict_hint, FALSE, FALSE, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(import_btn), "primary");
+    gtk_widget_set_halign(import_btn, GTK_ALIGN_START);
+    setup_card_add(dict_card, import_btn);
+    /* 词库导入说明：三端统一句（Windows/macOS 同句）。 */
+    setup_card_add(dict_card,
+                   setup_hint_new("支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。"));
+    gtk_box_pack_start(GTK_BOX(page), dict_card, FALSE, FALSE, 0);
 
     g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_clicked), ctx);
     g_signal_connect(export_btn, "clicked", G_CALLBACK(on_export_clicked), ctx);
     g_signal_connect(import_btn, "clicked", G_CALLBACK(on_import_clicked), ctx);
-    return dict_page;
+    return page;
 }
