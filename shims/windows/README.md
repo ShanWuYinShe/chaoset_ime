@@ -302,7 +302,7 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 由单例 UI 宿主创建（开始菜单/搜索等 AC 宿主里也能打开）；交互需真机验收 |
 | Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
-| 游戏/全屏输入（UILess 宿主照常激活 + 自绘候选窗，UILessActivate 注册表可关） | 编译级实现；Dota 2/SDL2 游戏真机待验收 |
+| 游戏/全屏输入（UILess 宿主照常激活 + 官方 ITfUIElementMgr 协商：宿主画/pbShow=FALSE 回退 GDI 自绘，UILessActivate 注册表可关） | 编译级实现；Dota 2/SDL2 游戏真机待验收 |
 | UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
 候选窗默认全屏抑制由 `HKCU\Software\Chaoset\FullscreenSuppress` 控制（DWORD，缺省 1）。
@@ -318,7 +318,9 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 - 全屏免打扰只抑制候选窗，不改变按键/组词；无边框全屏不命中 D3D 全屏判定。
 - **游戏/UILess 宿主输入**：Dota 2/CS2/Deadlock 等 Source 2/SDL2 宿主以 UILess
   激活 TSF，且只给 Valve 白名单内的输入法代绘候选（SDL2 对 BeginUIElement 一律
-  pbShow=FALSE）；本壳照常激活并 GDI 自绘候选窗，白名单不挡按键路由。CS2 Trusted
+  pbShow=FALSE）；本壳按微软《UI less mode》官方协议实现 ITfUIElementMgr 协商
+  （ui_element 模块的 ITfCandidateListUIElement，已注册 TFCAT_TIPCAP_UIELEMENTENABLED
+  类别）：宿主不画时按官方语义回退 GDI 自绘候选窗，白名单不挡按键路由。CS2 Trusted
   Mode 只加载 `System32\IME\` 下带有效签名的 TIP DLL——未签名安装包在 CS2 无法
   加载本输入法（Dota 2 无此限制）。游戏内 `GetTextExt` 常不可用，候选窗锚点退回
   鼠标位置；游戏内输入需真机验收（CI 只做静态/编译验证）。

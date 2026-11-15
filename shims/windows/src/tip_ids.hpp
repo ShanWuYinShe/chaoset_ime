@@ -40,15 +40,15 @@ inline const GUID kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER = {
     0x046602e4, 0xc36a, 0x4f66, {0x82, 0xf7, 0xb4, 0x4d, 0x5f, 0xd8, 0x1a, 0xc4}};
 // 现代 Windows (Windows 8/10/11) 沉浸式与托盘支持能力分类，确保在现代系统设置与 UWP 应用中可见。
 //
-// **刻意不注册 TFCAT_TIPCAP_UIELEMENTENABLED**（2026-10-30 修）：
-// 该类别声明「本 TIP 以 UILess 模式提供候选 UI」——TSF 在沉浸式宿主
-// （Windows 11 开始菜单 / 搜索框等）里据此期望 TIP 通过
-// ITfUIElementMgr::BeginUIElement 提交 ITfUIElement，由宿主自行渲染。
-// 本壳从未实现这些接口（全文件 ITfUIElementMgr / BeginUIElement 出现 0 次），
-// 候选窗是进程内自建的 GDI 弹窗——声明与实现矛盾。
-// 实机症状：记事本（普通 Win32 宿主）候选窗正常，开始菜单里完全看不到
-// （2026-10-30 用户反馈）。撤掉声明让 TSF 按「TIP 自绘候选」的普通路径
-// 对待，与实现保持一致。
+// TFCAT_TIPCAP_UIELEMENTENABLED（UILess 官方能力类别，随 ui_element 模块
+// 落地后**注册**，见 tip_registration.cpp）：声明「本 TIP 支持 ITfUIElement
+// 协商」。2026-10-30 曾「只声明不实现」导致开始菜单候选窗完全消失（声明与
+// 实现矛盾）；现 ui_element 模块已实现官方 ITfCandidateListUIElement 协商
+//（BeginUIElement → 宿主画/pbShow=FALSE 时本壳 GDI 自绘），声明与实现一致。
+// GUID 值三源验证：Windows SDK 元数据绑定（go-bindings-win32）与独立
+// 实现者资料一致。
+inline const GUID kGUID_TFCAT_TIPCAP_UIELEMENTENABLED = {
+    0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
 //
 // 保留 IMMERSIVESUPPORT / SYSTRAYSUPPORT：它们只影响「在现代设置与任务栏
 // 中可见」，与候选窗渲染路径无关。

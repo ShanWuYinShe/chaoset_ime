@@ -7,9 +7,11 @@
 // 模块边界（docs/architecture.md §3.1）：
 //   * TIP 是 Windows 壳最高层：只被 win32.cpp 编排、被 tip_*.cpp 展开实现。
 //   * 叶子模块（candidate_window/mode_toast/shell_worker/tip_thread/winutil/
-//     theme/config/transport/daemon/ui_client/settings_window/ui_host/diagnostics）
-//     严禁 include/引用本文件；tip_thread 对 TIP 的唯一接触是 TipThreadSink
-//     抽象接口（本类实现），因此 tip_thread.cpp 不依赖具体 TIP 类型。
+//     theme/config/transport/daemon/ui_client/settings_window/ui_host/
+//     diagnostics/ui_element）严禁 include/引用本文件；tip_thread 对 TIP 的
+//     唯一接触是 TipThreadSink 抽象接口（本类实现），因此 tip_thread.cpp 不
+//     依赖具体 TIP 类型；ui_element 对 TIP 的唯一接触是 UiElementHost 抽象
+//     接口（本类实现）。
 //   * 依赖方向：tip.hpp → candidate_window.hpp（CandidateWindowHost）/
 //     mode_toast.hpp / tip_thread.hpp（TipThreadSink）/ tip_ids.hpp + 叶子模块。
 //
@@ -34,6 +36,7 @@
 #include "tip_ids.hpp"
 #include "tip_thread.hpp"
 #include "transport.hpp"
+#include "ui_element.hpp"
 #include "winutil.hpp"
 
 namespace chaoset::win {
@@ -117,7 +120,8 @@ class ChaosetTIP : public chaoset::win::ITfTextInputProcessorEx,
                   public ITfActiveLanguageProfileNotifySink,
                   public ITfInputProcessorProfileActivationSink,
                   public chaoset::win::CandidateWindowHost,
-                  public chaoset::win::TipThreadSink {
+                  public chaoset::win::TipThreadSink,
+                  public chaoset::win::UiElementHost {
 public:
     ChaosetTIP();
     virtual ~ChaosetTIP();
@@ -403,6 +407,24 @@ private:
     // 词组，保证删除刷新不改变联想链（与 macOS associateSylls 同语义）。
     std::string assocSylls_;
     ITfComposition* composition_ = nullptr;
+    // ---- UILess 宿主官方协商（微软《UI less mode》，实现见 ui_element 模块）----
+    // uilessThread_：ActivateEx 带 TF_TMAE_UIELEMENTENABLEDONLY 的线程（游戏/
+    // 全屏宿主）。uiElementMgr_：tm_ 上的标准接口（Activate QI、Deactivate 释）。
+    // candUiElement_：本壳 ITfCandidateListUIElement 实现（懒创建，随 TIP 存活）。
+    // uiElementId_/uiElementActive_：BeginUIElement 的元素 id 与未 End 状态；
+    // uiElementShown_：宿主表态 pbShow=TRUE（宿主渲染，本壳不画浮窗）。
+    bool uilessThread_ = false;
+    ITfUIElementMgr* uiElementMgr_ = nullptr;
+    chaoset::win::ChaosetCandidateListUIElement* candUiElement_ = nullptr;
+    DWORD uiElementId_ = static_cast<DWORD>(-1);
+    bool uiElementActive_ = false;
+    bool uiElementShown_ = false;
+    // render 的候选协商入口：snapshot + Begin/Update；返回 uiElementShown_
+    // （true = 宿主接管渲染）。无 UILess 线程/接口缺失/协商失败一律 false
+    // （render 走 GDI 自绘兜底，绝不丢候选）。
+    bool presentCandidatesUiElement();
+    // EndUIElement 收口（幂等）：组词结束/合成终止/退场的所有路径调用。
+    void endCandidatesUiElement();
     // 合成所属宿主窗口（render 时缓存；前台事件回调只读，避免回调里碰 TSF）。
     HWND composeHostWnd_ = nullptr;
     ITfComposition* endTarget_ = nullptr;  // endComposition 编辑会话内的目标
@@ -421,6 +443,10 @@ public:
     void onWorkerForeground(HWND fg) override;
     void onWorkerModeAuthority() override;
     void onWorkerShowToast(int id) override;
+
+    // UiElementHost：UILess 宿主经 ITfUIElement::Show 通知显示/隐藏。
+    // 隐藏时收起自绘浮窗（宿主接管渲染场景本壳浮窗本就未显示，幂等）。
+    void onUiElementShow(BOOL shown) override;
 
     // 设置窗口入口（三端一致的独立设置窗口，macOS SettingsWindow 同构；
     // 定义见 tip_candidates.cpp）。

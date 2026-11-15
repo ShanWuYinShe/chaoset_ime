@@ -39,6 +39,14 @@ ChaosetTIP::~ChaosetTIP() {
     // 无法清理），彻底修复需要全局 (tip, 线程 id) 注册表，本轮不做。
     unregisterTipFromThread(this);
     if (fgHook_ != nullptr) unhookForeground();
+    // UILess 候选元素：交还 TIP 持有的那份引用（Deactivate 已 endCandidates
+    // UiElement，TSF 侧引用已释；此处 Release 后引用归零即销毁，若宿主仍持
+    // 引用则由其 Release 收尾——COM 引用计数语义，绝不悬空销毁）。
+    endCandidatesUiElement();
+    if (candUiElement_ != nullptr) {
+        candUiElement_->Release();
+        candUiElement_ = nullptr;
+    }
     candidateWnd_.destroy();
     // TSF 焦点 sink 必须在释放 tm_ 之前 Unadvise（幂等）：宿主未调 Deactivate
     // 直接 Release 时也成对摘除，避免 TSF 持有指向本对象/已卸载 DLL 的回调。
@@ -162,6 +170,13 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
             compMgr->Release();
         }
     }
+    // UILess 官方协商接口（ITfUIElementMgr 是 ThreadMgr 标准接口）：仅
+    // uilessThread_ 线程使用（render 协商候选），普通宿主零开销。QI 失败
+    // 不致命——render 据此走 GDI 自绘兜底。
+    if (uilessThread_ && uiElementMgr_ == nullptr && tm_ != nullptr) {
+        tm_->QueryInterface(IID_ITfUIElementMgr,
+                            reinterpret_cast<void**>(&uiElementMgr_));
+    }
     syncModeCompartment();
     // 模式指示器归单例 UI 进程所有（chaoset-ui.exe 托盘图标唯一），TIP 只上报。
     // 只有「本线程激活档案确实是我们」才同步/上报；后台实例在这里就被拦下。
@@ -226,6 +241,7 @@ DWORD dwFlags) {
                    static_cast<unsigned long>(GetCurrentProcessId()));
     }
     if ((dwFlags & TF_TMAE_UIELEMENTENABLEDONLY) != 0) {
+        uilessThread_ = true;  // UILess 线程：候选经官方 ITfUIElementMgr 协商
         // UILess 线程（Dota 2/CS2/Deadlock 等 Source 2 与 SDL2 宿主以
         // TF_TMF_UIELEMENTENABLEDONLY 激活 TSF）：**照常激活**，候选窗仍由
         // 本壳 GDI 自绘浮窗呈现，绝不依赖宿主代绘。旧实现在此直接不激活——
@@ -239,7 +255,12 @@ DWORD dwFlags) {
         // （声明与实现不一致正是 2026-10-30「开始菜单候选窗完全消失」的事故）。
         // 回退开关：HKCU\Software\Chaoset\UILessActivate（DWORD，缺省 1）
         // 设 0 恢复旧「不激活」行为——个别 UILess 宿主异常时可一键让本输入法隐身。
-        if (!cachedUilessActivate()) return S_OK;
+        if (!cachedUilessActivate()) {
+            uilessThread_ = false;  // 回退开关：恢复旧「不激活」隐身行为
+            return S_OK;
+        }
+    } else {
+        uilessThread_ = false;
     }
     return Activate(ptim, tid);
 }
@@ -269,6 +290,10 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate() {
     if (profileMgr_ != nullptr) {
         profileMgr_->Release();
         profileMgr_ = nullptr;
+    }
+    if (uiElementMgr_ != nullptr) {
+        uiElementMgr_->Release();
+        uiElementMgr_ = nullptr;
     }
     if (modeCompartment_ != nullptr) {
         modeCompartment_->Release();
@@ -395,6 +420,7 @@ ITfComposition* pComposition) {
             }
         }
     }
+    endCandidatesUiElement();  // 合成被外部终止：UILess 协商一并收口
     candidateWnd_.hide();
     // 引用所有权：TSF 只在「本服务以外的人」结束合成时回调（Microsoft
     // SampleIME Composition.cpp 注释原文：whenever someone other than
@@ -762,6 +788,7 @@ void ChaosetTIP::warmDaemonInBackgroundOnce() {
 //     激活时按需重建（建窗成本远小于「挡住用户鼠标」的代价）。
 void ChaosetTIP::retireUiCompletely() {
     // 1) 候选窗/提示条：销毁而不是隐藏（destroy 内部会把 g_live* 计数归还）。
+    endCandidatesUiElement();  // UILess 协商一并收口（EndUIElement 幂等）
     candidateWnd_.setActiveGate(false);
     candidateWnd_.destroy();
     toast_.destroy();
@@ -956,4 +983,12 @@ void ChaosetTIP::onWorkerModeAuthority() {
 
 void ChaosetTIP::onWorkerShowToast(int id) {
     if (id == 1) showToast(L"设置窗口打不开：chaoset-ui.exe 未运行", true);
+}
+
+// UiElementHost：UILess 宿主经 ITfUIElement::Show 通知显示/隐藏。
+// shown=FALSE（宿主要求隐藏候选 UI）时收起自绘浮窗——宿主接管渲染场景
+// 本壳浮窗本就未显示，hide 幂等；shown=TRUE 无需动作（数据经
+// UpdateUIElement 持续刷新）。
+void ChaosetTIP::onUiElementShow(BOOL shown) {
+    if (!shown) candidateWnd_.hide();
 }

@@ -4,6 +4,17 @@
 
 ## 未发布
 
+- **重构(Windows壳/游戏输入)：UILess 候选按微软《UI less mode》官方协议重做（ITfUIElementMgr / ITfCandidateListUIElement）**：
+  在「UILess 线程照常激活」的基础上补齐官方协商路径——新增 `ui_element` 叶子模块实现
+  ITfCandidateListUIElement（mingw 缺声明自补，IID/虚表顺序经 SDL 头、Windows SDK 元数据
+  绑定、官方示例 SampleIME CCandidateListUIPresenter 三源交叉验证），render 经
+  BeginUIElement 提交候选：宿主 pbShow=TRUE 由宿主渲染（不画 GDI 浮窗），pbShow=FALSE
+  按官方语义回退 GDI 自绘（Dota 2/CS2 等 SDL2 宿主即此路径），协商失败一律自绘兜底、
+  绝不丢候选；候选关闭/组词结束/退场统一 EndUIElement，数据变化按 TF_CLUIE_* 标志
+  UpdateUIElement。注册 TFCAT_TIPCAP_UIELEMENTENABLED 类别（GUID 值三源验证；声明与
+  实现一致，消除 2026-10-30「只声明不实现」的事故根因）；checkuiparity「UILess 能力」
+  组断言同步扩展（协商四接口 + 类别注册 + 声明一致前提）。
+
 - **修复(Windows壳/游戏输入)：UILess 宿主（Dota 2/CS2 等游戏）照常激活输入法，游戏里可以打中文**：
   此前 `ActivateEx` 在 `TF_TMAE_UIELEMENTENABLEDONLY` 线程直接不激活（本壳不实现
   ITfUIElementMgr，选择在 UILess 线程隐身），而 Dota 2/CS2/Deadlock 等 Source 2 与

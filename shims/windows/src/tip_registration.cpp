@@ -69,15 +69,18 @@ static std::string guidToString(const GUID& g) {
     return narrow;
 }
 
-// 旧版（≤v0.2.16）注册过 UILess/UIELEMENTENABLED 类别；v0.2.17 起本壳不再
-// 声明该类别（不实现 ITfUIElementMgr）。NSIS 安装器有 DeleteRegKey 清理，
-// 但便携 ZIP 走 regsvr32 → DllRegisterServer 的路径没有清理步骤，升级用户
-// 会残留该类别，开始菜单/搜索继续按 UILess 模式期待宿主渲染候选窗
-//（2026-10-31 审计 A2）。这里在每个 DLL 注册时幂等清掉自己注册表视图下的
-// 残留：64 位 DLL 清 64 位视图，32 位 DLL（WOW64）清 32 位视图。
+// 旧版（≤v0.2.16）注册过 UILess/UIELEMENTENABLED 类别；v0.2.17～v0.3.24 不
+// 声明该类别（彼时未实现 ITfUIElementMgr）。NSIS 安装器有 DeleteRegKey 清理，
+// 但便携 ZIP 走 regsvr32 → DllRegisterServer 的路径没有清理步骤。本版起
+// ui_element 模块已实现官方协商并正牌注册该类别，本函数保留**幂等预清理**：
+// 先注销再注册，保证从任何旧版本升级后声明与实现一致（残留键值被当前
+// 注册覆盖，且此函数删注册表视图，随后 catGuids 数组按正牌类别重建）。
+// 64 位 DLL 清 64 位视图，32 位 DLL（WOW64）清 32 位视图。
 static void removeLegacyUILessCategory() {
     const GUID kLegacyUIElementEnabled = {
         0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
+    // 值与正牌 kGUID_TFCAT_TIPCAP_UIELEMENTENABLED 相同（旧版内联即 SDK 值）：
+    // 预清理 + 本轮注册 = 幂等收敛到「已实现且已声明」的最终态。
     // 1) 经类别管理器注销（若 COM 已初始化；失败不影响后续注册）
     ITfCategoryMgr* catMgr = nullptr;
     if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
@@ -134,7 +137,11 @@ STDAPI DllRegisterServer() {
                                    reinterpret_cast<void**>(&catMgr)))) {
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
-        // 不注册 UIELEMENTENABLED：本壳不实现 ITfUIElementMgr（见常量处注释）
+        // UILess 官方能力类别：本壳已实现 ITfUIElementMgr 协商（ui_element 模块
+        // 的 ITfCandidateListUIElement），声明与实现一致（2026-10-30「只声明
+        // 不实现」的事故根因已随官方协议落地消除）。
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+                                 CLSID_ChaosetTIP);
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
         catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
@@ -151,7 +158,7 @@ STDAPI DllRegisterServer() {
     const GUID* catGuids[] = {
         &kGUID_TFCAT_TIP_KEYBOARD,
         &kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
-        // 不含 UIELEMENTENABLED：本壳不实现 ITfUIElementMgr（见常量处注释）
+        &kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
         &kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
         &kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
     };
@@ -181,11 +188,10 @@ STDAPI DllUnregisterServer() {
                                    reinterpret_cast<void**>(&catMgr)))) {
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
-        // 注销旧版注册过的 UILess 类别（本版不再注册，但升级用户的注册表里
-        // 仍残留，卸载必须清干净；GUID 直接内联，常量已随修复删除）。
-        const GUID kLegacyUIElementEnabled = {
-            0x49d2f9cf, 0x1f5e, 0x11d7, {0xa6, 0xd3, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kLegacyUIElementEnabled, CLSID_ChaosetTIP);
+        // UILess 类别注销：本版正牌注册（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED
+        // 与旧版内联值相同，同一 GUID 一次注销同时覆盖旧残留与本次注册）。
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+                                   CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
