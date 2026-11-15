@@ -55,6 +55,10 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		// 锚点必须跳过采信，恒走鼠标/GDI 兜底（updateCaretFromRange 入口守卫）。
 		"if (uilessThread_) return;",
 		"一律**不采信** GetTextExt",
+		// UILess 宿主锚点保留上一轮位置（鼠标会被移走；GetTextExt 不可信）：
+		// 锁 render 条件重置形态，绕过即红。
+		"if (!uilessThread_) {",
+		"锚点**保留上一轮位置**",
 	)
 }
 
