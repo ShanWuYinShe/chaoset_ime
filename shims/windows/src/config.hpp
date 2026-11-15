@@ -33,6 +33,9 @@ bool cachedAssociate();
 bool cachedDarkTheme();
 bool cachedFullscreenSuppress();
 bool cachedFullscreenActive();
+// UILess 线程激活开关（HKCU UILessActivate，缺省 1）：游戏/全屏宿主里照常
+// 激活本输入法；0 = 旧「不激活」行为（UILess 宿主完全隐身）。
+bool cachedUilessActivate();
 void invalidateAssociateCache();
 void invalidateThemeCache();
 

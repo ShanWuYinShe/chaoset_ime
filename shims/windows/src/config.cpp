@@ -32,6 +32,21 @@ static bool isFullscreenSuppressEnabled() {
     return v != 0;
 }
 
+// UILess 线程激活开关（2026-11-15 游戏输入）：注册表键 HKCU\Software\Chaoset
+// 的 UILessActivate（DWORD，缺省 1）。游戏/全屏等 UILess 宿主里照常激活本输入法
+// （候选窗由本壳 GDI 自绘，不依赖宿主代绘）；设 0 恢复旧「不激活」行为——
+// 本输入法在 UILess 宿主完全隐身（等于游戏里只能打字母），仅供个别宿主
+// 异常时回退使用。
+static bool isUilessActivateEnabled() {
+    DWORD v = 1;
+    DWORD sz = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"UILessActivate",
+                     RRF_RT_REG_DWORD, nullptr, &v, &sz) != ERROR_SUCCESS) {
+        v = 1;  // 未配置 = 激活（游戏内可输入）
+    }
+    return v != 0;
+}
+
 // 只认「全屏独占 D3D / 演示模式」两种状态；普通最大化、无边框全屏返回
 // QUNS_ACCEPTS_NOTIFICATIONS，不在抑制范围（边界见 README 已知限制）。
 static bool isFullscreenAppActive() {
@@ -83,12 +98,14 @@ UINT associateChangedMessage() {
 
 // ---- 配置缓存（每键注册表/Shell 查询 → TTL 缓存，审计 T10）----
 // slot: 0=ModeScope 1=Associate 2=DarkTheme 3=FullscreenSuppress 4=FullscreenActive
-static volatile LONG g_cfgStamp[5] = {0};
+//       5=UILessActivate
+static volatile LONG g_cfgStamp[6] = {0};
 static ModeScope g_cfgModeScope = ModeScope::System;
 static bool g_cfgAssociate = true;
 static bool g_cfgDark = false;
 static bool g_cfgFullscreenSuppress = true;
 static bool g_cfgFullscreenActive = false;
+static bool g_cfgUilessActivate = true;
 
 static bool cacheFresh(int slot, DWORD ttlMs) {
     const LONG s = g_cfgStamp[slot];
@@ -145,6 +162,14 @@ bool cachedFullscreenActive() {
         cacheTouch(4);
     }
     return g_cfgFullscreenActive;
+}
+
+bool cachedUilessActivate() {
+    if (!cacheFresh(5, 5000)) {
+        g_cfgUilessActivate = isUilessActivateEnabled();
+        cacheTouch(5);
+    }
+    return g_cfgUilessActivate;
 }
 
 // TSF 线程：HKCU UiEnglish 镜像读（注册表微秒级读，绝不跨进程等待）。

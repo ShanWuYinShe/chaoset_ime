@@ -226,9 +226,20 @@ DWORD dwFlags) {
                    static_cast<unsigned long>(GetCurrentProcessId()));
     }
     if ((dwFlags & TF_TMAE_UIELEMENTENABLEDONLY) != 0) {
-        // UILess 线程：本壳尚未实现 ITfUIElementMgr，选择不激活，等价于旧
-        // 行为（不实现该接口的 TIP 在此类线程根本不会被激活）。
-        return S_OK;
+        // UILess 线程（Dota 2/CS2/Deadlock 等 Source 2 与 SDL2 宿主以
+        // TF_TMF_UIELEMENTENABLEDONLY 激活 TSF）：**照常激活**，候选窗仍由
+        // 本壳 GDI 自绘浮窗呈现，绝不依赖宿主代绘。旧实现在此直接不激活——
+        // 本壳不实现 ITfUIElementMgr，等于把整个游戏输入场景让出去：输入法
+        // 在游戏里收不到任何按键，表现为「只能输入字母」（2026-11-15 用户
+        // 反馈）。Valve 游戏的白名单只挡宿主代绘候选（SDL2 对 BeginUIElement
+        // 一律回 pbShow=FALSE，白名单外的输入法不画），**不挡按键路由**；
+        // 同类第三方输入法（水杉 msime PR #5983、清风论坛实测）均以「照常
+        // 激活 + 自绘候选窗」在白名单之外工作。渲染路径不变：本壳不实现
+        // ITfUIElementMgr，也继续不注册 TFCAT_TIPCAP_UIELEMENTENABLED
+        // （声明与实现不一致正是 2026-10-30「开始菜单候选窗完全消失」的事故）。
+        // 回退开关：HKCU\Software\Chaoset\UILessActivate（DWORD，缺省 1）
+        // 设 0 恢复旧「不激活」行为——个别 UILess 宿主异常时可一键让本输入法隐身。
+        if (!cachedUilessActivate()) return S_OK;
     }
     return Activate(ptim, tid);
 }

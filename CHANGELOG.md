@@ -4,6 +4,21 @@
 
 ## 未发布
 
+- **修复(Windows壳/游戏输入)：UILess 宿主（Dota 2/CS2 等游戏）照常激活输入法，游戏里可以打中文**：
+  此前 `ActivateEx` 在 `TF_TMAE_UIELEMENTENABLEDONLY` 线程直接不激活（本壳不实现
+  ITfUIElementMgr，选择在 UILess 线程隐身），而 Dota 2/CS2/Deadlock 等 Source 2 与
+  SDL2 宿主正是以 UILess 方式激活 TSF——输入法在游戏里收不到任何按键，表现为
+  「只能输入字母」（2026-11-15 用户反馈）。现在 UILess 线程照常完成激活，候选窗
+  仍由本壳 GDI 自绘浮窗呈现（不依赖宿主代绘，也继续不注册 UIELEMENTENABLED 类别）。
+  Valve 游戏白名单只挡宿主代绘候选（SDL2 对 BeginUIElement 一律 pbShow=FALSE），
+  不挡按键路由；同行实现（水杉 msime PR #5983、清风论坛实测）已验证该路径可行。
+  `HKCU\Software\Chaoset\UILessActivate`（DWORD，缺省 1）设 0 可回退为不激活。
+  已知限制：CS2 Trusted Mode 只加载 `System32\IME\` 下带有效签名的 TIP DLL，未签名
+  安装包在 CS2 仍不可用（Dota 2 无此限制）；游戏内 GetTextExt 常不可用，候选窗锚点
+  退回鼠标位置；D3D 独占全屏下候选窗仍按全屏免打扰抑制（无边框全屏不抑制）。
+  checkuiparity「UILess 能力」组同步断言激活与回退开关。真机验收待办：Dota 2
+  无边框全屏聊天框输入中文（CI 只能静态/编译验证）。
+
 ## v0.3.24（2026-11-14）
 
 本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.23` 之后 2 个提交：全平台同构落地日式生活艺术风 UI 质感与微实体键帽升级，以及中英文状态指示字形清晰度优化。
