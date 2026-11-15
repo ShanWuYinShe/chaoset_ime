@@ -53,6 +53,10 @@ inline const DWORD kTfCluieCurrentpage = 0x00000020;
 // 虚表顺序 = ITfUIElement 四方法 + 下列八字节方法（SDL_msctf.h vtable 与
 // SDK 元数据绑定双源一致）。
 struct ITfCandidateListUIElement : public ITfUIElement {
+// 微软 SDK 接口的惯用保护析构：防止经基类指针 delete（COM 释放只经 Release）。
+protected:
+    ~ITfCandidateListUIElement() {}
+public:
     virtual HRESULT STDMETHODCALLTYPE GetUpdatedFlags(DWORD* pdwFlags) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetDocumentMgr(ITfDocumentMgr** ppdim) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetCount(UINT* puCount) = 0;
@@ -76,7 +80,7 @@ public:
 // GetSelection 为页内预选，GetCurrentPage/GetPageIndex 反映引擎页码（单页
 // 表）；宿主要翻页时 SetPageIndex 返回 E_NOTIMPL（翻页由用户方向键驱动，
 // 本壳更新数据后 UpdateUIElement 通知）。
-class ChaosetCandidateListUIElement : public ITfCandidateListUIElement {
+class ChaosetCandidateListUIElement final : public ITfCandidateListUIElement {
 public:
     static HRESULT CreateInstance(UiElementHost* host,
                                   ChaosetCandidateListUIElement** ppobj);

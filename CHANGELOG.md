@@ -13,7 +13,8 @@
   绝不丢候选；候选关闭/组词结束/退场统一 EndUIElement，数据变化按 TF_CLUIE_* 标志
   UpdateUIElement。注册 TFCAT_TIPCAP_UIELEMENTENABLED 类别（GUID 值三源验证；声明与
   实现一致，消除 2026-10-30「只声明不实现」的事故根因）；checkuiparity「UILess 能力」
-  组断言同步扩展（协商四接口 + 类别注册 + 声明一致前提）。
+  组断言同步扩展（协商四接口 + 类别注册 + 声明一致前提）。DLL 链接新增 oleaut32
+  （BSTR 分配所需）；候选元素接口按微软 SDK 惯例加保护析构、实现类 final。
 
 - **修复(Windows壳/游戏输入)：UILess 宿主（Dota 2/CS2 等游戏）照常激活输入法，游戏里可以打中文**：
   此前 `ActivateEx` 在 `TF_TMAE_UIELEMENTENABLEDONLY` 线程直接不激活（本壳不实现
