@@ -38,6 +38,10 @@ std::wstring windowClassName(const wchar_t* base, HINSTANCE inst);
 // 只有沉浸式 shell 宿主（开始菜单/搜索等）需要 owner（否则被 z 序 band 压住）；
 // 普通桌面宿主不需要 owner（带 owner 会把 owner 窗口组抬到前面，见实现注释）。
 bool shellHostNeedsOwner();
+// 已知 UILess 游戏宿主：候选锚点/宿主协商在该类宿主不可信（GetTextExt 失败
+// 或给出贴左上角的退化矩形；SDL2 对 BeginUIElement 表态后渲染位置也不跟随
+// 输入框），走「跳过协商 + 鼠标锚点」路径（见 tip_composition render）。
+bool isKnownGameUiLessHost();
 HWND popupOwner();
 
 // 主屏 DPI / 指定屏幕坐标所在显示器的 DPI（Win8.1+ shcore，缺失时退回主屏）。

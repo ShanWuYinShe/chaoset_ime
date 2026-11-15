@@ -203,12 +203,26 @@ void ChaosetTIP::render(ITfContext* pic) {
     // 元素，宿主 pbShow=TRUE 时由宿主渲染（本壳不画浮窗）；pbShow=FALSE 是
     // 官方语义的「宿主不画，TIP 自绘」——落到下方 GDI 浮窗路径。协商不可用
     //（非 UILess 线程/接口缺失/失败）一律自绘兜底，绝不丢候选。
+    // 已知游戏宿主（isKnownGameUiLessHost）：宿主即便接管渲染，候选也画在
+    // 固定位置不跟随输入框（2026-11-15 用户实测 Dota 2 贴屏幕左上角）——跳过
+    // 协商直接自绘，锚点强制走下方鼠标兜底。
     // 独占全屏免打扰优先：不向宿主提交候选（与 GDI 路径的 show 抑制同语义）。
-    if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
+    const bool gameUiLess = uilessThread_ && isKnownGameUiLessHost();
+    if (gameUiLess) {
+        endCandidatesUiElement();
+    } else if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
         endCandidatesUiElement();
     } else if (presentCandidatesUiElement()) {
         candidateWnd_.hide();  // 宿主接管渲染（预编辑已照常写入文档）
         return;
+    }
+
+    // 游戏 UILess 宿主：applyPreedit 里的 GetTextExt 常返回贴左上角的退化
+    // 矩形并置 caretFound_——不采信，强制走下方鼠标兜底（聊天框需先点击，
+    // 鼠标就在输入行附近，候选窗跟随鼠标即跟随输入框）。
+    if (gameUiLess) {
+        caretFound_ = false;
+        caretFromMouse_ = false;
     }
 
     if (!caretFound_ || (caretPos_.x == 0 && caretPos_.y == 0)) {
@@ -293,6 +307,14 @@ void ChaosetTIP::updateCaretFromRange(ITfContext* ctx, TfEditCookie ec, ITfRange
     BOOL fClipped = FALSE;
     if (SUCCEEDED(view->GetTextExt(ec, range, &rc, &fClipped)) &&
         (rc.right > rc.left || rc.bottom > rc.top)) {
+        // 退化矩形防线（2026-11-15 用户实测 Dota 2）：部分游戏宿主返回 S_OK
+        // 但矩形贴主屏左上角且面积极小（游戏渲染坐标系与桌面无关）。采信会
+        // 把候选窗画到左上角。判定：矩形完全落在主屏左上 32px 内 → 不采信，
+        // 保留旧锚点/走鼠标兜底（正常宿主几乎不可能在该区域返回合成矩形）。
+        if (rc.left < 32 && rc.top < 32 && (rc.right - rc.left) < 32 &&
+            (rc.bottom - rc.top) < 32) {
+            return;
+        }
         caretPos_.x = rc.left;
         caretPos_.y = rc.bottom;
         caretLineHeight_ = (rc.bottom > rc.top) ? (rc.bottom - rc.top) : 20;
