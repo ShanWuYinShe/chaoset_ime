@@ -302,12 +302,15 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
 | 设置窗：联想、学习数据、词库导入、深浅色、per-monitor DPI | 由单例 UI 宿主创建（开始菜单/搜索等 AC 宿主里也能打开）；交互需真机验收 |
 | Shift 空按中英切换、全/半角、双拼 `;`、渐进上屏 | 编译级 + 核心行为测试；Shift 记账有静态契约断言（`checkuiparity`）；投递层仍需真机验收 |
 | 全屏免打扰、UIA 窗口级 provider | 编译级实现 |
-| 游戏/全屏输入（UILess 宿主照常激活 + 官方 ITfUIElementMgr 协商：宿主画/pbShow=FALSE 回退 GDI 自绘，UILessActivate 注册表可关） | 编译级实现；Dota 2/SDL2 游戏真机待验收 |
+| 游戏/全屏输入（UILess 宿主照常激活 + 候选 GDI 自绘，通用无宿主名单；官方 ITfUIElementMgr 协商为显式开关 UiElementRender，UILessActivate 注册表可关） | 编译级实现；Dota 2/SDL2 游戏真机已验收打字，候选窗跟随鼠标 |
 | UWP/AppContainer 细节、多会话（RDP/快切）、混合 DPI 多屏、Narrator | 待 Windows 真机验收 |
 
 候选窗默认全屏抑制由 `HKCU\Software\Chaoset\FullscreenSuppress` 控制（DWORD，缺省 1）。
 游戏/全屏（UILess 宿主）内照常激活输入法由 `HKCU\Software\Chaoset\UILessActivate`
 控制（DWORD，缺省 1；设 0 恢复「UILess 线程不激活」，本输入法在游戏里完全隐身）。
+官方 ITfUIElementMgr 协商由 `HKCU\Software\Chaoset\UiElementRender` 控制
+（DWORD，缺省 0；候选默认 GDI 自绘——锚点三级兜底加退化矩形防线，通用无宿主名单；
+设 1 启用官方协商，供会正确渲染候选的 UILess 宿主使用）。
 设置窗入口：候选栏齿轮，或右键单击托盘「中/英」图标 →「打开设置…」（由
 `chaoset-ui.exe` 打开；system 档托盘左键切换中英，process 档左键只显示不切换）；
 设置项存 `HKCU\Software\Chaoset`。
@@ -320,12 +323,12 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   激活 TSF，且只给 Valve 白名单内的输入法代绘候选（SDL2 对 BeginUIElement 一律
   pbShow=FALSE）；本壳按微软《UI less mode》官方协议实现 ITfUIElementMgr 协商
   （ui_element 模块的 ITfCandidateListUIElement，已注册 TFCAT_TIPCAP_UIELEMENTENABLED
-  类别）：宿主不画时按官方语义回退 GDI 自绘候选窗，白名单不挡按键路由。CS2 Trusted
+  类别），候选**默认 GDI 自绘**（通用无宿主名单）：锚点走 GetTextExt → GDI 光标 →
+  鼠标三级兜底，GetTextExt 贴主屏左上角的退化矩形一律不采信（实测 Dota 2 如此），
+  候选窗跟随鼠标（聊天框需先点击，鼠标就在输入行附近）。官方协商为显式开关
+  `UiElementRender`（缺省 0——实测游戏宿主的协商渲染位置不跟随输入框）。CS2 Trusted
   Mode 只加载 `System32\IME\` 下带有效签名的 TIP DLL——未签名安装包在 CS2 无法
-  加载本输入法（Dota 2 无此限制）。已知游戏宿主（dota2/cs2/deadlock 及 Source 2
-  /SDL2 特征）跳过宿主渲染协商并强制鼠标锚点：候选窗跟随鼠标（聊天框需先点击，
-  鼠标就在输入行附近）；通用防线上 GetTextExt 贴主屏左上角的退化矩形一律不采信。
-  游戏内输入需真机验收（CI 只做静态/编译验证）。
+  加载本输入法（Dota 2 无此限制）。游戏内输入需真机验收（CI 只做静态/编译验证）。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
 - **候选窗右键菜单不得激活候选窗自身（issue#1）**：候选窗是 `WS_EX_NOACTIVATE`，
   但 `SetForegroundWindow` 仍会**程序化激活**它（微软文档明确），激活会夺走宿主文档的

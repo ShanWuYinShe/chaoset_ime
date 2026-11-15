@@ -199,30 +199,22 @@ void ChaosetTIP::render(ITfContext* pic) {
         return;
     }
 
-    // UILess 宿主官方协商（微软《UI less mode》）：BeginUIElement 提交候选列表
-    // 元素，宿主 pbShow=TRUE 时由宿主渲染（本壳不画浮窗）；pbShow=FALSE 是
-    // 官方语义的「宿主不画，TIP 自绘」——落到下方 GDI 浮窗路径。协商不可用
-    //（非 UILess 线程/接口缺失/失败）一律自绘兜底，绝不丢候选。
-    // 已知游戏宿主（isKnownGameUiLessHost）：宿主即便接管渲染，候选也画在
-    // 固定位置不跟随输入框（2026-11-15 用户实测 Dota 2 贴屏幕左上角）——跳过
-    // 协商直接自绘，锚点强制走下方鼠标兜底。
+    // UILess 宿主候选：**默认 GDI 自绘**，对一切 UILess 宿主通用——锚点走
+    // 三级兜底（GetTextExt → GDI 光标 → 鼠标）加退化矩形防线（贴主屏左上角
+    // 32px 内的 GetTextExt 矩形一律不采信），不需要按宿主逐个特判（名单式
+    // 特判不可持续：2026-11-15 用户实测 Dota 2 宿主协商渲染画在固定位置不
+    // 跟随输入框、GetTextExt 给贴左上角的退化矩形）。微软《UI less mode》
+    // 官方协商（BeginUIElement 提交 ITfCandidateListUIElement，宿主
+    // pbShow=TRUE 由宿主渲染）保留为显式开关：注册表键 HKCU\Software\Chaoset
+    // 的 UiElementRender（DWORD，缺省 0）= 1 时启用。
     // 独占全屏免打扰优先：不向宿主提交候选（与 GDI 路径的 show 抑制同语义）。
-    const bool gameUiLess = uilessThread_ && isKnownGameUiLessHost();
-    if (gameUiLess) {
+    if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
         endCandidatesUiElement();
-    } else if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
-        endCandidatesUiElement();
-    } else if (presentCandidatesUiElement()) {
+    } else if (cachedUiElementRender() && presentCandidatesUiElement()) {
         candidateWnd_.hide();  // 宿主接管渲染（预编辑已照常写入文档）
         return;
-    }
-
-    // 游戏 UILess 宿主：applyPreedit 里的 GetTextExt 常返回贴左上角的退化
-    // 矩形并置 caretFound_——不采信，强制走下方鼠标兜底（聊天框需先点击，
-    // 鼠标就在输入行附近，候选窗跟随鼠标即跟随输入框）。
-    if (gameUiLess) {
-        caretFound_ = false;
-        caretFromMouse_ = false;
+    } else if (!cachedUiElementRender()) {
+        endCandidatesUiElement();  // 自绘优先：协商通道保持关闭
     }
 
     if (!caretFound_ || (caretPos_.x == 0 && caretPos_.y == 0)) {
