@@ -100,7 +100,7 @@ done
   -DCHAOSET_VERSION="\"$VERSION\"" \
   -o build/ChaosetIME.dll \
   $DLL_SRCS ../common/ipc/core.cpp build/chaoset_rc.o \
-  -lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32
+  -lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
 if x86_64-w64-mingw32-objdump -h build/ChaosetIME.dll | command grep -qi "\.rsrc"; then
   echo "  图标与版本资源已嵌入（.rsrc 段存在）"
 else
