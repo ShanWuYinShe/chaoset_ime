@@ -46,11 +46,11 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		"kIID_ITfCandidateListUIElement", // IID 自补（三源交叉验证）
 		"RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED",
 		"声明与实现一致", // 类别注册前提：实现真实存在（防 2026-10-30 事故复发）
-		// 游戏 UILess 宿主（2026-11-15 用户实测 Dota 2 候选飞左上角）：协商与
-		// GetTextExt 锚点在该类宿主不可信，必须检测并跳过/走鼠标兜底。
-		// 锁 render 调用形态（判定与协商跳过同分支），绕过即红。
-		"uilessThread_ && isKnownGameUiLessHost()",
-		"if (gameUiLess) {",
+		// UILess 候选默认 GDI 自绘（通用，无宿主名单；2026-11-15 实测名单式
+		// 特判不可持续）；官方协商是显式开关——锁开关在 render 的调用形态，
+		// 绕过/默认启用都会红。
+		"cachedUiElementRender() && presentCandidatesUiElement()",
+		"if (!cachedUiElementRender()) {",
 	)
 }
 

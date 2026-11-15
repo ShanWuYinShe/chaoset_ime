@@ -161,7 +161,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 面板质感 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1pt 描边 + CS_DROPSHADOW + SetWindowRgn 圆角 | GDI 限制；Windows 无毛玻璃、圆角有锯齿 |
 | 窗口层级 | .floating(3)，不遮蔽菜单栏 | WS_EX_TOPMOST + owner=宿主窗口 | owned 候选窗在宿主之上，可跨开始菜单/搜索的沉浸式 z 序 |
 | 全屏免打扰 | 无 AppKit 对应机制 | D3D 全屏/演示模式抑制候选窗；FullscreenSuppress 注册表可关 | 只抑制显示，不改变按键/组词；无边框全屏不触发 |
-| 游戏/UILess 宿主输入 | 无对应机制（宿主不经文本输入系统则任何 IMK 输入法收不到按键） | UILess 线程照常激活 + 官方 ITfUIElementMgr 协商（宿主 pbShow=TRUE 宿主画 / FALSE 回退 GDI 自绘）；已知游戏宿主跳过协商并强制鼠标锚点；UILessActivate 注册表可关 | ibus 由面板/宿主呈现候选，无 UILess 概念 |
+| 游戏/UILess 宿主输入 | 无对应机制（宿主不经文本输入系统则任何 IMK 输入法收不到按键） | UILess 线程照常激活 + 候选默认 GDI 自绘（锚点三级兜底 + 退化矩形防线，通用无名单）；官方协商为显式开关 UiElementRender（缺省 0）；UILessActivate 注册表可关 | ibus 由面板/宿主呈现候选，无 UILess 概念 |
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
 | 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 翻页箭头显示 | 双箭头：首页只有下箭头、末页只有上箭头、中间页都有；单页两枚置灰不可点 | 同左（同几何：6pt 箭头块 + 页码） | ibus 面板自绘，壳拿不到箭头绘制/命中回调，无法控制箭头显隐（按键语义一致） | Windows 像素效果需真机验收 |

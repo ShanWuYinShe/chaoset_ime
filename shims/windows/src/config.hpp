@@ -36,6 +36,10 @@ bool cachedFullscreenActive();
 // UILess 线程激活开关（HKCU UILessActivate，缺省 1）：游戏/全屏宿主里照常
 // 激活本输入法；0 = 旧「不激活」行为（UILess 宿主完全隐身）。
 bool cachedUilessActivate();
+// UILess 官方协商开关（HKCU UiElementRender，缺省 0）：UILess 宿主候选默认
+// GDI 自绘（通用，无宿主名单）；1 = 启用微软《UI less mode》官方协商
+//（ITfUIElementMgr/ITfCandidateListUIElement）。
+bool cachedUiElementRender();
 void invalidateAssociateCache();
 void invalidateThemeCache();
 

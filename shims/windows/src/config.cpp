@@ -98,14 +98,15 @@ UINT associateChangedMessage() {
 
 // ---- 配置缓存（每键注册表/Shell 查询 → TTL 缓存，审计 T10）----
 // slot: 0=ModeScope 1=Associate 2=DarkTheme 3=FullscreenSuppress 4=FullscreenActive
-//       5=UILessActivate
-static volatile LONG g_cfgStamp[6] = {0};
+//       5=UILessActivate 6=UiElementRender
+static volatile LONG g_cfgStamp[7] = {0};
 static ModeScope g_cfgModeScope = ModeScope::System;
 static bool g_cfgAssociate = true;
 static bool g_cfgDark = false;
 static bool g_cfgFullscreenSuppress = true;
 static bool g_cfgFullscreenActive = false;
 static bool g_cfgUilessActivate = true;
+static bool g_cfgUiElementRender = false;
 
 static bool cacheFresh(int slot, DWORD ttlMs) {
     const LONG s = g_cfgStamp[slot];
@@ -170,6 +171,30 @@ bool cachedUilessActivate() {
         cacheTouch(5);
     }
     return g_cfgUilessActivate;
+}
+
+// UILess 官方协商开关（2026-11-15 通用化改版）：注册表键 HKCU\Software\Chaoset
+// 的 UiElementRender（DWORD，缺省 0）。UILess 宿主候选**默认 GDI 自绘**（锚点
+// 三级兜底 + 退化矩形防线，对一切宿主通用、无宿主名单）；设 1 启用微软
+//《UI less mode》官方协商（ITfUIElementMgr/ITfCandidateListUIElement）——
+// 供未来会正确渲染候选的 UILess 宿主使用（实测 Dota 2 等游戏宿主渲染位置
+// 不跟随输入框，协商默认关闭）。
+static bool isUiElementRenderEnabled() {
+    DWORD v = 0;
+    DWORD sz = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"UiElementRender",
+                     RRF_RT_REG_DWORD, nullptr, &v, &sz) != ERROR_SUCCESS) {
+        v = 0;  // 未配置 = 自绘优先（无宿主名单的通用路径）
+    }
+    return v != 0;
+}
+
+bool cachedUiElementRender() {
+    if (!cacheFresh(6, 5000)) {
+        g_cfgUiElementRender = isUiElementRenderEnabled();
+        cacheTouch(6);
+    }
+    return g_cfgUiElementRender;
 }
 
 // TSF 线程：HKCU UiEnglish 镜像读（注册表微秒级读，绝不跨进程等待）。
