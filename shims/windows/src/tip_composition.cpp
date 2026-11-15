@@ -169,8 +169,15 @@ void ChaosetTIP::render(ITfContext* pic) {
         compCtx_ = ctx;
         ctx->AddRef();
     }
-    caretFound_ = false;
-    caretFromMouse_ = false;
+    // UILess 宿主（游戏/全屏）锚点**保留上一轮位置**：GetTextExt 不可信
+    //（见 updateCaretFromRange 守卫），鼠标又会被用户在点开输入框后移走
+    //（2026-11-15 实测 Dota 2）——首键由鼠标兜底定位一次（点开聊天框时
+    // 鼠标就在输入框附近），之后整条组词稳定在该位置不跳变；组词结束/
+    // 退场（retireUiCompletely）才重置。非 UILess 宿主照旧每轮重新探测。
+    if (!uilessThread_) {
+        caretFound_ = false;
+        caretFromMouse_ = false;
+    }
     EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
         static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
     });
