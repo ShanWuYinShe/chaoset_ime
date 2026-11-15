@@ -128,6 +128,7 @@ bool ChaosetTIP::bailOutNoComposition() {
     resetComposition();
     comp_ = chaoset::Comp();
     confirmedPreedit_.clear(); // 上下文已不可写：缓冲一并放弃，绝不串进下轮组词
+    endCandidatesUiElement();  // 本轮放弃：EndUIElement（UILess 官方协商收口）
     candidateWnd_.hide();
     // 走到这里时合成对象必然已不存在（未建出或 SetText 失败已当场结束），
     // 上下文记录一并清掉，避免过期引用跨越焦点切换存活。
@@ -193,7 +194,20 @@ void ChaosetTIP::render(ITfContext* pic) {
     }
 
     if (comp_.candidates.empty()) {
+        endCandidatesUiElement();
         candidateWnd_.hide();
+        return;
+    }
+
+    // UILess 宿主官方协商（微软《UI less mode》）：BeginUIElement 提交候选列表
+    // 元素，宿主 pbShow=TRUE 时由宿主渲染（本壳不画浮窗）；pbShow=FALSE 是
+    // 官方语义的「宿主不画，TIP 自绘」——落到下方 GDI 浮窗路径。协商不可用
+    //（非 UILess 线程/接口缺失/失败）一律自绘兜底，绝不丢候选。
+    // 独占全屏免打扰优先：不向宿主提交候选（与 GDI 路径的 show 抑制同语义）。
+    if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
+        endCandidatesUiElement();
+    } else if (presentCandidatesUiElement()) {
+        candidateWnd_.hide();  // 宿主接管渲染（预编辑已照常写入文档）
         return;
     }
 
@@ -392,6 +406,7 @@ void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
 // 上屏；返回是否确实写进了文档（调用方据此决定失败时是否放行原键）
 bool ChaosetTIP::commit(ITfContext* pic, const std::string& text) {
     g_lastOp = kOpCommit;
+    endCandidatesUiElement();  // 组词结束：EndUIElement（UILess 官方协商收口）
     candidateWnd_.hide();
     ContextRef owned(nullptr);
     ITfContext* ctx = pic;
@@ -517,6 +532,7 @@ void ChaosetTIP::flushOrCancel(ITfContext* pic) {
 // cookie 0 在编辑会话外调用 SetText/EndComposition，TSF 只会返回失败：
 // 预编辑文本留在文档里、合成对象也泄漏（2026-10-29 审查）。
 void ChaosetTIP::endComposition() {
+    endCandidatesUiElement();  // 取消/收尾：EndUIElement（UILess 官方协商收口）
     candidateWnd_.hide();
     // 取消整条组词：未落盘的已确认段一并丢弃（与 macOS 壳 Esc 语义一致；
     // 幂等兜底——落盘型收尾走 commit() 且已先行取出拼接）。
@@ -601,4 +617,65 @@ std::vector<std::string> ChaosetTIP::splitSyllables(const std::string& syllables
         start = pos + 1;
     }
     return out;
+}
+
+
+// ---- UILess 宿主官方协商（微软《UI less mode》协议）----
+//
+// presentCandidatesUiElement：把当前页候选灌入 ITfCandidateListUIElement，
+// 首次 BeginUIElement（宿主经出参 pbShow 表态：TRUE=宿主渲染 / FALSE=宿主
+// 不画、按官方语义由本壳自绘），之后数据变化仅 UpdateUIElement（带
+// TF_CLUIE_* 差量标志）。返回 uiElementShown_（true = 宿主接管渲染）。
+// 任何失败（非 UILess 线程 / 接口缺失 / Begin 失败）返回 false，render
+// 走 GDI 自绘兜底——协议是增量能力，绝不因协商失败丢候选。
+bool ChaosetTIP::presentCandidatesUiElement() {
+    if (!uilessThread_ || uiElementMgr_ == nullptr) return false;
+    if (candUiElement_ == nullptr) {
+        if (FAILED(chaoset::win::ChaosetCandidateListUIElement::CreateInstance(
+                this, &candUiElement_)) ||
+            candUiElement_ == nullptr) {
+            return false;
+        }
+    }
+    std::vector<std::wstring> wide;
+    wide.reserve(comp_.candidates.size());
+    for (const auto& cand : comp_.candidates) {
+        wide.push_back(toWide(cand.text));
+    }
+    // 单页快照：selection 交 UILess 宿主自行管理（数字键选择仍走本壳键盘
+    // 路径）；页码/条数/文本全量刷新，宿主按 GetUpdatedFlags 差量渲染。
+    candUiElement_->snapshot(wide, /*selection=*/0, static_cast<UINT>(comp_.page),
+                             chaoset::win::kTfCluieCount | chaoset::win::kTfCluieSelection |
+                                 chaoset::win::kTfCluieString | chaoset::win::kTfCluiePageindex |
+                                 chaoset::win::kTfCluieCurrentpage);
+    if (!uiElementActive_) {
+        BOOL shown = FALSE;
+        const HRESULT hr = uiElementMgr_->BeginUIElement(candUiElement_, &shown, &uiElementId_);
+        if (FAILED(hr)) {
+            if (diagBudget()) {
+                diagPrintf(L"tsf.log", "BeginUIElement failed hr=0x%08lX\n",
+                           static_cast<unsigned long>(hr));
+            }
+            uiElementId_ = static_cast<DWORD>(-1);
+            return false;
+        }
+        uiElementActive_ = true;
+        uiElementShown_ = shown != FALSE;
+    } else {
+        uiElementMgr_->UpdateUIElement(uiElementId_);
+    }
+    return uiElementShown_;
+}
+
+// EndUIElement 收口（幂等）：组词结束（commit）、取消/外部终止
+//（endComposition / OnCompositionTerminated）、协商失败回收
+//（bailOutNoComposition）、退场（retireUiCompletely → Deactivate）统一走这里。
+void ChaosetTIP::endCandidatesUiElement() {
+    if (!uiElementActive_) return;
+    uiElementActive_ = false;
+    uiElementShown_ = false;
+    if (uiElementMgr_ != nullptr && uiElementId_ != static_cast<DWORD>(-1)) {
+        uiElementMgr_->EndUIElement(uiElementId_);
+    }
+    uiElementId_ = static_cast<DWORD>(-1);
 }

@@ -78,11 +78,11 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
 | `win32.cpp` | DLL 生命周期编排：ChaosetFactory、ChaosetRunUi 导出、DllMain/DllGetClassObject/DllCanUnloadNow、g_liveObjects 存活计数 | 全部 Windows 壳模块（含 tip.hpp） | ≤1200（当前 129；≤2000 目标已达成） |
-| `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink）、kVk*/kPageSize 常量、mingw 缺失的 ITfTextInputProcessorEx 补声明 | candidate_window, mode_toast, tip_thread, tip_ids, shell_worker, winutil, config, transport, daemon, diagnostics, core | ≤500 |
+| `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink/UiElementHost）、kVk*/kPageSize 常量、UILess 协商成员 | candidate_window, mode_toast, tip_thread, tip_ids, shell_worker, winutil, config, transport, daemon, diagnostics, core | ≤500 |
 | `tip_core.cpp` | TIP 生命周期/激活状态机/中英模式/前台钩子/worker 回投入口 | tip.hpp | ≤1100（当前 ~955） |
 | `tip_profiles.cpp` | TSF 信号 sink：ITfThreadFocusSink/ITfActiveLanguageProfileNotifySink/ITfInputProcessorProfileActivationSink（键盘布局切换只有它通知，托盘隐藏权威事件）的挂载与回调、isActiveTip 激活档案查询 | tip.hpp | ≤300 |
 | `tip_keys.cpp` | ITfKeyEventSink 五入口、Shift 状态机、修饰键/键位映射、wouldHandle/handleKey | tip.hpp | ≤1100 |
-| `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾 | tip.hpp, core | ≤900 |
+| `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾；UILess 官方协商（BeginUIElement/UpdateUIElement/EndUIElement） | tip.hpp, core | ≤900 |
 | `tip_candidates.cpp` | 候选点选/删除/翻页、showToast、设置窗入口、联想面板与 CandidateWindowHost 转发 | tip.hpp | ≤500 |
 | `candidate_window.cpp` `.hpp` | 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/齿轮笔/防卸载计数；TIP 侧只经 CandidateWindowHost 抽象接口 | winutil, theme, config, diagnostics, candidate_layout, core | ≤1200 / ≤300（当前 1179；接近上限，后续改动先按职责拆分） |
 | `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | winutil, core, transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
@@ -94,6 +94,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `winutil.cpp` `.hpp` | 窗口类名、DPI、AppContainer 判定、当前用户 SID/会话、宽字符转换、浮窗 owner 判定 | — | ≤500 |
 | `theme.cpp` `.hpp` | 候选窗配色/主题判定（与 macOS 视觉契约） | winutil | ≤500 |
 | `config.cpp` `.hpp` | HKCU 设置读写、配置 TTL 缓存、全屏抑制、UILess 激活开关 | winutil, diagnostics | ≤700 |
+| `ui_element.cpp` `.hpp` | UILess 官方协商：ITfCandidateListUIElement 实现（mingw 缺声明自补，IID/标志三源验证）+ UiElementHost 回呼；TIP 侧经 snapshot 灌数据、协商生命周期归 tip_composition/tip_core | winutil | ≤450 / ≤200 |
 | `transport.cpp` `.hpp` | daemon 命名管道名/探测/PipeTransport | winutil | ≤500 |
 | `daemon.cpp` `.hpp` | daemon 懒启动/连接/熔断原语（仅 worker 调用） | winutil, transport, diagnostics | ≤500 |
 | `ui_client.cpp` `.hpp` | UI 宿主管道低层（命令/查询/拉起原语） | winutil, diagnostics | ≤700 |

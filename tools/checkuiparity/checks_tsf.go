@@ -11,16 +11,18 @@ import (
 	"strings"
 )
 
-// UILess 能力契约（2026-11-05 建立，2026-11-15 游戏输入改版）：
+// UILess 能力契约（2026-11-05 建立，2026-11-15 官方协议落地）：
 // 微软《UILess Mode Overview》明确要求 TIP 实现 ITfTextInputProcessorEx，否则
 // 在 UILess 线程里**不会被激活**（连日志都不会有，所以「日志里 uiless=0」不是
-// 证据）。同时严禁在未实现 ITfUIElementMgr 的情况下注册
-// TFCAT_TIPCAP_UIELEMENTENABLED——声明了就必须让所有 UI 走 UI 元素管理器，
-// 否则正是 2026-10-30「开始菜单里候选窗完全消失」的事故。
-// 2026-11-15：UILess 线程（Dota 2/CS2 等 Source 2/SDL2 游戏宿主）必须**照常
-// 激活**并自绘候选窗——旧「不激活」行为让输入法在游戏里收不到任何按键
-// （用户反馈「只能输入字母」）。回退开关 cachedUilessActivate（HKCU
-// UILessActivate，缺省 1）必须保留，宿主异常时可一键隐身。
+// 证据）。官方协议（微软《UI less mode》+ 官方示例 SampleIME
+// CCandidateListUIPresenter）：UILess 线程激活后经 ITfUIElementMgr::
+// BeginUIElement 提交 ITfCandidateListUIElement——宿主 pbShow=TRUE 由宿主渲染，
+// pbShow=FALSE 按官方语义 TIP 自绘（SDL2/Dota 2/CS2 即此路径，本壳回退 GDI
+// 浮窗）。注册 TFCAT_TIPCAP_UIELEMENTENABLED 的前提是 ITfUIElementMgr 实现
+// 真实存在——2026-10-30「只声明不实现」曾致开始菜单候选窗完全消失，本次随
+// ui_element 模块落地后正牌注册，声明与实现一致。
+// 回退开关 cachedUilessActivate（HKCU UILessActivate，缺省 1）必须保留，
+// 宿主异常时可一键恢复「UILess 线程不激活」的旧行为。
 func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	const group = groupUILess
 	// 探测实证（2026-11-15）：只断言函数名 "cachedUilessActivate" 锁不住调用点——
@@ -33,15 +35,18 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 		"kIID_ITfTextInputProcessorEx", // 用自己的 IID 常量做 QI 匹配
 		"TF_TMAE_UIELEMENTENABLEDONLY", // 标志位判定入日志
 		// 回退开关必须在 ActivateEx 调用点使用（锁函数名锁不住调用被删，见上）：
-		"if (!cachedUilessActivate()) return S_OK;",
+		"if (!cachedUilessActivate()) {",
 		"照常激活", // 决策理由注释：UILess 线程照常激活，删注释即红
+		// ---- 官方 UILess 协商（ITfUIElementMgr / ITfCandidateListUIElement）----
+		"ITfUIElementMgr",                // 协商管理器（Activate QI）
+		"BeginUIElement(",                // 官方协商入口（render 提交候选元素）
+		"UpdateUIElement(",               // 数据变化差量通知
+		"EndUIElement(",                  // 关闭收口（endCandidatesUiElement）
+		"ITfCandidateListUIElement",      // 候选列表元素（mingw 缺声明，自补）
+		"kIID_ITfCandidateListUIElement", // IID 自补（三源交叉验证）
+		"RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED",
+		"声明与实现一致", // 类别注册前提：实现真实存在（防 2026-10-30 事故复发）
 	)
-	// 未实现 ITfUIElementMgr 前不得注册 UIELEMENTENABLED 类别。
-	// 只匹配**常量名**（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED），避免把解释性
-	// 注释里的字样也算进来；一旦有人真去注册，这条就会红。
-	checkExcludes(fsys, problems, group, winShell, "kGUID_TFCAT_TIPCAP_UIELEMENTENABLED")
-	// 决策理由必须留在源码里，防止后来者"顺手补上"。
-	checkContains(fsys, problems, group, winShell, "不注册 TFCAT_TIPCAP_UIELEMENTENABLED")
 }
 
 // 焦点兜底契约（2026-11-05）：Windows 11 开始菜单/搜索**不投递
