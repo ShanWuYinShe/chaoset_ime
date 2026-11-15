@@ -328,7 +328,9 @@ chaoset-userdict.exe -pipe export -o userdict-backup.tsv
   候选窗跟随鼠标（聊天框需先点击，鼠标就在输入行附近）。官方协商为显式开关
   `UiElementRender`（缺省 0——实测游戏宿主的协商渲染位置不跟随输入框）。CS2 Trusted
   Mode 只加载 `System32\IME\` 下带有效签名的 TIP DLL——未签名安装包在 CS2 无法
-  加载本输入法（Dota 2 无此限制）。游戏内输入需真机验收（CI 只做静态/编译验证）。
+  加载本输入法（Dota 2 无此限制）。UILess 宿主候选窗锚点**定位一次后保持**（首键
+  鼠标兜底定位；游戏中用户会把鼠标移走，锚点不随鼠标漂移，组词结束/退场才重置）。
+  游戏内输入需真机验收（CI 只做静态/编译验证）。
 - 候选窗/设置窗的深色、DPI、无障碍子项仍需 Windows 真机验收。
 - **候选窗右键菜单不得激活候选窗自身（issue#1）**：候选窗是 `WS_EX_NOACTIVATE`，
   但 `SetForegroundWindow` 仍会**程序化激活**它（微软文档明确），激活会夺走宿主文档的
