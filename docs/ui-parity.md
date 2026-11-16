@@ -274,6 +274,10 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   textSecondary，标题带 y+16..38pt，内容从 y+50pt 起（标题与控件不重叠）；
   行高 36pt；开关轨道 38×22pt（滑钮 16pt）；choice 胶囊高 30pt、圆角 9pt；
   按钮高 32pt、圆角 9pt；说明 11pt textSecondary；页脚 11pt textSecondary。
+  Linux 用 px 落地且要按「含描边的总高」换算：GTK 的 `min-height` 是内容盒，
+  choice 写 28px、按钮写 30px 才得到含 1px 描边的 30/32px（与另两端等高）；
+  控件圆角取 12px（Windows 的 9pt 在 96dpi 就是 12px，比 mac 的 9pt 略圆，
+  抵消 GTK 1x 抗锯齿更硬造成的「更方」观感），导航项与品牌标同为 12px。
   文字与底色对比：正文 ≥4.5:1、大字号 ≥3:1；不引入纯黑纯白。
 - 控件形态（三端同构，绘制机制按平台落地）：
   - 开关：标签左/开关右；开 = accent 轨道 + knob，关 = controlBg 轨道 + 1pt
