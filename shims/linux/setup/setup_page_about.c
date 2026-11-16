@@ -11,15 +11,19 @@ GtkWidget *setup_page_about_build(AppCtx *ctx) {
     GtkWidget *card = setup_card_new("<b>关于</b>");
 
     /* 头部横排：图标在左、名称与平台副标题在右（与另两端关于页一致）。
-     * 图标用 hicolor 里的 "chaoset"；CI/未安装环境没有图标主题，取不到就不占位，
-     * 避免破损图把标题列挤歪。 */
+     * 优先用 hicolor 里的 "chaoset"；源码直跑/未装图标包时退化为 .brand-icon 品牌标，
+     * 避免关于页缺图比其他两端更空。 */
     GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+    GtkWidget *icon;
     if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), "chaoset")) {
-        GtkWidget *icon = gtk_image_new_from_icon_name("chaoset", GTK_ICON_SIZE_DIALOG);
+        icon = gtk_image_new_from_icon_name("chaoset", GTK_ICON_SIZE_DIALOG);
         gtk_image_set_pixel_size(GTK_IMAGE(icon), 44);
-        gtk_widget_set_valign(icon, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(header), icon, FALSE, FALSE, 0);
+    } else {
+        icon = setup_label_new("C", "brand-icon");
+        gtk_label_set_line_wrap(GTK_LABEL(icon), FALSE);
     }
+    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(header), icon, FALSE, FALSE, 0);
     GtkWidget *titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     GtkWidget *app_name = setup_label_new("Chaoset 输入法", "title");
     gtk_label_set_line_wrap(GTK_LABEL(app_name), FALSE);

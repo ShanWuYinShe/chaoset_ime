@@ -36,36 +36,34 @@ static const SetupTheme kThemeDark = {
     "#F6EFE6", "#D97757", "#2A1B12", "#000000", "0.38",
 };
 
-/* 生成整套设置窗样式。只声明需要覆盖的属性，字体 family 与行高交给桌面主题
- * （避免与用户字体设置打架）；所有颜色都来自上面的令牌表，不写字面色。 */
+/* 生成整套设置窗样式：只声明需要覆盖的属性，字体 family/行高交给桌面主题；颜色全部来自令牌表。 */
 static gchar *theme_css(const SetupTheme *t) {
     GString *css = g_string_new(NULL);
-
-    /* 窗口面与标题栏：标题栏跟随导航列底色，避免与内容区割裂 */
     g_string_append_printf(css,
         "window, window.background { background-color: %s; color: %s; }\n"
-        "headerbar, headerbar:backdrop { background-color: %s; color: %s;"
-        " border: none; box-shadow: none; }\n",
-        t->window_bg, t->text_primary, t->nav_bg, t->text_primary);
+        "headerbar, headerbar:backdrop { background-image: none; background-color: %s;"
+        " color: %s; border: none; box-shadow: none; min-height: 30px; padding: 0 6px; }\nheaderbar .titlebutton { background: none; border: none; box-shadow: none; color: %s; }\n",
+        t->window_bg, t->text_primary, t->window_bg, t->text_primary, t->text_secondary);
 
-    /* 文字层级：应用标题 / 卡片标题 / 行标签 / 说明 / 页脚 / 链接 */
+    /* 字号用 px 不用 pt：macOS 的 pt 即逻辑像素，GTK 的 pt 按 96dpi 会大 33%，px 才能对齐视觉字号。 */
     g_string_append_printf(css,
-        ".title { font-size: 15pt; font-weight: bold; color: %s; }\n"
-        ".app-title { font-size: 13pt; font-weight: bold; color: %s; }\n"
-        ".card-title { font-size: 13pt; font-weight: bold; color: %s; }\n"
-        ".row-label { font-size: 13pt; color: %s; }\n"
-        ".hint { font-size: 11pt; color: %s; }\n"
-        ".footer { font-size: 11pt; color: %s; }\n"
-        ".tertiary { font-size: 11pt; color: %s; }\n"
-        ".link { font-size: 11pt; color: %s; }\n",
+        ".title { font-size: 15px; font-weight: bold; color: %s; }\n"
+        ".app-title { font-size: 13px; font-weight: bold; color: %s; }\n"
+        ".card-title { font-size: 13px; font-weight: bold; color: %s; }\n"
+        ".row-label { font-size: 13px; color: %s; }\n"
+        ".hint { font-size: 11px; color: %s; }\n"
+        ".footer { font-size: 11px; color: %s; }\n"
+        ".tertiary { font-size: 11px; color: %s; }\n"
+        ".link { font-size: 11px; color: %s; }\n"
+        ".brand-icon { background-color: %s; color: %s; border-radius: 10px; font-size: 20px; font-weight: bold; padding: 12px 14px; }\n",
         t->text_primary, t->text_primary, t->text_secondary, t->text_primary,
-        t->text_secondary, t->text_secondary, t->text_tertiary, t->accent_text);
+        t->text_secondary, t->text_secondary, t->text_tertiary, t->accent_text,
+        t->accent_strong, t->on_accent);
 
-    /* 左侧导航列 + 导航胶囊：选中 accentSoft 底 / accentText 字（与另两端一致） */
     g_string_append_printf(css,
         ".nav-column { background-color: %s; }\n"
         ".nav { background-color: transparent; background-image: none; border: none;"
-        " border-radius: 10px; color: %s; font-size: 13pt; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
+        " border-radius: 10px; color: %s; font-size: 13px; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
         ".nav:hover { background-color: %s; }\n"
         ".nav:active { background-color: %s; }\n"
         ".nav:checked, .nav:checked:hover { background-color: %s; color: %s;"
@@ -80,10 +78,9 @@ static gchar *theme_css(const SetupTheme *t) {
         ".row { min-height: 36px; }\n",
         t->card_bg, t->card_border, t->shadow, t->shadow_alpha);
 
-    /* choice 胶囊（中英状态二选一）：未选 controlBg/controlBorder，选中 accentSoft */
     g_string_append_printf(css,
         ".choice { background-color: %s; background-image: none; border: 1px solid %s;"
-        " border-radius: 9px; color: %s; font-size: 13pt; min-height: 30px;"
+        " border-radius: 9px; color: %s; font-size: 13px; min-height: 30px;"
         " padding: 0 12px; box-shadow: none; }\n"
         ".choice:hover { background-color: %s; }\n"
         ".choice:active { background-color: %s; }\n"
@@ -92,10 +89,8 @@ static gchar *theme_css(const SetupTheme *t) {
         t->control_bg, t->control_border, t->control_text, t->control_hover,
         t->control_hover, t->accent_soft, t->accent, t->accent_text);
 
-    /* 按钮：主按钮 accentStrong、次按钮 control。必须显式覆盖 hover/active/
-     * backdrop，否则 Adwaita 更具体的选择器会把强调色换回主题蓝。 */
     g_string_append_printf(css,
-        "button { font-size: 13pt; min-height: 32px; padding: 0 14px;"
+        "button { font-size: 13px; min-height: 32px; padding: 0 14px;"
         " border-radius: 9px; box-shadow: none; }\n"
         ".primary, .primary:hover, .primary:active, .primary:backdrop {"
         " background-image: none; border: 1px solid %s; color: %s; }\n"
@@ -111,7 +106,6 @@ static gchar *theme_css(const SetupTheme *t) {
         t->accent_pressed, t->control_border, t->control_text, t->control_bg,
         t->control_hover, t->danger, t->accent);
 
-    /* 开关：关=controlBg 轨道 + knob 滑钮，开=accent 轨道 */
     g_string_append_printf(css,
         "switch { min-width: 38px; min-height: 22px; border-radius: 11px;"
         " background-image: none; background-color: %s; border: 1px solid %s; }\n"
@@ -120,10 +114,10 @@ static gchar *theme_css(const SetupTheme *t) {
         " border-color: %s; }\n"
         "switch:checked:hover { background-color: %s; border-color: %s; }\n"
         "switch slider { min-width: 16px; min-height: 16px; border-radius: 8px;"
-        " background-image: none; background-color: %s; border: none; box-shadow: none; }\n"
+        " background-image: none; background-color: %s; border: 1px solid %s; box-shadow: none; }\n"
         "switch:focus { box-shadow: inset 0 0 0 2px %s; }\n",
         t->control_bg, t->control_border, t->control_hover, t->accent, t->accent,
-        t->accent_pressed, t->accent_pressed, t->knob, t->accent);
+        t->accent_pressed, t->accent_pressed, t->knob, t->control_border, t->accent);
 
     /* 对话框/文件选择器/禁用态：系统对话框也会继承暖色，避免冷蓝强调渗入 */
     g_string_append_printf(css,
@@ -142,9 +136,8 @@ static gboolean name_looks_dark(const gchar *name) {
     return dark;
 }
 
-/* 深浅色判定：优先读窗口 style context 的 background-color 相对亮度（跟随桌面
- * 实际 GTK 主题，而不是猜 GNOME 的 color-scheme）；取不到实色（窗口尚未实现化
- * 时常为全透明）时退回 GtkSettings 的 prefer-dark 与主题名。 */
+/* 深浅色判定：优先读窗口背景色相对亮度（跟随实际 GTK 主题）；窗口未实现化时为透明，
+ * 退回 GtkSettings prefer-dark 与主题名。 */
 static gboolean window_prefers_dark(GtkWidget *window) {
     GtkStyleContext *style = gtk_widget_get_style_context(window);
     GValue value = G_VALUE_INIT; /* GTK 自己初始化 GValue，重复初始化会报 critical */
@@ -203,8 +196,7 @@ void setup_show_message(GtkWindow *parent, GtkMessageType type, const gchar *tex
     gtk_widget_destroy(dialog);
 }
 
-/* 面板：需要整块底色的容器（导航列/卡片）。GtkBox 会按 CSS 盒模型绘制
- * 背景/圆角/描边与 padding；GtkEventBox 关掉 visible_window 后反而丢底色。 */
+/* 面板：需要整块底色的容器。GtkBox 按 CSS 盒模型绘制背景/圆角/描边；EventBox 关 visible_window 会丢底色。 */
 static GtkWidget *panel_new(const gchar *css_class) {
     GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_style_context_add_class(gtk_widget_get_style_context(panel), css_class);
@@ -280,7 +272,7 @@ static void on_nav_toggled(GtkToggleButton *button, gpointer user_data) {
         }
         g_list_free(children);
         const gchar *page = g_object_get_data(G_OBJECT(button), "chaoset-page");
-        if (page != NULL) { gtk_stack_set_visible_child_name(GTK_STACK(ctx->stack), page); }
+        if (page != NULL && ctx->stack != NULL) { gtk_stack_set_visible_child_name(GTK_STACK(ctx->stack), page); }
     }
     nav_syncing = FALSE;
 }
@@ -292,7 +284,7 @@ static GtkWidget *build_nav_column(AppCtx *ctx) {
     GtkWidget *navbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_set_margin_start(navbox, 12);
     gtk_widget_set_margin_end(navbox, 12);
-    gtk_widget_set_margin_top(navbox, 18);
+    gtk_widget_set_margin_top(navbox, 8);
     gtk_container_add(GTK_CONTAINER(column), navbox);
 
     GtkWidget *app_title = setup_label_new("Chaoset 设置", "app-title");
@@ -312,11 +304,11 @@ static GtkWidget *build_nav_column(AppCtx *ctx) {
         GtkWidget *button = gtk_toggle_button_new();
         GtkWidget *button_label = gtk_label_new(kNavItems[i].label);
         gtk_label_set_xalign(GTK_LABEL(button_label), 0.0);
-        gtk_widget_set_hexpand(button_label, TRUE);
         gtk_widget_set_halign(button_label, GTK_ALIGN_FILL);
         gtk_container_add(GTK_CONTAINER(button), button_label);
         gtk_style_context_add_class(gtk_widget_get_style_context(button), "nav");
         gtk_widget_set_size_request(button, 112, 34);
+        gtk_widget_set_halign(button, GTK_ALIGN_START);
         g_object_set_data(G_OBJECT(button), "chaoset-page", (gpointer)kNavItems[i].page);
         g_signal_connect(button, "toggled", G_CALLBACK(on_nav_toggled), ctx);
         gtk_box_pack_start(GTK_BOX(navbox), button, FALSE, FALSE, 0);
@@ -330,17 +322,26 @@ static GtkWidget *build_nav_column(AppCtx *ctx) {
 static GtkWidget *build_window(AppCtx *ctx) {
     GtkWidget *window = gtk_application_window_new(ctx->app);
     ctx->window = window;
-    gtk_window_set_title(GTK_WINDOW(window), "Chaoset 设置");
-    gtk_window_set_resizable(GTK_WINDOW(window), TRUE); /* 初始 640×560；非 resizable 会被内容自然宽撑大 */
-    gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
-    /* 客户区 640x560：与 Windows/macOS 设置窗同一骨架（三端契约） */
-    gtk_window_set_default_size(GTK_WINDOW(window), 640, 560);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE); gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER); /* 与 mac/Windows 同：固定 640×560、居中 */
+    gtk_window_set_default_size(GTK_WINDOW(window), 640, 560); /* 客户区 640×560，三端同骨架 */
     install_theme(window);
 
+    /* 标题栏自绘（暖色 headerbar，避免系统灰标题栏割裂）。必须 set_titlebar 之后再
+     * set_title：GTK3 在 set_titlebar 时清空标题，WM_NAME 会退化成进程名。 */
+    GtkWidget *header = gtk_header_bar_new();
+    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), TRUE);
+    gtk_window_set_titlebar(GTK_WINDOW(window), header);
+    gtk_header_bar_set_custom_title(GTK_HEADER_BAR(header), gtk_label_new("")); /* 标题已在左侧导航顶部，避免重复 */
+    gtk_window_set_title(GTK_WINDOW(window), "Chaoset 设置");
+
+    /* 用 GtkGrid：横向 GtkBox 会把多余宽度分给导航列（148→192），Grid 里导航固定宽、右侧列吃满。 */
+    GtkWidget *root = gtk_grid_new();
+    gtk_container_add(GTK_CONTAINER(window), root);
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(window), vbox);
-    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), content, TRUE, TRUE, 0);
+    GtkWidget *nav_column = build_nav_column(ctx);
+    gtk_widget_set_vexpand(nav_column, TRUE);
+    gtk_widget_set_hexpand(vbox, TRUE); gtk_widget_set_vexpand(vbox, TRUE);
+    gtk_grid_attach(GTK_GRID(root), nav_column, 0, 0, 1, 1); gtk_grid_attach(GTK_GRID(root), vbox, 1, 0, 1, 1);
 
     GtkWidget *stack = gtk_stack_new();
     ctx->stack = stack;
@@ -356,9 +357,8 @@ static GtkWidget *build_window(AppCtx *ctx) {
 
     gtk_widget_set_margin_start(stack, 24);
     gtk_widget_set_margin_end(stack, 24);
-    gtk_widget_set_margin_top(stack, 44);
-    gtk_box_pack_start(GTK_BOX(content), build_nav_column(ctx), FALSE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(content), stack, TRUE, TRUE, 0);
+    gtk_widget_set_margin_top(stack, 10); /* +headerbar 34 = 44，与 mac/Windows 内容起点一致 */
+    gtk_box_pack_start(GTK_BOX(vbox), stack, TRUE, TRUE, 0);
 
     /* 页脚版本号：固定在窗口最底、与内容列左对齐（checker 断言装配行） */
     gchar *footer_text = g_strdup_printf("Chaoset 版本 %s", CHAOSET_VERSION);
@@ -366,10 +366,10 @@ static GtkWidget *build_window(AppCtx *ctx) {
     g_free(footer_text);
     gtk_label_set_xalign(GTK_LABEL(footer), 0.0);
     gtk_style_context_add_class(gtk_widget_get_style_context(footer), "footer");
-    gtk_widget_set_margin_start(footer, 148 + 24);
+    gtk_widget_set_margin_start(footer, 24);
     gtk_widget_set_margin_end(footer, 24);
     gtk_widget_set_margin_top(footer, 12);
-    gtk_widget_set_margin_bottom(footer, 20);
+    gtk_widget_set_margin_bottom(footer, 16);
     gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);
 
     gtk_widget_show_all(window);

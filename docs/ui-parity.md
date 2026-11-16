@@ -239,8 +239,11 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   accentText 半粗字（不再用大面积实心 accent 底）；
   内容区左边 = 导航列右侧 +24pt、右边 24pt、顶部 44pt（macOS 透明标题栏下避开
   红绿灯）；页脚固定 34pt 高，**所有页**左下显示「Chaoset 版本 x.y.z」。
-  macOS/Windows 窗口固定 640×560pt；Linux 初始同样 640×560（GTK 非 resizable
-  窗口会按内容自然宽撑大，所以保持可缩放——拖大后卡片/文字自适应，仍同骨架）。
+  macOS/Windows 窗口固定 640×560pt（macOS 透明标题栏、Windows DWM 着色标题栏）；
+  Linux 客户区同样固定 640×560、非 resizable，标题栏由 GTK 自绘 headerbar（跟随窗口
+  底色，避免 GNOME/Wayland 的系统灰标题栏与另两端割裂；标题栏高度在客户区之外）。
+  字号按平台口径：macOS/Windows 用 pt，Linux 用 px——GTK 的 pt 按 96dpi 换算比 mac 的
+  pt 约大 33%，用 px 才能三端视觉字号一致（CJK 说明文字的换行位置也才对得上）。
 - 视觉令牌（**单一事实源**；三端实现逐值一致，浅色/深色两套 sRGB）：
 
   | 令牌 | light | dark | 用途 |

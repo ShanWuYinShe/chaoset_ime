@@ -147,7 +147,9 @@ jobs:
           SETUP_PID=$!
           WID=""
           for _ in 1 2 3 4 5; do
-            WID=$(DISPLAY=:99 xdotool search --onlyvisible --name "Chaoset 设置" 2>/dev/null | head -1)
+            # 按 WM_CLASS 搜索而不是窗口标题：CSD（自绘 headerbar）下中文标题在 C locale
+            # 的 xdotool 里无法匹配；WM_CLASS 稳定且与 locale/标题文案无关。
+            WID=$(DISPLAY=:99 xdotool search --onlyvisible --classname "chaoset-setup" 2>/dev/null | head -1)
             [ -n "$WID" ] && break
             sleep 1
           done
