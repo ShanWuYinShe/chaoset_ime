@@ -55,7 +55,7 @@ static gchar *theme_css(const SetupTheme *t) {
         ".footer { font-size: 11px; color: %s; }\n"
         ".tertiary { font-size: 11px; color: %s; }\n"
         ".link { font-size: 11px; color: %s; }\n"
-        ".brand-icon { background-color: %s; color: %s; border-radius: 10px; font-size: 20px; font-weight: bold; padding: 12px 14px; }\n",
+        ".brand-icon { background-color: %s; color: %s; border-radius: 12px; font-size: 20px; font-weight: bold; padding: 12px 14px; }\n",
         t->text_primary, t->text_primary, t->text_secondary, t->text_primary,
         t->text_secondary, t->text_secondary, t->text_tertiary, t->accent_text,
         t->accent_strong, t->on_accent);
@@ -63,7 +63,7 @@ static gchar *theme_css(const SetupTheme *t) {
     g_string_append_printf(css,
         ".nav-column { background-color: %s; }\n"
         ".nav { background-color: transparent; background-image: none; border: none;"
-        " border-radius: 10px; color: %s; font-size: 13px; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
+        " border-radius: 12px; color: %s; font-size: 13px; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
         ".nav:hover { background-color: %s; }\n"
         ".nav:active { background-color: %s; }\n"
         ".nav:checked, .nav:checked:hover { background-color: %s; color: %s;"
@@ -80,7 +80,7 @@ static gchar *theme_css(const SetupTheme *t) {
 
     g_string_append_printf(css,
         ".choice { background-color: %s; background-image: none; border: 1px solid %s;"
-        " border-radius: 9px; color: %s; font-size: 13px; min-height: 30px;"
+        " border-radius: 12px; color: %s; font-size: 13px; min-height: 28px;"
         " padding: 0 12px; box-shadow: none; }\n"
         ".choice:hover { background-color: %s; }\n"
         ".choice:active { background-color: %s; }\n"
@@ -90,8 +90,8 @@ static gchar *theme_css(const SetupTheme *t) {
         t->control_hover, t->accent_soft, t->accent, t->accent_text);
 
     g_string_append_printf(css,
-        "button { font-size: 13px; min-height: 32px; padding: 0 14px;"
-        " border-radius: 9px; box-shadow: none; }\n"
+        "button { font-size: 13px; min-height: 30px; padding: 0 14px;"
+        " border-radius: 12px; box-shadow: none; }\n"
         ".primary, .primary:hover, .primary:active, .primary:backdrop {"
         " background-image: none; border: 1px solid %s; color: %s; }\n"
         ".primary { background-color: %s; }\n"
