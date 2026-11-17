@@ -184,4 +184,23 @@ HWND popupOwner() {
     return fg;
 }
 
+bool setDwmRoundedCorners(HWND wnd) {
+    // Win11 SDK dwmapi.h 枚举常量：DWMWA_WINDOW_CORNER_PREFERENCE=33、
+    // DWMWCP_ROUND=2。mingw-w64 头不一定带，这里用本地 constexpr（数值与
+    // 官方定义一致，不与 SDK 枚举名冲突）。动态加载同 settings_window.cpp
+    // 的 DWM 写入模式：旧系统/服务器核心没有 dwmapi 时静默失败。
+    constexpr DWORD kDwmwaCornerPreference = 33;
+    constexpr DWORD kDwmwcpRound = 2;
+    typedef HRESULT(WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
+    static DwmSetWindowAttributeFn fn = []() -> DwmSetWindowAttributeFn {
+        HMODULE mod = LoadLibraryW(L"dwmapi.dll");
+        if (mod == nullptr) return nullptr;
+        return reinterpret_cast<DwmSetWindowAttributeFn>(
+            reinterpret_cast<void*>(GetProcAddress(mod, "DwmSetWindowAttribute")));
+    }();
+    if (fn == nullptr) return false;
+    const DWORD preference = kDwmwcpRound;
+    return SUCCEEDED(fn(wnd, kDwmwaCornerPreference, &preference, sizeof(preference)));
+}
+
 }  // namespace chaoset::win

@@ -49,6 +49,12 @@ int dpiForPoint(POINT pt);
 std::wstring currentUserSid();
 DWORD currentSessionId();
 
+// Windows 11 圆角申请（DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND）：
+// dwmapi 动态加载，Win10 / 服务器核心上调用失败返回 false——调用方保持
+// SetWindowRgn 旧路径不变。DWM 圆角自带抗锯齿与系统阴影，消除 GDI
+// region 的锯齿轮廓（docs/ui-parity.md「面板质感」记载的锯齿即此）。
+bool setDwmRoundedCorners(HWND wnd);
+
 }  // namespace chaoset::win
 
 #endif  // CHAOSET_WIN_WINUTIL_HPP_

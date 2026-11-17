@@ -50,7 +50,11 @@ void ModeToast::show(HINSTANCE hinst, const std::wstring& text, int x, int y) {
         if (y < mi.rcWork.top) y = mi.rcWork.top + edge;
     }
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w_, h_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, pt(10) * 2, pt(10) * 2), TRUE);
+    // DWM 圆角已生效时不再套锯齿 region（语义同候选窗；绘制半径 pt(10) ≥
+    // DWM 系统圆角半径，裁剪区 ⊆ 绘制区，无透明缺口）。
+    if (!dwmRounded_) {
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, w_ + 1, h_ + 1, pt(10) * 2, pt(10) * 2), TRUE);
+    }
     if (diagBudget()) {
         // 同候选窗：owner / 前台窗口 pid 用于定位「窗口被抬到前面」。
         const HWND own = GetWindow(hwnd_, GW_OWNER);
@@ -108,6 +112,8 @@ bool ModeToast::ensureWindow(HINSTANCE hinst) {
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
         // 窗口过程指向本 DLL 代码：活着就禁止宿主 FreeLibrary（同候选窗）
         InterlockedIncrement(&g_liveToastWindows);
+        // Windows 11：申请 DWM 抗锯齿圆角（失败保持 SetWindowRgn 旧路径）。
+        dwmRounded_ = setDwmRoundedCorners(hwnd_);
     }
     return hwnd_ != nullptr;
 }

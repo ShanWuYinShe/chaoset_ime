@@ -62,6 +62,8 @@ private:
     int dpi_ = 96;
     int w_ = 0;
     int h_ = 0;
+    // Windows 11 DWM 圆角申请成功标记（语义同候选窗 dwmRounded_）。
+    bool dwmRounded_ = false;
 };
 
 }  // namespace chaoset::win
