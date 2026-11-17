@@ -145,7 +145,7 @@ void ModeToast::onPaint(HWND hwnd) {
     // 会使缓存失效并触发重绘，保证配色一致。
     const bool dark = cachedDarkTheme();
     // 深色与候选窗同用深海军蓝面板底 #1A2740 + 白 alpha 描边有效值 #3A455B
-    // （mac Toast 同族；v0.3.33 深色表面统一海军蓝家族）。
+    // （mac Toast 同族；深色表面统一海军蓝家族）。
     HBRUSH bg = CreateSolidBrush(dark ? RGB(0x1A, 0x27, 0x40) : RGB(0xF6, 0xF6, 0xF8));
     // 描边 1pt（mac Toast 同为 1pt；用 show() 缓存的 dpi_，见 strokePx）
     HPEN pen = CreatePen(PS_SOLID, strokePx(dpi_),

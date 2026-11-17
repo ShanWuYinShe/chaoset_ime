@@ -101,7 +101,7 @@ Windows 常用 pt 值在各 DPI 下的设备像素（四舍五入）：
 | chipDigit | #1D1D1F | #F2F6FC |
 | userMark | #34C759 | #30D158 |
 
-深色板 = **深海军蓝家族**（v0.3.33 起，与设置窗深色视觉令牌同族，不再用中性灰）：
+深色板 = **深海军蓝家族**（与设置窗深色视觉令牌同族，不再用中性灰）：
 panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、text/chipDigit=textPrimary
 #F2F6FC、page/chevron=textTertiary #7E90AC；Toast 深色同用 #1A2740 面板底 + 白 alpha
 描边（描边与候选窗同款）。高亮蓝与学习标记绿为语义色，两版深浅都不变；浅色板不变。

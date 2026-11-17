@@ -45,7 +45,7 @@ struct CandidateTheme {
 
     static func theme(dark: Bool) -> CandidateTheme {
         if dark {
-            // 深色表面统一「深海军蓝」家族（与设置窗视觉令牌同族，v0.3.33）：
+            // 深色表面统一「深海军蓝」家族（与设置窗视觉令牌同族）：
             // panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、
             // text/chipDigit=textPrimary #F2F6FC、page/chevron=textTertiary #7E90AC；
             // 描边/分隔线沿用白 alpha（叠加后自动带蓝调），高亮蓝/学习绿不变。
