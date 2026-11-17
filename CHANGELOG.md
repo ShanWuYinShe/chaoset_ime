@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **加固(三端)：Toast 配色纳入机器断言，防止刚收敛的值再漂移**：上条把浅色
+  Toast 收敛到候选窗面板族后，配色此前只有文档表没有机器守卫。本次 macOS 侧把
+  `ModeToastView` 的配色抽成 `palette(isDark:)` 单一出口（draw 与度量工具共用），
+  `panel_metrics` 导出 toastLight/toastDark，`visual-parity.sh` 新增 F 段对
+  浅/深各 3 值逐色断言（编译集相应加入 CandidatePanel + CandidatePanelWindow）；
+  Windows 侧 `check-uiparity` 新增「Toast 配色」组，以 mode_toast.cpp 的整行
+  三元片段锁住 6 个预混合常量（单色值与候选窗 theme.hpp 共享、无法唯一定位）。
+  两端任一改配色不更新 `docs/ui-parity.md`「Toast 配色」表都会 FAIL。
 - **视觉(三端浅色)：模式 Toast 浅色配色两端收敛到候选窗浅色面板族**：macOS 浅色
   Toast 此前是 `white 0.97` 底 + `calibratedWhite 0.15` 文字（calibrated 灰阶的
   sRGB 实测有效值 #333333），与 Windows 的 #F6F6F8 底 / #262628 文字存在可见色差

@@ -49,10 +49,12 @@ case "$(uname -m)" in
   *)     SWIFT_TARGET=x86_64-apple-macos15.0 ;;
 esac
 # 2026-11-06 架构拆分：候选窗拆成 CandidateTheme（色值/布局常量/齿轮参数）+
-# CandidatePanelView（视图实现）；panel_metrics 只需这两个文件。
+# CandidatePanelView（视图实现）。2026-11-18 起加导出 Toast 配色
+# （ModeToastView.palette，CandidatePanel.swift + 其依赖 CandidatePanelWindow.swift）。
 if ! swiftc -O -module-cache-path build/modulecache \
       -target "$SWIFT_TARGET" -framework AppKit \
       src/CandidateTheme.swift src/CandidatePanelView.swift \
+      src/CandidatePanelWindow.swift src/CandidatePanel.swift \
       tools/panel_metrics.swift -o "$OUT/panel_metrics" 2>"$OUT/swift.err"; then
   note "FAIL 无法构建 Swift 度量工具："
   cat "$OUT/swift.err" | sed 's/^/     /' | head -20
@@ -93,6 +95,15 @@ GO_COLORS_DARK = {
     "chipBg": "#223353FF", "chipBorder": "#FFFFFF40", "chipDigit": "#F2F6FCFF",
     "highlightChipBg": "#FFFFFF45", "pageColor": "#7E90ACB8",
     "userMark": "#30D158FF", "divider": "#FFFFFF1E", "chevron": "#7E90ACB8",
+}
+# Toast 配色（浅/深 #RRGGBBAA，docs/ui-parity.md「Toast 配色」）：mac 经
+# ModeToastView.palette 导出；Windows 预混合常量由 checkuiparity「Toast 配色」
+# 组锁住（两端任一改一端都会 FAIL）。
+GO_TOAST_LIGHT = {
+    "bg": "#F6F6F8F2", "text": "#262628FF", "stroke": "#0000001A",
+}
+GO_TOAST_DARK = {
+    "bg": "#1A2740EB", "text": "#F2F6FCFF", "stroke": "#FFFFFF24",
 }
 
 fails = []
@@ -168,6 +179,20 @@ for section, label in (("colors", "浅色"), ("colorsDark", "深色")):
     print(f"-- {label}")
     for k in color_keys:
         g = (GO_COLORS if section == "colors" else GO_COLORS_DARK).get(k)
+        s = sw.get(section, {}).get(k)
+        if g is None or s is None:
+            fails.append((f"{section}.{k}", g, s))
+            print(f"FAIL {section}.{k}: 缺失 Go={g}  Swift={s}")
+        else:
+            cmp(f"{section}.{k}", g, s)
+
+print()
+print("== F. Toast 配色（浅色 + 深色，docs「Toast 配色」↔ ModeToastView.palette）==")
+toast_keys = ["bg", "text", "stroke"]
+for section, label in (("toastLight", "浅色"), ("toastDark", "深色")):
+    print(f"-- {label}")
+    for k in toast_keys:
+        g = (GO_TOAST_LIGHT if section == "toastLight" else GO_TOAST_DARK).get(k)
         s = sw.get(section, {}).get(k)
         if g is None or s is None:
             fails.append((f"{section}.{k}", g, s))

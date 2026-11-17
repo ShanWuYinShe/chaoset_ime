@@ -63,6 +63,10 @@ const (
 	groupCandidatePageArrows    = "候选窗翻页箭头"
 	groupCandidateDirectionKeys = "候选窗方向键预选"
 
+	// 浮窗模式 Toast 配色（docs/ui-parity.md「Toast 配色」；mac 侧由
+	// shims/macos/tests/visual-parity.sh F 段逐色断言）。
+	groupToastTheme = "Toast 配色"
+
 	// 跨端行为与 daemon 生命周期。
 	groupDaemonSingleton = "daemon 单实例"
 	groupShellEscaping   = "shell 变量转义"
