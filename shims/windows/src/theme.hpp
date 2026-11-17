@@ -33,24 +33,25 @@ struct CandidateColors {
     // 「有效色」固化成常量——公式与最终值必须与 mac 一致，否则同一候选窗
     // 在两端深浅不同（2026-10-30 三端一致性审计 R5/A5）：
     //   有效色 = round(bg*(1-a) + fg*a)，bg 为该色实际叠加的面板/键帽底色。
-    // 审计实测的偏差：深色 page/chevron mac #7A7A80 vs 旧值 #98989F（+30）、
-    // 深色 chipBorder #838386 vs #78787C、浅色 page #A1A1A6 vs #8E8E93。
+    // 深色板 = 深海军蓝家族（v0.3.33，与 macOS CandidateTheme/设置窗深色同族）：
+    // panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、
+    // text/chipDigit=textPrimary #F2F6FC、page/chevron=textTertiary #7E90AC。
     static CandidateColors get(bool dark) {
         if (dark) {
             return {
-                RGB(44, 44, 46),       // panelBg #2C2C2E（mac 为 F5 alpha，GDI 侧不透明）
-                RGB(74, 74, 76),       // panelBorder：白 #24 alpha 叠加 panelBg → #4A4A4C
-                RGB(255, 255, 255),    // text #FFFFFF
+                RGB(26, 39, 64),       // panelBg #1A2740（mac 为 F5 alpha，GDI 侧不透明）
+                RGB(58, 69, 91),       // panelBorder：白 #24 alpha 叠加 panelBg → #3A455B
+                RGB(242, 246, 252),    // text #F2F6FC
                 RGB(0, 102, 235),      // highlightBg #0066EB
                 RGB(255, 255, 255),    // highlightText #FFFFFF
-                RGB(90, 90, 94),       // chipBg #5A5A5E
-                RGB(131, 131, 134),    // chipBorder：白 #40 alpha 叠加 chipBg → #838386
-                RGB(255, 255, 255),    // chipDigit #FFFFFF
+                RGB(34, 51, 83),       // chipBg #223353
+                RGB(89, 102, 126),     // chipBorder：白 #40 alpha 叠加 chipBg → #59667E
+                RGB(242, 246, 252),    // chipDigit #F2F6FC
                 RGB(69, 143, 240),     // highlightChipBg（0x45 alpha 白叠加在 #0066EB）
-                RGB(122, 122, 128),    // pageColor：mac #98989F alpha B8 叠加 panelBg → #7A7A80
-                RGB(69, 69, 71),       // divider：白 #1E alpha 叠加 panelBg → #454547
-                RGB(122, 122, 128),    // chevron 同 pageColor 有效值 #7A7A80
-                RGB(48, 209, 88)       // userMark #30D158（与 skin.UserMarkColor 深色一致）
+                RGB(98, 115, 142),     // pageColor：mac #7E90AC alpha B8 叠加 panelBg → #62738E
+                RGB(53, 64, 86),       // divider：白 #1E alpha 叠加 panelBg → #354056
+                RGB(98, 115, 142),     // chevron 同 pageColor 有效值 #62738E
+                RGB(48, 209, 88)       // userMark #30D158（学习标记绿，语义色不变）
             };
         }
         return {

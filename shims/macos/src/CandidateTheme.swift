@@ -24,10 +24,10 @@ enum CandidateAppearance {
     }
 }
 
-// MARK: - 主题色（与 skin.DefaultSkinFor 色值一一对应）
+// MARK: - 主题色（深色 = 深海军蓝家族，与设置窗/Toast 深色同族）
 
 // internal（非 private）：tools/panel_metrics.swift 需要导出 13 个色值，
-// 与 Go 侧 skin/skin.go 做浅/深两套逐色比对（visual-parity.sh D 段）。
+// 与 tests/visual-parity.sh 的内联期望值做浅/深两套逐色比对（D 段）。
 struct CandidateTheme {
     let panelBg: NSColor
     let panelBorder: NSColor
@@ -45,20 +45,24 @@ struct CandidateTheme {
 
     static func theme(dark: Bool) -> CandidateTheme {
         if dark {
+            // 深色表面统一「深海军蓝」家族（与设置窗视觉令牌同族，v0.3.33）：
+            // panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、
+            // text/chipDigit=textPrimary #F2F6FC、page/chevron=textTertiary #7E90AC；
+            // 描边/分隔线沿用白 alpha（叠加后自动带蓝调），高亮蓝/学习绿不变。
             return CandidateTheme(
-                panelBg: NSColor(srgbRed: 0x2C / 255.0, green: 0x2C / 255.0, blue: 0x2E / 255.0, alpha: 0xF5 / 255.0),
+                panelBg: NSColor(srgbRed: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0, alpha: 0xF5 / 255.0),
                 panelBorder: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0x24 / 255.0),
-                text: .white,
+                text: NSColor(srgbRed: 0xF2 / 255.0, green: 0xF6 / 255.0, blue: 0xFC / 255.0, alpha: 1),
                 highlightBg: NSColor(srgbRed: 0x00 / 255.0, green: 0x66 / 255.0, blue: 0xEB / 255.0, alpha: 1),
                 highlightText: .white,
-                chipBg: NSColor(srgbRed: 0x5A / 255.0, green: 0x5A / 255.0, blue: 0x5E / 255.0, alpha: 1),
+                chipBg: NSColor(srgbRed: 0x22 / 255.0, green: 0x33 / 255.0, blue: 0x53 / 255.0, alpha: 1),
                 chipBorder: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0x40 / 255.0),
-                chipDigit: .white,
+                chipDigit: NSColor(srgbRed: 0xF2 / 255.0, green: 0xF6 / 255.0, blue: 0xFC / 255.0, alpha: 1),
                 highlightChipBg: NSColor(white: 1, alpha: 0x45 / 255.0),
-                pageColor: NSColor(srgbRed: 0x98 / 255.0, green: 0x98 / 255.0, blue: 0x9F / 255.0, alpha: 0xB8 / 255.0),
+                pageColor: NSColor(srgbRed: 0x7E / 255.0, green: 0x90 / 255.0, blue: 0xAC / 255.0, alpha: 0xB8 / 255.0),
                 userMark: NSColor(srgbRed: 0x30 / 255.0, green: 0xD1 / 255.0, blue: 0x58 / 255.0, alpha: 1),
                 divider: NSColor(white: 1, alpha: 0x1E / 255.0),
-                chevron: NSColor(srgbRed: 0x98 / 255.0, green: 0x98 / 255.0, blue: 0x9F / 255.0, alpha: 0xB8 / 255.0)
+                chevron: NSColor(srgbRed: 0x7E / 255.0, green: 0x90 / 255.0, blue: 0xAC / 255.0, alpha: 0xB8 / 255.0)
             )
         }
         return CandidateTheme(

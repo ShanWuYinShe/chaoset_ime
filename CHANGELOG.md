@@ -2,6 +2,20 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **视觉(三端深色)：候选窗与模式 Toast 深色表面统一为深海军蓝家族**：设置窗深色在
+  v0.3.32 已是深海军蓝，而候选窗/Toast 深色仍是中性灰（#2C2C2E 面板 + #5A5A5E 键帽），
+  同一产品的深色表面存在两种色相。本次把深色面板底统一为设置窗 cardBg `#1A2740`、
+  键帽=controlBg `#223353`、正文/键帽数字=textPrimary `#F2F6FC`、页码/翻页箭头=
+  textTertiary `#7E90AC`（macOS 基准值，带 alpha 的 NSColor），描边/分隔线沿用白
+  alpha 随新底色自动带蓝调；Windows 按 round(bg*(1-a)+fg*a) 预混合固化对应有效值
+  （panelBorder `#3A455B` / chipBorder `#59667E` / page `#62738E` / divider
+  `#354056`）。macOS/Windows Toast 深色同步改海军蓝底 + 白 alpha 描边（与候选窗
+  同款描边）。高亮蓝 #0066EB、学习标记绿 #30D158 为语义色不变；浅色板完全不变。
+  对比度：正文 13.8:1、键帽数字 11.6:1、装饰页码 3.1:1（≥3:1）。基准期望值同步
+  `shims/macos/tests/visual-parity.sh` 与 `docs/ui-parity.md`。
+
 ## v0.3.32（2026-11-17）
 
 本版本为**模块重构进行中**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计

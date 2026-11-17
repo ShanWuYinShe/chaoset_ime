@@ -77,7 +77,7 @@ GO_LAYOUT = {
     "maxWidth": 720,
     "cornerRadius": 8,
 }
-# 浅/深各 13 色（ARGB 十六进制，原 skin.DefaultSkinFor 的 NRGBA 值）。
+# 浅/深各 13 色（#RRGGBBAA 十六进制，macOS 为视觉参考实现）。
 GO_COLORS = {
     "panelBg": "#F6F6F8F6", "panelBorder": "#0000001A", "text": "#1D1D1FFF",
     "highlightBg": "#007AFFFF", "highlightText": "#FFFFFFFF",
@@ -86,11 +86,13 @@ GO_COLORS = {
     "userMark": "#34C759FF", "divider": "#00000014", "chevron": "#8E8E93D0",
 }
 GO_COLORS_DARK = {
-    "panelBg": "#2C2C2EF5", "panelBorder": "#FFFFFF24", "text": "#FFFFFFFF",
+    # 深色 = 深海军蓝家族（v0.3.33）：panelBg=设置窗 cardBg、chipBg=controlBg、
+    # text/chipDigit=textPrimary、page/chevron=textTertiary；描边/分隔线白 alpha。
+    "panelBg": "#1A2740F5", "panelBorder": "#FFFFFF24", "text": "#F2F6FCFF",
     "highlightBg": "#0066EBFF", "highlightText": "#FFFFFFFF",
-    "chipBg": "#5A5A5EFF", "chipBorder": "#FFFFFF40", "chipDigit": "#FFFFFFFF",
-    "highlightChipBg": "#FFFFFF45", "pageColor": "#98989FB8",
-    "userMark": "#30D158FF", "divider": "#FFFFFF1E", "chevron": "#98989FB8",
+    "chipBg": "#223353FF", "chipBorder": "#FFFFFF40", "chipDigit": "#F2F6FCFF",
+    "highlightChipBg": "#FFFFFF45", "pageColor": "#7E90ACB8",
+    "userMark": "#30D158FF", "divider": "#FFFFFF1E", "chevron": "#7E90ACB8",
 }
 
 fails = []
