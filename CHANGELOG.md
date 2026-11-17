@@ -4,6 +4,15 @@
 
 ## 未发布
 
+- **视觉(三端浅色)：模式 Toast 浅色配色两端收敛到候选窗浅色面板族**：macOS 浅色
+  Toast 此前是 `white 0.97` 底 + `calibratedWhite 0.15` 文字（calibrated 灰阶的
+  sRGB 实测有效值 #333333），与 Windows 的 #F6F6F8 底 / #262628 文字存在可见色差
+  （文字一灰一黑）；描边两端深浅也不一致（mac 黑 0.15 vs Windows #C8C8CC）。本次
+  macOS 浅色改为 #F6F6F8 底（alpha 0.95，半透明为平台差异）+ #262628 文字 + 黑
+  alpha 1A 描边（有效 #DDDDDF），Windows 浅色描边 #C8C8CC → #DDDDDF，两端浅色
+  Toast 与候选窗浅色面板完全同族；深色已是海军蓝家族（上一条）不变。
+  `docs/ui-parity.md` 新增「Toast 配色」表作为两端单一事实源（实测值来自
+  NSColor sRGB 转换探针，非目测）。
 - **视觉(Windows)：候选窗与模式 Toast 在 Win11 改用 DWM 抗锯齿圆角，消除 GDI
   region 锯齿轮廓**：此前浮窗圆角靠 `SetWindowRgn(CreateRoundRectRgn)` 裁剪，
   region 边缘无抗锯齿，任何缩放下都是硬锯齿（docs/ui-parity.md 面板质感行记载的

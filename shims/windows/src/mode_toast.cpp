@@ -149,7 +149,7 @@ void ModeToast::onPaint(HWND hwnd) {
     HBRUSH bg = CreateSolidBrush(dark ? RGB(0x1A, 0x27, 0x40) : RGB(0xF6, 0xF6, 0xF8));
     // 描边 1pt（mac Toast 同为 1pt；用 show() 缓存的 dpi_，见 strokePx）
     HPEN pen = CreatePen(PS_SOLID, strokePx(dpi_),
-                         dark ? RGB(0x3A, 0x45, 0x5B) : RGB(0xC8, 0xC8, 0xCC));
+                         dark ? RGB(0x3A, 0x45, 0x5B) : RGB(0xDD, 0xDD, 0xDF));
     HGDIOBJ oldBrush = SelectObject(dc, bg);
     HGDIOBJ oldPen = SelectObject(dc, pen);
     // mac 圆角 r10pt（NSBezierPath xRadius/yRadius=10）→ GDI 直径 20pt
