@@ -61,6 +61,12 @@ setup-container.sh  可复现的本地容器验证环境
 - 设置窗为 `Gtk.Application` 单例（`org.chaoset.Setup`），重复点击激活已有窗口。
 - 配置写入 `$XDG_CONFIG_HOME/chaoset/config.json`；引擎每次进入联想前重读
   `associate`，保存即生效。手工编辑后建议 `jq .` 校验。
+- 外观主题：设置窗「输入」页提供「跟随系统 / 浅色 / 深色」（config.json 键
+  `theme`，取值 `system`/`light`/`dark`，缺省 `system`）。该设置**只影响 GTK3
+  设置窗**：通过 `GtkSettings:gtk-application-prefer-dark-theme` 切换，并据选择
+  重装蓝白 CSS；`system` 重置该属性、按桌面主题明暗自动选浅/深。候选窗/预编辑
+  由 ibus 面板渲染，颜色完全由面板/主题决定；Go 引擎与 Linux 壳都不设置候选/
+  预编辑颜色，也没有自定义颜色资源。
 - 学习数据：统计/清空/导出都在设置窗；实现调用 `chaoset-userdict` 本地文件模式，
   engine 包不引入平台代码。清空时先停 daemon/引擎，再清空并重启 ibus，
   防止内存旧状态回写。

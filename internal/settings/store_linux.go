@@ -21,6 +21,7 @@ import (
 const (
 	linuxKeyAssociate = "associate"
 	linuxKeyModeScope = "mode_scope"
+	linuxKeyTheme     = "theme"
 )
 
 // Load 读取 Linux 设置。文件不存在/为空时返回 Defaults()（与 C 设置窗
@@ -52,6 +53,13 @@ func Load() (Settings, error) {
 			return s, fmt.Errorf("设置文件 %s 的 \"mode_scope\" 不是字符串: %w", path, err)
 		}
 		s.ModeScope = parseStoredModeScope(scope)
+	}
+	if raw, ok := m[linuxKeyTheme]; ok {
+		var theme string
+		if err := json.Unmarshal(raw, &theme); err != nil {
+			return s, fmt.Errorf("设置文件 %s 的 \"theme\" 不是字符串: %w", path, err)
+		}
+		s.Theme = parseStoredTheme(theme)
 	}
 	return s, nil
 }
@@ -92,6 +100,25 @@ func SetModeScope(scope ModeScope) error {
 			return err
 		}
 		m[linuxKeyModeScope] = raw
+		return nil
+	})
+}
+
+// SetTheme 只改 "theme"，保留文件里已有的其它键。
+func SetTheme(theme Theme) error {
+	if !theme.Valid() {
+		return fmt.Errorf("theme 非法: %q（只允许 system|light|dark）", string(theme))
+	}
+	path, err := linuxConfigPath()
+	if err != nil {
+		return err
+	}
+	return updateConfig(path, func(m map[string]json.RawMessage) error {
+		raw, err := json.Marshal(string(theme))
+		if err != nil {
+			return err
+		}
+		m[linuxKeyTheme] = raw
 		return nil
 	})
 }

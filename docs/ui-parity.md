@@ -165,7 +165,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
 | 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 翻页箭头显示 | 双箭头：首页只有下箭头、末页只有上箭头、中间页都有；单页两枚置灰不可点 | 同左（同几何：6pt 箭头块 + 页码） | ibus 面板自绘，壳拿不到箭头绘制/命中回调，无法控制箭头显隐（按键语义一致） | Windows 像素效果需真机验收 |
-| 设置窗 | 左导航三页（输入/词库/关于，148pt）+ 白瓷卡片 + 底部页脚版本号，640×560pt；窗口米白纸底 + 透明标题栏，自绘暖陶开关/软胶囊/按钮，选中项 accentSoft 胶囊 | 左导航 148pt + 白瓷卡片 + 底部页脚版本号 + 滚动，640×560pt；米白纸底 + 暖炭灰深色，DWM 标题栏跟随；深色/DPI 需真机验收 | 自绘胶囊导航（148pt）+ 三页卡片 + 底部页脚版本号，640×560pt；暖陶 GTK CSS 主题（深浅跟随系统），与 macOS/Windows 同令牌同形态 |
+| 设置窗 | 左导航三页（输入/词库/关于，148pt）+ 卡片 + 底部页脚版本号，640×560pt；窗口蓝白底 + 透明标题栏，自绘蓝色开关/软胶囊/按钮，选中项 accentSoft 胶囊 | 左导航 148pt + 卡片 + 底部页脚版本号 + 滚动，640×560pt；蓝白底 + 深海军蓝深色，DWM 标题栏跟随；深色/DPI 需真机验收 | 自绘胶囊导航（148pt）+ 三页卡片 + 底部页脚版本号，640×560pt；蓝白 GTK CSS 主题（深浅跟随系统 + 用户主题选择），与 macOS/Windows 同令牌同形态 |
 
 ## 非激活与托盘可见性（2026-11-07 用户要求）
 
@@ -228,9 +228,11 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   当前进程状态（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/
   切进程时把本进程状态上报到托盘，托盘左键只显示、不切换）。
 
-## 设置窗契约（三端同构 · 暖陶纸感）
+## 设置窗契约（三端同构 · 蓝白）
 
-三端设置窗共享骨架、视觉令牌、控件形态、分组标题与文案；卡片容器三端都有
+三端设置窗共享骨架、视觉令牌、控件形态、分组标题与文案；配色为蓝白体系
+（对齐候选窗 #007AFF/#0066EB 高亮蓝 + 近白面板），用户也可在「输入」页切换
+跟随系统/浅色/深色。卡片容器三端都有
 （macOS `SettingsCardView` / Windows 自绘圆角卡片 / Linux `.card` CSS），
 由 tools/checkuiparity 的「设置窗视觉令牌」组逐值断言。
 
@@ -248,27 +250,27 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 
   | 令牌 | light | dark | 用途 |
   | --- | --- | --- | --- |
-  | windowBg | #F5EFE6 | #1C1916 | 窗口底色 |
-  | navBg | #EFE7DB | #171412 | 左侧导航列 |
-  | cardBg | #FFFCF7 | #26221E | 卡片底 |
-  | cardBorder | #E8DCCC | #3A332C | 卡片/控件描边 |
-  | divider | #EDE3D6 | #332D27 | 行分隔线 |
-  | textPrimary | #2E2924 | #F3ECE3 | 主文字 |
-  | textSecondary | #6E655A | #B4A79A | 次文字（说明/卡片标题/页脚） |
-  | textTertiary | #8A7E72 | #8B7F73 | 仅装饰/弱提示 |
-  | accent | #C9703F | #E0915F | 开关开启轨道/焦点环 |
-  | accentStrong | #A85427 | #E0915F | 主按钮底 |
-  | accentPressed | #96491F | #EBA57A | 主按钮按下/hover |
-  | accentSoft | #F6E6D9 | #3B2A20 | 选中/悬停软底 |
-  | accentText | #9C4A25 | #E9A87C | 软底上的强调文字 |
-  | controlBg | #F1E9DD | #221E1A | 次按钮/未选胶囊/开关轨道关 |
-  | controlHover | #F7F0E6 | #2B2621 | hover 底 |
-  | controlBorder | #E0D4C4 | #403830 | 控件描边 |
-  | controlText | #2E2924 | #F3ECE3 | 控件文字 |
-  | knob | #FFFCF7 | #F6EFE6 | 开关滑钮 |
-  | danger | #A8482F | #D97757 | 危险操作文字 |
-  | onAccent | #FFFDF9 | #2A1B12 | accentStrong 上的文字 |
-  | shadow | #5A3C2A | #000000 | 卡片阴影（浅 12% / 深 38% 透明度；按平台绘制能力落地） |
+  | windowBg | #F4F7FB | #101A2C | 窗口底色（蓝白） |
+  | navBg | #EAF1F9 | #0C1626 | 左侧导航列 |
+  | cardBg | #FFFFFF | #1A2740 | 卡片底 |
+  | cardBorder | #D9E4F0 | #2D3E5C | 卡片/控件描边 |
+  | divider | #E4EDF6 | #243552 | 行分隔线 |
+  | textPrimary | #14213D | #F2F6FC | 主文字（深海军蓝/白） |
+  | textSecondary | #4A5A70 | #AFBFD6 | 次文字（说明/卡片标题/页脚） |
+  | textTertiary | #7A8899 | #7E90AC | 仅装饰/弱提示 |
+  | accent | #007AFF | #0066EB | 开关开启轨道/焦点环（与候选窗高亮蓝同值） |
+  | accentStrong | #0066EB | #007AFF | 主按钮底 |
+  | accentPressed | #0052BE | #4DA3FF | 主按钮按下/hover |
+  | accentSoft | #E5F1FF | #16345C | 选中/悬停软底 |
+  | accentText | #0066EB | #7FB4FF | 软底上的强调文字 |
+  | controlBg | #F0F5FB | #223353 | 次按钮/未选胶囊/开关轨道关 |
+  | controlHover | #E3EDF8 | #2C4165 | hover 底 |
+  | controlBorder | #C9D9EB | #3A5074 | 控件描边 |
+  | controlText | #14213D | #F2F6FC | 控件文字 |
+  | knob | #FFFFFF | #F2F6FC | 开关滑钮 |
+  | danger | #D32F2F | #FF7B72 | 危险操作文字 |
+  | onAccent | #FFFFFF | #FFFFFF | accentStrong 上的文字 |
+  | shadow | #1B4A80 | #000000 | 卡片阴影（浅 12% / 深 38% 透明度；按平台绘制能力落地） |
 
 - 几何：卡片圆角 14pt、内边距 18pt、卡片间距 16pt；卡片标题 13pt semibold
   textSecondary，标题带 y+16..38pt，内容从 y+50pt 起（标题与控件不重叠）；
@@ -306,8 +308,9 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
     「更多设置将在后续版本提供」+ 仓库链接。
 - 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
   Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
-- 禁止色：0A84FF / 007AFF / FAFAFC / 2A2A2E / C0C0C6 / F6F6F8 / D16B29 / 994014
-  不得出现在设置窗源码（系统蓝与冷灰是「突兀」的主要来源）。
+- 禁止色：0A84FF / F5EFE6 / FFFCF7 / C9703F / A85427 / E8DCCC / F6E6D9 / D16B29 / 994014
+  不得出现在设置窗源码（旧系统蓝与暖陶色与蓝白设计冲突；蓝白令牌 #007AFF/#0066EB
+  是允许且期望的强调色）。
 
 
 ## 零阻塞契约（Windows，2026-11-06）
@@ -431,4 +434,3 @@ Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部�
 切换输入法时已确认段先落盘（用户确认过的字不丢）。引擎侧不变：
 `SelectPrefix` 依旧只消耗候选音节对应的前缀、剩余回灌、即时学习（纯算法，
 与平台无关）。
-

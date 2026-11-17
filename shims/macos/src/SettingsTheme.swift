@@ -15,13 +15,13 @@
 // 由它弹出文件选择并完成合并/备份/原子替换/重启 daemon（入口与 Windows
 // 设置窗「词库」区对齐；导入实现仍只有 Setup.app 一份，避免复制粘贴）。
 //
-// 2026-11-16：视觉系统「暖陶纸感」——米白纸底 + 白瓷卡片 + 赤陶强调色，
-// 自绘开关/胶囊/按钮与左导航统一同一套令牌；深色为暖炭灰。令牌是三端共享
+// 视觉系统：蓝白配色——浅蓝白底 + 白卡片 + 品牌蓝强调色，
+// 自绘开关/胶囊/按钮与左导航统一同一套令牌；深色为深海军蓝。令牌是三端共享
 // 设计系统的 macOS 实现（docs/ui-parity.md「设置窗视觉令牌」逐值机器断言，
 // 改色值必须三端同步）。
 //
 // 2026-11-06 架构拆分：设置窗拆分为窗口骨架 / 主题与自绘控件 / 三页视图 /
-// @objc target；2026-11-16「暖陶纸感」视觉升级把主题令牌与自绘控件抽到
+// @objc target；视觉系统升级把主题令牌与自绘控件抽到
 // SettingsTheme.swift（三端共享设计系统的 macOS 实现，docs/ui-parity.md
 // 「设置窗视觉令牌」逐值机器断言）。
 
@@ -55,31 +55,31 @@ enum SettingsTheme {
                 alpha: alpha)
     }
 
-    // 底色与分层
-    static let windowBg = dynamic(light: 0xF5EFE6, dark: 0x1C1916)
-    static let navBg = dynamic(light: 0xEFE7DB, dark: 0x171412)
-    static let cardBg = dynamic(light: 0xFFFCF7, dark: 0x26221E)
-    static let cardBorder = dynamic(light: 0xE8DCCC, dark: 0x3A332C)
-    static let divider = dynamic(light: 0xEDE3D6, dark: 0x332D27)
+    // 底色与分层（蓝白配色，值来自 docs/ui-parity.md「设置窗视觉令牌」表）
+    static let windowBg = dynamic(light: 0xF4F7FB, dark: 0x101A2C)
+    static let navBg = dynamic(light: 0xEAF1F9, dark: 0x0C1626)
+    static let cardBg = dynamic(light: 0xFFFFFF, dark: 0x1A2740)
+    static let cardBorder = dynamic(light: 0xD9E4F0, dark: 0x2D3E5C)
+    static let divider = dynamic(light: 0xE4EDF6, dark: 0x243552)
     // 文字
-    static let textPrimary = dynamic(light: 0x2E2924, dark: 0xF3ECE3)
-    static let textSecondary = dynamic(light: 0x6E655A, dark: 0xB4A79A)
-    static let textTertiary = dynamic(light: 0x8A7E72, dark: 0x8B7F73)
-    // 强调色（赤陶）
-    static let accent = dynamic(light: 0xC9703F, dark: 0xE0915F)
-    static let accentStrong = dynamic(light: 0xA85427, dark: 0xE0915F)
-    static let accentPressed = dynamic(light: 0x96491F, dark: 0xEBA57A)
-    static let accentSoft = dynamic(light: 0xF6E6D9, dark: 0x3B2A20)
-    static let accentText = dynamic(light: 0x9C4A25, dark: 0xE9A87C)
+    static let textPrimary = dynamic(light: 0x14213D, dark: 0xF2F6FC)
+    static let textSecondary = dynamic(light: 0x4A5A70, dark: 0xAFBFD6)
+    static let textTertiary = dynamic(light: 0x7A8899, dark: 0x7E90AC)
+    // 强调色（蓝，与候选窗高亮同色系）
+    static let accent = dynamic(light: 0x007AFF, dark: 0x0066EB)
+    static let accentStrong = dynamic(light: 0x0066EB, dark: 0x007AFF)
+    static let accentPressed = dynamic(light: 0x0052BE, dark: 0x4DA3FF)
+    static let accentSoft = dynamic(light: 0xE5F1FF, dark: 0x16345C)
+    static let accentText = dynamic(light: 0x0066EB, dark: 0x7FB4FF)
     // 控件
-    static let controlBg = dynamic(light: 0xF1E9DD, dark: 0x221E1A)
-    static let controlHover = dynamic(light: 0xF7F0E6, dark: 0x2B2621)
-    static let controlBorder = dynamic(light: 0xE0D4C4, dark: 0x403830)
-    static let controlText = dynamic(light: 0x2E2924, dark: 0xF3ECE3)
-    static let knob = dynamic(light: 0xFFFCF7, dark: 0xF6EFE6)
-    static let danger = dynamic(light: 0xA8482F, dark: 0xD97757)
-    static let onAccent = dynamic(light: 0xFFFDF9, dark: 0x2A1B12)
-    static let shadow = dynamic(light: 0x5A3C2A, dark: 0x000000,
+    static let controlBg = dynamic(light: 0xF0F5FB, dark: 0x223353)
+    static let controlHover = dynamic(light: 0xE3EDF8, dark: 0x2C4165)
+    static let controlBorder = dynamic(light: 0xC9D9EB, dark: 0x3A5074)
+    static let controlText = dynamic(light: 0x14213D, dark: 0xF2F6FC)
+    static let knob = dynamic(light: 0xFFFFFF, dark: 0xF2F6FC)
+    static let danger = dynamic(light: 0xD32F2F, dark: 0xFF7B72)
+    static let onAccent = dynamic(light: 0xFFFFFF, dark: 0xFFFFFF)
+    static let shadow = dynamic(light: 0x1B4A80, dark: 0x000000,
                                 lightAlpha: 0.12, darkAlpha: 0.38)
 
     // 几何（pt，三端同一口径）
@@ -118,7 +118,7 @@ final class SettingsBackgroundView: NSView {
     }
 }
 
-/// 左侧导航列底色：比窗口底略深一档，形成暖色分栏（动态色需随外观重绘，
+/// 左侧导航列底色：比窗口底略深一档，形成浅蓝分栏（动态色需随外观重绘，
 /// 层背景的 CGColor 不会自动跟随深色，所以用自绘而不是 layer.backgroundColor）。
 final class SettingsNavColumnView: NSView {
     override func draw(_ dirtyRect: NSRect) {
@@ -147,7 +147,7 @@ struct SettingsCardEntry {
     }
 }
 
-/// 卡片容器：白瓷底 + 1pt 暖色描边 + 柔和阴影；标题与内容由约束排出，
+/// 卡片容器：卡片底 + 1pt 描边 + 柔和阴影；标题与内容由约束排出，
 /// 三页的所有分组都用它（三端同构）。
 final class SettingsCardView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
@@ -210,7 +210,7 @@ final class SettingsCardView: NSView {
     }
 }
 
-// MARK: - 自绘控件（统一暖陶令牌；不用系统 accent 蓝）
+// MARK: - 自绘控件（统一蓝白令牌；不用系统默认 accent）
 
 /// 焦点环：accent 1.5pt 圆角描边（替代系统虚线/系统蓝 focus ring）。
 private func drawSettingsFocusRing(in rect: NSRect, radius: CGFloat) {

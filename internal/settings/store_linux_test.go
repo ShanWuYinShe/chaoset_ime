@@ -99,10 +99,24 @@ func TestLinuxRoundTrip(t *testing.T) {
 		t.Errorf("Load().ModeScope = %q，期望 process", s.ModeScope)
 	}
 
+	if err := SetTheme(ThemeDark); err != nil {
+		t.Fatalf("SetTheme(dark) 报错: %v", err)
+	}
+	s, err = Load()
+	if err != nil {
+		t.Fatalf("Load() 报错: %v", err)
+	}
+	if s.Theme != ThemeDark {
+		t.Errorf("Load().Theme = %q，期望 dark", s.Theme)
+	}
+	if s.Associate || s.ModeScope != ModeScopeProcess {
+		t.Error("SetTheme 后 associate/mode_scope 被覆盖")
+	}
+
 	// 写出的文件对 C 设置窗的字符串读取（strstr "\"associate\""）友好：
 	// 键名与 true/false、字符串字面量格式必须与 setup_ctl.c 一致。
 	text := readFile(t, path)
-	for _, want := range []string{`"associate": false`, `"mode_scope": "process"`} {
+	for _, want := range []string{`"associate": false`, `"mode_scope": "process"`, `"theme": "dark"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("config.json 应包含 %q，实际:\n%s", want, text)
 		}
@@ -212,6 +226,46 @@ func TestLinuxModeScopeNormalized(t *testing.T) {
 	}
 }
 
+// theme 读取归一化：system/light/dark 保持；大小写/空白容忍；未知/空回退 system。
+func TestLinuxThemeNormalized(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want Theme
+	}{
+		{"system", ThemeSystem},
+		{"LIGHT", ThemeLight},
+		{" Dark ", ThemeDark},
+		{"bogus", ThemeSystem},
+		{"", ThemeSystem},
+	}
+	for _, c := range cases {
+		path := setupXDG(t)
+		writeFile(t, path, `{"theme": "`+c.raw+`"}`)
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load() 报错: %v", err)
+		}
+		if s.Theme != c.want {
+			t.Errorf("theme=%q 归一化后 = %q，期望 %q", c.raw, s.Theme, c.want)
+		}
+	}
+}
+
+// theme 写入保留未知键。
+func TestLinuxSetThemePreservesOtherKeys(t *testing.T) {
+	path := setupXDG(t)
+	writeFile(t, path, `{"fuzzy": true, "associate": true}`)
+	if err := SetTheme(ThemeLight); err != nil {
+		t.Fatalf("SetTheme(light) 报错: %v", err)
+	}
+	text := readFile(t, path)
+	for _, want := range []string{`"fuzzy": true`, `"associate": true`, `"theme": "light"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("config.json 应保留 %q，实际:\n%s", want, text)
+		}
+	}
+}
+
 // 损坏 JSON：读取报错，写入也拒绝（不得静默覆盖用户配置）。
 func TestLinuxCorruptJSON(t *testing.T) {
 	path := setupXDG(t)
@@ -234,6 +288,8 @@ func TestLinuxInvalidFieldTypes(t *testing.T) {
 		`{"associate": 1}`,
 		`{"mode_scope": 3}`,
 		`{"mode_scope": true}`,
+		`{"theme": 3}`,
+		`{"theme": true}`,
 	} {
 		path := setupXDG(t)
 		writeFile(t, path, content)
@@ -244,6 +300,15 @@ func TestLinuxInvalidFieldTypes(t *testing.T) {
 }
 
 // 非法枚举写入必须拒绝（CLI 层是退出码 2；store 层也不接受非法值）。
+func TestLinuxSetThemeRejectsInvalid(t *testing.T) {
+	setupXDG(t)
+	for _, v := range []Theme{"", "SYSTEM", "Light", "bogus"} {
+		if err := SetTheme(v); err == nil {
+			t.Errorf("SetTheme(%q) 应报错", v)
+		}
+	}
+}
+
 func TestLinuxSetModeScopeRejectsInvalid(t *testing.T) {
 	setupXDG(t)
 	// 旧三档值不在写入契约里：写入只接受 system|process（旧值 window 只允许读取/CLI 归一化）。

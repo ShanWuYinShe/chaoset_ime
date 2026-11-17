@@ -28,6 +28,7 @@ const (
 	// （不是 "Associate"；任务单/架构文档里的 "Associate" 是简称）。
 	macKeyAssociate = "AssociateEnabled"
 	macKeyModeScope = "ChaosetModeScope"
+	macKeyTheme     = "ChaosetTheme"
 )
 
 // Load 读取 macOS 设置。键不存在 = 缺省（AssociateEnabled 缺省 true、
@@ -48,6 +49,13 @@ func Load() (Settings, error) {
 	}
 	if ok {
 		s.ModeScope = parseStoredModeScope(scope)
+	}
+	theme, ok, err := readDefaultsString(macKeyTheme)
+	if err != nil {
+		return s, err
+	}
+	if ok {
+		s.Theme = parseStoredTheme(theme)
 	}
 	return s, nil
 }
@@ -72,6 +80,17 @@ func SetModeScope(scope ModeScope) error {
 	}
 	if _, err := defaultsRunner("write", defaultsDomain, macKeyModeScope, "-string", string(scope)); err != nil {
 		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyModeScope, err)
+	}
+	return nil
+}
+
+// SetTheme 写 UserDefaults 的 ChaosetTheme（string，与 Swift 侧 ThemeSetting 同键）。
+func SetTheme(theme Theme) error {
+	if !theme.Valid() {
+		return fmt.Errorf("theme 非法: %q（只允许 system|light|dark）", string(theme))
+	}
+	if _, err := defaultsRunner("write", defaultsDomain, macKeyTheme, "-string", string(theme)); err != nil {
+		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyTheme, err)
 	}
 	return nil
 }

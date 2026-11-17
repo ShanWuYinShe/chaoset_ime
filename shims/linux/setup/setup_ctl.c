@@ -408,6 +408,105 @@ gboolean setup_config_save_mode_scope(const char *scope) {
     return ok;
 }
 
+/* 外观主题合法值：只允许 system|light|dark，与 Go internal/settings /
+ * chaoset-settingsctl get/set theme 同口径。 */
+static gboolean valid_theme(const char *theme) {
+    return theme != NULL &&
+           (g_strcmp0(theme, "system") == 0 ||
+            g_strcmp0(theme, "light") == 0 ||
+            g_strcmp0(theme, "dark") == 0);
+}
+
+/* 存储读取的宽容归一化：system/light/dark 保持原值；
+ * 大小写与首尾空白容忍；未知/空→system（与 Go 侧同语义）。 */
+static const char *normalized_theme(const char *raw) {
+    if (raw == NULL) {
+        return "system";
+    }
+    char lower[16];
+    g_strlcpy(lower, raw, sizeof(lower));
+    g_strstrip(lower);
+    if (g_ascii_strcasecmp(lower, "light") == 0) {
+        return "light";
+    }
+    if (g_ascii_strcasecmp(lower, "dark") == 0) {
+        return "dark";
+    }
+    return "system";
+}
+
+/* 外观主题：读 JSON 里的 "theme" 字符串；缺省/读取失败/损坏值 system。
+ * 与存储里其它键共存，不改动文件。 */
+const char *setup_config_load_theme(void) {
+    static char cached[16] = "system";
+    gchar *path = config_path();
+    GError *error = NULL;
+    gchar *text = read_text(path, NULL, &error);
+    g_free(path);
+    if (error != NULL || text == NULL) {
+        g_clear_error(&error);
+        g_strlcpy(cached, "system", sizeof(cached));
+        return cached;
+    }
+    g_strlcpy(cached, "system", sizeof(cached));
+    const gchar *p = strstr(text, "\"theme\"");
+    if (p != NULL) {
+        const gchar *colon = strchr(p, ':');
+        if (colon != NULL) {
+            const gchar *q = strchr(colon, '"');
+            if (q != NULL) {
+                q++;
+                const gchar *end = strchr(q, '"');
+                if (end != NULL && (gsize)(end - q) < sizeof(cached)) {
+                    char tmp[16];
+                    g_strlcpy(tmp, q, (gsize)(end - q) + 1);
+                    g_strlcpy(cached, normalized_theme(tmp), sizeof(cached));
+                }
+            }
+        }
+    }
+    g_free(text);
+    return cached;
+}
+
+/* 写外观主题：只接受 system|light|dark；读-改-写只替换 theme 一个键，
+ * 保留 fuzzy/traditional/shuangpin/mode_scope 等其它键。 */
+gboolean setup_config_save_theme(const char *theme) {
+    if (!valid_theme(theme)) {
+        return FALSE;
+    }
+    gchar *path = config_path();
+    gchar *dir = g_path_get_dirname(path);
+    if (g_mkdir_with_parents(dir, 0700) != 0) {
+        g_free(dir);
+        g_free(path);
+        return FALSE;
+    }
+    g_free(dir);
+
+    GError *error = NULL;
+    gboolean missing = FALSE;
+    gchar *old = read_text(path, &missing, &error);
+    if (error != NULL) {
+        g_clear_error(&error);
+        g_free(path);
+        return FALSE;
+    }
+    gchar *quoted = g_strdup_printf("\"%s\"", theme);
+    gchar *updated = replace_json_value(old != NULL ? old : "{}", "theme", quoted);
+    g_free(quoted);
+    g_free(old);
+    gboolean ok = g_file_set_contents(path, updated, -1, &error);
+    g_free(updated);
+    if (ok) {
+        (void)g_chmod(path, 0644);
+    } else {
+        g_clear_error(&error);
+    }
+    g_free(path);
+    return ok;
+}
+
 
 // 联想开关的单项写入复用通用 JSON 编辑（保留 fuzzy/traditional/shuangpin 等键）。
 static gchar *replace_associate_value(const gchar *text, gboolean associate) {

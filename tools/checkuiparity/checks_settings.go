@@ -76,13 +76,14 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	// 反斜杠；2026-11-06 曾因生成脚本吞反斜杠写成 SoftwareChaoset）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
 		"windowsRegistrySubKey", "Software\\Chaoset")
-	// CLI 契约面：get/set + 三个键名 + JSON 字段名 + 两档作用域取值。
+	// CLI 契约面：get/set + 四个键名 + JSON 字段名 + 两档作用域 + 三档主题。
 	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
-		"get", "set", "associate", "mode-scope", "ui-english", "system|process")
+		"get", "set", "associate", "mode-scope", "theme", "ui-english", "system|process", "system|light|dark")
 	// 单一真源：两档枚举名与缺省 JSON 契约值固定为 system。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		"mode_scope", "ui_english", "ModeScopeSystem", "ModeScopeProcess",
-		`{"associate":true,"mode_scope":"system","ui_english":false}`)
+		"mode_scope", "ui_english", "theme", "ModeScopeSystem", "ModeScopeProcess",
+		"ThemeSystem", "ThemeLight", "ThemeDark",
+		`{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}`)
 	// 旧三档值的读取归一化必须保留：window→process、未知→system
 	// （老用户存储里仍有 window，删掉迁移映射会让 get/设置窗拿到非法值）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
@@ -94,17 +95,17 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 		"window→process", "未知→system")
 	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
 	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
-		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope")
+		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope", "ChaosetTheme")
 	// 方案 A2 试点（Windows）：设置窗的设置项冷路径必须走 chaoset-settingsctl，
 	// 且带 1s 硬超时与 native 回退；打包必须带 CLI。
 	checkContains(fsys, problems, group, winShell,
 		"chaoset-settingsctl.exe", "settingsRunCtl(", "settingsLoadShared(",
-		"settingsWriteShared(", "kSettingsCtlTimeoutMs", "set associate ", "set mode-scope ")
+		"settingsWriteShared(", "kSettingsCtlTimeoutMs", "set associate ", "set mode-scope ", "set theme ")
 	checkContains(fsys, problems, group, makefile, "chaoset-settingsctl")
 	checkContains(fsys, problems, group, winInstaller,
 		"chaoset-settingsctl.exe", "InstallRobustFile")
 	// Linux 必须复用 appdirs 的 config 路径（与 C 设置窗/chaoset-userdict 同源）。
-	checkContains(fsys, problems, group, "internal/settings/store_linux.go", "appdirs.LinuxConfigPath")
+	checkContains(fsys, problems, group, "internal/settings/store_linux.go", "appdirs.LinuxConfigPath", "linuxKeyTheme")
 	// 架构文档必须记录 CLI 契约与单一真源位置。
 	checkContains(fsys, problems, group, archDoc, "chaoset-settingsctl", "internal/settings")
 }
@@ -164,6 +165,11 @@ func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
 	// Windows 设置窗按钮标题必须真的是两档文案（注释里出现不算）。
 	checkContains(fsys, problems, groupSettingsSharedText, winShell,
 		`L"全局共享"`, `L"每进程独立"`)
+	// 外观主题三档文案三端一致。
+	for _, path := range []string{macSettings, winShell, linuxSetup} {
+		checkContains(fsys, problems, groupSettingsSharedText, path,
+			"跟随系统", "浅色", "深色")
+	}
 	// Windows 121/122 → System/Process 映射不得接反（默认 System；旧的 123 档已删）。
 	checkContains(fsys, problems, groupSettingsSharedText, winShell,
 		"(LOWORD(wParam) == 121 || LOWORD(wParam) == 122)",
@@ -323,7 +329,7 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 
 	// 禁止色：系统蓝/冷灰/旧橙是「突兀」的主要来源（C 源码先剥注释再查，
 	// 允许注释里记录历史色值，但代码里出现即 FAIL）。
-	forbidden := []string{"0A84FF", "007AFF", "FAFAFC", "2A2A2E", "C0C0C6", "F6F6F8", "D16B29", "994014"}
+	forbidden := []string{"0A84FF", "F5EFE6", "FFFCF7", "C9703F", "A85427", "E8DCCC", "F6E6D9", "D16B29", "994014"}
 	checkForbidden := func(path, text string) {
 		clean := strings.ToUpper(stripCppComments(text))
 		for _, bad := range forbidden {

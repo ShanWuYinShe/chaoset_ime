@@ -15,13 +15,13 @@
 // 由它弹出文件选择并完成合并/备份/原子替换/重启 daemon（入口与 Windows
 // 设置窗「词库」区对齐；导入实现仍只有 Setup.app 一份，避免复制粘贴）。
 //
-// 2026-11-16：视觉系统「暖陶纸感」——米白纸底 + 白瓷卡片 + 赤陶强调色，
-// 自绘开关/胶囊/按钮与左导航统一同一套令牌；深色为暖炭灰。令牌是三端共享
+// 视觉系统：蓝白配色——浅蓝白底 + 白卡片 + 品牌蓝强调色，
+// 自绘开关/胶囊/按钮与左导航统一同一套令牌；深色为深海军蓝。令牌是三端共享
 // 设计系统的 macOS 实现（docs/ui-parity.md「设置窗视觉令牌」逐值机器断言，
 // 改色值必须三端同步）。
 //
 // 2026-11-06 架构拆分：设置窗拆分为窗口骨架 / 主题与自绘控件 / 三页视图 /
-// @objc target；2026-11-16「暖陶纸感」视觉升级把主题令牌与自绘控件抽到
+// @objc target；视觉系统升级把主题令牌与自绘控件抽到
 // SettingsTheme.swift（三端共享设计系统的 macOS 实现，docs/ui-parity.md
 // 「设置窗视觉令牌」逐值机器断言）。
 
@@ -45,6 +45,8 @@ enum SettingsWindowController {
 
     // 中英状态二选一的 target（静态持有，避免窗口重建时悬空）。
     private static let modeTarget = ModeScopeTarget()
+    /// 外观主题三选一的 target（静态持有）。
+    private static let themeTarget = ThemeSegmentTarget()
 
     static func show() {
         NSApp.setActivationPolicy(.accessory)
@@ -64,12 +66,16 @@ enum SettingsWindowController {
             backing: .buffered,
             defer: false)
         w.title = "Chaoset 设置"
-        // 透明标题栏 + 内容延伸到底：暖色窗口底与内容连成一片，避免
-        // 「灰白标题栏 + 暖色内容」的割裂感（Windows/Linux 同语义）。
+        // 透明标题栏 + 内容延伸到底：窗口底色与内容连成一片，避免
+        // 「灰白标题栏 + 蓝白内容」的割裂感（Windows/Linux 同语义）。
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
         w.backgroundColor = SettingsTheme.windowBg
+        // 用户主题：system → nil（跟随系统），light/dark → 固定 appearance。
+        // SettingsTheme.dynamic 的 NSColor(name:nil) 解析器按窗口 effectiveAppearance
+        // 取色，强制 appearance 后令牌色自动切到对应浅/深值，无需重建控件。
+        w.appearance = AppTheme.windowAppearance
         w.contentView = makeContentView()
         w.isReleasedWhenClosed = false
         w.center()
@@ -90,6 +96,22 @@ enum SettingsWindowController {
             forName: .chaosetAssociateDisabled, object: nil, queue: nil) { _ in
             CandidatePanelController.hide()
         }
+
+        // 用户切换外观主题：设置窗立即重设 appearance（nil=跟随系统）并
+        // 触发整窗重绘；候选窗下次 draw 读 UserDefaults 新值，无需重启。
+        NotificationCenter.default.addObserver(
+            forName: .chaosetThemeChanged, object: nil, queue: nil) { [weak w] _ in
+            guard let w else { return }
+            w.appearance = AppTheme.windowAppearance
+            // 子视图（自绘开关/胶囊/卡片/文字）也需重绘：递归标记。
+            // 动态色 NSColor(name:nil) 按窗口 effectiveAppearance 取色，
+            // 强制 appearance 后令牌色自动切到对应浅/深值。
+            func markNeedsDisplay(_ view: NSView) {
+                view.needsDisplay = true
+                view.subviews.forEach(markNeedsDisplay)
+            }
+            if let root = w.contentView { markNeedsDisplay(root) }
+        }
     }
 
     /// 构建设置窗内容视图（窗口骨架与内容解耦：线上窗口与离屏视觉回归/截图
@@ -97,12 +119,13 @@ enum SettingsWindowController {
     static func makeContentView() -> NSView {
         // —— 三页内容 ——（视图构建见 SettingsWindowPages.swift）
         let inputPage = SettingsWindowPages.makeInputPage(
-            switchTarget: switchTarget, modeTarget: modeTarget)
+            switchTarget: switchTarget, modeTarget: modeTarget,
+            themeTarget: themeTarget)
         let dictPage = SettingsWindowPages.makeDictPage(
             learningTarget: learningTarget, dictImportTarget: dictImportTarget)
         let aboutPage = SettingsWindowPages.makeAboutPage()
 
-        // —— 左侧导航：米色分栏 + 赤陶软胶囊选中态 ——
+        // —— 左侧导航：浅蓝分栏 + 品牌蓝软胶囊选中态 ——
         let sidebar = NSStackView()
         sidebar.orientation = .vertical
         sidebar.alignment = .leading

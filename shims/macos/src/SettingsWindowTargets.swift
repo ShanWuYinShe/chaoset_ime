@@ -21,6 +21,31 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     static let chaosetAssociateDisabled =
         Notification.Name("chaosetAssociateDisabled")
+    /// 用户切换外观主题后发出：设置窗据此重设 appearance 并重绘；候选窗
+    /// 下次绘制直接读 UserDefaults（见 AppTheme），无需重启。
+    static let chaosetThemeChanged =
+        Notification.Name("chaosetThemeChanged")
+}
+
+/// 外观主题三选一（跟随系统/浅色/深色）的 target：持久化 + 广播变更。
+@objc final class ThemeSegmentTarget: NSObject {
+    /// 三个胶囊按钮（Pages 构建后登记，点击后同步选中态）。
+    var themeButtons: [WarmPillButton] = []
+
+    @objc func themeChanged(_ sender: WarmPillButton) {
+        // 用标题反查 theme（tag 与顺序耦合，标题稳定）。
+        let theme: Theme
+        switch sender.title {
+        case "浅色": theme = .light
+        case "深色": theme = .dark
+        default: theme = .system
+        }
+        ThemeSetting.current = theme
+        for button in themeButtons {
+            button.setPillSelected(button.title == sender.title)
+        }
+        NotificationCenter.default.post(name: .chaosetThemeChanged, object: nil)
+    }
 }
 
 /// 中英状态作用域二选一的 target（与 Windows/Linux 设置窗对齐）。
@@ -45,9 +70,8 @@ extension Notification.Name {
 
 /// 设置窗左侧导航的页切换 target（2026-11-06 卡片式布局，与 Windows 对齐）。
 /// 三个页面视图在构建时注册进来；按按钮 identifier（"0"/"1"/"2"）切页。
-/// 2026-11-06 阶段2：补左导航选中态——当前页按钮用 accent 胶囊底 + 白字
-/// （Windows 左导航同为 accent RGB 0A84FF 圆角高亮；此前 macOS 三个按钮外观
-/// 完全相同，看不出当前在哪一页）。
+/// 左导航选中态由 WarmPillButton 自绘（accentSoft 软胶囊 + accentText 字）；
+/// 此前三个按钮外观完全相同，看不出当前在哪一页。
 final class PageSwitchTarget: NSObject {
     static let shared = PageSwitchTarget()
     weak var inputPage: NSView?
@@ -70,7 +94,7 @@ final class PageSwitchTarget: NSObject {
         }
     }
 
-    /// 选中项：赤陶软胶囊（accentSoft 底 + accent 描边 + accentText 半粗字）；
+    /// 选中项：品牌蓝软胶囊（accentSoft 底 + accent 描边 + accentText 半粗字）；
     /// 未选中：透明底 + 主文本色，hover 时由按钮自绘 controlHover 胶囊。
     /// 大面积实心橙会让整窗显得突兀，软胶囊更符合「温暖柔和」的基调。
     private func styleNavButton(_ button: WarmPillButton, selected: Bool) {

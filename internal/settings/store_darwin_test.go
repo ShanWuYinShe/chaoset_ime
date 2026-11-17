@@ -46,6 +46,8 @@ func TestStoreDarwinLoad(t *testing.T) {
 			return "1", nil
 		case macKeyModeScope:
 			return "\"process\"", nil // 某些系统版本带引号
+		case macKeyTheme:
+			return "\"dark\"", nil
 		}
 		t.Fatalf("意外的 defaults 读取键: %v", args)
 		return "", nil
@@ -54,12 +56,12 @@ func TestStoreDarwinLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() 报错: %v", err)
 	}
-	want := Settings{Associate: true, ModeScope: ModeScopeProcess, UiEnglish: false}
+	want := Settings{Associate: true, ModeScope: ModeScopeProcess, UiEnglish: false, Theme: ThemeDark}
 	if got != want {
 		t.Fatalf("Load() = %+v, 期望 %+v", got, want)
 	}
-	if len(calls) != 2 {
-		t.Fatalf("Load() 应只读两个键，实际调用 %d 次", len(calls))
+	if len(calls) != 3 {
+		t.Fatalf("Load() 应只读三个键，实际调用 %d 次", len(calls))
 	}
 	// 域与键名必须与 macOS 壳逐字一致（改一个字符 Swift 侧就读不到）。
 	for _, c := range calls {
@@ -92,6 +94,8 @@ func TestStoreDarwinLoadLegacyModeScope(t *testing.T) {
 				return "1", nil
 			case macKeyModeScope:
 				return "\"" + c.raw + "\"", nil
+			case macKeyTheme:
+				return "system", nil
 			}
 			t.Fatalf("意外的 defaults 读取键: %v", args)
 			return "", nil
@@ -152,12 +156,16 @@ func TestStoreDarwinWrites(t *testing.T) {
 	if err := SetModeScope(ModeScopeProcess); err != nil {
 		t.Fatalf("SetModeScope(process) 报错: %v", err)
 	}
+	if err := SetTheme(ThemeLight); err != nil {
+		t.Fatalf("SetTheme(light) 报错: %v", err)
+	}
 	if err := SetUiEnglish(true); err == nil {
 		t.Fatal("macOS 没有 UiEnglish 持久化，SetUiEnglish 应返回错误")
 	}
 	want := [][]string{
 		{"write", defaultsDomain, macKeyAssociate, "-bool", "false"},
 		{"write", defaultsDomain, macKeyModeScope, "-string", "process"},
+		{"write", defaultsDomain, macKeyTheme, "-string", "light"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("defaults 写入调用 = %v，期望 %v", calls, want)
@@ -167,6 +175,9 @@ func TestStoreDarwinWrites(t *testing.T) {
 	calls = nil
 	if err := SetModeScope(ModeScope("bogus")); err == nil {
 		t.Fatal("非法 ModeScope 应报错")
+	}
+	if err := SetTheme(Theme("bogus")); err == nil {
+		t.Fatal("非法 Theme 应报错")
 	}
 	if len(calls) != 0 {
 		t.Fatalf("非法 ModeScope 不应调用 defaults，实际: %v", calls)

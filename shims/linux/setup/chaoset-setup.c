@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include "setup_ctl.h"
 #include "setup_pages.h"
 
 #ifndef CHAOSET_VERSION
@@ -22,110 +23,80 @@ typedef struct {
 } SetupTheme;
 
 static const SetupTheme kThemeLight = {
-    "#F5EFE6", "#EFE7DB", "#FFFCF7", "#E8DCCC", "#EDE3D6",
-    "#2E2924", "#6E655A", "#8A7E72",
-    "#C9703F", "#A85427", "#96491F", "#F6E6D9", "#9C4A25",
-    "#F1E9DD", "#F7F0E6", "#E0D4C4", "#2E2924",
-    "#FFFCF7", "#A8482F", "#FFFDF9", "#5A3C2A", "0.12",
+    "#F4F7FB", "#EAF1F9", "#FFFFFF", "#D9E4F0", "#E4EDF6",
+    "#14213D", "#4A5A70", "#7A8899",
+    "#007AFF", "#0066EB", "#0052BE", "#E5F1FF", "#0066EB",
+    "#F0F5FB", "#E3EDF8", "#C9D9EB", "#14213D",
+    "#FFFFFF", "#D32F2F", "#FFFFFF", "#1B4A80", "0.12",
 };
 static const SetupTheme kThemeDark = {
-    "#1C1916", "#171412", "#26221E", "#3A332C", "#332D27",
-    "#F3ECE3", "#B4A79A", "#8B7F73",
-    "#E0915F", "#E0915F", "#EBA57A", "#3B2A20", "#E9A87C",
-    "#221E1A", "#2B2621", "#403830", "#F3ECE3",
-    "#F6EFE6", "#D97757", "#2A1B12", "#000000", "0.38",
+    "#101A2C", "#0C1626", "#1A2740", "#2D3E5C", "#243552",
+    "#F2F6FC", "#AFBFD6", "#7E90AC",
+    "#0066EB", "#007AFF", "#4DA3FF", "#16345C", "#7FB4FF",
+    "#223353", "#2C4165", "#3A5074", "#F2F6FC",
+    "#F2F6FC", "#FF7B72", "#FFFFFF", "#000000", "0.38",
 };
 
-/* 生成整套设置窗样式：只声明需要覆盖的属性，字体 family/行高交给桌面主题；颜色全部来自令牌表。 */
-static gchar *theme_css(const SetupTheme *t) {
+/* 用户在「外观」里显式选择的主题（NULL=跟随系统）；CSS 深浅选择据此强制覆盖
+ * 窗口背景亮度判定。全局 provider 便于切换时先移除旧的再装新的，避免叠加。 */
+static const gchar *g_forced_theme = NULL;
+static GtkWidget *g_theme_window = NULL;
+static GtkCssProvider *g_css_provider = NULL;
+
+static gchar *theme_css(const SetupTheme *t) { /* 颜色全部来自令牌表；字号 px 与 mac/Windows 的 pt 视觉对齐 */
     GString *css = g_string_new(NULL);
     g_string_append_printf(css,
         "window, window.background { background-color: %s; color: %s; }\n"
-        "headerbar, headerbar:backdrop { background-image: none; background-color: %s;"
-        " color: %s; border: none; box-shadow: none; min-height: 30px; padding: 0 6px; }\nheaderbar .titlebutton { background: none; border: none; box-shadow: none; color: %s; }\n",
+        "headerbar, headerbar:backdrop { background-image: none; background-color: %s; color: %s; border: none; box-shadow: none; min-height: 30px; padding: 0 6px; }\n"
+        "headerbar .titlebutton { background: none; border: none; box-shadow: none; color: %s; }\n",
         t->window_bg, t->text_primary, t->window_bg, t->text_primary, t->text_secondary);
-
-    /* 字号用 px 不用 pt：macOS 的 pt 即逻辑像素，GTK 的 pt 按 96dpi 会大 33%，px 才能对齐视觉字号。 */
     g_string_append_printf(css,
-        ".title { font-size: 15px; font-weight: bold; color: %s; }\n"
-        ".app-title { font-size: 13px; font-weight: bold; color: %s; }\n"
-        ".card-title { font-size: 13px; font-weight: bold; color: %s; }\n"
-        ".row-label { font-size: 13px; color: %s; }\n"
-        ".hint { font-size: 11px; color: %s; }\n"
-        ".footer { font-size: 11px; color: %s; }\n"
-        ".tertiary { font-size: 11px; color: %s; }\n"
-        ".link { font-size: 11px; color: %s; }\n"
+        ".title { font-size: 15px; font-weight: bold; color: %s; }\n.app-title { font-size: 13px; font-weight: bold; color: %s; }\n"
+        ".card-title { font-size: 13px; font-weight: bold; color: %s; }\n.row-label { font-size: 13px; color: %s; }\n"
+        ".hint { font-size: 11px; color: %s; }\n.footer { font-size: 11px; color: %s; }\n"
+        ".tertiary { font-size: 11px; color: %s; }\n.link { font-size: 11px; color: %s; }\n"
         ".brand-icon { background-color: %s; color: %s; border-radius: 12px; font-size: 20px; font-weight: bold; padding: 12px 14px; }\n",
         t->text_primary, t->text_primary, t->text_secondary, t->text_primary,
         t->text_secondary, t->text_secondary, t->text_tertiary, t->accent_text,
         t->accent_strong, t->on_accent);
-
     g_string_append_printf(css,
         ".nav-column { background-color: %s; }\n"
-        ".nav { background-color: transparent; background-image: none; border: none;"
-        " border-radius: 12px; color: %s; font-size: 13px; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
-        ".nav:hover { background-color: %s; }\n"
-        ".nav:active { background-color: %s; }\n"
-        ".nav:checked, .nav:checked:hover { background-color: %s; color: %s;"
-        " font-weight: bold; }\n",
-        t->nav_bg, t->text_primary, t->control_hover, t->control_hover,
-        t->accent_soft, t->accent_text);
-
-    /* 卡片：圆角 14 / 内边距 18 / 1pt 描边 / 柔和阴影；行高 36 由行容器保证 */
+        ".nav { background-color: transparent; background-image: none; border: none; border-radius: 12px; color: %s; font-size: 13px; padding: 0 12px; padding-left: 14px; box-shadow: none; }\n"
+        ".nav:hover { background-color: %s; }\n.nav:active { background-color: %s; }\n"
+        ".nav:checked, .nav:checked:hover { background-color: %s; color: %s; font-weight: bold; }\n",
+        t->nav_bg, t->text_primary, t->control_hover, t->control_hover, t->accent_soft, t->accent_text);
     g_string_append_printf(css,
-        ".card { background-color: %s; background-image: none; border: 1px solid %s;"
-        " border-radius: 14px; padding: 18px; box-shadow: 0 2px 12px alpha(%s, %s); }\n"
+        ".card { background-color: %s; background-image: none; border: 1px solid %s; border-radius: 14px; padding: 18px; box-shadow: 0 2px 12px alpha(%s, %s); }\n"
         ".row { min-height: 36px; }\n",
         t->card_bg, t->card_border, t->shadow, t->shadow_alpha);
-
     g_string_append_printf(css,
-        ".choice { background-color: %s; background-image: none; border: 1px solid %s;"
-        " border-radius: 12px; color: %s; font-size: 13px; min-height: 28px;"
-        " padding: 0 12px; box-shadow: none; }\n"
-        ".choice:hover { background-color: %s; }\n"
-        ".choice:active { background-color: %s; }\n"
-        ".choice:checked, .choice:checked:hover { background-color: %s;"
-        " border-color: %s; color: %s; font-weight: bold; }\n",
-        t->control_bg, t->control_border, t->control_text, t->control_hover,
-        t->control_hover, t->accent_soft, t->accent, t->accent_text);
-
+        ".choice { background-color: %s; background-image: none; border: 1px solid %s; border-radius: 12px; color: %s; font-size: 13px; min-height: 28px; padding: 0 12px; box-shadow: none; }\n"
+        ".choice:hover { background-color: %s; }\n.choice:active { background-color: %s; }\n"
+        ".choice:checked, .choice:checked:hover { background-color: %s; border-color: %s; color: %s; font-weight: bold; }\n",
+        t->control_bg, t->control_border, t->control_text, t->control_hover, t->control_hover, t->accent_soft, t->accent, t->accent_text);
     g_string_append_printf(css,
-        "button { font-size: 13px; min-height: 30px; padding: 0 14px;"
-        " border-radius: 12px; box-shadow: none; }\n"
-        ".primary, .primary:hover, .primary:active, .primary:backdrop {"
-        " background-image: none; border: 1px solid %s; color: %s; }\n"
-        ".primary { background-color: %s; }\n"
-        ".primary:hover, .primary:active { background-color: %s; border-color: %s; }\n"
-        ".secondary, .secondary:active, .secondary:backdrop { background-image: none;"
-        " border: 1px solid %s; color: %s; }\n"
-        ".secondary { background-color: %s; }\n"
-        ".secondary:hover { background-color: %s; }\n"
-        ".danger, .danger:backdrop { color: %s; }\n"
-        "button:focus, .nav:focus, .choice:focus { box-shadow: inset 0 0 0 2px %s; }\n",
+        "button { font-size: 13px; min-height: 30px; padding: 0 14px; border-radius: 12px; box-shadow: none; }\n"
+        ".primary, .primary:hover, .primary:active, .primary:backdrop { background-image: none; border: 1px solid %s; color: %s; }\n"
+        ".primary { background-color: %s; }\n.primary:hover, .primary:active { background-color: %s; border-color: %s; }\n"
+        ".secondary, .secondary:active, .secondary:backdrop { background-image: none; border: 1px solid %s; color: %s; }\n"
+        ".secondary { background-color: %s; }\n.secondary:hover { background-color: %s; }\n"
+        ".danger, .danger:backdrop { color: %s; }\nbutton:focus, .nav:focus, .choice:focus { box-shadow: inset 0 0 0 2px %s; }\n",
         t->accent_strong, t->on_accent, t->accent_strong, t->accent_pressed,
         t->accent_pressed, t->control_border, t->control_text, t->control_bg,
         t->control_hover, t->danger, t->accent);
-
     g_string_append_printf(css,
-        "switch { min-width: 38px; min-height: 22px; border-radius: 11px;"
-        " background-image: none; background-color: %s; border: 1px solid %s; }\n"
+        "switch { min-width: 38px; min-height: 22px; border-radius: 11px; background-image: none; background-color: %s; border: 1px solid %s; }\n"
         "switch:hover { background-color: %s; }\n"
-        "switch:checked, switch:checked:backdrop { background-color: %s;"
-        " border-color: %s; }\n"
+        "switch:checked, switch:checked:backdrop { background-color: %s; border-color: %s; }\n"
         "switch:checked:hover { background-color: %s; border-color: %s; }\n"
-        "switch slider { min-width: 16px; min-height: 16px; border-radius: 8px;"
-        " background-image: none; background-color: %s; border: 1px solid %s; box-shadow: none; }\n"
+        "switch slider { min-width: 16px; min-height: 16px; border-radius: 8px; background-image: none; background-color: %s; border: 1px solid %s; box-shadow: none; }\n"
         "switch:focus { box-shadow: inset 0 0 0 2px %s; }\n",
         t->control_bg, t->control_border, t->control_hover, t->accent, t->accent,
         t->accent_pressed, t->accent_pressed, t->knob, t->control_border, t->accent);
-
-    /* 对话框/文件选择器/禁用态：系统对话框也会继承暖色，避免冷蓝强调渗入 */
     g_string_append_printf(css,
         "dialog, messagedialog, filechooser { background-color: %s; color: %s; }\n"
-        "separator { background-color: %s; min-height: 1px; }\n"
-        "*:disabled { color: %s; }\n",
+        "separator { background-color: %s; min-height: 1px; }\n*:disabled { color: %s; }\n",
         t->window_bg, t->text_primary, t->divider, t->text_tertiary);
-
     return g_string_free(css, FALSE);
 }
 
@@ -139,6 +110,10 @@ static gboolean name_looks_dark(const gchar *name) {
 /* 深浅色判定：优先读窗口背景色相对亮度（跟随实际 GTK 主题）；窗口未实现化时为透明，
  * 退回 GtkSettings prefer-dark 与主题名。 */
 static gboolean window_prefers_dark(GtkWidget *window) {
+    /* 用户显式选择优先于自动判定（跟随系统时 g_forced_theme 为 NULL）。 */
+    if (g_forced_theme != NULL) {
+        return g_strcmp0(g_forced_theme, "dark") == 0;
+    }
     GtkStyleContext *style = gtk_widget_get_style_context(window);
     GValue value = G_VALUE_INIT; /* GTK 自己初始化 GValue，重复初始化会报 critical */
     gtk_style_context_get_property(style, "background-color", GTK_STATE_FLAG_NORMAL, &value);
@@ -167,22 +142,41 @@ static gboolean window_prefers_dark(GtkWidget *window) {
 }
 
 static void install_theme(GtkWidget *window) {
-    const SetupTheme *theme = window_prefers_dark(window) ? &kThemeDark : &kThemeLight;
-    gchar *css = theme_css(theme);
+    g_theme_window = window;
+    gchar *css = theme_css(window_prefers_dark(window) ? &kThemeDark : &kThemeLight);
+    GdkScreen *screen = gdk_screen_get_default();
+    if (screen != NULL && g_css_provider != NULL) { /* 切换时移除旧 provider，避免叠加 */
+        gtk_style_context_remove_provider_for_screen(screen, GTK_STYLE_PROVIDER(g_css_provider));
+        g_object_unref(g_css_provider);
+        g_css_provider = NULL;
+    }
     GtkCssProvider *provider = gtk_css_provider_new();
     GError *error = NULL;
     gtk_css_provider_load_from_data(provider, css, -1, &error);
     g_free(css);
-    if (error != NULL) {
-        g_warning("Chaoset 设置窗样式加载失败：%s", error->message);
-        g_clear_error(&error);
-    }
-    GdkScreen *screen = gdk_screen_get_default();
+    if (error != NULL) { g_warning("Chaoset 设置窗样式加载失败：%s", error->message); g_clear_error(&error); }
     if (screen != NULL) {
         gtk_style_context_add_provider_for_screen(
             screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        g_css_provider = provider; /* 持有引用供下次移除 */
+    } else { g_object_unref(provider); }
+}
+
+/* 外观主题应用（冷路径，只影响本 GTK3 设置窗）：dark→prefer-dark TRUE，
+ * light→FALSE，system→reset 交回桌面主题；ibus 候选/预编辑颜色不在此列。 */
+void setup_apply_theme(const char *theme) {
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings != NULL) {
+        if (g_strcmp0(theme, "dark") == 0) { g_object_set(settings, "gtk-application-prefer-dark-theme", TRUE, NULL); }
+        else if (g_strcmp0(theme, "light") == 0) { g_object_set(settings, "gtk-application-prefer-dark-theme", FALSE, NULL); }
+        else { gtk_settings_reset_property(settings, "gtk-application-prefer-dark-theme"); }
     }
-    g_object_unref(provider);
+    /* 显式选择覆盖 CSS 深浅；重装样式让本窗口立即重绘。 */
+    g_forced_theme = (g_strcmp0(theme, "light") == 0 || g_strcmp0(theme, "dark") == 0) ? theme : NULL;
+    if (g_theme_window != NULL && gtk_widget_get_visible(g_theme_window)) {
+        install_theme(g_theme_window);
+        gtk_widget_queue_draw(g_theme_window);
+    }
 }
 
 void setup_show_message(GtkWindow *parent, GtkMessageType type, const gchar *text) {
@@ -324,6 +318,8 @@ static GtkWidget *build_window(AppCtx *ctx) {
     ctx->window = window;
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE); gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER); /* 与 mac/Windows 同：固定 640×560、居中 */
     gtk_window_set_default_size(GTK_WINDOW(window), 640, 560); /* 客户区 640×560，三端同骨架 */
+    /* 冷路径应用保存过的外观主题，再据此生成 CSS（切换单选时由页面回调即时应用）。 */
+    setup_apply_theme(setup_config_load_theme());
     install_theme(window);
 
     /* 标题栏自绘（暖色 headerbar，避免系统灰标题栏割裂）。必须 set_titlebar 之后再

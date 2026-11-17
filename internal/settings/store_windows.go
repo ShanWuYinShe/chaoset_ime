@@ -26,6 +26,7 @@ const (
 	winValueAssociate = "Associate"
 	winValueModeScope = "ModeScope"
 	winValueUiEnglish = "UiEnglish"
+	winValueTheme     = "Theme"
 
 	winRegOptionNonVolatile = 0 // REG_OPTION_NON_VOLATILE（C 壳同参数）
 )
@@ -63,6 +64,11 @@ func Load() (Settings, error) {
 		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueUiEnglish, err)
 	} else if ok {
 		s.UiEnglish = value != 0
+	}
+	if value, ok, err := winQueryString(h, winValueTheme); err != nil {
+		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueTheme, err)
+	} else if ok {
+		s.Theme = parseStoredTheme(value)
 	}
 	return s, nil
 }
@@ -116,6 +122,23 @@ func SetUiEnglish(on bool) error {
 	}
 	if err := winSetDWORD(h, winValueUiEnglish, value); err != nil {
 		return fmt.Errorf("写注册表值 %s 失败: %w", winValueUiEnglish, err)
+	}
+	return nil
+}
+
+// SetTheme 只写 REG_SZ Theme（小写 system|light|dark，C 壳读取大小写不敏感
+// 并归一化未知值为 system）。
+func SetTheme(theme Theme) error {
+	if !theme.Valid() {
+		return fmt.Errorf("theme 非法: %q（只允许 system|light|dark）", string(theme))
+	}
+	h, err := winCreateKey()
+	if err != nil {
+		return fmt.Errorf("创建注册表 HKCU\\%s 失败: %w", windowsRegistrySubKey, err)
+	}
+	defer syscall.RegCloseKey(h)
+	if err := winSetString(h, winValueTheme, string(theme)); err != nil {
+		return fmt.Errorf("写注册表值 %s 失败: %w", winValueTheme, err)
 	}
 	return nil
 }
