@@ -390,6 +390,9 @@ void CandidateWindow::ensureWindow(HINSTANCE hinst) {
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
         // 窗口过程现在指向本 DLL 的代码：只要它还活着，DLL 就不能被卸载
         InterlockedIncrement(&g_liveCandidateWindows);
+        // Windows 11：申请 DWM 抗锯齿圆角（成功则布局不再套锯齿 GDI region，
+        // 圆角与系统阴影由 DWM 呈现；Win10 申请失败保持 SetWindowRgn 旧路径）。
+        dwmRounded_ = setDwmRoundedCorners(hwnd_);
     }
 }
 
@@ -766,7 +769,12 @@ void CandidateWindow::layoutAndPosition() {
         }
     }
 
-    SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, pt(16, dpi), pt(16, dpi)), TRUE);
+    // DWM 圆角已生效时不再套 region：region 轮廓无抗锯齿（锯齿边），且会把
+    // 自绘描边的四角弧段裁出锯齿缺口。绘制半径 pt(8) ≥ DWM 系统圆角半径，
+    // 裁剪区 ⊆ 绘制区，不会出现透明缺口（docs/ui-parity.md 面板质感）。
+    if (!dwmRounded_) {
+        SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, pt(16, dpi), pt(16, dpi)), TRUE);
+    }
     SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }

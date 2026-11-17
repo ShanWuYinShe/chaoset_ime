@@ -4,6 +4,18 @@
 
 ## 未发布
 
+- **视觉(Windows)：候选窗与模式 Toast 在 Win11 改用 DWM 抗锯齿圆角，消除 GDI
+  region 锯齿轮廓**：此前浮窗圆角靠 `SetWindowRgn(CreateRoundRectRgn)` 裁剪，
+  region 边缘无抗锯齿，任何缩放下都是硬锯齿（docs/ui-parity.md 面板质感行记载的
+  「圆角有锯齿」）。现在窗口创建时经 dwmapi 动态加载（零新静态导入，复用设置窗
+  的 DWM 写入模式）申请 `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`：
+  成功（Win11+）则布局跳过 region，圆角与系统阴影由 DWM 呈现、边缘抗锯齿；
+  失败（Win10/服务器核心）静默保持 SetWindowRgn 旧路径，老系统观感不变。
+  自绘圆角半径（候选窗 pt(8)、Toast pt(10)）≥ DWM 系统圆角半径，裁剪区 ⊆ 绘制
+  区，不会出现透明缺口；代价是自绘 1pt 描边的四角弧段被 DWM 裁掉，轮廓由 DWM
+  抗锯齿边缘呈现（Win11 应用常态观感）。CS_DROPSHADOW 与 DWM 阴影是否叠加
+  为**真机验收项**。候选窗与模式 Toast 两处浮窗同处理；公共助手
+  `winutil::setDwmRoundedCorners` 供两个叶子模块共用。
 - **视觉(三端深色)：候选窗与模式 Toast 深色表面统一为深海军蓝家族**：设置窗深色在
   v0.3.32 已是深海军蓝，而候选窗/Toast 深色仍是中性灰（#2C2C2E 面板 + #5A5A5E 键帽），
   同一产品的深色表面存在两种色相。本次把深色面板底统一为设置窗 cardBg `#1A2740`、

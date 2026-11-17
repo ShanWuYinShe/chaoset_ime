@@ -163,7 +163,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | Windows per-monitor DPI | 系统自动 | GetDpiForMonitor 按锚点/窗口 DPI，处理 WM_DPICHANGED | 由桌面环境决定 | 混合 DPI 多屏需真机验收 |
 | 双拼 mspy ; | 支持 | 支持 | 支持 | 引擎下发 shuangpin，壳路由到 input |
 | 学习标记 * | 显示 | 显示 | 不适用 | ibus 无独立装饰层 |
-| 面板质感 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1pt 描边 + CS_DROPSHADOW + SetWindowRgn 圆角 | GDI 限制；Windows 无毛玻璃、圆角有锯齿 |
+| 面板质感 | 半透明 sRGB 底 + 1pt 描边 + 系统阴影 | 不透明预混合色 + 1pt 描边 + CS_DROPSHADOW；**Win11 申请 DWM 抗锯齿圆角（DWMWCP_ROUND，自带系统阴影，不再套 region）**，Win10 申请失败保持 SetWindowRgn 圆角（region 轮廓有锯齿，属已知旧系统限制） | 候选窗与 Toast 同处理；Win11 圆角观感/阴影是否叠加 CS_DROPSHADOW 需真机验收；Windows 无毛玻璃 |
 | 窗口层级 | .floating(3)，不遮蔽菜单栏 | WS_EX_TOPMOST + owner=宿主窗口 | owned 候选窗在宿主之上，可跨开始菜单/搜索的沉浸式 z 序 |
 | 全屏免打扰 | 无 AppKit 对应机制 | D3D 全屏/演示模式抑制候选窗；FullscreenSuppress 注册表可关 | 只抑制显示，不改变按键/组词；无边框全屏不触发 |
 | 游戏/UILess 宿主输入 | 无对应机制（宿主不经文本输入系统则任何 IMK 输入法收不到按键） | UILess 线程照常激活 + 候选默认 GDI 自绘（通用无名单）；锚点优先取宿主经 IMM32 兼容层写进 HIMC 的输入框位置，并用同值把系统组字窗挪到输入区；拿不到才退回 GDI 光标/鼠标；官方协商为显式开关 UiElementRender（缺省 0）；UILessActivate 注册表可关 | ibus 由面板/宿主呈现候选，无 UILess 概念 |

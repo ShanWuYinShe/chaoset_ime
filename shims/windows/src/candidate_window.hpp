@@ -132,6 +132,10 @@ private:
     int getDpi() const;
     int layoutDpi_ = 0;  // layoutAndPosition 时按 targetPos_ 计算并缓存，onPaint 复用
 
+    // Windows 11 DWM 圆角申请成功标记：成功时布局跳过 SetWindowRgn（锯齿
+    // GDI region），圆角轮廓交给 DWM 抗锯齿呈现；Win10 上申请失败走旧路径。
+    bool dwmRounded_ = false;
+
     // 候选窗统一以 **pt** 为布局单位：MulDiv(pt, dpi, 72)（与 macOS 1:1）。
     static int pt(int v, int dpi);
 
