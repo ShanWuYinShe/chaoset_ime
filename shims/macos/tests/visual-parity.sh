@@ -88,7 +88,7 @@ GO_COLORS = {
     "userMark": "#34C759FF", "divider": "#00000014", "chevron": "#8E8E93D0",
 }
 GO_COLORS_DARK = {
-    # 深色 = 深海军蓝家族（v0.3.33）：panelBg=设置窗 cardBg、chipBg=controlBg、
+    # 深色 = 深海军蓝家族：panelBg=设置窗 cardBg、chipBg=controlBg、
     # text/chipDigit=textPrimary、page/chevron=textTertiary；描边/分隔线白 alpha。
     "panelBg": "#1A2740F5", "panelBorder": "#FFFFFF24", "text": "#F2F6FCFF",
     "highlightBg": "#0066EBFF", "highlightText": "#FFFFFFFF",

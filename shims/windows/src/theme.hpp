@@ -33,7 +33,7 @@ struct CandidateColors {
     // 「有效色」固化成常量——公式与最终值必须与 mac 一致，否则同一候选窗
     // 在两端深浅不同（2026-10-30 三端一致性审计 R5/A5）：
     //   有效色 = round(bg*(1-a) + fg*a)，bg 为该色实际叠加的面板/键帽底色。
-    // 深色板 = 深海军蓝家族（v0.3.33，与 macOS CandidateTheme/设置窗深色同族）：
+    // 深色板 = 深海军蓝家族（与 macOS CandidateTheme/设置窗深色同族）：
     // panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、
     // text/chipDigit=textPrimary #F2F6FC、page/chevron=textTertiary #7E90AC。
     static CandidateColors get(bool dark) {
