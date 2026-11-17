@@ -130,6 +130,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   （Windows GDI 画直径 pt(10)*2；Win11 由 DWM 抗锯齿圆角呈现，见「已知功能差异·面板质感」）。
 - 不用 calibratedWhite / white 灰阶（其 sRGB 有效值与本表不符，见两端源码注释）；
   改动本表必须两端同步。
+- Linux：ibus 面板没有独立 Toast 层（模式反馈由 ibus/桌面指示器承担），本表不适用。
 - **机器断言**：mac 值经 `ModeToastView.palette` 由
   `shims/macos/tests/visual-parity.sh` F 段逐色断言（panel_metrics 导出
   toastLight/toastDark）；Windows 预混合常量由 `make check-uiparity`「Toast 配色」
