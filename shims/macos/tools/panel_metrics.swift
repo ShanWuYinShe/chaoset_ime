@@ -93,6 +93,13 @@ import Foundation
         // 配色：浅色 + 深色两套，Go↔Swift 逐色比对
         out["colors"] = colors(CandidateTheme.theme(dark: false))
         out["colorsDark"] = colors(CandidateTheme.theme(dark: true))
+        // Toast 配色（浅/深）：docs/ui-parity.md「Toast 配色」机器断言源
+        // （visual-parity.sh F 段逐色比对；Windows 侧由 checkuiparity 断言）。
+        func toastColors(_ p: (bg: NSColor, text: NSColor, stroke: NSColor)) -> [String: String] {
+            ["bg": hex(p.bg), "text": hex(p.text), "stroke": hex(p.stroke)]
+        }
+        out["toastLight"] = toastColors(ModeToastView.palette(isDark: false))
+        out["toastDark"] = toastColors(ModeToastView.palette(isDark: true))
 
         let data = try! JSONSerialization.data(
             withJSONObject: out, options: [.prettyPrinted, .sortedKeys])

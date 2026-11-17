@@ -424,6 +424,20 @@ func checkCandidateDivider(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupCandidateDivider, winShell, "textH * 55 / 100")
 }
 
+// checkToastColors 模式 Toast 两端配色同值（docs/ui-parity.md「Toast 配色」）。
+// mac 侧经 ModeToastView.palette 由 shims/macos/tests/visual-parity.sh F 段
+// 逐色断言；这里锁 Windows mode_toast.cpp 的预混合常量被单端改动（winShell
+// 是聚合逻辑文件，覆盖 mode_toast.cpp）。断言用「整行三元片段」而非单色值：
+// 深色文字/浅色底等值与候选窗 theme.hpp 共享，单色值断言无法定位到 Toast。
+// 改任一端配色必须 Windows + macOS + 文档表三处同步。
+func checkToastColors(fsys fs.FS, problems *[]string) {
+	checkContains(fsys, problems, groupToastTheme, winShell,
+		"CreateSolidBrush(dark ? RGB(0x1A, 0x27, 0x40) : RGB(0xF6, 0xF6, 0xF8))",
+		"dark ? RGB(0x3A, 0x45, 0x5B) : RGB(0xDD, 0xDD, 0xDF)",
+		"SetTextColor(dc, dark ? RGB(0xF2, 0xF6, 0xFC) : RGB(0x26, 0x26, 0x28))",
+	)
+}
+
 // checkThemeFieldParity 候选窗 13 个主题色字段名必须两端一致（任一新增/删除都会 FAIL）。
 func checkThemeFieldParity(fsys fs.FS, problems *[]string) {
 	const group = groupCandidateTheme

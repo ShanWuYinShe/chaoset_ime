@@ -137,32 +137,38 @@ private let modeToastDuration: TimeInterval = 1.2
 final class ModeToastView: NSView {
     var text: String = "" { didSet { needsDisplay = true } }
 
+    /// 浅/深 Toast 配色（与候选窗面板同族，两端同值）：draw 与 panel_metrics
+    /// （visual-parity.sh「Toast 配色」逐色断言）共用这一单一出口，
+    /// docs/ui-parity.md「Toast 配色」是文档事实源。此前浅色是 white 0.97 底 +
+    /// calibratedWhite 0.15 文字（sRGB 实测 #333333），与 Windows 存在可见色差。
+    static func palette(isDark: Bool) -> (bg: NSColor, text: NSColor, stroke: NSColor) {
+        if isDark {
+            return (
+                bg: NSColor(srgbRed: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0, alpha: 0.92),
+                text: NSColor(srgbRed: 0xF2 / 255.0, green: 0xF6 / 255.0, blue: 0xFC / 255.0, alpha: 1),
+                stroke: NSColor(white: 1, alpha: 0x24 / 255.0)
+            )
+        }
+        return (
+            bg: NSColor(srgbRed: 0xF6 / 255.0, green: 0xF6 / 255.0, blue: 0xF8 / 255.0, alpha: 0.95),
+            text: NSColor(srgbRed: 0x26 / 255.0, green: 0x26 / 255.0, blue: 0x28 / 255.0, alpha: 1),
+            stroke: NSColor(white: 0, alpha: 0x1A / 255.0)
+        )
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         // 与候选窗一致：用户主题优先（system 跟随系统，light/dark 强制）。
         let isDark = CandidateAppearance.isDark(effectiveAppearance: effectiveAppearance)
-        // 浅/深都与候选窗面板同族（两端同值，docs/ui-parity.md「Toast 配色」）：
-        // 浅色 = #F6F6F8 底 + 黑 alpha 1A 描边 + #262628 文字；深色 = #1A2740
-        // 底 + 白 alpha 24 描边 + #F2F6FC 文字。此前浅色是 white 0.97 底 +
-        // calibratedWhite 0.15 文字（实测有效值 #333333），与 Windows
-        // #F6F6F8/#262628 存在可见色差。
-        let bg = isDark
-            ? NSColor(srgbRed: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0, alpha: 0.92)
-            : NSColor(srgbRed: 0xF6 / 255.0, green: 0xF6 / 255.0, blue: 0xF8 / 255.0, alpha: 0.95)
-        let fg = isDark
-            ? NSColor(srgbRed: 0xF2 / 255.0, green: 0xF6 / 255.0, blue: 0xFC / 255.0, alpha: 1)
-            : NSColor(srgbRed: 0x26 / 255.0, green: 0x26 / 255.0, blue: 0x28 / 255.0, alpha: 1)
+        let p = ModeToastView.palette(isDark: isDark)
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
-        bg.setFill()
+        p.bg.setFill()
         path.fill()
-        let stroke = isDark
-            ? NSColor(white: 1, alpha: 0x24 / 255.0)
-            : NSColor(white: 0, alpha: 0x1A / 255.0)
-        stroke.setStroke()
+        p.stroke.setStroke()
         path.lineWidth = 1
         path.stroke()
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-            .foregroundColor: fg,
+            .foregroundColor: p.text,
         ]
         let size = (text as NSString).size(withAttributes: attrs)
         (text as NSString).draw(
