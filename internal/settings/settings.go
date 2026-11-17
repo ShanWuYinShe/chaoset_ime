@@ -17,6 +17,8 @@
 //	  ModeScope  REG_SZ     缺省 "system"；只写入 system|process，读取大小写不敏感
 //	                        并归一化旧值（旧三档 window→process，未知→system）
 //	  UiEnglish  REG_DWORD  缺省 0（UI 宿主上次的中英模式镜像）
+//	  Theme      REG_SZ     缺省 "system"；只写入 system|light|dark，读取大小写
+//	                        不敏感并归一化未知值为 system
 //
 // macOS（shims/macos/src/CandidateSettings.swift：AssociateSetting、
 // ModeScopeSetting，拆分前在 CandidatePanel.swift；SettingsWindow.swift
@@ -28,6 +30,7 @@
 //	  AssociateEnabled    Bool    缺省 true
 //	  ChaosetModeScope    String  缺省 "system"（system|process；
 //	                              旧值 window 读取时归一化）
+//	  ChaosetTheme        String  缺省 "system"（system|light|dark；读取宽容归一化）
 //	  （UiEnglish：macOS 壳没有持久化中英状态，不支持，见 ErrUnsupported）
 //
 // Linux（shims/linux/setup/setup_ctl.c：setup_config_load/setup_config_save/
@@ -37,6 +40,7 @@
 //	$XDG_CONFIG_HOME/chaoset/config.json（缺省 $HOME/.config/chaoset/config.json）
 //	  "associate"   bool    缺省 true
 //	  "mode_scope"  string  缺省 "system"（system|process；旧值 window 读取时归一化）
+//	  "theme"       string  缺省 "system"（system|light|dark；读取宽容归一化）
 //	  其它键（fuzzy/traditional/shuangpin 等）原样保留。
 //	  （UiEnglish：Linux 壳没有持久化中英状态，不支持）
 //
@@ -44,9 +48,11 @@
 //
 // 单行紧凑 JSON，字段顺序固定：
 //
-//	{"associate":true,"mode_scope":"system","ui_english":false}
+//	{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
 //
 // 供 chaoset-settingsctl get 输出与三端设置窗解析；改字段名即破坏契约。
+// theme 是用户可见的外观选择：system 跟随系统（默认）/ light 浅色 / dark 深色；
+// 三端存储键名见下方各平台段落（与壳逐字兼容，禁止改键名）。
 package settings
 
 import (
@@ -91,11 +97,38 @@ func (m ModeScope) Valid() bool {
 	return false
 }
 
+// Theme 是用户可见的外观选择，三端统一三档（与 Windows HKCU Theme、
+// macOS ChaosetTheme、Linux config.json theme 同语义）：
+//
+//   - system：跟随系统外观（默认）；
+//   - light：强制浅色（蓝白）；
+//   - dark：强制深色。
+//
+// 只影响 UI（候选窗/设置窗/托盘），不影响输入引擎行为。
+type Theme string
+
+const (
+	ThemeSystem Theme = "system"
+	ThemeLight  Theme = "light"
+	ThemeDark   Theme = "dark"
+)
+
+// Valid 报告主题是否为三档合法取值之一（大小写敏感；存储读取路径用
+// parseStoredTheme 做宽容归一化，CLI 解析用 ParseTheme）。
+func (t Theme) Valid() bool {
+	switch t {
+	case ThemeSystem, ThemeLight, ThemeDark:
+		return true
+	}
+	return false
+}
+
 // Settings 是三端统一设置项。JSON 字段名/顺序即 CLI 契约。
 type Settings struct {
 	Associate bool      `json:"associate"`
 	ModeScope ModeScope `json:"mode_scope"`
 	UiEnglish bool      `json:"ui_english"`
+	Theme     Theme     `json:"theme"`
 }
 
 // Defaults 返回三端一致的缺省值（与三端现有壳的缺省行为一致）。
@@ -104,6 +137,7 @@ func Defaults() Settings {
 		Associate: true,
 		ModeScope: ModeScopeSystem,
 		UiEnglish: false,
+		Theme:     ThemeSystem,
 	}
 }
 
@@ -112,6 +146,9 @@ func Defaults() Settings {
 func (s Settings) Validate() error {
 	if !s.ModeScope.Valid() {
 		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(s.ModeScope))
+	}
+	if !s.Theme.Valid() {
+		return fmt.Errorf("theme 非法: %q（只允许 system|light|dark）", string(s.Theme))
 	}
 	return nil
 }
@@ -173,4 +210,35 @@ func parseStoredModeScope(raw string) ModeScope {
 		return scope
 	}
 	return ModeScopeSystem
+}
+
+// ParseTheme 解析 CLI/调用方传入的主题：只接受 system|light|dark；
+// 容忍首尾空白与大小写。非法输入报参数错误。
+func ParseTheme(raw string) (Theme, error) {
+	if t, ok := normalizeTheme(raw); ok {
+		return t, nil
+	}
+	return "", fmt.Errorf("theme 只接受 system|light|dark，收到 %q", raw)
+}
+
+// normalizeTheme 把大小写/首尾空白容忍的取值归一化为三档主题。
+func normalizeTheme(raw string) (Theme, bool) {
+	switch Theme(strings.ToLower(strings.TrimSpace(raw))) {
+	case ThemeSystem:
+		return ThemeSystem, true
+	case ThemeLight:
+		return ThemeLight, true
+	case ThemeDark:
+		return ThemeDark, true
+	}
+	return "", false
+}
+
+// parseStoredTheme 归一化从原生存储读到的 theme（三端一致）：
+// system/light/dark 保持原值，大小写/首尾空白容忍；未知/空值回退缺省 system。
+func parseStoredTheme(raw string) Theme {
+	if t, ok := normalizeTheme(raw); ok {
+		return t
+	}
+	return ThemeSystem
 }

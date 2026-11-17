@@ -150,6 +150,40 @@ static void test_config_mode_scope_legacy_normalized(void) {
     g_free(dir);
 }
 
+// 外观主题：缺省 system；保存只改 theme 键；取值 system|light|dark，未知→system。
+static void test_config_theme(void) {
+    gchar *dir = g_dir_make_tmp("chaoset-setup-test-XXXXXX", NULL);
+    g_assert_nonnull(dir);
+    g_setenv("XDG_CONFIG_HOME", dir, TRUE);
+    g_setenv("PATH", "/nonexistent", TRUE);
+    gchar *path = g_build_filename(dir, "chaoset", "config.json", NULL);
+    gchar *dir_path = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir_path, 0700);
+    g_assert_true(g_file_set_contents(path,
+        "{\n  \"fuzzy\": true,\n  \"mode_scope\": \"process\",\n"
+        "  \"theme\": \"system\"\n}\n", -1, NULL));
+    g_assert_true(setup_config_save_theme("dark"));
+    gchar *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_assert_nonnull(g_strstr_len(text, -1, "\"fuzzy\": true"));
+    g_assert_nonnull(g_strstr_len(text, -1, "\"mode_scope\": \"process\""));
+    g_assert_nonnull(g_strstr_len(text, -1, "\"theme\": \"dark\""));
+    g_free(text);
+    g_assert_false(setup_config_save_theme("bogus"));
+    const struct { const char *raw; const char *want; } cases[] = {
+        {"light", "light"}, {"DARK", "dark"}, {" Light ", "light"}, {"bogus", "system"},
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+        gchar *json = g_strdup_printf("{\n  \"theme\": \"%s\"\n}\n", cases[i].raw);
+        g_assert_true(g_file_set_contents(path, json, -1, NULL));
+        g_free(json);
+        g_assert_cmpstr(setup_config_load_theme(), ==, cases[i].want);
+    }
+    g_free(dir_path);
+    g_free(path);
+    g_free(dir);
+}
+
 int main(int argc, char **argv) {
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/setupctl/config_roundtrip", test_config_roundtrip);
@@ -160,5 +194,6 @@ int main(int argc, char **argv) {
                     test_config_mode_scope_defaults_create_and_corrupt);
     g_test_add_func("/setupctl/config_mode_scope_legacy_normalized",
                     test_config_mode_scope_legacy_normalized);
+    g_test_add_func("/setupctl/config_theme", test_config_theme);
     return g_test_run();
 }

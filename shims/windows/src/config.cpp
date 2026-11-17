@@ -141,7 +141,9 @@ static void invalidateModeScopeCache() { g_cfgStamp[0] = 0; }
 
 bool cachedDarkTheme() {
     if (!cacheFresh(2, 1000)) {
-        g_cfgDark = isSystemDarkTheme();
+        // 外观主题（跟随系统/浅色/深色）由 uiEffectiveDark 统一判定：
+        // 候选窗/Toast 等读本缓存的调用点自动跟随设置窗里的主题选择。
+        g_cfgDark = uiEffectiveDark();
         cacheTouch(2);
     }
     return g_cfgDark;
@@ -247,6 +249,38 @@ void uiSaveModeScope(ModeScope scope) {
     RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"ModeScope",
                     REG_SZ, text, static_cast<DWORD>((wcslen(text) + 1) * sizeof(wchar_t)));
     invalidateModeScopeCache();  // 设置窗改了作用域：TIP 侧缓存立即失效
+}
+
+// 外观主题读取宽容归一化（三端一致）：system→System；light→Light；dark→Dark；
+// 未知/空→System（默认跟随系统，最符合用户直觉）。大小写不敏感。
+Theme uiLoadTheme() {
+    wchar_t buf[32] = {0};
+    DWORD size = sizeof(buf) - sizeof(wchar_t);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"Theme",
+                     RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS) {
+        if (_wcsicmp(buf, L"system") == 0) return Theme::System;
+        if (_wcsicmp(buf, L"light") == 0) return Theme::Light;
+        if (_wcsicmp(buf, L"dark") == 0) return Theme::Dark;
+    }
+    return Theme::System;
+}
+
+void uiSaveTheme(Theme theme) {
+    const wchar_t* text = L"system";
+    if (theme == Theme::Light) text = L"light";
+    else if (theme == Theme::Dark) text = L"dark";
+    RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"Theme",
+                    REG_SZ, text, static_cast<DWORD>((wcslen(text) + 1) * sizeof(wchar_t)));
+    invalidateThemeCache();  // 主题改变：候选窗/Toast 深色缓存立即失效
+}
+
+bool uiEffectiveDark() {
+    switch (uiLoadTheme()) {
+        case Theme::Light: return false;
+        case Theme::Dark: return true;
+        case Theme::System:
+        default: return isSystemDarkTheme();
+    }
 }
 
 }  // namespace chaoset::win

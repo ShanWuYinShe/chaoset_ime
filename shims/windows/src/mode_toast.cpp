@@ -11,6 +11,7 @@
 
 #include <string>
 
+#include "config.hpp"  // cachedDarkTheme：跟随外观主题（system/light/dark）
 #include "diagnostics.hpp"
 #include "mode_toast.hpp"
 #include "theme.hpp"
@@ -134,7 +135,9 @@ HFONT ModeToast::makeFont() const {
 void ModeToast::onPaint(HWND hwnd) {
     PAINTSTRUCT ps{};
     HDC dc = BeginPaint(hwnd, &ps);
-    const bool dark = isSystemDarkTheme();
+    // 跟随外观主题（uiEffectiveDark 经 TTL 缓存）；主题切换时 WM_SETTINGCHANGE
+    // 会使缓存失效并触发重绘，保证配色一致。
+    const bool dark = cachedDarkTheme();
     HBRUSH bg = CreateSolidBrush(dark ? RGB(0x2C, 0x2C, 0x2E) : RGB(0xF6, 0xF6, 0xF8));
     // 描边 1pt（mac Toast 同为 1pt；用 show() 缓存的 dpi_，见 strokePx）
     HPEN pen = CreatePen(PS_SOLID, strokePx(dpi_),

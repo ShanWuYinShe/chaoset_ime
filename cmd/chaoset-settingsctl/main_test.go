@@ -23,6 +23,9 @@ func TestRunUsageErrors(t *testing.T) {
 		{"set", "mode-scope", "auto"},       // 非法枚举
 		{"set", "mode-scope", "bogus"},      // 非法枚举
 		{"set", "mode-scope", "system", ""}, // 多余参数
+		{"set", "theme"},                    // 缺取值
+		{"set", "theme", "auto"},            // 非法枚举
+		{"set", "theme", "light", "dark"},   // 多余参数
 		{"set", "ui-english", "maybe"},      // 非法开关
 	}
 	for _, args := range cases {

@@ -33,13 +33,9 @@ namespace chaoset::win {
  volatile LONG g_liveSettingsWindows = 0;
 
 // ---- 设置窗口（三端一致：macOS SettingsWindow.swift 同构）----
-//
-// 候选栏齿轮 / 托盘菜单 → 独立设置窗口（单例：已打开则切页前置）。设置窗只做
-// 设置项读写，**不访问 TIP**（可活过 TIP，见 SettingsWndProc 的 UAF 注释）；
-// 学习数据经独立 PipeTransport + core::Session 连 daemon，与输入法主连接互不影响。
-//
-// 视觉：暖陶纸感令牌（SettingsColors）+ 自绘导航/卡片/页脚，跟随系统深浅色与
-// per-monitor DPI；交互控件用 BS_OWNERDRAW 子窗口保留原生可访问性，外观自绘。
+// 齿轮/托盘菜单 → 独立单例设置窗；只读写设置项、不访问 TIP（可活过 TIP），
+// 学习数据经独立 PipeTransport 连 daemon。视觉：蓝白令牌（SettingsColors）+
+// 自绘导航/卡片/页脚，跟随外观主题与 per-monitor DPI，控件用 BS_OWNERDRAW。
 static HWND g_settingsWnd = nullptr;        // 单例句柄
 static int g_settingsDpi = 96;              // 设置窗所在显示器 DPI（per-monitor）
 static HFONT g_settingsFont = nullptr;      // 正文/行标签 13pt
@@ -60,6 +56,7 @@ static bool g_settingsTrackingMouse = false;  // 父窗口是否已注册 TME_LE
 // 点选时经 set 写入。自绘控件每帧都读它——绝不能在 WM_DRAWITEM 里读注册表/
 // 起进程（每次重绘都发一次进程会明显拖慢设置窗）。
 static ModeScope g_settingsModeScope = ModeScope::System;
+static Theme g_settingsTheme = Theme::System;  // 外观主题缓存，绘制时只读
 
 // ---- 设置窗布局：左侧导航 + 右侧分组卡片 + 滚动 ----
 // 导航/卡片背景自绘（Win32 标准控件不跟随系统深色），内容行用 BS_OWNERDRAW
@@ -119,6 +116,8 @@ struct SettingsCardDef {
 static constexpr int kInputCard1H = 50 + kRowHeight + kHintGap + kHintH + kCardPad;   // 132
 static constexpr int kInputCard2Y = kInputCard1H + kCardGap;                          // 148
 static constexpr int kInputCard2H = 50 + kChoiceH + kHintGap + kHintH + kCardPad;     // 126
+static constexpr int kInputCard3Y = kInputCard2Y + kInputCard2H + kCardGap;
+static constexpr int kInputCard3H = kInputCard2H;
 static constexpr int kDictCard1H = 50 + kStatsH + kRowGap + kButtonH + kHintGap + kHintH + kCardPad;  // 156
 static constexpr int kDictCard2Y = kDictCard1H + kCardGap;                            // 172
 static constexpr int kDictCard2H = 50 + kButtonH + kHintGap + kHintH2 + kCardPad;    // 146
@@ -127,6 +126,7 @@ static constexpr int kAboutCardH = 50 + 44 + 16 + 3 * 22 + kCardPad;            
 static const SettingsCardDef kInputCards[] = {
     {0, kInputCard1H, L"输入行为"},
     {kInputCard2Y, kInputCard2H, L"中英状态"},
+    {kInputCard3Y, kInputCard3H, L"外观主题"},
 };
 static const SettingsCardDef kDictionaryCards[] = {
     {0, kDictCard1H, L"学习数据"},
@@ -207,51 +207,51 @@ struct SettingsColors {
 static SettingsColors settingsColors(bool dark) {
     if (dark) {
         return {
-            RGB(0x1C, 0x19, 0x16),  // windowBg #1C1916
-            RGB(0x17, 0x14, 0x12),  // navBg #171412
-            RGB(0x26, 0x22, 0x1E),  // cardBg #26221E
-            RGB(0x3A, 0x33, 0x2C),  // cardBorder #3A332C
-            RGB(0x33, 0x2D, 0x27),  // divider #332D27
-            RGB(0xF3, 0xEC, 0xE3),  // textPrimary #F3ECE3
-            RGB(0xB4, 0xA7, 0x9A),  // textSecondary #B4A79A
-            RGB(0x8B, 0x7F, 0x73),  // textTertiary #8B7F73
-            RGB(0xE0, 0x91, 0x5F),  // accent #E0915F
-            RGB(0xE0, 0x91, 0x5F),  // accentStrong #E0915F
-            RGB(0xEB, 0xA5, 0x7A),  // accentPressed #EBA57A
-            RGB(0x3B, 0x2A, 0x20),  // accentSoft #3B2A20
-            RGB(0xE9, 0xA8, 0x7C),  // accentText #E9A87C
-            RGB(0x22, 0x1E, 0x1A),  // controlBg #221E1A
-            RGB(0x2B, 0x26, 0x21),  // controlHover #2B2621
-            RGB(0x40, 0x38, 0x30),  // controlBorder #403830
-            RGB(0xF3, 0xEC, 0xE3),  // controlText #F3ECE3
-            RGB(0xF6, 0xEF, 0xE6),  // knob #F6EFE6
-            RGB(0xD9, 0x77, 0x57),  // danger #D97757
-            RGB(0x2A, 0x1B, 0x12),  // onAccent #2A1B12
+            RGB(0x10, 0x1A, 0x2C),  // windowBg #101A2C
+            RGB(0x0C, 0x16, 0x26),  // navBg #0C1626
+            RGB(0x1A, 0x27, 0x40),  // cardBg #1A2740
+            RGB(0x2D, 0x3E, 0x5C),  // cardBorder #2D3E5C
+            RGB(0x24, 0x35, 0x52),  // divider #243552
+            RGB(0xF2, 0xF6, 0xFC),  // textPrimary #F2F6FC
+            RGB(0xAF, 0xBF, 0xD6),  // textSecondary #AFBFD6
+            RGB(0x7E, 0x90, 0xAC),  // textTertiary #7E90AC
+            RGB(0x00, 0x66, 0xEB),  // accent #0066EB
+            RGB(0x00, 0x7A, 0xFF),  // accentStrong #007AFF
+            RGB(0x4D, 0xA3, 0xFF),  // accentPressed #4DA3FF
+            RGB(0x16, 0x34, 0x5C),  // accentSoft #16345C
+            RGB(0x7F, 0xB4, 0xFF),  // accentText #7FB4FF
+            RGB(0x22, 0x33, 0x53),  // controlBg #223353
+            RGB(0x2C, 0x41, 0x65),  // controlHover #2C4165
+            RGB(0x3A, 0x50, 0x74),  // controlBorder #3A5074
+            RGB(0xF2, 0xF6, 0xFC),  // controlText #F2F6FC
+            RGB(0xF2, 0xF6, 0xFC),  // knob #F2F6FC
+            RGB(0xFF, 0x7B, 0x72),  // danger #FF7B72
+            RGB(0xFF, 0xFF, 0xFF),  // onAccent #FFFFFF
             RGB(0x00, 0x00, 0x00),  // shadow #000000（rgba 0.38 的基色）
         };
     }
     return {
-        RGB(0xF5, 0xEF, 0xE6),  // windowBg #F5EFE6
-        RGB(0xEF, 0xE7, 0xDB),  // navBg #EFE7DB
-        RGB(0xFF, 0xFC, 0xF7),  // cardBg #FFFCF7
-        RGB(0xE8, 0xDC, 0xCC),  // cardBorder #E8DCCC
-        RGB(0xED, 0xE3, 0xD6),  // divider #EDE3D6
-        RGB(0x2E, 0x29, 0x24),  // textPrimary #2E2924
-        RGB(0x6E, 0x65, 0x5A),  // textSecondary #6E655A
-        RGB(0x8A, 0x7E, 0x72),  // textTertiary #8A7E72
-        RGB(0xC9, 0x70, 0x3F),  // accent #C9703F
-        RGB(0xA8, 0x54, 0x27),  // accentStrong #A85427
-        RGB(0x96, 0x49, 0x1F),  // accentPressed #96491F
-        RGB(0xF6, 0xE6, 0xD9),  // accentSoft #F6E6D9
-        RGB(0x9C, 0x4A, 0x25),  // accentText #9C4A25
-        RGB(0xF1, 0xE9, 0xDD),  // controlBg #F1E9DD
-        RGB(0xF7, 0xF0, 0xE6),  // controlHover #F7F0E6
-        RGB(0xE0, 0xD4, 0xC4),  // controlBorder #E0D4C4
-        RGB(0x2E, 0x29, 0x24),  // controlText #2E2924
-        RGB(0xFF, 0xFC, 0xF7),  // knob #FFFCF7
-        RGB(0xA8, 0x48, 0x2F),  // danger #A8482F
-        RGB(0xFF, 0xFD, 0xF9),  // onAccent #FFFDF9
-        RGB(0x5A, 0x3C, 0x2A),  // shadow #5A3C2A（rgba 0.12 的基色）
+        RGB(0xF4, 0xF7, 0xFB),  // windowBg #F4F7FB
+        RGB(0xEA, 0xF1, 0xF9),  // navBg #EAF1F9
+        RGB(0xFF, 0xFF, 0xFF),  // cardBg #FFFFFF
+        RGB(0xD9, 0xE4, 0xF0),  // cardBorder #D9E4F0
+        RGB(0xE4, 0xED, 0xF6),  // divider #E4EDF6
+        RGB(0x14, 0x21, 0x3D),  // textPrimary #14213D
+        RGB(0x4A, 0x5A, 0x70),  // textSecondary #4A5A70
+        RGB(0x7A, 0x88, 0x99),  // textTertiary #7A8899
+        RGB(0x00, 0x7A, 0xFF),  // accent #007AFF
+        RGB(0x00, 0x66, 0xEB),  // accentStrong #0066EB
+        RGB(0x00, 0x52, 0xBE),  // accentPressed #0052BE
+        RGB(0xE5, 0xF1, 0xFF),  // accentSoft #E5F1FF
+        RGB(0x00, 0x66, 0xEB),  // accentText #0066EB
+        RGB(0xF0, 0xF5, 0xFB),  // controlBg #F0F5FB
+        RGB(0xE3, 0xED, 0xF8),  // controlHover #E3EDF8
+        RGB(0xC9, 0xD9, 0xEB),  // controlBorder #C9D9EB
+        RGB(0x14, 0x21, 0x3D),  // controlText #14213D
+        RGB(0xFF, 0xFF, 0xFF),  // knob #FFFFFF
+        RGB(0xD3, 0x2F, 0x2F),  // danger #D32F2F
+        RGB(0xFF, 0xFF, 0xFF),  // onAccent #FFFFFF
+        RGB(0x1B, 0x4A, 0x80),  // shadow #1B4A80（rgba 0.12 的基色）
     };
 }
 
@@ -328,13 +328,13 @@ static HBRUSH settingsControlBg() {
 
 // 主题切换：重建背景/卡片刷、标题栏着色、重绘所有自绘控件（候选窗/Toast 另有实现）。
 static void settingsUpdateTheme(HWND wnd) {
-    g_settingsDark = isSystemDarkTheme();
+    g_settingsDark = uiEffectiveDark();  // 用户主题优先，system 跟随系统
     if (g_settingsBgBrush != nullptr) DeleteObject(g_settingsBgBrush);
     g_settingsBgBrush = CreateSolidBrush(settingsColors(g_settingsDark).windowBg);
     if (g_settingsCardBrush != nullptr) DeleteObject(g_settingsCardBrush);
     g_settingsCardBrush = CreateSolidBrush(settingsCardColor());
     settingsApplyTitleBarTheme(wnd);
-    for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 124}) {
+    for (int id : {101, 102, 105, 106, 107, 108, 110, 112, 121, 122, 124, 131, 132, 133, 134}) {
         HWND c = GetDlgItem(wnd, id);
         if (c != nullptr) InvalidateRect(c, nullptr, TRUE);
     }
@@ -361,6 +361,10 @@ static const SettingsCtlItem kSettingsCtl[] = {
     {121, SettingsPage::Input, kCardPad, kInputCard2Y + 50, 110, kChoiceH, 0},             // 全局共享
     {122, SettingsPage::Input, kCardPad + 110 + kRowGap, kInputCard2Y + 50, 110, kChoiceH, 0},  // 每进程独立
     {124, SettingsPage::Input, kCardPad, kInputCard2Y + 50 + kChoiceH + kHintGap, kInnerW, kHintH, 2},  // 说明
+    {131, SettingsPage::Input, kCardPad, kInputCard3Y + 50, 110, kChoiceH, 0},  // 跟随系统
+    {132, SettingsPage::Input, kCardPad + 110 + kRowGap, kInputCard3Y + 50, 110, kChoiceH, 0},  // 浅色
+    {133, SettingsPage::Input, kCardPad + 2 * (110 + kRowGap), kInputCard3Y + 50, 110, kChoiceH, 0},  // 深色
+    {134, SettingsPage::Input, kCardPad, kInputCard3Y + 50 + kChoiceH + kHintGap, kInnerW, kHintH, 2},  // 说明
     // ---- 词库页 ----
     {105, SettingsPage::Dictionary, kCardPad, 50, kInnerW, kStatsH, 0},                    // 学习数据统计
     {106, SettingsPage::Dictionary, kCardPad, 50 + kStatsH + kRowGap, 130, kButtonH, 0},   // 清空
@@ -422,11 +426,7 @@ static void settingsApplyDpi(HWND wnd, int dpi) {
     InvalidateRect(wnd, nullptr, TRUE);
 }
 
-// ---- 设置窗自绘：导航 / 卡片 / 页脚 / 关于页（全部走暖色令牌）----
-//
-// WM_PAINT 里一次性绘制非交互部分：导航列、导航项（选中/悬停）、卡片柔和阴影
-// 与 1pt 描边、卡片标题、关于页图文、页脚版本号、滚动条。交互控件是子窗口，
-// 自己重绘（见下方 settingsDraw*）。
+// ---- 设置窗自绘：导航/卡片/页脚/关于页（蓝白令牌）----
 
 // 圆角填充矩形（卡片/胶囊/开关轨道共用）。radius 是圆角半径（pt）；GDI
 // RoundRect 的后两个参数是圆角椭圆直径，因此这里乘 2 才能得到规范的圆角。
@@ -659,10 +659,8 @@ static void settingsDrawSwitch(const DRAWITEMSTRUCT* dis) {
     }
 }
 
-// 自绘 choice 胶囊（中英状态两档）：选中=accentSoft 底 + 1pt accent 描边 +
-// accentText semibold；未选=controlBg 底 + controlBorder 描边 + textPrimary；
-// 悬停未选=controlHover。共享设置读缓存 g_settingsModeScope（WM_DRAWITEM 里
-// 绝不读注册表/起进程，重绘是高频动作）。
+// 自绘 choice 胶囊：选中=accentSoft+accent 描边+accentText；未选=controlBg+
+// controlBorder+textPrimary，hover 未选=controlHover。只读缓存（重绘高频）。
 static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
@@ -671,6 +669,9 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     bool selected = false;
     if (dis->CtlID == 121) selected = current == ModeScope::System;
     else if (dis->CtlID == 122) selected = current == ModeScope::Process;
+    else if (dis->CtlID == 131) selected = g_settingsTheme == Theme::System;
+    else if (dis->CtlID == 132) selected = g_settingsTheme == Theme::Light;
+    else if (dis->CtlID == 133) selected = g_settingsTheme == Theme::Dark;
     const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
     RECT r = dis->rcItem;
     const COLORREF fill = selected ? c.accentSoft : (hovered ? c.controlHover : c.controlBg);
@@ -714,11 +715,8 @@ static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
     if ((dis->itemState & ODS_FOCUS) != 0) settingsDrawFocusRing(dc, r, settingsPt(9));
 }
 
-// ---- 自绘控件的 hover / 手型光标 ----
-//
-// BS_OWNERDRAW 的按钮不会把鼠标消息转发给父窗口，ODS_HOTLIGHT 又依赖主题
-// 行为，因此对每个自绘控件做窗口过程子类化：自己维护 hover id，并在
-// WM_SETCURSOR 里返回手型光标（否则整窗只有箭头，可点热区没有提示）。
+// ---- 自绘控件 hover / 手型光标 ----
+// BS_OWNERDRAW 不转发鼠标消息；子类化每个控件维护 hover id，WM_SETCURSOR 返回手型。
 struct SettingsCtlProcEntry {
     HWND hwnd;
     WNDPROC old;
@@ -837,30 +835,16 @@ static void SettingsExportLearningData(HWND wnd) {
     MessageBoxW(wnd, L"学习数据已导出。", L"学习数据", MB_OK | MB_ICONINFORMATION);
 }
 
-// ---- 词库导入（GUI，2026-10-31）----
-//
-// 普通用户不再需要命令行：设置窗口「词库」区选择 Rime dict.yaml /
-// CC-CEDICT txt / TSV，调用随包 chaoset-import.exe 合并到
-// %LOCALAPPDATA%\Chaoset\dict.tsv（旧文件先备份、同卷 staging +
-// MoveFileEx 原子替换），然后重启 daemon（读安装器写入的 Run 项命令行）。
-// 与 macOS Setup.app 的导入流程同语义（合并而非覆盖、备份、原子替换、
-// 检查导入器退出码——只看产物文件会把部分解析失败当成成功）。
+// ---- 词库导入（GUI）----
+// 设置窗选 dict.yaml/txt/TSV → chaoset-import 合并到用户词库（先备份、
+// 原子替换）后重启 daemon；与 macOS 同语义，必须检查导入器退出码。
 
 static std::wstring settingsQuote(const std::wstring& s) { return L"\"" + s + L"\""; }
 
 // ---- 方案 A（冷路径）：设置项读写统一走 Go chaoset-settingsctl ----
-//
-// 设置窗是**冷路径**（用户手动打开、低频），允许起进程；但每次调用必须有硬
-// 超时，UI 线程绝不无限等待（任务契约 ≤1s；正常一次 get/set 在 100ms 内）。
-// 输入热路径（TSF 回调）不经过这里，仍读 config.cpp 的 TTL 缓存。
-//
-// 可执行文件定位：<ChaosetIME.dll 所在目录>\chaoset-settingsctl.exe。设置窗
-// 代码编在 DLL 里、由同目录 chaoset-ui.exe 宿主加载，g_hInst 是 DLL 模块句柄，
-// 与安装/便携包布局（Makefile package-windows 把 CLI 放进同一目录）一致。
-//
-// 回退：CLI 不存在 / 起不来 / 超时 / 非 0 退出 / JSON 非法 → 回退原生 HKCU
-// 读写（RegGetAssociate/RegSetAssociate/uiLoadModeScope/uiSaveModeScope），
-// 保证旧安装包、便携包、被杀软拦截时设置窗仍可用；回退只记一条限流 diag。
+// 设置窗是冷路径，允许起进程但每次调用必须有 ≤1s 硬超时（UI 线程不无限等待）；
+// 热路径（TSF 回调）读 config.cpp 的 TTL 缓存。CLI 与 DLL 同目录，缺失/超时/
+// JSON 非法时回退原生 HKCU 读写，保证旧包仍可用（回退只记一条限流 diag）。
 static const DWORD kSettingsCtlTimeoutMs = 1000;   // ≤1s 硬上限（任务契约）
 static const size_t kSettingsCtlMaxOutput = 4096;  // get 契约是单行 JSON，防御上限
 
@@ -958,14 +942,11 @@ static bool settingsRunCtl(const std::wstring& args, std::string* out, DWORD tim
     return true;
 }
 
-// 解析 get 的单行 JSON 契约（见 cmd/chaoset-settingsctl/main.go 与
-// internal/settings/settings.go）：
-//   {"associate":true,"mode_scope":"system","ui_english":false}
-// 只认本窗用到的 associate + mode_scope；mode_scope 读取宽容归一化（三端一致）：
-// system→System；process→Process；旧 window→Process；未知枚举一律算失败
-//（回退原生，不把半个设置项当真源——写错键比读不到更糟）。
-static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeScope* scope) {
-    if (associate == nullptr || scope == nullptr) return false;
+// 解析 get 单行 JSON（见 chaoset-settingsctl）：只认本窗用的 associate/
+// mode_scope/theme；mode_scope 宽容归一化（旧 window→Process），未知值回退原生。
+static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeScope* scope,
+                                 Theme* theme) {
+    if (associate == nullptr || scope == nullptr || theme == nullptr) return false;
     const size_t a = json.find("\"associate\":");
     const size_t m = json.find("\"mode_scope\":\"");
     if (a == std::string::npos || m == std::string::npos) return false;
@@ -986,11 +967,27 @@ static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeS
     else if (raw == "process") *scope = ModeScope::Process;
     else if (raw == "window") *scope = ModeScope::Process;  // 旧档迁移
     else return false;
+    *theme = Theme::System;  // theme 可选：旧 CLI 无此字段时默认 system
+    const size_t t = json.find("\"theme\":\"");
+    if (t != std::string::npos) {
+        const size_t tv = t + sizeof("\"theme\":\"") - 1;
+        const size_t tq = json.find('"', tv);
+        if (tq == std::string::npos) return false;
+        const std::string traw = json.substr(tv, tq - tv);
+        if (traw == "light") *theme = Theme::Light;
+        else if (traw == "dark") *theme = Theme::Dark;
+        else if (traw != "system") return false;
+    }
     return true;
 }
 
 static const wchar_t* settingsScopeName(ModeScope scope) {
     return scope == ModeScope::Process ? L"process" : L"system";
+}
+static const wchar_t* settingsThemeName(Theme theme) {
+    if (theme == Theme::Light) return L"light";
+    if (theme == Theme::Dark) return L"dark";
+    return L"system";
 }
 
 // 冷路径读取「词组联想 + 中英状态作用域」：优先 Go 单一真源，失败回退原生。
@@ -999,9 +996,11 @@ static void settingsLoadShared() {
     if (settingsRunCtl(L"get", &raw, kSettingsCtlTimeoutMs)) {
         bool associate = true;
         ModeScope scope = ModeScope::System;
-        if (settingsParseGetJSON(raw, &associate, &scope)) {
+        Theme theme = Theme::System;
+        if (settingsParseGetJSON(raw, &associate, &scope, &theme)) {
             g_settingsAssociate = associate;
             g_settingsModeScope = scope;
+            g_settingsTheme = theme;
             return;
         }
         settingsDiagCtlFallback("get-json");
@@ -1011,6 +1010,7 @@ static void settingsLoadShared() {
     // 回退：旧安装包/便携包/CLI 被拦时保证设置窗仍能显示与修改。
     g_settingsAssociate = RegGetAssociate();
     g_settingsModeScope = uiLoadModeScope();
+    g_settingsTheme = uiLoadTheme();
 }
 
 // 冷路径写设置项：成功返回 true；失败返回 false 并限流记一条 diag，
@@ -1361,10 +1361,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             }
             if (HIWORD(wParam) == BN_CLICKED &&
                 (LOWORD(wParam) == 121 || LOWORD(wParam) == 122)) {
-                // 中英状态作用域两档切换（方案 A 冷路径）：写 Go 单一真源
-                // （chaoset-settingsctl set mode-scope system|process），立即生效
-                //（TIP 下次获得焦点时读注册表）。CLI 缺失/失败时回退原生
-                // uiSaveModeScope。
+                // 中英作用域两档：写 Go 单一真源 set mode-scope，失败回退 uiSaveModeScope。
                 ModeScope scope = ModeScope::System;
                 if (LOWORD(wParam) == 122) scope = ModeScope::Process;
                 g_settingsModeScope = scope;
@@ -1378,16 +1375,28 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 }
                 return 0;
             }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                (LOWORD(wParam) == 131 || LOWORD(wParam) == 132 || LOWORD(wParam) == 133)) {
+                Theme theme = Theme::System;
+                if (LOWORD(wParam) == 132) theme = Theme::Light;
+                else if (LOWORD(wParam) == 133) theme = Theme::Dark;
+                g_settingsTheme = theme;
+                const std::wstring arg = L"set theme " + std::wstring(settingsThemeName(theme));
+                if (!settingsWriteShared(arg, "set-theme")) uiSaveTheme(theme);
+                invalidateThemeCache();
+                settingsUpdateTheme(hwnd);
+                PostMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                             reinterpret_cast<LPARAM>(L"ImmersiveColorSet"));
+                for (int id : {131, 132, 133}) {
+                    HWND b = GetDlgItem(hwnd, id);
+                    if (b != nullptr) InvalidateRect(b, nullptr, TRUE);
+                }
+                return 0;
+            }
             if (LOWORD(wParam) == 101 && HIWORD(wParam) == BN_CLICKED) {
-                // 自绘复选框：手动翻转状态（BS_OWNERDRAW 不自动切换）。
-                // 只写注册表，**不解引用 TIP**：设置窗的生命周期与 TIP 无关
-                // （TSF 随时可能 Release TIP，而窗口还开着——此前把裸
-                // TIP 对象指针 存在 GWLP_USERDATA，TIP 释放后点复选框就是
-                // 宿主进程内 UAF，2026-10-30 三端一致性审计 P1-2）。
-                //
-                // 关闭联想时不再只能等下一次按键：用跨进程广播通知所有宿主
-                // 进程的候选窗立即收起（候选窗自己转发给同进程 TIP），与 macOS
-                // 设置窗通知即时收起对齐；设置窗仍不持有 TIP 指针，不引入 UAF。
+                // 自绘复选框：手动翻转状态。不解引用 TIP——设置窗生命周期与 TIP
+                // 无关（TIP 随时可能 Release，持裸指针会 UAF，审计 P1-2）。
+                // 关闭联想即广播通知各宿主候选窗收起（与 macOS 即时收起对齐）。
                 g_settingsAssociate = !g_settingsAssociate;
                 // 方案 A 冷路径：写 Go 单一真源（chaoset-settingsctl set
                 // associate on|off）；CLI 缺失/失败时回退原生 RegSetAssociate。
@@ -1464,13 +1473,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// 设置窗的真正创建入口：只在单例 UI 宿主进程（chaoset-ui.exe）里调用。
-// 从「TIP 宿主进程内创建」改为外部 UI 进程后：
-//   - 开始菜单/搜索（Low IL AppContainer）里点齿轮也能弹出：不再被沉浸式
-//     z 序 band 压住，也不再受 AC 的文件对话框/子进程限制；
-//   - 宿主应用退出不会带走设置窗，宿主也不会因为设置窗存活而无法卸载 DLL。
-// 打开设置窗。page 缺省为「输入」页；托盘菜单「关于」用 About 页。
-// 单例窗口已存在时只切页并前置，不另开新窗。
+// 真正创建入口：只在单例 UI 宿主（chaoset-ui.exe）里调用（AC 宿主里齿轮
+// 也能弹出，宿主退出不带走窗口）。page 缺省输入页；已存在则切页前置。
 void openSettingsWindowStandalone(SettingsPage page) {
     if (g_settingsWnd != nullptr && IsWindow(g_settingsWnd)) {
         settingsSwitchPage(g_settingsWnd, page);
@@ -1489,14 +1493,12 @@ void openSettingsWindowStandalone(SettingsPage page) {
     wc.lpszClassName = cls.c_str();
     RegisterClassExW(&wc);
 
-    // per-monitor DPI：按鼠标所在显示器取 DPI（UI 进程没有 TIP 的 caretPos_），
-    // 副屏/混合 DPI 下也能开在正确显示器。
+    // per-monitor DPI：按鼠标所在显示器取 DPI（副屏也能开对）。
     POINT anchor{};
     GetCursorPos(&anchor);
     g_settingsDpi = dpiForPoint(anchor);
-    g_settingsDark = isSystemDarkTheme();
-    // 方案 A 冷路径：打开设置窗时读 Go 单一真源（chaoset-settingsctl get，
-    // ≤1s 硬超时）；失败回退原生 HKCU（旧安装包/便携包/CLI 被拦）。此时窗口
+    g_settingsDark = uiEffectiveDark();
+    // 方案 A 冷路径：打开设置窗时读 Go 单一真源，失败回退原生 HKCU。此时窗口
     // 尚未创建，最坏情况是开窗慢 1s，绝不会卡住任何宿主进程（设置窗属于
     // chaoset-ui.exe，与 TIP 进程无关）。
     settingsLoadShared();
@@ -1530,11 +1532,8 @@ void openSettingsWindowStandalone(SettingsPage page) {
     g_settingsWnd = wnd;
     InterlockedIncrement(&g_liveSettingsWindows);
 
-    // 分组标题/页脚版本号/关于页正文由 settingsPaint 自绘（卡片标题），不再
-    // 创建 Static 标题控件——旧实现里 100/103/104/109/111/113/120 这 7 个
-    // 标题控件从未参与布局，既不可见又容易和卡片标题重复（2026-11-06）。
-    // 交互控件用 BS_OWNERDRAW 子窗口，保留 Tab/键盘可达性；背景由自绘函数
-    // 用卡片刷擦除（见 settingsControlBg）。
+    // 分组标题/页脚/关于正文由 settingsPaint 自绘；交互控件用 BS_OWNERDRAW
+    // 子窗口保留 Tab 可达性，背景由 settingsControlBg 擦除。
     auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text, int id) {
         return CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
                                0, 0, 0, 0, wnd,
@@ -1545,6 +1544,10 @@ void openSettingsWindowStandalone(SettingsPage page) {
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"全局共享", 121);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"每进程独立", 122);
     makeCtl(L"Static", SS_LEFT, L"切一次所有程序都生效（推荐）；每进程则各自独立。", 124);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"跟随系统", 131);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"浅色", 132);
+    makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"深色", 133);
+    makeCtl(L"Static", SS_LEFT, L"选择界面配色；跟随系统则随 Windows 浅/深色自动切换。", 134);
     makeCtl(L"Static", SS_LEFT, L"读取中…", 105);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"清空学习数据…", 106);
     makeCtl(L"Button", BS_OWNERDRAW | WS_TABSTOP, L"导出学习数据…", 107);
@@ -1553,7 +1556,7 @@ void openSettingsWindowStandalone(SettingsPage page) {
     makeCtl(L"Static", SS_LEFT, L"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。", 112);
 
     // 自绘控件的 hover/手型光标由窗口过程子类化维护（BS_OWNERDRAW 不转发鼠标消息）。
-    for (int id : {101, 106, 107, 110, 121, 122}) settingsSubclassControl(GetDlgItem(wnd, id));
+    for (int id : {101, 106, 107, 110, 121, 122, 131, 132, 133}) settingsSubclassControl(GetDlgItem(wnd, id));
     settingsLayoutControls(wnd);
     settingsUpdateTheme(wnd);
 

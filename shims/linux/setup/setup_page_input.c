@@ -45,6 +45,36 @@ static void on_mode_scope_toggled(GtkToggleButton *button, gpointer user_data) {
     mode_syncing = FALSE;
 }
 
+/* 外观主题三选一：与中英作用域同一套互斥/重入保护；保存后立即应用（只影响本
+ * 设置窗，候选/预编辑颜色归 ibus 面板）。 */
+static gboolean theme_syncing = FALSE;
+
+static void on_theme_toggled(GtkToggleButton *button, gpointer user_data) {
+    (void)user_data;
+    if (theme_syncing) { return; }
+    theme_syncing = TRUE;
+    if (!gtk_toggle_button_get_active(button)) {
+        gtk_toggle_button_set_active(button, TRUE);
+    } else {
+        GtkWidget *row = gtk_widget_get_parent(GTK_WIDGET(button));
+        GList *children = gtk_container_get_children(GTK_CONTAINER(row));
+        for (GList *item = children; item != NULL; item = item->next) {
+            if (item->data != (gpointer)button && GTK_IS_TOGGLE_BUTTON(item->data)) {
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(item->data), FALSE);
+            }
+        }
+        g_list_free(children);
+        const char *theme = g_object_get_data(G_OBJECT(button), "chaoset-theme");
+        if (theme != NULL && !setup_config_save_theme(theme)) {
+            setup_show_message(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(button))),
+                               GTK_MESSAGE_ERROR, "保存设置失败，请检查配置目录权限。");
+        } else {
+            setup_apply_theme(theme);
+        }
+    }
+    theme_syncing = FALSE;
+}
+
 GtkWidget *setup_page_input_build(AppCtx *ctx) {
     gboolean associate = TRUE;
     (void)setup_config_load(&associate);
@@ -89,6 +119,35 @@ GtkWidget *setup_page_input_build(AppCtx *ctx) {
     setup_card_add(mode_card,
                    setup_hint_new("切一次所有程序都生效（推荐）；每进程则各自独立。"));
     gtk_box_pack_start(GTK_BOX(page), mode_card, FALSE, FALSE, 0);
+
+    /* 外观主题三选一（跟随系统 / 浅色 / 深色），只影响本 GTK3 设置窗。
+     * 候选窗/预编辑由 ibus 面板渲染，颜色不受本设置影响（见 README）。 */
+    GtkWidget *theme_card = setup_card_new("<b>外观</b>");
+    GtkWidget *theme_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    const char *current_theme = setup_config_load_theme();
+    const struct {
+        const char *label;
+        const char *theme;
+    } kThemes[] = {
+        {"跟随系统", "system"},
+        {"浅色", "light"},
+        {"深色", "dark"},
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(kThemes); i++) {
+        GtkWidget *choice = gtk_toggle_button_new_with_label(kThemes[i].label);
+        gtk_style_context_add_class(gtk_widget_get_style_context(choice), "choice");
+        gtk_widget_set_size_request(choice, -1, 30);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choice),
+                                     g_strcmp0(current_theme, kThemes[i].theme) == 0);
+        g_object_set_data_full(G_OBJECT(choice), "chaoset-theme",
+                               g_strdup(kThemes[i].theme), g_free);
+        g_signal_connect(choice, "toggled", G_CALLBACK(on_theme_toggled), ctx);
+        gtk_box_pack_start(GTK_BOX(theme_row), choice, FALSE, FALSE, 0);
+    }
+    setup_card_add(theme_card, theme_row);
+    setup_card_add(theme_card,
+                   setup_hint_new("只影响本设置窗；候选与预编辑颜色由 ibus 面板决定。"));
+    gtk_box_pack_start(GTK_BOX(page), theme_card, FALSE, FALSE, 0);
 
     g_signal_connect(sw, "state-set", G_CALLBACK(on_associate_toggled), ctx);
     return page;

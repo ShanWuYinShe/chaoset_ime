@@ -18,9 +18,9 @@ import ImageIO
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 
-// MARK: - 应用图标（.icns，日式温润白瓷与晨曦焦糖赤陶徽章）
+// MARK: - 应用图标（.icns，蓝白渐变徽章，与候选窗配色一致）
 
-/// 应用图标：晨曦赤陶温润渐变底板 + 和纸微米光环 + 3D 白瓷浮雕「C」+ 晨曦暖金四芒星 (✦)。
+/// 应用图标：蓝白渐变底板 + 微米光环 + 白色浮雕「C」+ 白色四芒星 (✦)。
 /// 彻底根除冷电光蓝极客风，全平台同构日式手账与器物生活美学。
 func drawAppIcon(_ s: CGFloat) {
     let inset = s * 0.08
@@ -38,16 +38,16 @@ func drawAppIcon(_ s: CGFloat) {
         ctx.restoreGState()
     }
 
-    // 2. 底板晨曦焦糖与赤陶渐变 (Warm Amber -> Caramel Amber -> Deep Terracotta)
+    // 2. 底板蓝白渐变（对齐候选窗 #007AFF 高亮蓝）
     ctx.saveGState()
     let bgPath = CGPath(roundedRect: rect, cornerWidth: squircleR, cornerHeight: squircleR, transform: nil)
     ctx.addPath(bgPath)
     ctx.clip()
     let bgGrad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                             colors: [
-                                NSColor(srgbRed: 0.94, green: 0.56, blue: 0.26, alpha: 1.0).cgColor,  // #F08F42
-                                NSColor(srgbRed: 0.82, green: 0.42, blue: 0.16, alpha: 1.0).cgColor,  // #D16B29
-                                NSColor(srgbRed: 0.60, green: 0.25, blue: 0.08, alpha: 1.0).cgColor   // #994014
+                                NSColor(srgbRed: 0.30, green: 0.64, blue: 1.0, alpha: 1.0).cgColor,  // #4DA3FF
+                                NSColor(srgbRed: 0.00, green: 0.48, blue: 1.0, alpha: 1.0).cgColor,  // #007AFF
+                                NSColor(srgbRed: 0.00, green: 0.38, blue: 0.80, alpha: 1.0).cgColor  // #0062CC
                             ] as CFArray, locations: [0.0, 0.48, 1.0])!
     ctx.drawLinearGradient(bgGrad, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
 
@@ -108,7 +108,7 @@ func drawAppIcon(_ s: CGFloat) {
     }
     let starAttr: [NSAttributedString.Key: Any] = [
         .font: starFont,
-        .foregroundColor: NSColor(srgbRed: 1.0, green: 0.88, blue: 0.54, alpha: 1.0), // #FFE08A
+        .foregroundColor: NSColor.white, // 蓝白品牌：白色星标
         .shadow: starShadow
     ]
     let starText = NSAttributedString(string: "✦", attributes: starAttr)
@@ -473,19 +473,19 @@ func writeLinuxSvg(to path: String) {
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="terracottaGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#F08F42"/>
-      <stop offset="48%" stop-color="#D16B29"/>
-      <stop offset="100%" stop-color="#994014"/>
+    <linearGradient id="azureGrad" x1="41" y1="41" x2="471" y2="471" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4DA3FF"/>
+      <stop offset="48%" stop-color="#007AFF"/>
+      <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
     <filter id="shadow" x="0" y="8" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#401808" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#0A2A55" flood-opacity="0.35"/>
     </filter>
     <filter id="starGlow" x="280" y="100" width="160" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#FFA838" flood-opacity="0.8"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#BFE4FF" flood-opacity="0.8"/>
     </filter>
     <filter id="glyphShadow" x="80" y="80" width="360" height="360" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#4A1806" flood-opacity="0.65"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#082A66" flood-opacity="0.65"/>
     </filter>
     <clipPath id="squircleClip">
       <rect x="41" y="41" width="430" height="430" rx="96" ry="96"/>
@@ -493,31 +493,31 @@ func writeLinuxSvg(to path: String) {
   </defs>
 
   <!-- 1. Squircle Base with Soft Drop Shadow -->
-  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#terracottaGrad)" filter="url(#shadow)"/>
+  <rect x="41" y="41" width="430" height="430" rx="96" ry="96" fill="url(#azureGrad)" filter="url(#shadow)"/>
 
   <!-- 2. Clipped Texture & Highlights -->
   <g clip-path="url(#squircleClip)">
     <!-- Washi Concentric Micro-Rings -->
-    <circle cx="256" cy="256" r="120" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="189" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
-    <circle cx="256" cy="256" r="258" stroke="#FFF0E0" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="120" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="189" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
+    <circle cx="256" cy="256" r="258" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.5" fill="none"/>
     
     <!-- Top-edge Specular Rim Line -->
-    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFF8F0" stroke-opacity="0.50" stroke-width="2" fill="none"/>
+    <rect x="42" y="42" width="428" height="428" rx="95" ry="95" stroke="#FFFFFF" stroke-opacity="0.50" stroke-width="2" fill="none"/>
   </g>
 
   <!-- 3. Monogram "C" White Porcelain Typography -->
   <g filter="url(#glyphShadow)">
-    <text x="240" y="335" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="240" font-weight="900" fill="#FAF6F0">C</text>
+    <text x="240" y="335" text-anchor="middle" font-family="'Avenir Next', 'Helvetica Neue', system-ui, sans-serif" font-size="240" font-weight="900" fill="#FFFFFF">C</text>
   </g>
 
   <!-- 4. Morning Sun Golden Star (✦) -->
   <g filter="url(#starGlow)">
-    <text x="360" y="210" text-anchor="middle" font-family="system-ui, sans-serif" font-size="96" font-weight="bold" fill="#FFE08A">✦</text>
+    <text x="360" y="210" text-anchor="middle" font-family="system-ui, sans-serif" font-size="96" font-weight="bold" fill="#FFFFFF">✦</text>
   </g>
 
   <!-- 5. Bottom Subtext "CHAOS" -->
-  <text x="256" y="428" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="18" font-weight="bold" letter-spacing="4.5" fill="#FFF0E0" fill-opacity="0.80">CHAOS</text>
+  <text x="256" y="428" text-anchor="middle" font-family="'SF Pro Text', 'Avenir Next', system-ui, sans-serif" font-size="18" font-weight="bold" letter-spacing="4.5" fill="#EAF3FF" fill-opacity="0.80">CHAOS</text>
 </svg>
 """
     try? FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)

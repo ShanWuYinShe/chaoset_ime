@@ -20,6 +20,12 @@ namespace chaoset::win {
 // 新写入只有 system/process。
 enum class ModeScope { System, Process };
 
+// 外观主题（三档，三端一致）：跟随系统 / 强制浅色 / 强制深色。
+// 持久化在 HKCU\Software\Chaoset\Theme（REG_SZ：system/light/dark，大小写不敏感）；
+// 缺省/未知值归一化为 System。uiEffectiveDark() 是唯一「当前是否深色」判定出口：
+// light→false、dark→true、system→系统 AppsUseLightTheme。
+enum class Theme { System, Light, Dark };
+
 // 词组联想开关（HKCU\Software\Chaoset，DWORD Associate；未写入时默认开启）。
 bool RegGetAssociate();
 void RegSetAssociate(bool on);
@@ -55,6 +61,13 @@ void uiSaveEnglish(bool english);
 // process→Process；旧 window→Process；未知/空→System（默认）。
 ModeScope uiLoadModeScope();
 void uiSaveModeScope(ModeScope scope);
+
+// 外观主题持久化（HKCU\Software\Chaoset\Theme，REG_SZ，大小写不敏感）：
+// 读取宽容归一化（system/light/dark，未知/空→System），写入只写小写。
+Theme uiLoadTheme();
+void uiSaveTheme(Theme theme);
+// 唯一「当前是否深色」判定：light→false、dark→true、system→isSystemDarkTheme()。
+bool uiEffectiveDark();
 
 }  // namespace chaoset::win
 

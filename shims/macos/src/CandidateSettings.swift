@@ -5,6 +5,7 @@
 // 设置窗（SettingsWindow.swift）复用这里的 AssociateSetting / ModeScope(Setting)。
 
 import Foundation
+import AppKit
 
 // MARK: - 设置开关（词组联想）
 
@@ -60,5 +61,78 @@ enum ModeScopeSetting {
             return ModeScope.normalized(raw: raw)
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
+
+// MARK: - 外观主题（跟随系统 / 浅色 / 深色）
+
+/// 用户可选外观（三端统一 schema：system|light|dark，缺省 system；
+/// 与 Go internal/settings.theme、chaoset-settingsctl get/set theme 同语义）。
+/// macOS 壳持久化在 UserDefaults `ChaosetTheme`（checker 断言该键存在）。
+enum Theme: String, CaseIterable {
+    case system
+    case light
+    case dark
+
+    /// 宽容归一化：system/light/dark 保留；大小写/首尾空白容忍；未知回退 system。
+    static func normalized(raw: String) -> Theme {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "light": return .light
+        case "dark": return .dark
+        default: return .system
+        }
+    }
+
+    /// 设置窗分段控件显示名。
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    /// 把用户选择与系统 appearance 合成为「是否深色」：
+    /// system 跟随 appearance，light 恒 false，dark 恒 true。
+    func isDark(effectiveAppearance: NSAppearance?) -> Bool {
+        switch self {
+        case .light: return false
+        case .dark: return true
+        case .system:
+            return effectiveAppearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+    }
+}
+
+enum ThemeSetting {
+    static let key = "ChaosetTheme"
+
+    static var current: Theme {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: key) else {
+                return .system
+            }
+            return Theme.normalized(raw: raw)
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
+
+/// 主题解析助手：热路径（候选窗每次 draw）直接读 UserDefaults，不起进程、
+/// 不读文件；设置窗据此强制窗口 appearance。
+enum AppTheme {
+    static var current: Theme { ThemeSetting.current }
+
+    static func isDark(effectiveAppearance: NSAppearance?) -> Bool {
+        current.isDark(effectiveAppearance: effectiveAppearance)
+    }
+
+    /// 设置窗窗口 appearance：system → nil（跟随系统），light → .aqua，dark → .darkAqua。
+    static var windowAppearance: NSAppearance? {
+        switch current {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
     }
 }

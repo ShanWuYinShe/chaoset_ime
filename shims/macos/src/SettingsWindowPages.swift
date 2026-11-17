@@ -1,7 +1,7 @@
 // SettingsWindowPages.swift：设置窗三页视图构建（输入 / 词库 / 关于）。
 //
 // 从 SettingsWindowController.show() 原地抽出（2026-11-06 架构拆分），
-// 2026-11-16「暖陶纸感」重构为三端同构的卡片布局：每页由 SettingsCardView
+// 三端同构的卡片布局：每页由 SettingsCardView
 // （见 SettingsWindow.swift）分组，行/说明/按钮/胶囊统一由本文件 builder 产出。
 // 布局只引用 SettingsTheme 令牌，不写字面色值（checkuiparity 断言色值唯一来源）。
 
@@ -69,12 +69,14 @@ enum SettingsWindowPages {
 
     // MARK: 输入页
 
-    /// 输入页：输入行为（词组联想开关）+ 中英状态（共享作用域二选一）。
+    /// 输入页：输入行为（词组联想开关）+ 中英状态（共享作用域二选一）
+    /// + 外观主题（跟随系统/浅色/深色）。
     static func makeInputPage(switchTarget: AssociateSwitchTarget,
-                              modeTarget: ModeScopeTarget) -> NSView {
+                               modeTarget: ModeScopeTarget,
+                               themeTarget: ThemeSegmentTarget) -> NSView {
         let page = makePage()
 
-        // 卡 1：词组联想开关（自绘暖陶开关，三端同形态）
+        // 卡 1：词组联想开关（自绘蓝白开关，三端同形态）
         let toggle = WarmSwitch()
         toggle.state = AssociateSetting.enabled ? .on : .off
         toggle.target = switchTarget
@@ -102,6 +104,21 @@ enum SettingsWindowPages {
         addCard(SettingsCardView(title: "中英状态", content: [
             .natural(makeButtonRow(scopeButtons)),
             .full(makeHint("切一次所有程序都生效（推荐）；每进程则各自独立。")),
+        ]), to: page)
+
+        // 卡 3：外观主题三选一（跟随系统/浅色/深色，软胶囊与二选一同形态）
+        var themeButtons: [WarmPillButton] = []
+        for theme in Theme.allCases {
+            let button = WarmPillButton(title: theme.displayName, kind: .choice)
+            button.target = themeTarget
+            button.action = #selector(ThemeSegmentTarget.themeChanged(_:))
+            button.setPillSelected(ThemeSetting.current == theme)
+            themeButtons.append(button)
+        }
+        themeTarget.themeButtons = themeButtons
+        addCard(SettingsCardView(title: "外观主题", content: [
+            .natural(makeButtonRow(themeButtons)),
+            .full(makeHint("跟随系统按 macOS 外观自动切换；浅色/深色固定候选窗与设置窗配色。")),
         ]), to: page)
         return page
     }

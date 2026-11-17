@@ -12,7 +12,7 @@
 //
 //	chaoset-settingsctl get
 //	    单行紧凑 JSON（字段顺序固定），写 stdout，末尾换行：
-//	    {"associate":true,"mode_scope":"system","ui_english":false}
+//	    {"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
 //
 //	chaoset-settingsctl set associate on|off
 //	    写联想开关；成功无输出。
@@ -20,6 +20,9 @@
 //	chaoset-settingsctl set mode-scope system|process
 //	    写中英状态作用域；成功无输出。旧三档值 window 也接受并归一化
 //	    （window→process），但新写入只落 system|process。
+//
+//	chaoset-settingsctl set theme system|light|dark
+//	    写外观主题：system 跟随系统（默认）/ light 浅色 / dark 深色。
 //
 //	chaoset-settingsctl set ui-english on|off
 //	    写 Windows UI 宿主持久化的中英状态镜像（内部用）。
@@ -44,15 +47,18 @@
 //	         ModeScope REG_SZ    缺省 "system"（只写 system|process；
 //	                             旧三档 window→process）
 //	         UiEnglish REG_DWORD 缺省 0
+//	         Theme     REG_SZ    缺省 "system"（system|light|dark）
 //	macOS    UserDefaults 域 ime.chaoset.inputmethod.ChaosetIME（输入法
 //	         bundle id；SettingsWindow.swift 编进 ChaosetIME.app）
 //	         AssociateEnabled Bool   缺省 true
 //	         ChaosetModeScope String 缺省 "system"（旧值读取时归一化）
+//	         ChaosetTheme    String 缺省 "system"（system|light|dark）
 //	         ui_english 不支持（macOS 壳不持久化中英状态）
 //	Linux    $XDG_CONFIG_HOME/chaoset/config.json（回退
 //	         $HOME/.config/chaoset/config.json）
 //	         "associate"  bool   缺省 true
 //	         "mode_scope" string 缺省 "system"（旧值读取时归一化）
+//	         "theme"      string 缺省 "system"（system|light|dark）
 //	         其它键（fuzzy/traditional/shuangpin 等）原样保留
 //	         ui_english 不支持（Linux 壳不持久化中英状态）
 package main
@@ -69,10 +75,12 @@ const usageText = `用法：
   chaoset-settingsctl get
   chaoset-settingsctl set associate on|off
   chaoset-settingsctl set mode-scope system|process
+  chaoset-settingsctl set theme system|light|dark
   chaoset-settingsctl set ui-english on|off
 
-get 输出单行 JSON：{"associate":true,"mode_scope":"system","ui_english":false}
+get 输出单行 JSON：{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
 mode-scope 同时接受旧三档值 window 并归一化（window→process）。
+theme 取值：system 跟随系统 / light 浅色 / dark 深色。
 退出码：0 成功；1 运行错误；2 参数非法。错误写 stderr。`
 
 func main() {
@@ -146,6 +154,17 @@ func runSet(args []string, stderr io.Writer) int {
 		}
 		if err := settings.SetModeScope(scope); err != nil {
 			return fail(stderr, 1, "写入 mode-scope 失败: %v", err)
+		}
+	case "theme":
+		if len(args) != 2 {
+			return usageError(stderr, "set theme 需要 system|light|dark")
+		}
+		theme, err := settings.ParseTheme(value)
+		if err != nil {
+			return fail(stderr, 2, "set theme: %v", err)
+		}
+		if err := settings.SetTheme(theme); err != nil {
+			return fail(stderr, 1, "写入 theme 失败: %v", err)
 		}
 	case "ui-english":
 		if len(args) != 2 {

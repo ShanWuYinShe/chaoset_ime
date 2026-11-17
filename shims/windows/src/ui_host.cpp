@@ -245,7 +245,7 @@ private:
         return true;
     }
 
-    // 画一个 3D 拟物微实体键帽图标（中：晨曦焦糖琉璃 / 英：象牙白瓷微雕）。
+    // 画一个 3D 拟物微实体键帽图标（中：蓝白 #007AFF / 英：象牙白瓷微雕）。
     static HICON makeGlyphIcon(bool english) {
         const int sz = GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16;
         BITMAPV5HEADER bi{};
@@ -275,12 +275,13 @@ private:
         HGDIOBJ old = SelectObject(dc, color);
         ZeroMemory(bits, static_cast<size_t>(sz) * sz * 4);
 
-        // 3D 拟物键帽配色（全平台设计系统同构 tokens）：
-        // 中文模式：3D 晨曦焦糖琉璃键帽（底色 RGB(205,115,48)，边框阴影 RGB(155,78,25)，高光 RGB(245,175,115)）
-        // 英文模式：3D 象牙白瓷微雕键帽（底色 RGB(246,243,238)，边框阴影 RGB(200,195,185)，高光 RGB(255,255,255)）
-        const COLORREF clrBody = english ? RGB(246, 243, 238) : RGB(205, 115, 48);
-        const COLORREF clrBorder = english ? RGB(200, 195, 185) : RGB(155, 78, 25);
-        const COLORREF clrHi = english ? RGB(255, 255, 255) : RGB(245, 175, 115);
+        // 键帽配色：中文模式蓝白主题——圆角方块 #007AFF（与设置窗 accent 同值），
+        // 字形保持白色；英文模式沿用象牙白瓷键帽（深色字形）。
+        // 中文模式：底色 RGB(0,122,255)，边框阴影 RGB(0,90,190)，高光 RGB(90,170,255)
+        // 英文模式：底色 RGB(246,243,238)，边框阴影 RGB(200,195,185)，高光 RGB(255,255,255)
+        const COLORREF clrBody = english ? RGB(246, 243, 238) : RGB(0, 122, 255);
+        const COLORREF clrBorder = english ? RGB(200, 195, 185) : RGB(0, 90, 190);
+        const COLORREF clrHi = english ? RGB(255, 255, 255) : RGB(90, 170, 255);
         const COLORREF clrText = english ? RGB(30, 27, 24) : RGB(255, 255, 255);
 
         const int cr = (sz >= 24) ? 5 : 3;

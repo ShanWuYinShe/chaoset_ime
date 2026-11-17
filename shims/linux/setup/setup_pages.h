@@ -32,6 +32,11 @@ void setup_page_dict_refresh(AppCtx *ctx);
 // 共享模态提示框：各页面回调展示结果/错误用。
 void setup_show_message(GtkWindow *parent, GtkMessageType type, const gchar *text);
 
+/* 外观主题应用（冷路径）：system 跟随系统 / light 浅色 / dark 深色。
+ * 只设置 GtkSettings:gtk-application-prefer-dark-theme，作用于 GTK3 设置窗；
+ * ibus 候选/预编辑颜色由面板决定，本函数不碰。 */
+void setup_apply_theme(const char *theme);
+
 // 卡片骨架：底色/描边/圆角与标题样式由 GTK CSS 主题按令牌定义，页面只描述
 // 内容。卡片间距固定 16，卡片内标题与内容由骨架排版（标题 13pt 半粗）。
 GtkWidget *setup_card_new(const gchar *title_markup);

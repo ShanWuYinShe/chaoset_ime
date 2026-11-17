@@ -17,6 +17,9 @@ func TestDefaults(t *testing.T) {
 	if d.UiEnglish {
 		t.Error("Defaults().UiEnglish 应为 false（Windows UiEnglish 缺省 0）")
 	}
+	if d.Theme != ThemeSystem {
+		t.Errorf("Defaults().Theme = %q，期望 system（跟随系统，蓝白候选窗默认外观）", d.Theme)
+	}
 	if err := d.Validate(); err != nil {
 		t.Errorf("Defaults().Validate() = %v，期望 nil", err)
 	}
@@ -28,7 +31,7 @@ func TestDefaultsJSONContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JSON() 报错: %v", err)
 	}
-	want := `{"associate":true,"mode_scope":"system","ui_english":false}`
+	want := `{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}`
 	if got != want {
 		t.Errorf("JSON 契约不符：\n got  = %s\n want = %s", got, want)
 	}
@@ -38,12 +41,12 @@ func TestDefaultsJSONContract(t *testing.T) {
 }
 
 func TestJSONContractAllValues(t *testing.T) {
-	s := Settings{Associate: false, ModeScope: ModeScopeProcess, UiEnglish: true}
+	s := Settings{Associate: false, ModeScope: ModeScopeProcess, UiEnglish: true, Theme: ThemeDark}
 	got, err := s.JSON()
 	if err != nil {
 		t.Fatalf("JSON() 报错: %v", err)
 	}
-	want := `{"associate":false,"mode_scope":"process","ui_english":true}`
+	want := `{"associate":false,"mode_scope":"process","ui_english":true,"theme":"dark"}`
 	if got != want {
 		t.Errorf("JSON 契约不符：got = %s，want = %s", got, want)
 	}
@@ -123,12 +126,12 @@ func TestParseOnOff(t *testing.T) {
 func TestValidate(t *testing.T) {
 	valid := []ModeScope{ModeScopeSystem, ModeScopeProcess}
 	for _, scope := range valid {
-		if err := (Settings{Associate: true, ModeScope: scope}).Validate(); err != nil {
+		if err := (Settings{Associate: true, ModeScope: scope, Theme: ThemeSystem}).Validate(); err != nil {
 			t.Errorf("Validate(%q) = %v，期望 nil", scope, err)
 		}
 	}
 	for _, scope := range []ModeScope{"", "SYSTEM", "PROCESS", "window", "Window", "auto"} {
-		if err := (Settings{ModeScope: scope}).Validate(); err == nil {
+		if err := (Settings{ModeScope: scope, Theme: ThemeSystem}).Validate(); err == nil {
 			t.Errorf("Validate(%q) 期望报错", scope)
 		}
 	}
@@ -180,5 +183,71 @@ func TestModeScopeValid(t *testing.T) {
 	if ModeScope("").Valid() || ModeScope("System").Valid() || ModeScope("WINDOW").Valid() ||
 		ModeScope("window").Valid() || ModeScope("auto").Valid() {
 		t.Error("非法 ModeScope 不应 Valid()")
+	}
+}
+
+// ParseTheme：只写 system|light|dark；大小写/首尾空白容忍，非法值报错。
+func TestParseTheme(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Theme
+		ok   bool
+	}{
+		{"system", ThemeSystem, true},
+		{"light", ThemeLight, true},
+		{"dark", ThemeDark, true},
+		{" SYSTEM ", ThemeSystem, true},
+		{"Light", ThemeLight, true},
+		{"auto", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, err := ParseTheme(c.in)
+		if c.ok {
+			if err != nil {
+				t.Errorf("ParseTheme(%q) 报错: %v", c.in, err)
+			} else if got != c.want {
+				t.Errorf("ParseTheme(%q) = %q，期望 %q", c.in, got, c.want)
+			}
+		} else if err == nil {
+			t.Errorf("ParseTheme(%q) 期望报错，实际 = %q", c.in, got)
+		}
+	}
+}
+
+// parseStoredTheme：三端存储读取统一语义——大小写/空白容忍；未知/空回退 system。
+func TestParseStoredTheme(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Theme
+	}{
+		{"system", ThemeSystem},
+		{"LIGHT", ThemeLight},
+		{" Dark ", ThemeDark},
+		{"bogus", ThemeSystem},
+		{"", ThemeSystem},
+	}
+	for _, c := range cases {
+		if got := parseStoredTheme(c.in); got != c.want {
+			t.Errorf("parseStoredTheme(%q) = %q，期望 %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestThemeValid(t *testing.T) {
+	if !ThemeSystem.Valid() || !ThemeLight.Valid() || !ThemeDark.Valid() {
+		t.Error("三个合法 Theme 都应 Valid()")
+	}
+	for _, v := range []Theme{"", "SYSTEM", "Light", "auto"} {
+		if Theme(v).Valid() {
+			t.Errorf("非法 Theme %q 不应 Valid()", v)
+		}
+	}
+}
+
+func TestJSONRejectsInvalidTheme(t *testing.T) {
+	s := Settings{Associate: true, ModeScope: ModeScopeSystem, Theme: Theme("bogus")}
+	if _, err := s.JSON(); err == nil {
+		t.Error("theme 非法时 JSON() 应报错")
 	}
 }

@@ -35,4 +35,10 @@ gboolean setup_config_save(gboolean associate);
 const char *setup_config_load_mode_scope(void);
 gboolean setup_config_save_mode_scope(const char *scope);
 
+/* 外观主题（只影响 Linux GTK3 设置窗；候选/预编辑颜色归 ibus 面板）：
+ * "system"（默认，跟随系统）/ "light"（浅色）/ "dark"（深色）。
+ * 写入只接受这三值；读取时大小写/首尾空白容忍，未知/空→system。 */
+const char *setup_config_load_theme(void);
+gboolean setup_config_save_theme(const char *theme);
+
 #endif

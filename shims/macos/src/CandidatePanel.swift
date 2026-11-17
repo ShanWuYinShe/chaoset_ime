@@ -138,7 +138,8 @@ final class ModeToastView: NSView {
     var text: String = "" { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
-        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // 与候选窗一致：用户主题优先（system 跟随系统，light/dark 强制）。
+        let isDark = AppTheme.current.isDark(effectiveAppearance: effectiveAppearance)
         let bg = isDark ? NSColor(white: 0.18, alpha: 0.92) : NSColor(white: 0.97, alpha: 0.95)
         let fg = isDark ? NSColor.white : NSColor(calibratedWhite: 0.15, alpha: 1)
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
