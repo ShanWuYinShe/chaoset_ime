@@ -140,12 +140,21 @@ final class ModeToastView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         // 与候选窗一致：用户主题优先（system 跟随系统，light/dark 强制）。
         let isDark = CandidateAppearance.isDark(effectiveAppearance: effectiveAppearance)
-        let bg = isDark ? NSColor(white: 0.18, alpha: 0.92) : NSColor(white: 0.97, alpha: 0.95)
-        let fg = isDark ? NSColor.white : NSColor(calibratedWhite: 0.15, alpha: 1)
+        // 深色与候选窗同用深海军蓝面板底 #1A2740 + 白 alpha 描边（浅色不变）。
+        let bg = isDark
+            ? NSColor(srgbRed: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0, alpha: 0.92)
+            : NSColor(white: 0.97, alpha: 0.95)
+        let fg = isDark
+            ? NSColor(srgbRed: 0xF2 / 255.0, green: 0xF6 / 255.0, blue: 0xFC / 255.0, alpha: 1)
+            : NSColor(calibratedWhite: 0.15, alpha: 1)
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
         bg.setFill()
         path.fill()
-        NSColor(white: 0, alpha: isDark ? 0.4 : 0.15).setStroke()
+        // 描边：深色 = 候选窗面板描边同款白 alpha；浅色沿用黑 0.15。
+        let stroke = isDark
+            ? NSColor(white: 1, alpha: 0x24 / 255.0)
+            : NSColor(white: 0, alpha: 0.15)
+        stroke.setStroke()
         path.lineWidth = 1
         path.stroke()
         let attrs: [NSAttributedString.Key: Any] = [

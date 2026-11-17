@@ -138,10 +138,12 @@ void ModeToast::onPaint(HWND hwnd) {
     // 跟随外观主题（uiEffectiveDark 经 TTL 缓存）；主题切换时 WM_SETTINGCHANGE
     // 会使缓存失效并触发重绘，保证配色一致。
     const bool dark = cachedDarkTheme();
-    HBRUSH bg = CreateSolidBrush(dark ? RGB(0x2C, 0x2C, 0x2E) : RGB(0xF6, 0xF6, 0xF8));
+    // 深色与候选窗同用深海军蓝面板底 #1A2740 + 白 alpha 描边有效值 #3A455B
+    // （mac Toast 同族；v0.3.33 深色表面统一海军蓝家族）。
+    HBRUSH bg = CreateSolidBrush(dark ? RGB(0x1A, 0x27, 0x40) : RGB(0xF6, 0xF6, 0xF8));
     // 描边 1pt（mac Toast 同为 1pt；用 show() 缓存的 dpi_，见 strokePx）
     HPEN pen = CreatePen(PS_SOLID, strokePx(dpi_),
-                         dark ? RGB(0x45, 0x45, 0x48) : RGB(0xC8, 0xC8, 0xCC));
+                         dark ? RGB(0x3A, 0x45, 0x5B) : RGB(0xC8, 0xC8, 0xCC));
     HGDIOBJ oldBrush = SelectObject(dc, bg);
     HGDIOBJ oldPen = SelectObject(dc, pen);
     // mac 圆角 r10pt（NSBezierPath xRadius/yRadius=10）→ GDI 直径 20pt
@@ -151,7 +153,7 @@ void ModeToast::onPaint(HWND hwnd) {
     DeleteObject(bg);
     DeleteObject(pen);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, dark ? RGB(0xFF, 0xFF, 0xFF) : RGB(0x26, 0x26, 0x28));
+    SetTextColor(dc, dark ? RGB(0xF2, 0xF6, 0xFC) : RGB(0x26, 0x26, 0x28));
     HFONT font = makeFont();
     HGDIOBJ oldFont = SelectObject(dc, font);
     RECT rc{0, 0, w_, h_};

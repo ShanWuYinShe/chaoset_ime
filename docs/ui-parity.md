@@ -89,27 +89,32 @@ Windows 常用 pt 值在各 DPI 下的设备像素（四舍五入）：
   keycapFill、keycapText、divider、border、gear、gearHover、mark、shadow；
 - Windows 静态契约要求字段名集合与 macOS 一致，具体色值以 visual-parity.sh 内联期望值为准。
 
-主色（skin.DefaultSkinFor）：
+主色（macOS CandidateTheme 为视觉参考实现）：
 
 | 字段 | 浅色 | 深色 |
 | :--- | :--- | :--- |
-| panelBg | #F6F6F8（mac alpha F6） | #2C2C2E（mac alpha F5） |
-| text | #1D1D1F | #FFFFFF |
+| panelBg | #F6F6F8（mac alpha F6） | #1A2740（mac alpha F5） |
+| text | #1D1D1F | #F2F6FC |
 | highlightBg | #007AFF | #0066EB |
 | highlightText | #FFFFFF | #FFFFFF |
-| chipBg | #FFFFFF | #5A5A5E |
-| chipDigit | #1D1D1F | #FFFFFF |
+| chipBg | #FFFFFF | #223353 |
+| chipDigit | #1D1D1F | #F2F6FC |
 | userMark | #34C759 | #30D158 |
+
+深色板 = **深海军蓝家族**（v0.3.33 起，与设置窗深色视觉令牌同族，不再用中性灰）：
+panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、text/chipDigit=textPrimary
+#F2F6FC、page/chevron=textTertiary #7E90AC；Toast 深色同用 #1A2740 面板底 + 白 alpha
+描边（描边与候选窗同款）。高亮蓝与学习标记绿为语义色，两版深浅都不变；浅色板不变。
 
 macOS 使用带 alpha 的 NSColor 与底色实时混合；GDI 无逐字形 alpha，Windows
 按 round(bg*(1-a)+fg*a) 预混合成不透明常量。常用派生有效值：
 
 | 派生色 | 浅色 | 深色 |
 | :--- | :--- | :--- |
-| panelBorder | #DDDDDF | #4A4A4C |
-| chipBorder | #C3C3C3 | #838386 |
-| page/chevron | #A1A1A6 | #7A7A80 |
-| divider | #E2E2E4 | #454547 |
+| panelBorder | #DDDDDF | #3A455B |
+| chipBorder | #C3C3C3 | #59667E |
+| page/chevron | #A1A1A6 | #62738E |
+| divider | #E2E2E4 | #354056 |
 
 Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1pt 描边 + 系统阴影。
 
