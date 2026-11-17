@@ -6,6 +6,24 @@
 
 import AppKit
 
+// 用户外观主题（system/light/dark）在候选窗热路径的解析：直接读 UserDefaults
+// 的 ChaosetTheme（与 Go internal/settings.theme 同键同语义），system 跟随传入的
+// effectiveAppearance。放在本文件（而非 CandidateSettings/AppTheme）是为了让
+// visual-parity.sh 只编译 CandidateTheme+CandidatePanelView 时也能解析，不依赖
+// 设置窗文件。每次 draw 读取，改主题后下一次绘制即生效，无进程/文件 IO。
+enum CandidateAppearance {
+    static func isDark(effectiveAppearance: NSAppearance?) -> Bool {
+        let raw = UserDefaults.standard.string(forKey: "ChaosetTheme")?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "system"
+        switch raw {
+        case "light": return false
+        case "dark": return true
+        default:
+            return effectiveAppearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+    }
+}
+
 // MARK: - 主题色（与 skin.DefaultSkinFor 色值一一对应）
 
 // internal（非 private）：tools/panel_metrics.swift 需要导出 13 个色值，

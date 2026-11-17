@@ -185,10 +185,10 @@ final class CandidatePanelView: NSView {
     // MARK: 绘制
 
     /// 用户主题优先：system 跟随系统 appearance，light/dark 强制对应配色。
-    /// 每次 draw 直接读 UserDefaults（AppTheme.current），无进程/文件 IO，
+    /// 每次 draw 直接读 UserDefaults（CandidateAppearance），无进程/文件 IO，
     /// 改主题后下一次绘制即生效，无需重启。
     private var isDark: Bool {
-        AppTheme.current.isDark(effectiveAppearance: effectiveAppearance)
+        CandidateAppearance.isDark(effectiveAppearance: effectiveAppearance)
     }
 
     override func draw(_ dirtyRect: NSRect) {
