@@ -38,15 +38,11 @@ namespace chaoset::win {
 // 自绘导航/卡片/页脚，跟随外观主题与 per-monitor DPI，控件用 BS_OWNERDRAW。
 static HWND g_settingsWnd = nullptr;        // 单例句柄
 static int g_settingsDpi = 96;              // 设置窗所在显示器 DPI（per-monitor）
-static HFONT g_settingsFont = nullptr;      // 正文/行标签 13pt
-static HFONT g_settingsFontBold = nullptr;  // 卡片标题/选中项 13pt semibold
-static HFONT g_settingsFontHint = nullptr;  // 说明/页脚/关于页正文 11pt
-static HFONT g_settingsFontTitle = nullptr; // 窗口标题/关于页标题 15pt semibold
+static HFONT g_settingsFont = nullptr, g_settingsFontBold = nullptr;
+static HFONT g_settingsFontHint = nullptr, g_settingsFontTitle = nullptr;
 static HICON g_settingsIcon = nullptr;      // 关于页应用图标（资源 1，按 DPI 重取）
-static HBRUSH g_settingsBgBrush = nullptr;    // 窗口背景刷（主题切换时重建）
-static HBRUSH g_settingsCardBrush = nullptr; // 卡片背景刷（子控件擦除背景必须用它）
-static bool g_settingsDark = false;           // 当前系统是否深色
-static bool g_settingsAssociate = true;     // 词组联想开关状态（自绘开关）
+static HBRUSH g_settingsBgBrush = nullptr, g_settingsCardBrush = nullptr;
+static bool g_settingsDark = false, g_settingsAssociate = true;
 // 悬停状态：导航项由父窗口 WM_MOUSEMOVE 维护，自绘控件由窗口过程子类化维护。
 // 单独存 id/index 而不是每帧查鼠标位置——重绘是高频动作，查窗口代价更高。
 static int g_settingsHoverNav = -1;         // 悬停中的导航项（-1=无）
@@ -117,7 +113,7 @@ static constexpr int kInputCard1H = 50 + kRowHeight + kHintGap + kHintH + kCardP
 static constexpr int kInputCard2Y = kInputCard1H + kCardGap;                          // 148
 static constexpr int kInputCard2H = 50 + kChoiceH + kHintGap + kHintH + kCardPad;     // 126
 static constexpr int kInputCard3Y = kInputCard2Y + kInputCard2H + kCardGap;
-static constexpr int kInputCard3H = kInputCard2H;
+static constexpr int kInputCard3H = kInputCard2H + 42;                                // 168（含候选窗实机微预览）
 static constexpr int kDictCard1H = 50 + kStatsH + kRowGap + kButtonH + kHintGap + kHintH + kCardPad;  // 156
 static constexpr int kDictCard2Y = kDictCard1H + kCardGap;                            // 172
 static constexpr int kDictCard2H = 50 + kButtonH + kHintGap + kHintH2 + kCardPad;    // 146
@@ -138,17 +134,9 @@ static const SettingsCardDef kAboutCards[] = {
 
 // 返回本页卡片表与数量（数组顺序即绘制顺序）。
 static const SettingsCardDef* settingsCards(SettingsPage page, int* count) {
-    switch (page) {
-        case SettingsPage::Input:
-            *count = static_cast<int>(sizeof(kInputCards) / sizeof(kInputCards[0]));
-            return kInputCards;
-        case SettingsPage::Dictionary:
-            *count = static_cast<int>(sizeof(kDictionaryCards) / sizeof(kDictionaryCards[0]));
-            return kDictionaryCards;
-        case SettingsPage::About:
-            *count = static_cast<int>(sizeof(kAboutCards) / sizeof(kAboutCards[0]));
-            return kAboutCards;
-    }
+    if (page == SettingsPage::Input) { *count = static_cast<int>(sizeof(kInputCards) / sizeof(kInputCards[0])); return kInputCards; }
+    if (page == SettingsPage::Dictionary) { *count = static_cast<int>(sizeof(kDictionaryCards) / sizeof(kDictionaryCards[0])); return kDictionaryCards; }
+    if (page == SettingsPage::About) { *count = static_cast<int>(sizeof(kAboutCards) / sizeof(kAboutCards[0])); return kAboutCards; }
     *count = 0;
     return nullptr;
 }
@@ -307,15 +295,11 @@ static bool settingsDwmSetAttribute(HWND wnd, DWORD attr, const void* value, DWO
 // 暖色内容区割裂。35/36 在 Win10 上调用失败，静默忽略（不报错、不降级）。
 static void settingsApplyTitleBarTheme(HWND wnd) {
     const BOOL dark = g_settingsDark ? TRUE : FALSE;
-    if (!settingsDwmSetAttribute(wnd, 20, &dark, sizeof(dark))) {
-        settingsDwmSetAttribute(wnd, 19, &dark, sizeof(dark));
-    }
+    if (!settingsDwmSetAttribute(wnd, 20, &dark, sizeof(dark))) settingsDwmSetAttribute(wnd, 19, &dark, sizeof(dark));
     const SettingsColors c = settingsColors(g_settingsDark);
-    COLORREF caption = c.windowBg;
-    COLORREF captionText = c.textPrimary;
+    COLORREF caption = c.windowBg, captionText = c.textPrimary;
     settingsDwmSetAttribute(wnd, 35, &caption, sizeof(caption));
     settingsDwmSetAttribute(wnd, 36, &captionText, sizeof(captionText));
-    // Win11 圆角偏好设置（DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2）
     const DWORD corner = 2;
     settingsDwmSetAttribute(wnd, 33, &corner, sizeof(corner));
 }
@@ -482,12 +466,9 @@ static void settingsDrawFocusRing(HDC dc, const RECT& r, int radius) {
 
 // 导航项文案（顺序与 SettingsPage 一致）。
 static const wchar_t* settingsNavLabel(int index) {
-    switch (index) {
-        case 0: return L"输入";
-        case 1: return L"词库";
-        case 2: return L"关于";
-        default: return L"";
-    }
+    if (index == 0) return L"输入";
+    if (index == 1) return L"词库";
+    return index == 2 ? L"关于" : L"";
 }
 
 // 导航项命中矩形（自绘 + 点击 + 悬停命中都用它，避免两套坐标）：112×34、间距 4。
@@ -498,6 +479,39 @@ static RECT settingsNavItemRect(int index) {
     r.right = kNavWidth - 24;  // 112pt 胶囊（列宽 148、左右各 12 内边距）
     r.bottom = r.top + 34;
     return r;
+}
+
+// 候选窗实机自绘微预览（输入页外观主题卡内展示，与候选窗蓝白体系 1:1 对齐）
+static void settingsDrawCandidatePreview(HDC dc, const RECT& rc, const SettingsColors& c, bool dark) {
+    const COLORREF pedBg = dark ? RGB(0x13, 0x1B, 0x2E) : RGB(0xF8, 0xFA, 0xFC);
+    settingsFillRoundRect(dc, rc, settingsPt(6), pedBg);
+    settingsStrokeRoundRect(dc, rc, settingsPt(6), c.cardBorder, settingsStrokePx(1));
+    int curX = rc.left + settingsPt(8);
+    RECT pr{curX, rc.top, curX + settingsPt(42), rc.bottom};
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c.accentText);
+    HGDIOBJ oldF = SelectObject(dc, g_settingsFontBold);
+    DrawTextW(dc, L"chao|", -1, &pr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    curX += settingsPt(44);
+    RECT divR{curX, rc.top + settingsPt(6), curX + settingsStrokePx(1), rc.bottom - settingsPt(6)};
+    HBRUSH db = CreateSolidBrush(c.divider);
+    FillRect(dc, &divR, db);
+    DeleteObject(db);
+    curX += settingsPt(8);
+    RECT pill{curX, rc.top + settingsPt(4), curX + settingsPt(56), rc.bottom - settingsPt(4)};
+    settingsFillRoundRect(dc, pill, settingsPt(4), c.accent);
+    SetTextColor(dc, c.onAccent);
+    DrawTextW(dc, L"1. 潮客", -1, &pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    curX += settingsPt(62);
+    RECT cands{curX, rc.top, rc.right - settingsPt(40), rc.bottom};
+    SetTextColor(dc, c.textSecondary);
+    SelectObject(dc, g_settingsFont);
+    DrawTextW(dc, L"2. 潮水  3. 潮流  4. 潮汕", -1, &cands, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT pg{rc.right - settingsPt(38), rc.top, rc.right - settingsPt(8), rc.bottom};
+    SetTextColor(dc, c.textTertiary);
+    SelectObject(dc, g_settingsFontHint);
+    DrawTextW(dc, L"1/3 ⚙", -1, &pg, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, oldF);
 }
 
 static void settingsPaint(HDC dc, HWND wnd) {
@@ -534,12 +548,18 @@ static void settingsPaint(HDC dc, HWND wnd) {
         RECT pr{settingsPt(r.left), settingsPt(r.top), settingsPt(r.right), settingsPt(r.bottom)};
         const bool selected = (static_cast<int>(g_settingsPage) == i);
         const bool hovered = (g_settingsHoverNav == i);
-        if (selected) settingsFillRoundRect(dc, pr, settingsPt(10), c.accentSoft);
-        else if (hovered) settingsFillRoundRect(dc, pr, settingsPt(10), c.controlHover);
+        if (selected) {
+            settingsFillRoundRect(dc, pr, settingsPt(10), c.accentSoft);
+            RECT pill{pr.left + settingsPt(2), pr.top + settingsPt(7),
+                      pr.left + settingsPt(5), pr.bottom - settingsPt(7)};
+            settingsFillRoundRect(dc, pill, settingsPt(1), c.accent);
+        } else if (hovered) {
+            settingsFillRoundRect(dc, pr, settingsPt(10), c.controlHover);
+        }
         SetTextColor(dc, selected ? c.accentText : c.textPrimary);
         HGDIOBJ of = SelectObject(dc, selected ? g_settingsFontBold : g_settingsFont);
         RECT tr = pr;
-        tr.left += settingsPt(14);
+        tr.left += settingsPt(selected ? 16 : 14);
         DrawTextW(dc, settingsNavLabel(i), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
     }
@@ -559,12 +579,36 @@ static void settingsPaint(HDC dc, HWND wnd) {
         settingsDrawCardShadow(dc, rc);
         settingsFillRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBg);
         settingsStrokeRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBorder, settingsStrokePx(1));
-        SetTextColor(dc, c.textSecondary);
+
+        RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(15),
+                 rc.right - settingsPt(kCardPad), rc.top + settingsPt(37)};
+        const int bSize = settingsPt(18);
+        RECT badge{cap.left, cap.top + (cap.bottom - cap.top - bSize) / 2, cap.left + bSize, 0};
+        badge.bottom = badge.top + bSize;
+        const COLORREF bBg = (i == 0 ? c.accentSoft : (i == 1 ? settingsBlendColor(c.accentSoft, c.controlBg, 50) : c.controlBg));
+        settingsFillRoundRect(dc, badge, settingsPt(5), bBg);
+        settingsStrokeRoundRect(dc, badge, settingsPt(5), c.cardBorder, settingsStrokePx(1));
+        const wchar_t* glyph = (g_settingsPage == SettingsPage::Input)
+            ? (i == 0 ? L"⚡" : (i == 1 ? L"🌐" : L"🎨"))
+            : (g_settingsPage == SettingsPage::Dictionary ? (i == 0 ? L"📊" : L"📥") : L"ℹ");
+        HGDIOBJ gf = SelectObject(dc, g_settingsFontHint);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, c.accentText);
+        DrawTextW(dc, glyph, -1, &badge, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, gf);
+        cap.left += bSize + settingsPt(8);
+        SetTextColor(dc, c.textPrimary);
         HGDIOBJ of = SelectObject(dc, g_settingsFontBold);
-        RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(16),
-                 rc.right - settingsPt(kCardPad), rc.top + settingsPt(38)};
         DrawTextW(dc, card.caption, -1, &cap, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, of);
+    }
+
+    // 4.1) 输入页第 3 张卡「外观主题」底部的候选窗实机微预览
+    if (g_settingsPage == SettingsPage::Input) {
+        const int prevY = baseY + kInputCard3Y + 50 + kChoiceH + kHintGap + kHintH + 8;
+        RECT prevBox{cardX + settingsPt(kCardPad), settingsPt(prevY),
+                     cardX + cardW - settingsPt(kCardPad), settingsPt(prevY + 34)};
+        settingsDrawCandidatePreview(dc, prevBox, c, g_settingsDark);
     }
 
     // 5) 关于页：应用图标 + 标题/副标题 + 三行说明（版本号只在页脚，避免重复）
@@ -662,7 +706,7 @@ static void settingsDrawSwitch(const DRAWITEMSTRUCT* dis) {
     tr.right = track.left - settingsPt(12);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, c.textPrimary);
-    HGDIOBJ oldFont = SelectObject(dc, g_settingsFont);
+    HGDIOBJ oldFont = SelectObject(dc, g_settingsFontBold);
     DrawTextW(dc, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
     if ((dis->itemState & ODS_FOCUS) != 0) {
@@ -742,29 +786,16 @@ static int g_ctlProcCount = 0;
 static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     WNDPROC old = DefWindowProcW;
     for (int i = 0; i < g_ctlProcCount; ++i) {
-        if (g_ctlProcs[i].hwnd == hwnd) {
-            old = g_ctlProcs[i].old;
-            break;
-        }
+        if (g_ctlProcs[i].hwnd == hwnd) { old = g_ctlProcs[i].old; break; }
     }
     const int id = GetDlgCtrlID(hwnd);
     if (msg == WM_MOUSEMOVE) {
-        if (g_settingsHoverId != id) {
-            g_settingsHoverId = id;
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        TRACKMOUSEEVENT tme{};
-        tme.cbSize = sizeof(tme);
-        tme.dwFlags = TME_LEAVE;
-        tme.hwndTrack = hwnd;
+        if (g_settingsHoverId != id) { g_settingsHoverId = id; InvalidateRect(hwnd, nullptr, FALSE); }
+        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
         TrackMouseEvent(&tme);
     } else if (msg == WM_MOUSELEAVE) {
-        if (g_settingsHoverId == id) {
-            g_settingsHoverId = 0;
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
+        if (g_settingsHoverId == id) { g_settingsHoverId = 0; InvalidateRect(hwnd, nullptr, FALSE); }
     } else if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT) {
-        // IDC_HAND 的宏是 ANSI 变体，本壳按 W 版 API 编译，直接用资源号 32649。
         SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)));
         return TRUE;
     }
@@ -773,8 +804,7 @@ static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
 
 static void settingsSubclassControl(HWND ctl) {
     if (ctl == nullptr || g_ctlProcCount >= 16) return;
-    const LONG_PTR oldRaw = SetWindowLongPtrW(ctl, GWLP_WNDPROC,
-                                              reinterpret_cast<LONG_PTR>(settingsCtlProc));
+    const LONG_PTR oldRaw = SetWindowLongPtrW(ctl, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(settingsCtlProc));
     if (oldRaw == 0) return;
     g_ctlProcs[g_ctlProcCount].hwnd = ctl;
     g_ctlProcs[g_ctlProcCount].old = reinterpret_cast<WNDPROC>(oldRaw);
@@ -826,25 +856,19 @@ static void SettingsExportLearningData(HWND wnd) {
     chaoset::Session session(transport);
     std::string tsv;
     if (!session.userExportAll(false, &tsv)) {
-        MessageBoxW(wnd, L"导出失败：daemon 未运行，或未启用用户词典。", L"学习数据",
-                    MB_OK | MB_ICONERROR);
+        MessageBoxW(wnd, L"导出失败：daemon 未运行，或未启用用户词典。", L"学习数据", MB_OK | MB_ICONERROR);
         return;
     }
-    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) {
         MessageBoxW(wnd, L"无法写入所选文件。", L"学习数据", MB_OK | MB_ICONERROR);
         return;
     }
     DWORD written = 0;
-    const BOOL ok = tsv.empty() ? TRUE : WriteFile(f, tsv.data(),
-                                                  static_cast<DWORD>(tsv.size()), &written, nullptr);
+    const BOOL ok = tsv.empty() ? TRUE : WriteFile(f, tsv.data(), static_cast<DWORD>(tsv.size()), &written, nullptr);
     CloseHandle(f);
-    if (!ok) {
-        MessageBoxW(wnd, L"写入文件失败。", L"学习数据", MB_OK | MB_ICONERROR);
-        return;
-    }
-    MessageBoxW(wnd, L"学习数据已导出。", L"学习数据", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(wnd, ok ? L"学习数据已导出。" : L"写入文件失败。", L"学习数据",
+                ok ? (MB_OK | MB_ICONINFORMATION) : (MB_OK | MB_ICONERROR));
 }
 
 // ---- 词库导入（GUI）----
@@ -985,13 +1009,9 @@ static bool settingsParseGetJSON(const std::string& json, bool* associate, ModeS
     return true;
 }
 
-static const wchar_t* settingsScopeName(ModeScope scope) {
-    return scope == ModeScope::Process ? L"process" : L"system";
-}
+static const wchar_t* settingsScopeName(ModeScope scope) { return scope == ModeScope::Process ? L"process" : L"system"; }
 static const wchar_t* settingsThemeName(Theme theme) {
-    if (theme == Theme::Light) return L"light";
-    if (theme == Theme::Dark) return L"dark";
-    return L"system";
+    return theme == Theme::Light ? L"light" : (theme == Theme::Dark ? L"dark" : L"system");
 }
 
 // 冷路径读取「词组联想 + 中英状态作用域」：优先 Go 单一真源，失败回退原生。
@@ -1035,10 +1055,8 @@ static bool settingsRunProcess(const std::wstring& exe, const std::wstring& cmdL
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     if (!logPath.empty()) {
-        logFile = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                          OPEN_EXISTING, 0, nullptr);
+        logFile = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         if (logFile == INVALID_HANDLE_VALUE || nul == INVALID_HANDLE_VALUE) {
             if (logFile != INVALID_HANDLE_VALUE) CloseHandle(logFile);
             if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
@@ -1058,11 +1076,8 @@ static bool settingsRunProcess(const std::wstring& exe, const std::wstring& cmdL
     if (!ok) return false;
     const DWORD wait = WaitForSingleObject(pi.hProcess, 120000);
     DWORD code = 1;
-    if (wait == WAIT_OBJECT_0) {
-        GetExitCodeProcess(pi.hProcess, &code);
-    } else {
-        TerminateProcess(pi.hProcess, 1);
-    }
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     if (exitCode != nullptr) *exitCode = code;
@@ -1127,8 +1142,7 @@ static bool settingsRestartDaemon() {
     for (HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
         HKEY h = nullptr;
         if (RegOpenKeyExW(root, kRunKey, 0, KEY_READ, &h) != ERROR_SUCCESS) continue;
-        DWORD type = 0;
-        DWORD size = 0;
+        DWORD type = 0, size = 0;
         if (RegQueryValueExW(h, L"ChaosetDaemon", nullptr, &type, nullptr, &size) == ERROR_SUCCESS &&
             (type == REG_SZ || type == REG_EXPAND_SZ) && size > sizeof(wchar_t)) {
             std::vector<wchar_t> val(size / sizeof(wchar_t) + 1, 0);
@@ -1136,12 +1150,9 @@ static bool settingsRestartDaemon() {
                                  reinterpret_cast<LPBYTE>(val.data()), &size) == ERROR_SUCCESS) {
                 run = val.data();
                 if (type == REG_EXPAND_SZ) {
-                    // 安装器写的是 REG_EXPAND_SZ（保留 %LOCALAPPDATA%）；CreateProcess
-                    // 不会展开环境变量，必须用设置窗当前用户的环境展开后再启动。
-                    std::vector<wchar_t> expanded(32768, 0);
-                    const DWORD n = ExpandEnvironmentStringsW(run.c_str(), expanded.data(),
-                                                              static_cast<DWORD>(expanded.size()));
-                    if (n > 0 && n <= expanded.size()) run = expanded.data();
+                    std::vector<wchar_t> exp(32768, 0);
+                    const DWORD n = ExpandEnvironmentStringsW(run.c_str(), exp.data(), static_cast<DWORD>(exp.size()));
+                    if (n > 0 && n <= exp.size()) run = exp.data();
                 }
             }
         }
@@ -1215,20 +1226,11 @@ static void SettingsImportDictionary(HWND wnd) {
         return;
     }
     std::vector<std::wstring> files;
-    {
-        const wchar_t* p = buf.data();
-        const std::wstring first = p;
-        p += first.size() + 1;
-        if (*p == L'\0') {
-            files.push_back(first);
-        } else {
-            while (*p != L'\0') {
-                const std::wstring name = p;
-                files.push_back(first + L"\\" + name);
-                p += name.size() + 1;
-            }
-        }
-    }
+    const wchar_t* p = buf.data();
+    const std::wstring first = p;
+    p += first.size() + 1;
+    if (*p == L'\0') { files.push_back(first); }
+    else { while (*p != L'\0') { files.push_back(first + L"\\" + p); p += wcslen(p) + 1; } }
     if (files.empty()) return;
     // 4) 合并/备份/原子替换全部交给 Go 工具：壳只传 -o/-backup 和文件列表。
     //    （2026-11-01 用户要求工具逻辑用 Go，不在 shims 里重复实现。）
