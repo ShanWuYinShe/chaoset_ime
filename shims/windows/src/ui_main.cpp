@@ -22,9 +22,43 @@ using RunUiFn = int(WINAPI*)(HINSTANCE, LPCWSTR);
 void showLoadError(const wchar_t* text) {
     MessageBoxW(nullptr, text, L"Chaoset", MB_OK | MB_ICONERROR);
 }
+
+// 动态启用 Per-Monitor V2 DPI 意识：根治高分屏缩放下 DWM 位图缩放导致的模糊问题。
+void enablePerMonitorDpiAwareness() {
+    typedef BOOL(WINAPI* SetProcessDpiAwarenessContextFn)(HANDLE);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != nullptr) {
+        auto setContext = reinterpret_cast<SetProcessDpiAwarenessContextFn>(
+            reinterpret_cast<void*>(GetProcAddress(user32, "SetProcessDpiAwarenessContext")));
+        if (setContext != nullptr) {
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE = -3
+            if (setContext(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4))) ||
+                setContext(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-3)))) {
+                return;
+            }
+        }
+    }
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    if (shcore != nullptr) {
+        typedef HRESULT(WINAPI* SetProcessDpiAwarenessFn)(int);
+        auto setDpiAwareness = reinterpret_cast<SetProcessDpiAwarenessFn>(
+            reinterpret_cast<void*>(GetProcAddress(shcore, "SetProcessDpiAwareness")));
+        if (setDpiAwareness != nullptr && SUCCEEDED(setDpiAwareness(2 /* PROCESS_PER_MONITOR_DPI_AWARE */))) {
+            return;
+        }
+    }
+    if (user32 != nullptr) {
+        typedef BOOL(WINAPI* SetProcessDPIAwareFn)();
+        auto setDpiAware = reinterpret_cast<SetProcessDPIAwareFn>(
+            reinterpret_cast<void*>(GetProcAddress(user32, "SetProcessDPIAware")));
+        if (setDpiAware != nullptr) setDpiAware();
+    }
+}
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR /*cmdLine*/, int) {
+    enablePerMonitorDpiAwareness();
     wchar_t path[MAX_PATH] = {0};
     if (GetModuleFileNameW(hInst, path, MAX_PATH) == 0) return 1;
     wchar_t* slash = wcsrchr(path, L'\\');

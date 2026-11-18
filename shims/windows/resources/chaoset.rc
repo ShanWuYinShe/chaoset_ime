@@ -11,6 +11,7 @@
 // 同一份模板同时用于 ChaosetIME.dll / ChaosetIME32.dll / chaoset-ui.exe，
 // 让「右键属性 → 详细信息」在前端 DLL 与 UI 宿主上都显示同样的 app 信息。
 1 ICON "chaoset.ico"
+@EXTRA_RESOURCE@
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION @VER_MAJOR@,@VER_MINOR@,@VER_PATCH@,@VER_BUILD@

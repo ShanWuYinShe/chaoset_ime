@@ -323,7 +323,7 @@ private:
         lf.lfHeight = -MulDiv(sz, 72, 96) * 96 / 100;
         lf.lfWeight = FW_BOLD;
         lf.lfCharSet = DEFAULT_CHARSET;
-        wcscpy_s(lf.lfFaceName, L"Microsoft YaHei");
+        wcscpy_s(lf.lfFaceName, L"Microsoft YaHei UI");
         HFONT font = CreateFontIndirectW(&lf);
         HGDIOBJ oldFont = SelectObject(dc, font);
         RECT rc{0, 0, sz, sz - 1};

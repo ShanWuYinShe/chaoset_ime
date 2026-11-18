@@ -304,6 +304,7 @@ package-windows:
 		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（64 位）/g' \
 		-e 's/@FILE_TYPE@/2/g' \
 		-e 's/@INTERNAL_NAME@/ChaosetIME/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME.dll/g' \
+		-e 's|@EXTRA_RESOURCE@||g' \
 		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset64.rc
 	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
 		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
@@ -311,6 +312,7 @@ package-windows:
 		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（32 位）/g' \
 		-e 's/@FILE_TYPE@/2/g' \
 		-e 's/@INTERNAL_NAME@/ChaosetIME32/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME32.dll/g' \
+		-e 's|@EXTRA_RESOURCE@||g' \
 		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset32.rc
 	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
 		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
@@ -318,6 +320,7 @@ package-windows:
 		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）/g' \
 		-e 's/@FILE_TYPE@/1/g' \
 		-e 's/@INTERNAL_NAME@/chaoset-ui/g' -e 's/@ORIGINAL_FILENAME@/chaoset-ui.exe/g' \
+		-e 's|@EXTRA_RESOURCE@|1 24 "chaoset-ui.manifest"|g' \
 		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset-ui.rc
 	# -c 65001：模板里的中文说明是 UTF-8，windres 默认按 ANSI/Latin-1 解释
 	# 会把「拼音输入法」存成 mojibake，属性页全是乱码（2026-11-06 打包验证）。
@@ -380,7 +383,7 @@ package-windows:
 		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
 	@if command -v makensis >/dev/null 2>&1; then \
 		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
-		(cd shims/windows/installer && makensis -DVERSION=$(VERSION) -DVERSION_QUAD=$(VERSION_QUAD) chaoset.nsi); \
+		(cd shims/windows/installer && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 makensis -DVERSION=$(VERSION) -DVERSION_QUAD=$(VERSION_QUAD) chaoset.nsi); \
 	fi
 	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
 	rm -rf dist/chaoset-windows-x64

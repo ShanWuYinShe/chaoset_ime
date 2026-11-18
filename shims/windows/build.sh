@@ -66,15 +66,16 @@ WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
 # chaoset.rc 是模板（图标 + VS_VERSION_INFO，含 @VERSION@ 等占位符）：先按
 # sed 注入版本与文件名生成 chaoset.gen.rc，再交给 windres。图标必须链进 DLL
 # （注册表 IconFile 指向本 DLL），版本信息让「右键属性 → 详细信息」可见。
-gen_rc() { # $1=输出 rc  $2=FileDescription  $3=InternalName  $4=OriginalFilename  $5=FileType
+gen_rc() { # $1=输出 rc  $2=FileDescription  $3=InternalName  $4=OriginalFilename  $5=FileType  $6=ExtraResource
   sed -e "s/@VERSION@/$VERSION/g" -e "s/@VERSION_QUAD@/$QUAD/g" \
       -e "s/@VER_MAJOR@/$VMAJOR/g" -e "s/@VER_MINOR@/$VMINOR/g" \
       -e "s/@VER_PATCH@/$VPATCH/g" -e "s/@VER_BUILD@/$VBUILD/g" \
       -e "s/@FILE_DESCRIPTION@/$2/g" -e "s/@INTERNAL_NAME@/$3/g" \
       -e "s/@ORIGINAL_FILENAME@/$4/g" -e "s/@FILE_TYPE@/$5/g" \
+      -e "s|@EXTRA_RESOURCE@|${6:-}|g" \
       resources/chaoset.rc > "$1"
 }
-gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "ChaosetIME.dll" 2
+gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "ChaosetIME.dll" 2 ""
 # -c 65001：模板里的中文说明是 UTF-8，windres 默认按 ANSI 解释会存成
 # mojibake（属性页乱码），显式指定 UTF-8 代码页。
 "$WINDRES" -c 65001 -I resources build/chaoset.gen.rc -O coff -o build/chaoset_rc.o
@@ -156,7 +157,7 @@ echo "[4/4] 交叉编译单例 UI 宿主 chaoset-ui.exe..."
 # ChaosetIME.dll 后调用导出 ChaosetRunUi，UI 实现全部在 DLL 里（无第二套 UI）。
 # 同一份版本模板再生成一份 UI 宿主专用资源：独立 EXE 的属性页也要显示
 # 产品名/公司/版本，且 FileDescription 指向「UI 宿主」而非前端 DLL。
-gen_rc build/ui.gen.rc "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1
+gen_rc build/ui.gen.rc "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
 "$WINDRES" -c 65001 -I resources build/ui.gen.rc -O coff -o build/ui_rc.o
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
   -o build/chaoset-ui.exe src/ui_main.cpp build/ui_rc.o
