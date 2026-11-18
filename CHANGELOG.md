@@ -18,7 +18,8 @@
   （文字一灰一黑）；描边两端深浅也不一致（mac 黑 0.15 vs Windows #C8C8CC）。本次
   macOS 浅色改为 #F6F6F8 底（alpha 0.95，半透明为平台差异）+ #262628 文字 + 黑
   alpha 1A 描边（有效 #DDDDDF），Windows 浅色描边 #C8C8CC → #DDDDDF，两端浅色
-  Toast 与候选窗浅色面板完全同族；深色已是海军蓝家族（上一条）不变。
+  Toast 与候选窗浅色面板完全同族；深色已是海军蓝家族（见本段「深色表面统一为
+  深海军蓝家族」条）不变。
   `docs/ui-parity.md` 新增「Toast 配色」表作为两端单一事实源（实测值来自
   NSColor sRGB 转换探针，非目测）。
 - **视觉(Windows)：候选窗与模式 Toast 在 Win11 改用 DWM 抗锯齿圆角，消除 GDI
