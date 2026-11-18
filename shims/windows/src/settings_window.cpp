@@ -736,7 +736,7 @@ struct SettingsCtlProcEntry {
     HWND hwnd;
     WNDPROC old;
 };
-static SettingsCtlProcEntry g_ctlProcs[8] = {};
+static SettingsCtlProcEntry g_ctlProcs[16] = {};
 static int g_ctlProcCount = 0;
 
 static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -772,7 +772,7 @@ static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
 }
 
 static void settingsSubclassControl(HWND ctl) {
-    if (ctl == nullptr || g_ctlProcCount >= 8) return;
+    if (ctl == nullptr || g_ctlProcCount >= 16) return;
     const LONG_PTR oldRaw = SetWindowLongPtrW(ctl, GWLP_WNDPROC,
                                               reinterpret_cast<LONG_PTR>(settingsCtlProc));
     if (oldRaw == 0) return;
@@ -1458,6 +1458,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             if (g_settingsIcon) { DestroyIcon(g_settingsIcon); g_settingsIcon = nullptr; }
             if (g_settingsBgBrush) { DeleteObject(g_settingsBgBrush); g_settingsBgBrush = nullptr; }
             if (g_settingsCardBrush) { DeleteObject(g_settingsCardBrush); g_settingsCardBrush = nullptr; }
+            g_ctlProcCount = 0;
+            g_settingsHoverId = 0;
+            g_settingsHoverNav = -1;
+            g_settingsTrackingMouse = false;
             g_settingsWnd = nullptr;
             InterlockedDecrement(&g_liveSettingsWindows);
             return 0;
