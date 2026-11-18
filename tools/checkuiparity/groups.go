@@ -37,6 +37,7 @@ const (
 	groupTrayModeScope      = "托盘与中英作用域"
 	groupTrayLifecycle      = "托盘生命周期"
 	groupTrayActive         = "托盘可见性（active）"
+	groupTrayPalette        = "托盘配色"
 	groupTsfZeroBlock       = "TSF 回调零跨进程等待"
 	groupWindowsInstall     = "Windows 安装安全"
 	groupWindowsVersionInfo = "Windows 版本信息"
