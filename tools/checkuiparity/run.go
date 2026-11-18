@@ -76,6 +76,7 @@ var checkGroups = []checkGroup{
 	{groupCandidateGearMouseUp, onLogical(checkCandidateGearMouseUp)},
 	{groupTrayLifecycle, onLogical(checkTrayLazyLifecycle)},
 	{groupTrayActive, onLogical(checkTrayActiveLifecycle)},
+	{groupTrayPalette, onLogical(checkTrayPalette)},
 	{groupTsfZeroBlock, onLogical(checkTsfZeroBlockContract)},
 	// daemon 单实例（安装器/LaunchAgent/TIP 三方）。
 	{groupDaemonSingleton, onLogical(checkDaemonSingleton)},

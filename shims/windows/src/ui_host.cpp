@@ -276,13 +276,15 @@ private:
         ZeroMemory(bits, static_cast<size_t>(sz) * sz * 4);
 
         // 键帽配色：中文模式蓝白主题——圆角方块 #007AFF（与设置窗 accent 同值），
-        // 字形保持白色；英文模式沿用象牙白瓷键帽（深色字形）。
+        // 字形保持白色；英文模式并入蓝白浮窗浅色族（底 #F6F6F8 + 描边 #DDDDDF +
+        // 文字 #262628，与候选窗/Toast 浅色面板同值，docs/ui-parity.md「托盘键帽
+        // 配色」；此前象牙白瓷键帽是暖陶配色残留）。顶边高光为键帽立体造型语义。
         // 中文模式：底色 RGB(0,122,255)，边框阴影 RGB(0,90,190)，高光 RGB(90,170,255)
-        // 英文模式：底色 RGB(246,243,238)，边框阴影 RGB(200,195,185)，高光 RGB(255,255,255)
-        const COLORREF clrBody = english ? RGB(246, 243, 238) : RGB(0, 122, 255);
-        const COLORREF clrBorder = english ? RGB(200, 195, 185) : RGB(0, 90, 190);
+        // 英文模式：底色 RGB(246,246,248)，边框阴影 RGB(221,221,223)，高光 RGB(255,255,255)
+        const COLORREF clrBody = english ? RGB(246, 246, 248) : RGB(0, 122, 255);
+        const COLORREF clrBorder = english ? RGB(221, 221, 223) : RGB(0, 90, 190);
         const COLORREF clrHi = english ? RGB(255, 255, 255) : RGB(90, 170, 255);
-        const COLORREF clrText = english ? RGB(30, 27, 24) : RGB(255, 255, 255);
+        const COLORREF clrText = english ? RGB(38, 38, 40) : RGB(255, 255, 255);
 
         const int cr = (sz >= 24) ? 5 : 3;
         // 1. 底层微阴影与倒角边框

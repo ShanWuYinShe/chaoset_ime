@@ -447,6 +447,19 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 //     与输入焦点解耦）：active 1（显示并设 owner）/ active 0（只在输入法被切走
 //     时上报，是唯一隐藏入口）；UI 宿主保留单活跃 owner 记账与 300ms 防抖，
 //     无心跳/轮询定时器。
+//
+// checkTrayPalette 任务栏「中/英」托盘键帽配色（docs/ui-parity.md「托盘键帽配色」）：
+// 英文模式并入蓝白浮窗浅色族（此前象牙白瓷键帽为暖陶配色残留），中文模式底色与
+// 候选窗浅色高亮蓝/设置窗 accent 同值。以 ui_host.cpp 的整行三元片段锁住底/边框/
+// 文字三值（顶边高光为键帽造型语义，不锁）。改配色须同步 docs 表与本断言。
+func checkTrayPalette(fsys fs.FS, problems *[]string) {
+	checkContains(fsys, problems, groupTrayPalette, winShell,
+		"const COLORREF clrBody = english ? RGB(246, 246, 248) : RGB(0, 122, 255);",
+		"const COLORREF clrBorder = english ? RGB(221, 221, 223) : RGB(0, 90, 190);",
+		"const COLORREF clrText = english ? RGB(38, 38, 40) : RGB(255, 255, 255);",
+	)
+}
+
 func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 	const group = groupTrayModeScope
 	checkContains(fsys, problems, group, winShell,
