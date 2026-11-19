@@ -415,31 +415,20 @@ static void settingsApplyDpi(HWND wnd, int dpi) {
 
 // ---- 设置窗自绘：导航/卡片/页脚/关于页（蓝白令牌）----
 
-// 圆角填充矩形（卡片/胶囊/开关轨道共用）。radius 是圆角半径（pt）；GDI
-// RoundRect 的后两个参数是圆角椭圆直径，因此这里乘 2 才能得到规范的圆角。
-static void settingsFillRoundRect(HDC dc, const RECT& r, int radius, COLORREF fill) {
+// 统一圆角矩形（填充与描边一次完成，像素级贴合，杜绝分次绘制造成的边缘噪点）。
+static void settingsDrawRoundRect(HDC dc, const RECT& r, int radius, COLORREF fill,
+                                  COLORREF stroke = 0, int strokeWidthPx = 0) {
     HBRUSH brush = CreateSolidBrush(fill);
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    HPEN pen = strokeWidthPx > 0 ? CreatePen(PS_SOLID, strokeWidthPx, stroke) : static_cast<HPEN>(GetStockObject(NULL_PEN));
+    HGDIOBJ oldBrush = SelectObject(dc, brush), oldPen = SelectObject(dc, pen);
     RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen); SelectObject(dc, oldBrush);
+    if (strokeWidthPx > 0) DeleteObject(pen);
     DeleteObject(brush);
 }
+static void settingsFillRoundRect(HDC dc, const RECT& r, int radius, COLORREF fill) { settingsDrawRoundRect(dc, r, radius, fill, 0, 0); }
 
-// 圆角描边（卡片 1pt 边框 / 胶囊描边 / 焦点环共用；只描边不填充；radius 同口径）。
-static void settingsStrokeRoundRect(HDC dc, const RECT& r, int radius, COLORREF color, int widthPx) {
-    HPEN pen = CreatePen(PS_SOLID, widthPx, color);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
-}
-
-// 卡片柔和阴影：以多层外扩填充的微透明渐变阶梯模拟现代高斯阴影（y+2、blur≈12pt），
-// 告别空心线框条纹，让卡片在浅色与深色背景上都具备自然精致的高级悬浮质感。
+// 卡片柔和阴影：以多层外扩填充的微透明渐变阶梯模拟现代高斯阴影（y+2、blur≈12pt）。
 static void settingsDrawCardShadow(HDC dc, const RECT& card) {
     const SettingsColors c = settingsColors(g_settingsDark);
     const COLORREF shadow = c.shadow;
@@ -454,14 +443,6 @@ static void settingsDrawCardShadow(HDC dc, const RECT& card) {
         settingsFillRoundRect(dc, s, settingsPt(kCardRadius + i),
                               settingsBlendColor(shadow, c.windowBg, pct));
     }
-}
-
-// 焦点环：统一 accent 1.5pt 圆角描边（inset 2pt），替代系统点线 DrawFocusRect。
-static void settingsDrawFocusRing(HDC dc, const RECT& r, int radius) {
-    RECT fr = r;
-    InflateRect(&fr, -settingsPt(2), -settingsPt(2));
-    settingsStrokeRoundRect(dc, fr, radius, settingsColors(g_settingsDark).accent,
-                            (std::max)(1, MulDiv(3, g_settingsDpi, 144)));
 }
 
 // 导航项文案（顺序与 SettingsPage 一致）。
@@ -484,8 +465,7 @@ static RECT settingsNavItemRect(int index) {
 // 候选窗实机自绘微预览（输入页外观主题卡内展示，与候选窗蓝白体系 1:1 对齐）
 static void settingsDrawCandidatePreview(HDC dc, const RECT& rc, const SettingsColors& c, bool dark) {
     const COLORREF pedBg = dark ? RGB(0x13, 0x1B, 0x2E) : RGB(0xF8, 0xFA, 0xFC);
-    settingsFillRoundRect(dc, rc, settingsPt(6), pedBg);
-    settingsStrokeRoundRect(dc, rc, settingsPt(6), c.cardBorder, settingsStrokePx(1));
+    settingsDrawRoundRect(dc, rc, settingsPt(6), pedBg, c.cardBorder, settingsStrokePx(1));
     int curX = rc.left + settingsPt(8);
     RECT pr{curX, rc.top, curX + settingsPt(42), rc.bottom};
     SetBkMode(dc, TRANSPARENT);
@@ -577,8 +557,7 @@ static void settingsPaint(HDC dc, HWND wnd) {
         RECT rc{cardX, settingsPt(baseY + card.y), cardX + cardW,
                 settingsPt(baseY + card.y + card.h)};
         settingsDrawCardShadow(dc, rc);
-        settingsFillRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBg);
-        settingsStrokeRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBorder, settingsStrokePx(1));
+        settingsDrawRoundRect(dc, rc, settingsPt(kCardRadius), c.cardBg, c.cardBorder, settingsStrokePx(1));
 
         RECT cap{rc.left + settingsPt(kCardPad), rc.top + settingsPt(15),
                  rc.right - settingsPt(kCardPad), rc.top + settingsPt(37)};
@@ -586,8 +565,7 @@ static void settingsPaint(HDC dc, HWND wnd) {
         RECT badge{cap.left, cap.top + (cap.bottom - cap.top - bSize) / 2, cap.left + bSize, 0};
         badge.bottom = badge.top + bSize;
         const COLORREF bBg = (i == 0 ? c.accentSoft : (i == 1 ? settingsBlendColor(c.accentSoft, c.controlBg, 50) : c.controlBg));
-        settingsFillRoundRect(dc, badge, settingsPt(5), bBg);
-        settingsStrokeRoundRect(dc, badge, settingsPt(5), c.cardBorder, settingsStrokePx(1));
+        settingsDrawRoundRect(dc, badge, settingsPt(5), bBg, c.cardBorder, settingsStrokePx(1));
         const wchar_t* glyph = (g_settingsPage == SettingsPage::Input)
             ? (i == 0 ? L"⚡" : (i == 1 ? L"🌐" : L"🎨"))
             : (g_settingsPage == SettingsPage::Dictionary ? (i == 0 ? L"📊" : L"📥") : L"ℹ");
@@ -668,38 +646,40 @@ static void settingsPaint(HDC dc, HWND wnd) {
     }
 }
 
+// 键盘焦点状态：鼠标点击不显示焦点框（Fluent 规范）；Tab 键盘导航时才高亮焦点。
+static bool g_settingsFocusByKeyboard = false;
+static bool settingsShouldDrawFocus(const DRAWITEMSTRUCT* dis) {
+    if (dis == nullptr || (dis->itemState & ODS_FOCUS) == 0 || (dis->itemState & ODS_NOFOCUSRECT) != 0 || !g_settingsFocusByKeyboard) return false;
+    HWND target = dis->hwndItem ? dis->hwndItem : g_settingsWnd;
+    return target == nullptr || (SendMessage(target, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0;
+}
+
 // 自绘开关整行（词组联想）：左侧 13pt 标签 + 右侧 38×22 开关轨道与 16pt 滑钮。
-// 关=controlBg 轨道 + controlBorder；开=accent 轨道；hover 分别用 controlHover /
-// accentPressed。整行都是点击热区（与旧复选框一致，点标签也能切换）。
+// 关=controlBg 轨道 + controlBorder；开=accent 轨道；hover 分别用 controlHover / accentPressed。
+// 键盘焦点直接在开关轨道描边呈现（accent/accentStrong），无裁剪/无内外重叠。
 static void settingsDrawSwitch(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
     FillRect(dc, &dis->rcItem, settingsControlBg());
-    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
-    const bool on = g_settingsAssociate;
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID)), focused = settingsShouldDrawFocus(dis), on = g_settingsAssociate;
     const RECT row = dis->rcItem;
-    const int trackW = settingsPt(38);
-    const int trackH = settingsPt(22);
-    RECT track{row.right - trackW, row.top + (row.bottom - row.top - trackH) / 2, row.right, 0};
+    const int trackW = settingsPt(38), trackH = settingsPt(22), padR = settingsPt(4), radius = settingsPt(11);
+    RECT track{row.right - trackW - padR, row.top + (row.bottom - row.top - trackH) / 2, row.right - padR, 0};
     track.bottom = track.top + trackH;
-    const int radius = settingsPt(11);
-    const COLORREF trackFill = on ? (hovered ? c.accentPressed : c.accent)
-                                  : (hovered ? c.controlHover : c.controlBg);
-    settingsFillRoundRect(dc, track, radius, trackFill);
-    settingsStrokeRoundRect(dc, track, radius, on ? trackFill : c.controlBorder,
-                            settingsStrokePx(1));
-    const int knob = settingsPt(16);
-    const int pad = (trackH - knob) / 2;
-    const int knobX = on ? (track.right - pad - knob) : (track.left + pad);
-    RECT kr{knobX, track.top + pad, knobX + knob, track.top + pad + knob};
-    RECT krShadow = kr;
+    const COLORREF trackFill = on ? (hovered ? c.accentPressed : c.accent) : (hovered ? c.controlHover : c.controlBg);
+    const COLORREF trackStroke = on ? (focused ? c.accentStrong : trackFill) : (focused ? c.accent : c.controlBorder);
+    const int trackStrokeW = focused ? settingsStrokePx(2) : (on ? 0 : settingsStrokePx(1));
+    settingsDrawRoundRect(dc, track, radius, trackFill, trackStroke, trackStrokeW);
+
+    const int knob = settingsPt(16), pad = (trackH - knob) / 2, knobX = on ? (track.right - pad - knob) : (track.left + pad);
+    RECT kr{knobX, track.top + pad, knobX + knob, track.top + pad + knob}, krShadow = kr;
     krShadow.top += settingsStrokePx(1);
     krShadow.bottom += settingsStrokePx(1);
     settingsFillRoundRect(dc, krShadow, knob / 2, on ? settingsBlendColor(c.accentPressed, c.accent, 40)
                                                      : settingsBlendColor(c.shadow, c.controlBg, 15));
-    settingsFillRoundRect(dc, kr, knob / 2, c.knob);
-    settingsStrokeRoundRect(dc, kr, knob / 2, on ? settingsBlendColor(c.accent, c.knob, 25)
-                                                 : c.controlBorder, settingsStrokePx(1));
+    const COLORREF knobStroke = on ? settingsBlendColor(c.accent, c.knob, 25) : c.controlBorder;
+    settingsDrawRoundRect(dc, kr, knob / 2, c.knob, knobStroke, settingsStrokePx(1));
+
     wchar_t label[64] = {0};
     GetWindowTextW(dis->hwndItem, label, _countof(label));
     RECT tr = row;
@@ -709,17 +689,10 @@ static void settingsDrawSwitch(const DRAWITEMSTRUCT* dis) {
     HGDIOBJ oldFont = SelectObject(dc, g_settingsFontBold);
     DrawTextW(dc, label, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
-    if ((dis->itemState & ODS_FOCUS) != 0) {
-        // 焦点环画在开关外圈（accent 环画在 accent 轨道里会看不见）。
-        RECT fr = track;
-        InflateRect(&fr, settingsPt(2), settingsPt(2));
-        settingsStrokeRoundRect(dc, fr, settingsPt(13), c.accent,
-                                (std::max)(1, MulDiv(3, g_settingsDpi, 144)));
-    }
 }
 
-// 自绘 choice 胶囊：选中=accentSoft+accent 描边+accentText；未选=controlBg+
-// controlBorder+textPrimary，hover 未选=controlHover。只读缓存（重绘高频）。
+// 自绘 choice 胶囊：选中=accentSoft+accent 描边+accentText；未选=controlBg+controlBorder+textPrimary。
+// 焦点时单一描边高亮（杜绝双环与噪点）。
 static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
@@ -731,47 +704,44 @@ static void settingsDrawChoice(const DRAWITEMSTRUCT* dis) {
     else if (dis->CtlID == 131) selected = g_settingsTheme == Theme::System;
     else if (dis->CtlID == 132) selected = g_settingsTheme == Theme::Light;
     else if (dis->CtlID == 133) selected = g_settingsTheme == Theme::Dark;
-    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
-    RECT r = dis->rcItem;
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID)), focused = settingsShouldDrawFocus(dis);
+    const RECT r = dis->rcItem;
     const COLORREF fill = selected ? c.accentSoft : (hovered ? c.controlHover : c.controlBg);
-    settingsFillRoundRect(dc, r, settingsPt(9), fill);
-    settingsStrokeRoundRect(dc, r, settingsPt(9), selected ? c.accent : c.controlBorder,
-                            settingsStrokePx(1));
+    const COLORREF stroke = selected ? (focused ? c.accentStrong : c.accent) : (focused ? c.accent : c.controlBorder);
+    const int strokeW = (focused && !selected) ? settingsStrokePx(2) : settingsStrokePx(1);
+    settingsDrawRoundRect(dc, r, settingsPt(9), fill, stroke, strokeW);
+
     wchar_t text[64] = {0};
     GetWindowTextW(dis->hwndItem, text, _countof(text));
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, selected ? c.accentText : c.textPrimary);
     HGDIOBJ oldFont = SelectObject(dc, selected ? g_settingsFontBold : g_settingsFont);
-    DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(dc, text, -1, const_cast<RECT*>(&r), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
-    if ((dis->itemState & ODS_FOCUS) != 0) settingsDrawFocusRing(dc, r, settingsPt(9));
 }
 
-// 自绘按钮：110 是主按钮（accentStrong 底 + onAccent 字），106/107 是次按钮
-// （controlBg + controlBorder + controlText，清空用 danger 字）；hover/按下
-// 主按钮 accentPressed、次按钮 controlHover。
+// 自绘按钮：110 主按钮（accentStrong），106/107 次按钮（controlBg）；hover/按下 controlHover/accentPressed。
+// 键盘焦点直接高亮外边框，无内缩双边框。
 static void settingsDrawButton(const DRAWITEMSTRUCT* dis) {
     const SettingsColors c = settingsColors(g_settingsDark);
     HDC dc = dis->hDC;
     FillRect(dc, &dis->rcItem, settingsControlBg());
-    const bool primary = (dis->CtlID == 110);
-    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
-    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID));
-    RECT r = dis->rcItem;
+    const bool primary = (dis->CtlID == 110), pressed = (dis->itemState & ODS_SELECTED) != 0;
+    const bool hovered = (g_settingsHoverId == static_cast<int>(dis->CtlID)), focused = settingsShouldDrawFocus(dis);
+    const RECT r = dis->rcItem;
     const COLORREF fill = primary ? ((pressed || hovered) ? c.accentPressed : c.accentStrong)
                                   : ((pressed || hovered) ? c.controlHover : c.controlBg);
-    settingsFillRoundRect(dc, r, settingsPt(9), fill);
-    if (!primary) {
-        settingsStrokeRoundRect(dc, r, settingsPt(9), c.controlBorder, settingsStrokePx(1));
-    }
+    const COLORREF stroke = primary ? (focused ? c.onAccent : fill) : (focused ? c.accent : c.controlBorder);
+    const int strokeW = (!primary || focused) ? (focused ? settingsStrokePx(2) : settingsStrokePx(1)) : 0;
+    settingsDrawRoundRect(dc, r, settingsPt(9), fill, stroke, strokeW);
+
     wchar_t text[64] = {0};
     GetWindowTextW(dis->hwndItem, text, _countof(text));
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, primary ? c.onAccent : (dis->CtlID == 106 ? c.danger : c.controlText));
     HGDIOBJ oldFont = SelectObject(dc, g_settingsFont);
-    DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(dc, text, -1, const_cast<RECT*>(&r), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldFont);
-    if ((dis->itemState & ODS_FOCUS) != 0) settingsDrawFocusRing(dc, r, settingsPt(9));
 }
 
 // ---- 自绘控件 hover / 手型光标 ----
@@ -789,6 +759,11 @@ static LRESULT CALLBACK settingsCtlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         if (g_ctlProcs[i].hwnd == hwnd) { old = g_ctlProcs[i].old; break; }
     }
     const int id = GetDlgCtrlID(hwnd);
+    if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) {
+        if (g_settingsFocusByKeyboard) { g_settingsFocusByKeyboard = false; InvalidateRect(hwnd, nullptr, FALSE); }
+    } else if (msg == WM_KEYDOWN && (wp == VK_TAB || wp == VK_LEFT || wp == VK_RIGHT || wp == VK_UP || wp == VK_DOWN)) {
+        if (!g_settingsFocusByKeyboard) { g_settingsFocusByKeyboard = true; InvalidateRect(hwnd, nullptr, FALSE); }
+    }
     if (msg == WM_MOUSEMOVE) {
         if (g_settingsHoverId != id) { g_settingsHoverId = id; InvalidateRect(hwnd, nullptr, FALSE); }
         TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
@@ -1340,6 +1315,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             break;
         // 左键点导航切换页（导航是自绘的，不是子窗口，只能在这里命中）。
         case WM_LBUTTONDOWN: {
+            if (g_settingsFocusByKeyboard) {
+                g_settingsFocusByKeyboard = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             for (int i = 0; i < 3; ++i) {
                 RECT r = settingsNavItemRect(i);
@@ -1441,6 +1420,15 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             // 系统深浅色/主题切换：重建背景刷 + DWM 标题栏 + 重绘自绘控件。
             settingsUpdateTheme(hwnd);
             return 0;
+        case WM_UPDATEUISTATE:
+            if ((LOWORD(wParam) & UISF_HIDEFOCUS) != 0) {
+                const bool kb = (HIWORD(wParam) == UIS_CLEAR);
+                if (g_settingsFocusByKeyboard != kb) {
+                    g_settingsFocusByKeyboard = kb;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            break;
         case WM_DPICHANGED: {
             // 窗口跨到不同缩放的显示器：按新 DPI 重排控件与窗口尺寸（优先采用系统建议矩形）。
             settingsApplyDpi(hwnd, static_cast<int>(HIWORD(wParam)));
@@ -1594,5 +1582,7 @@ void openSettingsWindowStandalone(SettingsPage page) {
                    static_cast<unsigned long>(GetCurrentProcessId()));
     }
 }
+
+HWND settingsWindowHandle() { return g_settingsWnd; }
 
 }  // namespace chaoset::win

@@ -18,6 +18,9 @@ enum class SettingsPage { Input = 0, Dictionary = 1, About = 2 };
 // 窗口已存在时只切页并前置，不另开新窗。
 void openSettingsWindowStandalone(SettingsPage page = SettingsPage::Input);
 
+// 返回设置窗句柄（未创建或已关闭时为 nullptr）。
+HWND settingsWindowHandle();
+
 }  // namespace chaoset::win
 
 #endif  // CHAOSET_WIN_SETTINGS_WINDOW_HPP_

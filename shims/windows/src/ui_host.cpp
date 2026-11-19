@@ -940,6 +940,10 @@ int runUiHost(LPCWSTR cmdLine) {
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        HWND sWnd = settingsWindowHandle();
+        if (sWnd != nullptr && IsWindow(sWnd) && IsDialogMessageW(sWnd, &msg)) {
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
