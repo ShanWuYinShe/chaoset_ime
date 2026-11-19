@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
+.PHONY: build build-settings build-settings-windows test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -86,6 +86,14 @@ build:
 	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
 	go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
 	go build -o bin/chaoset-settingsctl ./cmd/chaoset-settingsctl
+
+build-settings:
+	cargo build --release --manifest-path shims/settings/Cargo.toml
+	mkdir -p bin
+	cp shims/settings/target/release/chaoset-settings bin/chaoset-settings
+
+build-settings-windows:
+	cargo build --release --target x86_64-pc-windows-gnu --manifest-path shims/settings/Cargo.toml
 
 test:
 	go test ./...
@@ -213,6 +221,9 @@ package-linux:
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-cli ./cmd/chaoset-cli
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-import ./cmd/chaoset-import
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-userdict ./cmd/chaoset-userdict
+	@if [ -f shims/settings/target/release/chaoset-settings ]; then \
+		cp shims/settings/target/release/chaoset-settings dist/chaoset-linux-x86_64/bin/chaoset-settings; \
+	fi
 	# 引擎是平台原生壳（C++/libibus），只做 IBus UI 与按键路由；拼音/联想
 	# 由 Go chaosetd 通过 Unix socket 提供。必须在 Linux 上构建（CI/容器）。
 	sh shims/linux/engine/build.sh dist/chaoset-linux-x86_64/bin/chaoset-engine
@@ -297,6 +308,9 @@ package-windows:
 	# 「词组联想 / 中英状态」；必须与 ChaosetIME.dll 同目录（settings_window.cpp
 	# 用 g_hInst 解析同目录 exe）。CLI 缺失时设置窗回退原生 HKCU 读写。
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-settingsctl.exe ./cmd/chaoset-settingsctl
+	@if [ -f shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe ]; then \
+		cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe; \
+	fi
 	# 资源模板 chaoset.rc 含图标 + VS_VERSION_INFO（@VERSION@ 等占位符）。
 	# 单一真源：$(VERSION)/$(VERSION_QUAD) 由 git tag 推导，sed 注入后交给 windres；
 	# 64/32 位 DLL 与 UI 宿主各生成一份带各自 FileDescription 的资源，让

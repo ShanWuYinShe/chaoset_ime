@@ -1,0 +1,259 @@
+import { Theme } from "tokens.slint";
+
+// ---- 优雅自绘开关控件 ----
+export component ChaosSwitch {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    width: 38px;
+    height: 22px;
+
+    track := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: 11px;
+        background: root.checked ? (touch.has-hover ? Theme.accent_pressed : Theme.accent)
+                                 : (touch.has-hover ? Theme.control_hover : Theme.control_bg);
+        border-width: root.checked ? 0px : 1px;
+        border-color: Theme.control_border;
+        animate background { duration: 150ms; easing: ease-in-out; }
+
+        knob := Rectangle {
+            x: root.checked ? parent.width - self.width - 3px : 3px;
+            y: (parent.height - self.height) / 2;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            background: Theme.knob;
+            drop-shadow-color: rgba(0, 0, 0, 0.15);
+            drop-shadow-blur: 2px;
+            drop-shadow-offset-y: 1px;
+            animate x { duration: 150ms; easing: ease-out; }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+        mouse-cursor: pointer;
+    }
+}
+
+// ---- 单选胶囊选项 ----
+export component ChoicePill {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 30px;
+    horizontal-stretch: 1;
+
+    rect := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: Theme.control_radius;
+        background: root.selected ? Theme.accent_soft
+                                  : (touch.has-hover ? Theme.control_hover : Theme.control_bg);
+        border-width: 1px;
+        border-color: root.selected ? Theme.accent : Theme.control_border;
+        animate background { duration: 120ms; }
+        animate border-color { duration: 120ms; }
+
+        txt := Text {
+            text: root.text;
+            color: root.selected ? Theme.accent_text : Theme.text_primary;
+            font-size: 13px;
+            font-weight: root.selected ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        mouse-cursor: pointer;
+    }
+}
+
+// ---- 操作按钮 ----
+export component ChaosButton {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    callback clicked();
+
+    height: 32px;
+
+    rect := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: Theme.control_radius;
+        background: root.primary
+            ? (touch.pressed ? Theme.accent_pressed : (touch.has-hover ? Theme.accent_pressed : Theme.accent_strong))
+            : (touch.pressed ? Theme.control_hover : (touch.has-hover ? Theme.control_hover : Theme.control_bg));
+        border-width: root.primary ? 0px : 1px;
+        border-color: Theme.control_border;
+        animate background { duration: 120ms; }
+
+        txt := Text {
+            text: root.text;
+            color: root.primary ? Theme.on_accent
+                                : (root.danger ? Theme.danger : Theme.control_text);
+            font-size: 13px;
+            font-weight: root.primary ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        mouse-cursor: pointer;
+    }
+}
+
+// ---- 卡片容器 ----
+export component Card inherits Rectangle {
+    in property <string> title: "";
+    in property <string> icon: "";
+    in property <string> hint: "";
+
+    border-radius: Theme.card_radius;
+    background: Theme.card_bg;
+    border-width: 1px;
+    border-color: Theme.card_border;
+    drop-shadow-color: Theme.shadow;
+    drop-shadow-blur: 10px;
+    drop-shadow-offset-y: 2px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        if root.title != "" : HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            if root.icon != "" : Text {
+                text: root.icon;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.title;
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.text_secondary;
+                vertical-alignment: center;
+            }
+        }
+
+        @children
+
+        if root.hint != "" : Text {
+            text: root.hint;
+            font-size: 11px;
+            color: Theme.text_secondary;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ---- 候选窗实机微预览条 ----
+export component CandidatePreview inherits Rectangle {
+    height: 40px;
+    border-radius: 6px;
+    background: Theme.is_dark ? #131B2E : #F8FAFC;
+    border-width: 1px;
+    border-color: Theme.card_border;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+        alignment: center;
+
+        // 拼音预编辑
+        Text {
+            text: "ni'hao";
+            color: Theme.accent_text;
+            font-size: 12px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+
+        // 首选蓝胶囊
+        Rectangle {
+            height: 24px;
+            border-radius: 4px;
+            background: Theme.accent;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 4px;
+                Text {
+                    text: "1.";
+                    color: #FFFFFF;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "你好";
+                    color: #FFFFFF;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // 次选
+        HorizontalLayout {
+            spacing: 3px;
+            Text {
+                text: "2.";
+                color: Theme.text_tertiary;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "您好";
+                color: Theme.text_primary;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        // 学习词
+        HorizontalLayout {
+            spacing: 3px;
+            Text {
+                text: "3.";
+                color: Theme.text_tertiary;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "拟好";
+                color: Theme.text_primary;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "*";
+                color: Theme.accent_text;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // 页码与微齿轮
+        Text {
+            text: "1/4";
+            color: Theme.text_tertiary;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
