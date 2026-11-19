@@ -39,6 +39,11 @@ jobs:
       # 注：renderer 包已于 2026-10-27 删除，Go 测试不再需要 CJK 字体；
       # 原「安装 CJK 字体」步骤随 2026-11-08 审计清理移除（GTK 无头冒烟在 ci.yml
       # 的 linux-e2e job 内自行安装）。
+      - name: 安装 Slint 构建依赖 (fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+
       - name: 运行单元测试
         run: make test
 
@@ -62,6 +67,9 @@ jobs:
       # 一致性、app 资源清单与 zip 生成。此前 release 手写了一份更弱的复制品
       # （只 lipo 两个主二进制），发版包与日常 CI 验证过的包可能不一致
       # （2026-11-08 审计 P1-4）。
+      - name: 编译 Slint macOS 设置中心
+        run: make build-settings
+
       - name: 构建 Go 工具与 macOS 安装包（make package-macos）
         run: |
           make build
@@ -104,6 +112,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ibus zstd build-essential pkg-config libgtk-3-dev libibus-1.0-dev file
+
+      - name: 编译 Slint Linux 设置中心
+        run: make build-settings
 
       - name: 编译与打包
         run: |
@@ -171,6 +182,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
+
+      - name: 安装 Rust Windows 交叉编译目标
+        run: rustup target add x86_64-pc-windows-gnu
+
+      - name: Windows 设置中心交叉编译 (chaoset-settings.exe)
+        run: make build-settings-windows
 
       # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
       # 协议与会话逻辑（Windows 壳本身走命名管道，CI 在 Linux 上没有管道 API，
