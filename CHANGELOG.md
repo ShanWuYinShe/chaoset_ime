@@ -2,6 +2,21 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.35（2026-11-19）
+
+本版本为**Slint 跨平台统一设置中心、无头 UI 单元测试体系与多功能 CLI 整合**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.34` 之后 5 个提交：全新引入基于 Slint 声明式 UI 的跨平台统一设置中心（`shims/settings`），像素级 100% 对齐 21 项色彩与 10 项几何令牌；创新性地将 UI 一致性检查升级为基于 Slint 强类型编译与 `i-slint-backend-testing` 的内存无头单元测试体系；全端 CI/Release 流水线完整接入 Rust 检查、单测与交叉编译并随包分发；同时将各命令行工具收敛合并为单一的 `chaoset` 多功能命令（支持 Multicall 与子命令调用），并对原生 Windows 设置窗进行了焦点重影与边缘噪点修复。
+
+- **特性(Slint UI)：基于 Slint 实现跨平台统一设置中心 (`shims/settings`)**：
+  引入 Slint 现代化声明式 UI 框架构建跨平台独立设置中心，生成单一原生可执行文件（Linux ELF / Windows PE32+ GUI / macOS Mach-O），运行时无额外动态库依赖。界面 100% 对齐 `docs/ui-parity.md` 规范与 21 项色彩令牌（涵盖卡片、开关、单选胶囊与文字等浅深双色系）；提供左侧三页导航（⚡ 拼音输入、📥 词库与数据、ℹ️ 关于与更新）、卡片容器、平滑过渡动画开关、单选软胶囊与 1:1 实时联动候选窗微缩展台；通过 `src/bridge.rs` 桥接 Go CLI 命令完成配置持久化与词库导入，并集成 `rfd` 原生系统文件选择对话框。
+- **测试(UI 一致性)：基于 i-slint-backend-testing 的无头 UI 单元测试体系**：
+  改进传统基于 tools 字符串匹配的 UI 校验机制，升级为 Slint 编译器强类型保障与内存无头单元测试：新增 `shims/settings/tests/ui_test.rs`，在无需显示服务（Headless）的环境下自动化遍历与断言 Light/Dark 浅深主题下的 21 项颜色令牌、10 项几何令牌、页面切换、主题切换与事件回调；`shims/settings/src/lib.rs` 规范模块化导出并严守行数预算（≤150行）；`src/bridge.rs` 补充配置反序列化、缺省容错与词库路径解析等核心逻辑单测，形成高置信度自动化防护网。
+- **流水线(CI & Release)：全平台 CI 门禁、自动化无头测试与 Release 安装包集成**：
+  在 `.github/workflows/ci.yml` 中全面接入 Slint 设置中心检查：`lint` 作业执行 `cargo check`，`test` 作业在预置 `libfontconfig1-dev` 环境下运行 `cargo test` 无头测试，`linux-e2e` / `macos-build` / `windows-build` 分别接入本地与 MinGW 交叉编译验证；在 `.github/workflows/release.yml` 中补齐 fontconfig 依赖与跨端编译打包流程，Windows 安装器（NSIS）正式捆绑并维护 `chaoset-settings.exe` 与 `chaoset.exe`，确保全平台发布产物完整可用。
+- **重构(CLI)：合并命令行工具为统一的 chaoset 多功能命令**：
+  抽离 `internal/tools/` 基础能力，新增统一二进制入口 `cmd/chaoset`。支持单一二进制运行所有管理命令（`import`、`userdict`、`config`/`settings`、`client`/`cli`、`version`）以及 busybox 风格的 Multicall (`argv[0]`) 多调用模式；保留原 `cmd/chaoset-*` 为薄转发层以 100% 保持向后兼容并满足既有工具契约。
+- **修复(Windows)：消除原生设置窗控件周边光栅化噪点与焦点环重影**：
+  针对 Windows GDI 原生设置窗在特定缩放与交互场景下的像素级细节进行修复：改进自绘控件的背景擦除与绘制逻辑，消除鼠标悬停及交互时光标切换带来的边缘光栅化毛边，修复按钮与单选胶囊控件获得点击焦点时的残留双层重影。
+
 ## v0.3.34（2026-11-18）
 
 本版本为**Windows 设置窗质感重塑与 Fluent 现代视觉升级**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.33` 之后 3 个提交：Windows 设置窗告别模糊与粗糙，全面对齐现代 Windows 11 Fluent 审美——原生嵌入 PerMonitorV2 清单动态启用 PerMonitorAwareV2 彻底根治高分屏 DWM 位图缩放模糊、现代 YaHei UI 统一字族紧凑垂直居中、4 层透明度漫反射阴影消除生硬边界、DWM 系统圆角与双缓冲抗闪烁；控件子类化数组扩容至 16 并规范化销毁生命周期复位；引入 Fluent 垂直高亮指示胶囊、行级与卡片图标微锚点（⚡/🌐/🎨/📊/📥）、并在外观主题卡内自绘 1:1 实时联动候选窗微缩展台（随主题切换动态重绘 Preedit、高亮选中胶囊与微齿轮）。
