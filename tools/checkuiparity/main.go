@@ -166,6 +166,8 @@ const (
 	uiParityDoc     = "docs/ui-parity.md"
 	readmeDoc       = "README.md"
 	changelogDoc    = "CHANGELOG.md"
+	slintTokens     = "shims/settings/ui/tokens.slint"
+	slintApp        = "shims/settings/ui/app.slint"
 )
 
 func main() {

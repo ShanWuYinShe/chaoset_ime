@@ -160,13 +160,14 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 基于 Slint 实现的原生 GPU 加速设置窗口，对齐 `docs/ui-parity.md` 视觉令牌，完全脱离 Chromium/Electron 庞大体积：
 
-| 文件 | 职责 |
-| :--- | :--- |
-| `ui/tokens.slint` | 21 项视觉令牌定义（深色/浅色配色、卡片圆角、控件高度） |
-| `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览） |
-| `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 |
-| `src/bridge.rs` | Go CLI 桥接：读写 `chaoset config`、`chaoset userdict`、`chaoset import` |
-| `src/main.rs` | Slint 事件循环与数据绑定、系统原生文件对话框集成（rfd） |
+| 文件 | 职责 | 预算 |
+| :--- | :--- | :--- |
+| `ui/tokens.slint` | 21 项视觉令牌定义（深色/浅色配色、卡片圆角、几何尺寸） | ≤100 |
+| `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览） | ≤400 |
+| `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 | ≤500 |
+| `src/bridge.rs` | Go CLI 桥接：读写 `chaoset config`、`chaoset userdict`、`chaoset import` | ≤300 |
+| `src/lib.rs` | Slint 模块接入、系统深浅色感知、模块导出与无头测试桩 | ≤150 |
+| `src/main.rs` | Slint 事件循环与数据绑定、系统原生文件对话框集成（rfd） | ≤150 |
 
 ## 4. 机器断言（checkuiparity）
 

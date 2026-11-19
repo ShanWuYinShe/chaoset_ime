@@ -1,22 +1,7 @@
 #![windows_subsystem = "windows"]
 
-mod bridge;
-
+use chaoset_settings::{bridge, update_theme, MainWindow};
 use slint::ComponentHandle;
-
-slint::include_modules!();
-
-fn update_theme(window: &MainWindow, theme_str: &str) {
-    let is_dark = match theme_str {
-        "dark" => true,
-        "light" => false,
-        _ => {
-            // "system": 默认使用浅色，后续可根据操作系统偏好同步
-            false
-        }
-    };
-    Theme::get(window).set_is_dark(is_dark);
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = MainWindow::new()?;
@@ -87,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let w_handle = window.as_weak();
     window.on_export_userdict_clicked(move || {
         let file = rfd::FileDialog::new()
+            .set_title("导出学习数据")
             .set_file_name("userdict_phrases.tsv")
             .add_filter("TSV 词组文件", &["tsv", "txt"])
             .save_file();
@@ -112,6 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let w_handle = window.as_weak();
     window.on_import_dict_clicked(move || {
         let files = rfd::FileDialog::new()
+            .set_title("导入外部词库")
             .add_filter("词库文件", &["tsv", "txt", "yaml"])
             .pick_files();
         if let Some(files) = files {

@@ -97,6 +97,7 @@ build-settings-windows:
 
 test:
 	go test ./...
+	cargo test --manifest-path shims/settings/Cargo.toml
 
 vet:
 	go vet ./...

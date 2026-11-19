@@ -147,6 +147,9 @@ Section "MainSection" SEC01
     ; 设置项 Go 单一真源 CLI（方案 A 冷路径）：设置窗通过它读写「词组联想/中英
     ; 状态」，必须与 ChaosetIME.dll 同目录；缺失时设置窗自动回退 HKCU。
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settingsctl.exe"
+    !if /FileExists "..\..\..\dist\chaoset-windows-x64\chaoset-settings.exe"
+        !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settings.exe"
+    !endif
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
     ; 图标非关键文件：同样不因占用中止
     SetOverwrite try
@@ -356,6 +359,7 @@ Section "Uninstall"
     Delete "$INSTDIR\chaoset-import.exe"
     Delete "$INSTDIR\chaoset-ui.exe"
     Delete "$INSTDIR\chaoset-settingsctl.exe"
+    Delete "$INSTDIR\chaoset-settings.exe"
     Delete "$INSTDIR\dict.tsv"
     Delete "$INSTDIR\chaoset.ico"
     Delete "$INSTDIR\uninstall.exe"

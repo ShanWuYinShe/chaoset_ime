@@ -731,6 +731,7 @@ dependencies = [
 name = "chaoset-settings"
 version = "0.3.35"
 dependencies = [
+ "i-slint-backend-testing",
  "rfd",
  "serde",
  "serde_json",

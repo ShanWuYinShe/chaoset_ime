@@ -142,6 +142,13 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/linux/engine/daemon.cpp", 300},
 	{"shims/common/ipc/core.cpp", 700},
 	{"shims/common/ipc/core.hpp", 300},
+	// Slint 跨平台设置中心（shims/settings/）：声明式 UI，三端令牌对齐。
+	{"shims/settings/ui/tokens.slint", 100},
+	{"shims/settings/ui/components.slint", 400},
+	{"shims/settings/ui/app.slint", 500},
+	{"shims/settings/src/bridge.rs", 300},
+	{"shims/settings/src/lib.rs", 150},
+	{"shims/settings/src/main.rs", 150},
 }
 
 var shimDirLineLimits = map[string]int{
@@ -150,6 +157,8 @@ var shimDirLineLimits = map[string]int{
 	"shims/linux/setup":  800,
 	"shims/linux/engine": 1000,
 	"shims/common/ipc":   800,
+	"shims/settings/src": 500,
+	"shims/settings/ui":  500,
 }
 
 func checkShimModuleLayout(fsys fs.FS, problems *[]string) {
@@ -183,7 +192,7 @@ func checkShimModuleLayout(fsys fs.FS, problems *[]string) {
 				continue
 			}
 			switch path.Ext(e.Name()) {
-			case ".cpp", ".hpp", ".swift", ".c", ".h":
+			case ".cpp", ".hpp", ".swift", ".c", ".h", ".rs", ".slint":
 			default:
 				continue
 			}
@@ -250,6 +259,11 @@ func checkCICoverage(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupCICoverage, ciYML, "make package-macos", "macOS 构建 + 安装包")
 	// equivalence.sh B 段用 bin/chaoset-import：macOS job 必须先 make build。
 	checkContains(fsys, problems, groupCICoverage, ciYML, "make build")
+	// CI 门禁必须覆盖 Slint 设置中心单元测试、类型检查与 Windows 交叉编译。
+	checkContains(fsys, problems, groupCICoverage, ciYML,
+		"cargo test --manifest-path shims/settings/Cargo.toml",
+		"cargo check --manifest-path shims/settings/Cargo.toml",
+		"make build-settings-windows")
 	// 断言用例数守卫：防止有人删断言让回归测试静默变弱；并校验 expectedChecks
 	// 与实际 check( 数一致（加断言忘了同步会 FAIL）。
 	checkContains(fsys, problems, groupCICoverage, macKeyTest, "expectedChecks")

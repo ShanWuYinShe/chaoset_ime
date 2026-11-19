@@ -181,3 +181,52 @@ pub fn import_dict(files: &[PathBuf]) -> Result<String, String> {
 
     run_cmd(&args)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let cfg = ConfigSettings::default();
+        assert!(cfg.associate);
+        assert_eq!(cfg.mode_scope, "system");
+        assert_eq!(cfg.theme, "system");
+        assert!(!cfg.ui_english);
+    }
+
+    #[test]
+    fn test_config_json_deserialization() {
+        let json = r#"{"associate":false,"mode_scope":"process","theme":"dark","ui_english":true}"#;
+        let cfg: ConfigSettings = serde_json::from_str(json).unwrap();
+        assert!(!cfg.associate);
+        assert_eq!(cfg.mode_scope, "process");
+        assert_eq!(cfg.theme, "dark");
+        assert!(cfg.ui_english);
+    }
+
+    #[test]
+    fn test_config_json_with_missing_fields() {
+        let json = r#"{}"#;
+        let cfg: ConfigSettings = serde_json::from_str(json).unwrap();
+        assert!(cfg.associate);
+        assert_eq!(cfg.mode_scope, "system");
+        assert_eq!(cfg.theme, "system");
+        assert!(!cfg.ui_english);
+    }
+
+    #[test]
+    fn test_userdict_paths_json() {
+        let json = r#"{"userdict":"/path/to/dict.db","imported_dict":"/path/to/import.tsv"}"#;
+        let paths: HashMap<String, String> = serde_json::from_str(json).unwrap();
+        assert_eq!(paths.get("userdict").unwrap(), "/path/to/dict.db");
+        assert_eq!(paths.get("imported_dict").unwrap(), "/path/to/import.tsv");
+    }
+
+    #[test]
+    fn test_import_dict_empty_files() {
+        let res = import_dict(&[]);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "未选择导入文件");
+    }
+}
