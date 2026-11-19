@@ -58,7 +58,15 @@ jobs:
       - name: 核心构建检查
         run: make build
 
-  # ── 2. Go 单测 ────────────────────────────────────────────────────
+      - name: 安装 Slint 构建依赖 (fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+
+      - name: Slint 设置中心静态检查 (cargo check)
+        run: cargo check --manifest-path shims/settings/Cargo.toml
+
+  # ── 2. Go + Slint 单元测试 ───────────────────────────────────────
   test:
     name: 单元测试
     runs-on: ubuntu-24.04
@@ -71,10 +79,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # 注：renderer 包已于 2026-10-27 删除，不再需要 CJK 字体做候选窗 PNG 渲染断言
-      #（2026-10-30 审计清理）。如后续新增需要字体的测试，再在此安装。
-      - name: 运行单元测试
-        run: make test
+      - name: 运行 Go 核心与工具单测
+        run: go test ./...
+
+      - name: 安装 Slint 构建依赖 (fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+
+      - name: 运行 Slint 设置中心单元测试（无头 UI + 设计令牌 + 桥接逻辑）
+        run: cargo test --manifest-path shims/settings/Cargo.toml
 
   # ── 3. 数据竞争检测（本机最重的一项，完全交给 CI）─────────────────
   race:
@@ -173,6 +187,9 @@ jobs:
           wait "$SETUP_PID" 2>/dev/null || true
 
 
+      - name: 编译 Slint Linux 设置中心
+        run: make build-settings
+
       # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄
       # 漏装原生设置窗。这里在 PR/日常提交上构建 tar.gz（以及可用的 deb）
       # 并断言设置窗二进制在包里。
@@ -214,6 +231,9 @@ jobs:
       # app + 全部随包工具 universal 自检 + zip。
       # 此前日常 CI 只跑 build.sh，打包脚本/资源清单坏了要到打 tag 才发现
       #（与 Linux 安装包自检同一类问题，2026-10-31 补齐）。
+      - name: 编译 Slint macOS 设置中心
+        run: make build-settings
+
       - name: macOS 构建 + 安装包（zip，含 universal 自检）
         run: |
           # equivalence.sh 的 B 段走 import-dict.sh，它用 bin/chaoset-import；
@@ -302,6 +322,12 @@ jobs:
           make build
           chmod +x shims/windows/build.sh
           ./shims/windows/build.sh
+
+      - name: 安装 Rust Windows 交叉编译目标
+        run: rustup target add x86_64-pc-windows-gnu
+
+      - name: Windows 设置中心交叉编译 (chaoset-settings.exe)
+        run: make build-settings-windows
 
       - name: Windows 安装包（NSIS 脚本 + ZIP/UI 宿主内容自检）
         run: make package-windows

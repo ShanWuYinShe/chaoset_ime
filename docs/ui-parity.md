@@ -276,7 +276,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 三端设置窗共享骨架、视觉令牌、控件形态、分组标题与文案；配色为蓝白体系
 （对齐候选窗 #007AFF/#0066EB 高亮蓝 + 近白面板），用户也可在「输入」页切换
 跟随系统/浅色/深色。卡片容器三端都有
-（macOS `SettingsCardView` / Windows 自绘圆角卡片 / Linux `.card` CSS），
+（macOS `SettingsCardView` / Windows 自绘圆角卡片 / Linux `.card` CSS，以及统一跨平台设置中心 `shims/settings/`），
 由 tools/checkuiparity 的「设置窗视觉令牌」组逐值断言。
 
 - 尺寸与骨架：客户区 640×560pt；左侧导航列宽 148pt（导航标题 13pt semibold、

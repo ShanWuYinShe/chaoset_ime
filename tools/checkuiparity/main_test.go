@@ -85,7 +85,7 @@ func TestCheckCandidateWindow(t *testing.T) {
 //  3. 安装器重新写 ChaosetUi Run 项必须被捕获。
 func TestCheckSettingsGearAndTray(t *testing.T) {
 	paths := []string{macPanel, winShell, linuxReadme, winInstaller, winInstallBat,
-		uiParityDoc, macSettings, linuxSetup}
+		uiParityDoc, macSettings, linuxSetup, slintApp}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
 		data := readRepo(t, p)
@@ -153,6 +153,7 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 		winInstaller: fsys[winInstaller], winInstallBat: fsys[winInstallBat],
 		uiParityDoc: fsys[uiParityDoc],
 		macSettings: &fstest.MapFile{Data: []byte(mutatedSettings)}, linuxSetup: fsys[linuxSetup],
+		slintApp: fsys[slintApp],
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "640, height: 560") {
 		t.Fatalf("mac 设置窗尺寸回退应被捕获，实际：%v", problems)

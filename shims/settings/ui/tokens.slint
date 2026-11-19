@@ -25,8 +25,15 @@ export global Theme {
     out property <color> on_accent: is_dark ? #FFFFFF : #FFFFFF;
     out property <color> shadow: is_dark ? rgba(0, 0, 0, 0.38) : rgba(27, 74, 128, 0.12);
 
-    // 标准几何
+    // 标准几何（对齐 docs/ui-parity.md 契约）
     out property <length> card_radius: 14px;
+    out property <length> card_pad: 18px;
+    out property <length> card_gap: 16px;
+    out property <length> row_height: 36px;
+    out property <length> nav_width: 148px;
+    out property <length> switch_width: 38px;
+    out property <length> switch_height: 22px;
+    out property <length> button_height: 32px;
     out property <length> control_radius: 9px;
     out property <length> nav_item_radius: 10px;
 }

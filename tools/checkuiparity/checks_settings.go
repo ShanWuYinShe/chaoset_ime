@@ -43,10 +43,13 @@ func checkSettingsWindowContract(fsys fs.FS, problems *[]string) {
 	// 页脚版本号固定在最底：Windows 自绘、macOS footerLabel、Linux vbox 页脚。
 	checkContains(fsys, problems, group, linuxSetup,
 		"gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);")
-	// 关于页分组标题（三端）：Windows 卡片标题 / macOS label / Linux markup。
+	// 关于页分组标题（三端）：Windows 卡片标题 / macOS label / Linux markup / Slint 卡片。
 	checkContains(fsys, problems, group, winShell, `L"关于"`)
 	checkContains(fsys, problems, group, macSettings, `title: "关于"`)
 	checkContains(fsys, problems, group, linuxSetup, "<b>关于</b>")
+	checkContains(fsys, problems, group, slintApp,
+		"preferred-width: 640px;", "preferred-height: 560px;",
+		"width: 148px;", `title: "关于"`, "root.version_text")
 	// 词库导入统一说明由 sharedSettingsText 在三端逐字断言（2026-11-06 定稿：
 	// Windows 也已改为「导入后自动重启输入法」）；这里只锁文档同步。
 	// 文档必须记录骨架/卡片口径/分组文案（实现改了文档不跟会 FAIL）。
@@ -149,12 +152,12 @@ func checkLinuxSetupAssembly(fsys fs.FS, problems *[]string) {
 	}
 }
 
-// checkSettingsSharedText 三端设置窗共享文案必须逐字一致（改一端即 FAIL）。
+// checkSettingsSharedText 三端 + Slint 设置窗共享文案必须逐字一致（改一端即 FAIL）。
 func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
-	for _, path := range []string{macSettings, winShell, linuxSetup} {
+	for _, path := range []string{macSettings, winShell, linuxSetup, slintApp} {
 		checkContains(fsys, problems, groupSettingsSharedText, path, sharedSettingsText...)
 	}
-	// 两档作用域的按钮文案 → 存储值映射不得接反：macOS/Linux 设置窗都必须是
+	// 两档作用域的按钮文案 → 存储值映射不得接反：macOS/Linux/Slint 设置窗都必须是
 	// 「全局共享」→system、「每进程独立」→process。
 	checkContains(fsys, problems, groupSettingsSharedText, macSettings,
 		`case .system: title = "全局共享"`,
@@ -162,11 +165,14 @@ func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupSettingsSharedText, linuxSetup,
 		`{"全局共享", "system"}`,
 		`{"每进程独立", "process"}`)
+	checkContains(fsys, problems, groupSettingsSharedText, slintApp,
+		`"全局共享"`, `"system"`,
+		`"每进程独立"`, `"process"`)
 	// Windows 设置窗按钮标题必须真的是两档文案（注释里出现不算）。
 	checkContains(fsys, problems, groupSettingsSharedText, winShell,
 		`L"全局共享"`, `L"每进程独立"`)
-	// 外观主题三档文案三端一致。
-	for _, path := range []string{macSettings, winShell, linuxSetup} {
+	// 外观主题三档文案三端 + Slint 一致。
+	for _, path := range []string{macSettings, winShell, linuxSetup, slintApp} {
 		checkContains(fsys, problems, groupSettingsSharedText, path,
 			"跟随系统", "浅色", "深色")
 	}
@@ -263,15 +269,16 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 	macText, macErr := readText(fsys, macTheme)
 	winText, winErr := readText(fsys, winSettings)
 	linuxText, linuxErr := readText(fsys, linuxSetup)
+	slintText, slintErr := readText(fsys, slintTokens)
 	for _, one := range []struct {
 		path string
 		err  error
-	}{{macTheme, macErr}, {winSettings, winErr}, {linuxSetup, linuxErr}} {
+	}{{macTheme, macErr}, {winSettings, winErr}, {linuxSetup, linuxErr}, {slintTokens, slintErr}} {
 		if one.err != nil {
 			*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, one.path, one.err))
 		}
 	}
-	if macErr != nil || winErr != nil || linuxErr != nil {
+	if macErr != nil || winErr != nil || linuxErr != nil || slintErr != nil {
 		return
 	}
 
@@ -304,10 +311,16 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 					"%s：%s（Linux 设置窗聚合源）缺少令牌 %s 色值 #%s（解码自 %s）",
 					group, linuxSetup, name, v, uiParityDoc))
 			}
+			// Slint：#F5EFE6（大小写不敏感）
+			if !strings.Contains(strings.ToUpper(slintText), "#"+v) {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s（Slint 设计令牌）缺少令牌 %s 色值 #%s（解码自 %s）",
+					group, slintTokens, name, v, uiParityDoc))
+			}
 		}
 	}
 
-	// 几何令牌（pt）：三端同一节奏，改尺寸要三端一起改。
+	// 几何令牌（pt）：三端 + Slint 同一节奏，改尺寸要一起改。
 	checkContains(fsys, problems, group, macTheme,
 		"cardRadius: CGFloat = 14", "cardPad: CGFloat = 18", "cardGap: CGFloat = 16",
 		"rowHeight: CGFloat = 36", "navWidth: CGFloat = 148",
@@ -318,6 +331,11 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 		"kRowHeight = 36", "kNavWidth = 148")
 	checkContains(fsys, problems, group, linuxSetup,
 		"border-radius: 14px", "padding: 18px", ", 148, -1)")
+	checkContains(fsys, problems, group, slintTokens,
+		"card_radius: 14px", "card_pad: 18px", "card_gap: 16px",
+		"row_height: 36px", "nav_width: 148px",
+		"switch_width: 38px", "switch_height: 22px",
+		"button_height: 32px")
 
 	// 三端形态同构：卡片 + 暖陶开关 + 软胶囊（导航/二选一）+ 主/次按钮。
 	checkContains(fsys, problems, group, macTheme,
@@ -343,4 +361,5 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 	checkForbidden(macTheme, macText)
 	checkForbidden(winSettings, winText)
 	checkForbidden(linuxSetup, linuxText)
+	checkForbidden(slintTokens, slintText)
 }

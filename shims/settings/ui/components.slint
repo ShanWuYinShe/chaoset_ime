@@ -5,8 +5,8 @@ export component ChaosSwitch {
     in-out property <bool> checked: false;
     callback toggled(bool);
 
-    width: 38px;
-    height: 22px;
+    width: Theme.switch_width;
+    height: Theme.switch_height;
 
     track := Rectangle {
         width: 100%;
@@ -84,7 +84,7 @@ export component ChaosButton {
     in property <bool> danger: false;
     callback clicked();
 
-    height: 32px;
+    height: Theme.button_height;
 
     rect := Rectangle {
         width: 100%;
@@ -129,8 +129,8 @@ export component Card inherits Rectangle {
     drop-shadow-offset-y: 2px;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
+        padding: Theme.card_pad;
+        spacing: Theme.card_gap;
 
         if root.title != "" : HorizontalLayout {
             spacing: 8px;
@@ -162,15 +162,15 @@ export component Card inherits Rectangle {
 
 // ---- 候选窗实机微预览条 ----
 export component CandidatePreview inherits Rectangle {
-    height: 40px;
-    border-radius: 6px;
+    height: 42px;
+    border-radius: 8px;
     background: Theme.is_dark ? #131B2E : #F8FAFC;
     border-width: 1px;
     border-color: Theme.card_border;
 
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
         spacing: 12px;
         alignment: center;
 
@@ -178,14 +178,14 @@ export component CandidatePreview inherits Rectangle {
         Text {
             text: "ni'hao";
             color: Theme.accent_text;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 500;
             vertical-alignment: center;
         }
 
         // 首选蓝胶囊
         Rectangle {
-            height: 24px;
+            height: 26px;
             border-radius: 4px;
             background: Theme.accent;
             HorizontalLayout {
@@ -195,13 +195,13 @@ export component CandidatePreview inherits Rectangle {
                 Text {
                     text: "1.";
                     color: #FFFFFF;
-                    font-size: 10px;
+                    font-size: 11px;
                     vertical-alignment: center;
                 }
                 Text {
                     text: "你好";
                     color: #FFFFFF;
-                    font-size: 12px;
+                    font-size: 13px;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
@@ -214,13 +214,13 @@ export component CandidatePreview inherits Rectangle {
             Text {
                 text: "2.";
                 color: Theme.text_tertiary;
-                font-size: 10px;
+                font-size: 11px;
                 vertical-alignment: center;
             }
             Text {
                 text: "您好";
                 color: Theme.text_primary;
-                font-size: 12px;
+                font-size: 13px;
                 vertical-alignment: center;
             }
         }
@@ -231,29 +231,51 @@ export component CandidatePreview inherits Rectangle {
             Text {
                 text: "3.";
                 color: Theme.text_tertiary;
-                font-size: 10px;
+                font-size: 11px;
                 vertical-alignment: center;
             }
             Text {
                 text: "拟好";
                 color: Theme.text_primary;
-                font-size: 12px;
+                font-size: 13px;
                 vertical-alignment: center;
             }
             Text {
                 text: "*";
                 color: Theme.accent_text;
-                font-size: 11px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
         }
 
-        // 页码与微齿轮
-        Text {
-            text: "1/4";
-            color: Theme.text_tertiary;
-            font-size: 11px;
-            vertical-alignment: center;
+        // 翻页箭头与微齿轮
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+            Text {
+                text: "▲";
+                color: Theme.text_tertiary;
+                font-size: 8px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "▼";
+                color: Theme.text_secondary;
+                font-size: 8px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "1/4";
+                color: Theme.text_tertiary;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "⚙";
+                color: Theme.text_secondary;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
         }
     }
 }
