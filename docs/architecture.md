@@ -11,9 +11,9 @@
 ```
 engine/           纯 Go 拼音/联想算法（禁止平台 API、CGO、build tag；purity_test.go 守卫）
 ipc/              IPC 帧协议与传输抽象（unix socket / Windows 命名管道；无 TCP）
-internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源）
-cmd/              可执行工具（chaosetd、chaoset-cli、chaoset-import、chaoset-userdict、
-                  chaoset-dictgen、chaoset-settingsctl）
+internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源、tools ← 统一工具库）
+cmd/              可执行工具（chaoset 多功能统一 CLI、chaosetd、chaoset-cli、chaoset-import、
+                  chaoset-userdict、chaoset-dictgen、chaoset-settingsctl）
 shims/common/     三端壳共用的 C++ IPC 客户端（core.hpp/core.cpp）
 shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交互
 ```

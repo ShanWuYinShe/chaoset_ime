@@ -79,6 +79,7 @@ check-version:
 	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 年月日-commit hash；含 Windows 安装器/二进制版本资源）"
 
 build:
+	go build -o bin/chaoset ./cmd/chaoset
 	go build -o bin/chaosetd ./cmd/chaosetd
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
 	go build -o bin/chaoset-import ./cmd/chaoset-import
@@ -207,6 +208,7 @@ package-linux:
 	mkdir -p dist/chaoset-linux-x86_64/component
 	mkdir -p dist/chaoset-linux-x86_64/icons
 	mkdir -p dist/chaoset-linux-x86_64/data
+	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset ./cmd/chaoset
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaosetd ./cmd/chaosetd
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-cli ./cmd/chaoset-cli
 	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-import ./cmd/chaoset-import
@@ -285,6 +287,7 @@ WIN_DLL_SRCS := $(filter-out shims/windows/src/ui_main.cpp,$(wildcard shims/wind
 package-windows:
 	rm -rf dist/chaoset-windows-x64
 	mkdir -p dist/chaoset-windows-x64
+	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset.exe ./cmd/chaoset
 	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import

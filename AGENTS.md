@@ -75,7 +75,7 @@ worktree 内提交 → 推送分支 → `gh pr create` → `gh pr checks --watch
 日常不在本地跑这些目标，调试/复现时才用；CI 已覆盖同等验证：
 
 ```bash
-make build       # 编译 bin/ 下的 chaosetd, chaoset-cli, chaoset-import, chaoset-dictgen, chaoset-userdict, chaoset-settingsctl
+make build       # 编译 bin/ 下的 chaoset (统一 CLI), chaosetd, chaoset-cli, chaoset-import, chaoset-dictgen, chaoset-userdict, chaoset-settingsctl
 make test        # 运行引擎与协议测试 (go test ./...)
 make fmt         # 代码格式化（只格式化 git 跟踪的 .go，不扫 .workwork/）
 make version     # 当前版本（tag CI 用 tag 号，其余用 年月日-commit hash）
