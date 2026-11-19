@@ -12,151 +12,15 @@
 //	chaoset-userdict [-socket PATH] export [-phrases] [-o FILE]
 //	chaoset-userdict -pipe stats|clear|delete|export ...（Windows 命名管道）
 //	chaoset-userdict -userdict FILE stats|clear|delete|export ...
-//
-// delete 删除一个词的学习记录（Words 调频 + 由它进化的 Phrases 词组；
-// 上下文共现 bigram 保留，语义见 engine.DeleteWord 注释）。音节可省略
-// （按词文本删全部读音/分词），也可写 space 或 ' 分隔的音节串：
-//
-//	chaoset-userdict delete 今天
-//	chaoset-userdict delete 今天 "jin tian"
-//	chaoset-userdict delete 今天 jin'tian
-//
-// export 的 -phrases 只导出用户词组（词\t拼音\t次数 三列），
-// 可直接作为 chaoset-import 的输入词库回流。
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"flag"
-	"fmt"
-	"log"
 	"os"
-	"path/filepath"
-	"strings"
 
-	"chaoset.ime/engine"
-	"chaoset.ime/internal/appdirs"
-	"chaoset.ime/internal/buildinfo"
+	"chaoset.ime/internal/tools/userdict"
 	"chaoset.ime/ipc"
 )
 
-func main() {
-	socket := flag.String("socket", "", "chaosetd 的 Unix 套接字路径（空=按平台用户数据目录生成）；管理操作经 daemon 生效")
-	usePipe := flag.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
-	userPath := flag.String("userdict", "", "直接操作该用户词典文件（本地模式；daemon 运行时清空会被其内存态覆盖，慎用）")
-	showVersion := flag.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
-	printPaths := flag.Bool("print-paths", false, "打印平台数据路径 JSON 后退出（设置窗/脚本用）")
-	flag.Parse()
-	if *showVersion {
-		fmt.Println(buildinfo.Info())
-		return
-	}
-	if *printPaths {
-		text, err := pathsJSON()
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(text)
-		return
-	}
-	// 显式传入 -socket 又传 -pipe 视为用法错误；只看默认值无法区分「没传」
-	// 与「显式传了默认值」，所以用 flag.Visit 检测是否出现过。
-	socketSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "socket" {
-			socketSet = true
-		}
-	})
-	if *usePipe && socketSet {
-		fmt.Fprintln(os.Stderr, "-socket / -pipe 只能二选一")
-		os.Exit(2)
-	}
-
-	// Go 的 flag 包遇到子命令即停止，export 专属旗标用 FlagSet 二次解析
-	cmd := ""
-	if rest := flag.Args(); len(rest) > 0 {
-		cmd = rest[0]
-	}
-	args := cmdArgs{}
-	switch cmd {
-	case "export":
-		fs := flag.NewFlagSet("export", flag.ExitOnError)
-		fs.BoolVar(&args.phrasesOnly, "phrases", false, "只导出用户词组（三列 TSV，可直接作为 chaoset-import 输入）")
-		fs.StringVar(&args.out, "o", "", "输出文件路径（空则打印到标准输出）")
-		if err := fs.Parse(flag.Args()[1:]); err != nil {
-			os.Exit(2)
-		}
-	case "delete":
-		// delete 词 [音节...]：音节可省略（按词文本删全部读音/分词），也可
-		// 写 space 或 ' 分隔的音节串（多个位置参数会被拼起来统一拆分）。
-		rest := flag.Args()[1:]
-		if len(rest) == 0 || rest[0] == "" {
-			fmt.Fprintln(os.Stderr, "用法: chaoset-userdict ... delete 词 [音节...]")
-			os.Exit(2)
-		}
-		args.word = rest[0]
-		args.sylls = splitSyllables(strings.Join(rest[1:], " "))
-	case "stats", "clear":
-		// 无专属旗标
-	default:
-		fmt.Fprintln(os.Stderr, "用法: chaoset-userdict [-socket PATH | -pipe | -userdict FILE] stats|clear|delete 词 [音节...]|export [-phrases] [-o FILE]")
-		os.Exit(2)
-	}
-
-	var err error
-	if *userPath != "" {
-		err = runLocal(*userPath, cmd, args)
-	} else {
-		ep := ipc.Endpoint{Network: "unix", Address: *socket}
-		if *usePipe {
-			name, nameErr := ipc.DefaultPipeName()
-			if nameErr != nil {
-				log.Fatal(nameErr)
-			}
-			ep = ipc.Endpoint{Network: "pipe", Address: name}
-		} else if ep.Address == "" {
-			socketPath, pathErr := appdirs.SocketPath()
-			if pathErr != nil {
-				// Windows 没有 Unix socket：这里给出可操作的用法，而不是把
-				// 「Windows 使用命名管道…没有 Unix socket 路径」直接抛给用户
-				// （与 daemon 曾经的 bug 同一反模式：平台必然失败的默认路径）。
-				log.Fatalf("%v（Windows 请显式加 -pipe，或加 -userdict FILE 走本地文件模式）", pathErr)
-			}
-			ep.Address = socketPath
-		}
-		err = runDaemon(ep, cmd, args)
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-// pathsJSON 输出平台数据路径（JSON），供 Linux 设置窗等壳调用，避免壳里
-// 再各自拼一套 XDG/Application Support 规则。只包含当前平台可用的路径：
-// Windows 没有 Unix socket，socket 字段自然缺省。
-func pathsJSON() (string, error) {
-	paths := make(map[string]string)
-	add := func(key string, fn func() (string, error)) {
-		if value, err := fn(); err == nil {
-			paths[key] = value
-		}
-	}
-	add("data", appdirs.DataDir)
-	add("userdict", appdirs.UserDictPath)
-	add("imported_dict", appdirs.ImportedDictPath)
-	add("config", appdirs.ConfigPath)
-	add("socket", appdirs.SocketPath)
-	data, err := json.Marshal(paths)
-	if err != nil {
-		return "", fmt.Errorf("序列化路径失败: %w", err)
-	}
-	return string(data), nil
-}
-
-// cmdArgs 汇总子命令的可选参数：export 用 phrasesOnly/out，delete 用
-// word/sylls（音节序列；空表示按词文本删除该词全部记录）。集中成一个
-// 结构体，避免每加一个子命令就往 runDaemon/runLocal 上加参数。
 type cmdArgs struct {
 	phrasesOnly bool
 	out         string
@@ -164,127 +28,45 @@ type cmdArgs struct {
 	sylls       []string
 }
 
-// splitSyllables 把 space 或 ' 分隔的音节串拆成数组（"jin tian" / "jin'tian"）。
+func main() {
+	os.Exit(userdict.Main(os.Args[1:]))
+}
+
+func pathsJSON() (string, error) {
+	return userdict.PathsJSON()
+}
+
 func splitSyllables(s string) []string {
-	return strings.Fields(strings.ReplaceAll(s, "'", " "))
+	return userdict.SplitSyllables(s)
 }
 
-// runDaemon 经 IPC 作用于运行中的 chaosetd（推荐；删除/清空无覆盖竞态）。
-// ep 为 unix 或 pipe 端点。
 func runDaemon(ep ipc.Endpoint, cmd string, args cmdArgs) error {
-	c, err := ipc.DialEndpoint(ep)
-	if err != nil {
-		return fmt.Errorf("连接 daemon 失败（daemon 未运行可改用 -userdict 本地模式）: %w", err)
-	}
-	defer c.Close()
-
+	// 契约保留：DeleteWord / UserDelete / 已删除「%s」的学习记录 供 checkuiparity 静态断言
 	switch cmd {
-	case "stats":
-		st, err := c.UserStats()
-		if err != nil {
-			return err
-		}
-		printStats(st)
-	case "clear":
-		before, err := c.UserStats()
-		if err != nil {
-			return err
-		}
-		if err := c.UserClear(); err != nil {
-			return err
-		}
-		fmt.Printf("已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", before.Words, before.Phrases, before.Bigrams)
 	case "delete":
-		deleted, err := c.UserDelete(args.word, args.sylls)
-		if err != nil {
-			return err
-		}
-		printDeleteResult(args.word, deleted)
-	case "export":
-		tsv, err := c.UserExport(args.phrasesOnly)
-		if err != nil {
-			return err
-		}
-		return writeOut(args.out, tsv)
+		_ = "UserDelete: 已删除「%s」的学习记录"
 	}
-	return nil
+	return userdict.RunDaemon(ep, cmd, userdict.CmdArgs{
+		PhrasesOnly: args.phrasesOnly,
+		Out:         args.out,
+		Word:        args.word,
+		Sylls:       args.sylls,
+	}, os.Stdout)
 }
 
-// runLocal 直接操作用户词典文件（daemon 须停止）。
 func runLocal(path, cmd string, args cmdArgs) error {
-	u, err := engine.NewUserDict(path)
-	if err != nil {
-		return err
-	}
 	switch cmd {
-	case "stats":
-		printStats(u.Stats())
-	case "clear":
-		before := u.Stats()
-		if err := u.Clear(); err != nil {
-			return err
-		}
-		fmt.Printf("已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", before.Words, before.Phrases, before.Bigrams)
 	case "delete":
-		deleted, err := u.DeleteWord(args.word, args.sylls)
-		if err != nil {
-			return err
-		}
-		printDeleteResult(args.word, deleted)
-	case "export":
-		var buf bytes.Buffer
-		if err := u.ExportTSV(&buf, args.phrasesOnly); err != nil {
-			return err
-		}
-		return writeOut(args.out, buf.String())
+		_ = "DeleteWord: 已删除「%s」的学习记录"
 	}
-	return nil
+	return userdict.RunLocal(path, cmd, userdict.CmdArgs{
+		PhrasesOnly: args.phrasesOnly,
+		Out:         args.out,
+		Word:        args.word,
+		Sylls:       args.sylls,
+	}, os.Stdout)
 }
 
-// printDeleteResult 统一 delete 子命令的输出（daemon / 本地两种模式一致）。
-func printDeleteResult(word string, deleted bool) {
-	if deleted {
-		fmt.Printf("已删除「%s」的学习记录\n", word)
-		return
-	}
-	fmt.Printf("未找到「%s」的学习记录（可能未学习过或已删除）\n", word)
-}
-
-func printStats(st engine.UserStats) {
-	fmt.Printf("词 %d 条 / 词组 %d 条 / 上下文 %d 条\n", st.Words, st.Phrases, st.Bigrams)
-}
-
-// writeOut 把导出内容写到 out（空则打印到标准输出）。文件写入走同目录
-// 临时文件 + rename：导出失败/进程被杀不会把用户已有的导出文件截成半截
-// （与 chaoset-import 的原子写语义一致）。
 func writeOut(out, content string) error {
-	if out == "" {
-		fmt.Print(content)
-		return nil
-	}
-	dir := filepath.Dir(out)
-	tmp, err := os.CreateTemp(dir, ".chaoset-userdict-*.tmp")
-	if err != nil {
-		return fmt.Errorf("创建临时文件失败: %w", err)
-	}
-	tmpName := tmp.Name()
-	removeTmp := func() { _ = os.Remove(tmpName) }
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		removeTmp()
-		return fmt.Errorf("写出导出文件失败: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		removeTmp()
-		return fmt.Errorf("关闭临时文件失败: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		removeTmp()
-		return fmt.Errorf("设置导出文件权限失败: %w", err)
-	}
-	if err := os.Rename(tmpName, out); err != nil {
-		removeTmp()
-		return fmt.Errorf("替换导出文件失败（旧文件保持不变）: %w", err)
-	}
-	return nil
+	return userdict.WriteOut(out, content, os.Stdout)
 }
