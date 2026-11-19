@@ -1,0 +1,393 @@
+import { Theme } from "tokens.slint";
+export { Theme }
+import { ChaosSwitch, ChoicePill, ChaosButton, Card, CandidatePreview } from "components.slint";
+
+export component MainWindow inherits Window {
+    title: "Chaoset 设置";
+    preferred-width: 640px;
+    preferred-height: 560px;
+    min-width: 640px;
+    min-height: 560px;
+    background: Theme.window_bg;
+
+    // 状态属性（由 Rust 宿主写入和同步）
+    in-out property <int> current_page: 0; // 0=输入, 1=词库, 2=关于
+    in-out property <bool> associate_enabled: true;
+    in-out property <string> mode_scope: "system"; // system | process
+    in-out property <string> current_theme: "system"; // system | light | dark
+    in-out property <string> user_stats_text: "正在读取统计信息...";
+    in-out property <string> version_text: "Chaoset 版本";
+
+    // 回调事件（由 Rust 宿主监听执行）
+    callback associate_toggled(bool);
+    callback mode_scope_changed(string);
+    callback theme_changed(string);
+    callback clear_userdict_clicked();
+    callback export_userdict_clicked();
+    callback import_dict_clicked();
+
+    HorizontalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ---- 左侧导航列 (宽 148px) ----
+        Rectangle {
+            width: 148px;
+            background: Theme.nav_bg;
+            border-width: 0px;
+
+            // 侧边栏与内容区分割线
+            Rectangle {
+                x: parent.width - 1px;
+                y: 0px;
+                width: 1px;
+                height: 100%;
+                background: Theme.divider;
+            }
+
+            VerticalLayout {
+                padding: 16px;
+                padding-top: 24px;
+                padding-bottom: 16px;
+                spacing: 8px;
+
+                // 导航项 1: 输入
+                nav_item_0 := Rectangle {
+                    height: 36px;
+                    border-radius: Theme.nav_item_radius;
+                    background: root.current_page == 0 ? Theme.accent_soft
+                        : (nav_touch_0.has-hover ? Theme.control_hover : Colors.transparent);
+                    animate background { duration: 120ms; }
+
+                    if root.current_page == 0 : Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: 20px;
+                        border-radius: 1.5px;
+                        background: Theme.accent;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: "⚡️";
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "输入";
+                            font-size: 13px;
+                            font-weight: root.current_page == 0 ? 600 : 400;
+                            color: root.current_page == 0 ? Theme.accent_text : Theme.text_primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    nav_touch_0 := TouchArea {
+                        clicked => { root.current_page = 0; }
+                        mouse-cursor: pointer;
+                    }
+                }
+
+                // 导航项 2: 词库
+                nav_item_1 := Rectangle {
+                    height: 36px;
+                    border-radius: Theme.nav_item_radius;
+                    background: root.current_page == 1 ? Theme.accent_soft
+                        : (nav_touch_1.has-hover ? Theme.control_hover : Colors.transparent);
+                    animate background { duration: 120ms; }
+
+                    if root.current_page == 1 : Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: 20px;
+                        border-radius: 1.5px;
+                        background: Theme.accent;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: "📊";
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "词库";
+                            font-size: 13px;
+                            font-weight: root.current_page == 1 ? 600 : 400;
+                            color: root.current_page == 1 ? Theme.accent_text : Theme.text_primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    nav_touch_1 := TouchArea {
+                        clicked => { root.current_page = 1; }
+                        mouse-cursor: pointer;
+                    }
+                }
+
+                // 导航项 3: 关于
+                nav_item_2 := Rectangle {
+                    height: 36px;
+                    border-radius: Theme.nav_item_radius;
+                    background: root.current_page == 2 ? Theme.accent_soft
+                        : (nav_touch_2.has-hover ? Theme.control_hover : Colors.transparent);
+                    animate background { duration: 120ms; }
+
+                    if root.current_page == 2 : Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: 20px;
+                        border-radius: 1.5px;
+                        background: Theme.accent;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: "ℹ️";
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "关于";
+                            font-size: 13px;
+                            font-weight: root.current_page == 2 ? 600 : 400;
+                            color: root.current_page == 2 ? Theme.accent_text : Theme.text_primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    nav_touch_2 := TouchArea {
+                        clicked => { root.current_page = 2; }
+                        mouse-cursor: pointer;
+                    }
+                }
+
+                // 弹簧占位
+                Rectangle { vertical-stretch: 1; }
+
+                // 底部版本信息
+                Text {
+                    text: root.version_text;
+                    font-size: 11px;
+                    color: Theme.text_secondary;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // ---- 右侧主内容区 ----
+        Rectangle {
+            horizontal-stretch: 1;
+
+            VerticalLayout {
+                padding: 24px;
+                padding-top: 20px;
+
+                // Page 0: 输入页
+                if root.current_page == 0 : VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+
+                // 卡片 1: 联想设置
+                Card {
+                    title: "输入行为";
+                    icon: "⚡️";
+                    hint: "选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。";
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "词组联想";
+                            font-size: 13px;
+                            color: Theme.text_primary;
+                            vertical-alignment: center;
+                        }
+                        ChaosSwitch {
+                            checked: root.associate_enabled;
+                            toggled(val) => { root.associate_toggled(val); }
+                        }
+                    }
+                }
+
+                // 卡片 2: 中英状态作用域
+                Card {
+                    title: "中英状态";
+                    icon: "🌐";
+                    hint: "切一次所有程序都生效（推荐）；每进程则各自独立。";
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ChoicePill {
+                            text: "全局共享";
+                            selected: root.mode_scope == "system";
+                            clicked => { root.mode_scope_changed("system"); }
+                        }
+                        ChoicePill {
+                            text: "每进程独立";
+                            selected: root.mode_scope == "process";
+                            clicked => { root.mode_scope_changed("process"); }
+                        }
+                    }
+                }
+
+                // 卡片 3: 外观主题与实机微预览
+                Card {
+                    title: "外观主题";
+                    icon: "🎨";
+                    hint: "跟随系统则随操作系统浅/深色自动切换；也可固定浅色或深色。";
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ChoicePill {
+                            text: "跟随系统";
+                            selected: root.current_theme == "system";
+                            clicked => { root.theme_changed("system"); }
+                        }
+                        ChoicePill {
+                            text: "浅色";
+                            selected: root.current_theme == "light";
+                            clicked => { root.theme_changed("light"); }
+                        }
+                        ChoicePill {
+                            text: "深色";
+                            selected: root.current_theme == "dark";
+                            clicked => { root.theme_changed("dark"); }
+                        }
+                    }
+
+                    CandidatePreview {}
+                }
+            }
+
+            // Page 1: 词库页
+            if root.current_page == 1 : VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+
+                // 卡片 1: 学习数据管理
+                Card {
+                    title: "学习数据";
+                    icon: "📊";
+                    hint: "学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。";
+
+                    Text {
+                        text: root.user_stats_text;
+                        font-size: 13px;
+                        font-weight: 500;
+                        color: Theme.text_primary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        ChaosButton {
+                            text: "清空学习数据";
+                            danger: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.clear_userdict_clicked(); }
+                        }
+                        ChaosButton {
+                            text: "导出词组...";
+                            horizontal-stretch: 1;
+                            clicked => { root.export_userdict_clicked(); }
+                        }
+                    }
+                }
+
+                // 卡片 2: 外部词库扩展
+                Card {
+                    title: "词库扩展";
+                    icon: "📥";
+                    hint: "支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。";
+
+                    ChaosButton {
+                        text: "导入词库...";
+                        primary: true;
+                        clicked => { root.import_dict_clicked(); }
+                    }
+                }
+            }
+
+            // Page 2: 关于页
+            if root.current_page == 2 : VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+
+                Card {
+                    title: "关于 Chaoset";
+                    icon: "ℹ️";
+
+                    VerticalLayout {
+                        spacing: 12px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 56px;
+                            height: 56px;
+                            border-radius: 12px;
+                            background: Theme.accent;
+                            Text {
+                                text: "C";
+                                color: #FFFFFF;
+                                font-size: 28px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: "Chaoset 拼音输入法";
+                            font-size: 16px;
+                            font-weight: 700;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "跨平台原生极简中文拼音输入法";
+                            font-size: 12px;
+                            color: Theme.text_secondary;
+                            horizontal-alignment: center;
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.divider;
+                        }
+
+                        Text {
+                            text: "代码 MIT · 词库 CC BY-SA 4.0";
+                            font-size: 11px;
+                            color: Theme.text_secondary;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "更多设置将在后续版本提供";
+                            font-size: 11px;
+                            color: Theme.text_tertiary;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "https://github.com/chaoset/chaoset_ime";
+                            font-size: 11px;
+                            color: Theme.accent_text;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+}

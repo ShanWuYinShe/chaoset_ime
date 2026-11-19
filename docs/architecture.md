@@ -45,7 +45,9 @@ internal/settings/            设置 schema、默认值、校验、平台持久�
   store_windows.go            HKCU\\Software\\Chaoset（Associate / ModeScope / UiEnglish）
   store_darwin.go             UserDefaults.standard（AssociateEnabled / ChaosetModeScope；域 = ime.chaoset.inputmethod.ChaosetIME）
   store_linux.go              $XDG_CONFIG_HOME/chaoset/config.json（associate / mode_scope）
-cmd/chaoset-settingsctl/      供三端设置窗调用的命令行接口（JSON）
+cmd/chaoset/                  统一多功能命令行工具（Multicall: config/import/userdict/client/settings）
+cmd/chaoset-settingsctl/      供三端设置窗调用的命令行接口（JSON；薄包装兼容旧脚本）
+shims/settings/               基于 Slint 的跨平台统一设置中心（Rust/C++ 原生硬件加速，双端/三端 UI 令牌对齐）
 ```
 
 CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存/原生存储）：
@@ -153,6 +155,18 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | :--- | :--- |
 | `shims/common/ipc/core.cpp` | ≤700 |
 | `shims/common/ipc/core.hpp` | ≤300 |
+
+### 3.6 跨平台设置中心（`shims/settings/`）
+
+基于 Slint 实现的原生 GPU 加速设置窗口，对齐 `docs/ui-parity.md` 视觉令牌，完全脱离 Chromium/Electron 庞大体积：
+
+| 文件 | 职责 |
+| :--- | :--- |
+| `ui/tokens.slint` | 21 项视觉令牌定义（深色/浅色配色、卡片圆角、控件高度） |
+| `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览） |
+| `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 |
+| `src/bridge.rs` | Go CLI 桥接：读写 `chaoset config`、`chaoset userdict`、`chaoset import` |
+| `src/main.rs` | Slint 事件循环与数据绑定、系统原生文件对话框集成（rfd） |
 
 ## 4. 机器断言（checkuiparity）
 

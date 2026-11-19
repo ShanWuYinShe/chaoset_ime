@@ -5,6 +5,8 @@ dist/
 /chaoset-engine
 shims/macos/build/
 shims/windows/build/
+target/
+**/target/
 # Linux 原生设置窗本地构建产物（build.sh 默认输出到源码目录）
 shims/linux/setup/chaoset-setup
 

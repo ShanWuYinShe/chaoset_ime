@@ -1,0 +1,32 @@
+// Chaoset 拼音输入法设计令牌（对齐 docs/ui-parity.md 单一真源）
+export global Theme {
+    in-out property <bool> is_dark: false;
+
+    // 21 项视觉令牌
+    out property <color> window_bg: is_dark ? #101A2C : #F4F7FB;
+    out property <color> nav_bg: is_dark ? #0C1626 : #EAF1F9;
+    out property <color> card_bg: is_dark ? #1A2740 : #FFFFFF;
+    out property <color> card_border: is_dark ? #2D3E5C : #D9E4F0;
+    out property <color> divider: is_dark ? #243552 : #E4EDF6;
+    out property <color> text_primary: is_dark ? #F2F6FC : #14213D;
+    out property <color> text_secondary: is_dark ? #AFBFD6 : #4A5A70;
+    out property <color> text_tertiary: is_dark ? #7E90AC : #7A8899;
+    out property <color> accent: is_dark ? #0066EB : #007AFF;
+    out property <color> accent_strong: is_dark ? #007AFF : #0066EB;
+    out property <color> accent_pressed: is_dark ? #4DA3FF : #0052BE;
+    out property <color> accent_soft: is_dark ? #16345C : #E5F1FF;
+    out property <color> accent_text: is_dark ? #7FB4FF : #0066EB;
+    out property <color> control_bg: is_dark ? #223353 : #F0F5FB;
+    out property <color> control_hover: is_dark ? #2C4165 : #E3EDF8;
+    out property <color> control_border: is_dark ? #3A5074 : #C9D9EB;
+    out property <color> control_text: is_dark ? #F2F6FC : #14213D;
+    out property <color> knob: is_dark ? #F2F6FC : #FFFFFF;
+    out property <color> danger: is_dark ? #FF7B72 : #D32F2F;
+    out property <color> on_accent: is_dark ? #FFFFFF : #FFFFFF;
+    out property <color> shadow: is_dark ? rgba(0, 0, 0, 0.38) : rgba(27, 74, 128, 0.12);
+
+    // 标准几何
+    out property <length> card_radius: 14px;
+    out property <length> control_radius: 9px;
+    out property <length> nav_item_radius: 10px;
+}

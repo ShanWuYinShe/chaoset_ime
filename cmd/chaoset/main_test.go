@@ -112,4 +112,15 @@ func TestMulticall(t *testing.T) {
 			t.Errorf("multicall userdict -version 输出不符: %q", stdout.String())
 		}
 	}
+	// chaoset-settings multicall with CLI subargs
+	{
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"help"}, &stdout, &stderr, "chaoset-settings")
+		if code != 0 {
+			t.Errorf("multicall chaoset-settings help 应退出 0，实际 %d", code)
+		}
+		if !strings.Contains(stdout.String(), "chaoset-settingsctl get") {
+			t.Errorf("multicall chaoset-settings help 输出不符: %q", stdout.String())
+		}
+	}
 }

@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"chaoset.ime/internal/buildinfo"
@@ -59,6 +61,11 @@ func Run(args []string, stdout, stderr io.Writer, progName string) int {
 		return userdict.RunCLI(args, stdout, stderr)
 	case "chaoset-settingsctl":
 		return settingsctl.Run(args, stdout, stderr)
+	case "chaoset-settings":
+		if len(args) > 0 && args[0] != "gui" && args[0] != "--gui" && !strings.HasPrefix(args[0], "-") {
+			return settingsctl.Run(args, stdout, stderr)
+		}
+		return launchSettingsGUI(args, stdout, stderr)
 	case "chaoset-cli":
 		return client.RunCLI(args, stdout, stderr, os.Stdin)
 	}
@@ -84,6 +91,9 @@ func Run(args []string, stdout, stderr io.Writer, progName string) int {
 	case "userdict":
 		return userdict.RunCLI(subArgs, stdout, stderr)
 	case "settingsctl", "settings", "config":
+		if len(subArgs) > 0 && (subArgs[0] == "gui" || subArgs[0] == "--gui") {
+			return launchSettingsGUI(subArgs[1:], stdout, stderr)
+		}
 		return settingsctl.Run(subArgs, stdout, stderr)
 	case "cli", "client", "test":
 		return client.RunCLI(subArgs, stdout, stderr, os.Stdin)
@@ -92,6 +102,43 @@ func Run(args []string, stdout, stderr io.Writer, progName string) int {
 		fmt.Fprintln(stderr, usageText)
 		return 2
 	}
+}
+
+func launchSettingsGUI(args []string, stdout, stderr io.Writer) int {
+	exeName := "chaoset-settings"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	self, err := os.Executable()
+	var bin string
+	if err == nil {
+		dir := filepath.Dir(self)
+		candidate := filepath.Join(dir, exeName)
+		if _, err := os.Stat(candidate); err == nil {
+			bin = candidate
+		}
+	}
+	if bin == "" {
+		if p, err := exec.LookPath(exeName); err == nil {
+			bin = p
+		}
+	}
+	if bin == "" {
+		fmt.Fprintf(stderr, "未找到 %s 可执行文件\n", exeName)
+		return 1
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		fmt.Fprintf(stderr, "启动设置窗口失败: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func main() {
