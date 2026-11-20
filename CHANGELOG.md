@@ -2,6 +2,17 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.38（2026-11-20）
+
+本版本为**Windows 任务栏中英指示器 UTF-8 乱码彻底根治、超大满幅撑满图标重构与 Windows SDK 原生 GUID 规范化**的 patch 发版（重构完成前 minor 保持 0.3 不变）：
+
+- **修复(Windows 壳)：彻底根治任务栏中英指示器乱码缺陷（`è<±` → `英`）**：
+  查明 MSVC `cl.exe` 默认按系统 ANSI 代码页（Windows Server 英文 runner 上为 CP1252）解析无 BOM 的 UTF-8 源码、导致宽字符字面量 `L"英"`（`\xE8\x8B\xB1`）被转译为 3 字节乱码 `è<±` 的根因；在 `package_msvc.sh` 的 64 位 DLL、32 位 DLL 与单例 UI 宿主 `chaoset-ui.exe` 的全部 MSVC 编译指令中强制加入 `/utf-8` 编译开关（相当于 `/source-charset:utf-8 /execution-charset:utf-8`），彻底根治多语言 CI Runner 环境下的文本编码问题。
+- **优化(视觉资产)：重塑 Windows 任务栏输入法图标（`chaoset.ico`），彻底做大撑满与方块汉字平衡**：
+  针对用户反馈的“任务栏图标并未真正做大、只是简化了”的问题进行二次彻底重构：将小尺寸 SVG 圆角半径由 `rx=3.6`（椭圆直径 7.2px）收敛至 `rx=1.5`（与 GDI 绘制中英状态的 `cr=3` 椭圆直径严格一致），消除四个角的大面积削切与内缩；按键方块 100% 满幅撑满（0 到 sz），去除深色描边；将品牌字母「C」字号拉大至满格的 102%，笔画加粗至 14x15 像素（占据方块 75% 以上高度），视觉面积与饱满度彻底与任务栏「中/英」达到平衡。
+- **规范化(Windows TSF)：全面接入 Windows SDK 原生 GUID 与最佳实践**：
+  彻底清理 `shims/windows/src/tip_ids.hpp` 中历史遗留的自写 `k...` GUID 常量与手写接口声明，全面继承 Windows SDK `<msctf.h>` 标准接口与符号（`CLSID_TF_CategoryMgr`、`CLSID_TF_InputProcessorProfiles`、`GUID_TFCAT_TIP_KEYBOARD`、`ITfTextInputProcessorEx` 等）；在 `tip_registration.cpp` 中通过 `<initguid.h>` 规范化实例化 TSF 原生 GUID，并从 MSVC 链接指令中清理不存在的 `msctf.lib`。
+
 ## v0.3.37（2026-11-20）
 
 本版本为**Windows 构建流水线原生 MSVC 重构（6~8 倍提速）与任务栏输入法图标对齐放大**的 patch 发版（重构完成前 minor 保持 0.3 不变）：
