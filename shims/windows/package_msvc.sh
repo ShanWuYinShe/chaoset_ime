@@ -82,7 +82,7 @@ DLL_SRCS="$DLL_SRCS shims/common/ipc/core.cpp"
 echo "==> MSVC 编译 64 位 ChaosetIME.dll..."
 cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc \
   /DCHAOSET_VERSION="\"$VERSION\"" \
-  /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS \
+  /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS \
   /Ishims/windows/src /Ishims/common/ipc \
   /Fe:"$OUTDIR/ChaosetIME.dll" \
   $DLL_SRCS "$OUTDIR/chaoset64.res" \
@@ -93,7 +93,7 @@ cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc \
 echo "==> MSVC 编译 64 位单例 UI 宿主 chaoset-ui.exe..."
 cl.exe /nologo /std:c++17 /O2 /W4 /EHsc \
   /DCHAOSET_VERSION="\"$VERSION\"" \
-  /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS \
+  /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS \
   /Ishims/windows/src /Ishims/common/ipc \
   /Fe:"$OUTDIR/chaoset-ui.exe" \
   shims/windows/src/ui_main.cpp \
@@ -103,12 +103,23 @@ cl.exe /nologo /std:c++17 /O2 /W4 /EHsc \
 
 # 9. MSVC 编译 32 位 ChaosetIME32.dll
 echo "==> MSVC 编译 32 位 WOW64 ChaosetIME32.dll..."
-VCVARS32="${VSINSTALLDIR:-C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\}VC\\Auxiliary\\Build\\vcvarsamd64_x86.bat"
-if [ ! -f "$VCVARS32" ]; then
-  VCVARS32=$(cmd.exe //c "where /r \"C:\\Program Files\\Microsoft Visual Studio\" vcvarsamd64_x86.bat" | head -n 1 | tr -d '\r')
+VCVARS32=""
+if command -v vswhere.exe >/dev/null 2>&1; then
+  VCVARS32=$(vswhere.exe -latest -products * -find "VC\\Auxiliary\\Build\\vcvarsamd64_x86.bat" | head -n 1 | tr -d '\r')
+  if [ -z "$VCVARS32" ]; then
+    VCVARS32=$(vswhere.exe -latest -products * -find "VC\\Auxiliary\\Build\\vcvars32.bat" | head -n 1 | tr -d '\r')
+  fi
 fi
+if [ -z "$VCVARS32" ] && [ -n "${VSINSTALLDIR:-}" ]; then
+  if [ -f "${VSINSTALLDIR}VC\\Auxiliary\\Build\\vcvarsamd64_x86.bat" ]; then
+    VCVARS32="${VSINSTALLDIR}VC\\Auxiliary\\Build\\vcvarsamd64_x86.bat"
+  elif [ -f "${VSINSTALLDIR}VC\\Auxiliary\\Build\\vcvars32.bat" ]; then
+    VCVARS32="${VSINSTALLDIR}VC\\Auxiliary\\Build\\vcvars32.bat"
+  fi
+fi
+echo "==> 32 位编译环境脚本: $VCVARS32"
 
-cmd.exe //c "call \"$VCVARS32\" && cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /DCHAOSET_VERSION=\"$VERSION\" /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:\"$OUTDIR/ChaosetIME32.dll\" $DLL_SRCS \"$OUTDIR/chaoset32.res\" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib"
+cmd.exe //c "call \"$VCVARS32\" && cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /DCHAOSET_VERSION=\"$VERSION\" /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:\"$OUTDIR/ChaosetIME32.dll\" $DLL_SRCS \"$OUTDIR/chaoset32.res\" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib"
 
 # 10. 拷贝其它发行文件
 echo "==> 拷贝词库与配置文件..."

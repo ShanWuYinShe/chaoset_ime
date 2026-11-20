@@ -20,6 +20,9 @@
 #ifndef CHAOSET_WIN_TIP_HPP_
 #define CHAOSET_WIN_TIP_HPP_
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <msctf.h>
 
