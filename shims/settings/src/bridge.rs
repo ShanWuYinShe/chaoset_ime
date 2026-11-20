@@ -86,8 +86,15 @@ pub fn find_chaoset_bin() -> PathBuf {
 
 fn run_cmd(args: &[&str]) -> Result<String, String> {
     let bin = find_chaoset_bin();
-    let output = Command::new(&bin)
-        .args(args)
+    let mut cmd = Command::new(&bin);
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("执行 {:?} 失败: {}", bin, e))?;
 
