@@ -90,6 +90,9 @@ jobs:
       - name: 运行 Slint 设置中心单元测试（无头 UI + 设计令牌 + 桥接逻辑）
         run: cargo test --manifest-path shims/settings/Cargo.toml
 
+      - name: 运行 Rust 核心引擎与守护进程单元测试
+        run: cargo test --manifest-path crates/Cargo.toml
+
       # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
       # 协议与会话逻辑。测试在 Linux CI 常跑，毫秒级快速发现协议漂移。
       - name: 核心层行为测试（真实 daemon + Unix socket）

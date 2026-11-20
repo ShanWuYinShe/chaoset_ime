@@ -98,9 +98,13 @@ CARGO_WIN_TARGET ?= $(if $(findstring Windows,$(OS)),,--target x86_64-pc-windows
 build-settings-windows:
 	cargo build --release $(CARGO_WIN_TARGET) --manifest-path shims/settings/Cargo.toml
 
+build-rust:
+	cargo build --release --manifest-path crates/Cargo.toml
+
 test:
 	go test ./...
 	cargo test --manifest-path shims/settings/Cargo.toml
+	cargo test --manifest-path crates/Cargo.toml
 
 vet:
 	go vet ./...
