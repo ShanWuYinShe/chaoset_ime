@@ -65,9 +65,9 @@ gen_rc "$OUTDIR/chaoset64.rc" "Chaoset 拼音输入法 TSF 前端（64 位）" "
 gen_rc "$OUTDIR/chaoset32.rc" "Chaoset 拼音输入法 TSF 前端（32 位）" "ChaosetIME32" "ChaosetIME32.dll" 2 ""
 gen_rc "$OUTDIR/chaoset-ui.rc" "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
 
-rc.exe /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset64.res" "$OUTDIR/chaoset64.rc"
-rc.exe /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset32.res" "$OUTDIR/chaoset32.rc"
-rc.exe /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res" "$OUTDIR/chaoset-ui.rc"
+rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset64.res" "$OUTDIR/chaoset64.rc"
+rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset32.res" "$OUTDIR/chaoset32.rc"
+rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res" "$OUTDIR/chaoset-ui.rc"
 
 # 6. 确定 C++ 源码列表 (排除 ui_main.cpp)
 DLL_SRCS=""
