@@ -9,6 +9,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <objbase.h>
 #include <wingdi.h>
 #include <uiautomationcore.h>     // UIA 类型（无障碍宿主 provider，2026-10-31）
 #include <uiautomationcoreapi.h>  // UiaHostProviderFromHwnd / UiaReturnRawElementProvider
