@@ -62,17 +62,10 @@ rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetctl.res" "$OUTDIR/chaosetctl.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetd.res" "$OUTDIR/chaosetd.rc"
 
-# 为 Go 二进制生成 .syso 资源对象文件 (通过 cvtres.exe 将 .res 转换为 COFF .syso 嵌入图标与版本信息)
-if command -v cvtres.exe >/dev/null 2>&1; then
-  cvtres.exe /NOLOGO /MACHINE:X64 /OUT:cmd/chaosetctl/rsrc_windows_amd64.syso "$OUTDIR/chaosetctl.res"
-  cvtres.exe /NOLOGO /MACHINE:X64 /OUT:cmd/chaosetd/rsrc_windows_amd64.syso "$OUTDIR/chaosetd.res"
-fi
-
 # 4. 编译 Go 二进制 (chaosetctl.exe, chaosetd.exe)
 echo "==> 编译 Go 核心与全能工具 (chaosetctl.exe, chaosetd.exe)..."
 go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
 go build -ldflags "-H=windowsgui -s -w" -o "$OUTDIR/chaosetd.exe" ./cmd/chaosetd
-rm -f cmd/chaosetctl/rsrc_windows_amd64.syso cmd/chaosetd/rsrc_windows_amd64.syso
 
 # 5. 拷贝 Slint 设置中心 (chaoset-settings.exe)
 if [ -f "shims/settings/target/release/chaoset-settings.exe" ]; then
