@@ -1470,7 +1470,7 @@ static bool launchSlintSettings(SettingsPage page) {
             if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) {
                 std::wstring cmd = L"\"" + std::wstring(path) + L"\"";
                 cmd += (page == SettingsPage::About) ? L" --page about" :
-                       (page == SettingsPage::Dict ? L" --page dict" : L" --page input");
+                       (page == SettingsPage::Dictionary ? L" --page dict" : L" --page input");
                 STARTUPINFOW si{}; si.cb = sizeof(si);
                 PROCESS_INFORMATION pi{};
                 std::vector<wchar_t> buf(cmd.begin(), cmd.end()); buf.push_back(L'\0');
@@ -1520,7 +1520,8 @@ void openSettingsWindowStandalone(SettingsPage page) {
     RECT fr = {0, 0, settingsPt(kWinW), settingsPt(kWinH)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
-    MONITORINFO mi{sizeof(mi)};
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
     if (GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &mi)) {
         const int w = fr.right - fr.left, h = fr.bottom - fr.top;
         x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
