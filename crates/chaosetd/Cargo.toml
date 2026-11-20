@@ -1,0 +1,25 @@
+[package]
+name = "chaosetd"
+version = "0.3.38"
+edition = "2021"
+authors = ["Li You <winliyou@outlook.com>"]
+description = "High-performance, zero-GC Rust daemon for Chaoset IME"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+chaoset-engine = { path = "../chaoset-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

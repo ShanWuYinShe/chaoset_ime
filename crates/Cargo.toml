@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "chaoset-engine",
+    "chaosetd",
+]
+resolver = "2"
