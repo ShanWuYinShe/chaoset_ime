@@ -212,4 +212,11 @@ fi
 "$SEVENZIP" a -tzip "dist/chaoset-windows-x64.zip" "./$OUTDIR/*"
 test -f "dist/chaoset-windows-x64.zip" || { echo "缺少 dist/chaoset-windows-x64.zip"; exit 1; }
 
+# 14. 校验生成的 Windows 二进制版本信息与 App 资源（防乱码与漏资源）
+echo "==> 校验 Windows 二进制版本信息与 App 资源..."
+python3 scripts/check_windows_version_info.py || python scripts/check_windows_version_info.py || {
+  echo "Windows 二进制版本信息校验失败"
+  exit 1
+}
+
 echo "==> Windows 原生编译与打包全部成功！"

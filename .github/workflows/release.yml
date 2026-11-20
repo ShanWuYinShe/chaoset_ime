@@ -220,41 +220,12 @@ jobs:
           chmod +x shims/windows/package_msvc.sh
           ./shims/windows/package_msvc.sh
 
-      # 版本信息 / app 信息（2026-11-06）：安装器 EXE 与包内每个 PE 二进制
-      # 都必须带 VS_VERSION_INFO 与产品名/公司/版本字符串，且中文不能是
-      # mojibake（含 chaoset-ui.exe 单例 UI 宿主与 ChaosetRunUi 导出自检）。
+      # 版本信息 / app 信息校验：安装器 EXE 与包内每个 PE 二进制（含 chaoset-ui.exe 与 ChaosetRunUi 导出）
+      # 都必须带 VS_VERSION_INFO，中文资源不得乱码（由 scripts/check_windows_version_info.py 统一断言）。
       - name: 校验版本信息 / app 信息
         shell: bash
-        env:
-          PYTHONUTF8: 1
-          PYTHONIOENCODING: utf-8
         run: |
-          python - <<'PY'
-          import os, struct, sys
-          if hasattr(sys.stdout, "reconfigure"):
-              sys.stdout.reconfigure(encoding="utf-8")
-          files = [
-              "dist/chaoset-windows-x64/ChaosetIME.dll",
-              "dist/chaoset-windows-x64/ChaosetIME32.dll",
-              "dist/chaoset-windows-x64/chaoset-ui.exe",
-              "dist/ChaosetSetup.exe",
-          ]
-          for p in files:
-              d = open(p, "rb").read()
-              i = d.find("VS_VERSION_INFO".encode("utf-16-le"))
-              if i < 0:
-                  print(p + ": 缺少 VS_VERSION_INFO 版本资源"); sys.exit(1)
-              if d.find(struct.pack("<I", 0xFEEF04BD)) < 0:
-                  print(p + ": 缺少 VS_FIXEDFILEINFO（数字版本）"); sys.exit(1)
-              for k in ("ProductName", "CompanyName", "FileVersion", "ProductVersion"):
-                  if k.encode("utf-16-le") not in d:
-                      print(p + ": 版本资源缺少 " + k); sys.exit(1)
-              if "拼音输入法".encode("utf-16-le") not in d:
-                  print(p + ": 版本资源中文乱码"); sys.exit(1)
-              print(p + ": 版本信息 OK")
-          PY
-          echo "版本信息 / app 信息自检通过"
-          echo "ChaosetSetup.exe 安装程序自检通过"
+          python3 scripts/check_windows_version_info.py || python scripts/check_windows_version_info.py
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
