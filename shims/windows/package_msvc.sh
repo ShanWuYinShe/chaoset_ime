@@ -190,7 +190,7 @@ if ! command -v "$MAKENSIS" >/dev/null 2>&1; then
   done
 fi
 
-"$MAKENSIS" /DVERSION="$VERSION" /DVERSION_QUAD="$QUAD" shims/windows/installer/chaoset.nsi
+"$MAKENSIS" /INPUTCHARSET UTF8 /DVERSION="$VERSION" /DVERSION_QUAD="$QUAD" shims/windows/installer/chaoset.nsi
 test -f "dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
 
 # 13. 生成 ZIP 压缩包
