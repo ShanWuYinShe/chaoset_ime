@@ -6,10 +6,10 @@
       <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
   </defs>
-  <!-- Full-bleed Keycap -->
-  <rect x="0.5" y="0.5" width="255" height="255" rx="46.1" ry="46.1" fill="url(#blueGrad)" stroke="#0058B8" stroke-width="6.4"/>
+  <!-- Full-bleed Keycap: 满幅撑满 0 到 sz，无多余外框缩进 -->
+  <rect x="0" y="0" width="256" height="256" rx="30.7" ry="30.7" fill="url(#blueGrad)"/>
   <!-- Specular Rim Line -->
-  <line x1="46.1" y1="10.2" x2="209.9" y2="10.2" stroke="#90C5FF" stroke-width="7.7" stroke-linecap="round"/>
-  <!-- Bold Centered C -->
-  <text x="128.00" y="198.40" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="209.92" font-weight="900" fill="#FFFFFF">C</text>
+  <line x1="31.7" y1="1" x2="224.3" y2="1" stroke="#90C5FF" stroke-width="10.2" stroke-opacity="0.8" stroke-linecap="round"/>
+  <!-- Ultra Bold Centered C: 真正撑满方块、笔画粗重、在视觉重量与面积上与汉字完全等同 -->
+  <text x="128.00" y="207.36" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="261.12" font-weight="900" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="12.80" paint-order="stroke fill">C</text>
 </svg>

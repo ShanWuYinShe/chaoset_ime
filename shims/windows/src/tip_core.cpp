@@ -62,7 +62,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<IUnknown*>(static_cast<ITfTextInputProcessor*>(this));
     } else if (riid == IID_ITfTextInputProcessor) {
         *ppv = static_cast<ITfTextInputProcessor*>(this);
-    } else if (riid == kIID_ITfTextInputProcessorEx) {
+    } else if (riid == IID_ITfTextInputProcessorEx) {
         *ppv = static_cast<ITfTextInputProcessorEx*>(this);
     } else if (riid == IID_ITfKeyEventSink) {
         *ppv = static_cast<ITfKeyEventSink*>(this);
@@ -151,7 +151,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
     clientId_ = tid;
     if (profileMgr_ == nullptr) {
         const HRESULT hrProfile = CoCreateInstance(
-            kCLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
             IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&profileMgr_));
         static volatile LONG loggedProfileMgr = 0;
         if (InterlockedCompareExchange(&loggedProfileMgr, 1, 0) == 0) {
@@ -165,7 +165,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId ti
         if (SUCCEEDED(tm_->QueryInterface(IID_ITfCompartmentMgr,
                                           reinterpret_cast<void**>(&compMgr))) &&
             compMgr != nullptr) {
-            compMgr->GetCompartment(kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
+            compMgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
                                     &modeCompartment_);
             compMgr->Release();
         }

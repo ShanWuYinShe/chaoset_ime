@@ -23,14 +23,13 @@ import zlib
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def gen_svg(sz: int) -> str:
-    # 满幅键帽：几何、圆角、高光与 UiTray 保持完全一致
-    rx = 3.0 if sz <= 16 else (3.6 if sz <= 20 else (4.3 if sz <= 24 else (5.0 if sz <= 28 else (5.8 if sz <= 32 else (8.0 if sz <= 48 else sz * 0.18)))))
-    fsz = sz * 0.82
-    cy = sz * 0.775
+    # 满幅键帽：几何、圆角、高光与 UiTray GDI 原生绘制（cr=3，半径仅 1.5px）1:1 绝对对齐
+    rx = 1.5 if sz <= 20 else (2.0 if sz <= 24 else (2.5 if sz <= 28 else (3.0 if sz <= 32 else (4.5 if sz <= 48 else sz * 0.12))))
+    fsz = sz * 1.02
+    cy = sz * 0.81
     cx = sz * 0.5
-    stroke_w = 0.6 if sz <= 20 else (0.8 if sz <= 32 else (1.2 if sz <= 48 else sz * 0.025))
-    rim_w = 0.8 if sz <= 20 else (1.0 if sz <= 32 else (1.5 if sz <= 48 else sz * 0.03))
-    rim_y = 1.2 if sz <= 20 else (1.5 if sz <= 32 else sz * 0.04)
+    stroke_w = max(0.5, sz * 0.05)
+    rim_w = max(0.8, sz * 0.04)
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{sz}" height="{sz}" viewBox="0 0 {sz} {sz}">
   <defs>
@@ -40,12 +39,12 @@ def gen_svg(sz: int) -> str:
       <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
   </defs>
-  <!-- Full-bleed Keycap -->
-  <rect x="0.5" y="0.5" width="{sz - 1}" height="{sz - 1}" rx="{rx:.1f}" ry="{rx:.1f}" fill="url(#blueGrad)" stroke="#0058B8" stroke-width="{stroke_w:.1f}"/>
+  <!-- Full-bleed Keycap: 满幅撑满 0 到 sz，无多余外框缩进 -->
+  <rect x="0" y="0" width="{sz}" height="{sz}" rx="{rx:.1f}" ry="{rx:.1f}" fill="url(#blueGrad)"/>
   <!-- Specular Rim Line -->
-  <line x1="{rx:.1f}" y1="{rim_y:.1f}" x2="{sz - rx:.1f}" y2="{rim_y:.1f}" stroke="#90C5FF" stroke-width="{rim_w:.1f}" stroke-linecap="round"/>
-  <!-- Bold Centered C -->
-  <text x="{cx:.2f}" y="{cy:.2f}" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="{fsz:.2f}" font-weight="900" fill="#FFFFFF">C</text>
+  <line x1="{rx + 1:.1f}" y1="1" x2="{sz - rx - 1:.1f}" y2="1" stroke="#90C5FF" stroke-width="{rim_w:.1f}" stroke-opacity="0.8" stroke-linecap="round"/>
+  <!-- Ultra Bold Centered C: 真正撑满方块、笔画粗重、在视觉重量与面积上与汉字完全等同 -->
+  <text x="{cx:.2f}" y="{cy:.2f}" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="{fsz:.2f}" font-weight="900" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="{stroke_w:.2f}" paint-order="stroke fill">C</text>
 </svg>"""
 
 def render_png(svg_content: str, out_png: str, sz: int):

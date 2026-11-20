@@ -208,7 +208,7 @@ bool ChaosetTIP::isActiveTip() {
     // 反过来 fail-closed 的最坏后果只是「输入法暂时不出候选」，比干扰系统小得多。
     if (profileMgr_ == nullptr) return false;
     TF_INPUTPROCESSORPROFILE prof{};
-    const HRESULT hr = profileMgr_->GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD, &prof);
+    const HRESULT hr = profileMgr_->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &prof);
     // 首次查询结果留一条日志：否则「非激活整键放行」是否生效只能靠猜
     //（2026-11-05 回归审计 P2-5：全量日志 0 条 inactive 无法自证）。
     static volatile LONG loggedQuery = 0;

@@ -83,8 +83,8 @@ static void removeLegacyUILessCategory() {
     // 预清理 + 本轮注册 = 幂等收敛到「已实现且已声明」的最终态。
     // 1) 经类别管理器注销（若 COM 已初始化；失败不影响后续注册）
     ITfCategoryMgr* catMgr = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-                                   kIID_ITfCategoryMgr, reinterpret_cast<void**>(&catMgr)))) {
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_ITfCategoryMgr, reinterpret_cast<void**>(&catMgr)))) {
         catMgr->UnregisterCategory(CLSID_ChaosetTIP, kLegacyUIElementEnabled, CLSID_ChaosetTIP);
         catMgr->Release();
     }
@@ -118,8 +118,8 @@ STDAPI DllRegisterServer() {
     removeLegacyUILessCategory();
 
     ITfInputProcessorProfiles* profiles = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr,
-                                   CLSCTX_INPROC_SERVER, kIID_ITfInputProcessorProfiles,
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
                                    reinterpret_cast<void**>(&profiles)))) {
         profiles->Register(CLSID_ChaosetTIP);
         const wchar_t* desc = L"Chaoset 拼音输入法";
@@ -132,18 +132,18 @@ STDAPI DllRegisterServer() {
     }
 
     ITfCategoryMgr* catMgr = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr,
-                                   CLSCTX_INPROC_SERVER, kIID_ITfCategoryMgr,
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                    reinterpret_cast<void**>(&catMgr)))) {
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
         // UILess 官方能力类别：本壳已实现 ITfUIElementMgr 协商（ui_element 模块
         // 的 ITfCandidateListUIElement），声明与实现一致（2026-10-30「只声明
         // 不实现」的事故根因已随官方协议落地消除）。
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
                                  CLSID_ChaosetTIP);
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
-        catMgr->RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
+        catMgr->RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
     }
 
@@ -156,11 +156,11 @@ STDAPI DllRegisterServer() {
     regSet(HKEY_LOCAL_MACHINE, tips, "", "Chaoset 拼音输入法");
 
     const GUID* catGuids[] = {
-        &kGUID_TFCAT_TIP_KEYBOARD,
-        &kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
-        &kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
-        &kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
-        &kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+        &GUID_TFCAT_TIP_KEYBOARD,
+        &GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
+        &GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+        &GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+        &GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
     };
     for (const GUID* g : catGuids) {
         std::string gStr = guidToString(*g);
@@ -183,23 +183,23 @@ STDAPI DllUnregisterServer() {
     HRESULT hrCo = CoInitialize(nullptr);
 
     ITfCategoryMgr* catMgr = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_CategoryMgr, nullptr,
-                                   CLSCTX_INPROC_SERVER, kIID_ITfCategoryMgr,
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                    reinterpret_cast<void**>(&catMgr)))) {
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
-        // UILess 类别注销：本版正牌注册（kGUID_TFCAT_TIPCAP_UIELEMENTENABLED
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIP_KEYBOARD, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, CLSID_ChaosetTIP);
+        // UILess 类别注销：本版正牌注册（GUID_TFCAT_TIPCAP_UIELEMENTENABLED
         // 与旧版内联值相同，同一 GUID 一次注销同时覆盖旧残留与本次注册）。
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
                                    CLSID_ChaosetTIP);
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
-        catMgr->UnregisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_ChaosetTIP);
+        catMgr->UnregisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_ChaosetTIP);
         catMgr->Release();
     }
 
     ITfInputProcessorProfiles* profiles = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kCLSID_TF_InputProcessorProfiles, nullptr,
-                                   CLSCTX_INPROC_SERVER, kIID_ITfInputProcessorProfiles,
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
                                    reinterpret_cast<void**>(&profiles)))) {
         profiles->RemoveLanguageProfile(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile);
         profiles->Unregister(CLSID_ChaosetTIP);
