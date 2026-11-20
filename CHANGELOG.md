@@ -2,6 +2,15 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.37（2026-11-20）
+
+本版本为**Windows 构建流水线原生 MSVC 重构（6~8 倍提速）与任务栏输入法图标对齐放大**的 patch 发版（重构完成前 minor 保持 0.3 不变）：
+
+- **重构(流水线 & CI/CD)：Windows 构建与打包全面迁移至 windows-latest 原生 MSVC + NSIS**：
+  彻底终结在 Ubuntu runner 上通过 apt 下载超 1GB mingw-w64 交叉依赖时反复遭遇的网络超时、重试与卡顿瓶颈（构建总耗时从 30~40+ 分钟骤降至 5 分钟左右，提速达 6~8 倍）；全面启用 Windows 预装的 Visual Studio 2022 Enterprise + Windows SDK 原生工具链（`cl.exe` + `link.exe` + `rc.exe` + NSIS），通过 `shims/windows/package_msvc.sh` 完成 64 位 `ChaosetIME.dll`、32 位 WOW64 `ChaosetIME32.dll`、单例 UI 宿主 `chaoset-ui.exe`、Go `chaosetctl.exe` 与 Rust Slint `chaoset-settings.exe` 的极速原生构建、COM 导出符号校验与 NSIS/ZIP 打包。
+- **优化(视觉资产)：重塑 Windows 任务栏输入法图标（`chaoset.ico`），彻底根治偏小与噪点**：
+  针对系统任务栏输入指示器图标明显小于左侧「中/英」状态指示器、且缩放后出现杂散噪点的问题进行彻底重构：移除破坏居中与视觉面积的右上角星标，全分辨率统一采用满幅实心圆角键帽（Full-bleed Keycap，无多余留白），外形几何轮廓与 `UiTray` 中英文指示器 1:1 对齐；将品牌字母「C」字号拉大至约 82% 满格高度（字重 900），在视觉份量、按键轮廓与字体高度上与方块汉字「中/英」达到饱满平衡；Windows `.ico` 资源的小尺寸（≤64px）采用标准未压缩 32bpp DIB（BMP）格式封装，彻底根治 Windows GDI/TSF 在高 DPI（如 125%/150%）下因 PNG 兼容性缺陷导致的回退到 16px 或模糊缩放。
+
 ## v0.3.36（2026-11-20）
 
 本版本为**统一全能命令行工具 chaosetctl 瘦身升级、任务栏图标尺寸重构、右键删词保护与独立设置中心脱钩**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版重点清理安装包冗余文件、重塑任务栏输入法图标并修复候选窗交互细节：
