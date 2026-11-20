@@ -225,9 +225,14 @@ jobs:
       # mojibake（含 chaoset-ui.exe 单例 UI 宿主与 ChaosetRunUi 导出自检）。
       - name: 校验版本信息 / app 信息
         shell: bash
+        env:
+          PYTHONUTF8: 1
+          PYTHONIOENCODING: utf-8
         run: |
           python - <<'PY'
           import os, struct, sys
+          if hasattr(sys.stdout, "reconfigure"):
+              sys.stdout.reconfigure(encoding="utf-8")
           files = [
               "dist/chaoset-windows-x64/ChaosetIME.dll",
               "dist/chaoset-windows-x64/ChaosetIME32.dll",
