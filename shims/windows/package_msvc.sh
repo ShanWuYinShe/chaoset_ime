@@ -119,7 +119,26 @@ if [ -z "$VCVARS32" ] && [ -n "${VSINSTALLDIR:-}" ]; then
 fi
 echo "==> 32 位编译环境脚本: $VCVARS32"
 
-cmd.exe //c "call \"$VCVARS32\" && cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /DCHAOSET_VERSION=\"$VERSION\" /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:\"$OUTDIR/ChaosetIME32.dll\" $DLL_SRCS \"$OUTDIR/chaoset32.res\" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib"
+export VCVARS32
+export VERSION
+export OUTDIR
+export DLL_SRCS
+cat << 'EOF' > build32.bat
+@echo off
+call "%VCVARS32%"
+if errorlevel 1 (
+  echo Error: vcvars failed
+  exit /b 1
+)
+cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /DCHAOSET_VERSION="%VERSION%" /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:"%OUTDIR%/ChaosetIME32.dll" %DLL_SRCS% "%OUTDIR%/chaoset32.res" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib
+if errorlevel 1 (
+  echo Error: 32-bit cl.exe failed
+  exit /b 1
+)
+EOF
+
+cmd.exe //c build32.bat
+rm -f build32.bat
 
 # 10. 拷贝其它发行文件
 echo "==> 拷贝词库与配置文件..."
