@@ -34,14 +34,20 @@ if not exist "chaoset-ui.exe" ( echo WARN: chaoset-ui.exe missing; tray indicato
 REM Settings read/write go through the Go single-source CLI (plan A cold path).
 REM If it is missing the settings window falls back to native HKCU read/write, so
 REM this is a warning (portable zip upgrade from an older package), not an error.
-if not exist "chaoset-settingsctl.exe" ( echo WARN: chaoset-settingsctl.exe missing; settings window will fall back to native registry read/write )
+if not exist "chaosetctl.exe" if not exist "chaoset-settingsctl.exe" ( echo WARN: chaosetctl.exe missing; settings window will fall back to native registry read/write )
 
 echo ==^> Refreshing user dictionary (preserve imported words)
 REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps
 REM its imported words while the packaged baseline is refreshed; it creates the
 REM directory and backs up the old file. If this fails the daemon still seeds
 REM the dictionary on first use.
-if exist "%~dp0chaoset-import.exe" "%~dp0chaoset-import.exe" -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
+if exist "%~dp0chaosetctl.exe" (
+  "%~dp0chaosetctl.exe" import -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
+) else if exist "%~dp0chaoset.exe" (
+  "%~dp0chaoset.exe" import -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
+) else if exist "%~dp0chaoset-import.exe" (
+  "%~dp0chaoset-import.exe" -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
+)
 
 echo ==^> Cleaning legacy UILess category (v0.2.16 and earlier)
 REM v0.2.17 no longer declares TFCAT_TIPCAP_UIELEMENTENABLED (this shell does not

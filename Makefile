@@ -79,6 +79,7 @@ check-version:
 	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 年月日-commit hash；含 Windows 安装器/二进制版本资源）"
 
 build:
+	go build -o bin/chaosetctl ./cmd/chaosetctl
 	go build -o bin/chaoset ./cmd/chaoset
 	go build -o bin/chaosetd ./cmd/chaosetd
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
@@ -159,8 +160,7 @@ run-daemon:
 	go run ./cmd/chaosetd
 
 icons:
-	swift shims/macos/tools/make-icon.swift .workwork/tmp_icon --sync-all
-	rm -rf .workwork/tmp_icon
+	python3 scripts/generate_icons.py
 
 package-macos:
 	VERSION=$(VERSION) ./shims/macos/build.sh
@@ -217,11 +217,10 @@ package-linux:
 	mkdir -p dist/chaoset-linux-x86_64/component
 	mkdir -p dist/chaoset-linux-x86_64/icons
 	mkdir -p dist/chaoset-linux-x86_64/data
-	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset ./cmd/chaoset
-	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaosetd ./cmd/chaosetd
-	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-cli ./cmd/chaoset-cli
-	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-import ./cmd/chaoset-import
-	$(LINUX_GOENV) go build -o dist/chaoset-linux-x86_64/bin/chaoset-userdict ./cmd/chaoset-userdict
+	$(LINUX_GOENV) go build -ldflags "-s -w" -o dist/chaoset-linux-x86_64/bin/chaosetctl ./cmd/chaosetctl
+	$(LINUX_GOENV) go build -ldflags "-s -w" -o dist/chaoset-linux-x86_64/bin/chaosetd ./cmd/chaosetd
+	# 使用符号链接复用单一全能控制工具 chaosetctl (Multicall)，消除冗余二进制
+	(cd dist/chaoset-linux-x86_64/bin && ln -sf chaosetctl chaoset && ln -sf chaosetctl chaoset-cli && ln -sf chaosetctl chaoset-import && ln -sf chaosetctl chaoset-userdict)
 	@if [ -f shims/settings/target/release/chaoset-settings ]; then \
 		cp shims/settings/target/release/chaoset-settings dist/chaoset-linux-x86_64/bin/chaoset-settings; \
 	fi
@@ -243,7 +242,7 @@ package-linux:
 	cp LICENSE dist/chaoset-linux-x86_64/LICENSE
 	@# 架构自检：包里的二进制必须真是 ELF，不能是开发机的 Mach-O
 	@for b in dist/chaoset-linux-x86_64/bin/*; do \
-		file "$$b" | grep -q ELF || { echo "错误：$$b 不是 ELF（Linux）可执行文件："; file "$$b"; exit 1; }; \
+		file -L "$$b" | grep -q ELF || { echo "错误：$$b 不是 ELF（Linux）可执行文件："; file -L "$$b"; exit 1; }; \
 	done
 	tar -czf dist/chaoset-linux-x86_64.tar.gz -C dist chaoset-linux-x86_64
 	@# deb control 语法不支持 # 注释，模板里的维护说明必须在生成时剔除，
@@ -257,7 +256,7 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/ibus/component; \
 		mkdir -p dist/deb_staging/usr/share/icons; \
 		chmod 0755 dist/deb_staging dist/deb_staging/DEBIAN; \
-		cp dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
+		cp -d dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
 		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
@@ -299,16 +298,10 @@ WIN_DLL_SRCS := $(filter-out shims/windows/src/ui_main.cpp,$(wildcard shims/wind
 package-windows:
 	rm -rf dist/chaoset-windows-x64
 	mkdir -p dist/chaoset-windows-x64
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset.exe ./cmd/chaoset
+	# 统一全能命令行控制工具 chaosetctl.exe 集成 cli / import / settingsctl / userdict 子命令，
+	# 消除独立小工具造成的安装包体积冗余（原 chaoset-cli/import/settingsctl/userdict 独立编译占用近 12MB）。
+	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaosetctl.exe ./cmd/chaosetctl
 	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-cli.exe ./cmd/chaoset-cli
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-import.exe ./cmd/chaoset-import
-	# 用户词典管理工具：与 Linux 包对齐（Windows 上走 -pipe 连 daemon 的命名管道）。
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-userdict.exe ./cmd/chaoset-userdict
-	# 设置项 Go 单一真源 CLI（方案 A 冷路径）：设置窗打开/点选时调用它读写
-	# 「词组联想 / 中英状态」；必须与 ChaosetIME.dll 同目录（settings_window.cpp
-	# 用 g_hInst 解析同目录 exe）。CLI 缺失时设置窗回退原生 HKCU 读写。
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaoset-settingsctl.exe ./cmd/chaoset-settingsctl
 	@if [ -f shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe ]; then \
 		cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe; \
 	fi
@@ -350,13 +343,13 @@ package-windows:
 	# mingw 一旦发现显式 dllexport 就不再自动导出其余全局符号——COM 入口
 	# DllRegisterServer/DllGetClassObject/DllCanUnloadNow 会消失，regsvr32
 	# 注册失败（2026-11-06 打包自检发现）。显式打开全量导出恢复 COM 入口。
-	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--export-all-symbols \
+	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -s -Wall -Wextra -shared -static -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME.dll \
 		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
 		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
 	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
-	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
+	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -s -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
 		-DCHAOSET_VERSION='"$(VERSION)"' \
 		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
 		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
@@ -364,9 +357,18 @@ package-windows:
 	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
 	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。
 	# 版本资源链进 UI 宿主：独立 EXE 的属性页也要显示产品名/公司/版本。
-	x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
+	x86_64-w64-mingw32-g++ -std=c++17 -O2 -s -Wall -Wextra -municode -mwindows -static \
 		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp \
 		dist/chaoset-windows-x64/chaoset_ui_res.o
+	@if command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then \
+		x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME.dll dist/chaoset-windows-x64/chaoset-ui.exe 2>/dev/null || true; \
+		if [ -f dist/chaoset-windows-x64/chaoset-settings.exe ]; then \
+			x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/chaoset-settings.exe 2>/dev/null || true; \
+		fi \
+	fi
+	@if command -v i686-w64-mingw32-strip >/dev/null 2>&1; then \
+		i686-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME32.dll 2>/dev/null || true; \
+	fi
 	# 三个资源（64/32 DLL + UI 宿主）都链接完之后再删中间产物。
 	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o \
 		dist/chaoset-windows-x64/chaoset_ui_res.o \
@@ -380,7 +382,7 @@ package-windows:
 	cp shims/windows/install.bat dist/chaoset-windows-x64/
 	cp shims/windows/README.md dist/chaoset-windows-x64/
 	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
-	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaoset-cli.exe dist/chaoset-windows-x64/chaoset-import.exe dist/chaoset-windows-x64/chaoset-userdict.exe dist/chaoset-windows-x64/chaoset-settingsctl.exe; do \
+	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaosetctl.exe; do \
 		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
 	done
 	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }

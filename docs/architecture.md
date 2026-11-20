@@ -45,7 +45,7 @@ internal/settings/            设置 schema、默认值、校验、平台持久�
   store_windows.go            HKCU\\Software\\Chaoset（Associate / ModeScope / UiEnglish）
   store_darwin.go             UserDefaults.standard（AssociateEnabled / ChaosetModeScope；域 = ime.chaoset.inputmethod.ChaosetIME）
   store_linux.go              $XDG_CONFIG_HOME/chaoset/config.json（associate / mode_scope）
-cmd/chaoset/                  统一多功能命令行工具（Multicall: config/import/userdict/client/settings）
+cmd/chaosetctl/                全能命令行控制工具（Multicall: config/import/userdict/client/settings）
 cmd/chaoset-settingsctl/      供三端设置窗调用的命令行接口（JSON；薄包装兼容旧脚本）
 shims/settings/               基于 Slint 的跨平台统一设置中心（Rust/C++ 原生硬件加速，双端/三端 UI 令牌对齐）
 ```

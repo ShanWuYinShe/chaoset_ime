@@ -6,6 +6,25 @@ use slint::ComponentHandle;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = MainWindow::new()?;
 
+    // 0. 解析命令行参数以决定初始展示页
+    let mut initial_page = 0;
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--page" && i + 1 < args.len() {
+            match args[i + 1].as_str() {
+                "input" | "0" => initial_page = 0,
+                "dict" | "1" => initial_page = 1,
+                "about" | "2" => initial_page = 2,
+                _ => {}
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    window.set_current_page(initial_page);
+
     // 1. 初始化设置状态
     if let Ok(cfg) = bridge::get_config() {
         window.set_associate_enabled(cfg.associate);

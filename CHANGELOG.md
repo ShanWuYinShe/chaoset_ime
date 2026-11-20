@@ -2,6 +2,19 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## v0.3.36（2026-11-20）
+
+本版本为**统一全能命令行工具 chaosetctl 瘦身升级、任务栏图标尺寸重构、右键删词保护与独立设置中心脱钩**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版重点清理安装包冗余文件、重塑任务栏输入法图标并修复候选窗交互细节：
+
+- **重构(CLI & 打包)：正式定名与整合全能控制工具 `chaosetctl`，彻底消除安装包冗余**：
+  将原本分散编译的多个独立 Go 工具（`chaoset-cli`、`chaoset-import`、`chaoset-settingsctl`、`chaoset-userdict` 等）彻底合并为单一的 `chaosetctl`（Windows 为 `chaosetctl.exe`），支持子命令（`cli`/`import`/`userdict`/`config`/`get`/`set`）与 argv[0] Multicall 多调用模式；Windows NSIS 安装脚本只打包写入 `chaosetctl.exe`，并在升级时自动清理旧版遗留的 5 个冗余 exe，安装包与安装目录直接瘦身近 15 MB；Linux 打包同步去冗余，统一只构建一份 `chaosetctl`（配合符号链接兼容旧脚本）。
+- **优化(视觉资产)：任务栏输入法图标（`chaoset.ico` 与 hicolor）放大与重构，对齐中英文指示器**：
+  针对 Windows 任务栏输入法指示器图标明显偏小的问题进行彻底重构：在任务栏小尺寸（16~48px）下去除多余留白（Inset 归零），采用满格实心圆角键帽，几何轮廓与 `UiTray` 中英文指示器 1:1 绝对对齐；将中心瓷白「C」字号放大至按键高度的 75% 并严格水平垂直居中，加粗字重，消除在任务栏中的弱化感；Windows `chaoset.ico` 扩展补齐 9 个分辨率层（含 20x20 125% DPI 与 28x28 175% DPI），杜绝缩放模糊；同步更新 Linux 各级 hicolor 图标与 SVG。
+- **修复(Windows)：候选窗右键删除候选词防误杀与即时生效**：
+  修复 Windows 下在候选窗上右击候选词时导致候选窗瞬间消失的缺陷：引入上下文菜单追踪保护状态（`contextMenuTracking_`），在右键菜单弹出期间屏蔽系统的伪失焦、前台切换与合成终止事件；菜单点击“删除该词”后，向 daemon 发送 IPC `userDelete` 请求并立即重新组词刷新候选窗，词条删除即时生效且候选窗平滑保持显示。
+- **重构(设置中心)：三端设置窗口统一由 Slint 实现并独立脱钩，彻底根治 Windows GDI 噪点**：
+  候选窗齿轮与托盘菜单统一脱钩拉起独立运行的 `chaoset-settings`（Windows `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`），关闭句柄，不隶属于触发它的宿主应用，宿主退出时设置窗口独立存活直至用户手动关闭；支持已有实例检测并置顶，避免重复创建多个设置窗口；全端发布包全部应用 Release 最高级优化与深度 strip。
+
 ## v0.3.35（2026-11-19）
 
 本版本为**Slint 跨平台统一设置中心、无头 UI 单元测试体系与多功能 CLI 整合**的 patch 发版（重构完成前 minor 保持 0.3 不变）。本版累计 `v0.3.34` 之后 5 个提交：全新引入基于 Slint 声明式 UI 的跨平台统一设置中心（`shims/settings`），像素级 100% 对齐 21 项色彩与 10 项几何令牌；创新性地将 UI 一致性检查升级为基于 Slint 强类型编译与 `i-slint-backend-testing` 的内存无头单元测试体系；全端 CI/Release 流水线完整接入 Rust 检查、单测与交叉编译并随包分发；同时将各命令行工具收敛合并为单一的 `chaoset` 多功能命令（支持 Multicall 与子命令调用），并对原生 Windows 设置窗进行了焦点重影与边缘噪点修复。

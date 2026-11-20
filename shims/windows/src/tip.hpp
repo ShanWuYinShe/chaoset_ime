@@ -259,6 +259,7 @@ private:
     // 放行、不查询/不清理/不上报；清理已在上一次 active→inactive 迁移时完成。
     bool focused_ = false;      // OnSetFocus 记录的 TSF 焦点
     bool inputActive_ = false;  // 前台激活输入法（真正的“在用”）
+    bool contextMenuTracking_ = false;  // 右键删除上下文菜单跟踪保护
     bool warmed_ = false;       // daemon 预热每实例只发一次（修重复 spawn）
     static bool foregroundIsSelf();
     void updateInputActive(bool fromFocusEvent);
@@ -465,6 +466,7 @@ public:
     // 让菜单以「本来就是前台的宿主窗口」为 owner，避免激活候选窗自身导致宿主
     // 文档失去 TSF 焦点（实现见 tip_candidates.cpp）。
     HWND menuOwnerWindow() override;
+    void setContextMenuTracking(bool active) override;
 
     // 联想翻页入口（供候选窗箭头调用；实现见 tip_candidates.cpp 的 flipAssociate）。
     void flipAssociateFromPanel(bool next) override;

@@ -18,7 +18,7 @@ func TestRunUsageAndHelp(t *testing.T) {
 		if code != 0 {
 			t.Errorf("Run(%v) 退出码 = %d，期望 0", args, code)
 		}
-		if !strings.Contains(stdout.String(), "Chaoset 拼音输入法命令行工具") {
+		if !strings.Contains(stdout.String(), "Chaoset 拼音输入法全能命令行控制工具") {
 			t.Errorf("Run(%v) stdout 未输出用法: %q", args, stdout.String())
 		}
 		if stderr.Len() != 0 {

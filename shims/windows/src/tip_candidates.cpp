@@ -209,6 +209,11 @@ HWND ChaosetTIP::menuOwnerWindow() {
 }
 
 
+void ChaosetTIP::setContextMenuTracking(bool active) {
+    contextMenuTracking_ = active;
+}
+
+
 void ChaosetTIP::flipPage(bool next) {
     if (!hasCandidates() || comp_.pageCount <= 1) return;
     g_lastOp = kOpCandidateClick;

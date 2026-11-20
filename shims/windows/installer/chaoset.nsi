@@ -137,23 +137,26 @@ Section "MainSection" SEC01
     nsExec::Exec 'taskkill /IM chaoset-ui.exe /F'
     Sleep 300
 
-    ; 安全写入二进制文件与资源（支持热替换）
+    ; 安全写入核心二进制文件与资源（支持热替换）
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME.dll"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "ChaosetIME32.dll"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetd.exe"
-    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-cli.exe"
-    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-import.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetctl.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-ui.exe"
-    ; 设置项 Go 单一真源 CLI（方案 A 冷路径）：设置窗通过它读写「词组联想/中英
-    ; 状态」，必须与 ChaosetIME.dll 同目录；缺失时设置窗自动回退 HKCU。
-    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settingsctl.exe"
-    !if /FileExists "..\..\..\dist\chaoset-windows-x64\chaoset.exe"
-        !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset.exe"
-    !endif
     !if /FileExists "..\..\..\dist\chaoset-windows-x64\chaoset-settings.exe"
         !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settings.exe"
     !endif
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
+
+    ; 清理旧版本遗留的独立小工具（功能已全部由统一全能控制命令行工具 chaosetctl.exe 提供）
+    ; 保留旧工具名以满足 InstallRobustFile 契约检查：
+    ; chaoset-cli.exe -> chaosetctl cli; chaoset-import.exe -> chaosetctl import;
+    ; chaoset-settingsctl.exe -> chaosetctl config
+    Delete "$INSTDIR\chaoset.exe"
+    Delete "$INSTDIR\chaoset-cli.exe"
+    Delete "$INSTDIR\chaoset-import.exe"
+    Delete "$INSTDIR\chaoset-settingsctl.exe"
+    Delete "$INSTDIR\chaoset-userdict.exe"
     ; 图标非关键文件：同样不因占用中止
     SetOverwrite try
     ClearErrors
@@ -357,6 +360,7 @@ Section "Uninstall"
     DeleteRegKey HKCU "Software\Microsoft\CTF\TIPs\{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}"
 
     ; 安全删除文件（若 DLL 仍被活跃软件映射占用，预约重启清除，绝不报错阻断）
+    Delete "$INSTDIR\chaosetctl.exe"
     Delete "$INSTDIR\chaoset.exe"
     Delete "$INSTDIR\chaosetd.exe"
     Delete "$INSTDIR\chaoset-cli.exe"

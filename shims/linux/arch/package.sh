@@ -27,7 +27,7 @@ mkdir -p "$TMP_DIR/usr/share/chaoset"
 mkdir -p "$TMP_DIR/usr/share/ibus/component"
 mkdir -p "$TMP_DIR/usr/share/icons"
 
-cp "$SRC_DIR/bin/"* "$TMP_DIR/usr/bin/"
+cp -d "$SRC_DIR/bin/"* "$TMP_DIR/usr/bin/"
 cp "$SRC_DIR/data/dict.tsv" "$TMP_DIR/usr/share/chaoset/"
 # 设置窗口：component XML 的 <setup> 指向 /usr/share/chaoset/chaoset-setup，
 # 此前 Arch 二进制包漏装该文件 → ibus-setup「首选项」点了没反应（2026-10-30 审计

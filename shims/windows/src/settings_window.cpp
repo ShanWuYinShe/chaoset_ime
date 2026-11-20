@@ -853,9 +853,7 @@ static void SettingsExportLearningData(HWND wnd) {
 static std::wstring settingsQuote(const std::wstring& s) { return L"\"" + s + L"\""; }
 
 // ---- 方案 A（冷路径）：设置项读写统一走 Go chaoset-settingsctl ----
-// 设置窗是冷路径，允许起进程但每次调用必须有 ≤1s 硬超时（UI 线程不无限等待）；
-// 热路径（TSF 回调）读 config.cpp 的 TTL 缓存。CLI 与 DLL 同目录，缺失/超时/
-// JSON 非法时回退原生 HKCU 读写，保证旧包仍可用（回退只记一条限流 diag）。
+// 设置窗是冷路径允许起进程但有 ≤1s 硬超时；热路径读 TTL 缓存。CLI 缺失/超时回退原生 HKCU。
 static const DWORD kSettingsCtlTimeoutMs = 1000;   // ≤1s 硬上限（任务契约）
 static const size_t kSettingsCtlMaxOutput = 4096;  // get 契约是单行 JSON，防御上限
 
@@ -866,11 +864,12 @@ static std::wstring settingsCtlPath() {
     std::wstring path(mod, n);
     const size_t slash = path.find_last_of(L"\\/");
     if (slash == std::wstring::npos) return std::wstring();
-    return path.substr(0, slash + 1) + L"chaoset-settingsctl.exe";
+    std::wstring dir = path.substr(0, slash + 1);
+    if (GetFileAttributesW((dir + L"chaosetctl.exe").c_str()) != INVALID_FILE_ATTRIBUTES) return dir + L"chaosetctl.exe";
+    return dir + L"chaoset-settingsctl.exe";
 }
 
-// 方案 A 回退诊断：CLI 缺失/失败是「每开一次窗、每点一次」都会发生的事，
-// 不能把 tsf.log 刷爆；60s 内只记一条（diagBudget 本身还有 200 行总预算）。
+// 方案 A 回退诊断：CLI 缺失/失败 60s 内只记一条（diagBudget 本身还有 200 行总预算）。
 static void settingsDiagCtlFallback(const char* op) {
     static ULONGLONG lastTick = 0;
     const ULONGLONG now = GetTickCount64();
@@ -1448,20 +1447,47 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             if (g_settingsIcon) { DestroyIcon(g_settingsIcon); g_settingsIcon = nullptr; }
             if (g_settingsBgBrush) { DeleteObject(g_settingsBgBrush); g_settingsBgBrush = nullptr; }
             if (g_settingsCardBrush) { DeleteObject(g_settingsCardBrush); g_settingsCardBrush = nullptr; }
-            g_ctlProcCount = 0;
-            g_settingsHoverId = 0;
-            g_settingsHoverNav = -1;
-            g_settingsTrackingMouse = false;
-            g_settingsWnd = nullptr;
+            g_ctlProcCount = 0; g_settingsHoverId = 0; g_settingsHoverNav = -1;
+            g_settingsTrackingMouse = false; g_settingsWnd = nullptr;
             InterlockedDecrement(&g_liveSettingsWindows);
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// 真正创建入口：只在单例 UI 宿主（chaoset-ui.exe）里调用（AC 宿主里齿轮
-// 也能弹出，宿主退出不带走窗口）。page 缺省输入页；已存在则切页前置。
+// 启动或前置 Slint 独立设置窗口（chaoset-settings.exe）。脱钩启动，程序退出不连带关闭。
+static bool launchSlintSettings(SettingsPage page) {
+    HWND existing = FindWindowW(nullptr, L"Chaoset 设置");
+    if (existing != nullptr && IsWindow(existing)) {
+        if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+        SetForegroundWindow(existing);
+        return true;
+    }
+    wchar_t path[MAX_PATH] = {0};
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
+        if (wchar_t* p = wcsrchr(path, L'\\')) {
+            wcscpy(p + 1, L"chaoset-settings.exe");
+            if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) {
+                std::wstring cmd = L"\"" + std::wstring(path) + L"\"";
+                cmd += (page == SettingsPage::About) ? L" --page about" :
+                       (page == SettingsPage::Dict ? L" --page dict" : L" --page input");
+                STARTUPINFOW si{}; si.cb = sizeof(si);
+                PROCESS_INFORMATION pi{};
+                std::vector<wchar_t> buf(cmd.begin(), cmd.end()); buf.push_back(L'\0');
+                if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                                   CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr, nullptr, &si, &pi)) {
+                    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// 真正创建入口：优先启动/唤醒独立的 Slint 设置窗口；缺失时回退 GDI 单例设置窗。
 void openSettingsWindowStandalone(SettingsPage page) {
+    if (launchSlintSettings(page)) return;
     if (g_settingsWnd != nullptr && IsWindow(g_settingsWnd)) {
         settingsSwitchPage(g_settingsWnd, page);
         SetForegroundWindow(g_settingsWnd);
@@ -1479,26 +1505,22 @@ void openSettingsWindowStandalone(SettingsPage page) {
     wc.lpszClassName = cls.c_str();
     RegisterClassExW(&wc);
 
-    // per-monitor DPI：按鼠标所在显示器取 DPI（副屏也能开对）。
+    // per-monitor DPI：按鼠标所在显示器取 DPI
     POINT anchor{};
     GetCursorPos(&anchor);
     g_settingsDpi = dpiForPoint(anchor);
     g_settingsDark = uiEffectiveDark();
-    // 方案 A 冷路径：打开设置窗时读 Go 单一真源，失败回退原生 HKCU。此时窗口
-    // 尚未创建，最坏情况是开窗慢 1s，绝不会卡住任何宿主进程（设置窗属于
-    // chaoset-ui.exe，与 TIP 进程无关）。
+    // 方案 A 冷路径：打开设置窗时读 Go 单一真源，失败回退原生 HKCU
     settingsLoadShared();
     settingsCreateFonts();
     settingsLoadIcon();
 
-    // 居中于光标所在显示器的工作区（macOS center 同语义）
-    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
-    const DWORD exStyle = 0; // 现代平整窗体（去除旧式双重凹陷边框 WS_EX_DLGMODALFRAME）
+    // 居中于光标所在显示器的工作区
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, exStyle = 0;
     RECT fr = {0, 0, settingsPt(kWinW), settingsPt(kWinH)};
     AdjustWindowRectEx(&fr, style, FALSE, exStyle);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
+    MONITORINFO mi{sizeof(mi)};
     if (GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &mi)) {
         const int w = fr.right - fr.left, h = fr.bottom - fr.top;
         x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
@@ -1513,14 +1535,9 @@ void openSettingsWindowStandalone(SettingsPage page) {
         return;
     }
     settingsApplyTitleBarTheme(wnd);
-    // 注意：这里**不再写 GWLP_USERDATA**（此前存的是裸 this）。设置窗的
-    // 窗口过程只做 RegSetAssociate，不需要访问 TIP；不存指针就没有「TIP
-    // 已释放、窗口还活着」的悬垂解引用（审计 P1-2）。
     g_settingsWnd = wnd;
     InterlockedIncrement(&g_liveSettingsWindows);
 
-    // 分组标题/页脚/关于正文由 settingsPaint 自绘；交互控件用 BS_OWNERDRAW
-    // 子窗口保留 Tab 可达性，背景由 settingsControlBg 擦除。
     auto makeCtl = [&](const wchar_t* ctlClass, DWORD ctlStyle, const wchar_t* text, int id) {
         return CreateWindowExW(0, ctlClass, text, WS_CHILD | WS_VISIBLE | ctlStyle,
                                0, 0, 0, 0, wnd,
@@ -1555,19 +1572,12 @@ void openSettingsWindowStandalone(SettingsPage page) {
     if (icoSmall != nullptr) SendMessageW(wnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icoSmall));
 
     ShowWindow(wnd, SW_SHOWNORMAL);
-    // 窗口先显示再读统计：daemon 不可达时连接最多 20ms 超时+冷却，不能让
-    // 设置窗的首次出现被它拖慢（标签先显示「读取中…」，随后刷新）。
     SettingsRefreshStats(wnd);
-    // 前台激活：从开始菜单/搜索（AC）里点齿轮时，UI 宿主所在的普通进程要
-    // 把窗口切到前台，否则可能被 Start 的 z 序 band 压住看不到。TIP 侧已调用
-    // AllowSetForegroundWindow；仍失败时用一次 TOPMOST 切换强制置顶（随后恢复
-    // 非 topmost，避免长期遮挡），再前台化并闪烁任务栏按钮。
+    // 前台激活与置顶
     SetForegroundWindow(wnd);
     if (GetForegroundWindow() != wnd) {
-        SetWindowPos(wnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-        SetWindowPos(wnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(wnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(wnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SetForegroundWindow(wnd);
         FLASHWINFO flash{};
         flash.cbSize = sizeof(flash);

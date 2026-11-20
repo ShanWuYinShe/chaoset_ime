@@ -17,16 +17,14 @@ sha256sums=('SKIP')
 
 package() {
     cd "$srcdir/chaoset-linux-x86_64"
-    install -Dm755 bin/chaosetd "$pkgdir/usr/bin/chaosetd"
-    install -Dm755 bin/chaoset-cli "$pkgdir/usr/bin/chaoset-cli"
-    install -Dm755 bin/chaoset-import "$pkgdir/usr/bin/chaoset-import"
-    install -Dm755 bin/chaoset-userdict "$pkgdir/usr/bin/chaoset-userdict"
-    install -Dm755 bin/chaoset-engine "$pkgdir/usr/bin/chaoset-engine"
+    install -d "$pkgdir/usr/bin"
+    cp -d bin/* "$pkgdir/usr/bin/"
 
     install -d "$pkgdir/usr/local/bin"
     ln -sf /usr/bin/chaoset-engine "$pkgdir/usr/local/bin/chaoset-engine"
     ln -sf /usr/bin/chaosetd "$pkgdir/usr/local/bin/chaosetd"
-    ln -sf /usr/bin/chaoset-cli "$pkgdir/usr/local/bin/chaoset-cli"
+    ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaosetctl"
+    ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaoset-cli"
 
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
     # 设置窗口脚本（component XML 的 <setup> 指向它）：此前漏装导致
