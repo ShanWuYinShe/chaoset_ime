@@ -87,7 +87,7 @@ cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /utf-8 \
   /Fe:"$OUTDIR/ChaosetIME.dll" \
   $DLL_SRCS "$OUTDIR/chaoset64.res" \
   /link /DEF:shims/windows/resources/ChaosetIME.def \
-  ole32.lib oleaut32.lib uuid.lib msctf.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib
+  ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib
 
 # 8. MSVC 编译 64 位单例 UI 宿主 chaoset-ui.exe
 echo "==> MSVC 编译 64 位单例 UI 宿主 chaoset-ui.exe..."
@@ -126,7 +126,7 @@ if errorlevel 1 (
   echo Error: vcvars failed
   exit /b 1
 )
-cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /utf-8 /DCHAOSET_VERSION=\\"$VERSION\\" /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:"$OUTDIR/ChaosetIME32.dll" $DLL_SRCS "$OUTDIR/chaoset32.res" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib msctf.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib
+cl.exe /nologo /std:c++17 /O2 /W4 /LD /EHsc /utf-8 /DCHAOSET_VERSION=\\"$VERSION\\" /DUNICODE /D_UNICODE /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Ishims/windows/src /Ishims/common/ipc /Fe:"$OUTDIR/ChaosetIME32.dll" $DLL_SRCS "$OUTDIR/chaoset32.res" /link /DEF:shims/windows/resources/ChaosetIME.def ole32.lib oleaut32.lib uuid.lib user32.lib kernel32.lib advapi32.lib gdi32.lib shell32.lib comdlg32.lib imm32.lib
 if errorlevel 1 (
   echo Error: 32-bit cl.exe failed
   exit /b 1

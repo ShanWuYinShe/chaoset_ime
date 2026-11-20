@@ -1,7 +1,7 @@
 // TIP 的 CLSID / 语言配置 GUID / TSF 核心接口与类别标识（Windows 壳常量 TU）。
 //
 // 本输入法私有 GUID 保留在此处；所有 Windows TSF 官方标准 GUID 均直接采用
-// Windows SDK <msctf.h> 原生定义并通过 msctf.lib / uuid.lib 链接解析。
+// Windows SDK <msctf.h> 原生定义并通过 uuid.lib / initguid.h 解析。
 
 #ifndef CHAOSET_WIN_TIP_IDS_HPP_
 #define CHAOSET_WIN_TIP_IDS_HPP_
