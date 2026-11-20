@@ -36,21 +36,21 @@ func checkUILessCapability(fsys fs.FS, problems *[]string) {
 	// 断言仍绿。必须锁**调用形态**（开关被 ActivateEx 实际调用）与决策理由注释，
 	// 后来者删任一处都会红。
 	checkContains(fsys, problems, group, winShell,
-		"ITfTextInputProcessorEx",      // 接口声明（mingw 缺失，需自备）
+		"ITfTextInputProcessorEx",      // 接口声明（Windows SDK 规范）
 		"ActivateEx(",                  // 实现
-		"kIID_ITfTextInputProcessorEx", // 用自己的 IID 常量做 QI 匹配
+		"IID_ITfTextInputProcessorEx",  // SDK 原生 IID 做 QI 匹配
 		"TF_TMAE_UIELEMENTENABLEDONLY", // 标志位判定入日志
 		// 回退开关必须在 ActivateEx 调用点使用（锁函数名锁不住调用被删，见上）：
 		"if (!cachedUilessActivate()) {",
 		"照常激活", // 决策理由注释：UILess 线程照常激活，删注释即红
 		// ---- 官方 UILess 协商（ITfUIElementMgr / ITfCandidateListUIElement）----
-		"ITfUIElementMgr",                // 协商管理器（Activate QI）
-		"BeginUIElement(",                // 官方协商入口（render 提交候选元素）
-		"UpdateUIElement(",               // 数据变化差量通知
-		"EndUIElement(",                  // 关闭收口（endCandidatesUiElement）
-		"ITfCandidateListUIElement",      // 候选列表元素（mingw 缺声明，自补）
-		"kIID_ITfCandidateListUIElement", // IID 自补（三源交叉验证）
-		"RegisterCategory(CLSID_ChaosetTIP, kGUID_TFCAT_TIPCAP_UIELEMENTENABLED",
+		"ITfUIElementMgr",               // 协商管理器（Activate QI）
+		"BeginUIElement(",               // 官方协商入口（render 提交候选元素）
+		"UpdateUIElement(",              // 数据变化差量通知
+		"EndUIElement(",                 // 关闭收口（endCandidatesUiElement）
+		"ITfCandidateListUIElement",     // 候选列表元素
+		"IID_ITfCandidateListUIElement", // SDK 原生 IID
+		"RegisterCategory(CLSID_ChaosetTIP, GUID_TFCAT_TIPCAP_UIELEMENTENABLED",
 		"声明与实现一致", // 类别注册前提：实现真实存在（防 2026-10-30 事故复发）
 		// UILess 候选默认 GDI 自绘（通用，无宿主名单；2026-11-15 实测名单式
 		// 特判不可持续）；官方协商是显式开关——锁开关在 render 的调用形态，
@@ -102,7 +102,7 @@ func checkForegroundFallback(fsys fs.FS, problems *[]string) {
 func checkActiveProfileGate(fsys fs.FS, problems *[]string) {
 	const group = groupActiveGate
 	checkContains(fsys, problems, group, winShell,
-		"ITfInputProcessorProfileMgr", "GetActiveProfile(kGUID_TFCAT_TIP_KEYBOARD",
+		"ITfInputProcessorProfileMgr", "GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD",
 		"bool isActiveTip()", "bailOutIfInactive",
 		"TF_PROFILETYPE_INPUTPROCESSOR", "CLSID_ChaosetTIP",
 	)
@@ -144,7 +144,7 @@ func checkCrashLogFilter(fsys fs.FS, problems *[]string) {
 func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	const group = groupModeIndicator
 	checkContains(fsys, problems, group, winShell,
-		"kGUID_COMPARTMENT_KEYBOARD_OPENCLOSE",
+		"GUID_COMPARTMENT_KEYBOARD_OPENCLOSE",
 		"syncModeCompartment",
 		"IID_ITfCompartmentMgr",
 		"VT_I4", // 隔间值类型（非零 = 键盘打开/中文）

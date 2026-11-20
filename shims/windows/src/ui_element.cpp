@@ -44,7 +44,7 @@ HRESULT STDMETHODCALLTYPE ChaosetCandidateListUIElement::QueryInterface(REFIID r
     *ppv = nullptr;
     if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ITfUIElement)) {
         *ppv = static_cast<ITfUIElement*>(this);
-    } else if (IsEqualIID(riid, kIID_ITfCandidateListUIElement)) {
+    } else if (IsEqualIID(riid, IID_ITfCandidateListUIElement)) {
         *ppv = static_cast<ITfCandidateListUIElement*>(this);
     }
     if (*ppv == nullptr) return E_NOINTERFACE;

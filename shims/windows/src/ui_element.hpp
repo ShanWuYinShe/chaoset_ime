@@ -37,10 +37,6 @@
 
 namespace chaoset::win {
 
-// ITfCandidateListUIElement 的 IID（见文件头三源验证说明）。
-inline const GUID kIID_ITfCandidateListUIElement = {
-    0xea1ea138, 0x19df, 0x11d7, {0xa6, 0xd2, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
-
 // GetUpdatedFlags 的官方更新标志（Windows SDK msctf.h；值自 SDK 元数据绑定）。
 inline const DWORD kTfCluieSelection = 0x00000004;
 inline const DWORD kTfCluieString = 0x00000008;

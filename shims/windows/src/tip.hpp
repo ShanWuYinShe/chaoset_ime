@@ -103,20 +103,12 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 不实现它就等于对 UILess 宿主（游戏/全屏/部分 WinUI 应用）完全不可见，
 // 而且连日志都不会产生——我们此前看到的 "uiless=0" 正是「被排除」而非
 // 「不存在 UILess 宿主」。
-inline const GUID kIID_ITfTextInputProcessorEx = {
-    0x6e4e2102, 0xf9cd, 0x433d, {0xb4, 0x96, 0x30, 0x3c, 0xe0, 0x3a, 0x65, 0x07}};
-
-struct ITfTextInputProcessorEx : public ITfTextInputProcessor {
-    virtual HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr* ptim, TfClientId tid,
-                                                 DWORD dwFlags) = 0;
-};
-
 // 存活 TIP 实例数（定义在 win32.cpp，DllCanUnloadNow 与 ctor/dtor 共用）。
 extern volatile LONG g_liveObjects;
 
 }  // namespace chaoset::win
 
-class ChaosetTIP : public chaoset::win::ITfTextInputProcessorEx,
+class ChaosetTIP : public ITfTextInputProcessorEx,
                   public ITfKeyEventSink,
                   public ITfCompositionSink,
                   public ITfThreadFocusSink,
