@@ -49,6 +49,8 @@ public:
     //（未上屏拼音留在文档，issue #1）。
     // 返回 nullptr = 当前上下文取不到可用宿主窗口，候选窗应放弃弹菜单（安全优先）。
     virtual HWND menuOwnerWindow() = 0;
+    // 右键上下文菜单跟踪保护：弹出菜单模态期间阻止候选窗被临时失焦或外部终止信号误杀。
+    virtual void setContextMenuTracking(bool active) = 0;
 };
 
 // 存活中的候选窗口数量（定义在 candidate_window.cpp）。用于 DllCanUnloadNow——
@@ -154,6 +156,7 @@ private:
                           int* downCy, int* pageTop) const;
 
     HWND hwnd_ = nullptr;
+    bool contextMenuTracking_ = false;
     // 只在输入法真正激活时才允许显示（见 setActiveGate）。默认 false：
     // 建窗/Activate 之前不存在任何窗口，从根上杜绝「后台 app 里留一个
     // TOPMOST 窗口挡鼠标」。

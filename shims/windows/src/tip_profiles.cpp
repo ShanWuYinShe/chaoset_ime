@@ -121,6 +121,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetThreadFocus() {
 // 线程焦点丢失**只退场、不隐藏托盘**（issue #3）：托盘看的是「系统选中的
 // 输入法是不是本输入法」，不是「当前线程有没有焦点」。
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKillThreadFocus() {
+    if (contextMenuTracking_) return S_OK;
     focused_ = false;
     updateInputActive(false);
     return S_OK;

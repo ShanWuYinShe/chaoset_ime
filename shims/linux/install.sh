@@ -17,13 +17,14 @@ ICON_ROOT=/usr/share/icons
 
 uninstall() {
   echo "==> 卸载 chaoset"
-  rm -f "$PREFIX_BIN/chaosetd" "$PREFIX_BIN/chaoset-cli" \
-        "$PREFIX_BIN/chaoset-import" "$PREFIX_BIN/chaoset-userdict" \
-        "$PREFIX_BIN/chaoset-engine"
+  rm -f "$PREFIX_BIN/chaosetctl" "$PREFIX_BIN/chaoset" "$PREFIX_BIN/chaosetd" \
+        "$PREFIX_BIN/chaoset-cli" "$PREFIX_BIN/chaoset-import" \
+        "$PREFIX_BIN/chaoset-userdict" "$PREFIX_BIN/chaoset-engine" \
+        "$PREFIX_BIN/chaoset-settings"
   # 清理旧版遗留的 /usr/local/bin 符号链接；新版只装 /usr/bin，避免两份 PATH 命中。
-  rm -f /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli \
-        /usr/local/bin/chaoset-import /usr/local/bin/chaoset-userdict \
-        /usr/local/bin/chaoset-engine
+  rm -f /usr/local/bin/chaosetctl /usr/local/bin/chaoset /usr/local/bin/chaosetd \
+        /usr/local/bin/chaoset-cli /usr/local/bin/chaoset-import \
+        /usr/local/bin/chaoset-userdict /usr/local/bin/chaoset-engine
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
   # 设置窗口二进制随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下）
@@ -73,9 +74,7 @@ fi
 echo "==> 安装二进制到 $PREFIX_BIN"
 install -d "$PREFIX_BIN"
 install -d "$PREFIX_SHARE"
-for b in chaosetd chaoset-cli chaoset-import chaoset-userdict chaoset-engine; do
-  install -m 0755 "bin/$b" "$PREFIX_BIN/$b"
-done
+cp -d bin/* "$PREFIX_BIN/"
 
 echo "==> 安装词库到 $PREFIX_SHARE"
 install -d "$PREFIX_SHARE"

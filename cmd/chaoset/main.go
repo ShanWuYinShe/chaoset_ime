@@ -23,10 +23,10 @@ import (
 	"chaoset.ime/internal/tools/userdict"
 )
 
-const usageText = `Chaoset 拼音输入法命令行工具
+const usageText = `Chaoset 拼音输入法全能命令行控制工具 (chaosetctl)
 
 用法:
-  chaoset <command> [flags...] [args...]
+  chaosetctl <command> [flags...] [args...]
 
 可用命令:
   config | settings    读取或写入输入法设置项（开关/模式/主题）
@@ -40,7 +40,7 @@ const usageText = `Chaoset 拼音输入法命令行工具
   当程序名（argv[0]）为 chaoset-import、chaoset-userdict、chaoset-settingsctl、
   chaoset-cli 时，将自动分发至对应的子命令执行。
 
-输入 'chaoset <command> -h' 查看各子命令的详细用法。`
+输入 'chaosetctl <command> -h' 查看各子命令的详细用法。`
 
 func Run(args []string, stdout, stderr io.Writer, progName string) int {
 	if stdout == nil {
@@ -95,6 +95,8 @@ func Run(args []string, stdout, stderr io.Writer, progName string) int {
 			return launchSettingsGUI(subArgs[1:], stdout, stderr)
 		}
 		return settingsctl.Run(subArgs, stdout, stderr)
+	case "get", "set":
+		return settingsctl.Run(args, stdout, stderr)
 	case "cli", "client", "test":
 		return client.RunCLI(subArgs, stdout, stderr, os.Stdin)
 	default:

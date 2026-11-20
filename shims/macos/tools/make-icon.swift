@@ -23,9 +23,10 @@ try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirecto
 /// 应用图标：蓝白渐变底板 + 微米光环 + 白色浮雕「C」+ 白色四芒星 (✦)。
 /// 彻底根除冷电光蓝极客风，全平台同构日式手账与器物生活美学。
 func drawAppIcon(_ s: CGFloat) {
-    let inset = s * 0.08
+    let isSmall = (s <= 48)
+    let inset: CGFloat = isSmall ? 0.5 : (s * 0.08)
     let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let squircleR = rect.width * 0.224
+    let squircleR: CGFloat = isSmall ? ((s >= 24) ? 4.5 : (s >= 20 ? 3.5 : 2.5)) : (rect.width * 0.224)
     guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
     // 1. 底板柔和环境多层阴影
@@ -72,7 +73,7 @@ func drawAppIcon(_ s: CGFloat) {
     ctx.restoreGState()
 
     // 4. 「C」核心白瓷微浮雕字母排版
-    let cFontSize = rect.height * 0.54
+    let cFontSize = isSmall ? (rect.height * 0.75) : (rect.height * 0.54)
     let cFont = NSFont(name: "AvenirNext-Heavy", size: cFontSize)
         ?? NSFont(name: "HelveticaNeue-Bold", size: cFontSize)
         ?? NSFont.boldSystemFont(ofSize: cFontSize)
@@ -92,29 +93,31 @@ func drawAppIcon(_ s: CGFloat) {
     let cText = NSAttributedString(string: "C", attributes: cAttr)
     let cSize = cText.size()
 
-    let cX = rect.midX - cSize.width / 2 - s * 0.02
-    let cY = rect.midY - cSize.height / 2 + s * 0.012
+    let cX = isSmall ? (rect.midX - cSize.width / 2) : (rect.midX - cSize.width / 2 - s * 0.02)
+    let cY = isSmall ? (rect.midY - cSize.height / 2 + s * 0.03) : (rect.midY - cSize.height / 2 + s * 0.012)
 
     cText.draw(at: NSPoint(x: cX, y: cY))
 
     // 5. 镶嵌晨曦暖金四芒星 (✦)
-    let starFontSize = cFontSize * 0.40
-    let starFont = NSFont.systemFont(ofSize: starFontSize, weight: .bold)
-    let starShadow = NSShadow()
-    if s >= 64 {
-        starShadow.shadowBlurRadius = max(2.0, s * 0.03)
-        starShadow.shadowOffset = NSSize(width: 0, height: 0)
-        starShadow.shadowColor = NSColor(srgbRed: 1.0, green: 0.78, blue: 0.38, alpha: 0.75)
+    if !isSmall {
+        let starFontSize = cFontSize * 0.40
+        let starFont = NSFont.systemFont(ofSize: starFontSize, weight: .bold)
+        let starShadow = NSShadow()
+        if s >= 64 {
+            starShadow.shadowBlurRadius = max(2.0, s * 0.03)
+            starShadow.shadowOffset = NSSize(width: 0, height: 0)
+            starShadow.shadowColor = NSColor(srgbRed: 1.0, green: 0.78, blue: 0.38, alpha: 0.75)
+        }
+        let starAttr: [NSAttributedString.Key: Any] = [
+            .font: starFont,
+            .foregroundColor: NSColor.white, // 蓝白品牌：白色星标
+            .shadow: starShadow
+        ]
+        let starText = NSAttributedString(string: "✦", attributes: starAttr)
+        let starX = cX + cSize.width * 0.78
+        let starY = cY + cSize.height * 0.56
+        starText.draw(at: NSPoint(x: starX, y: starY))
     }
-    let starAttr: [NSAttributedString.Key: Any] = [
-        .font: starFont,
-        .foregroundColor: NSColor.white, // 蓝白品牌：白色星标
-        .shadow: starShadow
-    ]
-    let starText = NSAttributedString(string: "✦", attributes: starAttr)
-    let starX = cX + cSize.width * 0.78
-    let starY = cY + cSize.height * 0.56
-    starText.draw(at: NSPoint(x: starX, y: starY))
 
     // 6. 底部微标「CHAOS」字标（在大于等于 128 像素尺寸显示，小尺寸自动隐去以保清晰）
     if s >= 128 {
@@ -409,7 +412,7 @@ print("已生成 \(outDir)/ChaosetIME.iconset 与 ChaosetIME-input.tiff（22×16
 // MARK: - 跨平台同步（Windows .ico 与 Linux hicolor PNG/SVG）
 
 func writeWindowsIco(to path: String) {
-    let sizes = [16, 24, 32, 48, 64, 256]
+    let sizes = [16, 20, 24, 28, 32, 48, 64, 128, 256]
     var data = Data()
 
     var reserved: UInt16 = 0

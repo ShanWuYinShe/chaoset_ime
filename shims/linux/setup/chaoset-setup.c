@@ -372,14 +372,10 @@ static GtkWidget *build_window(AppCtx *ctx) {
     setup_page_dict_refresh(ctx);
     return window;
 }
-
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
     GtkWindow *existing = gtk_application_get_active_window(app);
-    if (existing != NULL) {
-        gtk_window_present(existing);
-        return;
-    }
+    if (existing != NULL) { gtk_window_present(existing); return; }
     AppCtx *ctx = g_new0(AppCtx, 1);
     ctx->app = app;
     build_window(ctx);
@@ -387,6 +383,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char **argv) {
+    /* 优先拉起 Slint 统一设置中心（chaoset-settings）：独立脱钩进程，三端一致 */
+    gchar *slint_bin = g_find_program_in_path("chaoset-settings");
+    if (!slint_bin && g_file_test("/usr/bin/chaoset-settings", G_FILE_TEST_IS_EXECUTABLE))
+        slint_bin = g_strdup("/usr/bin/chaoset-settings");
+    if (slint_bin) { argv[0] = slint_bin; execv(slint_bin, argv); g_free(slint_bin); }
     GtkApplication *app = gtk_application_new("org.chaoset.Setup", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);

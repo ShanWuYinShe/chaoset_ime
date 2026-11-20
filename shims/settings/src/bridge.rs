@@ -47,17 +47,23 @@ pub fn find_chaoset_bin() -> PathBuf {
         }
     }
 
-    let bin_name = if cfg!(windows) { "chaoset.exe" } else { "chaoset" };
+    let bin_names = if cfg!(windows) {
+        ["chaosetctl.exe", "chaoset.exe"]
+    } else {
+        ["chaosetctl", "chaoset"]
+    };
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join(bin_name);
-            if candidate.exists() {
-                return candidate;
-            }
-            let candidate_bin = dir.join("bin").join(bin_name);
-            if candidate_bin.exists() {
-                return candidate_bin;
+            for bin in bin_names {
+                let candidate = dir.join(bin);
+                if candidate.exists() {
+                    return candidate;
+                }
+                let candidate_bin = dir.join("bin").join(bin);
+                if candidate_bin.exists() {
+                    return candidate_bin;
+                }
             }
         }
     }

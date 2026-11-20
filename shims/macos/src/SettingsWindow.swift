@@ -49,6 +49,22 @@ enum SettingsWindowController {
     private static let themeTarget = ThemeSegmentTarget()
 
     static func show() {
+        // 优先拉起 Slint 统一设置中心（chaoset-settings）：独立脱钩进程，三端一致
+        let slintPath: String? = {
+            if let path = Bundle.main.path(forResource: "chaoset-settings", ofType: nil),
+               FileManager.default.isExecutableFile(atPath: path) { return path }
+            if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/chaoset-settings") {
+                return "/usr/local/bin/chaoset-settings"
+            }
+            return nil
+        }()
+        if let bin = slintPath {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: bin)
+            try? proc.run()
+            return
+        }
+
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
 

@@ -191,8 +191,7 @@ void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::
 
 
 void CandidateWindow::hide() {
-    // 面板收起/重建时丢弃未完成的按下状态，避免下一次抬起误触发
-    //（按下后鼠标移出或被 TSF 收起，收不到对应 mouseup）。
+    if (contextMenuTracking_) return;  // 菜单模态跟踪期间阻止误杀候选窗
     gearPressed_ = false;
     pressedItemIndex_ = -1;
     chevronPressed_ = 0;
@@ -246,6 +245,7 @@ void CandidateWindow::setSelectedIndex(int index) {
 
 
 void CandidateWindow::destroy() {
+    if (contextMenuTracking_) return;  // 菜单跟踪期间禁止销毁
     if (hwnd_ != nullptr) {
         // 主动销毁走 DestroyWindow：WM_NCDESTROY 里统一回收（见
         // onWindowDestroyed），避免这里和窗口过程各减一次计数。
@@ -1157,12 +1157,16 @@ void CandidateWindow::onRButtonUp(int x, int y) {
         if (diagBudget()) diagPrintf(L"tsf.log", "candidate menu skipped: no host owner\n");
         return;
     }
+    contextMenuTracking_ = true;
+    host->setContextMenuTracking(true);
     SetForegroundWindow(owner);
     const UINT cmd = TrackPopupMenu(
         menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
         screen.x, screen.y, 0, owner, nullptr);
     DestroyMenu(menu);
     PostMessageW(owner, WM_NULL, 0, 0);
+    contextMenuTracking_ = false;
+    host->setContextMenuTracking(false);
     if (cmd != 1) return;
     // B1（issue #1）：菜单是模态的，期间 TSF 焦点回调可能已 retireUiCompletely()
     //（tip_ 置空、hwnd_ 销毁、hide() 清空 items_）或 TIP 已 Deactivate。任一校验

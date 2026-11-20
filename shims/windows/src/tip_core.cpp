@@ -334,6 +334,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate() {
 // ITfKeyEventSink
 HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
     if (!fForeground) {
+        if (contextMenuTracking_) return S_OK;
         focused_ = false;
         // 从未激活的实例：**零动作**（不比较 goal、不清理、不上报）。
         if (!inputActive_) return S_OK;
@@ -421,7 +422,9 @@ ITfComposition* pComposition) {
         }
     }
     endCandidatesUiElement();  // 合成被外部终止：UILess 协商一并收口
-    candidateWnd_.hide();
+    if (!contextMenuTracking_) {
+        candidateWnd_.hide();
+    }
     // 引用所有权：TSF 只在「本服务以外的人」结束合成时回调（Microsoft
     // SampleIME Composition.cpp 注释原文：whenever someone other than
     // this service ends a composition）。这时成员仍持有引用，必须在此
@@ -432,11 +435,13 @@ ITfComposition* pComposition) {
         composition_ = nullptr;
     }
     releaseCompositionContext();
-    resetSession();
-    comp_ = chaoset::Comp();
-    // 合成被宿主终止时 TSF 会把合成内文本（含已确认段）留在文档里，
-    // 缓冲使命已结束，必须清空——绝不能串进下一轮组词的预编辑。
-    confirmedPreedit_.clear();
+    if (!contextMenuTracking_) {
+        resetSession();
+        comp_ = chaoset::Comp();
+        // 合成被宿主终止时 TSF 会把合成内文本（含已确认段）留在文档里，
+        // 缓冲使命已结束，必须清空——绝不能串进下一轮组词的预编辑。
+        confirmedPreedit_.clear();
+    }
     return S_OK;
 }
 
@@ -603,6 +608,7 @@ void ChaosetTIP::onForegroundChanged(HWND fg) {
     // 前台离开本进程：开始菜单/搜索等宿主不投递 OnSetFocus(FALSE)，靠这里收口。
     // **只退场、不隐藏托盘**（issue #3）：前台换到别的进程（含桌面/任务栏）不代表
     // 用户切走了输入法，托盘必须继续显示；隐藏只由 OnActivated(FALSE) 触发。
+    if (contextMenuTracking_) return;
     const bool wasActive = inputActive_;
     inputActive_ = false;
     focused_ = false;
@@ -787,6 +793,7 @@ void ChaosetTIP::warmDaemonInBackgroundOnce() {
 //   * retire() 直接 destroy() 窗口 + 撤掉所有钩子 + 停掉定时器，下次真正
 //     激活时按需重建（建窗成本远小于「挡住用户鼠标」的代价）。
 void ChaosetTIP::retireUiCompletely() {
+    if (contextMenuTracking_) return;
     // 1) 候选窗/提示条：销毁而不是隐藏（destroy 内部会把 g_live* 计数归还）。
     endCandidatesUiElement();  // UILess 协商一并收口（EndUIElement 幂等）
     candidateWnd_.setActiveGate(false);
