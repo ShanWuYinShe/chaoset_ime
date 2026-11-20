@@ -69,17 +69,19 @@ pub fn find_chaoset_bin() -> PathBuf {
     }
 
     if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join("bin").join(bin_name);
-        if candidate.exists() {
-            return candidate;
-        }
-        let candidate_root = cwd.join(bin_name);
-        if candidate_root.exists() {
-            return candidate_root;
+        for bin in bin_names {
+            let candidate = cwd.join("bin").join(bin);
+            if candidate.exists() {
+                return candidate;
+            }
+            let candidate_root = cwd.join(bin);
+            if candidate_root.exists() {
+                return candidate_root;
+            }
         }
     }
 
-    PathBuf::from(bin_name)
+    PathBuf::from(bin_names[0])
 }
 
 fn run_cmd(args: &[&str]) -> Result<String, String> {
