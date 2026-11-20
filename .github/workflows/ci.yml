@@ -90,6 +90,27 @@ jobs:
       - name: 运行 Slint 设置中心单元测试（无头 UI + 设计令牌 + 桥接逻辑）
         run: cargo test --manifest-path shims/settings/Cargo.toml
 
+      # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
+      # 协议与会话逻辑。测试在 Linux CI 常跑，毫秒级快速发现协议漂移。
+      - name: 核心层行为测试（真实 daemon + Unix socket）
+        run: |
+          set -e
+          g++ -std=c++17 -O2 -Wall -Wextra -Ishims/windows/src -Ishims/common/ipc \
+              shims/windows/tests/core_test.cpp shims/common/ipc/core.cpp \
+              -o /tmp/core_test
+          make build
+          SOCKDIR=$(mktemp -d /tmp/chaoset.XXXXXX)
+          SOCK="$SOCKDIR/core.sock"
+          ./bin/chaosetd -socket "$SOCK" \
+              -dict data/dict_common.tsv -userdict "" > /tmp/win-daemon.log 2>&1 &
+          DPID=$!
+          trap 'kill -TERM $DPID 2>/dev/null || true; rm -rf "$SOCKDIR"' EXIT
+          for i in $(seq 1 50); do
+            if [ -S "$SOCK" ]; then break; fi
+            sleep 0.2
+          done
+          /tmp/core_test "$SOCK"
+
   # ── 3. 数据竞争检测（本机最重的一项，完全交给 CI）─────────────────
   race:
     name: 数据竞争检测
@@ -292,15 +313,10 @@ jobs:
       - name: 设置存储单测（macOS defaults）
         run: go test ./internal/settings -count=1
 
-  # ── 6. Windows 壳：交叉编译 + 核心行为测试 + 安装包（2026-10-31 新增）──
-  # 为什么需要：Windows 壳（C++/NSIS）此前只在打 tag 的 release.yml 里编译，
-  # 日常提交改坏 win32.cpp 或 chaoset.nsi 时 CI 仍全绿，到发版才暴露
-  #（2026-10-31 审计 A6）。这里每次 push/PR 跑与 release 相同的构建链：
-  # mingw 交叉编译 DLL + core_test 对真实 daemon 跑核心行为 + makensis 编译
-  # 安装脚本 + ZIP 内容自检。
+  # ── 6. Windows 壳：原生 MSVC 编译 + 安装包（windows-latest）─────────
   windows-build:
-    name: Windows 构建（mingw + core_test + 安装包）
-    runs-on: ubuntu-24.04
+    name: Windows 构建（MSVC + 安装包）
+    runs-on: windows-latest
     needs: lint
     steps:
       - uses: actions/checkout@v7
@@ -310,27 +326,22 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: 安装 mingw-w64 / NSIS / zip
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 \
-            nsis zip
+      - name: 配置 MSVC (x64) 编译环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      - name: Windows 壳构建（DLL + 单例 UI 宿主交叉编译 + 核心行为测试）
-        run: |
-          make build
-          chmod +x shims/windows/build.sh
-          ./shims/windows/build.sh
+      - name: 安装 Make 与 NSIS 打包工具
+        run: choco install make nsis -y --no-progress
 
-      - name: 安装 Rust Windows 交叉编译目标
-        run: rustup target add x86_64-pc-windows-gnu
-
-      - name: Windows 设置中心交叉编译 (chaoset-settings.exe)
+      - name: Windows 设置中心编译 (chaoset-settings.exe)
         run: make build-settings-windows
 
-      - name: Windows 安装包（NSIS 脚本 + ZIP/UI 宿主内容自检）
-        run: make package-windows
+      - name: Windows 壳编译与打包（MSVC + NSIS）
+        shell: bash
+        run: |
+          chmod +x shims/windows/package_msvc.sh
+          ./shims/windows/package_msvc.sh
 
   # ── 7. Windows 设置存储单测（2026-11-08 审计 GO-04）────────────────
   # 为什么需要：internal/settings 是设置项单一真源，但 Windows 注册表 store

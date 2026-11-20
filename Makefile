@@ -93,8 +93,10 @@ build-settings:
 	mkdir -p bin
 	cp shims/settings/target/release/chaoset-settings bin/chaoset-settings
 
+CARGO_WIN_TARGET ?= $(if $(findstring Windows,$(OS)),,--target x86_64-pc-windows-gnu)
+
 build-settings-windows:
-	cargo build --release --target x86_64-pc-windows-gnu --manifest-path shims/settings/Cargo.toml
+	cargo build --release $(CARGO_WIN_TARGET) --manifest-path shims/settings/Cargo.toml
 
 test:
 	go test ./...

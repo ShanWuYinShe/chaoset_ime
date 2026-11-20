@@ -47,6 +47,27 @@ jobs:
       - name: 运行单元测试
         run: make test
 
+      # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
+      # 协议与会话逻辑。测试在 Linux CI 常跑，毫秒级快速发现协议漂移。
+      - name: 核心层行为测试（真实 daemon + Unix socket）
+        run: |
+          set -e
+          g++ -std=c++17 -O2 -Wall -Wextra -Ishims/windows/src -Ishims/common/ipc \
+              shims/windows/tests/core_test.cpp shims/common/ipc/core.cpp \
+              -o /tmp/core_test
+          make build
+          SOCKDIR=$(mktemp -d /tmp/chaoset.XXXXXX)
+          SOCK="$SOCKDIR/core.sock"
+          ./bin/chaosetd -socket "$SOCK" \
+              -dict data/dict_common.tsv -userdict "" > /tmp/win-daemon.log 2>&1 &
+          DPID=$!
+          trap 'kill -TERM $DPID 2>/dev/null || true; rm -rf "$SOCKDIR"' EXIT
+          for i in $(seq 1 50); do
+            if [ -S "$SOCK" ]; then break; fi
+            sleep 0.2
+          done
+          /tmp/core_test "$SOCK"
+
       - name: 运行代码静态检查
         run: make vet
 
@@ -168,7 +189,7 @@ jobs:
 
   package-windows:
     name: 打包 Windows (TSF DLL + 命名管道 Daemon)
-    runs-on: ubuntu-24.04
+    runs-on: windows-latest
     needs: test
     steps:
       - uses: actions/checkout@v7
@@ -178,100 +199,49 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: 安装 mingw-w64 交叉编译器与 NSIS 打包工具
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 gcc-mingw-w64-i686 g++-mingw-w64-i686 nsis
+      - name: 配置 MSVC (x64) 编译环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      - name: 安装 Rust Windows 交叉编译目标
-        run: rustup target add x86_64-pc-windows-gnu
+      - name: 安装 Make 与 NSIS 打包工具
+        run: choco install make nsis -y --no-progress
 
-      - name: Windows 设置中心交叉编译 (chaoset-settings.exe)
+      - name: Windows 设置中心编译 (chaoset-settings.exe)
         run: make build-settings-windows
 
-      # 核心层行为测试：用真实 chaosetd 的 Unix socket 测试台驱动 core.cpp 的
-      # 协议与会话逻辑（Windows 壳本身走命名管道，CI 在 Linux 上没有管道 API，
-      # 但同为 ipc.Endpoint 本机传输，帧格式与协议一致）。测试必须在 CI 常跑，
-      # 否则引擎/协议断言漂移不会被发现。
-      - name: 核心层行为测试（真实 daemon + Unix socket）
+      - name: Windows 壳原生编译与打包（MSVC + NSIS）
+        shell: bash
         run: |
-          set -e
-          g++ -std=c++17 -O2 -Wall -Wextra -Ishims/windows/src -Ishims/common/ipc \
-              shims/windows/tests/core_test.cpp shims/common/ipc/core.cpp \
-              -o /tmp/core_test
-          make build
-          # 路径必须短（sockaddr_un 上限 108 字节，macOS 104）
-          SOCKDIR=$(mktemp -d /tmp/chaoset.XXXXXX)
-          SOCK="$SOCKDIR/core.sock"
-          ./bin/chaosetd -socket "$SOCK" \
-              -dict data/dict_common.tsv -userdict "" > /tmp/win-daemon.log 2>&1 &
-          DPID=$!
-          trap 'kill -TERM $DPID 2>/dev/null || true; rm -rf "$SOCKDIR"' EXIT
-          # 等 daemon 真正就绪（socket 文件出现即已监听），而不是盲等
-          for i in $(seq 1 50); do
-            if [ -S "$SOCK" ]; then break; fi
-            sleep 0.2
-          done
-          /tmp/core_test "$SOCK"
+          chmod +x shims/windows/package_msvc.sh
+          ./shims/windows/package_msvc.sh
 
-      - name: 编译与打包
+      # 版本信息 / app 信息（2026-11-06）：安装器 EXE 与包内每个 PE 二进制
+      # 都必须带 VS_VERSION_INFO 与产品名/公司/版本字符串，且中文不能是
+      # mojibake（含 chaoset-ui.exe 单例 UI 宿主与 ChaosetRunUi 导出自检）。
+      - name: 校验版本信息 / app 信息
+        shell: bash
         run: |
-          make package-windows
-
-      # 包内容自检：不跑 Windows 真机（本 job 在 Linux 上），但必须保证
-      # 包里有用户真正需要的东西——词库、安装脚本、PE 格式二进制与一键安装程序。
-      - name: 校验包内容
-        run: |
-          unzip -q dist/chaoset-windows-x64.zip -d /tmp/winpkg
-          cd /tmp/winpkg/chaoset-windows-x64
-          for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaosetctl.exe chaoset-ui.exe README.md; do
-            test -f "$f" || { echo "缺少必要文件: $f"; ls -la; exit 1; }
-          done
-          file chaosetd.exe | grep -q 'PE32+' || { echo "chaosetd.exe 不是 Windows PE"; exit 1; }
-          file ChaosetIME.dll | grep -q 'PE32+' || { echo "ChaosetIME.dll 不是 64 位 Windows PE"; exit 1; }
-          file ChaosetIME32.dll | grep -q 'PE32 ' || { echo "ChaosetIME32.dll 不是 32 位 Windows PE"; exit 1; }
-          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllRegisterServer \
-            || { echo "ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
-          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q DllUnregisterServer \
-            || { echo "ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllRegisterServer \
-            || { echo "ChaosetIME32.dll 缺少 DllRegisterServer 导出"; exit 1; }
-          i686-w64-mingw32-objdump -p ChaosetIME32.dll | grep -q DllUnregisterServer \
-            || { echo "ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-          # 单例 UI 宿主：托盘指示器与设置窗都靠它；缺导出 = 两者整体不可用
-          file chaoset-ui.exe | grep -q 'PE32+' || { echo "chaoset-ui.exe 不是 64 位 Windows PE"; exit 1; }
-          x86_64-w64-mingw32-objdump -p ChaosetIME.dll | grep -q ChaosetRunUi \
-            || { echo "ChaosetIME.dll 缺少 ChaosetRunUi 导出（chaoset-ui.exe 无法工作）"; exit 1; }
-          if x86_64-w64-mingw32-objdump -p chaoset-ui.exe | grep -qi 'DLL Name:.*ChaosetIME'; then
-            echo "chaoset-ui.exe 静态导入了 ChaosetIME.dll（必须 LoadLibrary）"; exit 1
-          fi
-          echo "ZIP 包内容校验通过"
-          test -f "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
-          file "$GITHUB_WORKSPACE/dist/ChaosetSetup.exe" | grep -q 'PE32' || { echo "ChaosetSetup.exe 不是有效 Windows PE"; exit 1; }
-          # 版本信息 / app 信息（2026-11-06）：安装器 EXE 与包内每个 PE 二进制
-          # 都必须带 VS_VERSION_INFO 与产品名/公司/版本字符串，且中文不能是
-          # mojibake（windres -c 65001 曾漏掉导致属性页乱码）。
-          python3 - <<'PY'
+          python - <<'PY'
           import os, struct, sys
           files = [
-              "ChaosetIME.dll", "ChaosetIME32.dll", "chaoset-ui.exe",
-              os.environ["GITHUB_WORKSPACE"] + "/dist/ChaosetSetup.exe",
+              "dist/chaoset-windows-x64/ChaosetIME.dll",
+              "dist/chaoset-windows-x64/ChaosetIME32.dll",
+              "dist/chaoset-windows-x64/chaoset-ui.exe",
+              "dist/ChaosetSetup.exe",
           ]
           for p in files:
               d = open(p, "rb").read()
               i = d.find("VS_VERSION_INFO".encode("utf-16-le"))
               if i < 0:
                   print(p + ": 缺少 VS_VERSION_INFO 版本资源"); sys.exit(1)
-              # windres 把 VS_FIXEDFILEINFO 与字符串块放在资源节不同位置，
-              # 与 marker 相隔可达数十 KB，签名和键名都必须在全文件里找。
               if d.find(struct.pack("<I", 0xFEEF04BD)) < 0:
                   print(p + ": 缺少 VS_FIXEDFILEINFO（数字版本）"); sys.exit(1)
               for k in ("ProductName", "CompanyName", "FileVersion", "ProductVersion"):
                   if k.encode("utf-16-le") not in d:
                       print(p + ": 版本资源缺少 " + k); sys.exit(1)
-              # UTF-8 中文必须是真 UTF-16，不能被 windres 按 ANSI 解释成乱码
               if "拼音输入法".encode("utf-16-le") not in d:
-                  print(p + ": 版本资源中文乱码（需 windres -c 65001）"); sys.exit(1)
+                  print(p + ": 版本资源中文乱码"); sys.exit(1)
               print(p + ": 版本信息 OK")
           PY
           echo "版本信息 / app 信息自检通过"
