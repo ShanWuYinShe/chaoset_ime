@@ -1,15 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="256" gradientUnits="userSpaceOnUse">
+    <linearGradient id="azureGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4DA3FF"/>
-      <stop offset="50%" stop-color="#007AFF"/>
+      <stop offset="48%" stop-color="#007AFF"/>
       <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
+    <clipPath id="squircleClip">
+      <rect x="20.5" y="20.5" width="471.0" height="471.0" rx="96.0" ry="96.0"/>
+    </clipPath>
   </defs>
-  <!-- Full-bleed Keycap: 满幅撑满 0 到 sz，无多余外框缩进 -->
-  <rect x="0" y="0" width="256" height="256" rx="30.7" ry="30.7" fill="url(#blueGrad)"/>
-  <!-- Specular Rim Line -->
-  <line x1="31.7" y1="1" x2="224.3" y2="1" stroke="#90C5FF" stroke-width="10.2" stroke-opacity="0.8" stroke-linecap="round"/>
-  <!-- Ultra Bold Centered C: 真正撑满方块、笔画粗重、在视觉重量与面积上与汉字完全等同 -->
-  <text x="128.00" y="207.36" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="261.12" font-weight="900" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="12.80" paint-order="stroke fill">C</text>
+
+  <!-- 1. Squircle Base -->
+  <rect x="20.5" y="20.5" width="471.0" height="471.0" rx="96.0" ry="96.0" fill="url(#azureGrad)"/>
+
+  <!-- 2. Clipped Texture & Highlights -->
+  <g clip-path="url(#squircleClip)">
+    <circle cx="256.0" cy="256.0" r="131.9" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="207.3" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="282.6" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <!-- Top-edge Specular Rim Line -->
+    <rect x="21.5" y="21.5" width="469.0" height="469.0" rx="95.0" ry="95.0" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2.0" fill="none"/>
+  </g>
+
+  <!-- 3. Monogram C -->
+  <text x="220.2" y="368.6" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="292.0" font-weight="900" fill="#FFFFFF">C</text>
+
+  <!-- 4. Bright Star (✦) -->
+  <path d="M 384.00 79.05 Q 384.00 163.84 468.79 163.84 Q 384.00 163.84 384.00 248.63 Q 384.00 163.84 299.21 163.84 Q 384.00 163.84 384.00 79.05 Z" fill="#FFFFFF"/>
+
+  <!-- 5. Bottom Brand Subtext -->
+  <text x="256.0" y="476.2" text-anchor="middle" font-family="'Segoe UI', 'Liberation Sans', Arial, sans-serif" font-size="20.5" font-weight="bold" letter-spacing="5.1" fill="#EAF3FF" fill-opacity="0.85">CHAOS</text>
 </svg>

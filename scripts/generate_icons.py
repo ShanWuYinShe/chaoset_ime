@@ -4,14 +4,16 @@ scripts/generate_icons.py: 生成跨平台一致的高清图标资产。
 - Windows: shims/windows/resources/chaoset.ico (包含 16, 20, 24, 28, 32, 48, 64, 128, 256 多尺寸)
 - Linux: shims/linux/icons/hicolor/ (16, 22, 24, 32, 48, 64, 128, 256) 与 scalable SVG
 
-设计要点（解决任务栏图标偏小与不协调问题）：
-1. 满幅实心圆角键帽（Full-bleed Keycap，x=0.5, y=0.5, width=sz-1, height=sz-1，无四周多余留白），
-   外框几何轮廓与 UiTray 任务栏中英文指示器 1:1 完全对齐；
-2. 移除所有尺寸中的小星标与多余噪点，全分辨率统一采用居中加粗的大写品牌英文字母「C」；
-3. 字母「C」字号拉大至约 82% 满格高度（font-size=sz*0.82），笔画粗重（font-weight 900），
-   在视觉份量、醒目度和字形高度上与方块汉字「中/英」达到视觉平衡；
-4. Windows .ico 文件中小尺寸（≤64px）采用标准未压缩 32bpp DIB BMP 封装，128/256px 采用 PNG 封装，
-   杜绝 Windows 原生 GDI / TSF 在高 DPI (125%/150%) 下因 PNG 解码不兼容而回退到 16x16 或粗暴缩放的问题。
+设计规范：
+1. 品牌徽标核心元素：饱满挺拔的品牌字母「C」+ 右上角璀璨闪耀的四芒星标「✦」，在全尺寸下完整保留，绝不简化；
+2. 键帽造型与质感：
+   - 满幅实心圆角键帽（Full-bleed Keycap），蓝白渐变底色（#4DA3FF -> #007AFF -> #0062CC）；
+   - 顶边高光细线（Specular Rim Line）呈现微实体立体按键质感；
+   - 针对 16~32 像素任务栏小尺寸，采用像素级矢量拟合（精确贝塞尔内凹四芒星路径），
+     确保在任务栏低分辨率下星标和字母「C」均锐利纯净、不糊化、辨识度极高；
+3. Windows .ico 封装：
+   - ≤64px 采用标准未压缩 32bpp DIB BMP 封装；
+   - 128/256px 采用 PNG 封装，完美适配 Windows TSF、任务栏托盘、高 DPI 缩放。
 """
 
 import os
@@ -22,16 +24,33 @@ import zlib
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def gen_svg(sz: int) -> str:
-    # 满幅键帽：几何、圆角、高光与 UiTray GDI 原生绘制（cr=3，半径仅 1.5px）1:1 绝对对齐
-    rx = 1.5 if sz <= 20 else (2.0 if sz <= 24 else (2.5 if sz <= 28 else (3.0 if sz <= 32 else (4.5 if sz <= 48 else sz * 0.12))))
-    fsz = sz * 1.02
-    cy = sz * 0.81
-    cx = sz * 0.5
-    stroke_w = max(0.5, sz * 0.05)
-    rim_w = max(0.8, sz * 0.04)
+def gen_star_path(cx: float, cy: float, r: float) -> str:
+    """生成优雅锐利的四芒星（✦）贝塞尔内弧矢量路径"""
+    return (f"M {cx:.2f} {cy - r:.2f} "
+            f"Q {cx:.2f} {cy:.2f} {cx + r:.2f} {cy:.2f} "
+            f"Q {cx:.2f} {cy:.2f} {cx:.2f} {cy + r:.2f} "
+            f"Q {cx:.2f} {cy:.2f} {cx - r:.2f} {cy:.2f} "
+            f"Q {cx:.2f} {cy:.2f} {cx:.2f} {cy - r:.2f} Z")
 
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{sz}" height="{sz}" viewBox="0 0 {sz} {sz}">
+def gen_svg(sz: int) -> str:
+    if sz <= 48:
+        # 小尺寸：满幅键帽 + 品牌 C + 像素优化锐利星标 ✦
+        rx = 2.0 if sz <= 20 else (2.5 if sz <= 24 else (3.0 if sz <= 28 else (3.5 if sz <= 32 else 5.0)))
+        rim_w = max(0.6, sz * 0.04)
+        
+        # 字母 C 定位与大小
+        fsz = sz * 0.72
+        cx = sz * 0.42
+        cy = sz * 0.76
+        c_stroke_w = max(0.4, sz * 0.035)
+
+        # 星标 ✦ 定位与半径
+        star_cx = sz * 0.76
+        star_cy = sz * 0.28
+        star_r = sz * 0.20
+        star_p = gen_star_path(star_cx, star_cy, star_r)
+
+        return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{sz}" height="{sz}" viewBox="0 0 {sz} {sz}">
   <defs>
     <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="{sz}" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4DA3FF"/>
@@ -39,12 +58,61 @@ def gen_svg(sz: int) -> str:
       <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
   </defs>
-  <!-- Full-bleed Keycap: 满幅撑满 0 到 sz，无多余外框缩进 -->
+  <!-- Full-bleed Keycap -->
   <rect x="0" y="0" width="{sz}" height="{sz}" rx="{rx:.1f}" ry="{rx:.1f}" fill="url(#blueGrad)"/>
   <!-- Specular Rim Line -->
-  <line x1="{rx + 1:.1f}" y1="1" x2="{sz - rx - 1:.1f}" y2="1" stroke="#90C5FF" stroke-width="{rim_w:.1f}" stroke-opacity="0.8" stroke-linecap="round"/>
-  <!-- Ultra Bold Centered C: 真正撑满方块、笔画粗重、在视觉重量与面积上与汉字完全等同 -->
-  <text x="{cx:.2f}" y="{cy:.2f}" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="{fsz:.2f}" font-weight="900" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="{stroke_w:.2f}" paint-order="stroke fill">C</text>
+  <line x1="{rx + 1:.1f}" y1="1" x2="{sz - rx - 1:.1f}" y2="1" stroke="#90C5FF" stroke-width="{rim_w:.1f}" stroke-opacity="0.85" stroke-linecap="round"/>
+  <!-- Bold Centered-Left C -->
+  <text x="{cx:.2f}" y="{cy:.2f}" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="{fsz:.2f}" font-weight="900" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="{c_stroke_w:.2f}" paint-order="stroke fill">C</text>
+  <!-- Sharp Sparkle Star (✦) -->
+  <path d="{star_p}" fill="#FFFFFF"/>
+</svg>"""
+    else:
+        # 大尺寸：高精细节质感微实体（squircle + 同心微纹 + 顶边高光 + C + ✦ + CHAOS）
+        rx = sz * 0.1875
+        pad = sz * 0.04
+        w = sz - pad * 2
+        fsz = w * 0.62
+        cx = sz * 0.43
+        cy = sz * 0.72
+        
+        star_cx = sz * 0.75
+        star_cy = sz * 0.32
+        star_r = w * 0.18
+        star_p = gen_star_path(star_cx, star_cy, star_r)
+
+        return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{sz}" height="{sz}" viewBox="0 0 {sz} {sz}">
+  <defs>
+    <linearGradient id="azureGrad" x1="0" y1="0" x2="{sz}" y2="{sz}" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4DA3FF"/>
+      <stop offset="48%" stop-color="#007AFF"/>
+      <stop offset="100%" stop-color="#0062CC"/>
+    </linearGradient>
+    <clipPath id="squircleClip">
+      <rect x="{pad:.1f}" y="{pad:.1f}" width="{w:.1f}" height="{w:.1f}" rx="{rx:.1f}" ry="{rx:.1f}"/>
+    </clipPath>
+  </defs>
+
+  <!-- 1. Squircle Base -->
+  <rect x="{pad:.1f}" y="{pad:.1f}" width="{w:.1f}" height="{w:.1f}" rx="{rx:.1f}" ry="{rx:.1f}" fill="url(#azureGrad)"/>
+
+  <!-- 2. Clipped Texture & Highlights -->
+  <g clip-path="url(#squircleClip)">
+    <circle cx="{sz*0.5:.1f}" cy="{sz*0.5:.1f}" r="{w*0.28:.1f}" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="{sz*0.005:.1f}" fill="none"/>
+    <circle cx="{sz*0.5:.1f}" cy="{sz*0.5:.1f}" r="{w*0.44:.1f}" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="{sz*0.005:.1f}" fill="none"/>
+    <circle cx="{sz*0.5:.1f}" cy="{sz*0.5:.1f}" r="{w*0.60:.1f}" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="{sz*0.005:.1f}" fill="none"/>
+    <!-- Top-edge Specular Rim Line -->
+    <rect x="{pad+1:.1f}" y="{pad+1:.1f}" width="{w-2:.1f}" height="{w-2:.1f}" rx="{rx-1:.1f}" ry="{rx-1:.1f}" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="{max(1.0, sz*0.004):.1f}" fill="none"/>
+  </g>
+
+  <!-- 3. Monogram C -->
+  <text x="{cx:.1f}" y="{cy:.1f}" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="{fsz:.1f}" font-weight="900" fill="#FFFFFF">C</text>
+
+  <!-- 4. Bright Star (✦) -->
+  <path d="{star_p}" fill="#FFFFFF"/>
+
+  <!-- 5. Bottom Brand Subtext -->
+  <text x="{sz*0.5:.1f}" y="{sz*0.93:.1f}" text-anchor="middle" font-family="'Segoe UI', 'Liberation Sans', Arial, sans-serif" font-size="{sz*0.04:.1f}" font-weight="bold" letter-spacing="{sz*0.01:.1f}" fill="#EAF3FF" fill-opacity="0.85">CHAOS</text>
 </svg>"""
 
 def render_png(svg_content: str, out_png: str, sz: int):
@@ -145,11 +213,9 @@ def pack_ico(layers):
     return header + entries + images
 
 def main():
-    print("==> 生成图标资产...")
-
+    print("==> 生成跨平台高清图标资产（完整保留品牌星标✦与字母C）...")
+    
     # 1. 生成 Windows chaoset.ico
-    # 尺寸覆盖：16(100%), 20(125%), 24(150%), 28(175%), 32(200%), 48, 64, 128, 256
-    # ≤64px 使用标准 32bpp DIB BMP 格式，保证 Windows GDI/TSF 绝对兼容；128/256px 使用 PNG 格式
     win_sizes = [16, 20, 24, 28, 32, 48, 64, 128, 256]
     ico_layers = []
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -159,20 +225,20 @@ def main():
             render_png(svg, png_path, sz)
             with open(png_path, "rb") as f:
                 png_bytes = f.read()
-
+            
             if sz <= 64:
-                w, h, rgba_rows = decode_png_rgba(png_bytes)
-                bmp_bytes = rgba_to_ico_bmp(w, h, rgba_rows)
+                w, h, rows = decode_png_rgba(png_bytes)
+                bmp_bytes = rgba_to_ico_bmp(w, h, rows)
                 ico_layers.append((sz, sz, bmp_bytes))
             else:
                 ico_layers.append((sz, sz, png_bytes))
-
+        
         ico_bytes = pack_ico(ico_layers)
         ico_dest = os.path.join(REPO_ROOT, "shims/windows/resources/chaoset.ico")
         os.makedirs(os.path.dirname(ico_dest), exist_ok=True)
         with open(ico_dest, "wb") as f:
             f.write(ico_bytes)
-        print(f"✓ 已更新 Windows 图标: {ico_dest} (包含 {len(win_sizes)} 个分辨率层，小尺寸采用原生 DIB 封装)")
+        print(f"✓ 已更新 Windows 图标: {ico_dest} (包含 {len(win_sizes)} 个多分辨率层)")
 
     # 2. 生成 Linux hicolor 图标
     linux_sizes = [16, 22, 24, 32, 48, 64, 128, 256]
@@ -189,7 +255,7 @@ def main():
     os.makedirs(scalable_dir, exist_ok=True)
     scalable_svg = os.path.join(scalable_dir, "chaoset.svg")
     with open(scalable_svg, "w", encoding="utf-8") as f:
-        f.write(gen_svg(256))
+        f.write(gen_svg(512))
     print(f"✓ 已更新 Linux scalable SVG: {scalable_svg}")
 
 if __name__ == "__main__":

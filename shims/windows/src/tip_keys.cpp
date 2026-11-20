@@ -847,7 +847,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         // 全/半角开关归壳本地持有（2026-10-29 起）：快捷键切换不再与
         // daemon 往返，状态随 punct 请求下发（daemon 只按状态产出文本）
         halfWidth_ = !halfWidth_;
-        showToast(halfWidth_ ? L"半角标点" : L"全角标点");
+        showToast(halfWidth_ ? L"\u534a\u89d2\u6807\u70b9" : L"\u5168\u89d2\u6807\u70b9");
         return true;
     }
 

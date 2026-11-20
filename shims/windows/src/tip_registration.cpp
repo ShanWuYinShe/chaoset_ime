@@ -123,7 +123,7 @@ STDAPI DllRegisterServer() {
                                    CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
                                    reinterpret_cast<void**>(&profiles)))) {
         profiles->Register(CLSID_ChaosetTIP);
-        const wchar_t* desc = L"Chaoset 拼音输入法";
+        const wchar_t* desc = L"Chaoset \u62fc\u97f3\u8f93\u5165\u6cd5";
         profiles->AddLanguageProfile(CLSID_ChaosetTIP, 0x0804, GUID_ChaosetProfile,
                                      desc, static_cast<ULONG>(wcslen(desc)),
                                      pathW.c_str(), static_cast<ULONG>(pathW.size()), 0);

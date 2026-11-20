@@ -164,7 +164,7 @@ private:
         nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
         nid.uCallbackMessage = kCallbackMsg;
         nid.hIcon = icon_;
-        wcscpy_s(nid.szTip, english_ ? L"Chaoset 输入法：英文" : L"Chaoset 输入法：中文");
+        wcscpy_s(nid.szTip, english_ ? L"Chaoset \u8f93\u5165\u6cd5\uff1a\u82f1\u6587" : L"Chaoset \u8f93\u5165\u6cd5\uff1a\u4e2d\u6587");
         return Shell_NotifyIconW(action, &nid) != FALSE;
     }
 
@@ -327,7 +327,7 @@ private:
         HFONT font = CreateFontIndirectW(&lf);
         HGDIOBJ oldFont = SelectObject(dc, font);
         RECT rc{0, 0, sz, sz - 1};
-        DrawTextW(dc, english ? L"英" : L"中", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, english ? L"\u82f1" : L"\u4e2d", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, oldFont);
         DeleteObject(font);
         SelectObject(dc, old);
