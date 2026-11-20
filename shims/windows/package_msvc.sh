@@ -174,12 +174,42 @@ fi
 
 # 12. 编译 NSIS 安装包
 echo "==> 编译 NSIS 安装包 (ChaosetSetup.exe)..."
-makensis.exe /DVERSION="$VERSION" /DVERSION_QUAD="$QUAD" shims/windows/installer/chaoset.nsi
+MAKENSIS="makensis"
+if ! command -v "$MAKENSIS" >/dev/null 2>&1; then
+  for p in \
+    "/c/Program Files (x86)/NSIS/makensis.exe" \
+    "/c/Program Files/NSIS/makensis.exe" \
+    "/c/ProgramData/chocolatey/bin/makensis.exe" \
+    "C:/Program Files (x86)/NSIS/makensis.exe" \
+    "C:/Program Files/NSIS/makensis.exe" \
+    "makensis.exe"; do
+    if [ -f "$p" ]; then
+      MAKENSIS="$p"
+      break
+    fi
+  done
+fi
+
+"$MAKENSIS" /DVERSION="$VERSION" /DVERSION_QUAD="$QUAD" shims/windows/installer/chaoset.nsi
 test -f "dist/ChaosetSetup.exe" || { echo "缺少 ChaosetSetup.exe 安装程序"; exit 1; }
 
 # 13. 生成 ZIP 压缩包
 echo "==> 生成 ZIP 便携包 (chaoset-windows-x64.zip)..."
-7z a -tzip "dist/chaoset-windows-x64.zip" "./$OUTDIR/*"
+SEVENZIP="7z"
+if ! command -v "$SEVENZIP" >/dev/null 2>&1; then
+  for p in \
+    "/c/Program Files/7-Zip/7z.exe" \
+    "/c/ProgramData/chocolatey/bin/7z.exe" \
+    "C:/Program Files/7-Zip/7z.exe" \
+    "7z.exe"; do
+    if [ -f "$p" ]; then
+      SEVENZIP="$p"
+      break
+    fi
+  done
+fi
+
+"$SEVENZIP" a -tzip "dist/chaoset-windows-x64.zip" "./$OUTDIR/*"
 test -f "dist/chaoset-windows-x64.zip" || { echo "缺少 dist/chaoset-windows-x64.zip"; exit 1; }
 
 echo "==> Windows 原生编译与打包全部成功！"

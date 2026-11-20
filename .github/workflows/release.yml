@@ -205,7 +205,11 @@ jobs:
           arch: x64
 
       - name: 安装 Make 与 NSIS 打包工具
-        run: choco install make nsis -y --no-progress
+        run: |
+          choco install make nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+          echo "C:\Program Files\NSIS" >> $env:GITHUB_PATH
+          echo "C:\ProgramData\chocolatey\bin" >> $env:GITHUB_PATH
 
       - name: Windows 设置中心编译 (chaoset-settings.exe)
         run: make build-settings-windows
