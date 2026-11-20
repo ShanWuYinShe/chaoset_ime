@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <initguid.h>
 #include <msctf.h>
 #include <objbase.h>
 
