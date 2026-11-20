@@ -27,19 +27,8 @@ OUTDIR="dist/chaoset-windows-x64"
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 
-# 3. 编译 Go 二进制 (chaosetctl.exe, chaosetd.exe)
-echo "==> 编译 Go 核心与全能工具 (chaosetctl.exe, chaosetd.exe)..."
-go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
-go build -ldflags "-H=windowsgui -s -w" -o "$OUTDIR/chaosetd.exe" ./cmd/chaosetd
-
-# 4. 拷贝 Slint 设置中心 (chaoset-settings.exe)
-if [ -f "shims/settings/target/release/chaoset-settings.exe" ]; then
-  echo "==> 拷贝 Slint 设置中心 (chaoset-settings.exe)..."
-  cp "shims/settings/target/release/chaoset-settings.exe" "$OUTDIR/chaoset-settings.exe"
-fi
-
-# 5. 生成与编译 Windows 资源文件
-echo "==> 生成与编译 Windows 资源 (chaoset64.res, chaoset32.res, chaoset-ui.res)..."
+# 3. 生成与编译 Windows 资源文件 (全可执行程序图标与版本信息)
+echo "==> 生成与编译 Windows 资源 (chaoset64.res, chaoset32.res, chaoset-ui.res, chaosetctl.res, chaosetd.res)..."
 gen_rc() {
   local target_rc="$1"
   local desc="$2"
@@ -64,10 +53,32 @@ gen_rc() {
 gen_rc "$OUTDIR/chaoset64.rc" "Chaoset 拼音输入法 TSF 前端（64 位）" "ChaosetIME" "ChaosetIME.dll" 2 ""
 gen_rc "$OUTDIR/chaoset32.rc" "Chaoset 拼音输入法 TSF 前端（32 位）" "ChaosetIME32" "ChaosetIME32.dll" 2 ""
 gen_rc "$OUTDIR/chaoset-ui.rc" "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
+gen_rc "$OUTDIR/chaosetctl.rc" "Chaoset 拼音输入法全能控制工具" "chaosetctl" "chaosetctl.exe" 1 ""
+gen_rc "$OUTDIR/chaosetd.rc" "Chaoset 拼音输入法核心守护进程" "chaosetd" "chaosetd.exe" 1 ""
 
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset64.res" "$OUTDIR/chaoset64.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset32.res" "$OUTDIR/chaoset32.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res" "$OUTDIR/chaoset-ui.rc"
+rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetctl.res" "$OUTDIR/chaosetctl.rc"
+rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetd.res" "$OUTDIR/chaosetd.rc"
+
+# 为 Go 二进制生成 .syso 资源对象文件 (通过 cvtres.exe 将 .res 转换为 COFF .syso 嵌入图标与版本信息)
+if command -v cvtres.exe >/dev/null 2>&1; then
+  cvtres.exe /NOLOGO /MACHINE:X64 /OUT:cmd/chaosetctl/rsrc_windows_amd64.syso "$OUTDIR/chaosetctl.res"
+  cvtres.exe /NOLOGO /MACHINE:X64 /OUT:cmd/chaosetd/rsrc_windows_amd64.syso "$OUTDIR/chaosetd.res"
+fi
+
+# 4. 编译 Go 二进制 (chaosetctl.exe, chaosetd.exe)
+echo "==> 编译 Go 核心与全能工具 (chaosetctl.exe, chaosetd.exe)..."
+go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
+go build -ldflags "-H=windowsgui -s -w" -o "$OUTDIR/chaosetd.exe" ./cmd/chaosetd
+rm -f cmd/chaosetctl/rsrc_windows_amd64.syso cmd/chaosetd/rsrc_windows_amd64.syso
+
+# 5. 拷贝 Slint 设置中心 (chaoset-settings.exe)
+if [ -f "shims/settings/target/release/chaoset-settings.exe" ]; then
+  echo "==> 拷贝 Slint 设置中心 (chaoset-settings.exe)..."
+  cp "shims/settings/target/release/chaoset-settings.exe" "$OUTDIR/chaoset-settings.exe"
+fi
 
 # 6. 确定 C++ 源码列表 (排除 ui_main.cpp)
 DLL_SRCS=""
