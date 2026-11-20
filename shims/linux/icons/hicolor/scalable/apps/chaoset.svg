@@ -6,28 +6,28 @@
       <stop offset="100%" stop-color="#0062CC"/>
     </linearGradient>
     <clipPath id="squircleClip">
-      <rect x="20.5" y="20.5" width="471.0" height="471.0" rx="96.0" ry="96.0"/>
+      <rect x="0" y="0" width="512" height="512" rx="51.2" ry="51.2"/>
     </clipPath>
   </defs>
 
-  <!-- 1. Squircle Base -->
-  <rect x="20.5" y="20.5" width="471.0" height="471.0" rx="96.0" ry="96.0" fill="url(#azureGrad)"/>
+  <!-- 1. Full-bleed Squircle Base: 0 pad 占满 -->
+  <rect x="0" y="0" width="512" height="512" rx="51.2" ry="51.2" fill="url(#azureGrad)"/>
 
   <!-- 2. Clipped Texture & Highlights -->
   <g clip-path="url(#squircleClip)">
-    <circle cx="256.0" cy="256.0" r="131.9" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
-    <circle cx="256.0" cy="256.0" r="207.3" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
-    <circle cx="256.0" cy="256.0" r="282.6" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="153.6" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="235.5" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="317.4" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
     <!-- Top-edge Specular Rim Line -->
-    <rect x="21.5" y="21.5" width="469.0" height="469.0" rx="95.0" ry="95.0" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2.0" fill="none"/>
+    <rect x="1" y="1" width="510.0" height="510.0" rx="50.2" ry="50.2" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2.0" fill="none"/>
   </g>
 
   <!-- 3. Monogram C -->
-  <text x="220.2" y="368.6" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="292.0" font-weight="900" fill="#FFFFFF">C</text>
+  <text x="215.0" y="378.9" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="348.2" font-weight="900" fill="#FFFFFF">C</text>
 
   <!-- 4. Bright Star (✦) -->
-  <path d="M 384.00 79.05 Q 384.00 163.84 468.79 163.84 Q 384.00 163.84 384.00 248.63 Q 384.00 163.84 299.21 163.84 Q 384.00 163.84 384.00 79.05 Z" fill="#FFFFFF"/>
+  <path d="M 389.12 40.96 Q 389.12 143.36 491.52 143.36 Q 389.12 143.36 389.12 245.76 Q 389.12 143.36 286.72 143.36 Q 389.12 143.36 389.12 40.96 Z" fill="#FFFFFF"/>
 
   <!-- 5. Bottom Brand Subtext -->
-  <text x="256.0" y="476.2" text-anchor="middle" font-family="'Segoe UI', 'Liberation Sans', Arial, sans-serif" font-size="20.5" font-weight="bold" letter-spacing="5.1" fill="#EAF3FF" fill-opacity="0.85">CHAOS</text>
+  <text x="256.0" y="476.2" text-anchor="middle" font-family="'Segoe UI', 'Liberation Sans', Arial, sans-serif" font-size="23.0" font-weight="bold" letter-spacing="5.1" fill="#EAF3FF" fill-opacity="0.85">CHAOS</text>
 </svg>

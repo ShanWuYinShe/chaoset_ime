@@ -301,6 +301,7 @@ Section "MainSection" SEC01
 
     ; 开始菜单快捷方式
     CreateDirectory "$SMPROGRAMS\Chaoset"
+    CreateShortcut "$SMPROGRAMS\Chaoset\Chaoset 设置.lnk" "$INSTDIR\chaoset-settings.exe" "" "$INSTDIR\chaoset.ico" 0
     CreateShortcut "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk" "$INSTDIR\uninstall.exe"
 
     ; 仍有进程（后台驻留应用等）占用 DLL 时走的是 .new + 重启替换预约，
@@ -397,6 +398,7 @@ Section "Uninstall"
     skipUserData:
 
     ; 删除快捷方式
+    Delete "$SMPROGRAMS\Chaoset\Chaoset 设置.lnk"
     Delete "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk"
     RMDir "$SMPROGRAMS\Chaoset"
 SectionEnd
