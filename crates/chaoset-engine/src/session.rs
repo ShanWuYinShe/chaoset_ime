@@ -653,6 +653,52 @@ fn place_typo_fixed_position(items: Vec<(Candidate, i32, i32)>) -> Vec<(Candidat
     out
 }
 
+/// 正常输入的「已有词组合」候选（Go addCompositionCandidates）：
+/// 正确拼写的多音节输入如果整串在词库里没有单条词条、但能切成已有词的序列
+/// （changshuru → 长+输入、tuzhong → 图+中），也作为候选给出。约束：只允许
+/// 词典中真实存在的词段（不造词）；放在 RANK_COMPOSITION 层（真实词条与逐级
+/// 回退之后），不会挤掉正常首选；最多 4 条。
+fn add_composition_candidates(
+    dict: &Dictionary,
+    user: Option<&UserDict>,
+    shape: &ComposeShape,
+    patterns: &[Vec<Token>],
+    prev: Option<&str>,
+    traditional: bool,
+    pool: &mut Pool,
+) {
+    if shape.typo_suspicious || shape.mid_suspicious || shape.tail_suspicious || patterns.is_empty()
+    {
+        return;
+    }
+    let clean = &patterns[0];
+    if clean.len() < 2 || clean.iter().any(|t| !t.is_exact) {
+        return;
+    }
+    for e in crate::typo::composed_phrase_entries(dict, clean, 4) {
+        let (boost, from_user) = if let Some(u) = user {
+            let (b, is_user) = u.score(&e.word, prev);
+            (b as i32, is_user)
+        } else {
+            (0, false)
+        };
+        let display_text = if traditional {
+            to_traditional(&e.word)
+        } else {
+            e.word.clone()
+        };
+        pool.add(
+            &e.word,
+            display_text,
+            e.syllables.join("'"),
+            e.freq + boost,
+            from_user,
+            RANK_COMPOSITION,
+            false,
+        );
+    }
+}
+
 /// 单段输入的单字过滤（Go filterSingleSegment）：单音节全拼（diao/yi/jie）与
 /// 单段声母（d/y）不再出任何词语——既不是前缀扩展词，也不是连写恰好等于
 /// 输入的全匹配词（xian 的「西安」、jie 的「饥饿」）。词语只能通过显式分段
@@ -700,9 +746,13 @@ fn filter_single_segment(pool: &mut Pool, patterns: &[Vec<Token>]) {
     });
 }
 
-// Go：rankComposition = rankBackoff+64、rankSingleBackfill = rankComposition+16。
-// 组合候选（rankComposition 层）本轮未迁移；单字收尾保持在其后（列表最末纯单字）。
-const RANK_SINGLE_BACKFILL: i32 = RANK_BACKOFF + 64 + 16;
+// 组合候选层（Go rankComposition = rankBackoff+64）：把多音节输入切成「词库里
+// 真实存在的词」序列（changshuru → 长+输入）。放在所有真实词条与逐级回退碎片
+// 之后，只作为列表末尾的额外选项——组合没有语言模型，不得改变原有候选先后。
+const RANK_COMPOSITION: i32 = RANK_BACKOFF + 64;
+// 单字收尾（Go rankSingleBackfill = rankComposition+16）：纯单字收尾、列表最末；
+// 单字块之后不得再出现词组。
+const RANK_SINGLE_BACKFILL: i32 = RANK_COMPOSITION + 16;
 
 /// 续接候选每多补一个字符的得分折价。Go 数据扫描定型值：30 是唯一同时保住
 /// 「全拼完整输入首选率」与「末音节残缺首选率」的点（中国 85−30=55 > 中古 36）。
@@ -837,9 +887,6 @@ impl Session {
         let patterns = tokenize_pinyin(&pinyin_query);
         let best_pattern = patterns.first().cloned().unwrap_or_default();
         self.tokens = best_pattern.clone();
-
-        // 3. 构建音节序列与 preedit 显示（保留用户输入的大小写）
-        let preedit = preedit_with_case(&self.input_raw, &best_pattern);
 
         // 4. 召回与打分（分层召回，对齐 Go compose.go 的编排顺序）：
         // 层级是第一排序维度，词频打分只在同层内决定先后——这是与 Go 一致的
@@ -1174,7 +1221,18 @@ impl Session {
             }
         }
 
-        // 4.6 纠错层级提升（Go promoteTypoCorrections）：必须在常规/单字收集
+        // 4.6 已有词组合候选（Go addCompositionCandidates，J 段）
+        add_composition_candidates(
+            &self.dict,
+            self.user_dict.as_deref(),
+            &shape,
+            &patterns,
+            prev,
+            traditional,
+            &mut pool,
+        );
+
+        // 4.7 纠错层级提升（Go promoteTypoCorrections）：必须在常规/单字收集
         // 完之后、单段过滤之前——它按 rank 反推「纯错拼来源」。
         promote_typo_corrections(&mut pool, &typo, &shape, &match_input);
 
@@ -1236,6 +1294,16 @@ impl Session {
         // 纠错固定第 3 位（Go placeTypoFixedPosition）
         let sorted = place_typo_fixed_position(sorted);
         self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
+
+        // 预编辑（Go buildComposition 口径）：默认原样输入；有候选且有首选切分时
+        // 按切分边界重建并保留大小写（如 NI'HAO）——无候选（打错字/无切分）时
+        // 保持原串，用户能看到「回车会原样上屏什么」。
+        let preedit =
+            if !self.all_candidates.is_empty() && !patterns.is_empty() && !patterns[0].is_empty() {
+                preedit_with_case(&self.input_raw, &patterns[0])
+            } else {
+                self.input_raw.clone()
+            };
 
         // 6. 构造分页 Composition
         let total = self.all_candidates.len();
@@ -1334,7 +1402,14 @@ impl Session {
     pub fn select(&mut self, index: usize) -> Result<String, String> {
         let global_idx = self.page * self.page_size + index;
         if global_idx >= self.all_candidates.len() {
-            return Err("候选词索引越界".to_string());
+            // 与 Go 同文案：数量是**当前页**候选数（Composition.Candidates 长度）
+            let page_count =
+                (self.all_candidates.len() - self.page * self.page_size).min(self.page_size);
+            return Err(format!(
+                "候选序号 {} 越界（当前共 {} 个候选）",
+                index + 1,
+                page_count
+            ));
         }
 
         let cand = self.all_candidates[global_idx].0.clone();
@@ -1358,7 +1433,13 @@ impl Session {
     pub fn select_prefix(&mut self, index: usize) -> Result<Composition, String> {
         let global_idx = self.page * self.page_size + index;
         if global_idx >= self.all_candidates.len() {
-            return Err("候选词索引越界".to_string());
+            let page_count =
+                (self.all_candidates.len() - self.page * self.page_size).min(self.page_size);
+            return Err(format!(
+                "候选序号 {} 越界（当前共 {} 个候选）",
+                index + 1,
+                page_count
+            ));
         }
 
         let cand = self.all_candidates[global_idx].0.clone();

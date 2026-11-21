@@ -20,6 +20,9 @@ struct TrieNode {
     children: HashMap<String, TrieNode>,
     /// 完整匹配当前音节路径的词条列表索引（按词频降序排列）
     exact_words: Vec<usize>,
+    /// 子树内最小词条下标（Go dictNode.subtreeMin）：prefix 逐层展开的确定性
+    /// 次序键——同层节点子树互不相交，该键唯一，构成全序。
+    subtree_min: usize,
 }
 
 /// 主词典
@@ -149,9 +152,14 @@ impl Dictionary {
         fn sort_recursive(node: &mut TrieNode, entries: &[WordEntry]) {
             node.exact_words
                 .sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
+            let mut min_id = node.exact_words.first().copied().unwrap_or(usize::MAX);
             for child in node.children.values_mut() {
                 sort_recursive(child, entries);
+                if child.subtree_min < min_id {
+                    min_id = child.subtree_min;
+                }
             }
+            node.subtree_min = min_id;
         }
         sort_recursive(&mut self.trie, entries);
     }
@@ -263,6 +271,51 @@ impl Dictionary {
         }
     }
 
+    /// 沿 token 序列下钻并返回**全部终点节点**（Go walkTokens 镜像）：
+    /// 完整音节按子节点精确匹配；声母碎片按「音节以该声母开头」展开
+    /// （z 兼容 zh、c 兼容 ch、s 兼容 sh，与 Go matchSyllable 同口径）。
+    /// 简拼/混拼（n+h、zzz）能命中多个终点节点，后续双池各自合并。
+    fn walk_tokens_nodes<'a>(&'a self, tokens: &[&str]) -> Vec<&'a TrieNode> {
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+        let mut curr: Vec<&TrieNode> = vec![&self.trie];
+        for tok in tokens {
+            let mut next: Vec<&TrieNode> = Vec::new();
+            let exact = crate::syllable::is_syllable(tok);
+            for node in &curr {
+                if exact {
+                    if let Some(child) = node.children.get(*tok) {
+                        next.push(child);
+                    }
+                } else {
+                    for (syl, child) in node.children.iter() {
+                        if Self::match_syllable(syl, tok) {
+                            next.push(child);
+                        }
+                    }
+                }
+            }
+            if next.is_empty() {
+                return Vec::new();
+            }
+            curr = next;
+        }
+        curr
+    }
+
+    /// 音节与 token 的匹配（Go matchSyllable）：完整音节等值；碎片前缀匹配，
+    /// 且 z/c/s 兼容 zh/ch/sh。
+    fn match_syllable(syl: &str, tok: &str) -> bool {
+        if syl == tok || syl.starts_with(tok) {
+            return true;
+        }
+        matches!((tok, syl), ("z", "zh") | ("c", "ch") | ("s", "sh"))
+            || (tok == "z" && syl.starts_with("zh"))
+            || (tok == "c" && syl.starts_with("ch"))
+            || (tok == "s" && syl.starts_with("sh"))
+    }
+
     /// 末段残缺续接查询（对齐 Go Dictionary.QueryContinuation）：head 音节
     /// 全部精确消耗后，把 frag 视为**一个尚未打完的音节**，沿以其为前缀的
     /// 下探两层（覆盖 中国 / 中国人 这类衍生词），返回（词条索引, 需补全的
@@ -327,12 +380,16 @@ impl Dictionary {
         out
     }
 
-    /// Go queryTokens 的双池语义：exact 池 = 该音节路径节点上的词条（含
-    /// 单字同音字全量），prefix 池 = 其子孙词条（更长的词组）。两池独立
-    /// 上限、独立截断（exact 300/120 与 prefix 20 的分配依据见 Go
-    /// compose_query.go addTokenMatches 注释）；prefix 池的排除集用
-    /// **未截断**的 exact 全集，避免截断尾巴漏进前缀池。碎片导航展开的
-    /// 多个终点节点同样适用。
+    /// Go queryTokens 的双池语义（错拼/常规召回共用）：
+    ///   - exact 池 = 该音节路径节点上的词条（同音字全量），按词频降序、
+    ///     同频按词字典序，截断 exact_limit；
+    ///   - prefix 池 = 「衍生偏长词」，**逐层探索（最多向下 2 层、每层最多展开
+    ///     12 个节点）**：节点按「节点内最高词频、子树最小词条下标」排序后展开，
+    ///     避免宽泛节点下全树递归与巨型排序（Go 注释实测：z/zh 单键 1.2–1.8ms
+    ///     的主因）。收集后按词频降序、词长升序、字典序排序截断。
+    ///
+    /// 不能简单地「取整棵子树再按词频截断」——那会把 2 个音节以外的长词
+    /// （xi'an 输入带出 西安交通大学）混进候选，与 Go 行为不一致。
     pub fn query_exact_and_prefix(
         &self,
         syllables: &[&str],
@@ -340,38 +397,134 @@ impl Dictionary {
         prefix_limit: usize,
     ) -> (Vec<&WordEntry>, Vec<&WordEntry>) {
         let entries = &self.entries;
+        let mut terminals: Vec<&TrieNode> = self.walk_tokens_nodes(syllables);
+        if terminals.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
 
-        // exact 全集：碎片导航展开的各终点节点词条并集，词频降序
-        let mut exact_all: Vec<usize> = Vec::new();
-        Self::walk(&self.trie, syllables, false, &mut exact_all);
-        exact_all.sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
-        exact_all.dedup();
+        // exact 池
+        let mut exact_ids: Vec<usize> = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for node in &terminals {
+            for &id in &node.exact_words {
+                if seen.insert(id) {
+                    exact_ids.push(id);
+                }
+            }
+        }
+        exact_ids.sort_by(|&a, &b| {
+            entries[b]
+                .freq
+                .cmp(&entries[a].freq)
+                .then(entries[a].word.cmp(&entries[b].word))
+                .then(
+                    entries[a]
+                        .syllables
+                        .join("'")
+                        .cmp(&entries[b].syllables.join("'")),
+                )
+        });
+        exact_ids.truncate(exact_limit);
 
-        // 全子树（终点节点词条 + 子孙词条），词频降序
-        let mut all: Vec<usize> = Vec::new();
-        Self::walk(&self.trie, syllables, true, &mut all);
-        all.sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
-        all.dedup();
+        // prefix 池：Go queryTokens 的逐层 BFS
+        terminals.sort_by_key(|n| n.subtree_min);
+        let mut level_nodes: Vec<&TrieNode> = terminals;
+        let max_prefix_scan = prefix_limit.saturating_mul(4);
+        let mut prefix_ids: Vec<usize> = Vec::new();
+        let mut prefix_seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        const MAX_EXPAND_PER_LEVEL: usize = 12;
+        let mut depth = 0;
+        while depth < 2 && !level_nodes.is_empty() && prefix_ids.len() < max_prefix_scan {
+            let mut ranked: Vec<(u32, usize, &TrieNode)> = Vec::new();
+            for node in &level_nodes {
+                for child in node.children.values() {
+                    let top = child
+                        .exact_words
+                        .iter()
+                        .map(|&id| entries[id].freq)
+                        .max()
+                        .unwrap_or(0);
+                    ranked.push((top, child.subtree_min, child));
+                }
+            }
+            ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            ranked.truncate(MAX_EXPAND_PER_LEVEL);
+            let mut next_level: Vec<&TrieNode> = Vec::new();
+            for (_, _, child) in ranked {
+                next_level.push(child);
+                for &id in &child.exact_words {
+                    if prefix_seen.insert(id) {
+                        prefix_ids.push(id);
+                    }
+                }
+            }
+            level_nodes = next_level;
+            depth += 1;
+        }
+        prefix_ids.sort_by(|&a, &b| {
+            entries[b]
+                .freq
+                .cmp(&entries[a].freq)
+                .then(
+                    entries[a]
+                        .word
+                        .chars()
+                        .count()
+                        .cmp(&entries[b].word.chars().count()),
+                )
+                .then(entries[a].word.cmp(&entries[b].word))
+                .then(
+                    entries[a]
+                        .syllables
+                        .join("'")
+                        .cmp(&entries[b].syllables.join("'")),
+                )
+        });
+        prefix_ids.truncate(prefix_limit);
 
-        let exact_set: std::collections::HashSet<usize> = exact_all.iter().copied().collect();
-        let exact_pool: Vec<&WordEntry> = exact_all
-            .iter()
-            .take(exact_limit)
-            .map(|idx| &entries[*idx])
-            .collect();
-        let prefix_pool: Vec<&WordEntry> = all
-            .iter()
-            .filter(|i| !exact_set.contains(i))
-            .take(prefix_limit)
-            .map(|idx| &entries[*idx])
-            .collect();
-        (exact_pool, prefix_pool)
+        (
+            exact_ids.iter().map(|&i| &entries[i]).collect(),
+            prefix_ids.iter().map(|&i| &entries[i]).collect(),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// prefix 池必须是 Go queryTokens 的逐层探索语义（≤2 层）：只收「多 1~2
+    /// 个音节」的衍生词，更长的词不得混入（否则 xi'an 会带出 西安交通大学）。
+    #[test]
+    fn test_prefix_bfs_depth_limit() {
+        let mut dict = Dictionary::new();
+        for (word, pinyin, freq) in [
+            ("西安", "xi'an", 70u32),
+            ("西安事变", "xi'an'shi'bian", 40),
+            ("西安交通大学", "xi'an'jiao'tong'da'xue", 50),
+        ] {
+            dict.insert(WordEntry {
+                word: word.to_string(),
+                pinyin: pinyin.to_string(),
+                syllables: pinyin.split('\'').map(|s| s.to_string()).collect(),
+                freq,
+            });
+        }
+        dict.sort_nodes();
+
+        let (exact, prefix) = dict.query_exact_and_prefix(&["xi", "an"], 20, 20);
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].word, "西安");
+        let words: Vec<&str> = prefix.iter().map(|e| e.word.as_str()).collect();
+        assert!(
+            words.contains(&"西安事变"),
+            "+2 音节内的衍生词应在 prefix 池: {words:?}"
+        );
+        assert!(
+            !words.contains(&"西安交通大学"),
+            "超过 2 层的长词不得进入 prefix 池: {words:?}"
+        );
+    }
 
     #[test]
     fn test_dict_exact_and_prefix() {
