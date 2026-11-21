@@ -133,7 +133,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ibus zstd build-essential pkg-config libibus-1.0-dev file \
-            libfontconfig1-dev libfreetype-dev libxkbcommon-dev libwayland-dev xvfb
+            libfontconfig1-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxkbcommon-x11-0 xvfb
 
       - name: 编译 Slint Linux 设置中心
         run: make build-settings
