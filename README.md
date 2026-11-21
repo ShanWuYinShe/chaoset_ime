@@ -17,7 +17,7 @@
 | **Linux (Arch / Manjaro / EndeavourOS)** | [`chaoset-ime-x86_64.pkg.tar.zst`](https://github.com/ShanWuYinShe/chaoset_ime/releases/latest) | 应用商店（Pamac/发现）双击安装；装完后在「键盘 → 输入源」添加 **Chaoset Pinyin** | `Super + 空格` 或 `Ctrl + 空格` |
 
 > **Windows 安装不会关闭已打开的程序**：安装器只替换文件，不会强杀浏览器/
-> 编辑器/聊天软件或开始菜单等系统宿主；已有导入词由 Go 导入器合并保留。已打开
+> 编辑器/聊天软件或开始菜单等系统宿主；已有导入词由 Rust 导入器（`chaosetctl import`）合并保留。已打开
 > 程序重新打开后加载新版。daemon 在首次输入时以当前用户身份自动启动（命名管道，
 > 无需管理员权限）；系统宿主在注销/重启后刷新。若切换后暂时没有候选窗，先注销
 > 并重新登录一次。
@@ -63,7 +63,7 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
 
-本项目是**从零实现**的：Rust 引擎（`crates/chaoset-engine/`）、IPC（`ipc/`）、视觉参数真源
+本项目是**从零实现**的：Rust 引擎（`crates/chaoset-engine/`）、IPC（`crates/chaoset-ipc/`）、视觉参数真源
 、三端薄壳（`shims/`）全部为本仓库自研代码，
 `git ls-files` 中没有任何 Squirrel / librime 源码，也没有引用其图标素材。
 来自第三方的只有**数据**：
@@ -96,20 +96,22 @@ crates/chaoset-engine/  核心引擎（纯 Rust 逻辑，不依赖任何 OS API/
   src/s2t.rs            简繁字词映射（数据在 src/data/s2t/，默认关闭）
   src/shuangpin.rs      自然码/微软/小鹤双拼键码管线（默认关闭）
   src/userdict.rs       用户数据：调频记录、合成词组、上下文共现
+  src/bin/dictc.rs      发布用二进制词库编译器（CSDB）
+  src/bin/replay.rs     41 场景回放工具（行为回归基线）
   tests/dict_contract.rs     内置词库严格契约（CI 门禁）
   tests/parity_scenarios.rs  41 个冻结回放场景（行为回归基线）
-crates/chaosetd/        守护进程（Rust；-dict 可多次叠加）
-ipc/               IPC 帧协议与客户端（client 实现 ipc.Controller；服务端在 Rust）
+crates/chaosetd/        守护进程（Rust；-dict 可多次叠加；IPC 服务端）
+crates/chaoset-config/  设置 schema/默认值/持久化 + 用户目录（daemon 与 CLI 共用，三端存储键不变）
+crates/chaoset-ipc/     IPC 帧协议 + 客户端（19 方法、1 MiB 上限；daemon 与 CLI 共用）
+crates/chaoset-tools/   词库导入/合并/备份 + 用户词典离线逻辑（Rust）
+crates/chaosetctl/      单二进制 multicall CLI（config/import/userdict/client/version）
 docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内联在 visual-parity.sh）：
                    无运行时消费者——实际渲染是 macOS CandidatePanelView.swift 与
                    Windows candidate_window.cpp 两份实现；三端布局/色值期望由
                    shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
                    渲染链路
-cmd/
-  chaoset-cli/       终端测试台（连接 daemon 的 IPC 客户端）
-  chaoset-import/    热词导入工具（合并输出 TSV）
-  chaoset-dictgen/   内置词库生成工具（常用性门槛词表 + wordfreq/HanLP 词频 → TSV）
-  chaoset-userdict/  用户词典管理工具（统计/清空/导出，IPC 或本地文件）
+cmd/chaoset-dictgen/   内置词库生成工具（Go；构建期工具，make build-tools 构建）
+tools/                 Go 静态检查：checkuiparity / checkworkflows / checkgdi（不随包分发）
 data/
   categories/        中文互联网分类词库（流行梗/社交互动/职场/游戏二次元/数码AI等 8 大分类）
   dict_common.tsv    内置常用词库（cmd/chaoset-dictgen 生成产物，勿手工编辑）
@@ -284,9 +286,9 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
   组合；仅当该输入没有任何整词级纠错命中时，组合候选才提升到精确层（最多 8 个）。
   反序双字母（gn/hz/hc/hs/ev 强制；ao/ua/ue 软纠错）走最高置信度归位路径；
   高置信度纠错候选固定排在候选列表第 3 位起；错拼输入不追加单字兜底。
-- **学习数据删除**：IPC `userDelete` / `chaoset-userdict delete`；候选窗右键
+- **学习数据删除**：IPC `userDelete` / `chaosetctl userdict delete`（macOS/Linux 软链 `chaoset-userdict delete` 等价）；候选窗右键
   「删除该词」只删本机学习记录，不动内置/导入词库。
-- **词库**：内置 65k 条常用性门槛词库（方案 A，数据 CC BY-SA 4.0，见
+- **词库**：内置约 20 万条常用性门槛词库（方案 A，数据 CC BY-SA 4.0，见
   `data/NOTICE.md`）；手工补充表 `data/dict_extra.tsv`（口语）与
   `data/dict_hot.tsv`（现代/热词，随版本更新）。
 - **回归测试**：候选来源总闸门、错拼/组合、用户历史、单字兜底、歧义切分、连写匹配
@@ -464,26 +466,27 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 
 ## 快速开始（终端测试台）
 
-> 普通用户不需要命令行：联想开关、学习数据统计/清空/导出都在**设置中心口**
+> 普通用户不需要命令行：联想开关、学习数据统计/清空/导出都在**设置中心**
 > （候选栏右侧齿轮）。下面的 CLI 是开发测试台与高级/排障工具；
-> `chaoset-userdict` 仅作为无 GUI 环境/高级用户兜底。
+> `chaosetctl userdict` 仅作为无 GUI 环境/高级用户兜底。
 
 ```sh
+make build        # Rust：bin/chaosetctl、bin/chaosetd、bin/chaoset-dictc
 # CLI 是 daemon 的 IPC 客户端：先起 daemon（另开终端；本地内嵌引擎已移除）
-cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml &
+bin/chaosetd -dict data/dict_common.tsv &
 # 缺省连接平台默认 socket（与 daemon 同一路径规则）
-go run ./cmd/chaoset-cli
+bin/chaosetctl client
 # 显式指定 cwd 下的 socket 便于本地调试：
-# cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -socket chaoset.sock &
-# go run ./cmd/chaoset-cli -socket chaoset.sock
+# bin/chaosetd -socket chaoset.sock -dict data/dict_common.tsv &
+# bin/chaosetctl client -socket chaoset.sock
+# Linux/macOS 发行包另有软链：chaoset / chaoset-cli / chaoset-import / chaoset-userdict
 
 # Windows 命名管道（推荐；daemon/CLI 都按当前用户 SID 自动算管道名）
-cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -pipe &
-go run ./cmd/chaoset-cli -pipe
+bin\chaosetd.exe -pipe -dict data\dict_common.tsv
+bin\chaosetctl.exe client -pipe
 
-# 构建信息（提交号/构建时间）：真机排障第一步，确认装的是不是新构建
-cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -version
-go run ./cmd/chaoset-cli -version
+# 构建信息（版本/平台/提交/构建时间）：真机排障第一步，确认装的是不是新构建
+bin/chaosetctl version
 ```
 
 daemon 默认加载内置常用词库 `data/dict_common.tsv`（见「内置词库与再生成」），
@@ -548,14 +551,15 @@ TSV，每行三列（`#` 开头为注释）：
 
 ### 接入 CC-CEDICT 开源词库
 
-`chaoset-import` 与 `-dict` 直接识别 [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict)
-u8 格式（繁体 简体 [拼音] /释义/，空格分隔），无需转换：
+`chaosetctl import`（macOS app 内副本 `chaoset-import`）与 `-dict` 直接识别
+[CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) u8 格式
+（繁体 简体 [拼音] /释义/，空格分隔），无需转换：
 
 ```sh
 curl -o cedict.txt.gz \
   https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz
 gunzip cedict.txt.gz
-bin/chaoset-import -o dict-full.tsv data/dict_common.tsv cedict.txt
+bin/chaosetctl import -o dict-full.tsv data/dict_common.tsv cedict.txt
 bin/chaosetd -dict dict-full.tsv
 ```
 
@@ -568,7 +572,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 
 帧格式为 4 字节大端长度 + JSON 载荷（上限 1 MiB）。`reset`（清组词与学习上下文：Esc/
 失焦/新会话）与 `resetComposition`（只清组词、保留学习上下文：切中英、透传等）的
-双轨重置语义是三端壳契约；17 个方法的请求/响应参考、候选窗纯数据契约、传输形态
+双轨重置语义是三端壳契约；19 个方法的请求/响应参考（客户端唯一实现 `crates/chaoset-ipc`）、候选窗纯数据契约、传输形态
 与命名管道安全描述符见 [docs/ipc.md](docs/ipc.md)。
 
 ## 下载与安装（GitHub Release）
@@ -582,20 +586,23 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 | Linux Debian/Ubuntu | `chaoset_amd64.deb` | `chaoset-linux-x86_64.tar.gz`（需 sudo 脚本） |
 | Linux Arch | `chaoset-ime-x86_64.pkg.tar.zst` | 同左，无脚本包 |
 
-每个包都自带**完整的内置常用词库（约 6.5 万条）**，装完即可用，不需要另配词库。
+每个包都自带**完整的内置常用词库（约 20 万条）**，装完即可用，不需要另配词库。
 
 > **查看版本**：三端设置中心底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
 > 确认装的是新版本，再排查其他问题。Windows 还可以右键 `ChaosetSetup.exe`
-> 或安装目录里的 `ChaosetIME.dll` / `chaoset-ui.exe` →「属性 → 详细信息」
+> 或安装目录里的 `ChaosetIME.dll` / `chaoset-ui.exe` / `chaosetctl.exe` /
+> `chaosetd.exe` / `chaoset-settings.exe` →「属性 → 详细信息」
 > 查看产品名、公司、版权与文件/产品版本，或在「已安装的应用」的 Chaoset
 > 条目里看 `DisplayVersion`。版本号统一由 `scripts/version.sh` 注入，源码不写死：
 > CI 在 **push tag 触发**时通过 `CHAOS_VERSION_TAG` 注入 tag 号；其他一切构建
 > （本地、日常 CI、`workflow_dispatch`、PR）不设该变量，显示「年月日-commit hash」
 > （如 `20261106-8b2eb0ca0c38`，有未提交改动带 `-dirty`），便于排障时定位构建日期与提交。
 
-发布包由 CI 在目标平台构建并做启动冒烟：Linux/Windows 包显式指定
-`GOOS/GOARCH`，macOS 为 universal，Windows 提供 `ChaosetSetup.exe` 与
-`install.bat`，词库数量与架构均在包内容自检中断言。
+发布包由 CI 在目标平台构建并做启动冒烟：macOS 为 universal，Windows 提供
+`ChaosetSetup.exe` 与 `install.bat`，词库数量与架构均在包内容自检中断言；
+命令行工具在所有发行包里都是同一个 Rust 二进制（Windows 仅 `chaosetctl.exe`，
+macOS app 内 `chaosetctl` + `chaoset-import` 两份副本，Linux 包内 `chaosetctl` +
+`chaoset`/`chaoset-cli`/`chaoset-import`/`chaoset-userdict` 软链）。
 
 ## 平台壳
 
@@ -630,7 +637,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
   `log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"'`。
 - Linux：daemon 日志 `~/.local/share/chaoset/chaosetd.log`；引擎 stderr 前缀
   `chaoset-engine:`，可用 `journalctl --user -b | grep chaoset-engine` 查看。
-- 真机排障先跑 `chaosetd -version` / `chaoset-cli -version` 确认构建；
+- 真机排障先跑 `chaosetctl version` 确认构建（daemon 侧 `chaosetd -version` 也可用）；
   daemon 只在启动、连接与失败路径写日志，正常按键不产生磁盘 I/O。
 
 ## 热词导入
@@ -638,7 +645,8 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 ```sh
 # 把 Rime dict.yaml / TSV 热词文件与已有词库合并（自动去声调、ü→v、
 # 词频压缩到 1..99；非法音节行跳过并汇报）
-bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv 热词.yaml
+bin/chaosetctl import -o dict-merged.tsv data/dict_common.tsv 热词.yaml
+# Linux/macOS 发行包可用软链写法：bin/chaoset-import -o ... （macOS app 内副本同名）
 
 # daemon 叠加加载（-dict 可多次）
 bin/chaosetd -dict data/dict_common.tsv -dict dict-merged.tsv
@@ -664,9 +672,9 @@ sh shims/macos/import-dict.sh 别人给的词库.yaml     # 可一次给多个�
 #       重启 daemon 生效 → 复核 IPC；加 --no-current 则只并入新词库
 ```
 
-## 默认路径（internal/appdirs）
+## 默认路径（crates/chaoset-config）
 
-daemon / Go 工具统一走 `internal/appdirs`；Linux 原生引擎的 `daemon.cpp` 按同一 XDG 口径解析路径：
+daemon、CLI 与设置中心统一走 `crates/chaoset-config` 的路径函数（同一份实现）；Linux 原生引擎的 `daemon.cpp` 按同一 XDG 口径解析路径：
 
 | 平台 | 数据目录 | 默认 socket | 默认用户词典 |
 |---|---|---|---|
@@ -674,45 +682,48 @@ daemon / Go 工具统一走 `internal/appdirs`；Linux 原生引擎的 `daemon.c
 | Linux | `$XDG_DATA_HOME/chaoset`（缺省 `~/.local/share/chaoset`） | `$XDG_RUNTIME_DIR/chaoset/chaoset.sock`（无则数据目录） | `userdict.json`（同目录） |
 | Windows | `%LOCALAPPDATA%\Chaoset` | 命名管道 `\\.\pipe\chaoset-<SID>` | `userdict.json`（同目录） |
 
-`chaosetd` 的 `-socket`/`-userdict` 与 `chaoset-userdict` 的 `-socket` 默认值都按平台生成；显式传路径仍优先（`chaosetd -userdict ""` 表示不落盘）。
+`chaosetd` 的 `-socket`/`-userdict` 与 `chaosetctl userdict` 的 `-socket` 默认值都按平台生成；显式传路径仍优先（`chaosetd -userdict ""` 表示不落盘）。
 
-壳/脚本需要同一套路径时调用 `chaoset-userdict -print-paths`（JSON：`data`/`userdict`/`imported_dict`/`socket`），不要各自拼路径。
+壳/脚本需要同一套路径时调用 `chaosetctl userdict -print-paths`（单行 JSON 五键：
+`data`/`userdict`/`imported_dict`/`config`/`socket`），不要各自拼路径。
 
 macOS 的运行组件随输入法 app 安装：`~/Library/Input Methods/ChaosetIME.app/Contents/Resources/`
-内含 `chaosetd`、`chaoset-import`、`dict_common.tsv`；Application Support 只放用户数据、
-当前词库、socket 与日志，不再单独放 daemon 副本。
+内含 `chaosetd`、`chaosetctl`、`chaoset-import`（与 `chaosetctl` 同一 Rust 二进制的副本）、
+`dict_common.tsv` / `dict_common.bin`；Application Support 只放用户数据、当前词库、socket 与日志，
+不再单独放 daemon 副本。
 
 ## 用户词典管理
 
 ```sh
-# 经运行中的 daemon 操作（推荐：清空同时生效于内存与磁盘）
+# 经运行中的 daemon 操作（推荐：清空/删除立即同时生效于内存与磁盘）
 # 默认 socket 按平台用户目录生成；自定义 socket 时加 -socket PATH
-bin/chaoset-userdict stats
-bin/chaoset-userdict clear
-bin/chaoset-userdict export -o userdict-backup.tsv
+bin/chaosetctl userdict stats
+bin/chaosetctl userdict clear
+bin/chaosetctl userdict export -o userdict-backup.tsv
+# Linux/macOS 发行包可用软链写法：bin/chaoset-userdict stats（等价）
 
 # daemon 未运行时直接操作文件（daemon 运行时清空会被其内存态覆盖）
-bin/chaoset-userdict -userdict chaoset-userdict.json stats
+bin/chaosetctl userdict -userdict chaoset-userdict.json stats
 
 # 只导出学到的词组（三列 TSV），回流词库：
-bin/chaoset-userdict export -phrases -o learned.tsv
-bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
+bin/chaosetctl userdict export -phrases -o learned.tsv
+bin/chaosetctl import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 
 # Windows 命名管道（daemon 以 -pipe 启动时）：
-# bin/chaoset-userdict -pipe stats
-# bin/chaoset-userdict -pipe export -o userdict-backup.tsv
+# chaosetctl.exe userdict -pipe stats
+# chaosetctl.exe userdict -pipe export -o userdict-backup.tsv
 ```
 
-> **平台限制**：`chaoset-cli` / `chaoset-userdict` 支持 Unix socket（macOS/Linux）与
-> Windows 命名管道（`-pipe`）；Windows 包里的同名 exe 连接 daemon 时传输需与 daemon
-> 一致（`-pipe`）。daemon 未运行时只能加 `-userdict` 走本地
+> **平台限制**：`chaosetctl client` / `chaosetctl userdict` 支持 Unix socket（macOS/Linux）与
+> Windows 命名管道（`-pipe`）；Windows 包只有 `chaosetctl.exe`，连接 daemon 时传输需与
+> daemon 一致（`-pipe`）。daemon 未运行时只能加 `-userdict` 走本地
 > 文件模式（daemon 运行时会被其内存态覆盖，建议先停 daemon）。
 >
 > 导出经 IPC 分页传输（客户端自动拼接），学习数据再大也不会撞 1 MiB 单帧上限。
 
 ### 文件损坏时的自动恢复
 
-学习数据是增量优化，**不能因为它让输入法起不来**。daemon 与 ibus 引擎启动时
+学习数据是增量优化，**不能因为它让输入法起不来**。daemon 启动时
 用宽松加载：`chaoset-userdict.json` 若无法解析（断电写坏、磁盘满、手工编辑、
 异常写入残留），会把它改名备份为 `chaoset-userdict.json.corrupt-<时间戳>`
 并日志记一条警告，然后以空词典继续启动——不会退出、不需要手工删文件。
@@ -734,10 +745,11 @@ bin/chaoset-import -o dict-merged.tsv data/dict_common.tsv learned.tsv
 提交前本地只跑轻量项（测试/构建重活交给 CI，本地跑会占用 CPU）：
 
 ```sh
-gofmt -l $(git ls-files '*.go')   # 应无输出；make fmt 可自动格式化
+gofmt -l $(git ls-files '*.go')   # 应无输出；make fmt 可自动格式化（剩余 Go = dictgen + checker）
 go build ./...                    # 秒级
-make vet                          # go vet + workflow/版本/GDI/三端一致性静态检查
+make vet                          # go vet + workflow/版本/GDI/三端一致性/Rust CLI 发行面静态检查
 # 单测、race、三端构建与打包由 CI 执行（见 AGENTS.md「CI 门禁与本地验证分工」）
+# 需要本地跑 Rust 单测时：cargo test --manifest-path crates/Cargo.toml
 ```
 
 推送后由 GitHub Actions（`.github/workflows/ci.yml`）自动执行上述重活。

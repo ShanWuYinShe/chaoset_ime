@@ -212,17 +212,25 @@ func checkArchitectureDoc(fsys fs.FS, problems *[]string) {
 		return
 	}
 	text := string(data)
-	for _, want := range []string{"## 2. 方案 A", "## 3. 模块地图", "文件预算", "依赖方向"} {
+	// 发行面 Rust 化后按 P3 文档同步口径锁稳定关键词（不锁整句，避免文档改写即红）。
+	for _, want := range []string{
+		"## 1. 分层与依赖方向",
+		"## 2. 设置与 CLI 单一真源",
+		"## 3. 模块地图",
+		"## 4. 架构检查清单",
+		"## 5. 验证",
+		"文件预算", "依赖方向", "crates/chaoset-config", "chaosetctl",
+	} {
 		if !strings.Contains(text, want) {
-			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少关键小节「%s」", group, archDoc, want))
+			*problems = append(*problems, fmt.Sprintf("%s：%s 缺少关键小节/内容「%s」", group, archDoc, want))
 		}
 	}
 }
 
 // checkPackaging 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包；
-// macOS 运行组件必须随 ChaosetIME.app 安装。
+// macOS 运行组件必须随 ChaosetIME.app 安装；发行面 CLI 由 Rust 单二进制承载。
 func checkPackaging(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip", "build-settings", "chaoset-settings", "dict.bin")
+	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip", "build-settings", "chaoset-settings", "dict.bin", "--bin chaosetctl")
 	checkContains(fsys, problems, groupPackaging, installSh, "chaoset-setup", "chaoset-settings", "dict.bin")
 	checkContains(fsys, problems, groupPackaging, archScript, "chaoset-setup", "chaoset-settings", "dict.bin")
 	checkContains(fsys, problems, groupPackaging, releaseYML, "chaoset-setup", "chaoset-macos.zip", "chaoset-settings")
@@ -231,6 +239,11 @@ func checkPackaging(fsys fs.FS, problems *[]string) {
 	// macOS：运行组件与统一设置中心（含其依赖的 chaosetctl）必须随 app 安装。
 	checkContains(fsys, problems, groupPackaging, macBuild, "$APP/Contents/Resources/", "dict_common.tsv", "dict_common.bin", "chaoset-settings", "chaosetctl")
 	checkContains(fsys, problems, groupPackaging, macSetup, `installedResource("chaosetd")`, `embeddedResource("chaoset-import")`, "installSetupApp")
+	// 发行面 CLI：三端包内都是 Rust chaosetctl（macOS app 另出 chaoset-import 副本）。
+	checkContains(fsys, problems, groupPackaging, macBuild, "build/chaosetctl")
+	checkContains(fsys, problems, groupPackaging, winPackageMsvc, "chaosetctl.exe")
+	checkContains(fsys, problems, groupPackaging, winInstaller, "chaosetctl.exe")
+	checkContains(fsys, problems, groupPackaging, linuxArchPkg, "chaosetctl")
 	// 发布词库二进制化：TSV 仍是仓库源，打包期编译 CSDB；daemon 优先加载缓存。
 	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/dict_binary.rs")
 	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/bin/dictc.rs")
@@ -239,7 +252,8 @@ func checkPackaging(fsys fs.FS, problems *[]string) {
 }
 
 // checkCICoverage CI 覆盖不退化：按键路由/联想 E2E 回归测试必须存在且被 CI 调用；
-// 日常 CI 必须跑真实打包链（不能只靠打 tag 时的 release 冒烟）。
+// 日常 CI 必须跑真实打包链（不能只靠打 tag 时的 release 冒烟）；Rust 发行面后
+// Go 工具链只在 lint/test/race 出现，设置存储单测改跑 chaoset-config。
 func checkCICoverage(fsys fs.FS, problems *[]string) {
 	checkExists(fsys, problems, groupCICoverage, "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, problems, groupCICoverage, ciYML, "key_routing")
@@ -259,18 +273,44 @@ func checkCICoverage(fsys fs.FS, problems *[]string) {
 	// 启动器冒烟：Windows 交叉编译产物必须内嵌设置中心文件名；Linux 启动器
 	// 编译/execv 冒烟步骤必须在 CI 里存在。
 	checkContains(fsys, problems, groupCICoverage, ciYML, "设置入口启动器编译与冒烟")
+	// Rust 发行面：Go 只在 lint/test/race 安装；设置存储单测跑 chaoset-config
+	// （macOS defaults 与 Windows 注册表真跑），macOS universal 自检包含 chaosetctl。
+	if data, err := fs.ReadFile(fsys, ciYML); err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", groupCICoverage, ciYML, err))
+	} else if n := strings.Count(string(data), "actions/setup-go"); n != 3 {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 中 actions/setup-go 出现 %d 次，应只保留 lint/test/race 3 处（其余 job 装 Go 会掩盖 Rust 发行面）",
+			groupCICoverage, ciYML, n))
+	}
+	checkContains(fsys, problems, groupCICoverage, ciYML,
+		"cargo test --manifest-path crates/Cargo.toml -p chaoset-config -- --nocapture",
+		"cargo test --manifest-path crates/Cargo.toml -p chaoset-config windows_store -- --nocapture",
+		"设置存储单测（macOS defaults）",
+		"Windows 设置存储单测（注册表往返）",
+		"build/chaosetctl")
+	checkExcludes(fsys, problems, groupCICoverage, ciYML,
+		"go test ./internal/settings", "go test ./internal/tools",
+		"go test ./cmd/chaoset")
+	// release：Go 只在 test job（workflow 结构校验/单测），package-* 全走 Rust 打包链。
+	if data, err := fs.ReadFile(fsys, releaseYML); err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", groupCICoverage, releaseYML, err))
+	} else if n := strings.Count(string(data), "actions/setup-go"); n != 1 {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 中 actions/setup-go 出现 %d 次，应只保留 test job 1 处", groupCICoverage, releaseYML, n))
+	}
+	checkExcludes(fsys, problems, groupCICoverage, releaseYML, "构建 Go 工具")
 	checkContains(fsys, problems, groupCICoverage, macKeyTest, "expectedChecks")
 	checkKeyRoutingCount(fsys, problems)
 }
 
 // checkDocParity ui-parity 关键差异行必须保留（防止文档被删后失去对照基准）；
 // 历史阶段记录已移入 CHANGELOG，README 不得残留已过期的现状描述。
+// 发行面 Rust 化后只锁稳定关键词：阶段编号等会被 P3 文档同步重写的串不再锁死。
 func checkDocParity(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupDocParity, uiParityDoc,
 		"学习数据", "词库导入", "Slint", "chaoset-settings",
 		"Windows per-monitor DPI", "双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
-	checkContains(fsys, problems, groupDocParity, changelogDoc, "阶段 54",
-		"Linux 设置窗补「词库导入」GUI")
+	checkContains(fsys, problems, groupDocParity, changelogDoc, "## 未发布", "chaosetctl")
 	checkExcludes(fsys, problems, groupDocParity, readmeDoc,
 		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
 }

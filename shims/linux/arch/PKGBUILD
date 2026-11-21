@@ -10,16 +10,19 @@ license=('MIT')
 # 设置界面唯一实现是 Slint 统一设置中心 chaoset-settings（不再有 GTK3 设置窗），
 # 因此运行时/构建时都不需要 gtk3。
 depends=('ibus' 'libxkbcommon' 'libxkbcommon-x11' 'fontconfig')
-makedepends=('go' 'rust' 'gcc' 'pkgconf' 'ibus')
+# 发行面已 100% Rust（CLI/daemon/设置中心/词库导入）：构建不再需要 Go。
+makedepends=('rust' 'gcc' 'pkgconf' 'ibus')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 build() {
     cd "chaoset_ime-$pkgver"
-    export CGO_ENABLED=0
     mkdir -p bin
-    go build -ldflags "-s -w" -o bin/chaosetctl ./cmd/chaosetctl
+    # 全能 CLI 是 Rust 单二进制（crates/chaosetctl，argv[0] multicall）：
+    # 发行名 chaoset/chaoset-cli/chaoset-import/chaoset-userdict 由下面的软链提供。
+    cargo build --release --bin chaosetctl --manifest-path crates/Cargo.toml
+    install -Dm755 crates/target/release/chaosetctl bin/chaosetctl
     # daemon 唯一实现是 Rust（crates/chaosetd）。
     cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
     install -Dm755 crates/target/release/chaosetd bin/chaosetd

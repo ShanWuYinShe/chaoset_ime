@@ -38,15 +38,18 @@ REM 设置项的读写走统一 CLI（方案 A 冷路径）：缺失时设置中
 if not exist "chaosetctl.exe" ( echo WARN: chaosetctl.exe missing; settings center cannot read or write settings )
 
 echo ==^> Refreshing user dictionary (preserve imported words)
-REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps
-REM its imported words while the packaged baseline is refreshed; it creates the
-REM directory and backs up the old file. If this fails the daemon still seeds
-REM the dictionary on first use.
+REM Primary path: Rust CLI chaosetctl.exe (import subcommand) merges the packaged
+REM baseline into the existing %LOCALAPPDATA%\Chaoset\dict.tsv so imported words
+REM are kept; it creates the directory and backs up the old file. If this fails
+REM the daemon still seeds the dictionary on first use.
 if exist "%~dp0chaosetctl.exe" (
   "%~dp0chaosetctl.exe" import -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
 ) else if exist "%~dp0chaoset.exe" (
+  REM Legacy fallback: old Go-layout package (pre-Rust CLI). Not shipped anymore;
+  REM kept only so an old portable folder upgraded in place still refreshes words.
   "%~dp0chaoset.exe" import -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
 ) else if exist "%~dp0chaoset-import.exe" (
+  REM Legacy fallback: old Go importer binary (pre-Rust CLI), only for old layouts.
   "%~dp0chaoset-import.exe" -o "%LOCALAPPDATA%\Chaoset\dict.tsv" -seed "%DICT%" -backup "%DICT%" >nul 2>&1
 )
 

@@ -51,7 +51,9 @@ setup-container.sh  可复现的本地容器验证环境
 - 学习标记 `*`：ibus LookupTable 没有独立装饰层，不追加到候选文本；学习加权
   仍照常影响排序。
 - 候选右键删除：ibus 面板不提供上下文菜单回调，**不适用**；按词删除用
-  `chaoset-userdict delete`，整体清空用设置中心或 `chaoset-userdict clear`。
+  `chaosetctl userdict delete`，整体清空用设置中心或 `chaosetctl userdict clear`
+  （安装包内 `chaoset`/`chaoset-cli`/`chaoset-import`/`chaoset-userdict` 都是同一
+  `chaosetctl` 二进制的软链）。
 - 候选栏设置齿轮：Linux 不自绘候选窗/控制区，候选表与预编辑都由 ibus 面板
   渲染，壳拿不到齿轮的绘制与命中矩形（ibus 面板也没有「设置」按钮回调），
   因此**齿轮不适用**；设置入口是 ibus-setup 的「首选项」或
@@ -72,17 +74,17 @@ setup-container.sh  可复现的本地容器验证环境
   设置中心，参数原样转交；不含 UI、不链接 GTK。找不到时在 stderr 报
   「未找到统一设置中心（chaoset-settings）」并以 1 退出，**不回退任何旧设置窗**。
 - 配置写入 `$XDG_CONFIG_HOME/chaoset/config.json`（冷路径经
-  `chaosetctl config get/set`，schema/默认值/校验的唯一真源是 Go
-  `internal/settings`）；引擎每次进入联想前重读 `associate`，保存即生效。
+  `chaosetctl config get/set`，schema/默认值/校验/持久化的唯一真源是 Rust
+  `crates/chaoset-config`）；引擎每次进入联想前重读 `associate`，保存即生效。
   手工编辑后建议 `jq .` 校验。
 - 外观主题：设置中心「输入」页「外观主题」提供「跟随系统 / 浅色 / 深色」
   （config.json 键 `theme`，取值 `system`/`light`/`dark`，缺省 `system`）。
   该设置作用于设置中心自身的浅/深外观；候选窗/预编辑由 ibus 面板渲染，颜色
   完全由面板/桌面主题决定，壳不设置候选/预编辑颜色，也没有自定义颜色资源。
 - 学习数据：统计/清空/导出都在设置中心（调用 `chaosetctl userdict`）。
-  清空直接改用户词典文件；daemon 在内存里仍持有旧数据、下一次落盘会写回，
-  因此清空前应先退出 daemon（`pkill chaosetd`，下一次按键会自动拉起），
-  该顺序限制见「已知限制」。
+  清空/按词删除经 IPC 由 daemon 在响应前同步落盘（内存与磁盘一次生效），
+  **不要先停 daemon**；只有显式加 `-userdict FILE` 的本地模式才直接在 daemon
+  之外改文件（daemon 运行时会被其内存态覆盖）。
 - 词库导入：设置中心选择 Rime dict.yaml / CC-CEDICT txt / TSV，调用
   `chaosetctl import -o <用户导入词库> -backup` 合并（备份 + 原子替换）。
   daemon 启动时以 `-imported-dict` 加载用户导入词库；导入后重启 daemon
@@ -92,6 +94,11 @@ setup-container.sh  可复现的本地容器验证环境
   都必须随包安装，否则「首选项」只会报错。
 
 ## 安装
+
+发行包（tar.gz / deb / Arch）的 `bin/` 内容一致：真实文件 `chaosetctl`、`chaosetd`、
+`chaoset-settings`、`chaoset-engine`；`chaoset` / `chaoset-cli` / `chaoset-import` /
+`chaoset-userdict` 是指向 `chaosetctl` 的软链（单二进制 multicall）。整条构建/打包链
+不依赖 Go 构建（词库生成 `chaoset-dictgen` 只在仓库构建期使用）。
 
 ### Debian / Ubuntu / Mint
 
@@ -167,7 +174,7 @@ daemon 以 `-imported-dict` 加载；文件不存在时忽略。
   且不链接 GTK（设置界面唯一实现在 Slint 设置中心）。
 
 ```sh
-./shims/linux/test-ci.sh    # 需要 dbus/ibus/Xvfb/Go
+./shims/linux/test-ci.sh    # 需要 dbus/ibus/Xvfb（Rust 与 C++ 构建，不再需要 Go）
 ```
 
 ## 已知限制
@@ -179,8 +186,8 @@ daemon 以 `-imported-dict` 加载；文件不存在时忽略。
   FocusIn 重置 Shift 跟踪。
 - 候选右键删除不支持（见上）；学习标记 `*` 不显示。
 - 设置中心冷路径读写设置（`chaosetctl config get/set`）：文件缺失/为空按缺省值，
-  JSON 损坏时报错而不是静默覆盖；保存只改对应键、保留文件里其它键（Go
-  `internal/settings` 保证）。
-- 设置中心不暂停 daemon：清空学习数据或导入词库后，需要按「设置与词库」里的
-  手动步骤重启 daemon，否则运行中的 daemon 内存态会覆盖/延迟生效。
+  JSON 损坏时报错而不是静默覆盖；保存只改对应键、保留文件里其它键（Rust
+  `crates/chaoset-config` 保证）。
+- 设置中心不暂停 daemon：词库导入后由设置中心自动重启 daemon 生效；清空学习数据
+  经 IPC 立即落盘、无需停 daemon。
 - 光标跟随依赖桌面/ibus 面板实现，虚拟终端、Wayland 合成器等环境可能表现不同。

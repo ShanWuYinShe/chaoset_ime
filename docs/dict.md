@@ -3,6 +3,11 @@
 内置词库 `data/dict_common.tsv` 是 `cmd/chaoset-dictgen` 的生成产物,禁止手工编辑;
 本文记录规模基准、再生成流程、手工补充词表规则、校验分层与相关测试。
 
+工具边界：**构建期词库生成**仍是 Go `cmd/chaoset-dictgen`（`make build-tools`）；
+**运行期词库导入/合并与用户词典离线操作**实现于 Rust `crates/chaoset-tools`，CLI 入口是
+`chaosetctl import` / `chaosetctl userdict`（macOS 随包副本用 `chaoset-import` /
+`chaoset-userdict` 文件名，见 `crates/chaosetctl` 的 multicall）。Go 不再提供导入/用户词典工具。
+
 ## 内置词库与再生成
 
 仓库自带 `data/dict_common.tsv`（内置常用词库），是 daemon 与测试台的默认词库；
@@ -19,8 +24,8 @@
 
 **只收简体**：内置词库只收简体字、常用简体字词组；繁体、异体、粤语/方言用字
 **不内置**。需要时通过额外词库加载——daemon `-dict` 可重复叠加多个 TSV，
-或设置窗「词库导入」/`chaoset-import` 把自备词库合并进用户词库；额外词库
-在运行时合并，不写进内置产物。
+或设置窗「词库导入」/`chaosetctl import`（macOS 随包副本 `chaoset-import`）把自备词库
+合并进用户词库；额外词库在运行时合并，不写进内置产物。
 
 **词表（常用性门槛）**：
 

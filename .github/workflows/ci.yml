@@ -138,11 +138,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
       # 这套 DBus 端到端此前**只在人工容器里跑过**，CI 从未执行
       # （2026-10-26 审查指出）。现在放进 CI。
       #
@@ -189,7 +184,7 @@ jobs:
         run: |
           make package-linux
           tar -tzf dist/chaoset-linux-x86_64.tar.gz > /tmp/pkg-list.txt
-          for f in setup/chaoset-setup bin/chaoset-settings data/dict.tsv data/dict.bin chaoset-settings.desktop; do
+          for f in setup/chaoset-setup bin/chaosetctl bin/chaoset-settings data/dict.tsv data/dict.bin chaoset-settings.desktop; do
             grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
           done
           # Slint 设置中心的运行时动态库必须齐全（缺库时用户点设置直接打不开）。
@@ -231,11 +226,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
       # 直接跑 `make package-macos`（与 release 同一条打包链）：构建 universal
       # app + 全部随包工具 universal 自检 + zip。
       # 此前日常 CI 只跑 build.sh，打包脚本/资源清单坏了要到打 tag 才发现
@@ -272,8 +262,10 @@ jobs:
         run: |
           for b in shims/macos/build/chaosetd shims/macos/build/tis \
                    shims/macos/build/smoke shims/macos/build/chaoset-import \
+                   shims/macos/build/chaosetctl \
                    shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetd \
-                   shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-import; do
+                   shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-import \
+                   shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetctl; do
             lipo -info "$b" | grep -q 'x86_64 arm64\|arm64 x86_64' \
               || { echo "非 universal: $b"; lipo -info "$b"; exit 1; }
           done
@@ -299,7 +291,7 @@ jobs:
       # macOS 设置存储（UserDefaults 经 /usr/bin/defaults）的解析/写入单测：
       # 注入执行器，不碰真实用户偏好；此前该 store 从未被任何测试执行过。
       - name: 设置存储单测（macOS defaults）
-        run: go test ./internal/settings -count=1
+        run: cargo test --manifest-path crates/Cargo.toml -p chaoset-config -- --nocapture
 
   # ── 6. Windows 壳：原生 MSVC 编译 + 安装包（windows-latest）─────────
   windows-build:
@@ -308,11 +300,6 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v7
-
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
 
       - name: 配置 MSVC (x64) 编译环境
         uses: ilammy/msvc-dev-cmd@v1
@@ -335,11 +322,11 @@ jobs:
           chmod +x shims/windows/package_msvc.sh
           ./shims/windows/package_msvc.sh
 
-  # ── 7. Windows 设置存储单测（2026-11-08 审计 GO-04）────────────────
-  # 为什么需要：internal/settings 是设置项单一真源，但 Windows 注册表 store
-  # （DWORD/REG_SZ 读写、类型损坏回退）此前从未被任何测试/CI 执行过——
-  # windows-build job 在 ubuntu 上只做交叉编译，跑不了 Windows 二进制。
-  # 这里用一次性 windows runner 真跑 HKCU 往返测试（键值测试后恢复）。
+  # ── 7. Windows 设置存储单测（Rust chaoset-config）──────────────────
+  # crates/chaoset-config 的 WindowsStore 是设置项持久化实现，注册表 store
+  # （DWORD/REG_SZ 读写、类型损坏回退）必须在真实 Windows 上执行——
+  # 这里用一次性 windows runner 真跑 HKCU 往返测试（测试用独立 scratch 子键，
+  # 不碰真实 Software\\Chaoset，结束后删除并断言幂等）。
   settings-windows:
     name: Windows 设置存储单测（注册表往返）
     runs-on: windows-latest
@@ -347,10 +334,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
       - name: 注册表 store 往返测试
-        run: go test ./internal/settings -count=1 -v
+        run: cargo test --manifest-path crates/Cargo.toml -p chaoset-config windows_store -- --nocapture

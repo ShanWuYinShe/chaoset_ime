@@ -162,7 +162,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   markW = 字符宽 + pt(2)；ibus 面板没有独立装饰层，不追加 *（学习加权仍生效）。
 - 学习数据按词删除：macOS/Windows 候选行右键 →「删除该词」，经 IPC userDelete
   删除本机学习记录，不上屏、不结束组词；Linux ibus 面板没有右键菜单回调，
-  替代入口为 chaoset-userdict delete。
+  替代入口为 `chaosetctl userdict delete`（安装包内软链 `chaoset-userdict` 等价）。
 - 右键删除只删学习记录，不删内置词库词条；删除 Words/Phrases（含整句式
   Segs 记录），上下文 bigram 刻意保留。重复删除幂等，无记录时提示
   「未找到该词的学习记录」；**删除成功静默**（只刷新候选窗，不弹成功提示，用户反馈成功
@@ -194,7 +194,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 关闭联想即时性 | 设置中心写入后，候选窗**下一次显示**时读取并收起联想 | 同左；候选窗自身保留 `Chaoset.AssociateChanged` 处理，齿轮快捷切换等进程内路径仍然即时 | 同左 | 设置中心是独立进程，不再有跨进程通知链（旧原生设置窗时代遗留）；文档口径为「下一次显示生效」 |
 | 学习数据管理 | 统一设置中心：统计/清空（二次确认）/导出，经同目录 `chaosetctl userdict` | 同左 | 同左 | 数据都在 daemon；设置中心不直接读写用户词典文件 |
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端统一两档：`system`（全局共享，默认）/ `process`（每进程独立）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process |
-| 词库导入 | 统一设置中心：选择文件 → `chaosetctl import -o … -backup` → 自动重启 daemon | 同左 | 同左 | 合并/备份/原子替换都在 Go `chaoset-import`；mac 安装器 Setup.app 仍保留导入面板 |
+| 词库导入 | 统一设置中心：选择文件 → `chaosetctl import -o … -backup` → 自动重启 daemon | 同左 | 同左 | 合并/备份/原子替换唯一实现是 Rust `crates/chaoset-tools`（CLI 入口 `chaosetctl import`，macOS app 内副本 `chaoset-import` 是同一 Rust 二进制）；mac 安装器 Setup.app 仍保留导入面板 |
 | 鼠标点选候选 | 候选窗点击（按下记录、抬起上屏） | 同左（onLButtonDown 记录 / onLButtonUp 上屏） | CandidateClicked（ibus 面板决定点击语义） | 与数字键同语义；左键动作统一 mouseup（2026-11-06 用户要求） |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
 | 无障碍 | VoiceOver 候选文字/窗口级 | UIA 窗口级 provider | 由 ibus/桌面读屏决定 | Windows 候选子项未实现 |
@@ -285,7 +285,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   `chaoset-settings`。
 
 设置中心的冷路径读写统一走同目录 `chaosetctl`（multicall：config/userdict/import），
-与 daemon 的设置单一真源（Go `internal/settings`）保持一致；找不到设置中心或启动
+与 daemon 共用的设置单一真源（Rust `crates/chaoset-config`）保持一致；找不到设置中心或启动
 失败时只明确报错，**不回退**旧原生窗口。随包位置：macOS app `Contents/Resources/`、
 Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接失败。
 
@@ -425,7 +425,12 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
   浅/深各 13 色；故意改字号/色值会 FAIL。E 段（源码级，issue#2）：折叠区双箭头
   可用性/命中区分开/预选高亮跟随。
 - shims/macos/tests/equivalence.sh：图标 keycap 契约、universal 架构、TIS 图标键。
-- tools/checkuiparity：三端设置窗文案/单例、设置窗契约（640×560pt、页脚版本号
+- tools/checkuiparity：三端设置窗文案/单例、「设置核心（Rust 单一真源）」
+  （`crates/chaoset-config` 是 schema/默认值/持久化唯一实现，daemon 与 CLI 共用，
+  三端存储键不变）、「Rust CLI 发行面」（构建/打包链只从 `crates/chaosetctl` 产出 CLI；
+  Linux 包 `chaosetctl` + 四个软链、macOS app `chaosetctl` + `chaoset-import` 两份副本、
+  Windows 包 `chaosetctl.exe`；安装/升级用 `chaosetctl import -seed -backup`；已删的 Go
+  运行期实现不得回归），设置窗契约（640×560pt、页脚版本号
   所有页、三端卡片标识、关于页正文）、**设置窗视觉令牌（21 个令牌逐值三端比对 +
   几何令牌 + 禁止色）**、学习数据 GUI、词库导入安全、齿轮 mouseUp
   （按下不得打开设置）、托盘生命周期（不写登录 Run 项、--mode 懒启动、首条模式

@@ -41,7 +41,7 @@ IPC 是纯数据协议：daemon 只返回协议 DTO（Rust 客户端侧为
 用 ibus 原生 LookupTable/Preedit 呈现；daemon 不提供贴图渲染。
 
 视觉参数（几何 + 浅/深配色）的基准期望值内联在 `shims/macos/tests/visual-parity.sh`（
-**无运行时消费者**）；mac/Windows 两份壳实现按它手写。Go↔macOS 的布局常量
+**无运行时消费者**）；mac/Windows 两份壳实现按它手写。macOS 布局常量
 （5 项）+ macOS 参考常量（含 divider）+ 浅/深各 13 色由
 `shims/macos/tests/visual-parity.sh` 逐项机器断言；Windows 侧目前只有 pt
 口径约束与交叉编译/核心行为测试，无运行时视觉断言（见 docs/ui-parity.md
@@ -57,8 +57,10 @@ daemon 也在、却没有候选」。AppContainer 宿主里壳不发起进程，
 
 ## 客户端（Rust `crates/chaoset-ipc`）
 
-daemon 与 CLI/工具共用的唯一 Rust 客户端是 `crates/chaoset-ipc`（daemon 自身的帧读写也复用
-同一份 `protocol` 实现，不再有第二份 Request/Response/上限常量）；入口 `client::Client`：
+daemon 与 CLI/工具共用的唯一客户端是 `crates/chaoset-ipc`（daemon 自身的帧读写也复用
+同一份 `protocol` 实现，不再有第二份 Request/Response/上限常量）；入口 `client::Client`。
+Go 客户端（原 `ipc/` 包）已随 Go 侧实现退役删除，仓库不再保留第二份客户端实现；
+三端 C++ 壳仍用 `shims/common/ipc/core.cpp` 自己的 `Session` 封装（不属于本 crate）：
 
 - 传输：Unix socket（macOS/Linux，`Client::connect_unix(path)` 可注入路径，默认路径由
   `chaoset_config::paths::socket_path()` 给出）与 Windows 命名管道

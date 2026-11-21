@@ -224,48 +224,58 @@ func TestCheckShellVarEscaping(t *testing.T) {
 	}
 }
 
-// TestCheckImportSafety 用真实两端源码验证导入安全契约，并做一次变异：
-// 去掉 Windows 的原子替换标志应被捕获。
+// TestCheckImportSafety 用真实两端源码 + Rust 导入工具验证导入安全契约，并做两次变异：
+// 设置中心或 Rust 导入实现去掉 -backup（备份语义不能丢）都应被捕获。
 func TestCheckImportSafety(t *testing.T) {
 	macText := string(readRepo(t, macSetup))
 	winText := string(readRepo(t, winShell))
 	bridgeText := string(readRepo(t, slintBridge))
 	eventsText := string(readRepo(t, slintEvents))
 	importText := string(readRepo(t, chaosetImport))
-	fsys := fstest.MapFS{
-		macSetup:      &fstest.MapFile{Data: []byte(macText)},
-		winShell:      &fstest.MapFile{Data: []byte(winText)},
-		slintBridge:   &fstest.MapFile{Data: []byte(bridgeText)},
-		slintEvents:   &fstest.MapFile{Data: []byte(eventsText)},
-		chaosetImport: &fstest.MapFile{Data: []byte(importText)},
+	fsText := string(readRepo(t, rustImportFs))
+	base := func(bridge, importSrc string) fstest.MapFS {
+		return fstest.MapFS{
+			macSetup:      &fstest.MapFile{Data: []byte(macText)},
+			winShell:      &fstest.MapFile{Data: []byte(winText)},
+			slintBridge:   &fstest.MapFile{Data: []byte(bridge)},
+			slintEvents:   &fstest.MapFile{Data: []byte(eventsText)},
+			chaosetImport: &fstest.MapFile{Data: []byte(importSrc)},
+			rustImportFs:  &fstest.MapFile{Data: []byte(fsText)},
+		}
 	}
 	var problems []string
-	checkImportSafety(fsys, &problems)
+	checkImportSafety(base(bridgeText, importText), &problems)
 	if len(problems) != 0 {
 		t.Fatalf("真实导入实现未通过安全契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
-	// 设置中心导入调用去掉 -backup（备份语义不能丢）应被捕获。
+	// 变异 1：设置中心导入调用去掉 -backup（备份语义不能丢）应被捕获。
 	mutated := strings.Replace(bridgeText, `"-backup"`, `"-nobackup"`, 1)
 	if mutated == bridgeText {
 		t.Fatal("变异未生效：bridge.rs 里找不到 -backup")
 	}
 	problems = nil
-	checkImportSafety(fstest.MapFS{
-		macSetup:      &fstest.MapFile{Data: []byte(macText)},
-		winShell:      &fstest.MapFile{Data: []byte(winText)},
-		slintBridge:   &fstest.MapFile{Data: []byte(mutated)},
-		slintEvents:   &fstest.MapFile{Data: []byte(eventsText)},
-		chaosetImport: &fstest.MapFile{Data: []byte(importText)},
-	}, &problems)
+	checkImportSafety(base(mutated, importText), &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
 		t.Fatalf("设置中心去掉 -backup 应被捕获，实际：%v", problems)
+	}
+	// 变异 2：Rust 导入实现（dictimport.rs）去掉 -backup 应被捕获。
+	// 用 ReplaceAll：usage 文案与参数解析/单测里都有 -backup，只改一处不算丢能力。
+	mutatedImport := strings.ReplaceAll(importText, "-backup", "-nobackup")
+	if mutatedImport == importText {
+		t.Fatal("变异未生效：dictimport.rs 里找不到 -backup")
+	}
+	problems = nil
+	checkImportSafety(base(bridgeText, mutatedImport), &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
+		t.Fatalf("Rust 导入实现去掉 -backup 应被捕获，实际：%v", problems)
 	}
 }
 
 // TestCheckWindowsVersionInfo 用真实安装器/模板/构建脚本验证版本信息契约，
 // 并做变异：删掉安装器的 VIProductVersion 或写死版本号都应被捕获。
 func TestCheckWindowsVersionInfo(t *testing.T) {
-	paths := []string{winInstaller, winResource, makefile, winBuild, releaseYML, ciYML, winShell, winInstallBat}
+	paths := []string{winInstaller, winResource, makefile, winBuild, releaseYML, ciYML, winShell, winInstallBat,
+		winPackageMsvc, winVersionCheck, rustCtlBuildScript, rustDaemonBuildScript}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
 		data := readRepo(t, p)
@@ -543,6 +553,30 @@ func TestCheckDllUnloadSafety(t *testing.T) {
 	checkDllUnloadSafety(fsys(mutated), &problems)
 	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "removeCrashHandler") {
 		t.Fatalf("删掉卸载时 removeCrashHandler 应被捕获，实际：%v", problems)
+	}
+}
+
+// TestCheckRustCLIShipping 用真实构建/打包链验证「发行面 Rust 化」契约，并做变异：
+// Makefile 恢复一条 go build ./cmd/chaosetctl 必须被捕获（回退双实现）。
+func TestCheckRustCLIShipping(t *testing.T) {
+	paths := []string{makefile, macBuild, winPackageMsvc, linuxArchPkg, winInstaller,
+		winInstallBat, winVersionCheck, rustCtlBuildScript, rustDaemonBuildScript}
+	fsys := fstest.MapFS{}
+	for _, p := range paths {
+		fsys[p] = &fstest.MapFile{Data: readRepo(t, p)}
+	}
+	var problems []string
+	checkRustCLIShipping(fsys, &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实发行链未通过 Rust CLI 契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+	// 变异：Makefile 回退成 go build 已删除的 ctl。
+	mutated := string(fsys[makefile].Data) + "\n\tgo build -o bin/chaosetctl ./cmd/chaosetctl\n"
+	fsys[makefile] = &fstest.MapFile{Data: []byte(mutated)}
+	problems = nil
+	checkRustCLIShipping(fsys, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "cmd/chaosetctl") {
+		t.Fatalf("Makefile 回退 go build ctl 应被捕获，实际：%v", problems)
 	}
 }
 

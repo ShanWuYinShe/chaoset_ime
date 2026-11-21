@@ -115,9 +115,10 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, rustUserdict,
 		"pub fn delete_word", "phrases")
 	checkContains(fsys, problems, group, ipcServer, "\"userDelete\" =>", "delete_word")
-	checkContains(fsys, problems, group, ipcClient, "func (c *Client) UserDelete")
+	// Rust IPC 客户端与 CLI 是删除链路实现：client.user_delete → userdict 子命令文案。
+	checkContains(fsys, problems, group, ipcClient, "pub fn user_delete", `"userDelete"`)
 	checkContains(fsys, problems, group, userdictCLI,
-		"case \"delete\":", "DeleteWord", "UserDelete", "已删除「%s」的学习记录")
+		`"delete"`, "user_delete", "已删除「{word}」的学习记录")
 	// 三端文案逐字一致：菜单文案在两端壳内；失败提示保留，**删除成功静默**
 	// （用户反馈「已删除该词」成功提示多余）：只刷新候选窗，不弹 toast。
 	for _, text := range []string{"未找到该词的学习记录", "删除失败：daemon 不可达"} {
@@ -128,10 +129,10 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 	checkExcludes(fsys, problems, group, winShell, "已删除该词")
 	// Linux：ibus 面板不适用，必须记录理由与替代入口，禁止假装已支持。
 	checkContains(fsys, problems, group, linuxReadme,
-		"右键删除", "不适用", "chaoset-userdict delete")
+		"右键删除", "不适用", "userdict delete")
 	// 文档：语义/入口/文案必须有对照，防止文档悄悄变成「三端都支持」。
 	checkContains(fsys, problems, group, uiParityDoc,
-		"学习数据按词删除", "右键删除", "删除该词", "chaoset-userdict delete")
+		"学习数据按词删除", "右键删除", "删除该词", "userdict delete")
 
 	// ---- issue #1（2026-11-12）：右键菜单 owner 安全契约 ----
 	// 根因：对 WS_EX_NOACTIVATE 候选窗调用 SetForegroundWindow 会程序化激活它

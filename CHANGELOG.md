@@ -4,6 +4,16 @@
 
 ## 未发布
 
+- **重构(发行面)：命令行/工具链 100% Rust，单二进制 `chaosetctl` 取代全部 Go 小工具**：
+  - 发行面不再有 Go 可执行文件：`config`（设置读写）/ `import`（词库导入合并）/ `userdict`（用户词典统计/清空/导出/删除）/ `client`（终端测试台）/ `version` 全部由 `crates/chaosetctl` 一个二进制提供；Linux 包 `bin/` 用 `chaoset`/`chaoset-cli`/`chaoset-import`/`chaoset-userdict` 四个软链复用同一文件，macOS app 放 `chaosetctl` 与 `chaoset-import` 两份同源副本（同一 cargo 产物 cp 两份、各自独立签名），Windows 只有 `chaosetctl.exe`——不再安装 `chaoset-cli.exe`/`chaoset-import.exe`/`chaoset-userdict.exe`/`chaoset-settingsctl.exe`；
+  - 体积与启动（本机实测，单架构）：同一 CLI 4,972,424 B（Go）→ 1,201,632 B（Rust，约 -76%）；`version` 冷启动 200 次中位数 3.61ms → 2.93ms（含进程创建开销），设置中心每个控件的冷路径调用同步变轻；
+  - 逻辑收敛：设置 schema/默认值/持久化唯一实现是 `crates/chaoset-config`（daemon 与 CLI 共用；macOS UserDefaults 域、Windows HKCU 键、Linux config.json 键全部保持不变）；IPC 协议与客户端唯一实现是 `crates/chaoset-ipc`（19 方法、1 MiB 上限、导出分页与关连接规则不变）；词库导入/合并/备份与用户词典离线读写唯一实现是 `crates/chaoset-tools`；
+  - 发行形态：macOS app `Contents/Resources/` 内是 `chaosetd`、`chaosetctl`、`chaoset-import`（副本）与 `dict_common.tsv`/`dict_common.bin`；Linux deb/tar/Arch 包 `bin/` 为 `chaosetctl` + 四个软链 + `chaosetd`/`chaoset-settings`/`chaoset-engine`；Windows ZIP 为 `chaosetctl.exe`/`chaosetd.exe`/`chaoset-settings.exe`/`chaoset-dictc.exe`/`chaoset-ui.exe` + DLL/词库/安装脚本；
+  - Windows 每个发行 exe（`chaosetctl.exe`/`chaosetd.exe`/`chaoset-settings.exe` 以及 `ChaosetSetup.exe`、UI 宿主、DLL）都带图标与 `VS_VERSION_INFO`：属性页可见产品名/公司/版权/显示版本与 4 段数字版本；
+  - 兼容：`chaosetctl config get/set` 的 JSON 输出、退出码与错误前缀与旧 `chaoset-settingsctl` 一致，`chaoset-settingsctl` 作为 argv[0] 兼容别名保留；macOS 安装器/脚本可继续调 `chaoset-import` 文件名；旧 Go 工具名不再随包，文档与脚本已切换到 `chaosetctl`；
+  - 构建链：`make build` 只构建 Rust CLI + daemon + dictc（Go-free），`make build-tools` 构建词库生成器 `chaoset-dictgen`（Go 只保留构建期词库生成与静态检查）；
+  - 验证：`cargo test --manifest-path crates/Cargo.toml` 205 passed / 0 failed；发行面/设置核心/文档对照由 `make check-uiparity` 静态断言，三端打包产物（Linux 软链、Windows PE 资源与包内容、macOS app 资源）自检由 CI 执行。
+
 - **修复(用户词典)：daemon 导出/删除/清空与文档契约对齐**：
   - 导出 TSV 拼音列改用学习记录的音节（此前取 `segs`，正常选词时恒为空 → 导出文件再导入会整行丢失），时间列改为 UTC RFC3339（此前是裸 Unix 秒）；`-phrases` 恢复「无段头、三列」，可直接作为导入输入；
   - 按词删除改为同时匹配词与音节表、未命中再按词删全部读音，**保留上下文（bigram）统计**（此前会误删且删不到也标脏）；

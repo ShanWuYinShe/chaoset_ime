@@ -157,7 +157,7 @@ Section "MainSection" SEC01
 
     ; 清理旧版本遗留的独立小工具（功能已全部由统一全能控制命令行工具 chaosetctl.exe 提供）
     ; 保留旧工具名以满足 InstallRobustFile 契约检查：
-    ; chaoset-cli.exe -> chaosetctl cli; chaoset-import.exe -> chaosetctl import;
+    ; chaoset-cli.exe -> chaosetctl.exe cli; chaoset-import.exe -> chaosetctl.exe import;
     ; chaoset-settingsctl.exe -> chaosetctl config
     Delete "$INSTDIR\chaoset.exe"
     Delete "$INSTDIR\chaoset-cli.exe"
@@ -249,16 +249,16 @@ Section "MainSection" SEC01
     ${EndIf}
     nsExec::Exec '"$R1" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$$tip = \"0804:{8a5c7b31-4e2d-4c6a-9f41-77d0b3e5c1a8}{5a1b3c7d-8e9f-4a1b-a2c3-d4e5f6071829}\"; $$l = Get-WinUserLanguageList; $$z = $$l | Where-Object { $$_.LanguageTag -like \"zh*\" }; if ($$z) { if (-not ($$z.InputMethodTips -contains $$tip)) { $$z.InputMethodTips.Add($$tip) } } else { $$z = New-WinUserLanguageList zh-CN; $$z[0].InputMethodTips.Add($$tip); $$l += $$z[0] }; Set-WinUserLanguageList $$l -Force"'
 
-    ; 为安装器当前用户刷新可写词库：调用 Go 导入器以 -seed 合并，保留用户
-    ; 已导入的词（旧文件由 -backup 备份），不在壳/NSIS 里重复实现合并逻辑。
-    ; 其他用户的首次启动仍由 daemon -seeddict 从 $INSTDIR 初始化。
+    ; 为安装器当前用户刷新可写词库：调用 Rust 全能 CLI chaosetctl.exe 的 import
+    ; 子命令（单一实现，argv[0] 为 chaoset-import 时也分发到同一子命令）以 -seed
+    ; 合并，保留用户已导入的词（旧文件由 -backup 备份），不在壳/NSIS 里重复实现
+    ; 合并逻辑。其他用户的首次启动仍由 daemon -seeddict 从 $INSTDIR 初始化。
     ;
     ; 注意 -backup 是**布尔开关**（无参数），后面紧跟的那个路径是位置参数
-    ; （chaoset-import 要求至少一个输入词库，否则 usage + exit 2）。此前写成
-    ; -backup "$INSTDIR\dict.tsv"，路径被当成输入词库又合并了一遍（结果恰好
-    ; 相同，但语义错了：真正的备份标记生效、额外多读一遍同一文件）。这里把
-    ; 位置参数显式写成种子词库，含义与行为都对得上。
-    nsExec::Exec '"$INSTDIR\chaoset-import.exe" -o "$LOCALAPPDATA\Chaoset\dict.tsv" -seed "$INSTDIR\dict.tsv" -backup "$INSTDIR\dict.tsv"'
+    ; （import 要求至少一个输入词库，否则 usage + exit 2）。这里把位置参数显式
+    ; 写成种子词库，含义与行为都对得上。此前这里调用的是旧 Go 布局的
+    ; chaoset-import.exe，新版包里已不存在该文件，词库刷新会静默失败。
+    nsExec::Exec '"$INSTDIR\chaosetctl.exe" import -o "$LOCALAPPDATA\Chaoset\dict.tsv" -seed "$INSTDIR\dict.tsv" -backup "$INSTDIR\dict.tsv"'
 
     ; 为用户词库预生成二进制缓存（失败不阻断安装：daemon 首次启动会自动重建）。
     nsExec::Exec '"$INSTDIR\chaoset-dictc.exe" "$LOCALAPPDATA\Chaoset\dict.tsv"'
