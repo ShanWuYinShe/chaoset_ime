@@ -42,9 +42,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> 构建 Linux 原生引擎（C++/libibus）与 Go daemon"
+echo "==> 构建 Linux 原生引擎（C++/libibus）与 Rust daemon"
 sh shims/linux/engine/build.sh "$WORK/chaoset-engine"
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$WORK/chaosetd" ./cmd/chaosetd
+cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
+cp crates/target/release/chaosetd "$WORK/chaosetd"
 
 echo "==> 启动私有 session bus、Xvfb 与 ibus-daemon"
 dbus-daemon --session --fork --print-address > "$WORK/dbus_addr"

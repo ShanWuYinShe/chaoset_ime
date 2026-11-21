@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod appdirs;
 mod ipc;
 mod server;
@@ -204,6 +206,52 @@ fn register_shutdown_handler(running: Arc<AtomicBool>, _clean_path: Option<PathB
     }
 }
 
+/// 把 daemon 日志接到 `-log` 指定的文件（与 Go daemon 同口径）。
+///
+/// 三端壳启动 daemon 时统一传 `-log <用户数据目录>/chaosetd.log`，排障依赖它；
+/// 直接重定向进程 stderr 的好处是后续所有 eprintln（含 panic 信息）都落盘，
+/// 不需要把每处日志改成 logger 调用。目录不存在时先建；打开失败退回「临时
+/// 目录 + PID 后缀」的文件——日志不能反过来让 daemon 起不来。
+fn attach_log_file(path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .or_else(|_| {
+            let fallback =
+                std::env::temp_dir().join(format!("chaosetd-{}.log", std::process::id()));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(fallback)
+        });
+    let Ok(file) = file else {
+        return;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        unsafe {
+            libc::dup2(file.as_raw_fd(), 2);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+        unsafe {
+            SetStdHandle(STD_ERROR_HANDLE, file.as_raw_handle() as _);
+        }
+    }
+    std::mem::forget(file); // fd/句柄在进程生命周期内保持打开
+}
+
 fn main() {
     let args = parse_args();
 
@@ -213,6 +261,8 @@ fn main() {
         println!("chaosetd {} {}/{}", env!("CARGO_PKG_VERSION"), os, arch);
         return;
     }
+
+    attach_log_file(args.log_path.as_deref().unwrap_or(""));
 
     // 默认词库
     let mut dict_paths = if args.dicts.is_empty() {
