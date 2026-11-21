@@ -2,6 +2,13 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **测试(重构)：新增 Go ↔ Rust 引擎差分对比工具（`tools/engineparity` + `make engineparity`），建立 rust 迁移量化基线**：
+  - 同一份场景语料（`tools/engineparity/scenarios.jsonl`：切分/简拼/翻页/退格/渐进上屏/标点/联想/纠错/模糊音/繁体/双拼共 30 场景）分别驱动 Go `engine.Session` 与 Rust `chaoset-engine::Session`（后者经 `crates/chaoset-engine` 的 `replay` bin），逐场景逐步骤对比用户可见行为（候选序列、preedit、页码、committed）；候选打分 score 只做信息性统计；
+  - 首次基线（`make engineparity` 取数）：30 场景一致 4 个、差异 26 个；主要缺口为排序键、召回范围（page_count）、非小写字符过滤、无候选兜底、简拼展开与退格后组词保留，后续迁移按此清单逐项推进并以该工具复验；
+  - 修复 Rust 候选音节分隔符协议漂移：`Candidate.syllables` 由空格连接改为撇号连接（`ni hao` → `ni'hao`），与 Go `compose_state.go` 及三端壳消费口径一致。
+
 ## v0.3.40（2026-11-21）
 
 本版本为**任务栏图标 100% 满幅撑满（0 留白消除任务栏偏小问题）、全套可执行程序与窗口注入专属应用图标与开始菜单设置快捷方式补齐**的 patch 发版（重构完成前 minor 保持 0.3 不变）：
