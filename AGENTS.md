@@ -128,6 +128,9 @@ make check-version  # 断言源码里没有写死的版本号、没有回退到 
   需要增删词条或改词频，先改生成工具（或 `data/dict_extra.tsv`/`data/dict_hot.tsv` 手工补充表）
   再重新生成（同一输入必须逐字节一致）。来源与许可见文件头注释与 `data/NOTICE.md`：
   **代码 MIT，词库数据 CC BY-SA 4.0（方案 A）**；单字 Jun Da 字频有商用许可风险，发布前须处理。
+- **发布用二进制词库**：仓库只保留 TSV 源；打包阶段由 `dictc`（`cargo run --release --bin dictc --manifest-path crates/Cargo.toml`）
+  编译为 CSDB 二进制随包分发，daemon `-dict` 仍传 TSV、优先加载同目录 `.bin` 缓存（缺失/过期/损坏自动从 TSV 重建）。
+  格式、实测数据与等价性测试见 `docs/dict.md`「发布产物：二进制词库」。
 - 中间文件：所有测试日志、原型草稿一律放 `.workwork/`，禁止提交根目录临时生成的 `*.sock` 或词库临时产物。
 
 ## 按需加载的 skill

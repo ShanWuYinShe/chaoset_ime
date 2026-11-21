@@ -90,6 +90,7 @@ cp -d bin/* "$PREFIX_BIN/"
 echo "==> 安装词库到 $PREFIX_SHARE"
 install -d "$PREFIX_SHARE"
 install -m 0644 data/dict.tsv "$PREFIX_SHARE/dict.tsv"
+install -m 0644 data/dict.bin "$PREFIX_SHARE/dict.bin"  # 发布用二进制词库（daemon 缓存）
 
 echo "==> 安装 ibus 组件描述到 $COMPONENT_DIR"
 install -d "$COMPONENT_DIR"

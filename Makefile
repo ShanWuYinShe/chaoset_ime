@@ -85,6 +85,9 @@ build:
 	# daemon 唯一实现是 Rust（crates/chaosetd）：Go 版已删除。
 	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 	cp crates/target/release/chaosetd bin/chaosetd
+	# 发布用二进制词库编译器（构建期工具，不随包分发）：TSV 是仓库源，打包时编译为 CSDB。
+	cargo build --release --bin dictc --manifest-path crates/Cargo.toml
+	cp crates/target/release/dictc bin/chaoset-dictc
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
 	go build -o bin/chaoset-import ./cmd/chaoset-import
 	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
@@ -228,6 +231,8 @@ package-macos:
 		|| { echo "错误：ChaosetIME.app 缺 daemon"; exit 1; }
 	@test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.tsv \
 		|| { echo "错误：ChaosetIME.app 缺种子词库"; exit 1; }
+	@test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.bin \
+		|| { echo "错误：ChaosetIME.app 缺二进制词库 dict_common.bin"; exit 1; }
 	@echo "✓ 全部二进制 universal（主壳 + 安装器 + app 内置工具）"
 	@# 版本号一致性：两个 app 的 CFBundleShortVersionString 必须等于 $(VERSION)
 	@# （tag 发布 = tag 号；本地/日常 CI = 年月日-commit hash）。release 与日常
@@ -278,6 +283,10 @@ package-linux:
 	# 此前只带 558 条的 dict_seed.tsv 而引擎默认要 dict_common.tsv，是装完
 	# 「引擎启动即退出」的直接原因。
 	cp data/dict_common.tsv dist/chaoset-linux-x86_64/data/dict.tsv
+	# 发布用二进制词库：daemon 启动直接解析 CSDB（比 TSV 快 1.4–1.7x）；用户导入词库后
+	# daemon 会按 mtime 自动重建同目录 .bin 缓存，launch 参数仍指向 dict.tsv。
+	cargo build --release --bin dictc --manifest-path crates/Cargo.toml
+	crates/target/release/dictc data/dict_common.tsv dist/chaoset-linux-x86_64/data/dict.bin
 	# 设置窗口：ibus-setup 的 <setup> 入口（三端一致的设置窗口，2026-10-29；
 	# 2026-11-01 起为原生 GTK3 C，不再依赖 Python/PyGObject）。
 	install -d dist/chaoset-linux-x86_64/setup
@@ -303,6 +312,7 @@ package-linux:
 		chmod 0755 dist/deb_staging dist/deb_staging/DEBIAN; \
 		cp -d dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
+		cp dist/chaoset-linux-x86_64/data/dict.bin dist/deb_staging/usr/share/chaoset/; \
 		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
@@ -424,10 +434,15 @@ package-windows:
 	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
 	# 名字对不上——用户照做会直接启动失败。
 	cp data/dict_common.tsv dist/chaoset-windows-x64/dict.tsv
+	# 发布用二进制词库：Windows 安装器用 dictc.exe 为用户词库预生成 dict.bin 缓存
+	# （LOCALAPPDATA 词库随后第一次 daemon 启动即可直接加载二进制）。
+	cargo build --release --bin dictc --manifest-path crates/Cargo.toml
+	cp crates/target/release/dictc.exe dist/chaoset-windows-x64/chaoset-dictc.exe
+	./dist/chaoset-windows-x64/chaoset-dictc.exe data/dict_common.tsv dist/chaoset-windows-x64/dict.bin
 	cp shims/windows/install.bat dist/chaoset-windows-x64/
 	cp shims/windows/README.md dist/chaoset-windows-x64/
 	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
-	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaosetctl.exe; do \
+	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaosetctl.exe dist/chaoset-windows-x64/chaoset-dictc.exe; do \
 		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
 	done
 	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }

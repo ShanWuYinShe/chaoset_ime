@@ -189,7 +189,7 @@ jobs:
         run: |
           make package-linux
           tar -tzf dist/chaoset-linux-x86_64.tar.gz > /tmp/pkg-list.txt
-          for f in setup/chaoset-setup bin/chaoset-settings data/dict.tsv; do
+          for f in setup/chaoset-setup bin/chaoset-settings data/dict.tsv data/dict.bin; do
             grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
           done
           # Slint 设置中心的运行时动态库必须齐全（缺库时用户点设置直接打不开）。

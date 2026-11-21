@@ -150,6 +150,10 @@ Section "MainSection" SEC01
     ; 即构建失败，不允许出现「装完设置打不开」的半成品包。
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settings.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
+    ; 发布用二进制词库与其编译器：安装器用 dictc 为当前用户词库预生成 dict.bin
+    ;（daemon 启动优先加载同目录同 stem 的 .bin，导入后按 mtime 自动重建）。
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-dictc.exe"
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.bin"
 
     ; 清理旧版本遗留的独立小工具（功能已全部由统一全能控制命令行工具 chaosetctl.exe 提供）
     ; 保留旧工具名以满足 InstallRobustFile 契约检查：
@@ -255,6 +259,9 @@ Section "MainSection" SEC01
     ; 相同，但语义错了：真正的备份标记生效、额外多读一遍同一文件）。这里把
     ; 位置参数显式写成种子词库，含义与行为都对得上。
     nsExec::Exec '"$INSTDIR\chaoset-import.exe" -o "$LOCALAPPDATA\Chaoset\dict.tsv" -seed "$INSTDIR\dict.tsv" -backup "$INSTDIR\dict.tsv"'
+
+    ; 为用户词库预生成二进制缓存（失败不阻断安装：daemon 首次启动会自动重建）。
+    nsExec::Exec '"$INSTDIR\chaoset-dictc.exe" "$LOCALAPPDATA\Chaoset\dict.tsv"'
 
     ; 不再强杀 ctfmon / 系统宿主，也不在提升后的安装器里启动 daemon：
     ; 管理员账户与交互用户可能不是同一个，强杀会打断用户正在使用的程序，
@@ -374,6 +381,8 @@ Section "Uninstall"
     Delete "$INSTDIR\chaoset-settingsctl.exe"
     Delete "$INSTDIR\chaoset-settings.exe"
     Delete "$INSTDIR\dict.tsv"
+    Delete "$INSTDIR\dict.bin"
+    Delete "$INSTDIR\chaoset-dictc.exe"
     Delete "$INSTDIR\chaoset.ico"
     Delete "$INSTDIR\uninstall.exe"
 
@@ -397,6 +406,7 @@ Section "Uninstall"
     ; 个人数据」的选择，这里默认删除（输入法学习数据无长期价值）。
     MessageBox MB_YESNO|MB_ICONQUESTION "是否同时删除 Chaoset 的个人数据（学习词库与日志）？$\r$\n选择「否」将保留在 $LOCALAPPDATA\Chaoset，重装后可继续使用。" IDNO skipUserData
       Delete "$LOCALAPPDATA\Chaoset\dict.tsv"
+      Delete "$LOCALAPPDATA\Chaoset\dict.bin"
       Delete "$LOCALAPPDATA\Chaoset\userdict.json"
       Delete "$LOCALAPPDATA\Chaoset\chaosetd.log"
       Delete "$LOCALAPPDATA\Chaoset\chaoset-userdict.json"

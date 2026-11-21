@@ -167,7 +167,9 @@ if [ -x "$DAEMON" ]; then
   # dict.builtin.sha256 记录「词库已合并到哪个内置版本」：版本没变就跳过，
   # 避免每次安装都重写词库。
   BUILTIN_DICT="$IM/ChaosetIME.app/Contents/Resources/dict_common.tsv"
+  BUILTIN_DICT_BIN="$IM/ChaosetIME.app/Contents/Resources/dict_common.bin"
   [ -f "$BUILTIN_DICT" ] || BUILTIN_DICT=../../data/dict_common.tsv
+  [ -f "$BUILTIN_DICT_BIN" ] || BUILTIN_DICT_BIN=../../data/dict_common.bin
   if [ -f "$BUILTIN_DICT" ]; then
     DICT_MARKER="$SUPPORT/dict.builtin.sha256"
     BUILTIN_SHA=$(shasum -a 256 "$BUILTIN_DICT" | awk '{print $1}')
@@ -177,6 +179,8 @@ if [ -x "$DAEMON" ]; then
     fi
     if [ ! -f "$SUPPORT/dict.tsv" ]; then
       cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
+      # 同目录二进制词库缓存（daemon 优先按 mtime 用 .bin；缺失时自动从 TSV 重建）。
+      [ -f "$BUILTIN_DICT_BIN" ] && cp "$BUILTIN_DICT_BIN" "$SUPPORT/dict.bin"
       printf '%s\n' "$BUILTIN_SHA" > "$DICT_MARKER"
       echo "   已部署内置常用词库（原本没有词库）"
     elif [ "$CURRENT_VERSION" = "$BUILTIN_SHA" ]; then
@@ -185,6 +189,7 @@ if [ -x "$DAEMON" ]; then
          && ! printf '%s' "$(head -1 "$SUPPORT/dict.tsv" 2>/dev/null || true)" | grep -q 'chaoset-import'; then
       cp "$SUPPORT/dict.tsv" "$SUPPORT/dict.tsv.bak.$(date +%Y%m%d-%H%M%S)"
       cp "$BUILTIN_DICT" "$SUPPORT/dict.tsv"
+      [ -f "$BUILTIN_DICT_BIN" ] && cp "$BUILTIN_DICT_BIN" "$SUPPORT/dict.bin"
       printf '%s\n' "$BUILTIN_SHA" > "$DICT_MARKER"
       echo "   已把旧的纯种子词库升级为新内置词库（原文件已备份）"
     elif [ -x "$IM/ChaosetIME.app/Contents/Resources/chaoset-import" ]; then

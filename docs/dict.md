@@ -235,3 +235,21 @@ flag 说明：
 | `TestCJKWordOK` | CJK 范围判定（基本区/扩展 A/兼容区/〇 与长度上限） |
 
 改了生成逻辑后请同时跑：`go test ./cmd/chaoset-dictgen/` 与 `cargo test --manifest-path crates/Cargo.toml`。
+
+## 发布产物：二进制词库（CSDB v1）
+
+仓库只保留 **TSV**（可审阅、可 diff、可 git 版本管理）；发布包在打包阶段把 TSV 编译为
+二进制词库随包分发，daemon 启动直接解析二进制（加载更快、内存更省）。源与产物同一份数据：
+
+- 编译：`cargo build --release --bin dictc --manifest-path crates/Cargo.toml`，
+  再 `crates/target/release/dictc data/dict_common.tsv out.bin`；同一 TSV 两次编译 sha256 相同；
+- 加载：daemon 的 `-dict` 参数仍指向 TSV；`load_with_cache` 优先加载同目录同 stem 的 `.bin`
+  （缓存 mtime 不旧于源时），缺失/过期/损坏则解析 TSV 并原子重建缓存（用户导入词库后自动刷新），
+  只读目录只警告不失败；
+- 实测（200,000 条，release）：4.67 MB → 3.61 MB（-22.7%），加载 139–170ms → 91–124ms（1.4–1.7x），
+  daemon 启动 0.187s → 0.135s，进程 RSS 约 -5~6%；
+- 行为等价：`crates/chaoset-engine/tests/dict_binary.rs` 断言 TSV/bin 加载逐条一致、41 场景回放
+  stdout 逐字节相同、损坏二进制/缓存会被拒绝并回退；
+- 随包位置：macOS app `Contents/Resources/dict_common.bin`、Linux `/usr/share/chaoset/dict.bin`、
+  Windows 安装器用随包 `chaoset-dictc.exe` 为 `%LOCALAPPDATA%\Chaoset\dict.tsv` 预生成 `dict.bin`；
+  `.bin` 是生成产物，已在 `.gitignore` 忽略。

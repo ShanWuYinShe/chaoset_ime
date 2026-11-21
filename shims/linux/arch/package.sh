@@ -34,6 +34,7 @@ if [ ! -x "$SRC_DIR/bin/chaoset-settings" ]; then
 fi
 cp -d "$SRC_DIR/bin/"* "$TMP_DIR/usr/bin/"
 cp "$SRC_DIR/data/dict.tsv" "$TMP_DIR/usr/share/chaoset/"
+cp "$SRC_DIR/data/dict.bin" "$TMP_DIR/usr/share/chaoset/dict.bin"
 # 设置启动器：component XML 的 <setup> 指向 /usr/share/chaoset/chaoset-setup
 # （纯 POSIX C，只 exec chaoset-settings）。此前 Arch 二进制包漏装该文件 →
 # ibus-setup「首选项」点了没反应；deb/tar.gz 两个包本来就有，只有 Arch 缺。
@@ -48,7 +49,7 @@ ln -sf /usr/bin/chaoset-cli "$TMP_DIR/usr/local/bin/chaoset-cli"
 
 chmod 0755 "$TMP_DIR/usr/bin/"*
 chmod 0755 "$TMP_DIR/usr/share/chaoset/chaoset-setup"
-chmod 0644 "$TMP_DIR/usr/share/chaoset/dict.tsv"
+chmod 0644 "$TMP_DIR/usr/share/chaoset/dict.tsv" "$TMP_DIR/usr/share/chaoset/dict.bin"
 chmod 0644 "$TMP_DIR/usr/share/ibus/component/chaoset.xml"
 
 # 复制 install 钩子
