@@ -28,3 +28,7 @@
 {"name":"traditional-nihao","config":{"traditional":true},"steps":[{"op":"input","text":"nihao"}]}
 {"name":"dp-zrm-nihk","config":{"shuangpin":"zrm"},"steps":[{"op":"input","text":"nihk"},{"op":"select","index":0}]}
 {"name":"dp-flypy-nihc","config":{"shuangpin":"flypy"},"steps":[{"op":"input","text":"nihc"}]}
+{"name": "uppercase-basic", "steps": [{"op": "input", "text": "NIHAO"}]}
+{"name": "uppercase-mixed-case", "steps": [{"op": "input", "text": "NiHao"}, {"op": "backspace"}]}
+{"name": "uppercase-commit-raw", "steps": [{"op": "input", "text": "HelloWorld"}, {"op": "commitRaw"}]}
+{"name": "uppercase-with-punct-filter", "steps": [{"op": "input", "text": "NI1hao!?"}]}
