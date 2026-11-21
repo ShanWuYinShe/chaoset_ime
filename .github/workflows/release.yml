@@ -97,6 +97,13 @@ jobs:
           make package-macos
           test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.bin \
             || { echo "macOS 包缺少二进制词库 dict_common.bin"; exit 1; }
+          SETTINGS_APP="shims/macos/build/ChaosetIME.app/Contents/Resources/ChaosetSettings.app"
+          test -x "$SETTINGS_APP/Contents/MacOS/chaoset-settings" \
+            || { echo "macOS 包缺少 ChaosetSettings.app（设置中心 app bundle）"; exit 1; }
+          test -f "$SETTINGS_APP/Contents/Info.plist" \
+            || { echo "ChaosetSettings.app 缺少 Info.plist"; exit 1; }
+          test -f "$SETTINGS_APP/Contents/Resources/ChaosetSettings.icns" \
+            || { echo "ChaosetSettings.app 缺少品牌图标"; exit 1; }
 
       # 等价性回归（D 段 keycap/图标契约、E 段系统渲染尺寸、B 段导入链路）：
       # 需要真实 macOS 与已构建的 app，release 里显式再跑一次。

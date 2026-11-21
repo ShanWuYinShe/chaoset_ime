@@ -12,7 +12,7 @@ InputMethodKit 薄壳：只负责按键转发、文本上屏与原生候选窗�
   Contents/Resources/chaosetd
   Contents/Resources/chaoset-import
   Contents/Resources/chaosetctl
-  Contents/Resources/chaoset-settings
+  Contents/Resources/ChaosetSettings.app/Contents/MacOS/chaoset-settings（独立 app bundle，带品牌图标）
   Contents/Resources/dict_common.tsv
   Contents/Resources/ChaosetIME-input.tiff
 ```
@@ -176,7 +176,7 @@ macOS 第三方输入法只有 bundle 级与 mode 级两套图标键：
 ## 设置窗口（统一设置中心）
 
 macOS 壳**没有原生 AppKit 设置窗**：候选栏右侧齿轮 → `src/SettingsLauncher.swift`
-拉起随包的 Slint 统一设置中心（`Contents/Resources/chaoset-settings`，三端同一个
+拉起随包的 Slint 统一设置中心（`Contents/Resources/ChaosetSettings.app`，三端同一个
 设置中心、同一套视觉令牌）：
 
 - 输入行为：词组联想（保存即生效）、模糊音、双拼方案（后两者保存后重启 daemon 生效）；

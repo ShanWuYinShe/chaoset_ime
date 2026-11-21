@@ -65,6 +65,7 @@ setup-container.sh  可复现的本地容器验证环境
 
 - 设置统一由 **Slint 统一设置中心 `chaoset-settings`** 提供（`shims/settings/`，
   三端同一份实现，安装到 `/usr/bin/chaoset-settings`）。
+- 应用菜单入口：安装包会装 `chaoset-settings.desktop`（Icon=chaoset），可直接搜索/点击带图标的「Chaoset 设置」。
 - 设置入口：ibus-setup 中选中 Chaoset →「首选项」，或运行
   `/usr/share/chaoset/chaoset-setup`。后者只是**纯 POSIX C 启动器**：按
   PATH → `/usr/bin/chaoset-settings` → 自身同目录 的顺序查找并 `execv`

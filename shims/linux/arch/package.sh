@@ -26,6 +26,7 @@ mkdir -p "$TMP_DIR/usr/local/bin"
 mkdir -p "$TMP_DIR/usr/share/chaoset"
 mkdir -p "$TMP_DIR/usr/share/ibus/component"
 mkdir -p "$TMP_DIR/usr/share/icons"
+mkdir -p "$TMP_DIR/usr/share/applications"
 
 # 统一设置中心是设置界面的唯一实现：包里缺了它设置入口只剩报错，直接打包失败。
 if [ ! -x "$SRC_DIR/bin/chaoset-settings" ]; then
@@ -41,6 +42,7 @@ cp "$SRC_DIR/data/dict.bin" "$TMP_DIR/usr/share/chaoset/dict.bin"
 cp "$SRC_DIR/setup/chaoset-setup" "$TMP_DIR/usr/share/chaoset/"
 cp "$SRC_DIR/component/chaoset.xml" "$TMP_DIR/usr/share/ibus/component/"
 cp -r "$SRC_DIR/icons/hicolor" "$TMP_DIR/usr/share/icons/"
+cp "$SRC_DIR/chaoset-settings.desktop" "$TMP_DIR/usr/share/applications/chaoset-settings.desktop"
 
 # 创建兼容软链接到 /usr/local/bin
 ln -sf /usr/bin/chaoset-engine "$TMP_DIR/usr/local/bin/chaoset-engine"

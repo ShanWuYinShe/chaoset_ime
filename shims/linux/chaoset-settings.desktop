@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Chaoset 设置
+Name[en]=Chaoset Settings
+GenericName=输入法设置
+Comment=Chaoset 拼音输入法设置中心
+Comment[en]=Settings center for Chaoset Pinyin IME
+Exec=/usr/bin/chaoset-settings
+Icon=chaoset
+Terminal=false
+Categories=Settings;Utility;
+Keywords=chaoset;pinyin;ime;input;settings;
+StartupNotify=true

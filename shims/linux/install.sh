@@ -17,6 +17,7 @@ PREFIX_BIN=/usr/bin
 PREFIX_SHARE=/usr/share/chaoset
 COMPONENT_DIR=/usr/share/ibus/component
 ICON_ROOT=/usr/share/icons
+APPLICATIONS_DIR=/usr/share/applications
 
 uninstall() {
   echo "==> 卸载 chaoset"
@@ -29,6 +30,7 @@ uninstall() {
         /usr/local/bin/chaoset-cli /usr/local/bin/chaoset-import \
         /usr/local/bin/chaoset-userdict /usr/local/bin/chaoset-engine
   rm -f "$COMPONENT_DIR/chaoset.xml"
+  rm -f "$APPLICATIONS_DIR/chaoset-settings.desktop"
   rm -rf "$PREFIX_SHARE"
   # 设置启动器随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下；
   # 统一设置中心 chaoset-settings 在 /usr/bin，上面已单独删除）
@@ -101,6 +103,15 @@ if [ -d icons/hicolor ]; then
   cp -r icons/hicolor "$ICON_ROOT/" 2>/dev/null || true
   command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t "$ICON_ROOT/hicolor" >/dev/null 2>&1 || true
+fi
+# 桌面入口：应用菜单/启动器里以品牌图标显示「Chaoset 设置」（此前只能从
+# ibus-setup 首选项进入，应用菜单里没有入口也没有图标）。
+if [ -f chaoset-settings.desktop ]; then
+  echo "==> 安装桌面入口"
+  install -d "$APPLICATIONS_DIR"
+  install -m644 chaoset-settings.desktop "$APPLICATIONS_DIR/chaoset-settings.desktop"
+  command -v update-desktop-database >/dev/null 2>&1 && \
+    update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
 fi
 
 # 冒烟自检：按 ibus 的方式（无 cwd 依赖）拉起引擎一次，确认词库能找到。
