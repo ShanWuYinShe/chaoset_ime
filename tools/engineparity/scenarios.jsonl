@@ -32,3 +32,10 @@
 {"name": "uppercase-mixed-case", "steps": [{"op": "input", "text": "NiHao"}, {"op": "backspace"}]}
 {"name": "uppercase-commit-raw", "steps": [{"op": "input", "text": "HelloWorld"}, {"op": "commitRaw"}]}
 {"name": "uppercase-with-punct-filter", "steps": [{"op": "input", "text": "NI1hao!?"}]}
+{"name": "user-word-recall", "user": {"words": [{"word": "幂等性", "sylls": ["mi", "deng", "xing"], "count": 1}]}, "steps": [{"op": "input", "text": "midengxing"}]}
+{"name": "user-phrase-recall", "user": {"words": [{"word": "长输入", "sylls": ["chang", "shu", "ru"], "count": 1, "phrase": true}]}, "steps": [{"op": "input", "text": "changshuru"}]}
+{"name": "user-continuation", "user": {"words": [{"word": "你好呀", "sylls": ["ni", "hao", "ya"], "count": 1}]}, "steps": [{"op": "input", "text": "nihaoy"}]}
+{"name": "user-bigram-boost", "user": {"words": [{"word": "幂等性", "sylls": ["mi", "deng", "xing"], "count": 2}], "bigrams": [["幂等性", "幂等性"]]}, "steps": [{"op": "input", "text": "midengxing"}, {"op": "select", "index": 0}, {"op": "input", "text": "xing"}]}
+{"name": "user-sentence-prefix-safe", "user": {"words": [{"word": "今天星期一", "sylls": ["jin", "tian", "xing", "qi", "yi"], "segs": ["今天", "星期一"], "count": 1}]}, "steps": [{"op": "input", "text": "jin"}, {"op": "reset"}, {"op": "input", "text": "jintianxingqiyi"}]}
+{"name": "user-typo-recall", "user": {"words": [{"word": "幂等性", "sylls": ["mi", "deng", "xing"], "count": 1}]}, "steps": [{"op": "input", "text": "midengxnig"}]}
+{"name": "user-single-backfill", "user": {"words": [{"word": "龘", "sylls": ["da"], "count": 3}]}, "steps": [{"op": "input", "text": "daren"}]}
