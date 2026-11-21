@@ -3,8 +3,12 @@ use std::path::PathBuf;
 pub fn data_dir() -> std::io::Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        let home = std::env::var("HOME").map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-        Ok(PathBuf::from(home).join("Library").join("Application Support").join("chaoset"))
+        let home = std::env::var("HOME")
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("chaoset"))
     }
     #[cfg(target_os = "windows")]
     {
@@ -22,8 +26,12 @@ pub fn data_dir() -> std::io::Result<PathBuf> {
                 return Ok(PathBuf::from(base).join("chaoset"));
             }
         }
-        let home = std::env::var("HOME").map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-        Ok(PathBuf::from(home).join(".local").join("share").join("chaoset"))
+        let home = std::env::var("HOME")
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+        Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("chaoset"))
     }
 }
 
@@ -41,7 +49,9 @@ pub fn default_socket_path() -> std::io::Result<PathBuf> {
         {
             if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
                 if !runtime_dir.is_empty() {
-                    return Ok(PathBuf::from(runtime_dir).join("chaoset").join("chaoset.sock"));
+                    return Ok(PathBuf::from(runtime_dir)
+                        .join("chaoset")
+                        .join("chaoset.sock"));
                 }
             }
         }
@@ -60,10 +70,8 @@ pub fn default_pipe_name() -> std::io::Result<String> {
     // 获取当前进程用户 SID
     use std::ptr::null_mut;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
-    use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
-    };
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {

@@ -33,7 +33,10 @@ impl LockHandle {
                 if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::AlreadyExists,
-                        format!("已有 chaosetd 在运行（{} 被占用），本次启动已放弃", lock_path.display()),
+                        format!(
+                            "已有 chaosetd 在运行（{} 被占用），本次启动已放弃",
+                            lock_path.display()
+                        ),
                     ));
                 }
                 return Err(err);
@@ -65,7 +68,7 @@ pub struct LockHandle {
 #[cfg(windows)]
 impl LockHandle {
     pub fn acquire(_endpoint: &str) -> std::io::Result<Self> {
-        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
         use windows_sys::Win32::System::Threading::CreateMutexW;
 
         const MUTEX_NAME: &str = "Local\\ChaosetDaemon\0";
