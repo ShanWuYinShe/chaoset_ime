@@ -1,7 +1,6 @@
 //! 拼音音节解析、规范化、切分与拼写纠错。
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 /// 无声调标准普通话音节表（约 420 个，字母序排列，ü 统一以 v 记写：nv=女、lve=略）。
 pub const SYLLABLE_TABLE: &[&str] = &[
