@@ -101,6 +101,35 @@ fn parse_args() -> CliArgs {
     args
 }
 
+/// 解析用户词典：与 Go daemon 同口径——「用户词典永远存在」。
+///
+/// 三种形态：
+///   1) 未传 `-userdict`：平台用户数据目录下的 userdict.json；
+///   2) 显式传 `-userdict <路径>`：就用该文件；
+///   3) 显式传 `-userdict ""`：**内存态**（学习/删除/导出可用，只是不落盘）。
+///
+/// 第 3 种是 IPC 测试与「临时干净环境」用的形态。此前 Rust 版把它当成
+/// 「未启用用户词典」→ user* 方法全部报错，与 Go 行为不一致（三端壳的
+/// core_test 依赖删除幂等语义；Go 的 NewUserDict("") 也是内存态）。
+fn resolve_user_dict(args: &CliArgs) -> Option<Arc<UserDict>> {
+    if args.user_dict_set {
+        return match args.user_dict.as_deref() {
+            Some("") | None => Some(Arc::new(UserDict::new::<&str>(None))),
+            Some(p) => Some(Arc::new(UserDict::new(Some(PathBuf::from(p))))),
+        };
+    }
+    match appdirs::default_user_dict_path() {
+        Ok(p) => Some(Arc::new(UserDict::new(Some(p)))),
+        Err(e) => {
+            eprintln!(
+                "警告: 解析用户词典路径失败，改用内存态（本次学习不落盘）: {}",
+                e
+            );
+            Some(Arc::new(UserDict::new::<&str>(None)))
+        }
+    }
+}
+
 fn seed_dict_files(seed: &str, targets: &[String]) -> Vec<String> {
     let seed_path = Path::new(seed);
     let data = match fs::read(seed_path) {
@@ -264,6 +293,17 @@ fn main() {
 
     attach_log_file(args.log_path.as_deref().unwrap_or(""));
 
+    // 用户词典：与 Go daemon 同口径——「用户词典永远存在」，见
+    // resolve_user_dict 的三种形态说明。
+    let user_dict = resolve_user_dict(&args);
+    match user_dict
+        .as_ref()
+        .and_then(|u| u.path().map(|p| p.display().to_string()))
+    {
+        Some(p) => eprintln!("用户词典: {}", p),
+        None => eprintln!("用户词典: 内存态（显式传入空路径，不落盘）"),
+    }
+
     // 默认词库
     let mut dict_paths = if args.dicts.is_empty() {
         vec!["data/dict_common.tsv".to_string()]
@@ -274,13 +314,6 @@ fn main() {
     if let Some(ref seed) = args.seed_dict {
         dict_paths = seed_dict_files(seed, &dict_paths);
     }
-
-    // 用户词典路径
-    let user_dict_path: Option<PathBuf> = if args.user_dict_set {
-        args.user_dict.filter(|s| !s.is_empty()).map(PathBuf::from)
-    } else {
-        appdirs::default_user_dict_path().ok()
-    };
 
     // 单实例与端点判断
     #[cfg(target_os = "windows")]
@@ -304,8 +337,6 @@ fn main() {
         std::process::exit(1);
     }
     eprintln!("已加载词典 {} 条（{}）", line_count, dict_paths.join(", "));
-
-    let user_dict = user_dict_path.map(|p| Arc::new(UserDict::new(Some(p))));
 
     let shuangpin_scheme = args.shuangpin.as_deref().and_then(|s| match s {
         "zrm" => Some(ShuangpinScheme::Zrm),
@@ -401,5 +432,40 @@ fn main() {
     let _ = flush_thread.join();
     if let Some(ref u) = user_dict {
         let _ = u.save();
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_with(userdict: Option<&str>) -> CliArgs {
+        CliArgs {
+            user_dict_set: true,
+            user_dict: userdict.map(|s| s.to_string()),
+            ..CliArgs::default()
+        }
+    }
+
+    /// `-userdict ""` 必须是**内存态用户词典**（学习/删除/导出可用、不落盘），
+    /// 不是「未启用」：Go daemon 的 NewUserDict("") 同语义，三端 core_test
+    /// 依赖 userDelete 返回 deleted=true/false 而不是「未启用用户词典」错误。
+    #[test]
+    fn empty_userdict_flag_means_in_memory_dict() {
+        let ud = resolve_user_dict(&args_with(Some(""))).expect("用户词典必须存在");
+        assert!(ud.path().is_none(), "显式空路径应为内存态（不落盘）");
+        // 内存态也要能学习并删除（dispatch 层不再报「未启用用户词典」）。
+        ud.bump_word("你好", Some("ni hao"), None);
+        assert!(ud.delete_word("你好", &["ni".to_string(), "hao".to_string()]));
+        assert!(!ud.delete_word("你好", &["ni".to_string(), "hao".to_string()]));
+    }
+
+    #[test]
+    fn explicit_userdict_path_is_used() {
+        let ud = resolve_user_dict(&args_with(Some("/tmp/chaoset-test-userdict.json")))
+            .expect("用户词典必须存在");
+        assert_eq!(
+            ud.path().and_then(|p| p.to_str()),
+            Some("/tmp/chaoset-test-userdict.json")
+        );
     }
 }
