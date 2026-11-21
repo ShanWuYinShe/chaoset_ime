@@ -27,6 +27,8 @@ const (
 	// 的 AssociateSetting.key / ModeScopeSetting.key 逐字一致。注意：联想开关的键是 "AssociateEnabled"
 	// （不是 "Associate"；任务单/架构文档里的 "Associate" 是简称）。
 	macKeyAssociate = "AssociateEnabled"
+	macKeyFuzzy     = "ChaosetFuzzy"
+	macKeyShuangpin = "ChaosetShuangpin"
 	macKeyModeScope = "ChaosetModeScope"
 	macKeyTheme     = "ChaosetTheme"
 )
@@ -42,6 +44,20 @@ func Load() (Settings, error) {
 	}
 	if ok {
 		s.Associate = associate
+	}
+	fuzzy, ok, err := readDefaultsBool(macKeyFuzzy)
+	if err != nil {
+		return s, err
+	}
+	if ok {
+		s.Fuzzy = fuzzy
+	}
+	shuangpin, ok, err := readDefaultsString(macKeyShuangpin)
+	if err != nil {
+		return s, err
+	}
+	if ok {
+		s.Shuangpin = parseStoredShuangpin(shuangpin)
 	}
 	scope, ok, err := readDefaultsString(macKeyModeScope)
 	if err != nil {
@@ -69,6 +85,29 @@ func SetAssociate(on bool) error {
 	}
 	if _, err := defaultsRunner("write", defaultsDomain, macKeyAssociate, "-bool", value); err != nil {
 		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyAssociate, err)
+	}
+	return nil
+}
+
+// SetFuzzy 写 UserDefaults 的 ChaosetFuzzy（bool）。
+func SetFuzzy(on bool) error {
+	value := "false"
+	if on {
+		value = "true"
+	}
+	if _, err := defaultsRunner("write", defaultsDomain, macKeyFuzzy, "-bool", value); err != nil {
+		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyFuzzy, err)
+	}
+	return nil
+}
+
+// SetShuangpin 写 UserDefaults 的 ChaosetShuangpin（string，"" = 全拼）。
+func SetShuangpin(scheme Shuangpin) error {
+	if !scheme.Valid() {
+		return fmt.Errorf("shuangpin 非法: %q（只允许 \"\"|zrm|mspy|flypy）", string(scheme))
+	}
+	if _, err := defaultsRunner("write", defaultsDomain, macKeyShuangpin, "-string", string(scheme)); err != nil {
+		return fmt.Errorf("写 macOS 设置 %s 失败: %w", macKeyShuangpin, err)
 	}
 	return nil
 }

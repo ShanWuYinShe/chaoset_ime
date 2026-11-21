@@ -45,8 +45,8 @@ shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交
 internal/settings/            设置 schema、默认值、校验、平台持久化（唯一真源）
   settings.go                 与平台无关：Settings、ModeScope、默认值、Validate、JSON 契约
   store_windows.go            HKCU\\Software\\Chaoset（Associate / ModeScope / UiEnglish）
-  store_darwin.go             UserDefaults.standard（AssociateEnabled / ChaosetModeScope；域 = ime.chaoset.inputmethod.ChaosetIME）
-  store_linux.go              $XDG_CONFIG_HOME/chaoset/config.json（associate / mode_scope）
+  store_darwin.go             UserDefaults.standard（AssociateEnabled / ChaosetFuzzy / ChaosetShuangpin / ChaosetModeScope；域 = ime.chaoset.inputmethod.ChaosetIME）
+  store_linux.go              $XDG_CONFIG_HOME/chaoset/config.json（associate / fuzzy / shuangpin / mode_scope / theme）
 cmd/chaosetctl/                全能命令行控制工具（Multicall: config/import/userdict/client/settings）
 cmd/chaoset-settingsctl/      供三端设置窗调用的命令行接口（JSON；薄包装兼容旧脚本）
 shims/settings/               基于 Slint 的跨平台统一设置中心（Rust/C++ 原生硬件加速，双端/三端 UI 令牌对齐）
@@ -56,8 +56,10 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 | 命令 | 输出/行为 |
 | :--- | :--- |
-| `chaoset-settingsctl get` | 单行 JSON：`{"associate":true,"mode_scope":"system","ui_english":false}` |
+| `chaoset-settingsctl get` | 单行 JSON：`{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}` |
 | `chaoset-settingsctl set associate on\|off` | 写 Associate，成功退出 0 |
+| `chaoset-settingsctl set fuzzy on\|off` | 写模糊音开关（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing） |
+| `chaoset-settingsctl set shuangpin full\|zrm\|mspy\|flypy` | 写双拼方案（full = 全拼，等同空串） |
 | `chaoset-settingsctl set mode-scope system\|process` | 写作用域（两档；旧值 window 也接受并归一化为 process），成功退出 0 |
 | `chaoset-settingsctl set ui-english on\|off` | 写 UI 宿主持久化中英状态（内部用） |
 

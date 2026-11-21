@@ -11,6 +11,12 @@ func TestDefaults(t *testing.T) {
 	if !d.Associate {
 		t.Error("Defaults().Associate 应为 true（三端壳：未配置 = 开启）")
 	}
+	if d.Fuzzy {
+		t.Error("Defaults().Fuzzy 应为 false（模糊音缺省关闭，避免误伤精确输入）")
+	}
+	if d.Shuangpin != ShuangpinFull {
+		t.Errorf("Defaults().Shuangpin = %q，期望空串（全拼）", d.Shuangpin)
+	}
 	if d.ModeScope != ModeScopeSystem {
 		t.Errorf("Defaults().ModeScope = %q，期望 system", d.ModeScope)
 	}
@@ -31,7 +37,7 @@ func TestDefaultsJSONContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JSON() 报错: %v", err)
 	}
-	want := `{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}`
+	want := `{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}`
 	if got != want {
 		t.Errorf("JSON 契约不符：\n got  = %s\n want = %s", got, want)
 	}
@@ -41,12 +47,12 @@ func TestDefaultsJSONContract(t *testing.T) {
 }
 
 func TestJSONContractAllValues(t *testing.T) {
-	s := Settings{Associate: false, ModeScope: ModeScopeProcess, UiEnglish: true, Theme: ThemeDark}
+	s := Settings{Associate: false, Fuzzy: true, Shuangpin: ShuangpinZrm, ModeScope: ModeScopeProcess, UiEnglish: true, Theme: ThemeDark}
 	got, err := s.JSON()
 	if err != nil {
 		t.Fatalf("JSON() 报错: %v", err)
 	}
-	want := `{"associate":false,"mode_scope":"process","ui_english":true,"theme":"dark"}`
+	want := `{"associate":false,"fuzzy":true,"shuangpin":"zrm","mode_scope":"process","ui_english":true,"theme":"dark"}`
 	if got != want {
 		t.Errorf("JSON 契约不符：got = %s，want = %s", got, want)
 	}

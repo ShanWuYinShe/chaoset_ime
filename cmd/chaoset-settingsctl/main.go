@@ -12,10 +12,16 @@
 //
 //	chaoset-settingsctl get
 //	    单行紧凑 JSON（字段顺序固定），写 stdout，末尾换行：
-//	    {"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
+//	    {"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}
 //
 //	chaoset-settingsctl set associate on|off
 //	    写联想开关；成功无输出。
+//
+//	chaoset-settingsctl set fuzzy on|off
+//	    写模糊音开关（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）；成功无输出。
+//
+//	chaoset-settingsctl set shuangpin full|zrm|mspy|flypy
+//	    写双拼方案（full=全拼，落存储为空串）；成功无输出。
 //
 //	chaoset-settingsctl set mode-scope system|process
 //	    写中英状态作用域；成功无输出。旧三档值 window 也接受并归一化
@@ -44,6 +50,8 @@
 //
 //	Windows  HKCU\Software\Chaoset
 //	         Associate REG_DWORD 缺省 1
+//	         Fuzzy     REG_DWORD 缺省 0
+//	         Shuangpin REG_SZ    缺省 ""（""|zrm|mspy|flypy）
 //	         ModeScope REG_SZ    缺省 "system"（只写 system|process；
 //	                             旧三档 window→process）
 //	         UiEnglish REG_DWORD 缺省 0
@@ -51,15 +59,19 @@
 //	macOS    UserDefaults 域 ime.chaoset.inputmethod.ChaosetIME（输入法
 //	         bundle id；SettingsWindow.swift 编进 ChaosetIME.app）
 //	         AssociateEnabled Bool   缺省 true
+//	         ChaosetFuzzy     Bool   缺省 false
+//	         ChaosetShuangpin String 缺省 ""（""|zrm|mspy|flypy）
 //	         ChaosetModeScope String 缺省 "system"（旧值读取时归一化）
 //	         ChaosetTheme    String 缺省 "system"（system|light|dark）
 //	         ui_english 不支持（macOS 壳不持久化中英状态）
 //	Linux    $XDG_CONFIG_HOME/chaoset/config.json（回退
 //	         $HOME/.config/chaoset/config.json）
 //	         "associate"  bool   缺省 true
+//	         "fuzzy"      bool   缺省 false
+//	         "shuangpin"  string 缺省 ""（""|zrm|mspy|flypy）
 //	         "mode_scope" string 缺省 "system"（旧值读取时归一化）
 //	         "theme"      string 缺省 "system"（system|light|dark）
-//	         其它键（fuzzy/traditional/shuangpin 等）原样保留
+//	         其它键（traditional 等）原样保留
 //	         ui_english 不支持（Linux 壳不持久化中英状态）
 package main
 

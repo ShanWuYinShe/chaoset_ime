@@ -290,6 +290,9 @@ func TestLinuxInvalidFieldTypes(t *testing.T) {
 		`{"mode_scope": true}`,
 		`{"theme": 3}`,
 		`{"theme": true}`,
+		`{"fuzzy": "yes"}`,
+		`{"fuzzy": 1}`,
+		`{"shuangpin": 3}`,
 	} {
 		path := setupXDG(t)
 		writeFile(t, path, content)
@@ -305,6 +308,68 @@ func TestLinuxSetThemeRejectsInvalid(t *testing.T) {
 	for _, v := range []Theme{"", "SYSTEM", "Light", "bogus"} {
 		if err := SetTheme(v); err == nil {
 			t.Errorf("SetTheme(%q) 应报错", v)
+		}
+	}
+}
+
+// fuzzy / shuangpin 读写往返 + 互不覆盖已有键。
+func TestLinuxRoundTripFuzzyShuangpin(t *testing.T) {
+	path := setupXDG(t)
+	if err := SetFuzzy(true); err != nil {
+		t.Fatalf("SetFuzzy(true) 报错: %v", err)
+	}
+	if err := SetShuangpin(ShuangpinMspy); err != nil {
+		t.Fatalf("SetShuangpin(mspy) 报错: %v", err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load() 报错: %v", err)
+	}
+	if !s.Fuzzy {
+		t.Error("SetFuzzy(true) 后 Load().Fuzzy 仍为 false")
+	}
+	if s.Shuangpin != ShuangpinMspy {
+		t.Errorf("Load().Shuangpin = %q，期望 mspy", s.Shuangpin)
+	}
+	text := readFile(t, path)
+	for _, want := range []string{`"fuzzy": true`, `"shuangpin": "mspy"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("config.json 应包含 %q，实际:\n%s", want, text)
+		}
+	}
+}
+
+// 存量脏值宽容归一化：未知方案回退全拼（存储嗅探不应让输入法起不来）。
+func TestLinuxShuangpinNormalized(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want Shuangpin
+	}{
+		{"zrm", ShuangpinZrm},
+		{"ZRM", ShuangpinZrm},
+		{" mspy ", ShuangpinMspy},
+		{"flypy", ShuangpinFlypy},
+		{"", ShuangpinFull},
+		{"bogus", ShuangpinFull},
+	}
+	for _, c := range cases {
+		path := setupXDG(t)
+		writeFile(t, path, `{"shuangpin": "`+c.raw+`"}`)
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load() 报错: %v", err)
+		}
+		if s.Shuangpin != c.want {
+			t.Errorf("shuangpin=%q 归一化后 = %q，期望 %q", c.raw, s.Shuangpin, c.want)
+		}
+	}
+}
+
+func TestLinuxSetShuangpinRejectsInvalid(t *testing.T) {
+	setupXDG(t)
+	for _, v := range []Shuangpin{"zrmx", "ZRM", "full", "none"} {
+		if err := SetShuangpin(v); err == nil {
+			t.Errorf("SetShuangpin(%q) 应报错", v)
 		}
 	}
 }

@@ -24,6 +24,8 @@ import (
 // 标准库、无第三方依赖）。
 const (
 	winValueAssociate = "Associate"
+	winValueFuzzy     = "Fuzzy"
+	winValueShuangpin = "Shuangpin"
 	winValueModeScope = "ModeScope"
 	winValueUiEnglish = "UiEnglish"
 	winValueTheme     = "Theme"
@@ -54,6 +56,16 @@ func Load() (Settings, error) {
 		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueAssociate, err)
 	} else if ok {
 		s.Associate = value != 0
+	}
+	if value, ok, err := winQueryDWORD(h, winValueFuzzy); err != nil {
+		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueFuzzy, err)
+	} else if ok {
+		s.Fuzzy = value != 0
+	}
+	if value, ok, err := winQueryString(h, winValueShuangpin); err != nil {
+		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueShuangpin, err)
+	} else if ok {
+		s.Shuangpin = parseStoredShuangpin(value)
 	}
 	if value, ok, err := winQueryString(h, winValueModeScope); err != nil {
 		return s, fmt.Errorf("读取注册表值 %s 失败: %w", winValueModeScope, err)
@@ -87,6 +99,39 @@ func SetAssociate(on bool) error {
 	}
 	if err := winSetDWORD(h, winValueAssociate, value); err != nil {
 		return fmt.Errorf("写注册表值 %s 失败: %w", winValueAssociate, err)
+	}
+	return nil
+}
+
+// SetFuzzy 只写 DWORD Fuzzy（与 C 壳读取同键同类型）。
+func SetFuzzy(on bool) error {
+	h, err := winCreateKey()
+	if err != nil {
+		return fmt.Errorf("创建注册表 HKCU\\%s 失败: %w", windowsRegistrySubKey, err)
+	}
+	defer syscall.RegCloseKey(h)
+	value := uint32(0)
+	if on {
+		value = 1
+	}
+	if err := winSetDWORD(h, winValueFuzzy, value); err != nil {
+		return fmt.Errorf("写注册表值 %s 失败: %w", winValueFuzzy, err)
+	}
+	return nil
+}
+
+// SetShuangpin 只写 REG_SZ Shuangpin（""|zrm|mspy|flypy；空串 = 全拼）。
+func SetShuangpin(scheme Shuangpin) error {
+	if !scheme.Valid() {
+		return fmt.Errorf("shuangpin 非法: %q（只允许 \"\"|zrm|mspy|flypy）", string(scheme))
+	}
+	h, err := winCreateKey()
+	if err != nil {
+		return fmt.Errorf("创建注册表 HKCU\\%s 失败: %w", windowsRegistrySubKey, err)
+	}
+	defer syscall.RegCloseKey(h)
+	if err := winSetString(h, winValueShuangpin, string(scheme)); err != nil {
+		return fmt.Errorf("写注册表值 %s 失败: %w", winValueShuangpin, err)
 	}
 	return nil
 }
