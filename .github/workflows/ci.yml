@@ -34,6 +34,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── 0. 证据图不得入库（一次性 PR 截图用 gh --attach 上传）─────────
+  no-evidence-images:
+    name: 证据图不得入库
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 检查 .github/pr-evidence
+        run: |
+          if git ls-files | grep -qE '(^|/)pr-evidence/'; then
+            echo "::error title=证据图不得入库::发现证据图被提交进仓库。一次性 PR 截图请用 gh 的 --attach 上传，不要提交进仓库。"
+            git ls-files | grep -E '(^|/)pr-evidence/'
+            exit 1
+          fi
+          echo "OK: 未发现证据图入库"
+
   # ── 1. 基础：格式 / 静态检查 / 构建（最快，失败就早停）────────────
   lint:
     name: 格式 / 静态检查 / 构建
