@@ -99,7 +99,8 @@ make check-version  # 断言源码里没有写死的版本号、没有回退到 
 UI 改动的 Before/After 截图用 `gh` 的 `--attach` 上传，**不得 `git add`/`commit` 进本仓库**。
 `.github/pr-evidence/` 不承载一次性截图，不得重建。
 
-- 压缩：`~/.agents/bin/pr-evidence shrink <图...>`（输出到 `.workwork/evidence/`，随任务清理）
+- 大小上限以 GitHub 附件为准：图片 10MB / 视频 100MB / 单次 50 个
+- 压缩（可选，只为加载速度）：`~/.agents/bin/pr-evidence shrink <图...>`（输出到 `.workwork/evidence/`，随任务清理）
 - 上传：`gh pr create --body-file <正文> --attach 'before.png#改前' --attach 'after.png#改后'`；
   正文照常写 `![改前](./before.png)`，gh 会把本地路径替换成附件地址
 - 追加到已有 PR：`gh pr comment <PR> --body "…" --attach "…"`
