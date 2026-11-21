@@ -34,7 +34,7 @@ GtkWidget *setup_page_about_build(AppCtx *ctx) {
     setup_card_add(card, header);
 
     setup_card_add(card, setup_hint_new("代码 MIT · 词库 CC BY-SA 4.0"));
-    setup_card_add(card, setup_label_new("更多设置将在后续版本提供", "tertiary"));
+    setup_card_add(card, setup_label_new("设置项会随版本持续补充", "tertiary"));
     setup_card_add(card, setup_label_new(
                              "https://github.com/ShanWuYinShe/chaoset_ime", "link"));
     gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
