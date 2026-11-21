@@ -8,6 +8,11 @@
   - 同一份场景语料（`tools/engineparity/scenarios.jsonl`：切分/简拼/翻页/退格/渐进上屏/标点/联想/纠错/模糊音/繁体/双拼共 30 场景）分别驱动 Go `engine.Session` 与 Rust `chaoset-engine::Session`（后者经 `crates/chaoset-engine` 的 `replay` bin），逐场景逐步骤对比用户可见行为（候选序列、preedit、页码、committed）；候选打分 score 只做信息性统计；
   - 首次基线（`make engineparity` 取数）：30 场景一致 4 个、差异 26 个；主要缺口为排序键、召回范围（page_count）、非小写字符过滤、无候选兜底、简拼展开与退格后组词保留，后续迁移按此清单逐项推进并以该工具复验；
   - 修复 Rust 候选音节分隔符协议漂移：`Candidate.syllables` 由空格连接改为撇号连接（`ni hao` → `ni'hao`），与 Go `compose_state.go` 及三端壳消费口径一致。
+- **重构(engine)：Rust 声母碎片导航与输入过滤对齐 Go 契约（基线缺口「字符过滤/简拼展开/无候选兜底」三项关闭）**：
+  - `dict.rs`：`query_prefix`/`query_exact` 统一走碎片感知 walk——单/双字母声母 token（z/x/n/zh…）按「音节以该声母开头」展开子树（此前 Trie 只认整音节键，`nh`/`zzz` 一类碎片输入召回为空）；
+  - `session.rs` compose：两阶段切分仲裁——纯音节 pattern 优先召回，全部空手而归才回退含碎片的 pattern（`xian` 不再混入 `xia'n` 切分的瞎闹/下奶类候选；碎片只在整段无音节解时兜底，对齐 Go 观察行为）；
+  - `session.rs` input：对齐 Go 契约——整体小写、只收 `[a-z']` 静默丢弃其余字符（标点唯一真源是壳，组词中标点走 `punct()`），双拼模式放行 `;`（mspy 的 ing 韵母键）；
+  - 新增 4 项单元测试锁定行为：碎片导航（dict）、输入过滤、纯音节优先不反噬、简拼/兜底召回；差分对比（`make engineparity`）：`NI1hao!?` 过滤、`nh` 简拼、`zzz` 兜底、`xian` 纯音节四类场景首候选与 Go 一致，30 场景首候选一致 27 个；剩余差异集中于排序键体系与 DP 纠错（`typo_dp` 未迁移），后续按清单推进。
 
 ## v0.3.40（2026-11-21）
 
