@@ -8,6 +8,10 @@ use serde::Deserialize;
 pub struct ConfigSettings {
     #[serde(default = "default_associate")]
     pub associate: bool,
+    #[serde(default)]
+    pub fuzzy: bool,
+    #[serde(default)]
+    pub shuangpin: String,
     #[serde(default = "default_mode_scope")]
     pub mode_scope: String,
     #[serde(default = "default_theme")]
@@ -32,6 +36,8 @@ impl Default for ConfigSettings {
     fn default() -> Self {
         Self {
             associate: true,
+            fuzzy: false,
+            shuangpin: String::new(),
             mode_scope: "system".to_string(),
             theme: "system".to_string(),
             ui_english: false,
@@ -123,6 +129,50 @@ pub fn get_config() -> Result<ConfigSettings, String> {
 pub fn set_associate(enabled: bool) -> Result<(), String> {
     let val = if enabled { "on" } else { "off" };
     run_cmd(&["config", "set", "associate", val]).map(|_| ())
+}
+
+/// 模糊音开关。修改后 daemon 需重启才生效（daemon 启动时读平台设置），
+/// 由调用方在成功后调用 `restart_daemon`。
+pub fn set_fuzzy(enabled: bool) -> Result<(), String> {
+    let val = if enabled { "on" } else { "off" };
+    run_cmd(&["config", "set", "fuzzy", val]).map(|_| ())
+}
+
+/// 双拼方案（""=全拼 / zrm / mspy / flypy）。修改后同样需要重启 daemon。
+pub fn set_shuangpin(scheme: &str) -> Result<(), String> {
+    run_cmd(&["config", "set", "shuangpin", scheme]).map(|_| ())
+}
+
+/// 让「输入行为」类设置（模糊音/双拼）立即生效。
+///
+/// 这些设置只在 daemon 启动时读取（LaunchAgent / 安装器 Run 项的参数是静态的，
+/// 改不了），所以改完后重启 daemon：
+/// - macOS 优先 `launchctl kickstart -k`（LaunchAgent 会用新设置重启）；
+/// - 各端都兜底 kill daemon，下一次按键由壳的懒启动拉起（读新设置）。
+/// 冷路径：只在用户改设置时调用；失败静默（最坏情况是下次登录后生效）。
+pub fn restart_daemon() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "launchctl kickstart -k \"gui/$(id -u)/ime.chaoset.daemon\" 2>/dev/null || killall chaosetd 2>/dev/null",
+            ])
+            .status();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/IM", "chaosetd.exe", "/F"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.status();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("killall").arg("chaosetd").status();
+    }
 }
 
 pub fn set_mode_scope(scope: &str) -> Result<(), String> {

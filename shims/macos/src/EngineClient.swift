@@ -51,6 +51,12 @@ final class EngineClient {
         self.transport = DaemonTransport(socketPath: socketPath)
     }
 
+    /// 设置窗改完「输入行为」类设置（模糊音/双拼）后重启 daemon 使其生效。
+    /// daemon 启动时读 UserDefaults，所以重启即可；实现与兜底见 DaemonTransport。
+    func restartDaemonForSettingsChange() {
+        transport.restartDaemonForSettingsChange()
+    }
+
     // call 发一次请求并返回 result 对象；任何失败返回 nil 并断开重连。
     //
     // 读类方法（input/backspace/nextPage 等）在失败且**尚未产生副作用**时重试一次：

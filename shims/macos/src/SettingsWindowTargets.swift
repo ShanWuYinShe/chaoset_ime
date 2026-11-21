@@ -18,6 +18,36 @@ import UniformTypeIdentifiers
     }
 }
 
+/// 模糊音开关：写 UserDefaults（与 daemon 启动时读的键一致）并重启 daemon。
+/// 模糊音只在 daemon 启动时读取，所以要重启才生效（冷路径）。
+@objc final class FuzzySwitchTarget: NSObject {
+    @objc func switchChanged(_ sender: WarmSwitch) {
+        FuzzySetting.enabled = sender.state == .on
+        SettingsWindowController.engine.restartDaemonForSettingsChange()
+    }
+}
+
+/// 双拼方案四选一：写 UserDefaults、同步胶囊选中态并重启 daemon。
+@objc final class ShuangpinTarget: NSObject {
+    var shuangpinButtons: [WarmPillButton] = []
+
+    @objc func schemeChanged(_ sender: WarmPillButton) {
+        // 用标题反查方案（tag 与顺序耦合，标题稳定），与主题/作用域选择同模式。
+        let scheme: Shuangpin
+        switch sender.title {
+        case "自然码": scheme = .zrm
+        case "微软": scheme = .mspy
+        case "小鹤": scheme = .flypy
+        default: scheme = .full
+        }
+        ShuangpinSetting.current = scheme
+        for button in shuangpinButtons {
+            button.setPillSelected(button.title == sender.title)
+        }
+        SettingsWindowController.engine.restartDaemonForSettingsChange()
+    }
+}
+
 extension Notification.Name {
     static let chaosetAssociateDisabled =
         Notification.Name("chaosetAssociateDisabled")

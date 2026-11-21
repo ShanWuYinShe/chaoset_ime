@@ -55,7 +55,20 @@ func checkSettingsWindowContract(fsys fs.FS, problems *[]string) {
 	// 文档必须记录骨架/卡片口径/分组文案（实现改了文档不跟会 FAIL）。
 	checkContains(fsys, problems, group, uiParityDoc,
 		"## 设置窗契约", "640×560pt", "卡片容器三端都有",
-		"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。")
+		"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。",
+		"模糊音", "双拼方案", "内容区滚动")
+	// 输入行为设置（模糊音 / 双拼方案）：三端 UI 与 daemon 设置读取必须同时存在
+	// （只改 UI 不生效、只改 daemon 用户看不见，都是回归）。
+	checkContains(fsys, problems, group, macSettings,
+		"FuzzySetting", "ShuangpinSetting", "模糊音", "双拼方案",
+		"restartDaemonForSettingsChange")
+	checkContains(fsys, problems, group, slintApp,
+		"fuzzy_enabled", "shuangpin", "fuzzy_toggled", "shuangpin_changed",
+		"模糊音", "双拼方案")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/input_settings.rs",
+		"ChaosetFuzzy", "ChaosetShuangpin", "fuzzy", "shuangpin")
+	checkContains(fsys, problems, group, "shims/settings/src/bridge.rs",
+		"set_fuzzy", "set_shuangpin", "restart_daemon")
 }
 
 // checkSettingsCore 锁住方案 A 的 Go 单一真源与 CLI 契约（2026-11-06）：

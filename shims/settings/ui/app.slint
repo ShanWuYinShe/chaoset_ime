@@ -14,6 +14,8 @@ export component MainWindow inherits Window {
     // 状态属性（由 Rust 宿主写入和同步）
     in-out property <int> current_page: 0; // 0=输入, 1=词库, 2=关于
     in-out property <bool> associate_enabled: true;
+    in-out property <bool> fuzzy_enabled: false;
+    in-out property <string> shuangpin: ""; // ""=全拼 | zrm | mspy | flypy
     in-out property <string> mode_scope: "system"; // system | process
     in-out property <string> current_theme: "system"; // system | light | dark
     in-out property <string> user_stats_text: "正在读取统计信息...";
@@ -21,6 +23,8 @@ export component MainWindow inherits Window {
 
     // 回调事件（由 Rust 宿主监听执行）
     callback associate_toggled(bool);
+    callback fuzzy_toggled(bool);
+    callback shuangpin_changed(string);
     callback mode_scope_changed(string);
     callback theme_changed(string);
     callback clear_userdict_clicked();
@@ -198,11 +202,11 @@ export component MainWindow inherits Window {
                 spacing: 16px;
                 alignment: start;
 
-                // 卡片 1: 联想设置
+                // 卡片 1: 输入行为（联想 / 模糊音 / 双拼方案）
                 Card {
                     title: "输入行为";
                     icon: "⚡️";
-                    hint: "选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。";
+                    hint: "选词上屏后展示可续接的词组候选；模糊音让 zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing 混用也能命中；双拼两键一音节。修改后输入法会短暂重启以生效。";
 
                     HorizontalLayout {
                         alignment: space-between;
@@ -215,6 +219,51 @@ export component MainWindow inherits Window {
                         ChaosSwitch {
                             checked: root.associate_enabled;
                             toggled(val) => { root.associate_toggled(val); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "模糊音";
+                            font-size: 13px;
+                            color: Theme.text_primary;
+                            vertical-alignment: center;
+                        }
+                        ChaosSwitch {
+                            checked: root.fuzzy_enabled;
+                            toggled(val) => { root.fuzzy_toggled(val); }
+                        }
+                    }
+
+                    Text {
+                        text: "双拼方案";
+                        font-size: 13px;
+                        color: Theme.text_primary;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ChoicePill {
+                            text: "全拼";
+                            selected: root.shuangpin == "";
+                            clicked => { root.shuangpin_changed(""); }
+                        }
+                        ChoicePill {
+                            text: "自然码";
+                            selected: root.shuangpin == "zrm";
+                            clicked => { root.shuangpin_changed("zrm"); }
+                        }
+                        ChoicePill {
+                            text: "微软";
+                            selected: root.shuangpin == "mspy";
+                            clicked => { root.shuangpin_changed("mspy"); }
+                        }
+                        ChoicePill {
+                            text: "小鹤";
+                            selected: root.shuangpin == "flypy";
+                            clicked => { root.shuangpin_changed("flypy"); }
                         }
                     }
                 }

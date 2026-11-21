@@ -39,6 +39,9 @@ pub fn parse_bool(raw: &str) -> Option<bool> {
 
 /// 从 Linux `config.json` 文本解析设置：只关心 fuzzy/shuangpin 两个键，
 /// 其它键与未知结构一律忽略（文件由 Go 设置核心/设置窗维护）。
+///
+/// 只在 Linux 运行时与单测里使用；macOS/Windows 构建不调用，避免 dead_code 警告。
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 pub fn parse_linux_config(text: &str) -> InputSettings {
     let mut out = InputSettings::default();
     let value: serde_json::Value = match serde_json::from_str(text) {

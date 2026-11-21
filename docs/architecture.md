@@ -171,7 +171,8 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 | ≤500 |
 | `src/bridge.rs` | Go CLI 桥接：读写 `chaoset config`、`chaoset userdict`、`chaoset import` | ≤300 |
 | `src/lib.rs` | Slint 模块接入、系统深浅色感知、模块导出与无头测试桩 | ≤150 |
-| `src/main.rs` | Slint 事件循环与数据绑定、系统原生文件对话框集成（rfd） | ≤150 |
+| `src/events.rs` | 设置窗事件绑定（联想/模糊音/双拼/中英作用域/主题/学习数据/词库导入）与重启 daemon | ≤150 |
+| `src/main.rs` | Slint 初始化（读设置/统计/版本）与事件循环 | ≤150 |
 
 ## 4. 机器断言（checkuiparity）
 
