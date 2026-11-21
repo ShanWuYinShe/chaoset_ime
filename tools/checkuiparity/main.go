@@ -80,7 +80,8 @@
 //     熔断；daemon 未就绪按键 fail-open；前台钩子回调只 PostMessage；
 //     DllCanUnloadNow 计入 worker 线程与消息窗口。
 //
-//  18. 每页候选数引擎与三端壳一致（2026-11-08）：唯一真源是 engine/session.go 的 pageSize；
+//  18. 每页候选数引擎与三端壳一致：唯一真源是 crates/chaoset-engine/src/session.rs 的
+//     PAGE_SIZE（crates/chaoset-engine/tests/dict_contract.rs 另有一道硬断言）；
 //     macOS `associatePageSize` / Windows `kPageSize` / Linux ibus `kPageSize` 必须
 //     与之相同。任一端漂移会让数字键 1..N 指位与翻页错位（pageSize 曾由 9 改 6，
 //     壳仍接受 1-9 时按 7/8/9 既不选词也不进文档）。

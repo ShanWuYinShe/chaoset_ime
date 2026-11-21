@@ -4,6 +4,12 @@
 
 ## 未发布
 
+> **本版本最终状态**：Rust 引擎（`crates/chaoset-engine`）与 Rust daemon（`crates/chaosetd`）是唯一实现；
+> Go 引擎（`engine/`）、Go daemon（`cmd/chaosetd`）、Go↔Rust 差分工具（`tools/engineparity`）与
+> 发布期二进制词库（CDB1 / `data/dict_common.bin`）均已删除，词库只保留 TSV。
+> 下方迁移过程条目里的「Go 对照实现」「差分工具」「二进制词库」均为阶段性产物，最终已移除；
+> 41 个差分场景已冻结为 Rust 回放基线（`crates/chaoset-engine/tests/parity_scenarios.rs`）。
+
 - **重构(引擎)：删除 Go 引擎（`engine/`）与差分工具，Rust 成为唯一实现**：
   - 前置解耦：`ipc` 客户端 DTO 收进 `ipc/types.go`、`chaoset-cli` 改为纯 daemon 客户端、`chaoset-import`/`chaoset-userdict`/`chaoset-dictgen` 改用新增的 `internal/dict` 与本地文件实现，Go 工具不再 import `chaoset.ime/engine`；同时删除已无运行时消费者的二进制词库（`data/dict_common.bin`、dictgen `-bin`/`-compile`）；
   - 删除 `engine/`（Go 算法/测试）与 `tools/engineparity`（Go↔Rust 差分工具，`make engineparity` 同步移除）；41 个差分场景转为 **Rust 冻结回放基线**（`crates/chaoset-engine/tests/parity_scenarios.rs` + `tests/data/*.jsonl`，含候选打分），行为回归仍会被 CI 捕获；
@@ -16,15 +22,16 @@
   - 删除 `cmd/chaosetd`（含 `run_test.go`/`listen_unix_test.go`/`seed_test.go`/`run_test.go`/singleton 等 6 个文件）与 `ipc/server.go`、服务端管道 ACL（`pipe_sddl.go`）、daemon 侧 UI 宿主拉起（`ui_*.go`）及其 8 个服务端/集成测试；`ipc` 包只保留客户端侧（`Endpoint`+`DialEndpoint`、`Client`、命名管道名/拨号）；
   - `Makefile` 不再构建 `bin/chaosetd-go`（回滚路径随 Go daemon 一起删除）；Arch `PKGBUILD` 改 cargo 构建 Rust daemon（`makedepends` 加 `rust`）；
   - `tools/checkuiparity` 的 daemon 侧契约断言从 Go 源码迁到 Rust 源：单实例锁位置（`crates/chaosetd/src/main.rs`）、Windows 互斥体（`singleton.rs`）、IPC 方法分发（`ipc.rs`）、UI 宿主代拉起（`ui.rs`）、reset/userDelete 语义；
-  - `AGENTS.md`/`docs/architecture.md`/daemon 生命周期 skill 同步：daemon 唯一实现为 Rust；Go 引擎仅作差分基线临时保留（已在本轮删除，见下条）。- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
-  - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版保留为 `bin/chaosetd-go`（对照与回滚路径，算法层已由 `make engineparity` 差分 41 场景对齐；后续 PR 已删除 Go 版）；
+  - `AGENTS.md`/`docs/architecture.md`/daemon 生命周期 skill 同步：daemon 唯一实现为 Rust；Go 引擎仅作差分基线临时保留（随后删除，见本段「删除 Go 引擎」条目）。
+- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
+  - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版曾短暂保留为 `bin/chaosetd-go` 作对照与回滚路径（随后随 Go daemon/engine 删除一起移除）；
   - macOS：Rust daemon 同样产出 **universal 二进制**（aarch64 + x86_64 交叉构建后 lipo，缺失的 rustup 目标自动补装）；
   - Windows：release 构建带 `windows_subsystem = "windows"`（无控制台闪窗，对应原 Go `-H=windowsgui`），并补齐 `Win32_System_Console` feature；
   - daemon `-log` 真正落盘（此前 Rust 版忽略该参数）：启动即把 stderr 重定向到指定日志文件（目录不存在先建，打不开时回退临时目录 + PID 后缀），与 Go daemon `-log` 同口径——三端壳都靠它排障；
   - `docs/architecture.md` 模块地图、`AGENTS.md` 架构首行与 `README.md` 架构图/运行命令同步；
-  - 验证：`make build` 产出 Rust `bin/chaosetd`（2.3MB vs Go 6.2MB）+ `bin/chaosetd-go` 对照；Rust/Go daemon 用同一 `chaoset-cli` 回放同一输入序列，候选/预编辑/页码/上屏文本**逐字节一致**；`-log` 落盘实测有内容；`make vet` 54 组通过；`make engineparity` 41/41 一致；
+  - 对照期验证：`make build` 产出 Rust `bin/chaosetd`（2.3MB vs Go 6.2MB）+ `bin/chaosetd-go` 对照；Rust/Go daemon 用同一 `chaoset-cli` 回放同一输入序列，候选/预编辑/页码/上屏文本**逐字节一致**；`-log` 落盘实测有内容；`make vet` 54 组通过；差分工具 41/41 一致（该工具随后删除，场景已冻结为 Rust 回放基线）；
   - 修 CI 暴露的两处差异：① `-userdict ""` 在 Go 语义里是**内存态用户词典**（学习/删除/导出可用、不落盘），Rust 此前当「未启用」导致 user* 方法报错、三端 core_test 的 userDelete 断言失败——抽出 `resolve_user_dict` 与 Go 对齐并加单测；② Windows 打包在 Git Bash 下 cargo 链接时被 `/usr/bin/link.exe`（GNU link）遮蔽 MSVC `link.exe`，改为把 MSVC 工具目录前置到 PATH；
-  - 已知跟进：源码构建用的 Arch `PKGBUILD` 仍构建 Go daemon（需引入 cargo makedepends 与 crates 依赖策略，单独跟进）；Go daemon 源码暂保留作对照，后续再删。
+  - 收尾：Arch `PKGBUILD` 已改为 cargo 构建 Rust daemon（`makedepends` 加 `rust`）；Go daemon 源码随后删除，最终状态见本段「删除 Go 引擎」条目。
 - **重构(引擎)：Rust 用户词库参与组词召回——差分 41 场景**全部一致（含 score）**：
   - 用户词库不再是「只加权不召回」：补齐 Go 的 6 个接入点——末段续接两条路径（dict 24 + 用户 8）、token 主查询（用户 queryTokens 10）、回退层（QueryTokensExact 5）、首音节单字兜底（300）、错拼修正（queryTokens 4）；用户学过的词/词组进化/整句记录现在都能作为候选出现；
   - 新增 `UserDict.query_tokens_exact` / `query_tokens` / `query_continuation`（Go 同名查询的 Rust 版：音节数过滤 + matchSyllable（碎片前缀、z/c/s 兼容 zh/ch/sh）+ 词频/词长/字典序排序 + 按词去重）；
@@ -75,7 +82,7 @@
   - `syllable.rs`：新增 `syllable_continuations`/`split_exact_syllables`/`partial_tail_splits` 续接辅助；
   - 量化对比（`tools/engineparity` + skill 口径确定性语料 1,131 词 × 5 形态）：tail1（打一半，最高频形态）命中率 31.9%→**89.0%**（Go 88.8%）、首选率 13.8%→**45.3%**（Go 45.4%），tail2 命中率 42.8%→**59.9%**（Go 58.5%），full/initials/mixed 持平或略优，首屏全同 88.9%–98.5%；30 场景差分一致 4→7、score 信息性差异 186→21；
   - 新增 5 项双向回归测试（续接压过巧合词、残缺末段领跑、单段只出单字、回退置顶+单字收尾、超段仲裁），合计 22 项单测全过；
-  - 未迁移项（后续清单）：组合候选层（rankComposition 的分词 DP）、DP 纠错（typo_dp）与错拼固定第 3 位、TypoSuspicious 形态的纠错主路径。
+  - 未迁移项（后续清单）：组合候选层（rankComposition 的分词 DP）、DP 纠错（typo_dp）与错拼固定第 3 位、TypoSuspicious 形态的纠错主路径。（截至本版本收尾，上述项均已完成迁移，并有 Rust 单测与 41 场景冻结基线覆盖。）
 - **重构(engine)：Rust 声母碎片导航与输入过滤对齐 Go 契约（基线缺口「字符过滤/简拼展开/无候选兜底」三项关闭）**：
   - `dict.rs`：`query_prefix`/`query_exact` 统一走碎片感知 walk——单/双字母声母 token（z/x/n/zh…）按「音节以该声母开头」展开子树（此前 Trie 只认整音节键，`nh`/`zzz` 一类碎片输入召回为空）；
   - `session.rs` compose：两阶段切分仲裁——纯音节 pattern 优先召回，全部空手而归才回退含碎片的 pattern（`xian` 不再混入 `xia'n` 切分的瞎闹/下奶类候选；碎片只在整段无音节解时兜底，对齐 Go 观察行为）；
