@@ -1,7 +1,7 @@
 //! Windows 注册表设置存储的真实往返测试（只在 Windows 上编译/运行）。
 //!
 //! CI 的 settings-windows job 用
-//! `cargo test --manifest-path crates/Cargo.toml -p chaoset-config windows_store`
+//! `cargo test --manifest-path crates/Cargo.toml -p chaoset-config --test windows_store`
 //! 在一次性 Windows runner 上真跑 HKCU：DWORD/REG_SZ 读写、mode_scope 归一化、
 //! 类型损坏与超长字符串回退、scratch 子键清理幂等。
 //!

@@ -352,4 +352,4 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: 注册表 store 往返测试
-        run: cargo test --manifest-path crates/Cargo.toml -p chaoset-config windows_store -- --nocapture
+        run: cargo test --manifest-path crates/Cargo.toml -p chaoset-config --test windows_store -- --nocapture
