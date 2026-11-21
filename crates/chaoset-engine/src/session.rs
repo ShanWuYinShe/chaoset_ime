@@ -96,7 +96,10 @@ impl Session {
             self.all_candidates.clear();
             self.page = 0;
             return Composition {
-                shuangpin: self.shuangpin.map(|s| s.name().to_string()).unwrap_or_default(),
+                shuangpin: self
+                    .shuangpin
+                    .map(|s| s.name().to_string())
+                    .unwrap_or_default(),
                 ..Default::default()
             };
         }
@@ -141,54 +144,79 @@ impl Session {
         let mut candidates_map: std::collections::HashMap<String, (Candidate, u32)> =
             std::collections::HashMap::new();
 
-        // 4.1 对所有切分 pattern 召回候选
-        for (pat_idx, pat) in patterns.iter().enumerate() {
-            let syll_slices: Vec<&str> = pat.iter().map(|t| t.text.as_str()).collect();
-            let pat_penalty = (pat_idx as u32) * 200;
+        // 4.1 切分 pattern 召回：优先「纯音节」切分；全部空手而归时才回退
+        // 含声母碎片的 pattern 兜底（对齐 Go：xian 只出先/线/显……不把
+        // xia'n 这类碎片切分的瞎闹/下奶混入候选池；zzz/nh 整段无音节解
+        // 时碎片导航才生效）。
+        let pattern_has_fragment = |pat: &[crate::syllable::Token]| pat.iter().any(|t| !t.is_exact);
+        let has_pure_pattern = patterns.iter().any(|p| !pattern_has_fragment(p));
+        let recall_pattern =
+            |pat_idx: usize,
+             pat: &[crate::syllable::Token],
+             candidates_map: &mut std::collections::HashMap<String, (Candidate, u32)>| {
+                let syll_slices: Vec<&str> = pat.iter().map(|t| t.text.as_str()).collect();
+                let pat_penalty = (pat_idx as u32) * 200;
 
-            for l in (1..=syll_slices.len()).rev() {
-                let sub_sylls = &syll_slices[..l];
-                let is_full = l == syll_slices.len();
-                let matched_entries = if is_full {
-                    self.dict.query_prefix(sub_sylls, 64)
-                } else {
-                    self.dict.query_exact(sub_sylls)
-                };
-
-                for entry in matched_entries {
-                    let (user_bonus, from_user) = if let Some(ref u) = self.user_dict {
-                        u.score(&entry.word, self.last_committed.as_deref())
+                for l in (1..=syll_slices.len()).rev() {
+                    let sub_sylls = &syll_slices[..l];
+                    let is_full = l == syll_slices.len();
+                    let matched_entries = if is_full {
+                        self.dict.query_prefix(sub_sylls, 64)
                     } else {
-                        (0, false)
+                        self.dict.query_exact(sub_sylls)
                     };
 
-                    // 最长匹配加成（整词优先）
-                    let match_bonus = if is_full && entry.syllables.len() == syll_slices.len() {
-                        5000 // 完整精确词最高优先级
-                    } else if is_full {
-                        1000 // 完整前缀词 (如 nihao 输入匹配 你好吗)
-                    } else {
-                        entry.syllables.len() as u32 * 500 // 前缀子词 (如 nihao 输入匹配 你)
-                    };
-                    let score = (entry.freq + user_bonus + match_bonus).saturating_sub(pat_penalty);
-                    let display_text = if self.traditional {
-                        to_traditional(&entry.word)
-                    } else {
-                        entry.word.clone()
-                    };
+                    for entry in matched_entries {
+                        let (user_bonus, from_user) = if let Some(ref u) = self.user_dict {
+                            u.score(&entry.word, self.last_committed.as_deref())
+                        } else {
+                            (0, false)
+                        };
 
-                    candidates_map.entry(display_text.clone()).or_insert_with(|| {
-                        (
-                            Candidate {
-                                text: display_text,
-                                syllables: entry.syllables.join("'"),
-                                score: 0,
-                                from_user,
-                            },
-                            score,
-                        )
-                    });
+                        // 最长匹配加成（整词优先）
+                        let match_bonus = if is_full && entry.syllables.len() == syll_slices.len() {
+                            5000 // 完整精确词最高优先级
+                        } else if is_full {
+                            1000 // 完整前缀词 (如 nihao 输入匹配 你好吗)
+                        } else {
+                            entry.syllables.len() as u32 * 500 // 前缀子词 (如 nihao 输入匹配 你)
+                        };
+                        let score =
+                            (entry.freq + user_bonus + match_bonus).saturating_sub(pat_penalty);
+                        let display_text = if self.traditional {
+                            to_traditional(&entry.word)
+                        } else {
+                            entry.word.clone()
+                        };
+
+                        candidates_map
+                            .entry(display_text.clone())
+                            .or_insert_with(|| {
+                                (
+                                    Candidate {
+                                        text: display_text,
+                                        syllables: entry.syllables.join("'"),
+                                        score: 0,
+                                        from_user,
+                                    },
+                                    score,
+                                )
+                            });
+                    }
                 }
+            };
+        for (pat_idx, pat) in patterns.iter().enumerate() {
+            if has_pure_pattern && pattern_has_fragment(pat) {
+                continue;
+            }
+            recall_pattern(pat_idx, pat, &mut candidates_map);
+        }
+        if has_pure_pattern && candidates_map.is_empty() {
+            for (pat_idx, pat) in patterns.iter().enumerate() {
+                if !pattern_has_fragment(pat) {
+                    continue;
+                }
+                recall_pattern(pat_idx, pat, &mut candidates_map);
             }
         }
 
@@ -207,17 +235,19 @@ impl Session {
                         } else {
                             entry.word.clone()
                         };
-                        candidates_map.entry(display_text.clone()).or_insert_with(|| {
-                            (
-                                Candidate {
-                                    text: display_text,
-                                    syllables: entry.syllables.join("'"),
-                                    score: 0,
-                                    from_user: false,
-                                },
-                                entry.freq.saturating_sub(200), // 模糊候选稍降权
-                            )
-                        });
+                        candidates_map
+                            .entry(display_text.clone())
+                            .or_insert_with(|| {
+                                (
+                                    Candidate {
+                                        text: display_text,
+                                        syllables: entry.syllables.join("'"),
+                                        score: 0,
+                                        from_user: false,
+                                    },
+                                    entry.freq.saturating_sub(200), // 模糊候选稍降权
+                                )
+                            });
                     }
                 }
             }
@@ -236,17 +266,19 @@ impl Session {
                         } else {
                             entry.word.clone()
                         };
-                        candidates_map.entry(display_text.clone()).or_insert_with(|| {
-                            (
-                                Candidate {
-                                    text: display_text,
-                                    syllables: entry.syllables.join("'"),
-                                    score: 0,
-                                    from_user: false,
-                                },
-                                entry.freq.saturating_sub(500),
-                            )
-                        });
+                        candidates_map
+                            .entry(display_text.clone())
+                            .or_insert_with(|| {
+                                (
+                                    Candidate {
+                                        text: display_text,
+                                        syllables: entry.syllables.join("'"),
+                                        score: 0,
+                                        from_user: false,
+                                    },
+                                    entry.freq.saturating_sub(500),
+                                )
+                            });
                     }
                 }
             }
@@ -291,23 +323,23 @@ impl Session {
             page: self.page,
             page_count,
             committed: String::new(),
-            shuangpin: self.shuangpin.map(|s| s.name().to_string()).unwrap_or_default(),
+            shuangpin: self
+                .shuangpin
+                .map(|s| s.name().to_string())
+                .unwrap_or_default(),
         }
     }
 
     /// 用户键盘输入
-    pub fn input(&mut self, text: &str, half_width: bool) -> Result<Composition, String> {
-        // 如果包含标点符号键且已有组词内容，且不是撇号（撇号作为拼音分隔符），执行顶字上屏
-        for c in text.chars() {
-            if crate::punct::punct_map(c).is_some() && !self.input_raw.is_empty() && c != '\'' {
-                // 上屏当前首选词
-                let committed_word = self.select(0).unwrap_or_default();
-                let punct_str = self.punct_state.process(c, half_width);
-                let mut comp = self.compose();
-                comp.committed = format!("{}{}", committed_word, punct_str);
-                return Ok(comp);
+    pub fn input(&mut self, text: &str, _half_width: bool) -> Result<Composition, String> {
+        // 与 Go engine.Session.Input 同契约：壳是标点唯一真源，input 只收
+        // 拼音字母（先整体小写，非 [a-z'] 一律静默丢弃，标点走 punct()）。
+        // 例外：双拼模式 ';' 是韵母键（mspy 的 ing），必须放行参与成对解码。
+        for c in text.to_lowercase().chars() {
+            if c.is_ascii_lowercase() || c == '\'' || (c == ';' && self.shuangpin_decoder.is_some())
+            {
+                self.input_raw.push(c);
             }
-            self.input_raw.push(c);
         }
 
         Ok(self.compose())
@@ -557,5 +589,95 @@ mod tests {
         sess.input("ni", false).unwrap();
         let comp = sess.backspace();
         assert_eq!(comp.input, "n");
+    }
+
+    /// 输入过滤契约（对齐 Go Input）：整体小写、只收 [a-z']，其余字符
+    /// 静默丢弃（标点由壳路由到 punct()，不在 input 里顶字上屏）。
+    #[test]
+    fn test_input_filters_non_pinyin_chars() {
+        let mut sess = create_test_session();
+        let comp = sess.input("NI1hao!?", false).unwrap();
+        assert_eq!(comp.input, "nihao");
+        assert_eq!(comp.preedit, "ni'hao");
+        assert!(comp.committed.is_empty(), "input 不得代行标点上屏");
+        assert_eq!(comp.candidates[0].text, "你好");
+
+        // 全部为非法字符：组词保持为空（新会话，input 累积语义与 Go 一致——
+        // 非法字符不产生新组词，也不清掉既有组词）
+        let mut sess2 = create_test_session();
+        let comp2 = sess2.input("123", false).unwrap();
+        assert!(comp2.input.is_empty());
+        assert!(comp2.candidates.is_empty());
+    }
+
+    /// 纯音节切分优先于声母碎片：xian 是合法音节，不得混入 xia'n
+    /// 这类碎片切分展开的候选（对齐 Go：碎片只在整段无音节解时兜底）。
+    #[test]
+    fn test_fragment_patterns_lose_to_pure_syllables() {
+        let mut dict = Dictionary::new();
+        dict.insert(crate::dict::WordEntry {
+            word: "先".to_string(),
+            pinyin: "xian".to_string(),
+            syllables: vec!["xian".to_string()],
+            freq: 5000,
+        });
+        dict.insert(crate::dict::WordEntry {
+            word: "瞎闹".to_string(),
+            pinyin: "xia'nao".to_string(),
+            syllables: vec!["xia".to_string(), "nao".to_string()],
+            freq: 9000, // 词频更高也不得靠碎片切分胜出
+        });
+        dict.sort_nodes();
+        let mut sess = Session::new(Arc::new(dict), None);
+
+        let comp = sess.input("xian", false).unwrap();
+        for cd in &comp.candidates {
+            let first = cd.syllables.split('\'').next().unwrap_or("");
+            assert_ne!(
+                first, "xia",
+                "碎片切分不得污染纯音节输入: {:?}",
+                comp.candidates
+            );
+        }
+        assert_eq!(comp.candidates[0].text, "先");
+    }
+
+    /// 简拼与无候选兜底：整段没有合法音节切分时，碎片导航才参与召回
+    /// （nh → n/h 展开、zzz → z'z'z 展开）。
+    #[test]
+    fn test_fragment_fallback_recall() {
+        let mut dict = Dictionary::new();
+        dict.insert(crate::dict::WordEntry {
+            word: "你好".to_string(),
+            pinyin: "ni'hao".to_string(),
+            syllables: vec!["ni".to_string(), "hao".to_string()],
+            freq: 9000,
+        });
+        dict.insert(crate::dict::WordEntry {
+            word: "自治州".to_string(),
+            pinyin: "zi'zhi'zhou".to_string(),
+            syllables: vec!["zi".to_string(), "zhi".to_string(), "zhou".to_string()],
+            freq: 800,
+        });
+        dict.sort_nodes();
+        let mut sess = Session::new(Arc::new(dict), None);
+
+        // 简拼 nh：n/h 碎片展开召回 你好
+        let comp = sess.input("nh", false).unwrap();
+        assert!(
+            comp.candidates.iter().any(|c| c.text == "你好"),
+            "简拼应召回 你好: {:?}",
+            comp.candidates
+        );
+
+        // zzz：无任何合法音节，碎片 z'z'z 兜底召回 自治州（zi'zhi'zhou 每个
+        // 音节都以 z 开头）
+        sess.reset();
+        let comp2 = sess.input("zzz", false).unwrap();
+        assert!(
+            comp2.candidates.iter().any(|c| c.text == "自治州"),
+            "碎片兜底应召回 自治州: {:?}",
+            comp2.candidates
+        );
     }
 }
