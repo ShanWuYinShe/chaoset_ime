@@ -3,10 +3,10 @@
 # 用于 GitHub Actions windows-latest runner 原生秒级构建
 set -euo pipefail
 
-# 防止 Git Bash / MSYS2 将 Windows 编译器参数（如 /O2 /LD /DEF:...）转为 Unix 路径
-export MSYS2_ARG_CONV_EXCL="*"
-
 # 1. 确定版本号（单一真源 scripts/version.sh）
+# 注意：这一步必须在设置 MSYS2_ARG_CONV_EXCL 之前——该变量会阻止 MSYS 把
+# `/d/a/...` 形式路径转换成 Windows 路径，导致原生 git.exe 读不到 -C 目录，
+# version.sh 误判为 nogit（Windows CI 实际踩坑）。
 if [ -z "${VERSION:-}" ]; then
   VERSION=$(sh scripts/version.sh)
 fi
@@ -25,6 +25,10 @@ VBUILD=$(echo "$QUAD" | cut -d. -f4)
 # chaoset-settings 都由 build.rs 负责，本脚本不再手写 rc/编译 res）。
 export CHAOSET_BUILD_VERSION="$VERSION"
 export CHAOSET_VERSION_QUAD="$QUAD"
+
+# 防止 Git Bash / MSYS2 将 Windows 编译器参数（如 /O2 /LD /DEF:...）转为 Unix 路径。
+# 版本探测完成后再开启（见上方注释）。
+export MSYS2_ARG_CONV_EXCL="*"
 
 # Git Bash 自带的 /usr/bin/link.exe（GNU coreutils 的 link）会遮蔽 MSVC 的
 # link.exe：cargo 链接 Rust 产物时按 PATH 找 linker，会调用 GNU link 并报
