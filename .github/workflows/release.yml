@@ -132,7 +132,8 @@ jobs:
       - name: 安装 ibus 与 zstd 测试依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y ibus zstd build-essential pkg-config libibus-1.0-dev file
+          sudo apt-get install -y ibus zstd build-essential pkg-config libibus-1.0-dev file \
+            libfontconfig1-dev libfreetype-dev libxkbcommon-dev libwayland-dev xvfb
 
       - name: 编译 Slint Linux 设置中心
         run: make build-settings

@@ -115,6 +115,16 @@ build-settings-universal:
 	@lipo -info bin/chaoset-settings | grep -q 'x86_64 arm64\|arm64 x86_64' || { echo "错误：设置中心不是 universal" >&2; exit 1; }
 
 build-settings-windows:
+	@# Git Bash 自带的 /usr/bin/link.exe（GNU link）会遮蔽 MSVC link.exe，
+	# cargo 链接 build script 时报「extra operand ... .rcgu.o」；Windows runner 上
+	# 必须把 MSVC 工具目录前置（cl.exe 同目录有 link.exe/lib.exe）。
+	@if command -v cl.exe >/dev/null 2>&1; then \
+		MSVC_BIN_DIR=$$(dirname "$$(command -v cl.exe)"); \
+		export PATH="$$MSVC_BIN_DIR:$$PATH"; \
+		if command -v cygpath >/dev/null 2>&1; then \
+			export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$$(cygpath -w "$$MSVC_BIN_DIR/link.exe"); \
+		fi; \
+	fi; \
 	CHAOSET_BUILD_VERSION='$(VERSION)' cargo build --release $(CARGO_WIN_TARGET) --manifest-path shims/settings/Cargo.toml
 
 build-rust:
