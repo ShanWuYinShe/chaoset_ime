@@ -106,6 +106,11 @@ pub struct UserDict {
 }
 
 impl UserDict {
+    /// 用户词典文件路径（None = 内存态，不落盘）。
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     pub fn new<P: AsRef<Path>>(path_opt: Option<P>) -> Self {
         let path = path_opt.map(|p| p.as_ref().to_path_buf());
         let mut file_data = UserFile::default();
