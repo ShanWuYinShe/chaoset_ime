@@ -2,11 +2,11 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.4.0（2026-11-21）
 
 > **本版本最终状态**：Rust 引擎（`crates/chaoset-engine`）与 Rust daemon（`crates/chaosetd`）是唯一实现；
 > Go 引擎（`engine/`）、Go daemon（`cmd/chaosetd`）、Go↔Rust 差分工具（`tools/engineparity`）与
-> 旧 CDB1 二进制词库（`data/dict_common.bin`）已删除；仓库词库源保持 TSV（发布用二进制词库由后续条目引入）。
+> 旧 CDB1 二进制词库已删除；仓库词库源保持 TSV，发布包由新的 CSDB 二进制词库承载（见本段「重构(词库)」条目）。
 > 下方迁移过程条目里的「Go 对照实现」「差分工具」「二进制词库」均为阶段性产物，最终已移除；
 > 41 个差分场景已冻结为 Rust 回放基线（`crates/chaoset-engine/tests/parity_scenarios.rs`）。
 
