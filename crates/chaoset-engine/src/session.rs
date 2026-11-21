@@ -1261,31 +1261,35 @@ impl Session {
         // 4.5 首段全量单字收尾（Go addSingleCharBackfill）：任何多段输入都在
         // 列表最末追加首段全量单字（rankSingleBackfill），让 SelectPrefix 能
         // 选到 top 之外的字；单段输入本身已是全量单字，不重复追加。
-        if let Some(first_pat) = patterns.first() {
-            if first_pat.len() >= 2 {
-                let first = [first_pat[0].text.as_str()];
-                let singles: Vec<(String, Vec<String>, u32)> = self
-                    .dict
-                    .query_exact(&first, SINGLE_SYLLABLE_EXACT_LIMIT)
-                    .iter()
-                    .filter(|e| e.word.chars().count() == 1)
-                    .map(|e| (e.word.clone(), e.syllables.clone(), e.freq))
-                    .collect();
-                for (word, syllables_vec, freq) in singles {
-                    let display_text = if traditional {
-                        to_traditional(&word)
-                    } else {
-                        word.clone()
-                    };
-                    pool.add(
-                        &word,
-                        display_text,
-                        syllables_vec.join("'"),
-                        freq as i32,
-                        false,
-                        RANK_SINGLE_BACKFILL,
-                        false,
-                    );
+        // **错拼输入不追加单字兜底**（项目硬约束）：纠错候选固定第 3 位，其余
+        // 位置只保留纠错与真实词条，否则列表会被几百个同音单字淹没。
+        if !shape.typo_suspicious {
+            if let Some(first_pat) = patterns.first() {
+                if first_pat.len() >= 2 {
+                    let first = [first_pat[0].text.as_str()];
+                    let singles: Vec<(String, Vec<String>, u32)> = self
+                        .dict
+                        .query_exact(&first, SINGLE_SYLLABLE_EXACT_LIMIT)
+                        .iter()
+                        .filter(|e| e.word.chars().count() == 1)
+                        .map(|e| (e.word.clone(), e.syllables.clone(), e.freq))
+                        .collect();
+                    for (word, syllables_vec, freq) in singles {
+                        let display_text = if traditional {
+                            to_traditional(&word)
+                        } else {
+                            word.clone()
+                        };
+                        pool.add(
+                            &word,
+                            display_text,
+                            syllables_vec.join("'"),
+                            freq as i32,
+                            false,
+                            RANK_SINGLE_BACKFILL,
+                            false,
+                        );
+                    }
                 }
             }
         }
@@ -2597,5 +2601,21 @@ mod tests {
         sess.input("h", false).unwrap();
         let comp = sess.backspace();
         assert_eq!(comp.input, "ni", "暂存首键的退格只清暂存");
+    }
+    /// 错拼输入不追加单字兜底（项目硬约束，Go 同口径）：lianxiagn 的候选里
+    /// 不得出现只靠 rankSingleBackfill 层才会召回的冷僻同音字。
+    #[test]
+    fn test_typo_input_has_no_single_char_backfill() {
+        let mut sess = Session::new(common_dict(), None);
+        let comp = sess.input("lianxiagn", false).unwrap();
+        assert!(!comp.candidates.is_empty(), "错拼输入应有纠错候选");
+        assert!(
+            !comp.candidates.iter().any(|c| c.text == "莲"),
+            "错拼输入不得追加单字兜底层（莲 只靠兜底才会出现）: {:?}",
+            comp.candidates
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 }
