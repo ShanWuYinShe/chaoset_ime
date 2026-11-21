@@ -101,6 +101,12 @@ build-settings-windows:
 build-rust:
 	cargo build --release --manifest-path crates/Cargo.toml
 
+# 引擎差分对比（Go ↔ Rust 重构基线）：同一场景语料驱动两套引擎，对比用户可见
+# 行为；rust 迁移推进时按需手动执行，全部场景一致后可升级为 CI 门禁。
+engineparity:
+	go run ./tools/engineparity -mode compare -dict data/dict_common.tsv \
+		-scenarios tools/engineparity/scenarios.jsonl
+
 test:
 	go test ./...
 	cargo test --manifest-path shims/settings/Cargo.toml
