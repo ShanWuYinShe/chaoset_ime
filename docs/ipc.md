@@ -31,7 +31,7 @@ daemon 与壳之间的纯数据协议;帧格式与传输契约的现行摘要见
 `;` 键路由到 `input` 而不是 `punct`——mspy 的 ing 韵母键是 `;`）与顶层
 `committed`（本次调用需壳写入文档的文本：渐进上屏段，或双拼 `;` 触发的
 「首选词+标点」）。
-IPC 是纯数据协议：daemon 只返回 `engine.Candidate` / `engine.Composition` 结构，
+IPC 是纯数据协议：daemon 只返回协议 DTO（Go 客户端侧为 `ipc.Candidate` / `ipc.Composition`），
 候选窗由 mac/Windows 壳原生自绘（macOS 用 AppKit，见
 `shims/macos/src/CandidatePanelView.swift`；Windows 用 GDI），Linux 不重绘面板、
 用 ibus 原生 LookupTable/Preedit 呈现；daemon 不提供贴图渲染。

@@ -158,7 +158,8 @@ const (
 	// 单实例/延迟拉起等 daemon 侧契约看 main.rs/singleton.rs/ui.rs。
 	ipcServer    = "crates/chaosetd/src/ipc.rs"
 	ipcClient    = "ipc/client.go"
-	userdictGo   = "engine/userdict.go"
+	rustUserdict = "crates/chaoset-engine/src/userdict.rs"
+	rustSession  = "crates/chaoset-engine/src/session.rs"
 	userdictCLI  = "cmd/chaoset-userdict/main.go"
 	makefile     = "Makefile"
 	installSh    = "shims/linux/install.sh"

@@ -9,11 +9,9 @@
 ## 1. 分层与依赖方向
 
 ```
-crates/           Rust 引擎与守护进程（chaoset-engine 算法 + chaosetd daemon；已接替发行包）
-crates/           Rust 引擎与守护进程（chaoset-engine + chaosetd；唯一实现）
-engine/           纯 Go 拼音/联想算法（临时差分基线：make engineparity；禁止平台 API、CGO、build tag）
+crates/           Rust 引擎与守护进程（chaoset-engine 算法 + chaosetd daemon；唯一实现）
 ipc/              IPC 帧协议与**客户端**传输（unix socket / Windows 命名管道；无 TCP；服务端在 Rust）
-internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源、tools ← 统一工具库）
+internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源、dict ← 工具链词库格式/拼音归一化、tools ← 统一工具库）
 cmd/              可执行工具（chaoset 多功能统一 CLI、chaoset-cli、chaoset-import、
                   chaoset-userdict、chaoset-dictgen、chaoset-settingsctl）
 shims/common/     三端壳共用的 C++ IPC 客户端（core.hpp/core.cpp）
@@ -22,7 +20,7 @@ shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交
 
 规则：
 
-1. **单向依赖**：engine ← cmd/daemon ← ipc；shims 只允许通过 IPC 调 daemon，不 import Go 包。
+1. **单向依赖**：cmd 工具 ← ipc；shims 只允许通过 IPC 调 daemon，不 import Go 包。Go 工具不得 import Rust 侧实现（也不能再引入已删除的 Go 引擎）。
 2. **shims 内**：平台壳只做「平台集成 + 渲染 + 系统交互」；业务逻辑（设置 schema/持久化、
    学习数据、词库合并/备份/导入）归 Go。shim 不得把同一份业务逻辑再实现一遍。
 3. **大小预算**：单文件超过预算即视为架构回退，`checkuiparity` 会 FAIL。拆分时按职责，

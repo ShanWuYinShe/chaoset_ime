@@ -10,7 +10,7 @@ const (
 	groupSettingsSharedText    = "设置窗共享文案"
 	groupSettingsSingleton     = "设置窗单例"
 	groupLearningGUI           = "学习数据 GUI"
-	groupEnginePurity          = "engine 纯净约束"
+	groupNoGoEngine            = "Go 引擎已移除"
 	groupImportEntries         = "词库导入入口"
 	groupImportSafety          = "词库导入安全"
 	groupAssociateImmediacy    = "关闭联想即时性"

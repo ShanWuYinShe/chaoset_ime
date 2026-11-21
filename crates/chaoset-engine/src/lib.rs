@@ -13,4 +13,5 @@ pub mod userdict;
 pub use dict::{Dictionary, WordEntry};
 pub use session::{Candidate, Composition, Session, PAGE_SIZE};
 pub use shuangpin::ShuangpinScheme;
+pub use syllable::is_syllable;
 pub use userdict::{UserDict, UserStats};

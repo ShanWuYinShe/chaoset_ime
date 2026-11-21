@@ -12,7 +12,7 @@
 1 字 8,710、2 字 86,370、3 字 47,951、4 字 51,287、5 字 3,826、6 字 1,856。
 覆盖通用规范汉字表 8105 全部单字，以及现代日常生活、职场工作、信息科技AI、社会政务、医疗健康与现代消费各领域常用词汇。
 数据规模与候选质量基线以上方「实测数据（可复现）」为准（同一 1,071 采样口径）。
-`engine/data_contract_test.go` 另保证：内置词库 ≥6 万条、单字 ≥8,000、音节数等于
+`crates/chaoset-engine/tests/dict_contract.rs` 另保证：内置词库 ≥6 万条、单字 ≥8,000、音节数等于
 字数、`dict_extra`/`dict_hot` 全部合并；当前词库实际覆盖通用规范汉字表 8105 全部单字。
 规范常用词覆盖/精度与 98 热词探针属于词库生成期的固定词表评估（脚本未入库），
 不作为候选排序回归指标。
@@ -150,11 +150,11 @@ flag 说明：
 生成规则（实现见 `cmd/chaoset-dictgen`）：
 
 - 只收纯 CJK 汉字词条——基本区、扩展 A、兼容表意区与「〇」，长度 1–6 字；
-- 拼音经 `engine.NormalizePinyin` 归一化并逐音节 `IsSyllable` 校验，音节数必须
+- 拼音经 `internal/dict.NormalizePinyin` 归一化并逐音节 `IsSyllable` 校验，音节数必须
   等于字数，否则丢弃（防止错位拼音进词库）；
 - 高频用法词必须通过词表交叉验证（phrase-pinyin-data / THUOCL / HanLP），
   wordfreq 的分词噪声（这是/这我/一给）不会入库；
-- 繁体变体剔除**只对高频用法来源生效**：`engine.ToSimplified` 是 OpenCC 简→繁表
+- 繁体变体剔除**只对高频用法来源生效**：`internal/dict.ToSimplified` 是 OpenCC 简→繁表
   的反向映射，对「像/象」这类简繁同形字会误判（好像→好象），规范词表/HSK/
   手工词表不做该过滤，避免误删常用词；
 - 输出按词频降序、同频按词、再按音节排序，确定性可复现。
@@ -172,11 +172,11 @@ flag 说明：
 权重是「估算原始词频」量级，生成器按 `ln(w)/ln(1e6)`
 压缩到常用词中高区间（4000≈60 分、1000≈50 分、100≈35 分）；与主词表重复时取
 较大词频，不需要从词表删除重复词。改完必须重新生成 `data/dict_common.tsv` 并
-提交两者，生成产物仍禁止手改；`engine/data_contract_test.go` 会在 CI 断言
+提交两者，生成产物仍禁止手改；`crates/chaoset-engine/tests/dict_contract.rs` 会在 CI 断言
 「手工词条格式合法 + 已合并进内置词库」。
 
 维护规则：只收「确实常用、且上游词表/词频源没有或明显偏低」的词；拼音必须逐条
-核对（生成器会用 `engine.IsSyllable` + 音节数==字数强校验，非法即让生成失败）。
+核对（生成器会用 `internal/dict.IsSyllable` + 音节数==字数强校验，非法即让生成失败）。
 
 ## 词库校验：构建期严格，运行期健壮
 
@@ -184,8 +184,8 @@ flag 说明：
 
 | 阶段 | 对象 | 策略 | 保证方式 |
 |---|---|---|---|
-| 构建期 | 内置词库（生成产物 + extra 补充表） | **严格**：一行脏数据即失败 | `cmd/chaoset-dictgen` 生成时强校验；`engine/data_contract_test.go` 在 CI 严格解析 `data/dict_common.tsv` 与 `data/dict_extra.tsv`/`data/dict_hot.tsv`（规模、音节数==字数、词频区间、手工词表必须已合并） |
-| 运行期 | 用户自备的第三方词库（`-dict`） | **健壮**：跳过坏行并汇总警告 | `engine.LoadDictFilesLenient`：坏行跳过、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20；daemon 把汇总写日志 |
+| 构建期 | 内置词库（生成产物 + extra 补充表） | **严格**：一行脏数据即失败 | `cmd/chaoset-dictgen` 生成时强校验；`crates/chaoset-engine/tests/dict_contract.rs` 在 CI 严格解析 `data/dict_common.tsv` 与 `data/dict_extra.tsv`/`data/dict_hot.tsv`（规模、音节数==字数、词频区间、手工词表必须已合并） |
+| 运行期 | 用户自备的第三方词库（`-dict`） | **健壮**：跳过坏行并汇总警告 | Rust 引擎的宽松加载（`Dictionary::load_tsv`）：坏行跳过、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20；daemon 把汇总写日志 |
 
 为什么这样分：内置词库是**我们的**产物，脏数据必须在构建期暴露，不能靠运行时
 宽容掩盖；而用户从网上下载或手写的词库，一行编码/格式问题不该让整个输入法起
@@ -201,46 +201,14 @@ flag 说明：
 先按严格规则校验、通过则原样保留音节），因此 daemon 在用户机器上的候选行为
 与 CI 验证过的行为一致。
 
-## 规模基准
+## 词库规模与加载说明
 
-测量方式（**数据来自这里，可复现**）：
-
-```sh
-# 环境：Apple M1 / macOS，Go 版本见 go.mod（go 1.27）
-# 四个基准都在 engine/scale_bench_test.go，词库为代码合成的 10 万条双音节词，
-# 不依赖任何外部词库文件，因此在任何机器上都能复跑。
-go test ./engine/ -bench . -benchtime 3x
-```
-
-基准项与测量对象（参考量级；复跑以本机结果为准）：
-
-| 基准函数 | 测的是什么 | 参考量级 |
-|---|---|---|
-| `BenchmarkLoadDict100k` | 解析 10 万行 TSV 建索引（daemon 启动路径，只跑一次） | 数十 ms |
-| `BenchmarkCompose100k` | 单次组词，含全量候选排序 + 分页切片 | 亚毫秒/键 |
-| `BenchmarkQueryPrefix100k` | 残缺音节前缀查询（线性扫描） | 亚毫秒/键 |
-
-> 复跑会受机器负载、Go 版本与电源策略影响；判断回归时请在**同一环境**前后对比。
-> 120,282 条 CC-CEDICT 合并词库下 daemon 秒级就绪，逐键链路在毫秒级
-> （含进程启动），翻页在数千候选下正常。
-
-## 内置词库（真实数据）
-
-上面那组是代码合成的词库。默认加载的 `data/dict_common.tsv` 是**真实数据**，另有
-两个基准直接读仓库里的词库文件、测的就是用户实际启动路径（`engine/common_dict_bench_test.go`）：
-
-```sh
-go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
-```
-
-| 基准函数 | 测的是什么 | 参考量级 |
-|---|---|---|
-| `BenchmarkLoadCommonDict` | 解析 200,000 条真实 TSV 词库建索引（daemon 启动时跑一次） | 约 350–420ms |
-| `BenchmarkComposeCommonDict` | `jingchang` 完整组词（含全量候选排序 + 分页切片） | 约 70–120µs/键 |
-
-词库自身规模：**200,000 条 / TSV 4.6 MB**，词频区间 1–99；按词长分布为
+内置词库 `data/dict_common.tsv` 的实际规模：**200,000 条 / TSV 4.6 MB**，词频区间 1–99；按词长分布为
 1 字 8,710、2 字 86,370、3 字 47,951、4 字 51,287、5 字 3,826、6 字 1,856。
-词库统一使用纯文本 TSV（Git 友好可审计）：Rust 引擎只实现 TSV 加载，不再维护二进制格式，避免两套加载路径漂移。
+
+词库统一使用纯文本 TSV（Git 友好可审计）：Rust 引擎只实现 TSV 加载，不再维护二进制格式，
+避免两套加载路径漂移。加载/组词性能以 `cargo test --release` 与真实输入体验为准；
+旧 Go 引擎的 benchmark 已随引擎删除，本文不再写死跨版本性能数字。
 
 ## 词库相关的测试
 
@@ -248,11 +216,8 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 
 | 测试 | 守什么 |
 |---|---|
-| `engine.TestCommonDictJingchang` | 用户反馈的原始场景：输入 `jingchang` 第一候选必须是「经常」 |
-| `engine.TestCommonDictSingleSyllableRanksCommonChar` | 单音节 `jing` 第一候选是常用字「经」，不被生僻字淹没 |
-| `engine.TestExactSyllableCountPreferred` | 完全匹配优先：「经常」排在「经常化」前 |
-| `engine.TestUserBoostBeatsExactMatch` | 反向约束：用户选过的长词要能压过「完全匹配优先」 |
-| `engine.TestCommonDictScale` | 规模与完整性回归：≥6 万条、常用词都在、词频全部落在 1..99 |
+| `crates/chaoset-engine` 单元测试（`session.rs`，读真实内置词库） | 用户反馈场景（`jingchang`→经常）、单音节常用字优先、完全匹配优先、用户学习加权、错拼不污染正常输入 |
+| `crates/chaoset-engine/tests/dict_contract.rs` | 规模 ≥6 万条、单字 ≥8,000、音节数==字数、词频 1..99、手工词表已合并 |
 
 生成工具自身（`cmd/chaoset-dictgen/main_test.go`，用小样本，不依赖那三个大源文件）：
 
@@ -269,4 +234,4 @@ go test ./engine/ -run XXX -bench 'CommonDict' -benchtime 3x
 | `TestGenDropsSyllableCountMismatch` | 音节数与字数不符的整条丢弃 |
 | `TestCJKWordOK` | CJK 范围判定（基本区/扩展 A/兼容区/〇 与长度上限） |
 
-改了生成逻辑后请同时跑：`go test ./cmd/chaoset-dictgen/ ./engine/`。
+改了生成逻辑后请同时跑：`go test ./cmd/chaoset-dictgen/` 与 `cargo test --manifest-path crates/Cargo.toml`。

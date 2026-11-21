@@ -226,13 +226,44 @@ func checkLearningDataGUI(fsys fs.FS, problems *[]string) {
 		"chaoset-userdict", "-userdict", "setup_userdict_clear", "ibus")
 }
 
-// checkEnginePurity engine 包纯净约束：Linux 设置窗只能走 chaoset-userdict 本地文件模式，
-// 不允许重新引入 DBus / ibus 引擎管理接口（2026-10-31 用户明确要求）。
-func checkEnginePurity(fsys fs.FS, problems *[]string) {
-	for _, path := range []string{linuxSetup, linuxCtl, linuxDictImport} {
-		checkExcludes(fsys, problems, groupEnginePurity, path,
-			"dbus-send", "org.freedesktop.IBus", "IBusEngine")
+// checkNoGoEngine 锁定「Go 引擎已删除、Rust 是唯一实现」：
+//  1. engine/ 目录不得重新出现（回退成双实现）；
+//  2. 任何 Go 源码不得 import "chaoset.ime/engine"（工具层不得再绑回引擎）。
+//
+// 这是删除 Go 引擎后的回归锁：旧 engine 包若被重新引入，候选行为会再次出现
+// 「Go 与 Rust 两套实现漂移」的问题，而用户在机器上看到的是偶尔不一致。
+func checkNoGoEngine(fsys fs.FS, problems *[]string) {
+	const group = groupNoGoEngine
+	if _, err := fs.Stat(fsys, "engine"); err == nil {
+		*problems = append(*problems, group+"：engine/ 目录不应存在（Go 引擎已删除，Rust 是唯一实现）")
 	}
+	skip := map[string]bool{".git": true, ".agents": true, ".workwork": true,
+		"node_modules": true, "target": true, "bin": true, "build": true, "dist": true}
+	_ = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skip[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		data, rerr := fs.ReadFile(fsys, path)
+		if rerr != nil {
+			return nil
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(line) == "\"chaoset.ime/engine\"" {
+				*problems = append(*problems, group+"："+path+" 仍 import chaoset.ime/engine（Go 引擎已删除，工具应使用 internal/dict 等独立包）")
+				break
+			}
+		}
+		return nil
+	})
 }
 
 // settingsTokenNames 是三端设置窗视觉令牌表的必备令牌名（只防「删表行」；
