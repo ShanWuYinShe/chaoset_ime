@@ -15,7 +15,7 @@ CXX=${CXX:-clang++}
   tests/core_test.cpp ../common/ipc/core.cpp -o build/core_test
 
 echo "[2/4] 启动真实 daemon（Unix socket）并跑行为测试..."
-(cd ../.. && go build -o shims/windows/build/chaosetd ./cmd/chaosetd)
+(cd ../.. && cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml && cp crates/target/release/chaosetd shims/windows/build/chaosetd)
 # 测试台用 Unix socket 连 daemon：Windows 壳本身只走命名管道（本机没有管道
 # API），但两者同属 ipc.Endpoint 的本机传输，帧格式与协议完全一致。
 # 路径必须短——macOS 的 sockaddr_un 上限 104 字节，长路径会连不上。

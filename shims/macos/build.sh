@@ -49,6 +49,30 @@ swift_universal() {
   fi
 }
 
+# rust_universal_daemon <输出>
+# daemon 由 Rust 实现（crates/chaosetd）：分别构建两种架构再 lipo 合并。
+# rustup 目标缺失时自动补装（CI 的 macos runner 首次构建 x86_64 需要）。
+rust_universal_daemon() {
+  out=$1
+  rm -f "$out"
+  for arch in $ARCHS; do
+    case "$arch" in
+      arm64)  rtarget=aarch64-apple-darwin ;;
+      x86_64) rtarget=x86_64-apple-darwin ;;
+      *) echo "未知架构: $arch" >&2; return 1 ;;
+    esac
+    rustup target add "$rtarget" >/dev/null 2>&1 || true
+    (cd "$ROOT" && cargo build --release --bin chaosetd --target "$rtarget"       --manifest-path crates/Cargo.toml) || return 1
+    cp "$ROOT/crates/target/$rtarget/release/chaosetd" "$out.$arch" || return 1
+  done
+  if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
+    lipo -create "$out".* -output "$out"
+    rm -f "$out".arm64 "$out".x86_64
+  else
+    mv "$out.$ARCHS" "$out"
+  fi
+}
+
 # go_universal <输出> <包路径>
 go_universal() {
   out=$1; pkg=$2
@@ -71,7 +95,7 @@ go_universal() {
 }
 
 echo "[1/5] 编译 Go daemon 与导入工具（架构: ${ARCHS}）..."
-go_universal "$ROOT/shims/macos/build/chaosetd" ./cmd/chaosetd
+rust_universal_daemon "$ROOT/shims/macos/build/chaosetd"
 # chaoset-import 必须随输入法 app 一起安装：设置窗打开安装器导入词库时，
 # 导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到用户目录。
 go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import

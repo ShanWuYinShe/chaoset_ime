@@ -9,7 +9,8 @@
 ## 1. 分层与依赖方向
 
 ```
-engine/           纯 Go 拼音/联想算法（禁止平台 API、CGO、build tag；purity_test.go 守卫）
+crates/           Rust 引擎与守护进程（chaoset-engine 算法 + chaosetd daemon；已接替发行包）
+engine/           纯 Go 拼音/联想算法（算法对照基线：make engineparity 差分；禁止平台 API、CGO、build tag）
 ipc/              IPC 帧协议与传输抽象（unix socket / Windows 命名管道；无 TCP）
 internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源、tools ← 统一工具库）
 cmd/              可执行工具（chaoset 多功能统一 CLI、chaosetd、chaoset-cli、chaoset-import、

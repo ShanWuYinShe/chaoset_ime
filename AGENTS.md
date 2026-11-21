@@ -1,6 +1,6 @@
 # chaoset_ime
 
-跨平台中文输入法：Go 核心引擎（chaosetd） + IPC 通信（Unix socket / Windows 命名管道） + 平台原生薄壳（macOS IMK / Windows TSF / Linux C++/libibus）。
+跨平台中文输入法：Rust 引擎与守护进程（`crates/chaoset-engine` + `crates/chaosetd`，已接替发行包） + IPC 通信（Unix socket / Windows 命名管道） + 平台原生薄壳（macOS IMK / Windows TSF / Linux C++/libibus）。Go 引擎（`engine/`）与 Go daemon（`cmd/chaosetd`）保留为算法对照基线（`make engineparity` 差分）与回滚路径，Go 工具链（`cmd/chaoset*`）继续承担导入/设置/多合一 CLI。
 
 通用约束以全局 `~/AGENTS.md` 为准，本文件只做项目特有补充。
 
@@ -75,7 +75,7 @@ worktree 内提交 → 推送分支 → `gh pr create` → `gh pr checks --watch
 日常不在本地跑这些目标，调试/复现时才用；CI 已覆盖同等验证：
 
 ```bash
-make build       # 编译 bin/ 下的 chaoset (统一 CLI), chaosetd, chaoset-cli, chaoset-import, chaoset-dictgen, chaoset-userdict, chaoset-settingsctl
+make build       # 编译 bin/ 下 chaoset (统一 CLI), chaosetd（Rust daemon）, chaoset-cli, chaoset-import, chaoset-dictgen, chaoset-userdict, chaoset-settingsctl
 make test        # 运行引擎与协议测试 (go test ./...)
 make fmt         # 代码格式化（只格式化 git 跟踪的 .go，不扫 .workwork/）
 make version     # 当前版本（tag CI 用 tag 号，其余用 年月日-commit hash）

@@ -53,7 +53,7 @@ case "$ARCH" in
   *) echo "不支持的容器架构: $ARCH" >&2; exit 1 ;;
 esac
 mkdir -p "$ROOT/build"
-( cd "$ROOT" && GOOS=linux GOARCH="$GOARCH" CGO_ENABLED=0 go build -o build/chaosetd ./cmd/chaosetd )
+( cd "$ROOT" && cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml && cp crates/target/release/chaosetd build/chaosetd )
 docker cp "$ROOT/build/chaosetd" "$NAME:/usr/local/bin/chaosetd"
 docker cp "$ROOT/data/dict_common.tsv" "$NAME:/usr/local/share/chaoset/dict.tsv"
 docker exec "$NAME" chmod +x /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd

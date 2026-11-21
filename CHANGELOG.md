@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
+  - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版保留为 `bin/chaosetd-go`（对照与回滚路径，算法层已由 `make engineparity` 差分 41 场景对齐）；
+  - macOS：Rust daemon 同样产出 **universal 二进制**（aarch64 + x86_64 交叉构建后 lipo，缺失的 rustup 目标自动补装）；
+  - Windows：release 构建带 `windows_subsystem = "windows"`（无控制台闪窗，对应原 Go `-H=windowsgui`），并补齐 `Win32_System_Console` feature；
+  - daemon `-log` 真正落盘（此前 Rust 版忽略该参数）：启动即把 stderr 重定向到指定日志文件（目录不存在先建，打不开时回退临时目录 + PID 后缀），与 Go daemon `-log` 同口径——三端壳都靠它排障；
+  - `docs/architecture.md` 模块地图、`AGENTS.md` 架构首行与 `README.md` 架构图/运行命令同步；
+  - 验证：`make build` 产出 Rust `bin/chaosetd`（2.3MB vs Go 6.2MB）+ `bin/chaosetd-go` 对照；Rust/Go daemon 用同一 `chaoset-cli` 回放同一输入序列，候选/预编辑/页码/上屏文本**逐字节一致**；`-log` 落盘实测有内容；`make vet` 54 组通过；`make engineparity` 41/41 一致；
+  - 已知跟进：源码构建用的 Arch `PKGBUILD` 仍构建 Go daemon（需引入 cargo makedepends 与 crates 依赖策略，单独跟进）；Go daemon 源码暂保留作对照，后续再删。
 - **重构(引擎)：Rust 用户词库参与组词召回——差分 41 场景**全部一致（含 score）**：
   - 用户词库不再是「只加权不召回」：补齐 Go 的 6 个接入点——末段续接两条路径（dict 24 + 用户 8）、token 主查询（用户 queryTokens 10）、回退层（QueryTokensExact 5）、首音节单字兜底（300）、错拼修正（queryTokens 4）；用户学过的词/词组进化/整句记录现在都能作为候选出现；
   - 新增 `UserDict.query_tokens_exact` / `query_tokens` / `query_continuation`（Go 同名查询的 Rust 版：音节数过滤 + matchSyllable（碎片前缀、z/c/s 兼容 zh/ch/sh）+ 词频/词长/字典序排序 + 按词去重）；

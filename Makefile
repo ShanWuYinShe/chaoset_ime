@@ -81,7 +81,11 @@ check-version:
 build:
 	go build -o bin/chaosetctl ./cmd/chaosetctl
 	go build -o bin/chaoset ./cmd/chaoset
-	go build -o bin/chaosetd ./cmd/chaosetd
+	# daemon 由 Rust 实现（crates/chaosetd）接替发行包；Go 版保留为
+	# bin/chaosetd-go 供对照与回滚（算法层已由 tools/engineparity 差分对齐）。
+	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
+	cp crates/target/release/chaosetd bin/chaosetd
+	go build -o bin/chaosetd-go ./cmd/chaosetd
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
 	go build -o bin/chaoset-import ./cmd/chaoset-import
 	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
@@ -169,7 +173,7 @@ run-cli:
 	go run ./cmd/chaoset-cli
 
 run-daemon:
-	go run ./cmd/chaosetd
+	cargo run --quiet --release --bin chaosetd --manifest-path crates/Cargo.toml
 
 icons:
 	python3 scripts/generate_icons.py
@@ -230,7 +234,12 @@ package-linux:
 	mkdir -p dist/chaoset-linux-x86_64/icons
 	mkdir -p dist/chaoset-linux-x86_64/data
 	$(LINUX_GOENV) go build -ldflags "-s -w" -o dist/chaoset-linux-x86_64/bin/chaosetctl ./cmd/chaosetctl
-	$(LINUX_GOENV) go build -ldflags "-s -w" -o dist/chaoset-linux-x86_64/bin/chaosetd ./cmd/chaosetd
+	# daemon 由 Rust 实现（crates/chaosetd，已接替发行包）：交叉链接不可靠，
+	# Linux 包必须在 Linux 上构建（release.yml 的 package-linux 用 ubuntu runner）。
+	@test "$$(uname -s)" = Linux || { echo "错误：Linux 发行包的 chaosetd 需在 Linux 上构建（Rust 不做跨平台交叉链接）" >&2; exit 1; }
+	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
+	cp crates/target/release/chaosetd dist/chaoset-linux-x86_64/bin/chaosetd
+	strip dist/chaoset-linux-x86_64/bin/chaosetd 2>/dev/null || true
 	# 使用符号链接复用单一全能控制工具 chaosetctl (Multicall)，消除冗余二进制
 	(cd dist/chaoset-linux-x86_64/bin && ln -sf chaosetctl chaoset && ln -sf chaosetctl chaoset-cli && ln -sf chaosetctl chaoset-import && ln -sf chaosetctl chaoset-userdict)
 	@if [ -f shims/settings/target/release/chaoset-settings ]; then \
@@ -313,7 +322,10 @@ package-windows:
 	# 统一全能命令行控制工具 chaosetctl.exe 集成 cli / import / settingsctl / userdict 子命令，
 	# 消除独立小工具造成的安装包体积冗余（原 chaoset-cli/import/settingsctl/userdict 独立编译占用近 12MB）。
 	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaosetctl.exe ./cmd/chaosetctl
-	$(WIN_GOENV) go build -ldflags "-H=windowsgui -s -w" -o dist/chaoset-windows-x64/chaosetd.exe ./cmd/chaosetd
+	# daemon 由 Rust 实现（crates/chaosetd，release 为 windows 子系统，无控制台闪窗）。
+	# Windows 包在 windows-latest 原生构建（release.yml 的 package-windows）。
+	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
+	cp crates/target/release/chaosetd.exe dist/chaoset-windows-x64/chaosetd.exe
 	@if [ -f shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe ]; then \
 		cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe; \
 	fi

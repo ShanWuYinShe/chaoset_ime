@@ -52,7 +52,7 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 搜狗的多进程形态、macOS InputMethodKit 本身就是进程间模型）。
 
 ```
-┌──────────────── chaosetd (Go，一份代码) ────────────────┐
+┌─────────────── chaosetd (Rust，crates/chaosetd) ───────────────┐
 │  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
 │  ipc  ：length-prefixed JSON（Unix socket / 命名管道）      │
 └───────┬───────────────────┬───────────────────┬────────┘
@@ -104,7 +104,7 @@ docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内�
                    shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
                    渲染链路
 cmd/
-  chaosetd/          守护进程二进制（-dict 可多次叠加）
+  chaosetd/          守护进程二进制（Rust 实现；-dict 可多次叠加）
   chaoset-cli/       终端测试台（本地内嵌引擎或连接 daemon）
   chaoset-import/    热词导入工具（合并输出 TSV）
   chaoset-dictgen/   内置词库生成工具（常用性门槛词表 + wordfreq/HanLP 词频 → TSV）
@@ -477,17 +477,17 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 go run ./cmd/chaoset-cli
 
 # 或经 IPC 连接 daemon（先起 daemon；默认 socket 在平台用户目录）
-go run ./cmd/chaosetd &
+cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml &
 # 显式指定 cwd 下的 socket 便于本地调试：
-# go run ./cmd/chaosetd -socket chaoset.sock &
+# cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -socket chaoset.sock &
 # go run ./cmd/chaoset-cli --socket chaoset.sock
 
 # Windows 命名管道（推荐；daemon/CLI 都按当前用户 SID 自动算管道名）
-go run ./cmd/chaosetd -pipe &
+cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -pipe &
 go run ./cmd/chaoset-cli -pipe
 
 # 构建信息（提交号/构建时间）：真机排障第一步，确认装的是不是新构建
-go run ./cmd/chaosetd -version
+cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -version
 go run ./cmd/chaoset-cli -version
 ```
 

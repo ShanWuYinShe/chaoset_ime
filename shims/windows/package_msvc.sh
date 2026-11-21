@@ -62,10 +62,13 @@ rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetctl.res" "$OUTDIR/chaosetctl.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetd.res" "$OUTDIR/chaosetd.rc"
 
-# 4. 编译 Go 二进制 (chaosetctl.exe, chaosetd.exe)
-echo "==> 编译 Go 核心与全能工具 (chaosetctl.exe, chaosetd.exe)..."
+# 4. 编译二进制：chaosetctl.exe（Go 全能工具）+ chaosetd.exe（Rust daemon）
+echo "==> 编译 chaosetctl.exe（Go）与 chaosetd.exe（Rust）..."
 go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
-go build -ldflags "-H=windowsgui -s -w" -o "$OUTDIR/chaosetd.exe" ./cmd/chaosetd
+# daemon 由 Rust 实现（crates/chaosetd）：release 构建带 windows 子系统属性，
+# 不弹控制台窗口；MSVC 工具链由 CI 的 ilammy/msvc-dev-cmd 提供。
+cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
+cp crates/target/release/chaosetd.exe "$OUTDIR/chaosetd.exe"
 
 # 5. 拷贝 Slint 设置中心 (chaoset-settings.exe)
 if [ -f "shims/settings/target/release/chaoset-settings.exe" ]; then
