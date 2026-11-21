@@ -2,8 +2,8 @@
 //
 // # 用途
 //
-// 三端平台壳（Windows chaoset-ui.exe 设置窗、macOS SettingsWindow、Linux
-// GTK3 设置窗）只做渲染；设置项的 schema/默认值/校验/持久化唯一真源在
+// 设置 UI 只有 Slint 统一设置中心（shims/settings，经随包 chaosetctl 调用本
+// 命令）；设置项的 schema/默认值/校验/持久化唯一真源在
 // Go internal/settings，本命令是它给 shim 的**冷路径**入口（设置窗读取/
 // 写入、诊断脚本）。输入热路径（Windows TSF 回调、macOS IMK、Linux ibus）
 // 禁止调用本命令，仍读各自本机缓存/原生存储，保证按键延迟不受影响。
@@ -57,7 +57,7 @@
 //	         UiEnglish REG_DWORD 缺省 0
 //	         Theme     REG_SZ    缺省 "system"（system|light|dark）
 //	macOS    UserDefaults 域 ime.chaoset.inputmethod.ChaosetIME（输入法
-//	         bundle id；SettingsWindow.swift 编进 ChaosetIME.app）
+//	         bundle id；Slint 设置中心写同一域）
 //	         AssociateEnabled Bool   缺省 true
 //	         ChaosetFuzzy     Bool   缺省 false
 //	         ChaosetShuangpin String 缺省 ""（""|zrm|mspy|flypy）

@@ -15,8 +15,8 @@ import (
 // 无 plist API；用系统自带 defaults 与 Objective-C 的 UserDefaults 同一域）。
 //
 // 域 = 输入法 app 的 CFBundleIdentifier（见 shims/macos/build.sh）：
-// SettingsWindow.swift 与 CandidatePanel.swift 一起编进 ChaosetIME.app，
-// 因此设置窗里的 UserDefaults.standard 就是该 bundle 域；安装器
+// Slint 统一设置中心与 CandidatePanel.swift 使用的域相同（设置中心经
+// chaosetctl 写），因此 UserDefaults.standard 就是该 bundle 域；安装器
 // ChaosetSetup.app（ime.chaoset.setup）不存设置。显式传域还能让本 CLI
 // 以任意进程名运行（无 bundle 的进程 UserDefaults.standard 域不是它）。
 const (

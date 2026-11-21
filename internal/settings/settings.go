@@ -22,9 +22,8 @@
 //	  Theme      REG_SZ     缺省 "system"；只写入 system|light|dark，读取大小写
 //	                        不敏感并归一化未知值为 system
 //
-// macOS（shims/macos/src/CandidateSettings.swift：AssociateSetting、
-// ModeScopeSetting，拆分前在 CandidatePanel.swift；SettingsWindow.swift
-// 编进 ChaosetIME.app，因此
+// macOS（shims/macos/src/CandidateSettings.swift 的 AssociateSetting 供候选窗
+// 热路径；Slint 统一设置中心经 chaosetctl 写同一 UserDefaults 域，因此
 // UserDefaults.standard 的域 = 输入法 bundle id，见 shims/macos/build.sh 的
 // CFBundleIdentifier；不是安装器 Setup.app 的 ime.chaoset.setup）：
 //
@@ -37,8 +36,7 @@
 //	  ChaosetTheme        String  缺省 "system"（system|light|dark；读取宽容归一化）
 //	  （UiEnglish：macOS 壳没有持久化中英状态，不支持，见 ErrUnsupported）
 //
-// Linux（shims/linux/setup/setup_ctl.c：setup_config_load/setup_config_save/
-// setup_config_load_mode_scope/setup_config_save_mode_scope；路径口径与
+// Linux（config.json 由设置中心经 chaosetctl 写入、daemon 启动时读取；路径口径与
 // internal/appdirs LinuxConfigPath 一致）：
 //
 //	$XDG_CONFIG_HOME/chaoset/config.json（缺省 $HOME/.config/chaoset/config.json）

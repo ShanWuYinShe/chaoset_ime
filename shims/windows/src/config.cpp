@@ -85,8 +85,8 @@ void RegSetAssociate(bool on) {
 
 // 「联想开关变化」跨进程广播消息（2026-10-31）。
 //
-// 设置窗与候选窗可能在不同宿主进程（用户从 A 应用打开设置窗后切到 B 应用打字），
-// 且设置窗**不能**持有 TIP 对象指针：TSF 随时可能 Release TIP，而设置窗还开着，
+// 设置中心与候选窗必定在不同进程（用户从 A 应用打开设置中心后切到 B 应用打字），
+// 且设置中心**不能**持有 TIP 对象指针：TSF 随时可能 Release TIP，而设置中心还开着，
 // 裸指针就是宿主进程内 UAF（2026-10-30 三端一致性审计 P1-2）。
 // 因此用 RegisterWindowMessageW：同一字符串在整个会话内返回同一消息 id，
 // HWND_BROADCAST 可送达所有顶层窗口（含各宿主进程里的候选窗），候选窗再转发给
@@ -142,7 +142,7 @@ static void invalidateModeScopeCache() { g_cfgStamp[0] = 0; }
 bool cachedDarkTheme() {
     if (!cacheFresh(2, 1000)) {
         // 外观主题（跟随系统/浅色/深色）由 uiEffectiveDark 统一判定：
-        // 候选窗/Toast 等读本缓存的调用点自动跟随设置窗里的主题选择。
+        // 候选窗/Toast 等读本缓存的调用点自动跟随设置中心里的主题选择。
         g_cfgDark = uiEffectiveDark();
         cacheTouch(2);
     }
@@ -248,7 +248,7 @@ void uiSaveModeScope(ModeScope scope) {
     const wchar_t* text = (scope == ModeScope::Process) ? L"process" : L"system";
     RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Chaoset", L"ModeScope",
                     REG_SZ, text, static_cast<DWORD>((wcslen(text) + 1) * sizeof(wchar_t)));
-    invalidateModeScopeCache();  // 设置窗改了作用域：TIP 侧缓存立即失效
+    invalidateModeScopeCache();  // 设置中心改了作用域：TIP 侧缓存立即失效
 }
 
 // 外观主题读取宽容归一化（三端一致）：system→System；light→Light；dark→Dark；

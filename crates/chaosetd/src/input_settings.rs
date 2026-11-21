@@ -127,7 +127,7 @@ fn load_macos() -> InputSettings {
 
 #[cfg(target_os = "macos")]
 fn defaults_read(domain: &str, key: &str) -> Option<String> {
-    // 标准库没有 plist API：/usr/bin/defaults 与 SettingsWindow.swift 的
+    // 标准库没有 plist API：/usr/bin/defaults 与设置核心（及 Slint 设置中心）的
     // UserDefaults.standard 读同一域（设置核心 store_darwin.go 同口径）。
     let out = std::process::Command::new("/usr/bin/defaults")
         .args(["read", domain, key])

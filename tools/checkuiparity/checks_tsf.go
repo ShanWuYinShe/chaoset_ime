@@ -155,7 +155,7 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	)
 	checkContains(fsys, problems, group, winShell,
 		"reportModeToUi", "uiSendCommand", "chaoset-ui.exe",
-		"openSettingsViaUi", "openSettingsWindowStandalone",
+		"openSettingsViaUi", "LaunchSettingsCenter",
 	)
 	// UI 宿主实现（在 DLL 内）：唯一托盘、命令管道、单实例、设置窗入口。
 	checkContains(fsys, problems, group, winShell,
@@ -164,7 +164,7 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 		"runUiHost", "ChaosetRunUi", "ChaosetUi-", "ALL APPLICATION PACKAGES",
 		"S-1-15-2-1",  // DACL: ALL APPLICATION PACKAGES（AC 宿主才能写）
 		"ML;;NW;;;LW", // SACL: 低完整性 NO_WRITE_UP
-		"openSettingsWindowStandalone",
+		"LaunchSettingsCenter",
 	)
 	// 初始化/切换/焦点回来都必须上报，否则托盘会停在旧模式。
 	if data, err := fs.ReadFile(fsys, winShell); err == nil {
@@ -173,12 +173,12 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 				"%s：reportModeToUi( 只有 %d 处，应至少 3 处"+
 					"（Activate / 切换模式 / 焦点回来）", group, n))
 		}
-		// 设置窗创建入口只允许出现在 UI 宿主路径里（定义 + 消息处理 + 首启），
-		// 且候选栏齿轮只发管道请求。
-		if n := strings.Count(string(data), "openSettingsWindowStandalone("); n < 3 {
+		// 设置中心启动入口只允许出现在 UI 宿主路径里（UI 宿主消息处理 + 首启
+		// --settings + 托盘菜单），且候选栏齿轮只发管道请求。
+		if n := strings.Count(string(data), "LaunchSettingsCenter"); n < 3 {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：openSettingsWindowStandalone() 只有 %d 处，应至少 3 处"+
-					"（定义 / UI 宿主消息 / 首启 --settings）", group, n))
+				"%s：LaunchSettingsCenter 只有 %d 处，应至少 3 处"+
+					"（UI 宿主消息 / 首启 --settings / 托盘菜单）", group, n))
 		}
 	}
 	// TIP 的齿轮入口必须走管道（AC 宿主内 TIP 不能 CreateProcess）。
@@ -702,14 +702,9 @@ func checkTrayAndModeScope(fsys fs.FS, problems *[]string) {
 		"kActiveWatchTimerId", "onActiveWatchTimer", "refreshActiveWatchTimer",
 		"kUiPruneTimerId", "kUiActiveStaleMs", "g_uiActivePids")
 
-	// 设置窗卡片式布局：左导航三页 + 卡片 + 页脚 + 滚动。
+	// 设置中心由 UI 宿主拉起（原生卡片式设置窗已删除）；「关于」直达关于页。
 	checkContains(fsys, problems, group, winShell,
-		"enum class SettingsPage", "SettingsPage::Input", "SettingsPage::Dictionary",
-		"SettingsPage::About", "kNavWidth", "settingsPaint", "settingsSwitchPage",
-		"settingsNavItemRect", "kCardRadius", "WM_MOUSEWHEEL")
-	// 「关于」跳设置窗关于页（不再另开 MessageBox 对话框）。
-	checkContains(fsys, problems, group, winShell,
-		"kUiOpenSettingsAboutMsg", "openSettingsWindowStandalone(SettingsPage::About)")
+		"kUiOpenSettingsAboutMsg", `LaunchSettingsCenterAtPage(L"about")`)
 }
 
 // checkTrayLazyLifecycle 锁住 2026-11-06 用户要求：托盘中英图标不随开机显示，
@@ -958,10 +953,7 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	// TSF 壳必须在当前用户上下文懒启动（-seeddict 首次初始化用户词库）。
 	checkContains(fsys, problems, group, winShell,
 		"ensureDaemonStarted", "ensureDaemonConnected", "-seeddict")
-	// 设置窗重启 daemon 必须用 detached 启动；settingsRunProcess 会等 120s
-	// 再 TerminateProcess，曾把 daemon 当普通导入器进程杀掉。
-	checkContains(fsys, problems, group, winShell, "settingsStartProcessDetached")
-	checkExcludes(fsys, problems, group, winShell, `settingsRunProcess(L"", run`)
+	// 设置中心/daemon 重启由 Slint bridge 承担（壳内不再有设置窗进程逻辑）。
 	// 词库刷新必须走 Go 导入器（保留用户导入词 + 备份 + 原子替换），不能
 	// 用 CopyFiles 直接覆盖用户词库。
 	checkContains(fsys, problems, group, winInstaller,

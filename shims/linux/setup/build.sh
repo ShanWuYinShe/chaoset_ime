@@ -1,5 +1,8 @@
 #!/bin/sh
-# 构建 Linux 原生 GTK3 设置窗（不依赖 Python/PyGObject）。
+# 构建 Linux 设置启动器 chaoset-setup（纯 POSIX C）。
+#
+# 它只负责找到并启动 Slint 统一设置中心 chaoset-settings：不含 UI、不链接 GTK，
+# 因此不需要 pkg-config 与任何 GTK 开发包，普通 C 编译器即可。
 # 用法：shims/linux/setup/build.sh [输出路径]
 set -eu
 
@@ -11,29 +14,7 @@ case "$OUT" in
 esac
 cd "$(dirname "$0")"
 CC=${CC:-cc}
-# 版本号单一真源 scripts/version.sh：tag 触发的 CI 用 tag 号，其余用 commit
-# hash；Makefile 通过 VERSION 环境变量注入，直接跑时自己调同一个脚本。
-ROOT=$(cd ../../.. && pwd)
-if [ -z "${VERSION:-}" ]; then
-    VERSION=$(sh "$ROOT/scripts/version.sh")
-fi
 
-# 源文件用通配：按页面/职责拆分后的 *.c 自动纳入，新增文件不用手改清单
-# （2026-11-06 拆分）。test_setup_ctl.c 是无 GTK 单测（CI 单独编译运行），
-# 不能链进设置窗。
-SOURCES=""
-for src in *.c; do
-    if [ "$src" = "test_setup_ctl.c" ]; then
-        continue
-    fi
-    SOURCES="$SOURCES $src"
-done
-
-# shellcheck disable=SC2086
-$CC -std=c11 -O2 -Wall -Wextra -Werror \
-    -DCHAOSET_VERSION="\"$VERSION\"" \
-    $(pkg-config --cflags gtk+-3.0) \
-    -o "$OUT" $SOURCES \
-    $(pkg-config --libs gtk+-3.0)
+$CC -std=c11 -O2 -Wall -Wextra -Werror -o "$OUT" chaoset-setup.c
 
 echo "built $OUT"

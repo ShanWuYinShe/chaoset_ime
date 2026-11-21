@@ -30,11 +30,12 @@ echo ==^> Checking required files
 if not exist "%DLL%"    ( echo ERROR: %DLL% missing & pause & exit /b 1 )
 if not exist "%DAEMON%" ( echo ERROR: %DAEMON% missing & pause & exit /b 1 )
 if not exist "%DICT%"   ( echo ERROR: dictionary %DICT% missing, package incomplete & pause & exit /b 1 )
-if not exist "chaoset-ui.exe" ( echo WARN: chaoset-ui.exe missing; tray indicator/settings window in Start menu will not work & pause )
-REM Settings read/write go through the Go single-source CLI (plan A cold path).
-REM If it is missing the settings window falls back to native HKCU read/write, so
-REM this is a warning (portable zip upgrade from an older package), not an error.
-if not exist "chaosetctl.exe" if not exist "chaoset-settingsctl.exe" ( echo WARN: chaosetctl.exe missing; settings window will fall back to native registry read/write )
+REM 统一设置中心 chaoset-settings.exe 是 Windows 唯一设置 UI（壳里没有原生设置窗），
+REM 便携包缺它等于设置功能不可用——直接报错，不允许半成品安装。
+if not exist "chaoset-settings.exe" ( echo ERROR: chaoset-settings.exe missing, package incomplete & pause & exit /b 1 )
+if not exist "chaoset-ui.exe" ( echo WARN: chaoset-ui.exe missing; tray indicator/settings center entry will not work & pause )
+REM 设置项的读写走统一 CLI（方案 A 冷路径）：缺失时设置中心拿不到/存不了配置。
+if not exist "chaosetctl.exe" ( echo WARN: chaosetctl.exe missing; settings center cannot read or write settings )
 
 echo ==^> Refreshing user dictionary (preserve imported words)
 REM Use the Go importer so an existing %LOCALAPPDATA%\Chaoset\dict.tsv keeps
@@ -65,9 +66,11 @@ REM 与 NSIS 安装器同一策略：不枚举/强杀加载旧 DLL 的用户程�
 REM 被占用的 DLL 由安装包复制/重启替换处理；已打开程序继续用旧版，
 REM 重新打开后加载新版。只终止本输入法自己的后台进程（daemon + UI 宿主）。
 taskkill /IM %DAEMON% /F >nul 2>&1
-REM UI 宿主 chaoset-ui.exe 是托盘「中/英」与设置窗的唯一进程，属于本输入法
-REM 自己的后台程序；升级时结束它，避免旧进程继续加载旧 DLL 并占着单例互斥体。
+REM UI 宿主 chaoset-ui.exe 是托盘「中/英」与统一设置中心启动入口的唯一进程，
+REM chaoset-settings.exe 是 Windows 唯一设置 UI；两者都属于本输入法自己的后台
+REM 程序，升级时结束它们，避免旧进程继续加载旧 DLL 或占着单例互斥体/.exe。
 taskkill /IM chaoset-ui.exe /F >nul 2>&1
+taskkill /IM chaoset-settings.exe /F >nul 2>&1
 REM 2026-11-06：UI 宿主不再随登录启动（托盘图标只在切换到输入法后才显示），
 REM 升级时清掉旧版（NSIS 安装器）写入的 Run 项；便携包本来不写 Run，幂等清理。
 reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetUi /f /reg:64 >nul 2>&1
@@ -113,6 +116,7 @@ exit /b 0
 echo ==^> Stopping daemon/UI host and removing autostart entries
 taskkill /IM %DAEMON% /F >nul 2>&1
 taskkill /IM chaoset-ui.exe /F >nul 2>&1
+taskkill /IM chaoset-settings.exe /F >nul 2>&1
 reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ChaosetDaemon /f /reg:64 >nul 2>&1
 REM 旧版 NSIS 安装器写入的 UI 宿主 Run 项（便携包本身不写，但升级路径要清干净）。

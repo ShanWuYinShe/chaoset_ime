@@ -17,7 +17,9 @@ docker run -d --name "$NAME" -v "$ROOT":/src -w /src "$IMAGE" bash -c '
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   build-essential pkg-config libibus-1.0-dev \
-  ibus dbus gir1.2-ibus-1.0 libgtk-3-dev xvfb >/dev/null
+  ibus dbus gir1.2-ibus-1.0 xvfb >/dev/null
+# 不再安装 libgtk-3-dev：设置窗已统一为 Slint 设置中心（chaoset-settings），
+# Linux 侧只剩纯 POSIX C 启动器，不需要 GTK 开发包。
 mkdir -p /usr/local/share/chaoset
 Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
 export DISPLAY=:99

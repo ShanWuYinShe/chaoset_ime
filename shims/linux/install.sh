@@ -1,6 +1,9 @@
 #!/bin/sh
 # chaoset Linux 安装脚本（ibus engine）。
 #
+# 设置界面唯一实现是 Slint 统一设置中心 chaoset-settings（安装到 /usr/bin）；
+# ibus-setup 的 <setup> 入口 /usr/share/chaoset/chaoset-setup 只是它的启动器。
+#
 # 用法：解包后在本目录执行
 #   sudo ./install.sh            # 安装（词库装到 /usr/share/chaoset）
 #   sudo ./install.sh --uninstall  # 卸载
@@ -27,7 +30,8 @@ uninstall() {
         /usr/local/bin/chaoset-userdict /usr/local/bin/chaoset-engine
   rm -f "$COMPONENT_DIR/chaoset.xml"
   rm -rf "$PREFIX_SHARE"
-  # 设置窗口二进制随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下）
+  # 设置启动器随 PREFIX_SHARE 目录一起删除（chaoset-setup 在其下；
+  # 统一设置中心 chaoset-settings 在 /usr/bin，上面已单独删除）
   # 图标按 hicolor 目录逐个删（不整目录删，避免误删系统图标）
   find "$ICON_ROOT/hicolor" -path '*apps/chaoset.*' -delete 2>/dev/null || true
   echo "==> 已卸载。重启 ibus-daemon 生效：ibus restart"
@@ -50,26 +54,33 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# 设置唯一实现是 Slint 统一设置中心（chaoset-settings）：随包缺失时设置入口
+# 直接不可用，必须视为安装包不完整（安装器不做任何「找不到就开旧窗」的回退）。
+if [ ! -x bin/chaoset-settings ]; then
+  echo "错误：包内缺少统一设置中心 bin/chaoset-settings，安装包不完整" >&2
+  exit 1
+fi
+
 # 词库是必需的：缺了引擎会在启动时直接退出（ibus 里表现为打不出字）。
 if [ ! -f data/dict.tsv ]; then
   echo "错误：包内缺少词库 data/dict.tsv，安装包不完整" >&2
   exit 1
 fi
 
-# 设置窗口（ibus-setup 的 <setup> 入口；原生 GTK3 C，与 macOS/Windows 同构）
-#
-# 必须先建目录再 install：deb 安装时 dpkg 会创建 /usr/share/chaoset，但
-# tar.gz 安装（sudo ./install.sh）没有任何东西保证该目录存在。2026-10-29 加入
-# 设置窗口时本段被排在下面的 install -d 之前，于是**所有 tar.gz 用户安装即失败**：
-#   install: cannot create regular file '/usr/share/chaoset/chaoset-setup':
-#   No such file or directory
-# deb 冒烟先建了目录、随后随 dpkg -r 被删，正好轮到 tar.gz 冒烟才暴露——v0.2.15
-# 与 v0.2.16 两次 release 都挂在这里（2026-10-30 修）。
-if [ -f setup/chaoset-setup ]; then
-  echo "==> 安装设置窗口到 $PREFIX_SHARE"
-  install -d "$PREFIX_SHARE"
-  install -m755 setup/chaoset-setup "$PREFIX_SHARE/chaoset-setup"
+# 设置启动器（ibus-setup 的 <setup> 入口）：只 exec chaoset-settings，不含 UI、
+# 不链接 GTK。缺失时「首选项」按约定报错退出，而不是静默无响应。
+if [ ! -x setup/chaoset-setup ]; then
+  echo "错误：包内缺少设置启动器 setup/chaoset-setup，安装包不完整" >&2
+  exit 1
 fi
+
+# 必须先建目录再 install：deb 安装时 dpkg 会创建 /usr/share/chaoset，但
+# tar.gz 安装（sudo ./install.sh）没有任何东西保证该目录存在。历史上本段
+# 排在 install -d 之前，导致**所有 tar.gz 用户安装即失败**（v0.2.15/v0.2.16
+# 两次 release 都挂在这里），保留此注释防止回归。
+echo "==> 安装设置启动器到 $PREFIX_SHARE"
+install -d "$PREFIX_SHARE"
+install -m755 setup/chaoset-setup "$PREFIX_SHARE/chaoset-setup"
 
 echo "==> 安装二进制到 $PREFIX_BIN"
 install -d "$PREFIX_BIN"

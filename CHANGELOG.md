@@ -6,11 +6,16 @@
 
 > **本版本最终状态**：Rust 引擎（`crates/chaoset-engine`）与 Rust daemon（`crates/chaosetd`）是唯一实现；
 > Go 引擎（`engine/`）、Go daemon（`cmd/chaosetd`）、Go↔Rust 差分工具（`tools/engineparity`）与
-> 发布期二进制词库（CDB1 / `data/dict_common.bin`）均已删除，词库只保留 TSV。
+> 旧 CDB1 二进制词库（`data/dict_common.bin`）已删除；仓库词库源保持 TSV（发布用二进制词库由后续条目引入）。
 > 下方迁移过程条目里的「Go 对照实现」「差分工具」「二进制词库」均为阶段性产物，最终已移除；
 > 41 个差分场景已冻结为 Rust 回放基线（`crates/chaoset-engine/tests/parity_scenarios.rs`）。
 
 - **修复(设置窗)：关于页占位文案与仓库链接四端对齐**：统一设置中心已提供「模糊音/双拼方案」等设置，原占位句「更多设置将在后续版本提供」已过时，四端（Slint 统一设置中心 / macOS / Windows / Linux 原生设置窗）改为「设置项会随版本持续补充」；Slint 关于页仓库链接此前误写为 `github.com/chaoset/chaoset_ime`（404），改为与另外三端一致的 `https://github.com/ShanWuYinShe/chaoset_ime`，并把该 URL 加入 `checkuiparity` 共享文案断言（四端逐字一致），`docs/ui-parity.md` 同步。
+- **重构(设置)：设置 UI 收敛为 Slint 唯一实现，三端原生设置窗全部删除**：
+  - 删除 macOS AppKit 设置窗（`SettingsWindow*.swift`/`SettingsTheme.swift`，-1263 行）、Windows GDI 设置窗（`settings_window.cpp/.hpp`，-1625 行）、Linux GTK3 设置窗（`setup_page_*.c`/`setup_ctl.c`/`setup_learn.c`/`setup_import.c`，-2113 行）；三端只保留启动器：macOS `SettingsLauncher.swift`、Windows `settings_launcher.cpp`（由单例 UI 宿主启动，TIP 只发命名管道请求）、Linux 纯 POSIX 启动器 `chaoset-setup.c`（不链接 GTK）；找不到/启动失败只明确报错，无回退窗口；
+  - 设置入口直达 Slint 统一设置中心（`shims/settings`）：macOS app 包内 `Contents/Resources/chaoset-settings` 并同时携带它依赖的 `chaosetctl`（此前 macOS 包没带 chaosetctl，设置中心所有读写都会失败）；Windows 安装包强制包含 `chaoset-settings.exe`；Linux deb/Arch 包强制包含 `/usr/bin/chaoset-settings`；缺任一项打包直接失败；
+  - 设置中心自身补齐：单实例（Unix 本地 socket / Windows 命名互斥体 + 前置已有窗口，连点齿轮不再开多个窗口）、版本号改为构建注入（不再固定显示 0.3.35）、导入词库成功后自动重启 daemon、清空学习数据加二次确认、导入/清空与模糊音/双拼生效路径统一；macOS `build-settings` 在打包链中改为 universal（Intel Mac 可用），并注入 `CHAOSET_BUILD_VERSION`；
+  - `tools/checkuiparity` 重写设置相关契约（52 组）：设置中心契约/文案/视觉令牌以 Slint 为唯一被断言实现，三端只断言启动器与打包必带、旧原生设置窗文件不得回归；`docs/architecture.md`/`docs/ui-parity.md`/`AGENTS.md`/README 同步；Linux 设置窗不再依赖 GTK3（deb 依赖移除 gtk3），CI 增加启动器冒烟、设置中心 `ldd`/Xvfb 无头启动冒烟与 Linux 包内容断言；Linux `check-version` 不再要求启动器引用 `version.sh`（版本由设置中心显示）。
 - **重构(引擎)：删除 Go 引擎（`engine/`）与差分工具，Rust 成为唯一实现**：
   - 前置解耦：`ipc` 客户端 DTO 收进 `ipc/types.go`、`chaoset-cli` 改为纯 daemon 客户端、`chaoset-import`/`chaoset-userdict`/`chaoset-dictgen` 改用新增的 `internal/dict` 与本地文件实现，Go 工具不再 import `chaoset.ime/engine`；同时删除已无运行时消费者的二进制词库（`data/dict_common.bin`、dictgen `-bin`/`-compile`）；
   - 删除 `engine/`（Go 算法/测试）与 `tools/engineparity`（Go↔Rust 差分工具，`make engineparity` 同步移除）；41 个差分场景转为 **Rust 冻结回放基线**（`crates/chaoset-engine/tests/parity_scenarios.rs` + `tests/data/*.jsonl`，含候选打分），行为回归仍会被 CI 捕获；

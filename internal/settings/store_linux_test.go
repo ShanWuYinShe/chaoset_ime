@@ -114,7 +114,7 @@ func TestLinuxRoundTrip(t *testing.T) {
 	}
 
 	// 写出的文件对 C 设置窗的字符串读取（strstr "\"associate\""）友好：
-	// 键名与 true/false、字符串字面量格式必须与 setup_ctl.c 一致。
+	// 键名与 true/false、字符串字面量格式必须与 daemon/设置中心读取的 JSON 一致。
 	text := readFile(t, path)
 	for _, want := range []string{`"associate": false`, `"mode_scope": "process"`, `"theme": "dark"`} {
 		if !strings.Contains(text, want) {
@@ -126,7 +126,7 @@ func TestLinuxRoundTrip(t *testing.T) {
 	}
 }
 
-// 与 C 设置窗（shims/linux/setup/setup_ctl.c）写入格式逐字节一致：默认两项时。
+// 写入格式逐字节稳定（daemon/设置中心读取的 JSON 契约）：默认两项时。
 func TestLinuxDefaultFileMatchesCFormat(t *testing.T) {
 	path := setupXDG(t)
 	if err := SetAssociate(true); err != nil {
@@ -165,7 +165,7 @@ func TestLinuxReadsFileWrittenByCSetup(t *testing.T) {
 }
 
 // 写 associate 必须保留其它设置键（C 的 setup_config_save 同语义；
-// 回归 shims/linux/setup/test_setup_ctl.c 的「保存 associate 不能丢键」契约）。
+// 回归「保存 associate 不能丢其它键」契约）。
 func TestLinuxSetAssociatePreservesOtherKeys(t *testing.T) {
 	path := setupXDG(t)
 	writeFile(t, path, "{\n  \"fuzzy\": true,\n  \"associate\": true\n}\n")

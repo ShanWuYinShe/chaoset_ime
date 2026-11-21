@@ -18,14 +18,16 @@ namespace chaoset::win {
 
 // ---- 单例 UI 宿主进程通信（chaoset-ui.exe）----
 //
-// 为什么托盘指示器与设置窗必须放进独立进程（2026-11-05 用户反馈的根因）：
+// 为什么托盘指示器必须有独立宿主、设置 UI 必须由独立进程启动（2026-11-05
+// 用户反馈的根因）：
 //   1) TSF TIP 由系统加载进**每个宿主进程**——实测 explorer.exe 一个进程就有 4 个
 //      TIP 实例（4 个按钮窗口）。进程内自绘托盘 = 每个实例一个图标，而且各实例
 //      enMode_ 互相独立，任务栏会同时出现「中 英 中 英」多个图标；
-//   2) 设置窗若由宿主进程创建：开始菜单/搜索（SearchApp.exe 等 Low IL
-//      AppContainer）里会被沉浸式 z 序 band 压住，且文件对话框、导入器进程、
-//      重启 daemon 在 AC 里都不可用；宿主退出还会带走设置窗。
-// 因此任务栏中英指示器与设置窗统一交给「每用户会话唯一」的后台 UI 进程
+//   2) 开始菜单/搜索（SearchApp.exe 等 Low IL AppContainer）有沉浸式 z 序
+//      band，且 TIP 在 AC 宿主里不能 CreateProcess：设置 UI（唯一实现是跨平台
+//      Slint 设置中心 chaoset-settings.exe）只能由已运行的中等完整性 UI 宿主
+//      拉起；宿主退出也不会带走独立的设置中心进程。
+// 因此任务栏中英指示器与设置中心统一交给「每用户会话唯一」的后台 UI 进程
 // （chaoset-ui.exe，**不随登录启动**：TIP 首次激活时带 --mode 懒启动；托盘
 // 可见性只由 TIP 的 active 上报控制，见 ui_host.cpp 的 kUiActiveMsg）。
 // TIP 只通过命名管道上报模式与激活状态、请求打开设置，不持有任何 UI。
@@ -78,7 +80,7 @@ bool uiSendCommandOnce(const char* command) {
     return ok != FALSE && written == payload.size();
 }
 
-// attempts=4（≈40ms）用于按键路径；设置窗点击路径用更多次（≈200ms）。
+// attempts=4（≈40ms）用于按键路径；设置中心请求路径用更多次（≈200ms）。
 //
 // 2026-11-06：这个函数会在宿主 UI 线程上被调用（Activate / OnSetFocus），
 // 所以「重试次数」必须很小。UI 宿主没跑时由 ensureUiHostStarted 节流拉起，
@@ -164,8 +166,8 @@ static std::wstring uiHostExePath() {
 }
 
 // 当前进程是否提升后的管理员。提升进程懒启动 UI 宿主会得到一个 elevated 的
-// UI 进程（托盘/设置窗落在错误完整性级别，且它与普通 daemon 管道/用户数据可能
-// 不一致）；因此只允许非提升进程懒启动，提升宿主依赖登录 Run 项的实例。
+// UI 进程（托盘/设置中心落在错误完整性级别，且它与普通 daemon 管道/用户数据
+// 可能不一致）；因此只允许非提升进程懒启动（升级/提升宿主不产生 elevated UI）。
 static bool isProcessElevated() {
     static int cached = -1;
     if (cached >= 0) return cached == 1;
@@ -227,7 +229,7 @@ static bool uiHostPipeExists() {
     return true;
 }
 
-// 按需拉起 UI 宿主（5s 节流）：托盘指示器 / 设置窗都靠它。只在 ShellWorker
+// 按需拉起 UI 宿主（5s 节流）：托盘指示器 / 设置中心都靠它。只在 ShellWorker
 // 后台线程调用——CreateProcessW 出现在 TSF 宿主 UI 线程上就是卡顿源（审计 T7）。
 // args 可为 "--mode 0/1"（TIP 首次激活时带上当前中英状态，UI 宿主起来后
 // 直接显示正确模式）或 "--settings"。

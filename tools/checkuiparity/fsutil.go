@@ -44,6 +44,18 @@ func checkExcludes(fsys fs.FS, problems *[]string, group, path string, needles .
 	}
 }
 
+// checkAbsent 断言路径不存在：用于锁定「删除的原生实现不得回归」。
+
+func checkAbsent(fsys fs.FS, problems *[]string, group, path string) {
+
+	if _, err := fs.Stat(fsys, path); err == nil {
+
+		*problems = append(*problems, fmt.Sprintf("%s：%s 不应存在（架构已收敛为 Slint 唯一设置中心）", group, path))
+
+	}
+
+}
+
 // checkExists 断言路径存在（文件或目录）。
 func checkExists(fsys fs.FS, problems *[]string, group, path string) {
 	if _, err := fs.Stat(fsys, path); err != nil {
@@ -206,13 +218,10 @@ func lineCount(data []byte) int {
 // 绕过聚合去读单文件（拆分后单文件不再包含完整实现）。
 func defaultBundles() map[string]bundleSpec {
 	return map[string]bundleSpec{
-		winShell:    {dir: "shims/windows/src", exts: []string{".cpp", ".hpp"}, exclude: map[string]bool{"ui_main.cpp": true}},
-		macPanel:    {dir: "shims/macos/src", exts: []string{".swift"}},
-		macSettings: {dir: "shims/macos/src", exts: []string{".swift"}},
+		winShell: {dir: "shims/windows/src", exts: []string{".cpp", ".hpp"}, exclude: map[string]bool{"ui_main.cpp": true}},
+		macPanel: {dir: "shims/macos/src", exts: []string{".swift"}},
 		"shims/macos/src/ChaosetController.swift": {dir: "shims/macos/src", exts: []string{".swift"}},
 		"shims/macos/src/EngineClient.swift":      {dir: "shims/macos/src", exts: []string{".swift"}},
-		linuxSetup:                                {dir: "shims/linux/setup", exts: []string{".c", ".h"}, exclude: map[string]bool{"test_setup_ctl.c": true}},
-		linuxCtl:                                  {dir: "shims/linux/setup", exts: []string{".c", ".h"}, exclude: map[string]bool{"test_setup_ctl.c": true}},
 	}
 }
 

@@ -31,7 +31,7 @@ namespace chaoset::win {
 class CandidateWindowHost {
 public:
     virtual ~CandidateWindowHost() = default;
-    // 打开设置窗（单例 UI 宿主进程创建，TIP 只发管道请求）。
+    // 打开统一设置中心（单例 UI 宿主启动 chaoset-settings.exe，TIP 只发管道请求）。
     virtual void showSettingsWindow() = 0;
     // 候选点选/删除（鼠标抬起后调用，语义与数字键一致）。
     virtual void selectCandidateByIndex(int index) = 0;
@@ -91,7 +91,7 @@ public:
     void onWindowDestroyed();
 
     void onLButtonDown(int x, int y);
-    // 设置齿轮在**鼠标抬起**（WM_LBUTTONUP）才打开设置窗（2026-11-06 用户要求：
+    // 设置齿轮在**鼠标抬起**（WM_LBUTTONUP）才打开统一设置中心（2026-11-06 用户要求：
     // 按下即弹窗属于误触语义）。按下只记录待触发状态，抬起时仍在齿轮区才生效；
     // 候选词点选保持按下即选的既有语义。
     void onLButtonUp(int x, int y);
@@ -142,7 +142,7 @@ private:
     static int pt(int v, int dpi);
 
     bool isInteractiveArea() const;
-    // 设置窗关闭联想后的跨进程广播处理（实现在候选窗 TU，经 CandidateWindowHost
+    // 设置中心关闭联想后的跨进程广播处理（实现在候选窗 TU，经 CandidateWindowHost
     // 转发 clearAssociateFromSettings；只查注册表，不信任消息参数）。
     void onAssociateChanged();
 

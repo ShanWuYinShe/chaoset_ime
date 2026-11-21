@@ -73,7 +73,7 @@ gen_rc() {
 
 gen_rc "$OUTDIR/chaoset64.rc" "Chaoset 拼音输入法 TSF 前端（64 位）" "ChaosetIME" "ChaosetIME.dll" 2 ""
 gen_rc "$OUTDIR/chaoset32.rc" "Chaoset 拼音输入法 TSF 前端（32 位）" "ChaosetIME32" "ChaosetIME32.dll" 2 ""
-gen_rc "$OUTDIR/chaoset-ui.rc" "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
+gen_rc "$OUTDIR/chaoset-ui.rc" "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置中心入口）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
 gen_rc "$OUTDIR/chaosetctl.rc" "Chaoset 拼音输入法全能控制工具" "chaosetctl" "chaosetctl.exe" 1 ""
 gen_rc "$OUTDIR/chaosetd.rc" "Chaoset 拼音输入法核心守护进程" "chaosetd" "chaosetd.exe" 1 ""
 
@@ -91,11 +91,20 @@ go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
 cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 cp crates/target/release/chaosetd.exe "$OUTDIR/chaosetd.exe"
 
-# 5. 拷贝 Slint 设置中心 (chaoset-settings.exe)
-if [ -f "shims/settings/target/release/chaoset-settings.exe" ]; then
-  echo "==> 拷贝 Slint 设置中心 (chaoset-settings.exe)..."
-  cp "shims/settings/target/release/chaoset-settings.exe" "$OUTDIR/chaoset-settings.exe"
+# 5. 统一设置中心 (chaoset-settings.exe)：Windows 唯一设置 UI，**必须**随包分发。
+#    产物由 `make build-settings-windows` 在 Windows runner 原生构建；缺失即
+#    打包失败——壳里已删除原生设置窗，不存在任何回退窗口。
+SETTINGS_SRC="shims/settings/target/release/chaoset-settings.exe"
+if [ ! -f "$SETTINGS_SRC" ]; then
+  SETTINGS_SRC="shims/settings/target/x86_64-pc-windows-msvc/release/chaoset-settings.exe"
 fi
+if [ ! -f "$SETTINGS_SRC" ]; then
+  echo "错误：找不到统一设置中心产物 chaoset-settings.exe（Windows 唯一设置 UI）。" >&2
+  echo "      请先运行 make build-settings-windows（需要 Windows MSVC/Rust 工具链）。" >&2
+  exit 1
+fi
+echo "==> 拷贝统一设置中心 (chaoset-settings.exe)..."
+cp "$SETTINGS_SRC" "$OUTDIR/chaoset-settings.exe"
 
 # 6. 确定 C++ 源码列表 (排除 ui_main.cpp)
 DLL_SRCS=""
@@ -179,7 +188,7 @@ rm -f "$OUTDIR"/*.obj "$OUTDIR"/*.res "$OUTDIR"/*.rc "$OUTDIR"/*.lib "$OUTDIR"/*
 
 # 11. 校验生成文件与导出符号
 echo "==> 校验生成的二进制与 COM 导出符号..."
-for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaosetctl.exe chaoset-ui.exe README.md; do
+for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaosetctl.exe chaoset-ui.exe chaoset-settings.exe README.md; do
   test -f "$OUTDIR/$f" || { echo "缺少必要文件: $f"; ls -la "$OUTDIR"; exit 1; }
 done
 

@@ -332,10 +332,11 @@ final class ChaosetController: IMKInputController {
 
     // MARK: - 设置（候选栏齿轮入口，微信输入法交互参考）
 
-    /// 齿轮点击 → 打开设置窗口（独立窗口含全部设置项；参考市面输入法，
-    /// 入口不止一个勾选框而是完整设置面板）。
+    /// 齿轮点击 → 拉起 Slint 统一设置中心（chaoset-settings，三端同一个设置
+    /// 中心；参考市面输入法，入口不止一个勾选框而是完整设置面板）。macOS 壳
+    /// 不再有旧版 AppKit 设置窗：找不到/启动失败由 SettingsLauncher 弹窗报错。
     private func showSettingsMenu() {
-        SettingsWindowController.show()
+        SettingsLauncher.open()
     }
 
     // MARK: - 展示
@@ -435,7 +436,7 @@ final class ChaosetController: IMKInputController {
             self.current = self.engine.prevPage()
             self.refresh(client)
         }
-        // 候选栏齿轮 → 设置菜单（微信输入法交互参考）
+        // 候选栏齿轮 → Slint 统一设置中心（微信输入法交互参考）
         CandidatePanelController.onSettings = { [weak self] in
             self?.showSettingsMenu()
         }

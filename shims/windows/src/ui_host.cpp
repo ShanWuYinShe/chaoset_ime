@@ -17,7 +17,7 @@
 
 #include "ui_host.hpp"
 #include "ui_client.hpp"
-#include "settings_window.hpp"
+#include "settings_launcher.hpp"
 #include "config.hpp"
 #include "diagnostics.hpp"
 #include "winutil.hpp"
@@ -275,7 +275,7 @@ private:
         HGDIOBJ old = SelectObject(dc, color);
         ZeroMemory(bits, static_cast<size_t>(sz) * sz * 4);
 
-        // 键帽配色：中文模式蓝白主题——圆角方块 #007AFF（与设置窗 accent 同值），
+        // 键帽配色：中文模式蓝白主题——圆角方块 #007AFF（与设置中心 accent 同值），
         // 字形保持白色；英文模式并入蓝白浮窗浅色族（底 #F6F6F8 + 描边 #DDDDDF +
         // 文字 #262628，与候选窗/Toast 浅色面板同值，docs/ui-parity.md「托盘键帽
         // 配色」；此前象牙白瓷键帽是暖陶配色残留）。顶边高光为键帽立体造型语义。
@@ -377,14 +377,18 @@ volatile LONG g_liveTrayWindows = 0;
 // ---- UI 宿主进程（chaoset-ui.exe）----
 //
 // 进程模型：chaoset-ui.exe 只有几十行（LoadLibrary 本 DLL + 调用导出
-// ChaosetRunUi），托盘绘制/设置窗/命名管道全部复用本文件代码，不存在第二套
-// UI 实现。这样做的原因见文件开头「单例 UI 宿主进程通信」的说明。
+// ChaosetRunUi），托盘绘制/设置中心进程启动/命名管道全部复用本文件代码，
+// 不存在第二套 UI 实现。这样做的原因见文件开头「单例 UI 宿主进程通信」的说明。
+//
+// 设置 UI 的唯一实现是跨平台 Slint 设置中心（chaoset-settings.exe，见
+// shims/settings）：本宿主只按 TIP 的 settings 请求调用 settings_launcher 把它
+// 拉起来，绝不在 TIP 宿主里自绘设置窗（AC 宿主里建进程/窗口都不可用）。
 //
 // 单实例：Local\ChaosetUi-<SID>-<session> 互斥体。第二个实例若带 --settings，
-// 就把 "settings" 命令转发给首实例后退出（连点齿轮不会开多个设置窗）。
+// 就把 "settings" 命令转发给首实例后退出（连点齿轮不会重复请求）。
 //
 // 生命周期：不写登录 Run 项（2026-11-06 用户要求：开机不显示托盘，切到输入法
-// 才显示）；TIP 首次激活时用 --mode 懒启动，设置窗入口用 --settings 拉起
+// 才显示）；TIP 首次激活时用 --mode 懒启动，设置中心入口用 --settings 拉起
 // （ensureUiHostStarted / openSettingsViaUi / daemon 代拉起）。退出只由本输入法
 // 自己的维护动作触发（安装器 taskkill，或向隐藏窗口 PostMessage(WM_CLOSE) 做
 // 测试）——命令管道**不接受 quit**：DACL 对 ALL APPLICATION PACKAGES 开放，
@@ -410,7 +414,7 @@ static constexpr UINT kUiSetModeMsg = WM_APP + 72;
 // 回调清理（只清 owner，不隐藏托盘）。
 // 占 WM_APP+74（原「打开设置→关于」消息顺延到 +75，避免撞号）。
 static constexpr UINT kUiActiveMsg = WM_APP + 74;
-// 打开设置窗并切到「关于」页（托盘右键菜单用，2026-11-06）。
+// 打开统一设置中心并直达「关于」页（托盘右键菜单用，2026-11-06）。
 static constexpr UINT kUiOpenSettingsAboutMsg = WM_APP + 75;
 // owner 进程退出（线程池 wait 回调 → 主线程清理 owner/句柄）：事件驱动兜底，
 // **不隐藏托盘**（issue #3：关掉应用不代表切走输入法，托盘必须常显）。
@@ -453,11 +457,11 @@ static void showTrayMenu(HWND owner) {
     DestroyMenu(menu);
     PostMessageW(owner, WM_NULL, 0, 0);
     if (cmd == 1) {
-        // 打开设置窗（输入页）。
+        // 打开统一设置中心（默认输入页）。
         if (g_uiHostWnd != nullptr) PostMessageW(g_uiHostWnd, kUiOpenSettingsMsg, 0, 0);
     } else if (cmd == 2) {
-        // 「关于」不另开对话框：直接打开设置窗的「关于」页（2026-11-06 用户
-        // 要求「关于其实就在设置窗口中已经有了」）。版本号与项目链接都在那一页。
+        // 「关于」不另开对话框：直接打开统一设置中心的「关于」页（2026-11-06 用户
+        // 要求「关于其实就在设置中心里已经有了」）。版本号与项目链接都在那一页。
         if (g_uiHostWnd != nullptr) {
             PostMessageW(g_uiHostWnd, kUiOpenSettingsAboutMsg, 0, 0);
         }
@@ -616,6 +620,17 @@ static void uiApplyEnglish(bool english) {
     uiSaveEnglish(english);
 }
 
+// 设置中心启动失败的用户可见提示：安装包不完整/被安全软件拦截时不能静默——
+// 用户点了「设置」就必须知道为什么没开。详细原因（缺失路径/错误码）已由
+// settings_launcher 写进 tsf.log；这里只做提示。只在 UI 主线程的用户操作路径
+// 调用（MessageBox 会阻塞本进程消息循环，属预期）。
+static void promptSettingsLaunchFailed() {
+    MessageBoxW(nullptr,
+                L"设置中心启动失败：找不到或无法运行 chaoset-settings.exe。\n\n"
+                L"请重新安装完整的 Chaoset 安装包（设置中心随安装包一起分发）。",
+                L"Chaoset", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+}
+
 static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case kUiSetModeMsg: {
@@ -693,10 +708,10 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             }
             break;
         case kUiOpenSettingsMsg:
-            openSettingsWindowStandalone(SettingsPage::Input);
+            if (!LaunchSettingsCenter()) promptSettingsLaunchFailed();
             return 0;
         case kUiOpenSettingsAboutMsg:
-            openSettingsWindowStandalone(SettingsPage::About);
+            if (!LaunchSettingsCenterAtPage(L"about")) promptSettingsLaunchFailed();
             return 0;
         case WM_CLOSE:
             DestroyWindow(hwnd);
@@ -821,12 +836,11 @@ static int finishUiHost(int code) {
 
 int runUiHost(LPCWSTR cmdLine) {
     const std::wstring sid = currentUserSid();
-    // 文件对话框（词库导入/学习数据导出）与主题查询需要 Apartment；
-    // 失败不影响托盘指示器与设置窗主体。
+    // 系统 UI/Shell 查询需要 Apartment；失败不影响托盘指示器与设置中心启动。
     const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     // UI 宿主也是进程：崩溃同样要留下 crash.log（此前只有 TIP 的 Activate 装 VEH）。
     ensureCrashHandler();
-    // 后台 worker：日志异步落地（设置窗/托盘路径也会写 tsf.log）。
+    // 后台 worker：日志异步落地（设置中心启动/托盘路径也会写 tsf.log）。
     if (g_workerStart != nullptr) g_workerStart();
     g_uiStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
@@ -911,7 +925,7 @@ int runUiHost(LPCWSTR cmdLine) {
     }
 
     // 命令行语义：
-    //   --settings   TIP 点齿轮但 UI 宿主没在跑时的拉起路径，首实例直接弹设置窗；
+    //   --settings   TIP 点齿轮但 UI 宿主没在跑时的拉起路径，首实例直接启动设置中心；
     //   --mode 0/1   TIP 首次激活时带上的当前中英状态——**只记录，不显示托盘**
     //                （可见性由随后到达的 active 上报控制；旧实现在这里直接
     //                 show()，是「托盘一旦出现永不休眠」的根因之一）。
@@ -935,15 +949,11 @@ int runUiHost(LPCWSTR cmdLine) {
     }
     if (wantSettings) {
         Sleep(30);  // 给管道线程一个创建实例的机会
-        openSettingsWindowStandalone();
+        if (!LaunchSettingsCenter()) promptSettingsLaunchFailed();
     }
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        HWND sWnd = settingsWindowHandle();
-        if (sWnd != nullptr && IsWindow(sWnd) && IsDialogMessageW(sWnd, &msg)) {
-            continue;
-        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

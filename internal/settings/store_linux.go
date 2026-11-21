@@ -13,8 +13,7 @@ import (
 	"chaoset.ime/internal/appdirs"
 )
 
-// Linux 存储：$XDG_CONFIG_HOME/chaoset/config.json，与 shims/linux/setup/
-// setup_ctl.c 逐字兼容（键名 "associate"/"mode_scope"、缺省 true/system；
+// Linux 存储：$XDG_CONFIG_HOME/chaoset/config.json，与设置中心/daemon 读取的 JSON 契约逐字兼容（键名 "associate"/"mode_scope"、缺省 true/system；
 // 读取时归一化旧三档值 window→process）。
 // 路径解析复用 internal/appdirs.LinuxConfigPath，与 chaoset-userdict
 // -print-paths 给壳的 config 路径同源。

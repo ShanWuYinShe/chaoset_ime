@@ -1,4 +1,4 @@
-.PHONY: build build-settings build-settings-windows test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
+.PHONY: build build-settings build-settings-universal build-settings-windows test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -72,7 +72,8 @@ check-version:
 	@# Makefile 本身必须走 version.sh，不能自己取 tag；三端 build.sh 也一样。
 	@grep -q 'VERSION ?= .*VERSION_SCRIPT' Makefile \
 		|| { echo "错误：Makefile 的 VERSION 未取自 scripts/version.sh"; exit 1; }
-	@for s in shims/macos/build.sh shims/windows/build.sh shims/linux/setup/build.sh; do \
+	@# Linux chaoset-setup 现在只是 POSIX 启动器（不显示版本），版本由 Slint 设置中心展示。
+	@for s in shims/macos/build.sh shims/windows/build.sh; do \
 		grep -q 'version.sh' "$$s" \
 			|| { echo "错误：$$s 未使用 scripts/version.sh"; exit 1; }; \
 	done
@@ -91,14 +92,30 @@ build:
 	go build -o bin/chaoset-settingsctl ./cmd/chaoset-settingsctl
 
 build-settings:
-	cargo build --release --manifest-path shims/settings/Cargo.toml
+	# 注入显示版本（scripts/version.sh 单一真源）：设置中心标题只显示当前构建版本。
+	CHAOSET_BUILD_VERSION='$(VERSION)' cargo build --release --manifest-path shims/settings/Cargo.toml
 	mkdir -p bin
 	cp shims/settings/target/release/chaoset-settings bin/chaoset-settings
 
 CARGO_WIN_TARGET ?= $(if $(findstring Windows,$(OS)),,--target x86_64-pc-windows-gnu)
 
+# macOS 发行包必须带 universal 设置中心（Intel Mac 也要能打开设置）。
+# 本机日常开发用宿主架构的 build-settings 即可；打包/CI 用本目标。
+build-settings-universal:
+	@if [ "$$(uname -s)" != Darwin ]; then echo "错误：build-settings-universal 仅用于 macOS" >&2; exit 1; fi
+	@for t in aarch64-apple-darwin x86_64-apple-darwin; do \
+		rustup target add $$t >/dev/null 2>&1 || { echo "错误：rustup target add $$t 失败" >&2; exit 1; }; \
+	done
+	CHAOSET_BUILD_VERSION='$(VERSION)' cargo build --release --manifest-path shims/settings/Cargo.toml --target aarch64-apple-darwin
+	CHAOSET_BUILD_VERSION='$(VERSION)' cargo build --release --manifest-path shims/settings/Cargo.toml --target x86_64-apple-darwin
+	mkdir -p bin
+	lipo -create shims/settings/target/aarch64-apple-darwin/release/chaoset-settings \
+		shims/settings/target/x86_64-apple-darwin/release/chaoset-settings \
+		-output bin/chaoset-settings
+	@lipo -info bin/chaoset-settings | grep -q 'x86_64 arm64\|arm64 x86_64' || { echo "错误：设置中心不是 universal" >&2; exit 1; }
+
 build-settings-windows:
-	cargo build --release $(CARGO_WIN_TARGET) --manifest-path shims/settings/Cargo.toml
+	CHAOSET_BUILD_VERSION='$(VERSION)' cargo build --release $(CARGO_WIN_TARGET) --manifest-path shims/settings/Cargo.toml
 
 build-rust:
 	cargo build --release --manifest-path crates/Cargo.toml
@@ -186,13 +203,17 @@ package-macos:
 	@# daemon/导入工具现在随 ChaosetIME.app 安装，安装器内是同一份 embedded app。
 	@for b in shims/macos/build/chaosetd shims/macos/build/tis \
 	           shims/macos/build/smoke shims/macos/build/chaoset-import \
+	                      shims/macos/build/chaosetctl \
 	           shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetd \
 	           shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-import \
+	                      shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetctl \
 	           shims/macos/build/ChaosetSetup.app/Contents/Resources/tis \
 	           shims/macos/build/ChaosetSetup.app/Contents/Resources/smoke; do \
 		lipo -info "$$b" 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
 			|| { echo "错误：$$b 不是 universal："; lipo -info "$$b" 2>&1; exit 1; }; \
 	done
+	@lipo -info shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-settings 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
+		|| { echo "错误：ChaosetIME.app 内 chaoset-settings 不是 universal" >&2; exit 1; }
 	@test -x shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetd \
 		|| { echo "错误：ChaosetIME.app 缺 daemon"; exit 1; }
 	@test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.tsv \
@@ -235,9 +256,9 @@ package-linux:
 	strip dist/chaoset-linux-x86_64/bin/chaosetd 2>/dev/null || true
 	# 使用符号链接复用单一全能控制工具 chaosetctl (Multicall)，消除冗余二进制
 	(cd dist/chaoset-linux-x86_64/bin && ln -sf chaosetctl chaoset && ln -sf chaosetctl chaoset-cli && ln -sf chaosetctl chaoset-import && ln -sf chaosetctl chaoset-userdict)
-	@if [ -f shims/settings/target/release/chaoset-settings ]; then \
-		cp shims/settings/target/release/chaoset-settings dist/chaoset-linux-x86_64/bin/chaoset-settings; \
-	fi
+	# 设置窗只保留 Slint 统一设置中心：缺少它用户点设置将无窗口可用，打包必须失败。
+	@test -x shims/settings/target/release/chaoset-settings || { echo "错误：缺少统一设置中心 chaoset-settings（先 make build-settings）" >&2; exit 1; }
+	cp shims/settings/target/release/chaoset-settings dist/chaoset-linux-x86_64/bin/chaoset-settings
 	# 引擎是平台原生壳（C++/libibus），只做 IBus UI 与按键路由；拼音/联想
 	# 由 Go chaosetd 通过 Unix socket 提供。必须在 Linux 上构建（CI/容器）。
 	sh shims/linux/engine/build.sh dist/chaoset-linux-x86_64/bin/chaoset-engine
@@ -319,9 +340,9 @@ package-windows:
 	# Windows 包在 windows-latest 原生构建（release.yml 的 package-windows）。
 	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 	cp crates/target/release/chaosetd.exe dist/chaoset-windows-x64/chaosetd.exe
-	@if [ -f shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe ]; then \
-		cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe; \
-	fi
+	# 设置窗只保留 Slint 统一设置中心：缺少它用户点设置将无窗口可用，打包必须失败。
+	@test -x shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe || { echo "错误：缺少统一设置中心 chaoset-settings.exe（先 make build-settings-windows）" >&2; exit 1; }
+	cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe
 	# 资源模板 chaoset.rc 含图标 + VS_VERSION_INFO（@VERSION@ 等占位符）。
 	# 单一真源：$(VERSION)/$(VERSION_QUAD) 由 git tag 推导，sed 注入后交给 windres；
 	# 64/32 位 DLL 与 UI 宿主各生成一份带各自 FileDescription 的资源，让
@@ -378,10 +399,7 @@ package-windows:
 		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp \
 		dist/chaoset-windows-x64/chaoset_ui_res.o
 	@if command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then \
-		x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME.dll dist/chaoset-windows-x64/chaoset-ui.exe 2>/dev/null || true; \
-		if [ -f dist/chaoset-windows-x64/chaoset-settings.exe ]; then \
-			x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/chaoset-settings.exe 2>/dev/null || true; \
-		fi \
+		x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME.dll dist/chaoset-windows-x64/chaoset-ui.exe dist/chaoset-windows-x64/chaoset-settings.exe 2>/dev/null || true; \
 	fi
 	@if command -v i686-w64-mingw32-strip >/dev/null 2>&1; then \
 		i686-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME32.dll 2>/dev/null || true; \

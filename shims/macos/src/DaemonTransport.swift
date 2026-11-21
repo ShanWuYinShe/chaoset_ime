@@ -210,42 +210,6 @@ final class DaemonTransport {
         }
     }
 
-    // 设置变更后重启 daemon，让「输入行为」类设置（模糊音/双拼）生效。
-    //
-    // 这些设置只在 daemon 启动时读取（见 crates/chaosetd/src/input_settings.rs）：
-    // LaunchAgent 的 ProgramArguments 是 install.sh 写死的静态参数，运行时改不了，
-    // 所以设置窗写 UserDefaults 后让 daemon 重新启动即可。
-    //
-    // 优先 launchctl kickstart -k：LaunchAgent 会按 plist 重新拉起（KeepAlive 下
-    // 立即），daemon 启动时重读 UserDefaults；LaunchAgent 未加载（开发构建/被
-    // bootout）时退回 killall + 懒启动（下一键自动拉起，同样读新设置）。
-    // 冷路径：只在用户改设置时调用，不在按键路径。
-    func restartDaemonForSettingsChange() {
-        let kick = Process()
-        kick.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        kick.arguments = ["kickstart", "-k", "gui/\(getuid())/ime.chaoset.daemon"]
-        kick.standardOutput = FileHandle.nullDevice
-        kick.standardError = FileHandle.nullDevice
-        if (try? kick.run()) != nil {
-            kick.waitUntilExit()
-            if kick.terminationStatus == 0 {
-                logger.info("设置变更：已通过 launchctl 重启 daemon")
-                return
-            }
-        }
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        kill.arguments = ["chaosetd"]
-        kill.standardOutput = FileHandle.nullDevice
-        kill.standardError = FileHandle.nullDevice
-        if (try? kill.run()) != nil {
-            kill.waitUntilExit()
-        }
-        lastSpawnAt = 0
-        spawnDaemonIfNeeded()
-        logger.info("设置变更：launchctl 不可用，已 killall + 懒启动 daemon")
-    }
-
     private func writeAll(_ bytes: [UInt8]) -> Bool {
         var off = 0
         while off < bytes.count {

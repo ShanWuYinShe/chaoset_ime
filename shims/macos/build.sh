@@ -26,6 +26,26 @@ export VERSION
 MODCACHE="$ROOT/shims/macos/build/modulecache"
 mkdir -p "$MODCACHE"
 
+# Slint 统一设置中心（chaoset-settings）**必带**：原生 AppKit 设置窗已删除，
+# 候选栏齿轮是 macOS 壳唯一的设置入口（见 src/SettingsLauncher.swift），缺了它
+# 用户点齿轮只会看到「未找到统一设置中心」报错，不能再产出「静默回退旧窗口」的
+# 安装包。与 Linux dist / Windows 安装包口径一致（三端同一个设置中心）。
+# 构建顺序：先 make build-settings（产出 bin/chaoset-settings），再跑本脚本。
+# 在跑重活之前先解析/签名，缺失时立刻失败（不要等几分钟构建完才报错）。
+SETTINGS_BUILT=build/chaoset-settings
+SETTINGS_SRC=""
+for cand in "$ROOT/bin/chaoset-settings" "$ROOT/shims/settings/target/release/chaoset-settings"; do
+  if [ -x "$cand" ]; then SETTINGS_SRC="$cand"; break; fi
+done
+if [ -z "$SETTINGS_SRC" ]; then
+  echo "错误：未找到统一设置中心二进制（chaoset-settings）。" >&2
+  echo "请先运行：make build-settings（产出 bin/chaoset-settings），再重新运行本脚本。" >&2
+  exit 1
+fi
+cp "$SETTINGS_SRC" "$SETTINGS_BUILT"
+chmod 755 "$SETTINGS_BUILT"
+codesign --force -s - "$SETTINGS_BUILT"
+
 # swift_universal <输出> <framework...> -- <源文件...>
 swift_universal() {
   out=$1; shift
@@ -96,12 +116,17 @@ go_universal() {
 
 echo "[1/5] 编译 Go daemon 与导入工具（架构: ${ARCHS}）..."
 rust_universal_daemon "$ROOT/shims/macos/build/chaosetd"
-# chaoset-import 必须随输入法 app 一起安装：设置窗打开安装器导入词库时，
-# 导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到用户目录。
+# chaoset-import 必须随输入法 app 一起安装：统一设置中心导入词库时经
+# chaosetctl 调它，导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到
+# 用户目录。
 go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
+# 统一设置中心（chaoset-settings）的读写全部经 multicall CLI chaosetctl：
+# bridge 的 find_chaoset_bin 优先看设置中心可执行文件同目录，两者必须一起随包，
+# 否则设置中心每个控件都会报「执行 chaosetctl 失败」（Windows/Linux 发行包同口径）。
+go_universal "$ROOT/shims/macos/build/chaosetctl" ./cmd/chaosetctl
 # 先给 build 产物做 ad-hoc 签名，再拷进 app；这样“build/ 与 app 内资源逐字节
 # 相同”的等价性测试仍有意义（app 签名只签主程序，不再改嵌套资源）。
-codesign --force -s - build/chaosetd build/chaoset-import
+codesign --force -s - build/chaosetd build/chaoset-import build/chaosetctl
 echo "[2/5] 编译 Swift 输入法壳与验证工具..."
 APP=build/ChaosetIME.app
 rm -rf "$APP"
@@ -297,26 +322,19 @@ plutil -lint "$APP/Contents/Resources/"*/InfoPlist.strings
 
 plutil -lint "$APP/Contents/Info.plist"
 
-# 输入法的运行组件全部装进 ChaosetIME.app 自身：daemon、导入工具、种子词库。
-# 此前 daemon 被单独拷到 Application Support，导致 app 版本与 daemon 版本
-# 可能漂移，也给用户留下“输入法为什么散落好几处”的困惑。
-cp build/chaosetd build/chaoset-import ../../data/dict_common.tsv \
+# 输入法的运行组件全部装进 ChaosetIME.app 自身：daemon、导入工具、设置中心
+# 依赖的 CLI、种子词库。此前 daemon 被单独拷到 Application Support，导致 app
+# 版本与 daemon 版本可能漂移，也给用户留下“输入法为什么散落好几处”的困惑。
+cp build/chaosetd build/chaoset-import build/chaosetctl ../../data/dict_common.tsv \
    "$APP/Contents/Resources/"
-chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import"
+chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import" \
+          "$APP/Contents/Resources/chaosetctl"
 
-# Slint 统一设置中心（chaoset-settings）随包携带：候选栏齿轮优先打开它（
-# SettingsWindowController.show 先找 Bundle 内副本），与 Linux dist /
-# Windows 安装包口径一致（三端同一个设置中心）。开发构建没编 Slint 时
-# 跳过，回退 AppKit 设置窗。
-SETTINGS_BIN=""
-for cand in "$ROOT/shims/settings/target/release/chaoset-settings" "$ROOT/bin/chaoset-settings"; do
-  if [ -x "$cand" ]; then SETTINGS_BIN="$cand"; break; fi
-done
-if [ -n "$SETTINGS_BIN" ]; then
-  cp "$SETTINGS_BIN" "$APP/Contents/Resources/chaoset-settings"
-  chmod 755 "$APP/Contents/Resources/chaoset-settings"
-  codesign --force -s - "$APP/Contents/Resources/chaoset-settings"
-fi
+# 统一设置中心（build/chaoset-settings 已在脚本开头解析并签名）：拷入 app，
+# 与 chaosetctl 同目录，候选栏齿轮才能拉起它。
+cp "$SETTINGS_BUILT" "$APP/Contents/Resources/chaoset-settings"
+chmod 755 "$APP/Contents/Resources/chaoset-settings"
+codesign --force -s - "$APP/Contents/Resources/chaoset-settings"
 codesign --force -s - "$APP"
 
 echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."
@@ -374,4 +392,4 @@ printf 'APPL????' > "$SETUP/Contents/PkgInfo"
 plutil -lint "$SETUP/Contents/Info.plist" "$SETUP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
 codesign --force -s - "$SETUP"
 
-echo "已生成 $(pwd)/${APP}（自带 daemon/导入工具/种子词库）与 $(pwd)/${SETUP}"
+echo "已生成 $(pwd)/${APP}（自带 daemon/导入工具/设置中心与 chaosetctl/种子词库）与 $(pwd)/${SETUP}"

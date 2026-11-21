@@ -1,11 +1,11 @@
-// ChaosetTIP 候选交互：点选/删除/翻页、短暂提示、设置窗入口与联想面板
+// ChaosetTIP 候选交互：点选/删除/翻页、短暂提示、设置中心入口与联想面板
 // （Windows 壳拆分 TU，wave2）。
 //
 // 从 win32.cpp 拆出：selectCandidateByIndex/deleteCandidateByIndex/flipPage、
 // showToast、联想面板（enterAssociate/showAssociatePage/flipAssociate/
 // clearAssociate）、候选窗 CandidateWindowHost 的转发入口（isAssociatePanel/
 // flipAssociateFromPanel/clearAssociateFromSettings）与 showSettingsWindow
-// （齿轮/设置窗：TIP 只发管道请求，窗口由单例 chaos-ui 宿主创建）。
+// （齿轮/设置中心：TIP 只发管道请求，由单例 UI 宿主启动 chaoset-settings.exe）。
 //
 // 模块边界：只依赖 tip.hpp；候选窗对 TIP 的接触面仍是 CandidateWindowHost
 // 抽象接口（wave1 定稿），本 TU 不反向 include 候选窗实现。
@@ -323,14 +323,14 @@ void ChaosetTIP::clearAssociate() {
 // 联想翻页的候选窗入口（public 转发，实现在 ChaosetTIP 私有区）。
 void ChaosetTIP::flipAssociateFromPanel(bool next) { flipAssociate(next); }
 
-// 设置窗关闭联想：立即收起当前联想面板（候选窗收到跨进程广播后转发；
+// 设置中心关闭联想：立即收起当前联想面板（候选窗收到跨进程广播后转发；
 // macOS 设置窗 post 通知后 Controller 也是立即收起）。
 void ChaosetTIP::clearAssociateFromSettings() { clearAssociate(); }
 
-// 候选栏齿轮：设置窗由单例 UI 进程（chaoset-ui.exe）创建，TIP 只发管道请求。
-// 优先请求已在运行的 UI 宿主；没有宿主时由 UI 宿主带 --settings 启动自己
-// （首实例直接弹设置窗，第二个实例把请求转给首实例后退出）。AppContainer
-// 宿主不能发起进程，只能连接登录 Run 项常驻的 UI 宿主。
+// 候选栏齿轮：唯一设置 UI 是跨平台 Slint 设置中心（chaoset-settings.exe），
+// 由单例 UI 宿主进程按请求启动；TIP 只发管道请求（TSF 线程零阻塞，且 AC
+// 宿主里 TIP 不能 CreateProcess）。优先请求已在运行的 UI 宿主；没有宿主时
+// 由 UI 宿主带 --settings 启动自己（首实例随即拉起设置中心）。
 void ChaosetTIP::showSettingsWindow() {
     // TSF 线程零等待：openSettingsViaUi 内部只做前台授权 + worker 入队，
     // 恒返回 true（管道重试/拉起 UI 宿主/失败提示都在 ShellWorker）。

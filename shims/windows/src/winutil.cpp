@@ -72,11 +72,11 @@ std::wstring windowClassName(const wchar_t* base, HINSTANCE inst) {
 
 // ---- 系统 DPI ----
 //
-// 候选窗 / 模式提示 / 设置窗口共用。MulDiv(pt, dpi, 72) 即 pt→设备像素。
+// 候选窗 / 模式提示共用。MulDiv(pt, dpi, 72) 即 pt→设备像素。
 //
-// 2026-10-31：per-monitor DPI 已接入（候选窗 / Toast / 设置窗口）：
+// 2026-10-31：per-monitor DPI 已接入（候选窗 / Toast）：
 //   - dpiForPoint：动态加载 shcore!GetDpiForMonitor，按锚点所在显示器取 DPI；
-//   - 三处窗口都处理 WM_DPICHANGED 重新布局/重绘（候选窗以锚点显示器为准）。
+//   - 两处窗口都处理 WM_DPICHANGED 重新布局/重绘（候选窗以锚点显示器为准）。
 // systemDpi() 保留为主屏/旧系统（Win8.1 之前无 shcore）兜底。
 // 仍需 Windows 真机验收混合 DPI 多屏（本机无 Windows 运行时）。
 int systemDpi() {
@@ -187,8 +187,8 @@ HWND popupOwner() {
 bool setDwmRoundedCorners(HWND wnd) {
     // Win11 SDK dwmapi.h 枚举常量：DWMWA_WINDOW_CORNER_PREFERENCE=33、
     // DWMWCP_ROUND=2。mingw-w64 头不一定带，这里用本地 constexpr（数值与
-    // 官方定义一致，不与 SDK 枚举名冲突）。动态加载同 settings_window.cpp
-    // 的 DWM 写入模式：旧系统/服务器核心没有 dwmapi 时静默失败。
+    // 官方定义一致，不与 SDK 枚举名冲突）。dwmapi 动态加载（候选窗圆角同理）：
+    // 旧系统/服务器核心没有 dwmapi 时静默失败。
     constexpr DWORD kDwmwaCornerPreference = 33;
     constexpr DWORD kDwmwcpRound = 2;
     typedef HRESULT(WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);

@@ -17,11 +17,10 @@ namespace chaoset::win {
 // 与窗口类名都靠它。
 extern HINSTANCE g_hInst;
 
-// 设置窗 / 托盘的生命周期计数（DllCanUnloadNow 防卸载）。定义分别在
-// settings_window.cpp / ui_host.cpp；TIP 相关计数分别在 win32.cpp
-// （g_liveObjects）/ tip_thread.cpp（g_liveTipMsgWindows）/ candidate_window.cpp /
-// mode_toast.cpp（对应窗口存活数）定义，各自头文件里 extern。
-extern volatile LONG g_liveSettingsWindows;
+// 托盘的生命周期计数（DllCanUnloadNow 防卸载）。定义在 ui_host.cpp；
+// TIP 相关计数分别在 win32.cpp（g_liveObjects）/ tip_thread.cpp
+// （g_liveTipMsgWindows）/ candidate_window.cpp / mode_toast.cpp（对应窗口存活数）
+// 定义，各自头文件里 extern。
 extern volatile LONG g_liveTrayWindows;
 
 // UTF-8 → UTF-16。

@@ -47,9 +47,19 @@ pub fn wire(window: &MainWindow) {
         }
     });
 
-    // 7. 事件绑定：清空学习数据
+    // 7. 事件绑定：清空学习数据（不可恢复，先二次确认；删除学习数据前先停 daemon，
+    // 防止内存态旧数据在退出时回写，由 bridge::clear_userdict 负责停/启）。
     let w_handle = window.as_weak();
     window.on_clear_userdict_clicked(move || {
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("清空学习数据")
+            .set_description("将删除本机全部学习数据（调频、词组联想与整句记录），清空后不可恢复。确定继续？")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !confirmed {
+            return;
+        }
         let res = bridge::clear_userdict();
         if let Some(w) = w_handle.upgrade() {
             match res {
@@ -111,6 +121,9 @@ pub fn wire(window: &MainWindow) {
                                 msg
                             };
                             w.set_user_stats_text(text.into());
+                            // 导入结果在 daemon 启动时加载：与旧设置窗一致，成功
+                            // 后立即重启 daemon，避免用户以为没生效。
+                            bridge::restart_daemon();
                         }
                         Err(err) => w.set_user_stats_text(format!("导入失败: {}", err).into()),
                     }

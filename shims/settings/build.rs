@@ -1,5 +1,8 @@
 fn main() {
     slint_build::compile("ui/app.slint").expect("编译 Slint UI 模板失败");
+    // 版本号由构建方注入（Makefile/build.sh 传 CHAOSET_BUILD_VERSION），
+    // 变化时必须重编 main.rs，避免设置中心显示旧版本。
+    println!("cargo:rerun-if-env-changed=CHAOSET_BUILD_VERSION");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "windows" {

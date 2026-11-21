@@ -1,4 +1,4 @@
-// daemon 懒启动/连接/熔断原语（模块实现；只有 worker 线程/设置窗调用）。
+// daemon 懒启动/连接/熔断原语（模块实现；只有 worker 线程调用）。
 // 叶子模块：不得 include/引用 TIP TU（tip.hpp / tip_*.cpp）的类型。
 
 #define WIN32_LEAN_AND_MEAN

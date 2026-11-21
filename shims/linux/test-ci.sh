@@ -15,6 +15,8 @@
 #   - 组词中 Page Down 被消费（翻页）
 #   - Alt+Backspace 按音节回退 / Ctrl+Backspace 整段清空 / Alt+U 放行
 #     （2026-10-31 三端统一后的真实 ibus 路由回归）
+#   - 设置启动器（chaoset-setup）只 exec 统一设置中心 chaoset-settings、
+#     原样转交参数，且不链接 GTK（设置界面唯一实现是 Slint 设置中心）
 #
 # 用法（Ubuntu，已装 ibus/dbus）：
 #   ./shims/linux/test-ci.sh
@@ -47,6 +49,40 @@ sh shims/linux/engine/build.sh "$WORK/chaoset-engine"
 cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 cp crates/target/release/chaosetd "$WORK/chaosetd"
 
+# ---- 设置启动器 ----
+# Linux 设置窗已统一为 Slint 设置中心（chaoset-settings）；/usr/share/chaoset/
+# chaoset-setup 只是纯 POSIX C 启动器。这里验证它确实 exec chaoset-settings 并
+# 原样转交参数（用假二进制，CI 无桌面不开真实 GUI），且没链接 GTK。
+echo "==> 构建并冒烟 Linux 设置启动器（chaoset-setup）"
+sh shims/linux/setup/build.sh "$WORK/chaoset-setup"
+if [ ! -x "$WORK/chaoset-setup" ]; then
+  echo "FAIL: 设置启动器未生成" >&2
+  exit 1
+fi
+if command -v readelf >/dev/null 2>&1; then
+  if readelf -d "$WORK/chaoset-setup" 2>/dev/null | grep -q 'libgtk'; then
+    echo "FAIL: 设置启动器链接了 GTK（应为纯 POSIX C 启动器，设置界面在 chaoset-settings）" >&2
+    exit 1
+  fi
+fi
+mkdir -p "$WORK/fakebin"
+cat > "$WORK/fakebin/chaoset-settings" <<'FAKE'
+#!/bin/sh
+printf '%s' "$*" > "$CHAOSET_SETTINGS_MARKER"
+FAKE
+chmod +x "$WORK/fakebin/chaoset-settings"
+CHAOSET_SETTINGS_MARKER="$WORK/settings-args.txt" \
+  PATH="$WORK/fakebin:$PATH" "$WORK/chaoset-setup" --page about
+GOT=""
+if [ -f "$WORK/settings-args.txt" ]; then
+  GOT=$(cat "$WORK/settings-args.txt")
+fi
+if [ "$GOT" != "--page about" ]; then
+  echo "FAIL: 设置启动器未 exec chaoset-settings 或参数未原样转交（实际: '$GOT'）" >&2
+  exit 1
+fi
+echo "PASS: 设置启动器 exec chaoset-settings 并原样转交参数"
+
 echo "==> 启动私有 session bus、Xvfb 与 ibus-daemon"
 dbus-daemon --session --fork --print-address > "$WORK/dbus_addr"
 DBUS_ADDR=$(cat "$WORK/dbus_addr")
@@ -67,7 +103,7 @@ fi
 export IBUS_ADDRESS="$IBUS_ADDR"
 export DBUS_SESSION_BUS_ADDRESS="$IBUS_ADDR"
 
-# 用户导入词库（Linux 设置窗「导入词库」写入 XDG 数据目录；这里显式传
+# 用户导入词库（Linux 设置中心「导入词库」写入 XDG 数据目录；这里显式传
 # -imported-dict 模拟，验证引擎启动时会与主词库一起加载）。
 printf '测试词\tce shi ci\t99\n' > "$WORK/imported.tsv"
 

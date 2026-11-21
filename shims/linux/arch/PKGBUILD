@@ -7,8 +7,10 @@ pkgdesc="Chaoset Pinyin IME - 傻瓜式现代拼音输入法"
 arch=('x86_64' 'aarch64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
-depends=('ibus' 'gtk3')
-makedepends=('go' 'rust' 'gcc' 'pkgconf' 'gtk3' 'ibus')
+# 设置界面唯一实现是 Slint 统一设置中心 chaoset-settings（不再有 GTK3 设置窗），
+# 因此运行时/构建时都不需要 gtk3。
+depends=('ibus')
+makedepends=('go' 'rust' 'gcc' 'pkgconf' 'ibus')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
@@ -22,6 +24,9 @@ build() {
     cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
     install -Dm755 crates/target/release/chaosetd bin/chaosetd
     (cd bin && ln -sf chaosetctl chaoset && ln -sf chaosetctl chaoset-cli && ln -sf chaosetctl chaoset-import && ln -sf chaosetctl chaoset-userdict)
+    # Slint 统一设置中心（chaoset-settings）：Linux 设置的唯一实现，必须随包分发。
+    cargo build --release --manifest-path shims/settings/Cargo.toml
+    install -Dm755 shims/settings/target/release/chaoset-settings bin/chaoset-settings
     # Linux 引擎是原生 C++/libibus 壳，必须用 g++ 与 ibus 头文件构建；
     # 拼音/联想在 Rust daemon（crates/chaosetd）中通过 Unix socket 提供。
     sh shims/linux/engine/build.sh bin/chaoset-engine
@@ -31,6 +36,8 @@ package() {
     cd "chaoset_ime-$pkgver"
     install -d "$pkgdir/usr/bin"
     cp -d bin/* "$pkgdir/usr/bin/"
+    # 设置入口依赖统一设置中心：包里缺了它「首选项」只会报错，视为打包失败。
+    test -x "$pkgdir/usr/bin/chaoset-settings" || { echo "错误：缺少统一设置中心 chaoset-settings" >&2; exit 1; }
 
     # Compatibility symlinks in /usr/local/bin
     install -d "$pkgdir/usr/local/bin"
@@ -45,8 +52,8 @@ package() {
     # IBus component
     install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
-    # 设置窗口（ibus-setup 的 <setup> 入口，原生 GTK3 C）
-    VERSION=$pkgver sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
+    # 设置启动器（ibus-setup 的 <setup> 入口）：纯 POSIX C，只 exec chaoset-settings。
+    sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
 
     # Icons
     install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"

@@ -40,17 +40,17 @@ bool ensureDaemonFast(PipeTransport& transport) {
 
 
 
-// 打开设置窗：优先请求已在运行的 UI 宿主；没有就让 UI 宿主带 --settings 启动
-// （首实例会直接弹出设置窗，第二实例把请求转给首实例后退出）。AppContainer
-// 宿主不能发起进程，只能走已运行实例（通常由此前正常宿主里的一次输入激活懒启动），
-// 失败时由调用方
+// 打开设置中心：优先请求已在运行的 UI 宿主；没有就让 UI 宿主带 --settings 启动
+// （首实例会随即拉起 Slint 设置中心 chaoset-settings.exe，第二实例把请求转给
+// 首实例后退出）。AppContainer 宿主不能发起进程，只能走已运行实例（通常由此前
+// 正常宿主里的一次输入激活懒启动），失败时由调用方
 // 通过 daemon 代拉起（见 ChaosetTIP::showSettingsWindow）。
-// 打开设置窗（TSF 线程入口）：只做前台授权 + 入队，零等待。
+// 打开设置中心（TSF 线程入口）：只做前台授权 + 入队，零等待。
 // 管道重试 / 拉起 UI 宿主 / AC 下 daemon 代拉起全部由 ShellWorker 执行；
 // 失败提示经 message-only 窗口回投 TIP 线程（kTipShowToastMsg）。
 // 这样齿轮点击（候选窗 WndProc 在宿主 UI 线程上）不会再冻结宿主。
 bool openSettingsViaUi() {
-    // TIP 所在宿主进程通常就是前台进程：显式授权 UI 宿主把设置窗切到前台。
+    // TIP 所在宿主进程通常就是前台进程：显式授权 UI 宿主把设置中心切到前台。
     // 必须在本进程仍是前台时调用（入队后由 worker 建进程/发命令）。
     AllowSetForegroundWindow(ASFW_ANY);
     postOpenSettings(GetCurrentThreadId());
@@ -115,8 +115,8 @@ static bool ensureUiHostByDaemonWorker(bool settings) {
     return session_.ensureUiHost(settings);
 }
 
-// 打开设置窗（worker 线程）：先短重试运行中的 UI 宿主，再按宿主类型懒启动；
-// 全部失败时把提示回投 TIP 线程（候选窗只能由 TIP 线程创建）。
+// 打开设置中心（worker 线程）：先短重试运行中的 UI 宿主，再按宿主类型懒启动；
+// 全部失败时把提示回投 TIP 线程（toast 只能由 TIP 线程创建）。
 static void openSettingsInWorker(DWORD notifyThread) {
     for (int i = 0; i < 20; ++i) {
         if (uiSendCommandOnce("settings")) return;

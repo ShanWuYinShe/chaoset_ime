@@ -8,7 +8,8 @@ pkgdesc="Chaoset Pinyin IME (prebuilt binary) - 傻瓜式现代拼音输入法"
 arch=('x86_64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
-depends=('ibus' 'gtk3')
+# 设置由 Slint 统一设置中心（chaoset-settings）提供，不再依赖 GTK3。
+depends=('ibus')
 provides=('chaoset-ime')
 conflicts=('chaoset-ime')
 install=chaoset-ime.install
@@ -19,6 +20,8 @@ package() {
     cd "$srcdir/chaoset-linux-x86_64"
     install -d "$pkgdir/usr/bin"
     cp -d bin/* "$pkgdir/usr/bin/"
+    # 设置入口依赖统一设置中心：包里缺了它「首选项」只会报错，视为打包失败。
+    test -x "$pkgdir/usr/bin/chaoset-settings" || { echo "错误：缺少统一设置中心 chaoset-settings" >&2; exit 1; }
 
     install -d "$pkgdir/usr/local/bin"
     ln -sf /usr/bin/chaoset-engine "$pkgdir/usr/local/bin/chaoset-engine"
@@ -27,8 +30,8 @@ package() {
     ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaoset-cli"
 
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
-    # 设置窗口脚本（component XML 的 <setup> 指向它）：此前漏装导致
-    # ibus-setup「首选项」点了没反应（2026-10-30 审计 B-P1-6）。
+    # 设置启动器（component XML 的 <setup> 指向它）：纯 POSIX C，只 exec
+    # chaoset-settings；此前漏装导致 ibus-setup「首选项」点了没反应。
     install -Dm755 setup/chaoset-setup "$pkgdir/usr/share/chaoset/chaoset-setup"
     install -Dm644 component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"
 
