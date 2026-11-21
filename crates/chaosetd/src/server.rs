@@ -1,8 +1,8 @@
+use chaoset_engine::{Dictionary, Session, ShuangpinScheme, UserDict};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use chaoset_engine::{Dictionary, Session, ShuangpinScheme, UserDict};
 
 use crate::ipc::{dispatch, read_message, write_message, Request, Response};
 
@@ -56,12 +56,13 @@ pub fn run_windows_server(
     config: ServerConfig,
     running: Arc<AtomicBool>,
 ) -> std::io::Result<()> {
-    use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
     use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
 
     while running.load(Ordering::SeqCst) {
         let handle = create_named_pipe_instance(pipe_name)?;
-        let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) != 0 || GetLastError() == 535 }; // ERROR_PIPE_CONNECTED = 535
+        let connected =
+            unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) != 0 || GetLastError() == 535 }; // ERROR_PIPE_CONNECTED = 535
         if connected {
             let dict = Arc::clone(&config.dict);
             let user_dict = config.user_dict.clone();
@@ -158,20 +159,26 @@ impl Drop for NamedPipeStream {
 }
 
 #[cfg(windows)]
-fn create_named_pipe_instance(pipe_name: &str) -> std::io::Result<windows_sys::Win32::Foundation::HANDLE> {
-    use windows_sys::Win32::System::Pipes::{
-        CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE, PIPE_READMODE_BYTE, PIPE_WAIT, PIPE_UNLIMITED_INSTANCES,
-    };
+fn create_named_pipe_instance(
+    pipe_name: &str,
+) -> std::io::Result<windows_sys::Win32::Foundation::HANDLE> {
+    use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
+    use windows_sys::Win32::System::Pipes::{
+        CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+        PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
 
     let wide_name: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
     let sid = crate::appdirs::default_pipe_name()?
         .strip_prefix(r"\\.\pipe\chaoset-")
         .unwrap_or("")
         .to_string();
-    let sddl = format!("D:P(A;;GA;;;SY)(A;;GA;;;{})(A;;GRGW;;;S-1-15-2-1)S:(ML;;NW;;;LW)\0", sid);
+    let sddl = format!(
+        "D:P(A;;GA;;;SY)(A;;GA;;;{})(A;;GRGW;;;S-1-15-2-1)S:(ML;;NW;;;LW)\0",
+        sid
+    );
     let wide_sddl: Vec<u16> = sddl.encode_utf16().collect();
 
     let mut sec_desc = std::ptr::null_mut();
@@ -187,7 +194,8 @@ fn create_named_pipe_instance(pipe_name: &str) -> std::io::Result<windows_sys::W
             1, // SDDL_REVISION_1
             &mut sec_desc,
             std::ptr::null_mut(),
-        ) != 0 {
+        ) != 0
+        {
             sa.lpSecurityDescriptor = sec_desc;
         }
 

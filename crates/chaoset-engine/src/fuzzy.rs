@@ -27,7 +27,10 @@ pub fn fuzzy_syllable_variants(syllable: &str) -> Vec<String> {
 
     for &(from, to) in FUZZY_PAIRS {
         // 声母替换（只在词头匹配）
-        if matches!(from, "zh" | "z" | "ch" | "c" | "sh" | "s" | "l" | "n" | "f" | "h") {
+        if matches!(
+            from,
+            "zh" | "z" | "ch" | "c" | "sh" | "s" | "l" | "n" | "f" | "h"
+        ) {
             // 防止单字母声母（如 z/c/s）误伤双字母声母（zh/ch/sh）
             if (from == "z" && syllable.starts_with("zh"))
                 || (from == "c" && syllable.starts_with("ch"))

@@ -1,8 +1,8 @@
-use std::io::{self, Read, Write};
-use std::sync::Arc;
 use chaoset_engine::{Session, UserDict};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 pub const MAX_MESSAGE_SIZE: usize = 1 << 20; // 1 MiB
 
@@ -23,7 +23,9 @@ pub struct Response {
     pub error: Option<String>,
 }
 
-pub fn read_message<R: Read, T: serde::de::DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
+pub fn read_message<R: Read, T: serde::de::DeserializeOwned>(
+    reader: &mut R,
+) -> io::Result<Option<T>> {
     let mut header = [0u8; 4];
     match reader.read_exact(&mut header) {
         Ok(()) => {}
@@ -41,14 +43,14 @@ pub fn read_message<R: Read, T: serde::de::DeserializeOwned>(reader: &mut R) -> 
 
     let mut buf = vec![0u8; size];
     reader.read_exact(&mut buf)?;
-    let msg: T = serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let msg: T =
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(msg))
 }
 
 pub fn write_message<W: Write, T: serde::Serialize>(writer: &mut W, msg: &T) -> io::Result<()> {
-    let data = serde_json::to_vec(msg)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data =
+        serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     if data.len() > MAX_MESSAGE_SIZE {
         return Err(io::Error::new(
@@ -72,9 +74,15 @@ pub fn dispatch(
         "ping" => Ok(json!("pong")),
 
         "input" => {
-            let params = req.params.as_ref().ok_or_else(|| "解析 input 参数失败".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "解析 input 参数失败".to_string())?;
             let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let half = params.get("half").and_then(|v| v.as_bool()).unwrap_or(false);
+            let half = params
+                .get("half")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let comp = sess.input(text, half)?;
             Ok(json!(comp))
         }
@@ -115,14 +123,20 @@ pub fn dispatch(
         }
 
         "select" => {
-            let params = req.params.as_ref().ok_or_else(|| "解析 select 参数失败".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "解析 select 参数失败".to_string())?;
             let index = params.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
             let text = sess.select(index)?;
             Ok(json!({ "committed": text }))
         }
 
         "selectPrefix" => {
-            let params = req.params.as_ref().ok_or_else(|| "解析 selectPrefix 参数失败".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "解析 selectPrefix 参数失败".to_string())?;
             let index = params.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
             let comp = sess.select_prefix(index)?;
             Ok(json!(comp))
@@ -150,7 +164,10 @@ pub fn dispatch(
         }
 
         "associateSelect" => {
-            let params = req.params.as_ref().ok_or_else(|| "解析 associateSelect 参数失败".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "解析 associateSelect 参数失败".to_string())?;
             let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
             let empty_vec = vec![];
             let sylls: Vec<String> = params
@@ -165,28 +182,47 @@ pub fn dispatch(
         }
 
         "punct" => {
-            let params = req.params.as_ref().ok_or_else(|| "解析 punct 参数失败".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "解析 punct 参数失败".to_string())?;
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
-            let half = params.get("half").and_then(|v| v.as_bool()).unwrap_or(false);
+            let half = params
+                .get("half")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let text = sess.punct(key, half)?;
             Ok(json!({ "committed": text }))
         }
 
         "userStats" => {
-            let u = user_dict.as_ref().ok_or_else(|| "未启用用户词典".to_string())?;
+            let u = user_dict
+                .as_ref()
+                .ok_or_else(|| "未启用用户词典".to_string())?;
             Ok(json!(u.stats()))
         }
 
         "userClear" => {
-            let u = user_dict.as_ref().ok_or_else(|| "未启用用户词典".to_string())?;
+            let u = user_dict
+                .as_ref()
+                .ok_or_else(|| "未启用用户词典".to_string())?;
             u.clear();
             Ok(json!({ "cleared": true }))
         }
 
         "userDelete" => {
-            let u = user_dict.as_ref().ok_or_else(|| "未启用用户词典".to_string())?;
-            let params = req.params.as_ref().ok_or_else(|| "userDelete 缺少 word 参数".to_string())?;
-            let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let u = user_dict
+                .as_ref()
+                .ok_or_else(|| "未启用用户词典".to_string())?;
+            let params = req
+                .params
+                .as_ref()
+                .ok_or_else(|| "userDelete 缺少 word 参数".to_string())?;
+            let word = params
+                .get("word")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
             if word.is_empty() {
                 return Err("userDelete 缺少 word 参数".to_string());
             }
@@ -224,7 +260,9 @@ pub fn dispatch(
         }
 
         "userExport" => {
-            let u = user_dict.as_ref().ok_or_else(|| "未启用用户词典".to_string())?;
+            let u = user_dict
+                .as_ref()
+                .ok_or_else(|| "未启用用户词典".to_string())?;
             let phrases_only = req
                 .params
                 .as_ref()

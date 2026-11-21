@@ -10,7 +10,7 @@
 //!
 //! 用法：replay --dict <tsv> --scenarios <jsonl>（结果写 stdout，日志走 stderr）
 
-use chaoset_engine::{Composition, Candidate, Dictionary, Session, ShuangpinScheme};
+use chaoset_engine::{Candidate, Composition, Dictionary, Session, ShuangpinScheme};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{BufWriter, Write};
@@ -168,7 +168,10 @@ fn run_scenario(dict: &Arc<Dictionary>, scen: &Scenario) -> Vec<Value> {
         };
         sess.set_shuangpin(scheme);
     }
-    scen.steps.iter().map(|step| run_step(&mut sess, step)).collect()
+    scen.steps
+        .iter()
+        .map(|step| run_step(&mut sess, step))
+        .collect()
 }
 
 fn run_step(sess: &mut Session, step: &Step) -> Value {
@@ -200,7 +203,11 @@ fn run_step(sess: &mut Session, step: &Step) -> Value {
             Err(e) => err_val(e),
         },
         "associate" => {
-            let cands: Vec<Value> = sess.associate(&step.sylls).iter().map(norm_candidate).collect();
+            let cands: Vec<Value> = sess
+                .associate(&step.sylls)
+                .iter()
+                .map(norm_candidate)
+                .collect();
             json!({ "ok": true, "candidates": cands })
         }
         "associateSelect" => match sess.associate_select(&step.word, &step.sylls) {

@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::dict::Dictionary;
-use crate::fuzzy::fuzzy_syllable_variants;
 use crate::punct::PunctState;
 use crate::s2t::to_traditional;
 use crate::shuangpin::{ShuangpinDecoder, ShuangpinScheme};
@@ -847,6 +846,10 @@ pub struct Session {
     pub traditional: bool,
     pub shuangpin: Option<ShuangpinScheme>,
     shuangpin_decoder: Option<ShuangpinDecoder>,
+    /// 双拼首键（等待第二键成对解码；None = 无）。
+    dp_pending: Option<char>,
+    /// 双拼退格栈：每次「按键事件」实际追加到输入串的字符数（退格回滚用）。
+    dp_lens: Vec<usize>,
     punct_state: PunctState,
 
     input_raw: String,
@@ -869,6 +872,8 @@ impl Session {
             traditional: false,
             shuangpin: None,
             shuangpin_decoder: None,
+            dp_pending: None,
+            dp_lens: Vec::new(),
             punct_state: PunctState::default(),
             input_raw: String::new(),
             tokens: Vec::new(),
@@ -889,6 +894,10 @@ impl Session {
     }
 
     pub fn set_shuangpin(&mut self, scheme: Option<ShuangpinScheme>) {
+        if scheme != self.shuangpin {
+            self.dp_pending = None;
+            self.dp_lens.clear();
+        }
         self.shuangpin = scheme;
         self.shuangpin_decoder = scheme.map(ShuangpinDecoder::new);
     }
@@ -912,28 +921,9 @@ impl Session {
             };
         }
 
-        // 1. 双拼解码
-        let pinyin_query = if let Some(ref decoder) = self.shuangpin_decoder {
-            let mut decoded = String::new();
-            let mut chars = self.input_raw.chars().peekable();
-            while let Some(c1) = chars.next() {
-                if let Some(&c2) = chars.peek() {
-                    let pair = format!("{}{}", c1, c2);
-                    if let Some(syll) = decoder.decode(&pair) {
-                        chars.next();
-                        if !decoded.is_empty() {
-                            decoded.push('\'');
-                        }
-                        decoded.push_str(syll);
-                        continue;
-                    }
-                }
-                decoded.push(c1);
-            }
-            decoded
-        } else {
-            self.match_input()
-        };
+        // 1. 匹配串：全拼保留用户大小写，双拼的输入串在 input() 里已解码成
+        //    音节（与 Go 一致：input 存解码结果，不是键码），这里统一取小写视图。
+        let pinyin_query = self.match_input();
 
         // 2. 音节切分
         let patterns = tokenize_pinyin(&pinyin_query);
@@ -1432,13 +1422,55 @@ impl Session {
     /// 用户回车（commit_raw）应原样上屏自己敲的字母，不必为大写切输入法；
     /// 拼音匹配另走 match_input() 小写视图。双拼按键与大小写无关，统一小写
     /// 后成对解码。例外：双拼模式 ';' 是韵母键（mspy 的 ing），必须放行。
-    pub fn input(&mut self, text: &str, _half_width: bool) -> Result<Composition, String> {
-        let shuangpin = self.shuangpin_decoder.is_some();
+    pub fn input(&mut self, text: &str, half_width: bool) -> Result<Composition, String> {
+        // 与 Go engine.Session.Input 同契约：壳是标点唯一真源，input 只收拼音
+        // 字母，其余字符静默丢弃（标点走 punct()）。**大小写都收且保留原样**：
+        // 用户回车（commit_raw）应原样上屏自己敲的字母，不必为大写切输入法；
+        // 拼音匹配另走 match_input() 小写视图。
+        //
+        // 双拼模式不同：按键大小写不敏感，两键成对解码后把**音节**写进输入串
+        // （Go 同口径：input 是解码结果，不是键码）；dp_lens 记录每次按键事件
+        // 实际追加的字符数，退格按「按键事件」整段回滚。
         for c in text.chars() {
-            if shuangpin {
+            if self.shuangpin_decoder.is_some() {
                 let lower = c.to_ascii_lowercase();
-                if lower.is_ascii_lowercase() || lower == ';' {
-                    self.input_raw.push(lower);
+                match lower {
+                    '\'' => {
+                        self.input_raw.push('\'');
+                        self.dp_lens.push(1);
+                        self.after_append();
+                    }
+                    ';' if self.dp_pending.is_none() => {
+                        // 没有暂存首键时 ';' 只能是标点：走完整 punct 语义（含
+                        // 半角、同键循环与「组词中先上屏首选」），上屏文本放进
+                        // committed。不处理同一 text 中 ';' 之后的字符：punct 已
+                        // 结束本轮组词，壳按单键转发。
+                        let out = self.punct(";", half_width)?;
+                        let mut comp = self.compose();
+                        comp.committed = out;
+                        return Ok(comp);
+                    }
+                    'a'..='z' | ';' => match self.dp_pending {
+                        None => self.dp_pending = Some(lower),
+                        Some(pending) => {
+                            self.dp_pending = None;
+                            let pair = format!("{}{}", pending, lower);
+                            let syl = self
+                                .shuangpin_decoder
+                                .as_ref()
+                                .and_then(|d| d.decode(&pair));
+                            match syl {
+                                Some(syl) => {
+                                    self.input_raw.push_str(&syl);
+                                    self.dp_lens.push(syl.chars().count());
+                                    self.after_append();
+                                }
+                                // 无效键码对：整体丢弃（与 Go 一致）
+                                None => return Ok(self.compose()),
+                            }
+                        }
+                    },
+                    _ => {}
                 }
                 continue;
             }
@@ -1448,6 +1480,24 @@ impl Session {
         }
 
         Ok(self.compose())
+    }
+
+    /// 追加音节后的公共状态（Go afterAppend）：截断超长输入、同步双拼退格栈、
+    /// 回第一页、打断标点循环。
+    fn after_append(&mut self) {
+        const MAX_INPUT_RUNES: usize = 64;
+        let chars: Vec<char> = self.input_raw.chars().collect();
+        if chars.len() > MAX_INPUT_RUNES {
+            self.input_raw = chars[chars.len() - MAX_INPUT_RUNES..].iter().collect();
+        }
+        // 截断后栈的总长度可能超出输入长度：从头弹出多余项（Go reconcileDpLens）
+        let mut total: usize = self.dp_lens.iter().sum();
+        let len = self.input_raw.chars().count();
+        while total > len && !self.dp_lens.is_empty() {
+            total -= self.dp_lens.remove(0);
+        }
+        self.page = 0;
+        self.punct_state.reset();
     }
 
     /// 用于拼音**匹配**的小写视图（对齐 Go matchInput）。
@@ -1460,12 +1510,33 @@ impl Session {
 
     /// 退格删除最后一个按键字符
     pub fn backspace(&mut self) -> Composition {
+        // 双拼：删除粒度是「按键事件」——暂存中的首键直接清除，已解码音节
+        // 整段回滚（对应两键），与 Go Backspace 同语义。
+        if self.shuangpin_decoder.is_some() {
+            if self.dp_pending.is_some() {
+                self.dp_pending = None;
+                return self.compose();
+            }
+            if let Some(cnt) = self.dp_lens.pop() {
+                let chars: Vec<char> = self.input_raw.chars().collect();
+                let cnt = cnt.min(chars.len());
+                let keep = chars.len() - cnt;
+                self.input_raw = chars[..keep].iter().collect();
+            }
+            self.page = 0;
+            self.punct_state.reset();
+            return self.compose();
+        }
         self.input_raw.pop();
         self.compose()
     }
 
     /// 删除最后一个整词音节（按词退格）
     pub fn backspace_word(&mut self) -> Composition {
+        // 双拼模式下单次 Backspace 已是完整音节回滚，直接复用（Go 同口径）。
+        if self.shuangpin_decoder.is_some() {
+            return self.backspace();
+        }
         if let Some(last_tok) = self.tokens.pop() {
             let remove_len = last_tok.text.len();
             for _ in 0..remove_len {
@@ -1587,6 +1658,8 @@ impl Session {
     /// 仅重置当前组词，保留历史上下文
     pub fn reset_composition(&mut self) -> Composition {
         self.input_raw.clear();
+        self.dp_pending = None;
+        self.dp_lens.clear();
         self.compose()
     }
 
@@ -2487,5 +2560,42 @@ mod tests {
         for p in &paths {
             assert_eq!(p.len(), 2, "每条路径音节数不变");
         }
+    }
+    /// 双拼流式集成（与 Go TestDoublePinyinSession 同口径）：逐键输入成对解码、
+    /// 退格按「按键事件」整段回滚、暂存首键的退格只清暂存。
+    #[test]
+    fn test_shuangpin_session_stream() {
+        let mut sess = create_test_session();
+        sess.set_shuangpin(Some(ShuangpinScheme::Zrm));
+
+        // 首键暂存：组成状态为空（不显示未解码的键码）
+        let comp = sess.input("n", false).unwrap();
+        assert!(
+            comp.candidates.is_empty() && comp.input.is_empty(),
+            "首键暂存应为空组成: {:?}",
+            comp
+        );
+
+        let comp = sess.input("i", false).unwrap();
+        assert_eq!(comp.input, "ni", "成对后输入应为解码音节");
+
+        sess.input("h", false).unwrap();
+        let comp = sess.input("k", false).unwrap();
+        assert_eq!(comp.input, "nihao");
+        assert_eq!(comp.preedit, "ni'hao");
+        assert!(
+            comp.candidates.iter().any(|c| c.text == "你好"),
+            "nihao 应命中「你好」: {:?}",
+            comp.candidates
+        );
+
+        // 退格：整段回滚 hao → 只剩 ni
+        let comp = sess.backspace();
+        assert_eq!(comp.input, "ni", "退格应整段回滚 hao");
+
+        // 暂存首键的退格：清除暂存，输入不变
+        sess.input("h", false).unwrap();
+        let comp = sess.backspace();
+        assert_eq!(comp.input, "ni", "暂存首键的退格只清暂存");
     }
 }
