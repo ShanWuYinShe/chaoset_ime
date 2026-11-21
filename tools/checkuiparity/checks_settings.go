@@ -81,12 +81,15 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 		"windowsRegistrySubKey", "Software\\Chaoset")
 	// CLI 契约面：get/set + 四个键名 + JSON 字段名 + 两档作用域 + 三档主题。
 	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
-		"get", "set", "associate", "mode-scope", "theme", "ui-english", "system|process", "system|light|dark")
+		"get", "set", "associate", "fuzzy", "shuangpin", "mode-scope", "theme", "ui-english",
+		"system|process", "system|light|dark", "full|zrm|mspy|flypy")
 	// 单一真源：两档枚举名与缺省 JSON 契约值固定为 system。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		"mode_scope", "ui_english", "theme", "ModeScopeSystem", "ModeScopeProcess",
+		"mode_scope", "ui_english", "theme", "fuzzy", "shuangpin",
+		"ModeScopeSystem", "ModeScopeProcess",
 		"ThemeSystem", "ThemeLight", "ThemeDark",
-		`{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}`)
+		"ShuangpinFull", "ShuangpinZrm", "ShuangpinMspy", "ShuangpinFlypy",
+		`{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}`)
 	// 旧三档值的读取归一化必须保留：window→process、未知→system
 	// （老用户存储里仍有 window，删掉迁移映射会让 get/设置窗拿到非法值）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
@@ -98,7 +101,8 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 		"window→process", "未知→system")
 	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
 	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
-		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled", "ChaosetModeScope", "ChaosetTheme")
+		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled",
+		"ChaosetFuzzy", "ChaosetShuangpin", "ChaosetModeScope", "ChaosetTheme")
 	// 方案 A2 试点（Windows）：设置窗的设置项冷路径必须走 chaoset-settingsctl，
 	// 且带 1s 硬超时与 native 回退；打包必须带 CLI。
 	checkContains(fsys, problems, group, winShell,

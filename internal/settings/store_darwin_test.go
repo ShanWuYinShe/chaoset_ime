@@ -44,6 +44,10 @@ func TestStoreDarwinLoad(t *testing.T) {
 		switch args[2] {
 		case macKeyAssociate:
 			return "1", nil
+		case macKeyFuzzy:
+			return "1", nil
+		case macKeyShuangpin:
+			return "\"zrm\"", nil
 		case macKeyModeScope:
 			return "\"process\"", nil // 某些系统版本带引号
 		case macKeyTheme:
@@ -56,12 +60,19 @@ func TestStoreDarwinLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() 报错: %v", err)
 	}
-	want := Settings{Associate: true, ModeScope: ModeScopeProcess, UiEnglish: false, Theme: ThemeDark}
+	want := Settings{
+		Associate: true,
+		Fuzzy:     true,
+		Shuangpin: ShuangpinZrm,
+		ModeScope: ModeScopeProcess,
+		UiEnglish: false,
+		Theme:     ThemeDark,
+	}
 	if got != want {
 		t.Fatalf("Load() = %+v, 期望 %+v", got, want)
 	}
-	if len(calls) != 3 {
-		t.Fatalf("Load() 应只读三个键，实际调用 %d 次", len(calls))
+	if len(calls) != 5 {
+		t.Fatalf("Load() 应只读五个键，实际调用 %d 次", len(calls))
 	}
 	// 域与键名必须与 macOS 壳逐字一致（改一个字符 Swift 侧就读不到）。
 	for _, c := range calls {
@@ -92,6 +103,10 @@ func TestStoreDarwinLoadLegacyModeScope(t *testing.T) {
 			switch args[2] {
 			case macKeyAssociate:
 				return "1", nil
+			case macKeyFuzzy:
+				return "0", nil
+			case macKeyShuangpin:
+				return "\"\"", nil
 			case macKeyModeScope:
 				return "\"" + c.raw + "\"", nil
 			case macKeyTheme:
@@ -153,6 +168,12 @@ func TestStoreDarwinWrites(t *testing.T) {
 	if err := SetAssociate(false); err != nil {
 		t.Fatalf("SetAssociate(false) 报错: %v", err)
 	}
+	if err := SetFuzzy(true); err != nil {
+		t.Fatalf("SetFuzzy(true) 报错: %v", err)
+	}
+	if err := SetShuangpin(ShuangpinFlypy); err != nil {
+		t.Fatalf("SetShuangpin(flypy) 报错: %v", err)
+	}
 	if err := SetModeScope(ModeScopeProcess); err != nil {
 		t.Fatalf("SetModeScope(process) 报错: %v", err)
 	}
@@ -164,6 +185,8 @@ func TestStoreDarwinWrites(t *testing.T) {
 	}
 	want := [][]string{
 		{"write", defaultsDomain, macKeyAssociate, "-bool", "false"},
+		{"write", defaultsDomain, macKeyFuzzy, "-bool", "true"},
+		{"write", defaultsDomain, macKeyShuangpin, "-string", "flypy"},
 		{"write", defaultsDomain, macKeyModeScope, "-string", "process"},
 		{"write", defaultsDomain, macKeyTheme, "-string", "light"},
 	}
@@ -178,6 +201,9 @@ func TestStoreDarwinWrites(t *testing.T) {
 	}
 	if err := SetTheme(Theme("bogus")); err == nil {
 		t.Fatal("非法 Theme 应报错")
+	}
+	if err := SetShuangpin(Shuangpin("bogus")); err == nil {
+		t.Fatal("非法 Shuangpin 应报错")
 	}
 	if len(calls) != 0 {
 		t.Fatalf("非法 ModeScope 不应调用 defaults，实际: %v", calls)

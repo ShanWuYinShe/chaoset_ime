@@ -14,6 +14,8 @@
 //
 //	HKCU\Software\Chaoset
 //	  Associate  REG_DWORD  缺省 1（未写入 = 开启）
+//	  Fuzzy      REG_DWORD  缺省 0（未写入 = 关闭；模糊音：zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）
+//	  Shuangpin  REG_SZ     缺省 ""；只写入 ""|zrm|mspy|flypy（空 = 全拼）
 //	  ModeScope  REG_SZ     缺省 "system"；只写入 system|process，读取大小写不敏感
 //	                        并归一化旧值（旧三档 window→process，未知→system）
 //	  UiEnglish  REG_DWORD  缺省 0（UI 宿主上次的中英模式镜像）
@@ -28,6 +30,8 @@
 //
 //	域 ime.chaoset.inputmethod.ChaosetIME
 //	  AssociateEnabled    Bool    缺省 true
+//	  ChaosetFuzzy        Bool    缺省 false
+//	  ChaosetShuangpin    String  缺省 ""（""|zrm|mspy|flypy；空 = 全拼）
 //	  ChaosetModeScope    String  缺省 "system"（system|process；
 //	                              旧值 window 读取时归一化）
 //	  ChaosetTheme        String  缺省 "system"（system|light|dark；读取宽容归一化）
@@ -39,16 +43,18 @@
 //
 //	$XDG_CONFIG_HOME/chaoset/config.json（缺省 $HOME/.config/chaoset/config.json）
 //	  "associate"   bool    缺省 true
+//	  "fuzzy"       bool    缺省 false（引擎 main.cpp 同键读取后传给 daemon）
+//	  "shuangpin"   string  缺省 ""（""|zrm|mspy|flypy；引擎同键读取）
 //	  "mode_scope"  string  缺省 "system"（system|process；旧值 window 读取时归一化）
 //	  "theme"       string  缺省 "system"（system|light|dark；读取宽容归一化）
-//	  其它键（fuzzy/traditional/shuangpin 等）原样保留。
+//	  其它键（traditional 等）原样保留。
 //	  （UiEnglish：Linux 壳没有持久化中英状态，不支持）
 //
 // # JSON 契约
 //
 // 单行紧凑 JSON，字段顺序固定：
 //
-//	{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
+//	{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}
 //
 // 供 chaoset-settingsctl get 输出与三端设置窗解析；改字段名即破坏契约。
 // theme 是用户可见的外观选择：system 跟随系统（默认）/ light 浅色 / dark 深色；
@@ -123,9 +129,68 @@ func (t Theme) Valid() bool {
 	return false
 }
 
+// Shuangpin 是双拼方案选择（三端统一；空串 = 全拼）。取值与 daemon
+// -shuangpin 参数、Rust/Go 引擎的 ShuangpinScheme 名逐字一致：
+//
+//   - ""      ：全拼（默认）；
+//   - "zrm"   ：自然码；
+//   - "mspy"  ：微软双拼；
+//   - "flypy" ：小鹤双拼。
+//
+// 只影响引擎匹配口径（双拼两键一音节），不改候选算法其它行为。
+type Shuangpin string
+
+const (
+	ShuangpinFull  Shuangpin = ""
+	ShuangpinZrm   Shuangpin = "zrm"
+	ShuangpinMspy  Shuangpin = "mspy"
+	ShuangpinFlypy Shuangpin = "flypy"
+)
+
+// Valid 报告是否为四种合法取值之一（空串是全拼，属于合法值）。
+func (s Shuangpin) Valid() bool {
+	switch s {
+	case ShuangpinFull, ShuangpinZrm, ShuangpinMspy, ShuangpinFlypy:
+		return true
+	}
+	return false
+}
+
+// ParseShuangpin 解析 CLI/调用方传入的双拼方案：full/none/"" 归一化为全拼
+// （空串），zrm/mspy/flypy 原样；大小写与首尾空白容忍。非法输入报参数错误。
+func ParseShuangpin(raw string) (Shuangpin, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "full", "none", "quanpin":
+		return ShuangpinFull, nil
+	case string(ShuangpinZrm):
+		return ShuangpinZrm, nil
+	case string(ShuangpinMspy):
+		return ShuangpinMspy, nil
+	case string(ShuangpinFlypy):
+		return ShuangpinFlypy, nil
+	}
+	return ShuangpinFull, fmt.Errorf("shuangpin 只接受 full|zrm|mspy|flypy（full=全拼），收到 %q", raw)
+}
+
+// parseStoredShuangpin 是存储读取路径的宽容归一化：大小写/空白容忍，未知值
+// 回退全拼（存储嗅探到脏值不应让输入法起不来；写路径 Validate 保证不写脏值）。
+func parseStoredShuangpin(raw string) Shuangpin {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(ShuangpinZrm):
+		return ShuangpinZrm
+	case string(ShuangpinMspy):
+		return ShuangpinMspy
+	case string(ShuangpinFlypy):
+		return ShuangpinFlypy
+	}
+	return ShuangpinFull
+}
+
 // Settings 是三端统一设置项。JSON 字段名/顺序即 CLI 契约。
 type Settings struct {
 	Associate bool      `json:"associate"`
+	Fuzzy     bool      `json:"fuzzy"`
+	Shuangpin Shuangpin `json:"shuangpin"`
 	ModeScope ModeScope `json:"mode_scope"`
 	UiEnglish bool      `json:"ui_english"`
 	Theme     Theme     `json:"theme"`
@@ -135,6 +200,8 @@ type Settings struct {
 func Defaults() Settings {
 	return Settings{
 		Associate: true,
+		Fuzzy:     false,
+		Shuangpin: ShuangpinFull,
 		ModeScope: ModeScopeSystem,
 		UiEnglish: false,
 		Theme:     ThemeSystem,
@@ -144,6 +211,9 @@ func Defaults() Settings {
 // Validate 校验设置项取值。bool 项无需校验；mode_scope 必须是合法枚举
 // （只允许新值 system|process；旧值 window 只在读取/CLI 解析时归一化，不进入写入）。
 func (s Settings) Validate() error {
+	if !s.Shuangpin.Valid() {
+		return fmt.Errorf("shuangpin 非法: %q（只允许 \"\"|zrm|mspy|flypy）", string(s.Shuangpin))
+	}
 	if !s.ModeScope.Valid() {
 		return fmt.Errorf("mode_scope 非法: %q（只允许 system|process）", string(s.ModeScope))
 	}

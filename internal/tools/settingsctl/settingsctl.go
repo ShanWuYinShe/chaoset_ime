@@ -11,11 +11,15 @@ import (
 const UsageText = `用法：
   chaoset-settingsctl get
   chaoset-settingsctl set associate on|off
+  chaoset-settingsctl set fuzzy on|off
+  chaoset-settingsctl set shuangpin full|zrm|mspy|flypy
   chaoset-settingsctl set mode-scope system|process
   chaoset-settingsctl set theme system|light|dark
   chaoset-settingsctl set ui-english on|off
 
-get 输出单行 JSON：{"associate":true,"mode_scope":"system","ui_english":false,"theme":"system"}
+get 输出单行 JSON：{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}
+fuzzy 是模糊音开关（zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing）。
+shuangpin 取值：full 全拼（默认，等同空串）/ zrm 自然码 / mspy 微软 / flypy 小鹤。
 mode-scope 同时接受旧三档值 window 并归一化（window→process）。
 theme 取值：system 跟随系统 / light 浅色 / dark 深色。
 退出码：0 成功；1 运行错误；2 参数非法。错误写 stderr。`
@@ -82,6 +86,28 @@ func runSet(args []string, stderr io.Writer) int {
 		}
 		if err := settings.SetAssociate(on); err != nil {
 			return fail(stderr, 1, "写入 associate 失败: %v", err)
+		}
+	case "fuzzy":
+		if len(args) != 2 {
+			return usageError(stderr, "set fuzzy 需要 on|off")
+		}
+		on, err := settings.ParseOnOff(value)
+		if err != nil {
+			return fail(stderr, 2, "set fuzzy: %v", err)
+		}
+		if err := settings.SetFuzzy(on); err != nil {
+			return fail(stderr, 1, "写入 fuzzy 失败: %v", err)
+		}
+	case "shuangpin":
+		if len(args) != 2 {
+			return usageError(stderr, "set shuangpin 需要 full|zrm|mspy|flypy")
+		}
+		scheme, err := settings.ParseShuangpin(value)
+		if err != nil {
+			return fail(stderr, 2, "set shuangpin: %v", err)
+		}
+		if err := settings.SetShuangpin(scheme); err != nil {
+			return fail(stderr, 1, "写入 shuangpin 失败: %v", err)
 		}
 	case "mode-scope":
 		if len(args) != 2 {

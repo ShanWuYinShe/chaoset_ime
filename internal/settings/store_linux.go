@@ -20,6 +20,8 @@ import (
 // -print-paths 给壳的 config 路径同源。
 const (
 	linuxKeyAssociate = "associate"
+	linuxKeyFuzzy     = "fuzzy"
+	linuxKeyShuangpin = "shuangpin"
 	linuxKeyModeScope = "mode_scope"
 	linuxKeyTheme     = "theme"
 )
@@ -46,6 +48,20 @@ func Load() (Settings, error) {
 			return s, fmt.Errorf("设置文件 %s 的 \"associate\" 不是 bool: %w", path, err)
 		}
 		s.Associate = on
+	}
+	if raw, ok := m[linuxKeyFuzzy]; ok {
+		var on bool
+		if err := json.Unmarshal(raw, &on); err != nil {
+			return s, fmt.Errorf("设置文件 %s 的 \"fuzzy\" 不是 bool: %w", path, err)
+		}
+		s.Fuzzy = on
+	}
+	if raw, ok := m[linuxKeyShuangpin]; ok {
+		var scheme string
+		if err := json.Unmarshal(raw, &scheme); err != nil {
+			return s, fmt.Errorf("设置文件 %s 的 \"shuangpin\" 不是字符串: %w", path, err)
+		}
+		s.Shuangpin = parseStoredShuangpin(scheme)
 	}
 	if raw, ok := m[linuxKeyModeScope]; ok {
 		var scope string
@@ -77,6 +93,41 @@ func SetAssociate(on bool) error {
 			return err
 		}
 		m[linuxKeyAssociate] = raw
+		return nil
+	})
+}
+
+// SetFuzzy 只改 "fuzzy"，保留文件里已有的其它键。
+func SetFuzzy(on bool) error {
+	path, err := linuxConfigPath()
+	if err != nil {
+		return err
+	}
+	return updateConfig(path, func(m map[string]json.RawMessage) error {
+		raw, err := json.Marshal(on)
+		if err != nil {
+			return err
+		}
+		m[linuxKeyFuzzy] = raw
+		return nil
+	})
+}
+
+// SetShuangpin 只改 "shuangpin"，保留文件里已有的其它键。
+func SetShuangpin(scheme Shuangpin) error {
+	if !scheme.Valid() {
+		return fmt.Errorf("shuangpin 非法: %q（只允许 \"\"|zrm|mspy|flypy）", string(scheme))
+	}
+	path, err := linuxConfigPath()
+	if err != nil {
+		return err
+	}
+	return updateConfig(path, func(m map[string]json.RawMessage) error {
+		raw, err := json.Marshal(string(scheme))
+		if err != nil {
+			return err
+		}
+		m[linuxKeyShuangpin] = raw
 		return nil
 	})
 }
