@@ -29,6 +29,13 @@ if command -v cl.exe >/dev/null 2>&1; then
   MSVC_BIN_DIR=$(dirname "$(command -v cl.exe)")
   PATH="$MSVC_BIN_DIR:$PATH"
   export PATH
+  # 双保险：显式告诉 cargo 用哪个 linker（PATH 还依赖 Git Bash 的路径转换，
+  # 某些 runner 上 MSYS 会把前置项排到后面）。cygpath 把 /c/... 转成 C:\...，
+  # rustc 只接受 Windows 形式路径。
+  if command -v cygpath >/dev/null 2>&1; then
+    CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$(cygpath -w "$MSVC_BIN_DIR/link.exe")
+    export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER
+  fi
   echo "==> MSVC 工具链目录前置: $MSVC_BIN_DIR"
 else
   echo "警告: PATH 上找不到 cl.exe，Rust daemon 构建可能选错 linker" >&2
