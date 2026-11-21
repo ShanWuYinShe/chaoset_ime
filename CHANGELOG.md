@@ -4,6 +4,14 @@
 
 ## 未发布
 
+- **重构(引擎)：Rust 用户词库参与组词召回——差分 41 场景**全部一致（含 score）**：
+  - 用户词库不再是「只加权不召回」：补齐 Go 的 6 个接入点——末段续接两条路径（dict 24 + 用户 8）、token 主查询（用户 queryTokens 10）、回退层（QueryTokensExact 5）、首音节单字兜底（300）、错拼修正（queryTokens 4）；用户学过的词/词组进化/整句记录现在都能作为候选出现；
+  - 新增 `UserDict.query_tokens_exact` / `query_tokens` / `query_continuation`（Go 同名查询的 Rust 版：音节数过滤 + matchSyllable（碎片前缀、z/c/s 兼容 zh/ch/sh）+ 词频/词长/字典序排序 + 按词去重）；
+  - **整句安全约束**（项目红线）：`is_sentence_entry` 判定与 Go 同口径，整句式学习记录只作为完整输入候选，绝不出现在部分输入的前缀候选（打「今」不出「今天星期一」）；
+  - 修正两处与 Go 不一致的语义：① `UserDict::score` 原本额外计入词组进化记录的 1.2× 加成，Go 的 `UserDict.Score` 只含 Words 调频 + Bigram 共现（词组记录的分数只作为查询结果 Freq，不再二次加成）；② 末段续接路径一跳过 `remain == ""` 的命中（末音节本身已完整时等同精确匹配，由常规路径覆盖）；
+  - 差分工具支持**用户词典场景**（`"user": {"words": [...], "bigrams": [...]}`，Go 与 Rust 两侧同构构造内存用户词典）：新增 7 个场景覆盖用户词/词组召回、末段续接、Bigram 加成、整句安全、错拼召回、单字兜底；
+  - 差分 41/41 场景用户可见行为与 score **全部一致**；语料 5,655 场景不降反升（full 首屏全同 99.9%→100.0%、tail1 99.6%→99.7%、tail2 99.6%→99.8%）；
+  - 新增回归：`test_user_word_recall`（学过即能打出 + from_user 标记）、`test_user_sentence_not_prefix_candidate`（整句只在完整输入出现）。
 - **重构(引擎)：Rust 查询保真收尾——差分 34 场景**全部一致**（含 score）**：
   - `TrieNode.subtree_min` 由「exact_words 排序后第一个（=最高频词索引）」修正为**子树内最小词条下标**（Go `dictNode.subtreeMin`）——这是 prefix 逐层展开的确定性次序键，取错会让简拼展开集合偏差；
   - prefix 池的逐层 BFS 按 Go `queryTokens` 的真实结构重写：**ranked 跨起点累积、每处理一个起点就重排截断到 12 节点并收集其词条**（此前做成「全局只排一次取 12」，简拼 nh 的 prefix 池只有 13 条 vs Go 20 条，漏掉 7 条三音节扩展词）；

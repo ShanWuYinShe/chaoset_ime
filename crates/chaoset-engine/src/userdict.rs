@@ -141,13 +141,6 @@ impl UserDict {
             from_user = true;
         }
 
-        // 2. 合成词组加分
-        if let Some(phrase) = data.phrases.get(word) {
-            let factor = decay(phrase.last_used, now);
-            total_bonus += (phrase.count as f64) * USER_BOOST_PER_COUNT * factor * 1.2;
-            from_user = true;
-        }
-
         // 3. 上下文 Bigram 共现加分
         if let Some(prev) = prev_word {
             let bigram_key = format!("{}->{}", prev, word);
@@ -510,5 +503,227 @@ mod tests {
         let (after_del_score, from_user_after) = udict.score("测试", None);
         assert_eq!(after_del_score, 0);
         assert!(!from_user_after);
+    }
+}
+
+/// 用户词库 token 查询命中（Go userdict *Entry 的 Rust 版）：带分段供整句
+/// 安全判断与联想剥前缀使用。
+#[derive(Debug, Clone)]
+pub struct TokenHit {
+    pub word: String,
+    pub syllables: Vec<String>,
+    pub freq: i32,
+    pub segs: Vec<String>,
+}
+
+/// 单个音节与 token 的匹配（Go matchSyllable）：完整音节等值；碎片 token
+/// 前缀匹配，且 z/c/s 兼容 zh/ch/sh。
+fn token_matches(syl: &str, tok: &str, exact: bool) -> bool {
+    if exact {
+        return syl == tok;
+    }
+    if syl.starts_with(tok) {
+        return true;
+    }
+    matches!((tok, syl), ("z", "zh") | ("c", "ch") | ("s", "sh"))
+        || (tok == "z" && syl.starts_with("zh"))
+        || (tok == "c" && syl.starts_with("ch"))
+        || (tok == "s" && syl.starts_with("sh"))
+}
+
+/// 用户词库查询结果的统一排序（Go Query* 的 sortSlice）：词频降序 → 词长
+/// 升序 → 词字典序 → 音节串；随后按词去重（保留排序后第一条）并截断。
+fn sort_and_dedupe_hits(hits: &mut Vec<TokenHit>, limit: usize) {
+    hits.sort_by(|a, b| {
+        b.freq
+            .cmp(&a.freq)
+            .then(a.word.chars().count().cmp(&b.word.chars().count()))
+            .then(a.word.cmp(&b.word))
+            .then(a.syllables.join("'").cmp(&b.syllables.join("'")))
+    });
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    hits.retain(|h| seen.insert(h.word.clone()));
+    hits.truncate(limit);
+}
+
+impl UserDict {
+    /// 用户词库 token 精确查询（Go QueryTokensExact）：音节数恰好等于 tokens
+    /// 且逐音节匹配；词组进化（Phrases）与调频词（Words）两张表都查。
+    pub fn query_tokens_exact(&self, tokens: &[(&str, bool)], max_results: usize) -> Vec<TokenHit> {
+        let limit = if max_results == 0 { 20 } else { max_results };
+        let data = self.data.read().unwrap();
+        let now = current_timestamp();
+        let mut out: Vec<TokenHit> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut consider =
+            |word: &str,
+             sylls: Vec<String>,
+             freq: i32,
+             segs: Vec<String>,
+             out: &mut Vec<TokenHit>,
+             seen: &mut std::collections::HashSet<String>| {
+                if sylls.len() != tokens.len() {
+                    return;
+                }
+                for (i, (tok, exact)) in tokens.iter().enumerate() {
+                    if !token_matches(&sylls[i], tok, *exact) {
+                        return;
+                    }
+                }
+                let key = format!("{}\u{0}{}", word, sylls.join(" "));
+                if !seen.insert(key) {
+                    return;
+                }
+                out.push(TokenHit {
+                    word: word.to_string(),
+                    syllables: sylls,
+                    freq,
+                    segs,
+                });
+            };
+        for rec in data.phrases.values() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(
+                &rec.word,
+                split_sylls(&rec.sylls),
+                freq,
+                rec.segs.clone(),
+                &mut out,
+                &mut seen,
+            );
+        }
+        for (word, rec) in data.words.iter() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(
+                word,
+                split_sylls(&rec.sylls),
+                freq,
+                rec.segs.clone(),
+                &mut out,
+                &mut seen,
+            );
+        }
+        sort_and_dedupe_hits(&mut out, limit);
+        out
+    }
+
+    /// 用户词库 token 查询（Go QueryTokens）：exact（音节数相等）与 prefix
+    /// （以 tokens 为音节前缀、词条更长）两池，各自排序去重截断。
+    pub fn query_tokens(
+        &self,
+        tokens: &[(&str, bool)],
+        max_results: usize,
+    ) -> (Vec<TokenHit>, Vec<TokenHit>) {
+        let limit = if max_results == 0 { 20 } else { max_results };
+        let data = self.data.read().unwrap();
+        let now = current_timestamp();
+        let mut exacts: Vec<TokenHit> = Vec::new();
+        let mut prefixes: Vec<TokenHit> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut consider = |word: &str, sylls: Vec<String>, freq: i32, segs: Vec<String>| {
+            if sylls.len() < tokens.len() {
+                return;
+            }
+            for (i, (tok, exact)) in tokens.iter().enumerate() {
+                if !token_matches(&sylls[i], tok, *exact) {
+                    return;
+                }
+            }
+            let key = format!("{}\u{0}{}", word, sylls.join(" "));
+            if !seen.insert(key) {
+                return;
+            }
+            let hit = TokenHit {
+                word: word.to_string(),
+                syllables: sylls.clone(),
+                freq,
+                segs,
+            };
+            if sylls.len() == tokens.len() {
+                exacts.push(hit);
+            } else {
+                prefixes.push(hit);
+            }
+        };
+        for rec in data.phrases.values() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(&rec.word, split_sylls(&rec.sylls), freq, rec.segs.clone());
+        }
+        for (word, rec) in data.words.iter() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(word, split_sylls(&rec.sylls), freq, rec.segs.clone());
+        }
+        sort_and_dedupe_hits(&mut exacts, limit);
+        sort_and_dedupe_hits(&mut prefixes, limit);
+        (exacts, prefixes)
+    }
+
+    /// 用户词库末音节续接（Go QueryContinuation）：tokens 是前面已完整的音节
+    /// 约束、frag 是末段尚未打完的串；命中「tokens + 以 frag 为前缀的音节」
+    /// 开头的词条，返回 (词条, 需补全的剩余字符)。
+    pub fn query_continuation(
+        &self,
+        tokens: &[(&str, bool)],
+        frag: &str,
+        max_results: usize,
+    ) -> Vec<(TokenHit, String)> {
+        if frag.is_empty() || tokens.is_empty() {
+            return Vec::new();
+        }
+        let limit = if max_results == 0 { 8 } else { max_results };
+        let data = self.data.read().unwrap();
+        let now = current_timestamp();
+        let mut out: Vec<(TokenHit, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut consider = |word: &str, sylls: Vec<String>, segs: Vec<String>, score: i32| {
+            if sylls.len() < tokens.len() + 1 {
+                return;
+            }
+            for (i, (tok, exact)) in tokens.iter().enumerate() {
+                if !token_matches(&sylls[i], tok, *exact) {
+                    return;
+                }
+            }
+            let next = &sylls[tokens.len()];
+            let Some(remain) = next.strip_prefix(frag) else {
+                return;
+            };
+            let key = format!("{}\u{0}{}", word, sylls.join(" "));
+            if !seen.insert(key) {
+                return;
+            }
+            out.push((
+                TokenHit {
+                    word: word.to_string(),
+                    syllables: sylls.clone(),
+                    freq: score,
+                    segs,
+                },
+                remain.to_string(),
+            ));
+        };
+        for rec in data.phrases.values() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(&rec.word, split_sylls(&rec.sylls), rec.segs.clone(), freq);
+        }
+        for (word, rec) in data.words.iter() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            consider(word, split_sylls(&rec.sylls), rec.segs.clone(), freq);
+        }
+        out.sort_by(|a, b| {
+            a.1.len()
+                .cmp(&b.1.len())
+                .then(b.0.freq.cmp(&a.0.freq))
+                .then(a.0.word.cmp(&b.0.word))
+                .then(a.0.syllables.join("'").cmp(&b.0.syllables.join("'")))
+        });
+        out.truncate(limit);
+        out
     }
 }

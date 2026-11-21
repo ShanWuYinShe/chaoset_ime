@@ -10,7 +10,7 @@
 //!
 //! 用法：replay --dict <tsv> --scenarios <jsonl>（结果写 stdout，日志走 stderr）
 
-use chaoset_engine::{Candidate, Composition, Dictionary, Session, ShuangpinScheme};
+use chaoset_engine::{Candidate, Composition, Dictionary, Session, ShuangpinScheme, UserDict};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{BufWriter, Write};
@@ -22,7 +22,58 @@ struct Scenario {
     name: String,
     #[serde(default)]
     config: Config,
+    #[serde(default)]
+    user: Option<UserSeed>,
     steps: Vec<Step>,
+}
+
+/// 场景预置的用户学习数据（内存用户词典，不落盘）：与 Go 侧 userSeed 同构。
+#[derive(Deserialize, Default)]
+struct UserSeed {
+    #[serde(default)]
+    words: Vec<UserSeedWord>,
+    #[serde(default)]
+    bigrams: Vec<(String, String)>,
+}
+
+#[derive(Deserialize, Default)]
+struct UserSeedWord {
+    word: String,
+    #[serde(default)]
+    sylls: Vec<String>,
+    #[serde(default)]
+    segs: Vec<String>,
+    #[serde(default)]
+    count: i32,
+    #[serde(default)]
+    phrase: bool,
+}
+
+/// 按场景种子构造内存用户词典（与 Go 侧 BumpWordWithSegs/BumpPhraseWithSegs/
+/// BumpBigram 调用序列一致）。
+fn build_user_dict(seed: Option<&UserSeed>) -> Option<Arc<UserDict>> {
+    let seed = seed?;
+    let ud = Arc::new(UserDict::new::<&str>(None));
+    for w in &seed.words {
+        let n = if w.count <= 0 { 1 } else { w.count };
+        let sylls = w.sylls.join(" ");
+        let segs = if w.segs.is_empty() {
+            None
+        } else {
+            Some(w.segs.clone())
+        };
+        for _ in 0..n {
+            if w.phrase {
+                ud.bump_phrase(&w.word, &sylls, segs.clone());
+            } else {
+                ud.bump_word(&w.word, Some(&sylls), segs.clone());
+            }
+        }
+    }
+    for (prev, next) in &seed.bigrams {
+        ud.bump_bigram(prev, next);
+    }
+    Some(ud)
 }
 
 #[derive(Deserialize, Default)]
@@ -156,7 +207,7 @@ fn main() -> ExitCode {
 }
 
 fn run_scenario(dict: &Arc<Dictionary>, scen: &Scenario) -> Vec<Value> {
-    let mut sess = Session::new(Arc::clone(dict), None);
+    let mut sess = Session::new(Arc::clone(dict), build_user_dict(scen.user.as_ref()));
     sess.set_fuzzy(scen.config.fuzzy);
     sess.set_traditional(scen.config.traditional);
     if !scen.config.shuangpin.is_empty() {

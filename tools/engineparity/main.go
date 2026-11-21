@@ -36,9 +36,25 @@ import (
 
 // scenario / step 的 JSON 结构（与 crates/chaoset-engine/src/bin/replay.rs 对齐）。
 type scenario struct {
-	Name   string `json:"name"`
-	Config cfg    `json:"config"`
-	Steps  []step `json:"steps"`
+	Name   string    `json:"name"`
+	Config cfg       `json:"config"`
+	User   *userSeed `json:"user,omitempty"`
+	Steps  []step    `json:"steps"`
+}
+
+// userSeed 描述场景预置的用户学习数据（内存用户词典，不落盘）：用于验证
+// 「用户词库参与组词召回 / 整句安全约束 / 上下文共现排序」等路径。
+type userSeed struct {
+	Words   []userSeedWord `json:"words,omitempty"`
+	Bigrams [][2]string    `json:"bigrams,omitempty"`
+}
+
+type userSeedWord struct {
+	Word   string   `json:"word"`
+	Sylls  []string `json:"sylls"`
+	Segs   []string `json:"segs,omitempty"`
+	Count  int      `json:"count,omitempty"`  // 重复上屏次数（模拟调频）
+	Phrase bool     `json:"phrase,omitempty"` // 写入 Phrases 表（词组进化）
 }
 
 type cfg struct {
@@ -109,7 +125,35 @@ func runGoScenarios(dict *engine.Dictionary, scens []scenario) ([]byte, error) {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
 	for _, sc := range scens {
-		sess := engine.NewSession(dict, nil)
+		var user *engine.UserDict
+		if sc.User != nil {
+			ud, err := engine.NewUserDict("")
+			if err != nil {
+				return nil, fmt.Errorf("构造内存用户词典失败: %w", err)
+			}
+			for _, w := range sc.User.Words {
+				n := w.Count
+				if n <= 0 {
+					n = 1
+				}
+				for i := 0; i < n; i++ {
+					if w.Phrase {
+						if err := ud.BumpPhraseWithSegs(w.Word, w.Sylls, w.Segs); err != nil {
+							return nil, err
+						}
+					} else if err := ud.BumpWordWithSegs(w.Word, w.Sylls, w.Segs); err != nil {
+						return nil, err
+					}
+				}
+			}
+			for _, bg := range sc.User.Bigrams {
+				if err := ud.BumpBigram(bg[0], bg[1]); err != nil {
+					return nil, err
+				}
+			}
+			user = ud
+		}
+		sess := engine.NewSession(dict, user)
 		sess.SetFuzzy(sc.Config.Fuzzy)
 		sess.SetTraditional(sc.Config.Traditional)
 		if sc.Config.Shuangpin != "" {

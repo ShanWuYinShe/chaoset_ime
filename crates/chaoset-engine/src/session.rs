@@ -429,6 +429,48 @@ fn add_typo_corrections(
                 typo.word_found = true;
             }
 
+            // 用户词库：自学习词与主词典同层参与纠错召回（Go 同口径：仅在非
+            // mistake-only 且非反序输入时；用户词条本身即用户分，不再加 Score）。
+            if let Some(user) = user {
+                if !mistake_only && !shape.mistake_input {
+                    let qp_pairs: Vec<(&str, bool)> =
+                        qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
+                    let (u_exacts, _) = user.query_tokens(&qp_pairs, 4);
+                    for hit in u_exacts {
+                        let syllables = hit.syllables.join("'");
+                        let key = pool_key(&hit.word, &syllables);
+                        if typo.added.contains(&key) {
+                            continue;
+                        }
+                        typo.added.insert(key.clone());
+                        typo.is_near.insert(key.clone(), fix.is_near);
+                        typo.lens.insert(key.clone(), fix.text.len());
+                        let mut score = hit.freq - penalty;
+                        if score < 1 {
+                            score = 1;
+                        }
+                        let display_text = if traditional {
+                            crate::s2t::to_traditional(&hit.word)
+                        } else {
+                            hit.word.clone()
+                        };
+                        pool.add(
+                            &hit.word.clone(),
+                            display_text,
+                            syllables,
+                            score,
+                            true,
+                            RANK_TYPO_FIX,
+                            true,
+                        );
+                        if is_cluster_fix {
+                            typo.mistake_keys.insert(key);
+                        }
+                        typo.word_found = true;
+                    }
+                }
+            }
+
             // 纠错后的「按已有词切分」DP：修正串在词库里没有单条整词时
             // （changshuru 没有「长输入」词条，但「长」+「输入」都存在），
             // 把修正后的音节切成已有词序列给出词组候选。只有没有任何整词级
@@ -970,7 +1012,7 @@ impl Session {
                 .iter()
                 .map(|t| t.text.as_str())
                 .collect();
-            let hits: Vec<(String, Vec<String>, u32, String)> = self
+            let mut hits: Vec<(String, Vec<String>, u32, String)> = self
                 .dict
                 .query_continuation(&head, &last.text, 24)
                 .into_iter()
@@ -979,7 +1021,19 @@ impl Session {
                     (e.word.clone(), e.syllables.clone(), e.freq, remain)
                 })
                 .collect();
+            if let Some(ref u) = self.user_dict {
+                let head_tokens: Vec<(&str, bool)> = pat[..pat.len() - 1]
+                    .iter()
+                    .map(|t| (t.text.as_str(), t.is_exact))
+                    .collect();
+                for (hit, remain) in u.query_continuation(&head_tokens, &last.text, 8) {
+                    hits.push((hit.word, hit.syllables, hit.freq.max(0) as u32, remain));
+                }
+            }
             for (word, syllables_vec, freq, remain) in hits {
+                if remain.is_empty() {
+                    continue; // 末音节本身已是完整音节：等同精确匹配，由常规路径覆盖
+                }
                 let (boost, from_user) = if let Some(ref u) = self.user_dict {
                     let (b, f) = u.score(&word, prev);
                     (b as i32, f)
@@ -1006,7 +1060,7 @@ impl Session {
         }
         for (head_syls, frag) in crate::syllable::partial_tail_splits(&match_input) {
             let head: Vec<&str> = head_syls.iter().map(|s| s.as_str()).collect();
-            let hits: Vec<(String, Vec<String>, u32, String)> = self
+            let mut hits: Vec<(String, Vec<String>, u32, String)> = self
                 .dict
                 .query_continuation(&head, &frag, 24)
                 .into_iter()
@@ -1015,6 +1069,12 @@ impl Session {
                     (e.word.clone(), e.syllables.clone(), e.freq, remain)
                 })
                 .collect();
+            if let Some(ref u) = self.user_dict {
+                let head_tokens: Vec<(&str, bool)> = head.iter().map(|s| (*s, true)).collect();
+                for (hit, remain) in u.query_continuation(&head_tokens, &frag, 8) {
+                    hits.push((hit.word, hit.syllables, hit.freq.max(0) as u32, remain));
+                }
+            }
             for (word, syllables_vec, freq, remain) in hits {
                 let (boost, from_user) = if let Some(ref u) = self.user_dict {
                     let (b, f) = u.score(&word, prev);
@@ -1253,6 +1313,74 @@ impl Session {
                                 false,
                             );
                         }
+                        // 用户词库：自学习词组/调频词与主词典同层参与召回（Go 同
+                        // 口径）：完整 token 查询层查 queryTokens（exact+prefix），
+                        // 回退层只补 QueryTokensExact(shorter, 5)。前缀层的整句式
+                        // 学习记录必须跳过（候选硬约束：部分输入不得出现整词候选）。
+                        if let Some(ref u) = self.user_dict {
+                            if is_full {
+                                let qp_pairs: Vec<(&str, bool)> =
+                                    qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
+                                let (u_exacts, u_prefixes) = u.query_tokens(&qp_pairs, 10);
+                                for hit in u_exacts {
+                                    let display_text = if traditional {
+                                        to_traditional(&hit.word)
+                                    } else {
+                                        hit.word.clone()
+                                    };
+                                    pool.add(
+                                        &hit.word.clone(),
+                                        display_text,
+                                        hit.syllables.join("'"),
+                                        hit.freq,
+                                        true,
+                                        rank_exact,
+                                        false,
+                                    );
+                                }
+                                for hit in u_prefixes {
+                                    if self.is_sentence_entry(&hit.word, &hit.syllables, &hit.segs)
+                                    {
+                                        continue;
+                                    }
+                                    let display_text = if traditional {
+                                        to_traditional(&hit.word)
+                                    } else {
+                                        hit.word.clone()
+                                    };
+                                    pool.add(
+                                        &hit.word.clone(),
+                                        display_text,
+                                        hit.syllables.join("'"),
+                                        hit.freq,
+                                        true,
+                                        rank_prefix,
+                                        false,
+                                    );
+                                }
+                            } else {
+                                let sub_tokens: Vec<(&str, bool)> = qp[..l]
+                                    .iter()
+                                    .map(|t| (t.text.as_str(), t.is_exact))
+                                    .collect();
+                                for hit in u.query_tokens_exact(&sub_tokens, 5) {
+                                    let display_text = if traditional {
+                                        to_traditional(&hit.word)
+                                    } else {
+                                        hit.word.clone()
+                                    };
+                                    pool.add(
+                                        &hit.word.clone(),
+                                        display_text,
+                                        hit.syllables.join("'"),
+                                        hit.freq,
+                                        true,
+                                        effective_rank,
+                                        false,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1289,6 +1417,29 @@ impl Session {
                             RANK_SINGLE_BACKFILL,
                             false,
                         );
+                    }
+                    // 用户词库的首音节单字同样补齐（Go 同口径）
+                    if let Some(ref u) = self.user_dict {
+                        let first_pairs = [(first_pat[0].text.as_str(), first_pat[0].is_exact)];
+                        for hit in u.query_tokens_exact(&first_pairs, SINGLE_SYLLABLE_EXACT_LIMIT) {
+                            if hit.word.chars().count() != 1 {
+                                continue;
+                            }
+                            let display_text = if traditional {
+                                to_traditional(&hit.word)
+                            } else {
+                                hit.word.clone()
+                            };
+                            pool.add(
+                                &hit.word.clone(),
+                                display_text,
+                                hit.syllables.join("'"),
+                                hit.freq,
+                                true,
+                                RANK_SINGLE_BACKFILL,
+                                false,
+                            );
+                        }
                     }
                 }
             }
@@ -1732,6 +1883,27 @@ impl Session {
             return segs.to_vec();
         }
         self.infer_segs(word, syllables)
+    }
+
+    /// 整句式学习记录判定（Go isSentenceEntry）：新数据看 Segs（≥2 段即整句），
+    /// 旧数据看「>4 音节且不在词典」或能推断出 ≥2 段。整句式记录**不参与部分
+    /// 输入的前缀候选**——否则打「今」就能看到「今天星期一」，正是用户反对的
+    /// 整词贪婪匹配（项目候选硬约束）。
+    fn is_sentence_entry(&self, word: &str, syllables: &[String], segs: &[String]) -> bool {
+        if syllables.len() < 2 {
+            return false;
+        }
+        if segs.len() >= 2 {
+            return true;
+        }
+        let syl_refs: Vec<&str> = syllables.iter().map(|s| s.as_str()).collect();
+        if self.dict.contains_word(word, &syl_refs) {
+            return false;
+        }
+        if syllables.len() > 4 {
+            return true; // 旧数据：>4 音节且不在词典，只可能是整句
+        }
+        self.infer_segs(word, syllables).len() >= 2
     }
 
     /// 在整句式学习记录的分段边界上剥掉已上屏前缀（Go stripAtSegmentBoundary）：
@@ -2612,6 +2784,56 @@ mod tests {
         assert!(
             !comp.candidates.iter().any(|c| c.text == "莲"),
             "错拼输入不得追加单字兜底层（莲 只靠兜底才会出现）: {:?}",
+            comp.candidates
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+    /// 用户词库参与组词召回（Go 同口径）：主词典没有的词，学过之后能打出来，
+    /// 且候选带 from_user 标记（壳据此显示学习标记）。
+    #[test]
+    fn test_user_word_recall() {
+        let user = std::sync::Arc::new(UserDict::new::<&str>(None));
+        user.bump_word("幂等性", Some("mi deng xing"), None);
+        let mut sess = Session::new(common_dict(), Some(user));
+        let comp = sess.input("midengxing", false).unwrap();
+        let hit = comp.candidates.iter().find(|c| c.text == "幂等性");
+        assert!(
+            hit.is_some(),
+            "用户学过的词应出现在候选: {:?}",
+            comp.candidates
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(hit.unwrap().from_user, "用户词条应带 from_user 标记");
+    }
+
+    /// 整句安全（项目红线）：整句式学习记录不得作为部分输入的前缀候选——
+    /// 打「今」不能出「今天星期一」；完整输入时才作为整句候选出现。
+    #[test]
+    fn test_user_sentence_not_prefix_candidate() {
+        let user = std::sync::Arc::new(UserDict::new::<&str>(None));
+        user.bump_word(
+            "今天星期一",
+            Some("jin tian xing qi yi"),
+            Some(vec!["今天".to_string(), "星期一".to_string()]),
+        );
+        let mut sess = Session::new(common_dict(), Some(user));
+        let comp = sess.input("jin", false).unwrap();
+        assert!(
+            !comp.candidates.iter().any(|c| c.text == "今天星期一"),
+            "部分输入不得出现整句记录: {:?}",
+            comp.candidates
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+        );
+        let comp = sess.input("tianxingqiyi", false).unwrap();
+        assert!(
+            comp.candidates.iter().any(|c| c.text == "今天星期一"),
+            "完整输入应给出整句候选: {:?}",
             comp.candidates
                 .iter()
                 .map(|c| c.text.as_str())
