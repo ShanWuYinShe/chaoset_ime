@@ -33,11 +33,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "chaoset-ipc"
+version = "0.4.0"
+dependencies = [
+ "chaoset-config",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "chaoset-tools"
+version = "0.4.0"
+dependencies = [
+ "chaoset-engine",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "chaosetctl"
+version = "0.4.0"
+dependencies = [
+ "chaoset-config",
+ "chaoset-ipc",
+ "chaoset-tools",
+ "serde_json",
+]
+
+[[package]]
 name = "chaosetd"
 version = "0.3.38"
 dependencies = [
  "chaoset-config",
  "chaoset-engine",
+ "chaoset-ipc",
  "libc",
  "serde",
  "serde_json",

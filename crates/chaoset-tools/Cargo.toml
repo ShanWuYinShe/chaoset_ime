@@ -1,0 +1,23 @@
+[package]
+name = "chaoset-tools"
+version = "0.4.0"
+edition = "2021"
+description = "Chaoset IME 词库导入与用户词典离线工具（Rust 唯一实现）"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chaoset-engine = { path = "../chaoset-engine" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+] }
+
+[dev-dependencies]
+tempfile = "3.10"

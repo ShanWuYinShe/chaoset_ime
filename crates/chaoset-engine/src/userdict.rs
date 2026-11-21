@@ -32,6 +32,228 @@ fn decay(last_used: i64, now: i64) -> f64 {
     }
 }
 
+/// Unix 秒 → UTC RFC3339（2026-09-24T12:00:00Z）。
+///
+/// 学习数据导出的时间列统一用 UTC（README：全量导出「按次数降序、UTC 时间，
+/// 输出稳定可 diff」）。不引入 chrono/time 依赖，用 Howard Hinnant 的
+/// civil_from_days 算法从 epoch 天数换算公历，负时间戳同样可表示。
+pub fn format_rfc3339_utc(unix: i64) -> String {
+    let (year, month, day, hour, minute, second) = utc_fields(unix);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
+}
+
+/// Unix 秒 → UTC 文件名时间戳（YYYYMMDD-HHMMSS，损坏备份后缀用）。
+fn format_stamp_utc(unix: i64) -> String {
+    let (year, month, day, hour, minute, second) = utc_fields(unix);
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        year, month, day, hour, minute, second
+    )
+}
+
+fn utc_fields(unix: i64) -> (i64, u32, u32, u32, u32, u32) {
+    let days = unix.div_euclid(86400);
+    let secs_of_day = unix.rem_euclid(86400) as u32;
+    let (year, month, day) = civil_from_days(days);
+    (
+        year,
+        month,
+        day,
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60,
+    )
+}
+
+/// Howard Hinnant 的 civil_from_days（proleptic Gregorian，1970-01-01 起）。
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// 损坏用户词典的备份路径：<path>.corrupt-<UTC 时间戳>。带秒级时间戳，
+/// 既避免覆盖现场，也便于按时间定位；同一秒内重复恢复会改名失败并降级为空词典。
+fn corrupt_backup_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(
+        ".corrupt-{}",
+        format_stamp_utc(current_timestamp())
+    ));
+    PathBuf::from(name)
+}
+
+/// 解析用户词典 JSON；兼容旧格式，返回（数据, 是否发生迁移）。
+///
+/// 新格式（Rust canonical）：words/phrases/bigrams 三张表，words 以词为键、
+/// 音节与整句分段在记录里。旧格式有两种，都迁移到 canonical：
+///   1. 阶段 0 扁平格式：顶层就是「词\0音节」→ 记录；
+///   2. Go daemon 的新格式：words/phrases 键是「词\0音节」、bigrams 键是
+///      「前词\0后词」。
+fn decode_user_file(data: &[u8]) -> Result<(UserFile, bool), String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(data).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "用户词典顶层不是 JSON 对象".to_string())?;
+    if obj.contains_key("words") || obj.contains_key("phrases") || obj.contains_key("bigrams") {
+        let mut file: UserFile =
+            serde_json::from_value(value).map_err(|e| format!("格式不匹配: {e}"))?;
+        let migrated = migrate_canonical_keys(&mut file);
+        Ok((file, migrated))
+    } else {
+        let legacy: HashMap<String, UserRecord> =
+            serde_json::from_value(value).map_err(|e| format!("格式不匹配: {e}"))?;
+        let mut file = UserFile::default();
+        for (key, mut rec) in legacy {
+            let (word, sylls) = split_flat_key(&key);
+            if word.is_empty() {
+                continue;
+            }
+            if rec.sylls.is_empty() {
+                rec.sylls = sylls;
+            }
+            merge_word_record(&mut file.words, word, rec);
+        }
+        Ok((file, true))
+    }
+}
+
+/// 把「键=词\0空格音节」拆成（词, 空格分隔音节串）；无分隔符时整键为词。
+fn split_flat_key(key: &str) -> (String, String) {
+    match key.split_once('\u{0}') {
+        Some((word, joined)) => (
+            word.trim().to_string(),
+            joined.split_whitespace().collect::<Vec<_>>().join(" "),
+        ),
+        None => (key.trim().to_string(), String::new()),
+    }
+}
+
+/// 合并同词记录：旧格式同一词可能有多读音/多条记录，次数相加、最近使用取较新、
+/// 保留非空的音节与分段——迁移不能把学习数据整条丢掉。
+fn merge_word_record(map: &mut HashMap<String, UserRecord>, word: String, incoming: UserRecord) {
+    match map.get_mut(&word) {
+        Some(existing) => {
+            existing.count = existing.count.saturating_add(incoming.count);
+            if incoming.last_used > existing.last_used {
+                existing.last_used = incoming.last_used;
+            }
+            if existing.sylls.is_empty() {
+                existing.sylls = incoming.sylls;
+            }
+            if existing.segs.is_empty() {
+                existing.segs = incoming.segs;
+            }
+        }
+        None => {
+            map.insert(word, incoming);
+        }
+    }
+}
+
+fn merge_phrase_record(map: &mut HashMap<String, PhraseRecord>, incoming: PhraseRecord) {
+    let word = incoming.word.clone();
+    match map.get_mut(&word) {
+        Some(existing) => {
+            existing.count = existing.count.saturating_add(incoming.count);
+            if incoming.last_used > existing.last_used {
+                existing.last_used = incoming.last_used;
+            }
+            if existing.sylls.is_empty() {
+                existing.sylls = incoming.sylls;
+            }
+            if existing.segs.is_empty() {
+                existing.segs = incoming.segs;
+            }
+        }
+        None => {
+            map.insert(word, incoming);
+        }
+    }
+}
+
+/// canonical 文件里也可能残留 Go daemon 写下的「词\0音节」键：逐表把键迁到
+/// Rust canonical（words/phrases 以词为键、bigrams 以「前词->后词」为键）。
+/// 返回是否改写过键（写过就要落盘升级）。
+fn migrate_canonical_keys(file: &mut UserFile) -> bool {
+    let mut migrated = false;
+
+    let old_words = std::mem::take(&mut file.words);
+    let mut words = HashMap::with_capacity(old_words.len());
+    for (key, rec) in old_words {
+        if key.contains('\u{0}') {
+            migrated = true;
+            let (word, sylls) = split_flat_key(&key);
+            if word.is_empty() {
+                continue;
+            }
+            let mut rec = rec;
+            if rec.sylls.is_empty() {
+                rec.sylls = sylls;
+            }
+            merge_word_record(&mut words, word, rec);
+        } else {
+            words.insert(key, rec);
+        }
+    }
+    file.words = words;
+
+    let old_phrases = std::mem::take(&mut file.phrases);
+    let mut phrases = HashMap::with_capacity(old_phrases.len());
+    for (key, mut rec) in old_phrases {
+        if key.contains('\u{0}') {
+            migrated = true;
+            let (word, sylls) = split_flat_key(&key);
+            if rec.word.is_empty() {
+                rec.word = word;
+            }
+            if rec.sylls.is_empty() {
+                rec.sylls = sylls;
+            }
+        }
+        if rec.word.is_empty() {
+            continue;
+        }
+        merge_phrase_record(&mut phrases, rec);
+    }
+    file.phrases = phrases;
+
+    let old_bigrams = std::mem::take(&mut file.bigrams);
+    let mut bigrams: HashMap<String, UserRecord> = HashMap::with_capacity(old_bigrams.len());
+    for (key, rec) in old_bigrams {
+        let key = match key.split_once('\u{0}') {
+            Some((prev, next)) => {
+                migrated = true;
+                format!("{}->{}", prev, next)
+            }
+            None => key,
+        };
+        match bigrams.get_mut(&key) {
+            Some(existing) => {
+                existing.count = existing.count.saturating_add(rec.count);
+                existing.last_used = existing.last_used.max(rec.last_used);
+            }
+            None => {
+                bigrams.insert(key, rec);
+            }
+        }
+    }
+    file.bigrams = bigrams;
+
+    migrated
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct UserRecord {
     pub count: i32,
@@ -80,6 +302,12 @@ fn split_sylls(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// 音节串导出成统一空格分隔（daemon 学习路径可能存 ' 连接；导出与再导入
+/// 都按空格口径，chaoset-import 也能直接吃）。
+fn format_sylls(s: &str) -> String {
+    split_sylls(s).join(" ")
+}
+
 pub struct WordPrefixHit {
     pub word: String,
     pub syllables: Vec<String>,
@@ -111,25 +339,95 @@ impl UserDict {
         self.path.as_deref()
     }
 
-    pub fn new<P: AsRef<Path>>(path_opt: Option<P>) -> Self {
+    /// 宽松加载用户词典（daemon / CLI 本地模式的启动路径）。
+    ///
+    /// - 文件不存在：空词典，无警告；
+    /// - 内容无法解析：改名 <path>.corrupt-<UTC 时间戳> 保留现场，以空词典继续，
+    ///   并把警告文本交还调用方——学习数据是增量优化，绝不能因为它让输入法起不来；
+    /// - 读取失败（权限不足、路径是目录等）：返回 Err——改名解决不了这类问题；
+    /// - 旧格式（阶段 0 扁平表 / Go daemon 的「词\0音节」键）：迁移到 canonical，
+    ///   迁移会标脏，下一次 save/flush 顺带把文件升级成新格式。
+    pub fn open<P: AsRef<Path>>(path_opt: Option<P>) -> std::io::Result<(Self, Vec<String>)> {
         let path = path_opt.map(|p| p.as_ref().to_path_buf());
+        let mut warnings = Vec::new();
         let mut file_data = UserFile::default();
-
+        let mut dirty = false;
         if let Some(ref p) = path {
-            if p.exists() {
-                if let Ok(content) = fs::read_to_string(p) {
-                    if let Ok(parsed) = serde_json::from_str::<UserFile>(&content) {
+            match fs::read(p) {
+                Ok(bytes) => match decode_user_file(&bytes) {
+                    Ok((parsed, migrated)) => {
                         file_data = parsed;
+                        dirty = migrated;
                     }
+                    Err(err) => {
+                        let backup = corrupt_backup_path(p);
+                        let warning = match fs::rename(p, &backup) {
+                            Ok(()) => format!(
+                                "用户词典 {} 解析失败（{}），已备份为 {}；本次以空词典启动",
+                                p.display(),
+                                err,
+                                backup.display()
+                            ),
+                            Err(rename_err) => format!(
+                                "用户词典 {} 解析失败（{}）；备份改名也失败（{}），本次以空词典启动",
+                                p.display(),
+                                err,
+                                rename_err
+                            ),
+                        };
+                        warnings.push(warning);
+                        file_data = UserFile::default();
+                        dirty = false;
+                    }
+                },
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(std::io::Error::new(
+                        err.kind(),
+                        format!("读取用户词典失败: {err}"),
+                    ))
                 }
             }
         }
+        Ok((
+            Self {
+                path,
+                data: RwLock::new(file_data),
+                dirty: RwLock::new(dirty),
+            },
+            warnings,
+        ))
+    }
 
+    /// 兼容入口（daemon 等常驻调用方）：加载失败一律降级为空词典，警告打印到
+    /// stderr。需要区分「读取失败」的调用方用 UserDict::open。
+    pub fn new<P: AsRef<Path>>(path_opt: Option<P>) -> Self {
+        match Self::open(path_opt) {
+            Ok((dict, warnings)) => {
+                for warning in warnings {
+                    eprintln!("警告: {warning}");
+                }
+                dict
+            }
+            Err(err) => {
+                eprintln!("警告: {err}；本次以空词典启动");
+                Self::in_memory()
+            }
+        }
+    }
+
+    /// 纯内存态（不落盘）。
+    fn in_memory() -> Self {
         Self {
-            path,
-            data: RwLock::new(file_data),
+            path: None,
+            data: RwLock::new(UserFile::default()),
             dirty: RwLock::new(false),
         }
+    }
+
+    /// 是否有尚未落盘的变更（迁移、删除与 bump 都会标脏）。
+    pub fn is_dirty(&self) -> bool {
+        *self.dirty.read().unwrap()
     }
 
     /// 计算候选词在当前上下文下的附加用户加分 (分值, 是否来自用户学习)
@@ -310,20 +608,36 @@ impl UserDict {
         *self.dirty.write().unwrap() = true;
     }
 
+    /// 删除一个词的学习记录（Words + Phrases），返回是否真的删到了记录。
+    ///
+    /// 匹配规则（与 Go 引擎同语义）：
+    ///   - 给了音节：先按「词 + 音节」精确匹配 Words/Phrases；
+    ///   - 精确匹配完全没命中：按「词文本」兜底删除同词的所有读音/分词记录
+    ///     （CLI 不带音节、右键删除语义是「把这个词从学习数据里删掉」）；
+    ///   - 什么都不匹配：返回 false，不产生任何变更。
+    ///
+    /// Bigrams（前后词共现）刻意保留：它是「前词→后词」的成对统计而不是单词
+    /// 自身的学习记录，删单侧会扭曲其它词的上下文加成；保留最多让该词在特定
+    /// 前文后仍有不超过 2 次共现的加分，下次使用会重新学习。
     pub fn delete_word(&self, word: &str, syllables: &[String]) -> bool {
+        if word.is_empty() {
+            return false;
+        }
         let mut data = self.data.write().unwrap();
         let mut deleted = false;
 
         if !syllables.is_empty() {
-            let sylls_joined = syllables.join(" ");
-            let phrase_key_match = data
-                .phrases
-                .iter()
-                .find(|(_, p)| p.word == word && p.sylls == sylls_joined)
-                .map(|(k, _)| k.clone());
-            if let Some(k) = phrase_key_match {
-                data.phrases.remove(&k);
-                deleted = true;
+            if let Some(rec) = data.words.get(word) {
+                if split_sylls(&rec.sylls).as_slice() == syllables {
+                    data.words.remove(word);
+                    deleted = true;
+                }
+            }
+            if let Some(rec) = data.phrases.get(word) {
+                if split_sylls(&rec.sylls).as_slice() == syllables {
+                    data.phrases.remove(word);
+                    deleted = true;
+                }
             }
         }
 
@@ -336,26 +650,11 @@ impl UserDict {
             }
         }
 
-        // 同时清理相关的 bigram
-        let keys_to_remove: Vec<String> = data
-            .bigrams
-            .keys()
-            .filter(|k| {
-                k.starts_with(&format!("{}->", word)) || k.ends_with(&format!("->{}", word))
-            })
-            .cloned()
-            .collect();
-
-        for k in keys_to_remove {
-            data.bigrams.remove(&k);
-        }
-
+        // 只有真删到记录才标脏：重复删除 / 未学习过不能触发落盘。
         if deleted {
             *self.dirty.write().unwrap() = true;
-            true
-        } else {
-            false
         }
+        deleted
     }
 
     pub fn stats(&self) -> UserStats {
@@ -384,58 +683,75 @@ impl UserDict {
         Ok(true)
     }
 
+    /// 把学习记录导出为多段 TSV（# 开头为注释段头）：
+    /// 词 / 用户词组 / 上下文共现；条目按次数降序、同次数按词排序，时间列用
+    /// UTC RFC3339，输出稳定可 diff；空段省略。
+    ///
+    /// 拼音列取记录里的 syllables（不是整句分段 segs）。phrases_only 只导出
+    /// 用户词组，且为无段头的「词\t拼音\t次数」三列，可直接作为
+    /// chaoset-import 的输入词库。
     pub fn export_tsv(&self, phrases_only: bool) -> String {
         let data = self.data.read().unwrap();
         let mut out = String::new();
 
         if !phrases_only && !data.words.is_empty() {
             out.push_str("# 词\t拼音\t次数\t最近使用\n");
-            let mut word_rows: Vec<(&String, &UserRecord)> = data.words.iter().collect();
-            word_rows.sort_by(|a, b| {
-                if a.1.count != b.1.count {
-                    b.1.count.cmp(&a.1.count)
-                } else {
-                    a.0.cmp(b.0)
-                }
-            });
-            for (w, r) in word_rows {
-                let segs = r.segs.join(" ");
-                out.push_str(&format!("{}\t{}\t{}\t{}\n", w, segs, r.count, r.last_used));
+            let mut rows: Vec<(&String, &UserRecord)> = data.words.iter().collect();
+            rows.sort_by(|a, b| b.1.count.cmp(&a.1.count).then_with(|| a.0.cmp(b.0)));
+            for (word, rec) in rows {
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    word,
+                    format_sylls(&rec.sylls),
+                    rec.count,
+                    format_rfc3339_utc(rec.last_used)
+                ));
             }
         }
 
         if !data.phrases.is_empty() {
-            out.push_str("# 词组\t拼音\t次数\t最近使用\n");
-            let mut phrase_rows: Vec<(&String, &PhraseRecord)> = data.phrases.iter().collect();
-            phrase_rows.sort_by(|a, b| {
-                if a.1.count != b.1.count {
-                    b.1.count.cmp(&a.1.count)
+            if !phrases_only {
+                out.push_str("# 词组\t拼音\t次数\t最近使用\n");
+            }
+            let mut rows: Vec<&PhraseRecord> = data.phrases.values().collect();
+            rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.word.cmp(&b.word)));
+            for rec in rows {
+                if phrases_only {
+                    out.push_str(&format!(
+                        "{}\t{}\t{}\n",
+                        rec.word,
+                        format_sylls(&rec.sylls),
+                        rec.count
+                    ));
                 } else {
-                    a.0.cmp(b.0)
+                    out.push_str(&format!(
+                        "{}\t{}\t{}\t{}\n",
+                        rec.word,
+                        format_sylls(&rec.sylls),
+                        rec.count,
+                        format_rfc3339_utc(rec.last_used)
+                    ));
                 }
-            });
-            for (w, r) in phrase_rows {
-                out.push_str(&format!(
-                    "{}\t{}\t{}\t{}\n",
-                    w, r.sylls, r.count, r.last_used
-                ));
             }
         }
 
         if !phrases_only && !data.bigrams.is_empty() {
             out.push_str("# 上下文\t前词\t后词\t次数\n");
-            let mut bigram_rows: Vec<(&String, &UserRecord)> = data.bigrams.iter().collect();
-            bigram_rows.sort_by(|a, b| {
-                if a.1.count != b.1.count {
-                    b.1.count.cmp(&a.1.count)
-                } else {
-                    a.0.cmp(b.0)
-                }
+            let mut rows: Vec<(&str, &str, i32)> = data
+                .bigrams
+                .iter()
+                .filter_map(|(key, rec)| {
+                    key.split_once("->")
+                        .map(|(prev, next)| (prev, next, rec.count))
+                })
+                .collect();
+            rows.sort_by(|a, b| {
+                b.2.cmp(&a.2)
+                    .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+                    .then_with(|| a.1.as_bytes().cmp(b.1.as_bytes()))
             });
-            for (k, r) in bigram_rows {
-                if let Some((prev, next)) = k.split_once("->") {
-                    out.push_str(&format!("{}\t{}\t{}\n", prev, next, r.count));
-                }
+            for (prev, next, count) in rows {
+                out.push_str(&format!("{}\t{}\t{}\n", prev, next, count));
             }
         }
 
