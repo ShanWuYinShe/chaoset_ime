@@ -4,6 +4,13 @@
 
 ## 未发布
 
+- **修复(输入体验)：中文模式下大写字母直接入组词，回车原样上屏英文——不必为大写切输入法**：
+  - 三端壳此前都先丢大写（macOS `isCompositionChar` 只认 a-z、Windows Shift+字母直接放行给宿主、Linux 只转发 a-z），引擎再 `ToLower` 后过滤一次，用户想打一段大写英文只能来回切中英；
+  - 现在三端壳把 a-z/A-Z 都转发给引擎（Windows 按 Shift⊕CapsLock 还原正确大小写），引擎把字母**原样保留**在组词串里（`s.input`），回车/`CommitRaw` 原样上屏；拼音切分、查词、纠错、联想一律走 `matchInput()` 小写视图，`NIHAO` 与 `nihao` 候选一致；
+  - 预编辑按切分边界还原原始大小写（`NI'HAO`），所见即回车所得；逐字符退格保留剩余大小写；
+  - 契约由 `make check-uiparity`「字母入组词大小写」组锁死（引擎 + 三端壳任一处回退即红），按键矩阵同步更新 `docs/ui-parity.md`；
+  - 回归：`TestUppercaseInputPreserved` / `TestCommitRawKeepsCase` / 更新的 `TestInputFiltersNonLetters`（大写保留、非字母丢弃）。
+
 - **测试(重构)：新增 Go ↔ Rust 引擎差分对比工具（`tools/engineparity` + `make engineparity`），建立 rust 迁移量化基线**：
   - 同一份场景语料（`tools/engineparity/scenarios.jsonl`：切分/简拼/翻页/退格/渐进上屏/标点/联想/纠错/模糊音/繁体/双拼共 30 场景）分别驱动 Go `engine.Session` 与 Rust `chaoset-engine::Session`（后者经 `crates/chaoset-engine` 的 `replay` bin），逐场景逐步骤对比用户可见行为（候选序列、preedit、页码、committed）；候选打分 score 只做信息性统计；
   - 首次基线（`make engineparity` 取数）：30 场景一致 4 个、差异 26 个；主要缺口为排序键、召回范围（page_count）、非小写字符过滤、无候选兜底、简拼展开与退格后组词保留，后续迁移按此清单逐项推进并以该工具复验；

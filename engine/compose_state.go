@@ -46,14 +46,14 @@ type composeState struct {
 // （beijngi / zhonguo / niihao）正是「打错字」的典型形态，必须继续走错拼修正
 // 路径才能救回来；常规 token 循环对空切片是安全的空操作。
 func newComposeState(s *Session) *composeState {
-	patterns := enumerateAllTokens(strings.Split(s.input, "'"))
+	patterns := enumerateAllTokens(strings.Split(s.matchInput(), "'"))
 	return &composeState{
 		s:                 s,
 		patterns:          patterns,
 		seen:              make(map[string]int),
 		seenShorter:       make(map[string]bool),
 		addedContinuation: make(map[string]bool),
-		shape:             analyzeShape(s.input, patterns),
+		shape:             analyzeShape(s.matchInput(), patterns),
 		typo:              newTypoState(),
 	}
 }

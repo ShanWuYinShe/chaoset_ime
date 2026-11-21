@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Candidate 是一个候选项。Syllables 以 ' 连接，便于展示与传输。
@@ -235,8 +236,11 @@ func (s *Session) Input(text string, halfWidth bool) (Composition, error) {
 	if s.input == "" {
 		s.seqSegs = nil
 	}
-	for _, r := range strings.ToLower(text) {
+	for _, r := range text {
 		if s.dpScheme != "" {
+			// 双拼按键大小写不敏感（Shift 打出的字母仍是拼音键）：统一小写后
+			// 成对解码；组词内容是解码出的音节，本身没有大小写概念。
+			r = unicode.ToLower(r)
 			switch {
 			case r == '\'':
 				s.input += "'"
@@ -272,12 +276,25 @@ func (s *Session) Input(text string, halfWidth bool) (Composition, error) {
 			}
 			continue
 		}
-		if (r >= 'a' && r <= 'z') || r == '\'' {
+		// 全拼：大小写字母都收进组词并**保留原样**——用户按 Enter（CommitRaw）
+		// 应原样上屏自己敲的字母，不必为了大写切到英文模式；拼音匹配另走
+		// matchInput() 的小写视图。
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '\'' {
 			s.input += string(r)
 			s.afterAppend()
 		}
 	}
 	return s.Compose(), nil
+}
+
+// matchInput 返回用于拼音**匹配**的小写视图。
+//
+// 用户可以直接在中文模式里敲大写字母（不必切输入法）：大写保留在 s.input
+// 里供预编辑显示与 Enter 原样上屏；切分、查词、纠错、联想一律按小写口径，
+// 保证「NIHAO」与「nihao」得到同一批候选。全小写输入时 strings.ToLower
+// 原地返回（无分配），热路径无额外开销。
+func (s *Session) matchInput() string {
+	return strings.ToLower(s.input)
 }
 
 // afterAppend 处理追加后的公共状态：截断、回第一页、打断标点循环。
@@ -564,7 +581,7 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 	cand := c.Candidates[index]
 	committed = cand.Text
 	sylls := strings.Split(cand.Syllables, "'")
-	rest, matched := consumeInputPrefix(s.input, sylls, s.fuzzy)
+	rest, matched := consumeInputPrefix(strings.ToLower(s.input), sylls, s.fuzzy)
 	if matched == 0 {
 		rest = "" // 一个音节都对不上（整句/简拼展开形态差异）：回退全清
 	} else if cand.typoFix {
@@ -582,7 +599,13 @@ func (s *Session) SelectPrefix(index int) (comp Composition, committed string, e
 
 	s.learnSelection(committed, sylls, cand.Segments)
 	s.prev = committed
-	s.input = rest
+	// rest 来自小写视图，长度与原输入后缀一致（字母大小写不改变字节数）：
+	// 按长度切回原输入，保留剩余字母的大小写。
+	if rest == "" {
+		s.input = ""
+	} else {
+		s.input = s.input[len(s.input)-len(rest):]
+	}
 	// 组词内容变了，回到第一页（与 afterAppend 一致）：否则用户在第 N 页
 	// 选段后，剩余拼音会停在原页码，首屏候选被跳过、页码显示错乱。
 	s.page = 0
