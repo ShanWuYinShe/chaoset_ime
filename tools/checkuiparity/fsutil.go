@@ -253,3 +253,16 @@ func firstInt(text, pattern string) (int, bool) {
 	}
 	return v, true
 }
+
+// checkNotContains 断言某文件不包含指定子串：用于锁定“错误写法不得回归”
+// （例如设置中心必须用 CLI 的连字符 `mode-scope`，不能写回下划线）。
+func checkNotContains(fsys fs.FS, problems *[]string, group, path, needle string) {
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		*problems = append(*problems, fmt.Sprintf("[%s] 读取 %s 失败: %v", group, path, err))
+		return
+	}
+	if strings.Contains(string(data), needle) {
+		*problems = append(*problems, fmt.Sprintf("[%s] %s 不得包含 %q", group, path, needle))
+	}
+}

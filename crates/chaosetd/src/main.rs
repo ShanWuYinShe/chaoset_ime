@@ -1,7 +1,5 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod appdirs;
-mod input_settings;
 mod ipc;
 mod server;
 mod singleton;
@@ -123,7 +121,7 @@ fn resolve_user_dict(args: &CliArgs) -> Option<Arc<UserDict>> {
             Some(p) => Some(Arc::new(UserDict::new(Some(PathBuf::from(p))))),
         };
     }
-    match appdirs::default_user_dict_path() {
+    match chaoset_config::paths::user_dict_path() {
         Ok(p) => Some(Arc::new(UserDict::new(Some(p)))),
         Err(e) => {
             eprintln!(
@@ -356,7 +354,7 @@ fn main() {
     // 输入行为设置：显式命令行参数 > 平台设置（设置窗写入）> 缺省。
     // daemon 自己读平台设置的原因见 input_settings 模块注释（LaunchAgent /
     // 安装器 Run 项的静态参数无法随设置变化）。
-    let platform_settings = input_settings::load();
+    let platform_settings = chaoset_config::behavior::load();
     let fuzzy = if args.fuzzy_set {
         args.fuzzy
     } else {
@@ -418,7 +416,7 @@ fn main() {
         let socket_path = if let Some(ref s) = args.socket {
             PathBuf::from(s)
         } else {
-            match appdirs::default_socket_path() {
+            match chaoset_config::paths::socket_path() {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("获取 socket 路径失败: {}", e);
@@ -458,7 +456,7 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        let pipe_name = match appdirs::default_pipe_name() {
+        let pipe_name = match chaoset_config::paths::default_pipe_name() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("生成命名管道名失败: {}", e);

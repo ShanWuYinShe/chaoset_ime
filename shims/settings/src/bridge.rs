@@ -176,7 +176,7 @@ pub fn restart_daemon() {
 }
 
 pub fn set_mode_scope(scope: &str) -> Result<(), String> {
-    run_cmd(&["config", "set", "mode_scope", scope]).map(|_| ())
+    run_cmd(&["config", "set", "mode-scope", scope]).map(|_| ())
 }
 
 pub fn set_theme(theme: &str) -> Result<(), String> {
