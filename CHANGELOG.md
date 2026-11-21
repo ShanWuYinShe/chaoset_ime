@@ -4,6 +4,12 @@
 
 ## 未发布
 
+- **重构(引擎)：Rust 查询保真收尾——差分 34 场景**全部一致**（含 score）**：
+  - `TrieNode.subtree_min` 由「exact_words 排序后第一个（=最高频词索引）」修正为**子树内最小词条下标**（Go `dictNode.subtreeMin`）——这是 prefix 逐层展开的确定性次序键，取错会让简拼展开集合偏差；
+  - prefix 池的逐层 BFS 按 Go `queryTokens` 的真实结构重写：**ranked 跨起点累积、每处理一个起点就重排截断到 12 节点并收集其词条**（此前做成「全局只排一次取 12」，简拼 nh 的 prefix 池只有 13 条 vs Go 20 条，漏掉 7 条三音节扩展词）；
+  - 找回「错拼输入不追加单字兜底」闸门（项目硬约束，此前重构中丢失）：`lianxiagn` 多出 18 个冷僻同音单字的问题消除；
+  - 差分 34 场景用户可见行为**全部一致**（候选顺序/预编辑/页数/上屏文本/score 差异均为 0）；语料 5,655 场景首屏全同 full 99.9% / tail1 99.6% / tail2 99.6% / mixed 99.6% / initials 98.4%（无退化）；
+  - 新增回归：`test_query_exact_and_prefix_fragment_bfs`（简拼 nh 双池条数与内容）、`test_typo_input_has_no_single_char_backfill`（错拼不出现只靠兜底层召回的冷僻同音字）。
 - **重构(引擎)：Rust 双拼对齐 Go——Rime schema 规则管线建表 + 输入存解码音节**：
   - 键位表从手写简化表改为忠实移植 Go 的 Rime schema algebra 规则管线（derive / xform / op 三类规则 + keepHead、键位小写化、派生码优先于透传的冲突消解），修复自然码 k 键同时映射 uai/ing（`hk` 被误解成 huai）、ao 键位错成 c 等偏差；三方案已知键位与完整性断言与 Go 同一份期望值；
   - 双拼输入形态对齐 Go：`Input` 里两键成对解码后把**音节**写进输入串（不是键码），`;` 无暂存首键时走 punct、无效键码对整体丢弃；补 `dp_pending`/`dp_lens` 状态，退格按「按键事件」整段回滚、暂存首键的退格只清暂存、`BackspaceWord` 复用退格、重置换方案时清状态、`afterAppend`（超长截断 64 / 退格栈对账 / 回第一页 / 打断标点循环）；

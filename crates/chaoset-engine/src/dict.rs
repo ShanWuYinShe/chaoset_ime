@@ -152,7 +152,11 @@ impl Dictionary {
         fn sort_recursive(node: &mut TrieNode, entries: &[WordEntry]) {
             node.exact_words
                 .sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
-            let mut min_id = node.exact_words.first().copied().unwrap_or(usize::MAX);
+            // 注意是**子树内最小词条下标**（Go dictNode.subtreeMin），不是排序后
+            // 第一个——exact_words 按词频降序，first() 是最高频词的索引，会让
+            // prefix BFS 的确定性次序键与 Go 不一致（简拼 nh 的 12 节点展开集合
+            // 因此偏差，少 7 条三音节扩展词）。
+            let mut min_id = node.exact_words.iter().copied().min().unwrap_or(usize::MAX);
             for child in node.children.values_mut() {
                 sort_recursive(child, entries);
                 if child.subtree_min < min_id {
@@ -515,16 +519,22 @@ impl Dictionary {
         });
         exact_ids.truncate(exact_limit);
 
-        // prefix 池：Go queryTokens 的逐层 BFS
+        // prefix 池：Go queryTokens 的逐层 BFS。注意 Go 的结构是「ranked 跨起点
+        // 节点累积，每处理一个起点就重排一次并截断到 12，随后收集该次快照的节点
+        // 词条，下一层取最后一次快照」——逐节点收集会让靠前的起点先贡献词条，
+        // 结果条目明显多于「全局只排一次」（简拼 nh 的 20 条 vs 13 条）。
         terminals.sort_by_key(|n| n.subtree_min);
         let mut level_nodes: Vec<&TrieNode> = terminals;
         let max_prefix_scan = prefix_limit.saturating_mul(4);
         let mut prefix_ids: Vec<usize> = Vec::new();
         let mut prefix_seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         const MAX_EXPAND_PER_LEVEL: usize = 12;
-        let mut depth = 0;
-        while depth < 2 && !level_nodes.is_empty() && prefix_ids.len() < max_prefix_scan {
+        for _depth in 0..2 {
+            if level_nodes.is_empty() || prefix_ids.len() >= max_prefix_scan {
+                break;
+            }
             let mut ranked: Vec<(u32, usize, &TrieNode)> = Vec::new();
+            let mut next_level: Vec<&TrieNode> = Vec::new();
             for node in &level_nodes {
                 for child in node.children.values() {
                     let top = child
@@ -535,20 +545,19 @@ impl Dictionary {
                         .unwrap_or(0);
                     ranked.push((top, child.subtree_min, child));
                 }
-            }
-            ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-            ranked.truncate(MAX_EXPAND_PER_LEVEL);
-            let mut next_level: Vec<&TrieNode> = Vec::new();
-            for (_, _, child) in ranked {
-                next_level.push(child);
-                for &id in &child.exact_words {
-                    if prefix_seen.insert(id) {
-                        prefix_ids.push(id);
+                ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+                ranked.truncate(MAX_EXPAND_PER_LEVEL);
+                next_level.clear();
+                for (_, _, child) in &ranked {
+                    next_level.push(*child);
+                    for &id in &child.exact_words {
+                        if prefix_seen.insert(id) {
+                            prefix_ids.push(id);
+                        }
                     }
                 }
             }
             level_nodes = next_level;
-            depth += 1;
         }
         prefix_ids.sort_by(|&a, &b| {
             entries[b]
@@ -688,5 +697,25 @@ mod tests {
         let exact_xian = dict.query_exact(&["xian"], 20);
         assert_eq!(exact_xian.len(), 1);
         assert_eq!(exact_xian[0].word, "先");
+    }
+    /// prefix 池是 Go queryTokens 的逐层 BFS（跨起点累积排名、每层最多 12 节点、
+    /// 逐节点收集）：简拼 nh 的 prefix 池应有 20 条且含 3 音节扩展词——「全局只
+    /// 排一次取 12」会只剩 13 条并漏掉这些词。
+    #[test]
+    fn test_query_exact_and_prefix_fragment_bfs() {
+        let mut dict = Dictionary::new();
+        dict.load_tsv(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../data/dict_common.tsv"
+        ))
+        .unwrap();
+        dict.sort_nodes();
+        let (exact, prefix) = dict.query_exact_and_prefix(&["n", "h"], 120, 20);
+        assert_eq!(exact.len(), 109, "简拼 nh 的精确池条数应与 Go 相同");
+        assert_eq!(prefix.len(), 20, "prefix 池应与 Go 同为 20 条");
+        let words: Vec<&str> = prefix.iter().map(|e| e.word.as_str()).collect();
+        for want in ["女孩子", "您还未", "拿回去", "牛磺酸"] {
+            assert!(words.contains(&want), "prefix 池应含 {want}: {words:?}");
+        }
     }
 }
