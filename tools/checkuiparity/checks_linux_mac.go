@@ -174,7 +174,7 @@ func checkResetSemantics(fsys fs.FS, problems *[]string) {
 	const group = groupResetSemantics
 	// daemon 侧两条链路都要在。
 	checkContains(fsys, problems, group, ipcServer,
-		"case \"reset\":", "case \"resetComposition\":")
+		"\"reset\" =>", "\"resetComposition\" =>")
 	// Windows：两个入口都在，轻量版被真正调用。
 	checkContains(fsys, problems, group, winShell,
 		"void resetSession()", "void resetComposition()",
@@ -298,9 +298,10 @@ func checkDaemonSingleton(fsys fs.FS, problems *[]string) {
 		"已用已安装 app 内的 daemon 启动")
 	checkContains(fsys, problems, groupDaemonSingleton, macInstall,
 		"killall chaosetd", "避免出现两个进程")
-	checkContains(fsys, problems, groupDaemonSingleton, "cmd/chaosetd/main.go", "runtime.GOOS")
-	checkContains(fsys, problems, groupDaemonSingleton, "cmd/chaosetd/singleton_windows.go",
-		"CreateMutex", `Local\ChaosetDaemon`)
+	checkContains(fsys, problems, groupDaemonSingleton, "crates/chaosetd/src/main.rs",
+		"LockHandle::acquire", "#[cfg(target_os = \"windows\")]")
+	checkContains(fsys, problems, groupDaemonSingleton, "crates/chaosetd/src/singleton.rs",
+		"CreateMutexW", `Local\\ChaosetDaemon`)
 	checkContains(fsys, problems, groupDaemonSingleton, linuxE2E, "chaosetd 单实例")
 }
 

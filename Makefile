@@ -81,11 +81,9 @@ check-version:
 build:
 	go build -o bin/chaosetctl ./cmd/chaosetctl
 	go build -o bin/chaoset ./cmd/chaoset
-	# daemon 由 Rust 实现（crates/chaosetd）接替发行包；Go 版保留为
-	# bin/chaosetd-go 供对照与回滚（算法层已由 tools/engineparity 差分对齐）。
+	# daemon 唯一实现是 Rust（crates/chaosetd）：Go 版已删除。
 	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 	cp crates/target/release/chaosetd bin/chaosetd
-	go build -o bin/chaosetd-go ./cmd/chaosetd
 	go build -o bin/chaoset-cli ./cmd/chaoset-cli
 	go build -o bin/chaoset-import ./cmd/chaoset-import
 	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen

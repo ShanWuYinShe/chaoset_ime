@@ -50,7 +50,7 @@ except Exception as e: print('失败:',e)
 unix socket 对象（lsof 里那串 `0x...`）与磁盘上的 inode 不是同一个。
 
 成因：daemon 启动时若在 `net.Listen` 前 `os.Remove(socket)`，会误删另一个运行中
-daemon 的套接字。现行实现用 flock 单实例锁规避（`cmd/chaosetd/singleton_unix.go`）。
+daemon 的套接字。现行实现（Rust）用 flock 单实例锁规避（`crates/chaosetd/src/singleton.rs`）。
 
 ### 第 2 步：daemon 是否被 SIGTERM 打断
 
@@ -153,7 +153,7 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
   - 「开始菜单/搜索框里打不出中文、普通程序里正常」= AppContainer 连不上或写不进。
     查点按顺序：① daemon 在不在（`%LOCALAPPDATA%\Chaoset\chaosetd.log`）；
     ② 管道安全描述符是否含低完整性标签（缺了就是「能连不能写」，见
-    `ipc/pipe_sddl.go`）；③ AppContainer 宿主日志（可能在
+    `crates/chaosetd/src/server.rs` 的 SDDL 构造）；③ AppContainer 宿主日志（可能在
     `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）。
   - 恢复手段：在任意**普通程序**（记事本、浏览器）里打一次字触发懒启动，
     之后 AppContainer 宿主即可用。

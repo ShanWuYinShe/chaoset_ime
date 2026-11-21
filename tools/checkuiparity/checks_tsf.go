@@ -198,9 +198,9 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	// AppContainer 内 UI 未运行时由 daemon 代拉起（IPC "ui"），不能静默失败。
 	checkContains(fsys, problems, group, winShell,
 		"ensureUiHostStartedByDaemon", "session_.ensureUiHost(settings)")
-	checkContains(fsys, problems, group, ipcServer, "case \"ui\":")
-	checkContains(fsys, problems, group, "ipc/ui_windows.go", "chaoset-ui.exe")
-	checkContains(fsys, problems, group, "ipc/ui_other.go", "ensureUIHost")
+	checkContains(fsys, problems, group, ipcServer, "\"ui\" =>")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/ui.rs", "chaoset-ui.exe", "ensure_ui_host")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/ui.rs", "单例 UI 宿主仅 Windows 支持")
 	// 构建/打包/安装三条链路都必须带上 UI 宿主，否则托盘与设置窗整体不可用。
 	checkContains(fsys, problems, group, winBuild,
 		"chaoset-ui.exe", "ui_main.cpp", "ChaosetRunUi")
@@ -405,7 +405,7 @@ func checkInactiveNoAction(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"ensureUiHostStartedByDaemon(/*settings=*/true)")
 	checkContains(fsys, problems, group, ipcServer, `"settings"`)
-	checkContains(fsys, problems, group, "ipc/ui_windows.go", "--settings")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/ui.rs", "--settings")
 	checkExcludes(fsys, problems, group, winShell,
 		"if (uiSendCommand(\"settings\", 1)) return;")
 	// 失焦分支必须走「彻底退场」而不是只 hide（用户要求：失去焦点后
@@ -1439,17 +1439,19 @@ func checkDaemonSpawnGuard(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"daemonMutexPresent()", "OpenMutexW(SYNCHRONIZE, FALSE, L\"Local\\\\ChaosetDaemon\")",
 		"const bool canSpawn = !isAppContainer() && !daemonMutexPresent();")
-	if data, err := fs.ReadFile(fsys, "cmd/chaosetd/main.go"); err == nil {
+	// daemon 已由 Rust 实现：单实例锁（Windows 互斥体）必须先于词库加载，
+	// 重复实例不再白载 20 万词条。
+	if data, err := fs.ReadFile(fsys, "crates/chaosetd/src/main.rs"); err == nil {
 		text := string(data)
-		early := strings.Index(text, "var winLock *lockHandle")
-		load := strings.Index(text, "engine.LoadDictFilesLenient(dicts)")
+		early := strings.Index(text, "LockHandle::acquire")
+		load := strings.Index(text, "let (dict, line_count) = load_dict_lenient")
 		if early < 0 || load < 0 || early > load {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s：cmd/chaosetd/main.go 的 Windows 单实例锁必须先于词库加载（early=%d load=%d）",
+				"%s：crates/chaosetd/src/main.rs 的 Windows 单实例锁必须先于词库加载（early=%d load=%d）",
 				group, early, load))
 		}
 	} else {
-		*problems = append(*problems, fmt.Sprintf("%s：读取 cmd/chaosetd/main.go 失败：%v", group, err))
+		*problems = append(*problems, fmt.Sprintf("%s：读取 crates/chaosetd/src/main.rs 失败：%v", group, err))
 	}
 	// 后台预激活实例不建 worker/窗口：Activate 体里不得直接 shellWorkerStart。
 	if body, line, ok := cppFunctionBody(src, "HRESULT STDMETHODCALLTYPE ChaosetTIP::Activate(ITfThreadMgr* ptim, TfClientId tid)"); ok {
