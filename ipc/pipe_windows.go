@@ -4,7 +4,6 @@ package ipc
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"os/user"
 
@@ -12,8 +11,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// 管道安全描述符由 pipe_sddl.go 提供（不带 build tag，便于在 Linux CI 上
-// 直接断言 ACL 字符串契约——Windows 真机无法在 CI 里跑）。
+// daemon 已由 Rust 实现（crates/chaosetd）：命名管道服务端与 ACL 在 Rust 侧，
+// 本文件只负责**客户端**按同一规则算名字并拨号（guests 无需知道 ACL）。
 
 // pipePrefix 是命名管道的固定前缀；后缀为当前用户 SID，保证同一用户的所有
 // 壳进程能算出同一个名字，不同用户互不干扰。
@@ -42,26 +41,6 @@ func DefaultPipeName() (string, error) {
 		return "", err
 	}
 	return pipePrefix + sid, nil
-}
-
-func listenPipe(name string) (net.Listener, error) {
-	sid, err := currentUserSID()
-	if err != nil {
-		return nil, err
-	}
-	ln, err := winio.ListenPipe(name, &winio.PipeConfig{
-		SecurityDescriptor: pipeSecurityDescriptor(sid),
-	})
-	if err == nil {
-		return ln, nil
-	}
-	// 不能让完整性标签设置失败演变成「daemon 起不来」（用户侧就是打不出中文）。
-	// 记录并降级；排障时按这条日志判断 AppContainer 场景为何不可用。
-	log.Printf("警告: 设置命名管道完整性标签失败（%v），降级为仅 DACL；"+
-		"开始菜单/搜索框等低完整性宿主可能无法写入", err)
-	return winio.ListenPipe(name, &winio.PipeConfig{
-		SecurityDescriptor: pipeSecurityDescriptorNoIntegrity(sid),
-	})
 }
 
 func dialPipe(name string) (net.Conn, error) {

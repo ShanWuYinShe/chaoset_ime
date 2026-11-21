@@ -4,7 +4,11 @@
 
 ## 未发布
 
-- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
+- **重构(迁移)：删除 Go daemon（`cmd/chaosetd` 与 `ipc` 服务端），Rust daemon 成为唯一实现**：
+  - 删除 `cmd/chaosetd`（含 `run_test.go`/`listen_unix_test.go`/`seed_test.go`/`run_test.go`/singleton 等 6 个文件）与 `ipc/server.go`、服务端管道 ACL（`pipe_sddl.go`）、daemon 侧 UI 宿主拉起（`ui_*.go`）及其 8 个服务端/集成测试；`ipc` 包只保留客户端侧（`Endpoint`+`DialEndpoint`、`Client`、命名管道名/拨号）；
+  - `Makefile` 不再构建 `bin/chaosetd-go`（回滚路径随 Go daemon 一起删除）；Arch `PKGBUILD` 改 cargo 构建 Rust daemon（`makedepends` 加 `rust`）；
+  - `tools/checkuiparity` 的 daemon 侧契约断言从 Go 源码迁到 Rust 源：单实例锁位置（`crates/chaosetd/src/main.rs`）、Windows 互斥体（`singleton.rs`）、IPC 方法分发（`ipc.rs`）、UI 宿主代拉起（`ui.rs`）、reset/userDelete 语义；
+  - `AGENTS.md`/`docs/architecture.md`/daemon 生命周期 skill 同步：daemon 唯一实现为 Rust；Go 引擎仅作差分基线临时保留（下一批删除）。- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
   - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版保留为 `bin/chaosetd-go`（对照与回滚路径，算法层已由 `make engineparity` 差分 41 场景对齐）；
   - macOS：Rust daemon 同样产出 **universal 二进制**（aarch64 + x86_64 交叉构建后 lipo，缺失的 rustup 目标自动补装）；
   - Windows：release 构建带 `windows_subsystem = "windows"`（无控制台闪窗，对应原 Go `-H=windowsgui`），并补齐 `Win32_System_Console` feature；

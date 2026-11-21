@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"chaoset.ime/engine"
-	"chaoset.ime/ipc"
 )
 
 // TestPathsJSON：-print-paths 输出当前平台的 userdict/imported_dict 路径。
@@ -31,53 +29,6 @@ func TestPathsJSON(t *testing.T) {
 	if !strings.HasSuffix(paths["config"], "config.json") {
 		t.Fatalf("config 路径错误: %q", paths["config"])
 	}
-}
-
-// TestRunDaemonStats：daemon 模式的 endpoint 连接（Unix socket）能完成 stats
-// 请求，覆盖 runDaemon 从 network/address 改为 ipc.Endpoint 后的路径。
-func TestRunDaemonStats(t *testing.T) {
-	requireUnixSocket(t)
-	user, _, err := engine.NewUserDictLenient("")
-	if err != nil {
-		t.Fatalf("创建用户词典失败: %v", err)
-	}
-	ep := startTestDaemon(t, user)
-	if err := runDaemon(ep, "stats", cmdArgs{}); err != nil {
-		t.Fatalf("runDaemon(stats) 失败: %v", err)
-	}
-}
-
-// requireUnixSocket 跳过 Windows：那里只有命名管道，没有 Unix socket。
-func requireUnixSocket(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix socket 用例只在 macOS/Linux 上跑")
-	}
-}
-
-// startTestDaemon 在短路径 Unix socket 上起一个真实 ipc.Server，返回可拨号的
-// 端点；连接与清理交给 t.Cleanup。Unix socket 路径上限约 104 字节（macOS），
-// t.TempDir 的目录名含完整测试名，长测试名会 bind: invalid argument。
-func startTestDaemon(t *testing.T, user *engine.UserDict) ipc.Endpoint {
-	t.Helper()
-	dict, _, err := engine.LoadDictFilesLenient([]string{"../../data/dict_common.tsv"})
-	if err != nil {
-		t.Fatalf("加载词库失败: %v", err)
-	}
-	dir, err := os.MkdirTemp("", "chaoset-ud")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "s")
-	ln, err := ipc.Listen(ipc.Endpoint{Network: "unix", Address: sock})
-	if err != nil {
-		t.Fatalf("监听 Unix socket 失败: %v", err)
-	}
-	srv := ipc.NewServer(ln, dict, user)
-	go func() { _ = srv.Serve() }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return ipc.Endpoint{Network: "unix", Address: ln.Addr().String()}
 }
 
 // TestRunLocalStatsClearExport：本地模式的 stats/clear/export 全链路。
@@ -184,31 +135,6 @@ func TestRunLocalDelete(t *testing.T) {
 	}
 	if got := reloaded.Score("你好", []string{"ni", "hao"}, ""); got == 0 {
 		t.Fatal("删除「今天」不应影响「你好」的学习记录")
-	}
-}
-
-// TestRunDaemonDelete：daemon 模式 delete 经 IPC 作用于共享 UserDict，
-// 立即生效于 daemon 内存态（无需等待落盘）。
-func TestRunDaemonDelete(t *testing.T) {
-	requireUnixSocket(t)
-	user, _, err := engine.NewUserDictLenient("")
-	if err != nil {
-		t.Fatalf("创建用户词典失败: %v", err)
-	}
-	if err := user.BumpWord("今天", []string{"jin", "tian"}); err != nil {
-		t.Fatalf("BumpWord 失败: %v", err)
-	}
-	ep := startTestDaemon(t, user)
-
-	if err := runDaemon(ep, "delete", cmdArgs{word: "今天", sylls: splitSyllables("jin tian")}); err != nil {
-		t.Fatalf("runDaemon(delete) 失败: %v", err)
-	}
-	if got := user.Score("今天", []string{"jin", "tian"}, ""); got != 0 {
-		t.Fatalf("daemon 内存态删除后仍有调频分 %d", got)
-	}
-	// 再删一次：不存在的词 → deleted=false，命令本身仍成功（幂等）。
-	if err := runDaemon(ep, "delete", cmdArgs{word: "今天"}); err != nil {
-		t.Fatalf("重复 runDaemon(delete) 不应报错: %v", err)
 	}
 }
 

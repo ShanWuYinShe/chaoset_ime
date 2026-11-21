@@ -10,10 +10,11 @@
 
 ```
 crates/           Rust 引擎与守护进程（chaoset-engine 算法 + chaosetd daemon；已接替发行包）
-engine/           纯 Go 拼音/联想算法（算法对照基线：make engineparity 差分；禁止平台 API、CGO、build tag）
-ipc/              IPC 帧协议与传输抽象（unix socket / Windows 命名管道；无 TCP）
+crates/           Rust 引擎与守护进程（chaoset-engine + chaosetd；唯一实现）
+engine/           纯 Go 拼音/联想算法（临时差分基线：make engineparity；禁止平台 API、CGO、build tag）
+ipc/              IPC 帧协议与**客户端**传输（unix socket / Windows 命名管道；无 TCP；服务端在 Rust）
 internal/         跨平台 Go 基础设施（appdirs、buildinfo、settings ← 方案 A 单一真源、tools ← 统一工具库）
-cmd/              可执行工具（chaoset 多功能统一 CLI、chaosetd、chaoset-cli、chaoset-import、
+cmd/              可执行工具（chaoset 多功能统一 CLI、chaoset-cli、chaoset-import、
                   chaoset-userdict、chaoset-dictgen、chaoset-settingsctl）
 shims/common/     三端壳共用的 C++ IPC 客户端（core.hpp/core.cpp）
 shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交互

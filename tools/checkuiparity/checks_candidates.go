@@ -114,7 +114,7 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 	// Go：引擎删除 API + IPC 分发/客户端 + CLI 子命令（daemon 与本地文件两模式）。
 	checkContains(fsys, problems, group, userdictGo,
 		"func (u *UserDict) DeleteWord", "u.file.Phrases")
-	checkContains(fsys, problems, group, ipcServer, "case \"userDelete\":", "DeleteWord")
+	checkContains(fsys, problems, group, ipcServer, "\"userDelete\" =>", "delete_word")
 	checkContains(fsys, problems, group, ipcClient, "func (c *Client) UserDelete")
 	checkContains(fsys, problems, group, userdictCLI,
 		"case \"delete\":", "DeleteWord", "UserDelete", "已删除「%s」的学习记录")
