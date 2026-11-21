@@ -310,7 +310,7 @@ func checkDocParity(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupDocParity, uiParityDoc,
 		"学习数据", "词库导入", "Slint", "chaoset-settings",
 		"Windows per-monitor DPI", "双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
-	checkContains(fsys, problems, groupDocParity, changelogDoc, "## 未发布", "chaosetctl")
+	checkContains(fsys, problems, groupDocParity, changelogDoc, "## v", "chaosetctl")
 	checkExcludes(fsys, problems, groupDocParity, readmeDoc,
 		"Linux 目前仍只有 CLI", "GTK 设置窗导入待后续")
 }
