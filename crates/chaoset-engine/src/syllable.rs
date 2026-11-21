@@ -351,79 +351,271 @@ pub struct TypoCorrection {
     pub is_near: bool,
 }
 
-/// 生成单次编辑纠错候选
+// ── 反序双字母手误（对齐 Go engine/syllable.go，逐值移植）────────────
+// 反序双字母手误分两档：
+//   1. FORCED_MISTAKE_PAIRS：反序后在拼音里几乎不可能出现、也不属于合法
+//      混拼形态的组合（gn/hz/hc/hs）——遇到即判定手误，强制进入纠错路径，
+//      归位修正无条件提升到精确层。
+//   2. SOFT_MISTAKE_PAIRS：反序形态在拼音音节里不出现，但可能与「合法混
+//      拼」同形（ao/oa、ua/au、ue/eu、ve/ev）——只在纠错路径里作为最高
+//      优先级修正，不强制触发、也不无条件提升。
+pub const FORCED_MISTAKE_PAIRS: &[(&str, &str)] = &[
+    ("gn", "ng"), // ng 韵尾打反：dign → ding
+    ("hz", "zh"),
+    ("hc", "ch"),
+    ("hs", "sh"),
+    ("ev", "ve"), // ü 韵母（lve/nve 打反）；v 不是合法声母/音节，ev 不可能是混拼
+];
+
+pub const SOFT_MISTAKE_PAIRS: &[(&str, &str)] = &[
+    ("oa", "ao"), // hao → hoa
+    ("au", "ua"), // hua → hau
+    ("eu", "ue"), // xue → xeu
+];
+
+/// 两档合并后的完整修正表（生成修正串时用）。
+pub const MISTAKE_PAIRS_ALL: &[(&str, &str)] = &[
+    ("gn", "ng"),
+    ("hz", "zh"),
+    ("hc", "ch"),
+    ("hs", "sh"),
+    ("ev", "ve"),
+    ("oa", "ao"),
+    ("au", "ua"),
+    ("eu", "ue"),
+];
+
+/// 报告输入是否含有「强制归位」的反序组合（Go hasCommonMistakeCluster）。
+pub fn has_common_mistake_cluster(s: &str) -> bool {
+    FORCED_MISTAKE_PAIRS.iter().any(|p| s.contains(p.0))
+}
+
+/// 报告是否存在「所有段都是完整音节」的切分路径（Go hasCleanFullSplit）。
+pub fn has_clean_full_split(patterns: &[Vec<Token>]) -> bool {
+    patterns
+        .iter()
+        .any(|pat| !pat.is_empty() && pat.iter().all(|t| t.is_exact))
+}
+
+/// 报告输入的所有切分路径是否都只由声母碎片组成（纯简拼，Go allInitialPatterns）。
+pub fn all_initial_patterns(patterns: &[Vec<Token>]) -> bool {
+    !patterns.is_empty() && patterns.iter().all(|pat| pat.iter().all(|t| !t.is_exact))
+}
+
+/// 生成把输入中反序组合翻回正常顺序的修正串：每个位置单独翻一次 + 所有
+/// 位置一起翻（支持同一输入里多处连错）。对齐 Go commonMistakeFixes。
+pub fn common_mistake_fixes(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let bytes = input.as_bytes();
+    for p in MISTAKE_PAIRS_ALL {
+        let (from, to) = p;
+        for i in 0..bytes.len().saturating_sub(1) {
+            if &input[i..i + 2] != *from {
+                continue;
+            }
+            let fixed = format!("{}{}{}", &input[..i], to, &input[i + 2..]);
+            if !fixed.is_empty() && fixed != input && seen.insert(fixed.clone()) {
+                out.push(fixed);
+            }
+        }
+    }
+    let mut all = input.to_string();
+    for p in MISTAKE_PAIRS_ALL {
+        all = all.replace(p.0, p.1);
+    }
+    if !all.is_empty() && all != input && seen.insert(all.clone()) {
+        out.push(all);
+    }
+    out
+}
+
+/// 判断输入是否「像打错了」——错拼修正的预筛（Go misspelledFromPatterns，
+/// 判据刻意保守）：
+///   - 纯声母简拼（gn=gong+neng、zg=zhong+guo）合法，不判手误；
+///   - 整串能切成完整音节时，反序组合可能跨音节边界（gongneng 的 gn），
+///     不判手误；
+///   - 含「反序双字母」组合（gn/hz/hc/hs）且无法完整切分 → 手误；
+///   - 切分路径为空（zhonguo/jisuanjii/niihao 都切不动）→ 手误；
+///   - 任一条切分路径里出现完整音节（≥2 字母）→ 信任为正常混拼；
+///   - 短串（≤4 字母，如 zg/bj/jsj）一律信任。
+pub fn misspelled_from_patterns(s: &str, patterns: &[Vec<Token>]) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // Rust tokenize_chunk 对「无任何完整切分」的输入回退成单条原样碎片
+    // token——语义上等价于 Go 的空切分路径（整串切不动）。Go 侧 patterns
+    // 为空时该回退不存在；PR-B 移植两段式切分器后此桥接可移除。
+    let effectively_empty = patterns.is_empty()
+        || (patterns.len() == 1
+            && patterns[0].len() == 1
+            && !patterns[0][0].is_exact
+            && patterns[0][0].text == s);
+    if !effectively_empty && all_initial_patterns(patterns) {
+        return false;
+    }
+    if has_clean_full_split(patterns) {
+        return false;
+    }
+    if has_common_mistake_cluster(s) {
+        return true;
+    }
+    if effectively_empty {
+        return true;
+    }
+    for pat in patterns {
+        for tok in pat {
+            if tok.is_exact && tok.text.len() >= 2 {
+                return false;
+            }
+        }
+    }
+    s.len() > 4
+}
+
+/// misspelled_from_patterns 的自切分包装（Go mayBeMisspelled）。
+pub fn may_be_misspelled(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    misspelled_from_patterns(s, &tokenize_chunk(s))
+}
+
+/// 报告任一切分路径里「非末位」出现单字母声母碎片（Go hasMidIsolatedInitial）。
+pub fn has_mid_isolated_initial(patterns: &[Vec<Token>]) -> bool {
+    for pat in patterns {
+        for k in 0..pat.len().saturating_sub(1) {
+            if !pat[k].is_exact && pat[k].text.chars().count() == 1 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 报告任一切分路径里「末位」出现单字母声母碎片（Go hasTailIsolatedInitial）。
+pub fn has_tail_isolated_initial(patterns: &[Vec<Token>]) -> bool {
+    patterns.iter().any(|pat| {
+        pat.last()
+            .map(|last| !last.is_exact && last.text.chars().count() == 1)
+            .unwrap_or(false)
+    })
+}
+
+/// 判断 a 与 b 是否为 QWERTY 物理相邻键（Go isQWERTYNeighbor）。
+pub fn is_qwerty_neighbor(a: char, b: char) -> bool {
+    qwerty_neighbors(a).contains(&b)
+}
+
+/// 生成 input 的「单次编辑」修正候选（只生成能完整切分成合法音节的那些
+/// 串），按编辑类型与置信度稳定输出。对齐 Go syllable.go typoCorrections：
+///
+/// 覆盖六类最常见的手误（生成顺序 = 置信度顺序）：
+///   0. 常见反序双字母归位（gn/hz/hc/hs/ev + 软纠错 ao/au/eu）：最高置信度
+///   1. transpose：相邻两字母颠倒（zhogn → zhong）
+///   2. delete：多敲了一个字母（zhonng / niihao → zhong / nihao）
+///   3. stutter：连击/粘键折叠（niihaoo → nihao）
+///   4. substitute-near：QWERTY 邻近键敲错（yishrng → yisheng）
+///   5. insert：漏敲了一个字母（zhonguo → zhongguo；字母在外、位置在内交错，
+///      避免位置 0 的 26 个插入吃光名额）
+///   6. substitute-far：非邻近键替换兜底（同样字母交错）
 pub fn typo_corrections(input: &str, max_results: usize) -> Vec<TypoCorrection> {
     if input.is_empty() {
         return Vec::new();
     }
-    let mut results = Vec::new();
-    let mut seen = HashSet::new();
+    let max_results = if max_results == 0 { 32 } else { max_results };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<TypoCorrection> = Vec::new();
 
-    let mut add = |cand: String, is_near: bool| {
-        if cand == input || results.len() >= max_results || seen.contains(&cand) {
+    let mut add = |cand: String, is_near: bool, out: &mut Vec<TypoCorrection>| {
+        if out.len() >= max_results || !seen.insert(cand.clone()) {
             return;
         }
-        if has_clean_syllable_split(&cand) {
-            seen.insert(cand.clone());
-            results.push(TypoCorrection {
-                text: cand,
-                is_near,
-            });
+        if cand == input || !has_clean_syllable_split(&cand) {
+            return;
         }
+        out.push(TypoCorrection {
+            text: cand,
+            is_near,
+        });
     };
 
-    // 1. 经典反序纠错 (gn -> ng, hz -> zh, hc -> ch, hs -> sh, ev -> ve, etc.)
-    const FORCED_PAIRS: &[(&str, &str)] = &[
-        ("gn", "ng"),
-        ("hz", "zh"),
-        ("hc", "ch"),
-        ("hs", "sh"),
-        ("ev", "ve"),
-        ("oa", "ao"),
-        ("au", "ua"),
-        ("eu", "ue"),
-    ];
+    // 0) 常见反序双字母（gn/hz/hc/hs → ng/zh/ch/sh）：最高置信度的手误，
+    //    优先于相邻互换/删除/插入等通用编辑，保证 dign→定、hzi→之 这类
+    //    修正排在纠错候选最前。
+    for fixed in common_mistake_fixes(input) {
+        add(fixed, true, &mut out);
+    }
+    let r = input.as_bytes();
+    let n = r.len();
 
-    for &(from, to) in FORCED_PAIRS {
-        if input.contains(from) {
-            add(input.replace(from, to), true);
+    // 1) 相邻互换：最优先，因为它是「同一个词、顺序打反」，语义最可能正确。
+    for i in 0..n.saturating_sub(1) {
+        if r[i] == r[i + 1] {
+            continue;
+        }
+        let mut c = r.to_vec();
+        c.swap(i, i + 1);
+        add(String::from_utf8_lossy(&c).to_string(), true, &mut out);
+    }
+    // 2) 删除一个字母（多敲或连带误触）
+    for i in 0..n {
+        let mut d = r.to_vec();
+        d.remove(i);
+        add(String::from_utf8_lossy(&d).to_string(), true, &mut out);
+    }
+    // 3) 连击/按键粘连折叠（连续重复字母手误，如 niihaoo -> nihao）
+    let has_dup = r.windows(2).any(|w| w[0] == w[1]);
+    if has_dup {
+        let collapsed: Vec<u8> = r
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i == 0 || r[*i] != r[*i - 1])
+            .map(|(_, b)| *b)
+            .collect();
+        add(
+            String::from_utf8_lossy(&collapsed).to_string(),
+            true,
+            &mut out,
+        );
+    }
+    // 4) QWERTY 键盘邻近键替换：手指物理按偏。优先级必须高于全键盘任意
+    //    插入/远端替换，避免有限配额被无关联字母耗尽。
+    for i in 0..n {
+        let orig = r[i] as char;
+        if !orig.is_ascii_lowercase() {
+            continue;
+        }
+        for nb in qwerty_neighbors(orig) {
+            let mut c = r.to_vec();
+            c[i] = *nb as u8;
+            add(String::from_utf8_lossy(&c).to_string(), true, &mut out);
         }
     }
-
-    // 2. 相邻字母颠倒 (transpose)
-    let bytes = input.as_bytes();
-    for i in 0..bytes.len().saturating_sub(1) {
-        if bytes[i] != bytes[i + 1] {
-            let mut swapped = bytes.to_vec();
-            swapped.swap(i, i + 1);
-            if let Ok(s) = String::from_utf8(swapped) {
-                add(s, true);
+    // 5) 插入一个字母（漏敲）。字母在外、位置在内交错。
+    for ch in b'a'..=b'z' {
+        for i in 0..=n {
+            let mut c = Vec::with_capacity(n + 1);
+            c.extend_from_slice(&r[..i]);
+            c.push(ch);
+            c.extend_from_slice(&r[i..]);
+            add(String::from_utf8_lossy(&c).to_string(), true, &mut out);
+        }
+    }
+    // 6) 远端非邻近键替换（敲错远端键），同样按字母交错。
+    for ci in 0..26u8 {
+        let ch = b'a' + ci;
+        for i in 0..n {
+            let orig = r[i] as char;
+            if r[i] == ch || is_qwerty_neighbor(orig, ch as char) {
+                continue;
             }
+            let mut c = r.to_vec();
+            c[i] = ch;
+            add(String::from_utf8_lossy(&c).to_string(), false, &mut out);
         }
     }
-
-    // 3. 删除连击/多敲字母 (delete)
-    for i in 0..bytes.len() {
-        let mut deleted = bytes.to_vec();
-        deleted.remove(i);
-        if let Ok(s) = String::from_utf8(deleted) {
-            add(s, true);
-        }
-    }
-
-    // 4. QWERTY 邻近替换 (substitute-near)
-    for i in 0..bytes.len() {
-        let c = bytes[i] as char;
-        for &neighbor in qwerty_neighbors(c) {
-            let mut subbed = bytes.to_vec();
-            subbed[i] = neighbor as u8;
-            if let Ok(s) = String::from_utf8(subbed) {
-                add(s, true);
-            }
-        }
-    }
-
-    results
+    out
 }
 
 #[cfg(test)]
@@ -467,5 +659,103 @@ mod tests {
 
         let fixes = typo_corrections("zhogn", 5);
         assert!(fixes.iter().any(|f| f.text == "zhong"));
+    }
+    /// TestMisspelledPrefilterBoundary 镜像：混拼形态判「正常」，彻底切不动
+    /// 的长串判「错拼」。
+    #[test]
+    fn test_misspelled_prefilter_boundary() {
+        for input in ["zhogn", "zhonng", "zhonguo", "jisuanjii", "niihao"] {
+            assert!(may_be_misspelled(input), "{} 应被判为错拼", input);
+        }
+        for input in [
+            "zhong",
+            "nihao",
+            "jingchang",
+            "zhongg",
+            "chifanl",
+            "zg",
+            "bj",
+            "jsj",
+            "yiw",
+            "shangxj",
+        ] {
+            assert!(
+                !may_be_misspelled(input),
+                "{} 不应被判为错拼（正常简拼/混拼输入）",
+                input
+            );
+        }
+    }
+
+    /// TestCommonMistakeFixesMultiple 镜像：同一输入里多处反序组合一起翻回。
+    #[test]
+    fn test_common_mistake_fixes_multiple() {
+        let fixes = common_mistake_fixes("dignhzi");
+        let set: std::collections::HashSet<String> = fixes.iter().cloned().collect();
+        for want in ["dinghzi", "dignzhi", "dingzhi"] {
+            assert!(
+                set.contains(want),
+                "common_mistake_fixes(dignhzi) 缺少 {}，实际 {:?}",
+                want,
+                fixes
+            );
+        }
+        assert!(
+            common_mistake_fixes("zhongguo").is_empty(),
+            "zhongguo 不应产生反序修正"
+        );
+    }
+
+    /// TestCommonMistakeFixesContainsSoftPairs 镜像：软纠错组合进入修正串列表。
+    #[test]
+    fn test_common_mistake_fixes_contains_soft_pairs() {
+        for (input, want) in [
+            ("hoa", "hao"),
+            ("hau", "hua"),
+            ("xeu", "xue"),
+            ("lev", "lve"),
+        ] {
+            let fixes = common_mistake_fixes(input);
+            assert!(
+                fixes.iter().any(|f| f == want),
+                "common_mistake_fixes({}) 应包含 {}，实际 {:?}",
+                input,
+                want,
+                fixes
+            );
+        }
+    }
+
+    /// 生成器顺序契约（Go typoCorrections 注释）：dign 的第一条修正应是
+    /// 强制归位 ding；zhoonng 的折叠修正 zhong 必须在列表里；zhonguo 的
+    /// 插入修正 zhonggu 必须在列表里；正常输入不产生修正。
+    #[test]
+    fn test_typo_generator_ordering_and_coverage() {
+        let fixes = typo_corrections("dign", 32);
+        assert_eq!(fixes[0].text, "ding", "强制归位应排最前: {:?}", fixes);
+        assert!(fixes[0].is_near);
+
+        let fixes = typo_corrections("zhoonng", 32);
+        assert!(
+            fixes.iter().any(|f| f.text == "zhong"),
+            "连击折叠应产出 zhong: {:?}",
+            fixes
+        );
+
+        let fixes = typo_corrections("zhonguo", 32);
+        assert!(
+            fixes.iter().any(|f| f.text == "zhongguo"),
+            "漏敲修正应产出 zhongguo: {:?}",
+            fixes
+        );
+
+        // 生成器永不把输入自身当作修正（Go add 同款排除；「正常输入的修正
+        // 列表是否被管线采用」由 TypoSuspicious 门控决定，属 PR-B 管线语义）
+        assert!(
+            !typo_corrections("zhongguo", 32)
+                .iter()
+                .any(|f| f.text == "zhongguo"),
+            "修正不得包含输入自身"
+        );
     }
 }
