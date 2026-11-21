@@ -2124,13 +2124,11 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "你好".to_string(),
-            pinyin: "ni'hao".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string()],
             freq: 9000,
         });
         dict.insert(crate::dict::WordEntry {
             word: "你".to_string(),
-            pinyin: "ni".to_string(),
             syllables: vec!["ni".to_string()],
             freq: 5000,
         });
@@ -2229,13 +2227,11 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "先".to_string(),
-            pinyin: "xian".to_string(),
             syllables: vec!["xian".to_string()],
             freq: 5000,
         });
         dict.insert(crate::dict::WordEntry {
             word: "瞎闹".to_string(),
-            pinyin: "xia'nao".to_string(),
             syllables: vec!["xia".to_string(), "nao".to_string()],
             freq: 9000, // 词频更高也不得靠碎片切分胜出
         });
@@ -2261,13 +2257,11 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "你好".to_string(),
-            pinyin: "ni'hao".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string()],
             freq: 9000,
         });
         dict.insert(crate::dict::WordEntry {
             word: "自治州".to_string(),
-            pinyin: "zi'zhi'zhou".to_string(),
             syllables: vec!["zi".to_string(), "zhi".to_string(), "zhou".to_string()],
             freq: 800,
         });
@@ -2300,19 +2294,16 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "中国".to_string(),
-            pinyin: "zhong'guo".to_string(),
             syllables: vec!["zhong".to_string(), "guo".to_string()],
             freq: 85,
         });
         dict.insert(crate::dict::WordEntry {
             word: "中古".to_string(),
-            pinyin: "zhong'gu".to_string(),
             syllables: vec!["zhong".to_string(), "gu".to_string()],
             freq: 36,
         });
         dict.insert(crate::dict::WordEntry {
             word: "大学".to_string(),
-            pinyin: "da'xue".to_string(),
             syllables: vec!["da".to_string(), "xue".to_string()],
             freq: 80,
         });
@@ -2342,7 +2333,6 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "全面".to_string(),
-            pinyin: "quan'mian".to_string(),
             syllables: vec!["quan".to_string(), "mian".to_string()],
             freq: 80,
         });
@@ -2364,19 +2354,16 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "先".to_string(),
-            pinyin: "xian".to_string(),
             syllables: vec!["xian".to_string()],
             freq: 5000,
         });
         dict.insert(crate::dict::WordEntry {
             word: "西安".to_string(),
-            pinyin: "xi'an".to_string(),
             syllables: vec!["xi".to_string(), "an".to_string()],
             freq: 9000, // 词频更高也不得出现在 xian 单段输入
         });
         dict.insert(crate::dict::WordEntry {
             word: "中国".to_string(),
-            pinyin: "zhong'guo".to_string(),
             syllables: vec!["zhong".to_string(), "guo".to_string()],
             freq: 9000,
         });
@@ -2432,13 +2419,11 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "你好".to_string(),
-            pinyin: "ni'hao".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string()],
             freq: 100, // 词频低
         });
         dict.insert(crate::dict::WordEntry {
             word: "你好吗".to_string(),
-            pinyin: "ni'hao'ma".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string(), "ma".to_string()],
             freq: 9000, // 词频极高但音节数超过输入段数
         });
@@ -2647,7 +2632,6 @@ mod tests {
         ] {
             dict.insert(crate::dict::WordEntry {
                 word: word.to_string(),
-                pinyin: pinyin.to_string(),
                 syllables: pinyin.split('\'').map(|s| s.to_string()).collect(),
                 freq,
             });

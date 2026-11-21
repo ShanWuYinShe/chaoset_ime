@@ -185,12 +185,22 @@ fn seed_dict_files(seed: &str, targets: &[String]) -> Vec<String> {
     out
 }
 
+/// 宽松加载词库（运行期健壮层）：每个文件优先用同目录同 stem 的 .bin 缓存。
+///
+/// 发布包同时带 TSV 源与预编译 .bin；三端安装脚本 / LaunchAgent / Run 项 /
+/// 引擎参数都保持指向 .tsv 不变，由 load_with_cache 选缓存：传入路径是 .bin
+/// 或文件头是 CSDB 时直接加载；否则缓存存在且不比源旧则加载缓存；缓存缺失/
+/// 过期/损坏时回退 TSV，并在目录可写时自动重建缓存（用户导入词库只会重写
+/// TSV，下次启动即自动重建）。-seeddict 的种子初始化仍是字节级复制（见
+/// seed_dict_files），这里不生成种子缓存；被种出的目标词库随后走同一条缓存
+/// 路径，首次加载按需建缓存。单个词库加载失败按警告跳过，由调用方用总词条数
+/// 为 0 判断整体不可用。
 fn load_dict_lenient(paths: &[String]) -> (Dictionary, usize) {
     let mut dict = Dictionary::new();
     let mut total_loaded = 0;
 
     for p in paths {
-        match dict.load_tsv(p) {
+        match dict.load_with_cache(p) {
             Ok(count) => total_loaded += count,
             Err(e) => eprintln!("警告: 加载词库 {} 失败: {}", p, e),
         }
@@ -309,7 +319,7 @@ fn main() {
         None => eprintln!("用户词典: 内存态（显式传入空路径，不落盘）"),
     }
 
-    // 默认词库
+    // 默认词库（TSV 源；同目录同名 .bin 作为缓存优先使用，缺失/过期时自动重建）
     let mut dict_paths = if args.dicts.is_empty() {
         vec!["data/dict_common.tsv".to_string()]
     } else {

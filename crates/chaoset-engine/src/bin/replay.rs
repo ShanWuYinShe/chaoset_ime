@@ -8,7 +8,8 @@
 //!   {"name":"basic-nihao","config":{"fuzzy":false,"traditional":false,"shuangpin":""},
 //!    "steps":[{"op":"input","text":"nihao"},{"op":"select","index":0}]}
 //!
-//! 用法：replay --dict <tsv> --scenarios <jsonl>（结果写 stdout，日志走 stderr）
+//! 用法：replay --dict <词库 .tsv 或 .bin> --scenarios <jsonl>（结果写 stdout，日志走 stderr）
+//! 词库格式由 Dictionary::load_auto 按文件头自动识别，冻结回放对两种格式必须逐字节一致。
 
 use chaoset_engine::{Candidate, Composition, Dictionary, Session, ShuangpinScheme, UserDict};
 use serde::Deserialize;
@@ -161,12 +162,13 @@ fn main() -> ExitCode {
         i += 1;
     }
     if dict_path.is_empty() || scen_path.is_empty() {
-        eprintln!("用法: replay --dict <tsv> --scenarios <jsonl>");
+        eprintln!("用法: replay --dict <词库 .tsv 或 .bin> --scenarios <jsonl>");
         return ExitCode::from(2);
     }
 
+    // load_auto：TSV 与 CSDB 二进制词库都能加载（冻结回放要验证两者行为等价）。
     let mut dict = Dictionary::new();
-    match dict.load_tsv(&dict_path) {
+    match dict.load_auto(&dict_path) {
         Ok(n) => eprintln!("replay: 已加载 {n} 条词条（{dict_path}）"),
         Err(e) => {
             eprintln!("replay: 加载词库失败: {e}");

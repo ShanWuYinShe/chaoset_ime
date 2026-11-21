@@ -9,7 +9,6 @@ use std::path::Path;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WordEntry {
     pub word: String,
-    pub pinyin: String,
     pub syllables: Vec<String>,
     pub freq: u32,
 }
@@ -58,14 +57,14 @@ impl Dictionary {
             }
 
             let word = parts[0].trim().to_string();
-            let pinyin = parts[1].trim().to_string();
             let freq = if parts.len() >= 3 {
                 parts[2].trim().parse::<u32>().unwrap_or(100)
             } else {
                 100
             };
 
-            let syllables: Vec<String> = pinyin
+            let syllables: Vec<String> = parts[1]
+                .trim()
                 .replace('\'', " ")
                 .split_whitespace()
                 .map(|s| s.to_string())
@@ -77,7 +76,6 @@ impl Dictionary {
 
             self.insert(WordEntry {
                 word,
-                pinyin,
                 syllables,
                 freq,
             });
@@ -103,14 +101,14 @@ impl Dictionary {
             }
 
             let word = parts[0].trim().to_string();
-            let pinyin = parts[1].trim().to_string();
             let freq = if parts.len() >= 3 {
                 parts[2].trim().parse::<u32>().unwrap_or(100)
             } else {
                 100
             };
 
-            let syllables: Vec<String> = pinyin
+            let syllables: Vec<String> = parts[1]
+                .trim()
                 .replace('\'', " ")
                 .split_whitespace()
                 .map(|s| s.to_string())
@@ -122,7 +120,6 @@ impl Dictionary {
 
             self.insert(WordEntry {
                 word,
-                pinyin,
                 syllables,
                 freq,
             });
@@ -134,16 +131,39 @@ impl Dictionary {
     }
 
     /// 插入一条新词条
+    ///
+    /// 先沿 trie 建路径、再推入 entries：不要预先 `entry.syllables.clone()`，
+    /// 那是「每条词条深拷贝一份 Vec<String>」——20 万条规模下多出几十万次
+    /// String 堆分配，是 TSV/二进制两条加载路径共同的启动开销大头。trie 边
+    /// 的 key 仍需 clone（HashMap<String, _> 要持有 key），但 word 与 syllables
+    /// 本身直接 move 进 entries。
     pub fn insert(&mut self, entry: WordEntry) {
         let idx = self.entries.len();
-        let syllables = entry.syllables.clone();
-        self.entries.push(entry);
 
         let mut node = &mut self.trie;
-        for syll in &syllables {
+        for syll in &entry.syllables {
             node = node.children.entry(syll.clone()).or_default();
         }
         node.exact_words.push(idx);
+
+        self.entries.push(entry);
+    }
+
+    /// 从 `entries` 全量重建 Trie。
+    ///
+    /// 供「先解析完、全部校验通过后再一次性提交」的加载路径使用：二进制缓存
+    /// 解析失败时 `self` 必须保持原状，否则 `load_with_cache` 回退 TSV 时会
+    /// 拿到半加载的词典状态。调用方需保证 `entries` 已按最终顺序就位。
+    pub(crate) fn rebuild_trie(&mut self) {
+        self.trie = TrieNode::default();
+        let entries = &self.entries;
+        for (idx, entry) in entries.iter().enumerate() {
+            let mut node = &mut self.trie;
+            for syll in &entry.syllables {
+                node = node.children.entry(syll.clone()).or_default();
+            }
+            node.exact_words.push(idx);
+        }
     }
 
     /// 构建完后对各节点按词频降序排序
@@ -603,7 +623,6 @@ mod tests {
         ] {
             dict.insert(WordEntry {
                 word: word.to_string(),
-                pinyin: pinyin.to_string(),
                 syllables: pinyin.split('\'').map(|s| s.to_string()).collect(),
                 freq,
             });
@@ -629,19 +648,16 @@ mod tests {
         let mut dict = Dictionary::new();
         dict.insert(WordEntry {
             word: "你".to_string(),
-            pinyin: "ni".to_string(),
             syllables: vec!["ni".to_string()],
             freq: 1000,
         });
         dict.insert(WordEntry {
             word: "你好".to_string(),
-            pinyin: "ni'hao".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string()],
             freq: 5000,
         });
         dict.insert(WordEntry {
             word: "你好吗".to_string(),
-            pinyin: "ni'hao'ma".to_string(),
             syllables: vec!["ni".to_string(), "hao".to_string(), "ma".to_string()],
             freq: 800,
         });
@@ -663,14 +679,13 @@ mod tests {
     #[test]
     fn test_fragment_navigation() {
         let mut dict = Dictionary::new();
-        for (word, pinyin, sylls, freq) in [
-            ("自治州", "zi'zhi'zhou", vec!["zi", "zhi", "zhou"], 800u32),
-            ("赞", "zan", vec!["zan"], 600),
-            ("先", "xian", vec!["xian"], 5000),
+        for (word, sylls, freq) in [
+            ("自治州", vec!["zi", "zhi", "zhou"], 800u32),
+            ("赞", vec!["zan"], 600),
+            ("先", vec!["xian"], 5000),
         ] {
             dict.insert(WordEntry {
                 word: word.to_string(),
-                pinyin: pinyin.to_string(),
                 syllables: sylls.iter().map(|s| s.to_string()).collect(),
                 freq,
             });
