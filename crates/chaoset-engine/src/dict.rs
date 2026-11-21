@@ -195,6 +195,30 @@ impl Dictionary {
         }
     }
 
+    /// 精确音节路径上的全部词条（按节点词频序排列，不截断、**不做碎片
+    /// 导航**）。对齐 Go Dictionary.QueryExact：错拼 DP 的分段查询要求
+    /// 「每一段都是词库里真实存在的词」，用碎片导航会造出假词段。
+    pub fn exact_words(&self, syllables: &[&str]) -> Vec<&WordEntry> {
+        let mut node = &self.trie;
+        for syll in syllables {
+            match node.children.get(*syll) {
+                Some(next) => node = next,
+                None => return Vec::new(),
+            }
+        }
+        node.exact_words
+            .iter()
+            .map(|&idx| &self.entries[idx])
+            .collect()
+    }
+
+    /// 词库中是否存在「词 + 音节序列」精确词条（Go Dictionary.Contains）。
+    /// 错拼 DP 用它排除「整词本身已是词条」的组合（如 你好 = 你+好），
+    /// 否则会给整词候选补上分段、改变上屏学习语义。
+    pub fn contains_word(&self, word: &str, syllables: &[&str]) -> bool {
+        self.exact_words(syllables).iter().any(|e| e.word == word)
+    }
+
     /// 精确匹配音节序列的词条（声母碎片按碎片导航展开；碎片导航会展开
     /// 多个子树，按词频降序截断到 limit——对齐 Go QueryTokensExact 的上限
     /// 口径：单音节全拼/单段声母/单字兜底 300、多段简拼 120、回退层 10）
