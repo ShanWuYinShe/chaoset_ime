@@ -1,68 +1,60 @@
+//! daemon IPC：帧读写（复用 chaoset_ipc::protocol）+ 方法分发 + 用户词典同步落盘。
+//!
+//! 帧格式/上限/Request/Response 由公共 crate crates/chaoset-ipc 定义，daemon 与
+//! 客户端（chaosetctl 等）共用同一份实现；本模块只保留 daemon 侧的 serde 适配与
+//! 19 个方法的 dispatch。
+
 use chaoset_engine::{Session, UserDict};
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-pub const MAX_MESSAGE_SIZE: usize = 1 << 20; // 1 MiB
+pub use chaoset_ipc::protocol::{read_frame, write_frame, Request, Response};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Request {
-    pub id: u64,
-    pub method: String,
-    #[serde(default)]
-    pub params: Option<Value>,
+/// 读一帧并反序列化为 T；Ok(None) = 对端在帧边界正常关闭。
+pub fn read_message<R: Read, T: DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
+    let Some(buf) = read_frame(reader)? else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&buf)
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Response {
-    pub id: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-pub fn read_message<R: Read, T: serde::de::DeserializeOwned>(
-    reader: &mut R,
-) -> io::Result<Option<T>> {
-    let mut header = [0u8; 4];
-    match reader.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
-    }
-
-    let size = u32::from_be_bytes(header) as usize;
-    if size > MAX_MESSAGE_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("消息长度 {} 超过上限 {}", size, MAX_MESSAGE_SIZE),
-        ));
-    }
-
-    let mut buf = vec![0u8; size];
-    reader.read_exact(&mut buf)?;
-    let msg: T =
-        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    Ok(Some(msg))
-}
-
-pub fn write_message<W: Write, T: serde::Serialize>(writer: &mut W, msg: &T) -> io::Result<()> {
+/// 序列化 T 成帧写出（超限拒绝且一个字节不写，见 write_frame）。
+pub fn write_message<W: Write, T: Serialize>(writer: &mut W, msg: &T) -> io::Result<()> {
     let data =
         serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_frame(writer, &data)
+}
 
-    if data.len() > MAX_MESSAGE_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("消息长度 {} 超过上限 {}", data.len(), MAX_MESSAGE_SIZE),
-        ));
+/// 用户词典落盘串行化：IPC 的 userClear/userDelete 同步落盘与 2s 后台 flush
+/// 线程共用一把锁，避免两者同时写同一个 temp 文件（交错写会产出坏 JSON）。
+static USER_DICT_SAVE_LOCK: Mutex<()> = Mutex::new(());
+
+fn save_lock() -> MutexGuard<'static, ()> {
+    USER_DICT_SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 返回响应前 best-effort 落盘（兑现 userClear/userDelete「内存与磁盘同时生效」）。
+///
+/// 失败只写 stderr 日志、不影响响应：内存已更新，dirty 保持 true，
+/// 下一次 2s 后台 flush 会重试。
+pub fn save_user_dict_now(user_dict: &UserDict) {
+    let _guard = save_lock();
+    if let Err(e) = user_dict.save() {
+        eprintln!("用户词典落盘失败（内存已更新，后台 flush 会重试）: {e}");
     }
+}
 
-    let header = (data.len() as u32).to_be_bytes();
-    writer.write_all(&header)?;
-    writer.write_all(&data)?;
-    writer.flush()
+/// 后台 2s flush：与 IPC 同步落盘共用同一把锁，避免并发写 temp 文件。
+pub fn flush_user_dict_if_dirty(user_dict: &UserDict) -> io::Result<bool> {
+    let _guard = save_lock();
+    user_dict.flush_if_dirty()
 }
 
 pub fn dispatch(
@@ -207,6 +199,8 @@ pub fn dispatch(
                 .as_ref()
                 .ok_or_else(|| "未启用用户词典".to_string())?;
             u.clear();
+            // 「内存与磁盘同时生效」：返回前 best-effort 落盘（失败不影响响应）。
+            save_user_dict_now(u);
             Ok(json!({ "cleared": true }))
         }
 
@@ -245,6 +239,8 @@ pub fn dispatch(
             }
 
             let deleted = u.delete_word(word, &sylls);
+            // 「内存与磁盘同时生效」：返回前 best-effort 落盘（失败不影响响应）。
+            save_user_dict_now(u);
             Ok(json!({ "deleted": deleted }))
         }
 
@@ -308,3 +304,136 @@ pub fn paginate_tsv(full: &str, offset: i64, limit: i64) -> (String, i64) {
     let next = if end >= lines.len() { -1 } else { end as i64 };
     (page, next)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chaoset_engine::Dictionary;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEMP_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn temp_userdict_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "chaosetd-ipc-{}-{}-{}.json",
+            std::process::id(),
+            tag,
+            TEMP_SEQ.fetch_add(1, Ordering::SeqCst)
+        ))
+    }
+
+    fn make_session(ud: Arc<UserDict>) -> Session {
+        Session::new(Arc::new(Dictionary::new()), Some(ud))
+    }
+
+    /// userClear 必须「内存与磁盘同时生效」：IPC 响应返回前落盘，重载文件看到 0 条。
+    #[test]
+    fn user_clear_persists_before_response() {
+        let path = temp_userdict_path("clear");
+        let ud = Arc::new(UserDict::new(Some(path.clone())));
+        ud.bump_word("你好", Some("ni'hao"), None);
+        assert_eq!(ud.stats().words, 1);
+
+        let user_dict = Some(Arc::clone(&ud));
+        let mut sess = make_session(Arc::clone(&ud));
+        let req = Request {
+            id: 1,
+            method: "userClear".to_string(),
+            params: None,
+        };
+        let result = dispatch(&mut sess, &user_dict, &req).expect("userClear 应成功");
+        assert_eq!(result["cleared"], true);
+
+        let reloaded = UserDict::new(Some(path.clone()));
+        let stats = reloaded.stats();
+        assert_eq!(
+            (stats.words, stats.phrases, stats.bigrams),
+            (0, 0, 0),
+            "响应返回前必须已落盘（重载为 0 条）"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// userDelete 同样在响应前落盘：删一条、留一条，重载后只剩保留的词。
+    #[test]
+    fn user_delete_persists_before_response() {
+        let path = temp_userdict_path("delete");
+        let ud = Arc::new(UserDict::new(Some(path.clone())));
+        ud.bump_word("你好", Some("ni'hao"), None);
+        ud.bump_word("世界", Some("shi'jie"), None);
+
+        let user_dict = Some(Arc::clone(&ud));
+        let mut sess = make_session(Arc::clone(&ud));
+        let req = Request {
+            id: 1,
+            method: "userDelete".to_string(),
+            params: Some(json!({ "word": "你好" })),
+        };
+        let result = dispatch(&mut sess, &user_dict, &req).expect("userDelete 应成功");
+        assert_eq!(result["deleted"], true);
+
+        let reloaded = UserDict::new(Some(path.clone()));
+        assert_eq!(reloaded.stats().words, 1, "仅删除一条，且删除已落盘");
+        assert!(reloaded.score("世界", None).1, "保留的词仍在磁盘上");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 端到端：真实 daemon server（crate::server）+ 真实共享协议客户端
+    /// （chaoset_ipc::client）走一遍 ping/input/select/userStats/userExport，
+    /// 验证 daemon 与客户端确实共用同一份帧协议。
+    #[cfg(unix)]
+    #[test]
+    fn client_and_daemon_server_interoperate() {
+        use crate::server::{run_unix_server, ServerConfig};
+        use std::os::unix::net::UnixListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        let socket_path = temp_userdict_path("e2e").with_extension("sock");
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("bind test socket");
+
+        let mut dict = Dictionary::new();
+        dict.load_tsv_str("你好\tni'hao\t9999\n");
+        let user_dict = Arc::new(UserDict::new::<&str>(None));
+        let running = Arc::new(AtomicBool::new(true));
+        let server_running = Arc::clone(&running);
+        let config = ServerConfig {
+            dict: Arc::new(dict),
+            user_dict: Some(Arc::clone(&user_dict)),
+            fuzzy: false,
+            traditional: false,
+            shuangpin: None,
+        };
+        let server = std::thread::spawn(move || {
+            let _ = run_unix_server(listener, config, server_running);
+        });
+        // bind 在 connect 前已完成（listen backlog 兜底），无需等待 accept 线程。
+        std::thread::sleep(Duration::from_millis(10));
+
+        let mut client =
+            chaoset_ipc::client::Client::connect_unix(&socket_path).expect("连接 daemon");
+        client.ping().expect("ping");
+        let comp = client.input("nihao", false).expect("input");
+        assert_eq!(comp.preedit, "ni'hao");
+        assert_eq!(
+            comp.candidates.first().map(|c| c.text.as_str()),
+            Some("你好"),
+            "候选必须来自 daemon 加载的词库"
+        );
+        assert_eq!(client.select(0).expect("select"), "你好");
+        assert!(client.user_stats().expect("userStats").words >= 1);
+        client.user_clear().expect("userClear");
+        assert!(
+            !client.user_export(false).expect("userExport").contains("你好"),
+            "清空后导出不应再有学习记录"
+        );
+        client.close();
+
+        running.store(false, Ordering::SeqCst);
+        let _ = server.join();
+        let _ = std::fs::remove_file(&socket_path);
+    }
+}
+

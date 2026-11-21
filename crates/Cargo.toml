@@ -2,6 +2,9 @@
 members = [
     "chaoset-engine",
     "chaoset-config",
+    "chaoset-ipc",
+    "chaoset-tools",
+    "chaosetctl",
     "chaosetd",
 ]
 resolver = "2"

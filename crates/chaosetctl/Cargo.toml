@@ -1,0 +1,16 @@
+[package]
+name = "chaosetctl"
+version = "0.4.0"
+edition = "2021"
+description = "Chaoset IME 全能命令行工具（multicall：chaosetctl/chaoset/chaoset-cli/chaoset-import/chaoset-userdict/chaoset-settingsctl）"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "chaosetctl"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1.0"
+chaoset-config = { path = "../chaoset-config" }
+chaoset-ipc = { path = "../chaoset-ipc" }
+chaoset-tools = { path = "../chaoset-tools" }

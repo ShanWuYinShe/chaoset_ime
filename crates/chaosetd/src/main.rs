@@ -397,7 +397,8 @@ fn main() {
         while flush_running.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_secs(2));
             if let Some(ref u) = flush_user_dict {
-                let _ = u.flush_if_dirty();
+                // 与 IPC 的 userClear/userDelete 同步落盘共用一把锁（见 ipc 模块）。
+                let _ = ipc::flush_user_dict_if_dirty(u);
             }
         }
     });
@@ -474,7 +475,8 @@ fn main() {
     running.store(false, Ordering::SeqCst);
     let _ = flush_thread.join();
     if let Some(ref u) = user_dict {
-        let _ = u.save();
+        // 正常退出同步落盘，同样走 ipc 模块的落盘锁。
+        ipc::save_user_dict_now(u);
     }
 }
 #[cfg(test)]

@@ -4,6 +4,12 @@
 
 ## 未发布
 
+- **修复(用户词典)：daemon 导出/删除/清空与文档契约对齐**：
+  - 导出 TSV 拼音列改用学习记录的音节（此前取 `segs`，正常选词时恒为空 → 导出文件再导入会整行丢失），时间列改为 UTC RFC3339（此前是裸 Unix 秒）；`-phrases` 恢复「无段头、三列」，可直接作为导入输入；
+  - 按词删除改为同时匹配词与音节表、未命中再按词删全部读音，**保留上下文（bigram）统计**（此前会误删且删不到也标脏）；
+  - `userClear`/`userDelete` 响应前同步落盘（此前最多滞后 2 秒，强杀后旧数据会复活），与 2 秒批量 flush 共用落盘锁避免写坏临时文件；
+  - 用户词典加载兼容旧扁平格式并自动迁移；损坏文件改名 `.corrupt-<时间戳>` 后以空词典继续（权限/IO 错误仍报错）。
+
 - **重构(设置)：设置核心开始收敛到 Rust 共享 crate，并修复中英作用域从未落盘的 bug**：
   - 新增 `crates/chaoset-config`：三端设置 schema/默认值/校验/单行 JSON 契约 + macOS UserDefaults、Windows 注册表、Linux config.json 存储的**唯一 Rust 实现**；daemon 改用 `behavior::load()`（lenient，读不到用缺省），删除 `crates/chaosetd/src/{appdirs,input_settings}.rs` 两份重复实现；
   - 修复设置中心把 CLI 参数写成 `mode_scope`（下划线）导致 `config set mode-scope` 始终失败、中英作用域从未落盘的问题（`bridge.rs` 改连字符，checker 增加反向断言防回归）；
