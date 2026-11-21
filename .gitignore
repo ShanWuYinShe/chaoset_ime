@@ -1,6 +1,6 @@
 # 构建产物（带 / 前缀锚定仓库根目录，避免误吞同名源码目录）
-bin/
-dist/
+/bin/
+/dist/
 /build/
 /chaoset-engine
 shims/macos/build/
