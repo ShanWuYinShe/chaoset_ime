@@ -95,7 +95,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved) {
         shellWorkerStop();
         UnregisterClassW(windowClassName(L"ChaosetCandidateWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetModeToastWndClass", hinstDLL).c_str(), hinstDLL);
-        UnregisterClassW(windowClassName(L"ChaosetSettingsWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetTrayWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetUiHostWndClass", hinstDLL).c_str(), hinstDLL);
         UnregisterClassW(windowClassName(L"ChaosetTipMsgWndClass", hinstDLL).c_str(), hinstDLL);
@@ -119,7 +118,6 @@ STDAPI DllCanUnloadNow() {
     // 没有 TIP/窗口后才停 worker；线程尚未退干净前继续返回 S_FALSE。
     if (g_liveObjects != 0) return S_FALSE;
     if (g_liveCandidateWindows != 0) return S_FALSE;
-    if (g_liveSettingsWindows != 0) return S_FALSE;
     if (g_liveToastWindows != 0) return S_FALSE;
     if (g_liveTrayWindows != 0) return S_FALSE;
     if (g_liveTipMsgWindows != 0) return S_FALSE;

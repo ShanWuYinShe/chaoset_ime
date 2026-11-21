@@ -8,7 +8,6 @@ package main
 const (
 	// 设置窗、学习数据与设置核心（方案 A）。
 	groupSettingsSharedText    = "设置窗共享文案"
-	groupSettingsSingleton     = "设置窗单例"
 	groupLearningGUI           = "学习数据 GUI"
 	groupNoGoEngine            = "Go 引擎已移除"
 	groupImportEntries         = "词库导入入口"
@@ -22,7 +21,6 @@ const (
 	groupSettingsContract      = "设置窗契约"
 	groupSettingsVisual        = "设置窗视觉令牌"
 	groupSettingsCore          = "设置核心（方案 A）"
-	groupLinuxSetupAssembly    = "Linux 设置窗装配"
 
 	// Windows 壳专属契约。
 	groupUILess             = "UILess 能力"

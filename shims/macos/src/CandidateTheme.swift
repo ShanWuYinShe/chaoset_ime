@@ -8,9 +8,9 @@ import AppKit
 
 // 用户外观主题（system/light/dark）在候选窗热路径的解析：直接读 UserDefaults
 // 的 ChaosetTheme（与 Go internal/settings.theme 同键同语义），system 跟随传入的
-// effectiveAppearance。放在本文件（而非 CandidateSettings/AppTheme）是为了让
+// effectiveAppearance。放在本文件（而非 CandidateSettings）是为了让
 // visual-parity.sh 只编译 CandidateTheme+CandidatePanelView 时也能解析，不依赖
-// 设置窗文件。每次 draw 读取，改主题后下一次绘制即生效，无进程/文件 IO。
+// 设置窗代码。每次 draw 读取，统一设置中心改主题后下一次绘制即生效，无进程/文件 IO。
 enum CandidateAppearance {
     static func isDark(effectiveAppearance: NSAppearance?) -> Bool {
         let raw = UserDefaults.standard.string(forKey: "ChaosetTheme")?
@@ -24,7 +24,7 @@ enum CandidateAppearance {
     }
 }
 
-// MARK: - 主题色（深色 = 深海军蓝家族，与设置窗/Toast 深色同族）
+// MARK: - 主题色（深色 = 深海军蓝家族，与统一设置中心/Toast 深色同族）
 
 // internal（非 private）：tools/panel_metrics.swift 需要导出 13 个色值，
 // 与 tests/visual-parity.sh 的内联期望值做浅/深两套逐色比对（D 段）。
@@ -45,8 +45,8 @@ struct CandidateTheme {
 
     static func theme(dark: Bool) -> CandidateTheme {
         if dark {
-            // 深色表面统一「深海军蓝」家族（与设置窗视觉令牌同族）：
-            // panelBg=设置窗 cardBg #1A2740、chipBg=controlBg #223353、
+            // 深色表面统一「深海军蓝」家族（与统一设置中心视觉令牌同族）：
+            // panelBg=设置中心 cardBg #1A2740、chipBg=controlBg #223353、
             // text/chipDigit=textPrimary #F2F6FC、page/chevron=textTertiary #7E90AC；
             // 描边/分隔线沿用白 alpha（叠加后自动带蓝调），高亮蓝/学习绿不变。
             return CandidateTheme(

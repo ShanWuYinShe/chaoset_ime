@@ -153,82 +153,64 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ibus dbus dbus-x11 gir1.2-ibus-1.0 libgtk-3-dev libibus-1.0-dev \
-            build-essential file xvfb xdotool fonts-noto-cjk
+            ibus dbus dbus-x11 gir1.2-ibus-1.0 libibus-1.0-dev \
+            build-essential file xvfb
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
           chmod +x shims/linux/test-ci.sh
           ./shims/linux/test-ci.sh
 
-      # Linux 设置窗是原生 GTK3 C（用户要求 shim 用原生实现、不引入 Python）。
-      # 除编译/无 GTK 单测外，再用 Xvfb 做一次无头启动冒烟并核对窗口几何：
-      # 只检查进程存活不够——缺 CJK 字体时 GTK 窗口会退化成 32767 高/不可见，
-      # 所以这里装 Noto CJK 并用 xdotool 断言窗口已映射且尺寸合理。
-      - name: 原生 GTK3 设置窗编译、单测与无头启动冒烟（C，无 Python）
+      # 设置窗只保留 Slint 统一设置中心：Linux 的 chaoset-setup 是纯 POSIX 启动器
+      # （不依赖 GTK），这里断言它能编译、能把 chaoset-settings 替换进进程，
+      # 并在找不到设置中心时明确报错退出（不得回退旧原生窗口）。
+      - name: 设置入口启动器编译与冒烟（chaoset-setup → chaoset-settings）
         run: |
-          # 2026-11-06 按页面/职责拆分后：build.sh 内部用 *.c 通配收集源文件
-          # （自动排除 test_setup_ctl.c），新增 TU 不需要再改 CI 清单。
           sh shims/linux/setup/build.sh /tmp/chaoset-setup
           file /tmp/chaoset-setup | grep -q ELF
-          # test_setup_ctl 只依赖 setup_ctl.c（配置/路径核心，无 GTK）；页面与
-          # setup_learn/setup_import 不参与本单测链接，避免非 GTK 单测引入 UI 依赖。
-          cc -std=c11 -Wall -Wextra -Werror \
-            $(pkg-config --cflags glib-2.0) \
-            -o /tmp/test_setup_ctl \
-            shims/linux/setup/test_setup_ctl.c shims/linux/setup/setup_ctl.c \
-            $(pkg-config --libs glib-2.0)
-          /tmp/test_setup_ctl
-          Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
-          sleep 1
-          DISPLAY=:99 /tmp/chaoset-setup > /tmp/setup-smoke.log 2>&1 &
-          SETUP_PID=$!
-          WID=""
-          for _ in 1 2 3 4 5; do
-            # 按 WM_CLASS 搜索而不是窗口标题：CSD（自绘 headerbar）下中文标题在 C locale
-            # 的 xdotool 里无法匹配；WM_CLASS 稳定且与 locale/标题文案无关。
-            WID=$(DISPLAY=:99 xdotool search --onlyvisible --classname "chaoset-setup" 2>/dev/null | head -1)
-            [ -n "$WID" ] && break
-            sleep 1
-          done
-          if [ -z "$WID" ]; then
-            echo "设置窗未创建可搜索窗口："
-            cat /tmp/setup-smoke.log
-            kill "$SETUP_PID" 2>/dev/null || true
-            exit 1
-          fi
-          GEO=$(DISPLAY=:99 xdotool getwindowgeometry --shell "$WID")
-          W=$(echo "$GEO" | awk -F= '/^WIDTH=/{print $2}')
-          H=$(echo "$GEO" | awk -F= '/^HEIGHT=/{print $2}')
-          echo "设置窗几何: ${W}x${H}"
-          if [ -z "$W" ] || [ -z "$H" ] || [ "$W" -lt 200 ] || [ "$H" -lt 200 ] || [ "$H" -gt 2000 ]; then
-            echo "设置窗几何异常（缺 CJK 字体/未映射？）：${W}x${H}"
-            cat /tmp/setup-smoke.log
-            kill "$SETUP_PID" 2>/dev/null || true
-            exit 1
-          fi
-          kill "$SETUP_PID" 2>/dev/null || true
-          wait "$SETUP_PID" 2>/dev/null || true
-
-
+          mkdir -p /tmp/fakebin
+          printf '#!/bin/sh\necho SETTINGS_CENTER_OK\n' > /tmp/fakebin/chaoset-settings
+          chmod +x /tmp/fakebin/chaoset-settings
+          PATH=/tmp/fakebin:$PATH /tmp/chaoset-setup | grep -q SETTINGS_CENTER_OK
+          set +e
+          OUT=$(PATH=/usr/bin:/bin /tmp/chaoset-setup 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT" | grep -q "未找到统一设置中心"
+          [ "$CODE" -ne 0 ]
       - name: 编译 Slint Linux 设置中心
         run: make build-settings
 
       # 打包回归：release.yml 的安装包冒烟只在打 tag 时跑，日常改动可能悄悄
       # 漏装原生设置窗。这里在 PR/日常提交上构建 tar.gz（以及可用的 deb）
       # 并断言设置窗二进制在包里。
-      - name: Linux 安装包自检（原生设置窗必须随包）
+      - name: Linux 安装包自检（设置入口与 Slint 设置中心必须随包）
         run: |
           make package-linux
           tar -tzf dist/chaoset-linux-x86_64.tar.gz > /tmp/pkg-list.txt
-          for f in setup/chaoset-setup data/dict.tsv; do
+          for f in setup/chaoset-setup bin/chaoset-settings data/dict.tsv; do
             grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
           done
+          # Slint 设置中心的运行时动态库必须齐全（缺库时用户点设置直接打不开）。
+          # 并在 Xvfb 下做一次无头启动冒烟：3s 后仍在运行（timeout=124）或正常退出都算
+          # 启动成功，其他退出码视为崩溃（例如缺 libfontconfig/libxkbcommon）。
+          if ldd dist/chaoset-linux-x86_64/bin/chaoset-settings | grep -q 'not found'; then
+            echo "chaoset-settings 运行时缺库："; ldd dist/chaoset-linux-x86_64/bin/chaoset-settings; exit 1
+          fi
+          set +e
+          xvfb-run -a timeout 3 dist/chaoset-linux-x86_64/bin/chaoset-settings > /tmp/settings-smoke.log 2>&1
+          SMOKE=$?
+          set -e
+          if [ "$SMOKE" -ne 0 ] && [ "$SMOKE" -ne 124 ]; then
+            echo "Slint 设置中心无头启动失败（exit=$SMOKE）："; cat /tmp/settings-smoke.log; exit 1
+          fi
+          echo "PASS: Slint 设置中心无头启动 OK（exit=$SMOKE）"
+
           if command -v dpkg-deb >/dev/null 2>&1 && [ -f dist/chaoset_amd64.deb ]; then
             dpkg-deb -c dist/chaoset_amd64.deb | grep -q 'usr/share/chaoset/chaoset-setup' \
-              || { echo "deb 缺少原生设置窗"; exit 1; }
+              || { echo "deb 缺少设置入口脚本"; exit 1; }
           fi
-          echo "PASS: Linux 安装包包含原生设置窗"
+          echo "PASS: Linux 安装包包含设置入口与 Slint 设置中心"
   # ── 5. macOS 构建 + 等价性 + 双端视觉一致性（本机跑要 2-3 分钟）─────
   # 此前这些只在打 tag 的 release.yml 里跑，PR/日常提交无从验证——改动一旦
   # 破坏 macOS 壳或两端视觉一致性，要到发版才发现。现在 PR 也跑。
@@ -255,8 +237,8 @@ jobs:
       # app + 全部随包工具 universal 自检 + zip。
       # 此前日常 CI 只跑 build.sh，打包脚本/资源清单坏了要到打 tag 才发现
       #（与 Linux 安装包自检同一类问题，2026-10-31 补齐）。
-      - name: 编译 Slint macOS 设置中心
-        run: make build-settings
+      - name: 编译 Slint macOS 设置中心（universal）
+        run: make build-settings-universal
 
       - name: macOS 构建 + 安装包（zip，含 universal 自检）
         run: |

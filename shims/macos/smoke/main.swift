@@ -43,12 +43,12 @@ check(c3?.preedit == "xi'an", "预编辑 xi'an（实际 \(c3?.preedit ?? "nil")�
 check(c3?.candidates.first?.text == "西安", "xi'an 第一候选 西安（实际 \(c3?.candidates.first?.text ?? "nil")）")
 // 退格留在本次组词内（Reset 会清空输入，退格才对组词生效），故此处不 Reset
 
-// 5. 学习数据只读接口（设置窗口「学习数据」区依赖；**不调用 userClear**，
-//    避免安装后自检误清真实用户的学习数据）
+// 5. 学习数据只读接口（统一设置中心经 chaosetctl 调同一 daemon 接口；
+//    这里保留 IPC 契约回归。**不调用 userClear**，避免安装后自检误清真实用户的学习数据）
 let stats = client.userStats()
-check(stats != nil, "userStats 可读（设置窗口学习数据统计）")
+check(stats != nil, "userStats 可读（学习数据统计）")
 let exported = client.userExportAll()
-check(exported != nil, "userExport 可读（设置窗口导出学习数据）")
+check(exported != nil, "userExport 可读（导出学习数据）")
 
 // 6. 退格
 let c4 = client.backspace()

@@ -41,7 +41,6 @@ func onPhysical(f func(fs.FS, *[]string)) func(*checker) {
 var checkGroups = []checkGroup{
 	// 设置窗、学习数据与设置核心（方案 A）。
 	{groupSettingsSharedText, onLogical(checkSettingsSharedText)},
-	{groupSettingsSingleton, onLogical(checkSettingsSingleton)},
 	{groupLearningGUI, onLogical(checkLearningDataGUI)},
 	{groupNoGoEngine, onPhysical(checkNoGoEngine)},
 	// 词库导入与三端键位语义。
@@ -71,7 +70,7 @@ var checkGroups = []checkGroup{
 	{groupDaemonSpawnGuard, onLogical(checkDaemonSpawnGuard)},
 	{groupDllUnload, onLogical(checkDllUnloadSafety)},
 	{groupTrayModeScope, onLogical(checkTrayAndModeScope)},
-	{groupSettingsContract, onLogical(checkSettingsWindowContract)},
+	{groupSettingsContract, onLogical(checkSettingsCenterContract)},
 	// 设置窗三端视觉令牌（docs/ui-parity.md 令牌表 = 单一事实源）。
 	{groupSettingsVisual, onLogical(checkSettingsVisualTokens)},
 	{groupCandidateGearMouseUp, onLogical(checkCandidateGearMouseUp)},
@@ -103,7 +102,6 @@ var checkGroups = []checkGroup{
 	{groupShellEscaping, onLogical(checkShellVarEscaping)},
 	{groupDocParity, onLogical(checkDocParity)},
 	{groupSettingsCore, onLogical(checkSettingsCore)},
-	{groupLinuxSetupAssembly, onLogical(checkLinuxSetupAssembly)},
 	{groupModuleLayout, onPhysical(checkShimModuleLayout)},
 	{groupArchitectureDoc, onPhysical(checkArchitectureDoc)},
 }

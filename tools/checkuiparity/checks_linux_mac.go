@@ -53,36 +53,16 @@ func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
 // 这里锁住实现关键片段，防止重构时把安全流程删掉。
 func checkImportSafety(fsys fs.FS, problems *[]string) {
 	const group = groupImportSafety
-	// mac Setup.app（2026-11-01 起）：只调 Go 工具，退出码检查 + seed/backup 参数。
-	checkContains(fsys, problems, group, macSetup,
-		"r.status == 0",
-		`"-seed"`,
-		`"-backup"`,
-	)
+	// 词库导入的唯一 GUI 是 Slint 统一设置中心（bridge 调 Go chaoset-import）。
+	checkContains(fsys, problems, group, slintBridge, `"import"`, `"-o"`, `"-backup"`)
+	checkContains(fsys, problems, group, slintEvents, "on_import_dict_clicked")
+	// mac 安装器的导入面板同样只调 Go 工具（退出码检查 + seed/backup）。
+	checkContains(fsys, problems, group, macSetup, "r.status == 0", `"-seed"`, `"-backup"`)
 	checkExcludes(fsys, problems, group, macSetup, "replaceItemAt")
-	// Windows 设置窗（2026-11-01 起）：只调 Go 工具，退出码检查 + backup 参数 +
-	// 失败日志；不再自己备份/替换。
-	checkContains(fsys, problems, group, winShell,
-		"code != 0",
-		"-backup",
-		"import.log",
-	)
-	checkExcludes(fsys, problems, group, winShell, "MoveFileExW(",
-		"MOVEFILE_REPLACE_EXISTING")
-	// Linux 设置窗（2026-11-01 起）：只调用 Go 工具并检查退出码；合并/备份/
-	// 原子替换由 chaoset-import 负责（-o 直接指向目标 + -backup）。
-	checkContains(fsys, problems, group, linuxDictImport,
-		"WIFEXITED",
-		`"-o"`,
-		`"-backup"`,
-	)
-	checkExcludes(fsys, problems, group, linuxDictImport,
-		"os.replace", "shutil.copy2", `target + ".tmp"`,
-	)
+	// 壳内不得自己备份/替换（历史事故：直接 move 会丢词库中间态）。
+	checkExcludes(fsys, problems, group, winShell, "MoveFileExW(", "MOVEFILE_REPLACE_EXISTING")
 	// Go 工具是这些安全语义的唯一实现：seed/backup/原子替换都在这里。
-	checkContains(fsys, problems, group, chaosetImport,
-		`"seed"`, `"backup"`, "backupFile(", "os.Rename(",
-	)
+	checkContains(fsys, problems, group, chaosetImport, `"seed"`, `"backup"`, "backupFile(", "os.Rename(")
 }
 
 // checkShiftToggleAccounting 锁住三端 Shift 空按的「记账」契约：
@@ -196,40 +176,27 @@ func checkResetSemantics(fsys fs.FS, problems *[]string) {
 // checkImportEntries 词库导入入口：mac Setup.app + Windows 设置窗有 GUI；Linux 设置窗调
 // chaoset-import 写用户词库，ibus 引擎启动时 -imported-dict 自动加载。
 func checkImportEntries(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupImportEntries, macSetup, "导入词库", "chaoset-import")
-	// mac 输入法设置窗也有「导入词库…」入口（打开 Setup.app 并传 --import），
-	// 与 Windows 设置窗「词库」区对齐；实现仍只有 Setup.app 一份。
-	checkContains(fsys, problems, groupImportEntries, macSettings, "导入词库", "安装与设置")
-	checkContains(fsys, problems, groupImportEntries, macSetup, "--import")
-	checkContains(fsys, problems, groupImportEntries, winShell, "导入词库", "chaoset-import.exe")
-	// Linux（2026-10-31 起）：原生 GTK3 设置窗「导入词库…」→ setup_ctl 调
-	// chaoset-import 写用户词库 → ibus 引擎启动时 -imported-dict 自动加载。
-	checkContains(fsys, problems, groupImportEntries, linuxSetup, "导入词库")
-	checkExists(fsys, problems, groupImportEntries, linuxDictImport)
-	checkContains(fsys, problems, groupImportEntries, linuxDictImport,
-		"chaoset-import", "setup_import_dicts", "restart_engines")
-	checkContains(fsys, problems, groupImportEntries, linuxEngine,
-		"-imported-dict", "importedDict")
-	// 默认路径同口径：C 侧优先调用 Go 工具 -print-paths（唯一来源
-	// internal/appdirs），原生引擎 daemon.cpp 也走 XDG 默认路径；
-	// C 仍保留 XDG 回退供源码树未构建时使用。
-	checkContains(fsys, problems, groupImportEntries, linuxCtl,
-		"-print-paths", "tool_path")
-	checkContains(fsys, problems, groupImportEntries, linuxDictImport,
-		`"imported_dict"`, `"dict.tsv"`)
-	checkContains(fsys, problems, groupImportEntries, linuxEngineMain,
-		"defaultLinuxPaths", "importedDict")
-	// linux-e2e 必须真实验证导入词参与候选，而不只是日志里有加载路径。
+	// 用户词库导入只有 Slint 统一设置中心一个 GUI 入口（三端共用）；合并/备份/原子替换
+	// 由 Go chaoset-import 承担，ibus 引擎启动时用 -imported-dict 自动加载。
+	checkContains(fsys, problems, groupImportEntries, slintApp, "导入词库")
+	checkContains(fsys, problems, groupImportEntries, slintBridge, "import_dict")
+	checkContains(fsys, problems, groupImportEntries, slintEvents, "on_import_dict_clicked")
+	checkContains(fsys, problems, groupImportEntries, macSetup, "导入词库", "chaoset-import", "--import")
+	checkContains(fsys, problems, groupImportEntries, linuxEngine, "-imported-dict", "importedDict")
+	checkContains(fsys, problems, groupImportEntries, linuxEngineMain, "defaultLinuxPaths", "importedDict")
 	checkContains(fsys, problems, groupImportEntries, linuxE2E, "用户导入词库", "测试词", "UpdateLookupTable")
 }
 
 // checkAssociateImmediacy 关闭联想的即时性：mac 通知立即收起；Windows 跨进程广播
 // （候选窗转发 TIP）立即收起；Linux 仍为下次按键生效（ui-parity 记录为已知差异）。
 func checkAssociateImmediacy(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupAssociateImmediacy, macSettings, "chaosetAssociateDisabled")
-	checkContains(fsys, problems, groupAssociateImmediacy, winShell,
-		"Chaoset.AssociateChanged", "HWND_BROADCAST", "clearAssociateFromSettings")
-	checkContains(fsys, problems, groupAssociateImmediacy, uiParityDoc, "下一次按键")
+	// 设置中心是独立进程：联想开关写入后候选窗在下一次显示时读取；Windows 候选窗
+	// 保留消息处理，齿轮快捷切换等进程内路径仍然即时。
+	checkContains(fsys, problems, groupAssociateImmediacy, slintEvents, "on_associate_toggled")
+	checkContains(fsys, problems, groupAssociateImmediacy, slintBridge, "set_associate")
+	checkContains(fsys, problems, groupAssociateImmediacy, "shims/macos/src/ChaosetController.swift", "AssociateSetting.enabled")
+	checkContains(fsys, problems, groupAssociateImmediacy, winShell, "Chaoset.AssociateChanged", "onAssociateChanged")
+	checkContains(fsys, problems, groupAssociateImmediacy, uiParityDoc, "下一次显示")
 }
 
 // checkBackspaceSemantics Option/Alt+Backspace 三端统一为按音节回退（2026-10-31）：

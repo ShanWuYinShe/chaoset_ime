@@ -7,7 +7,7 @@
 // 模块边界（docs/architecture.md §3.1）：
 //   * TIP 是 Windows 壳最高层：只被 win32.cpp 编排、被 tip_*.cpp 展开实现。
 //   * 叶子模块（candidate_window/mode_toast/shell_worker/tip_thread/winutil/
-//     theme/config/transport/daemon/ui_client/settings_window/ui_host/
+//     theme/config/transport/daemon/ui_client/settings_launcher/ui_host/
 //     diagnostics/ui_element）严禁 include/引用本文件；tip_thread 对 TIP 的
 //     唯一接触是 TipThreadSink 抽象接口（本类实现），因此 tip_thread.cpp 不
 //     依赖具体 TIP 类型；ui_element 对 TIP 的唯一接触是 UiElementHost 抽象
@@ -452,7 +452,8 @@ public:
     // 隐藏时收起自绘浮窗（宿主接管渲染场景本壳浮窗本就未显示，幂等）。
     void onUiElementShow(BOOL shown) override;
 
-    // 设置窗口入口（三端一致的独立设置窗口，macOS SettingsWindow 同构；
+    // 统一设置中心入口（唯一设置 UI 是跨平台 Slint 设置中心；TIP 只经命名
+    // 管道请单例 UI 宿主启动 chaoset-settings.exe，绝不在 TIP 进程内起进程；
     // 定义见 tip_candidates.cpp）。
     void showSettingsWindow() override;
     bool isAssociatePanel() const override;
@@ -466,7 +467,7 @@ public:
     // 联想翻页入口（供候选窗箭头调用；实现见 tip_candidates.cpp 的 flipAssociate）。
     void flipAssociateFromPanel(bool next) override;
 
-    // 设置窗关闭联想后立即收起（候选窗收到跨进程广播后转发；macOS 同语义）。
+    // 设置中心关闭联想后立即收起（候选窗收到跨进程广播后转发；macOS 同语义）。
     void clearAssociateFromSettings() override;
 
 private:

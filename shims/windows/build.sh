@@ -3,7 +3,7 @@
 #   1) 原生编译核心层行为测试，并用真实 chaosetd（Unix socket，与 Windows
 #      命名管道同为 ipc.Endpoint 本机传输，协议/帧格式一致）跑通
 #   2) mingw-w64 交叉编译 ChaosetIME.dll，检查导出表（含 ChaosetRunUi）
-#   3) mingw-w64 交叉编译 chaoset-ui.exe（单例 UI 宿主：托盘状态 + 设置窗）
+#   3) mingw-w64 交叉编译 chaoset-ui.exe（单例 UI 宿主：托盘状态 + 统一设置中心入口）
 # 前置：Go 工具链；brew install mingw-w64
 set -e
 cd "$(dirname "$0")"
@@ -87,7 +87,8 @@ gen_rc build/chaoset.gen.rc "Chaoset 拼音输入法 TSF 前端" "ChaosetIME" "C
 # 真实 TU：win32.cpp 只保留 DLL 生命周期编排（类厂/导出/DllMain/DllCanUnloadNow）；
 # TIP 主体 = tip.hpp（类声明）+ tip_core/tip_keys/tip_composition/tip_candidates.cpp，
 # TIP 线程消息窗口 = tip_thread.cpp，候选窗（candidate_window）、后台 worker
-# （shell_worker）、TIP 注册（tip_registration）与叶子模块（含 mode_toast）独立编译。
+# （shell_worker）、TIP 注册（tip_registration）与叶子模块（含 mode_toast、
+# settings_launcher）独立编译。
 # wave2 已完成 TIP 类拆分，win32.cpp 129 行，≤2000 目标达成）
 # 用 wildcard 后新增模块不需要再手改这份清单；UI 宿主仍然只编 ui_main.cpp。
 DLL_SRCS=""
@@ -152,12 +153,27 @@ if x86_64-w64-mingw32-objdump -p build/ChaosetIME.dll | command grep -qi 'DLL Na
 fi
 echo "  UIA 动态加载自检通过（无 uiautomationcore 静态导入）"
 
+# 设置 UI 的唯一入口是统一设置中心 chaoset-settings.exe（启动器编在 DLL 内）：
+# 用 python3 查 UTF-16LE 宽字符串，防止 settings_launcher.cpp 被误移出 DLL 源集合。
+if ! python3 - <<'PY'
+import sys
+d = open("build/ChaosetIME.dll", "rb").read()
+if "chaoset-settings.exe".encode("utf-16-le") not in d:
+    print("缺少 chaoset-settings.exe 启动器字符串", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "错误：ChaosetIME.dll 未包含统一设置中心启动器（settings_launcher.cpp 未编译进 DLL）" >&2
+  exit 1
+fi
+echo "  设置中心启动器自检通过（chaoset-settings.exe 字符串已嵌入 DLL）"
+
 echo "[4/4] 交叉编译单例 UI 宿主 chaoset-ui.exe..."
-# 托盘指示器 + 设置窗的唯一宿主。exe 本身只有几十行：LoadLibrary 同目录的
-# ChaosetIME.dll 后调用导出 ChaosetRunUi，UI 实现全部在 DLL 里（无第二套 UI）。
+# 托盘指示器 + 统一设置中心启动入口的唯一宿主。exe 本身只有几十行：LoadLibrary
+# 同目录的 ChaosetIME.dll 后调用导出 ChaosetRunUi，UI 实现全部在 DLL 里（无第二套 UI）。
 # 同一份版本模板再生成一份 UI 宿主专用资源：独立 EXE 的属性页也要显示
 # 产品名/公司/版本，且 FileDescription 指向「UI 宿主」而非前端 DLL。
-gen_rc build/ui.gen.rc "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
+gen_rc build/ui.gen.rc "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置中心入口）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
 "$WINDRES" -c 65001 -I resources build/ui.gen.rc -O coff -o build/ui_rc.o
 "$CXXWIN" -std=c++17 -O2 -Wall -Wextra -municode -mwindows -static \
   -o build/chaoset-ui.exe src/ui_main.cpp build/ui_rc.o

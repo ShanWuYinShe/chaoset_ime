@@ -37,7 +37,7 @@ public:
 
     // TSF 线程上的 TIP 用 setAutoConnect(false)：writeAll 绝不自行发起需要等待的连接。
     void setAutoConnect(bool on) { autoConnect_ = on; }
-    // 单次 I/O 等待上限（TSF 路径 30ms；worker/设置窗 200ms）。
+    // 单次 I/O 等待上限（TSF 路径 30ms；worker 200ms）。
     void setDeadlineMs(DWORD ms) { deadlineMs_ = (ms == 0) ? 200 : ms; }
 
     // 单次非阻塞连接：成功即返回；失败（含管道忙）立即返回 false，不做任何等待。
@@ -69,7 +69,7 @@ public:
             return false;
         }
         HANDLE h = INVALID_HANDLE_VALUE;
-        // daemon 可能尚未创建管道实例：最多等 3×20ms。只在 worker/设置窗线程调用。
+        // daemon 可能尚未创建管道实例：最多等 3×20ms。只在 worker 线程调用。
         for (int i = 0; i < 3; ++i) {
             h = ::CreateFileW(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE,
                               0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);

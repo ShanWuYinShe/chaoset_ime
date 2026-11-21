@@ -409,10 +409,10 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 
 ## 模糊音
 
-默认关闭：设置窗「模糊音」开关（写入平台设置，daemon 启动时读取），或 daemon 启动参数 `-fuzzy`：
+默认关闭：设置中心「模糊音」开关（写入平台设置，daemon 启动时读取），或 daemon 启动参数 `-fuzzy`：
 
 ```sh
-bin/chaosetd -fuzzy          # 或设置窗「模糊音」开关后重启 daemon（持久生效）
+bin/chaosetd -fuzzy          # 或设置中心「模糊音」开关后重启 daemon（持久生效）
 ```
 
 规则（微软拼音常用集）：声母对 zh/z、ch/c、sh/s、n/l；韵母对
@@ -437,7 +437,7 @@ bin/chaosetd -traditional       # 候选与上屏均为繁体
 
 ## 双拼
 
-默认关闭：设置窗「双拼方案」（全拼/自然码/微软/小鹤），或 daemon 启动参数 `-shuangpin zrm|mspy|flypy`：
+默认关闭：设置中心「双拼方案」（全拼/自然码/微软/小鹤），或 daemon 启动参数 `-shuangpin zrm|mspy|flypy`：
 
 ```sh
 bin/chaosetd -shuangpin zrm     # 自然码：两键一音节，nihao = n i h k
@@ -464,7 +464,7 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 
 ## 快速开始（终端测试台）
 
-> 普通用户不需要命令行：联想开关、学习数据统计/清空/导出都在**设置窗口**
+> 普通用户不需要命令行：联想开关、学习数据统计/清空/导出都在**设置中心口**
 > （候选栏右侧齿轮）。下面的 CLI 是开发测试台与高级/排障工具；
 > `chaoset-userdict` 仅作为无 GUI 环境/高级用户兜底。
 
@@ -584,7 +584,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 
 每个包都自带**完整的内置常用词库（约 6.5 万条）**，装完即可用，不需要另配词库。
 
-> **查看版本**：三端设置窗底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
+> **查看版本**：三端设置中心底部都会显示 `Chaoset 版本 x.y.z`；升级后先看这里
 > 确认装的是新版本，再排查其他问题。Windows 还可以右键 `ChaosetSetup.exe`
 > 或安装目录里的 `ChaosetIME.dll` / `chaoset-ui.exe` →「属性 → 详细信息」
 > 查看产品名、公司、版权与文件/产品版本，或在「已安装的应用」的 Chaoset
@@ -603,7 +603,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 |---|---|---|
 | Linux | ibus engine（原生 C++/libibus 薄壳），Unix socket 连 daemon；候选窗为 ibus 原生 LookupTable | 容器内端到端验证；真机桌面闭环待环境 |
 | macOS | InputMethodKit `.app`（Swift），Unix socket 连 daemon；候选窗为壳内 AppKit 原生自绘 | 真机启用；Shift 空按、LaunchAgent `ProcessType=Interactive` QoS 已验证 |
-| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态（显示当前输入上下文实际状态）与设置窗 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
+| Windows | TSF COM DLL（C++ 薄壳），命名管道连 daemon；壳内 GDI 原生自绘候选窗 + 合成内预编辑；单例 UI 宿主 `chaoset-ui.exe` 负责托盘中英状态（显示当前输入上下文实际状态）与设置中心 | CI/核心行为验证；开始菜单/搜索候选窗已真机验证；命名管道、安装器、游戏/全屏、UWP/多会话、无障碍与 per-monitor DPI 待真机 |
 
 ### 渐进上屏
 
@@ -623,7 +623,7 @@ CC-BY-SA 4.0——分发合并词库时须保留其署名与相同方式共享�
 - Windows：daemon 日志 `%LOCALAPPDATA%\Chaoset\chaosetd.log`，TSF 连接/渲染/
   请求诊断 `tsf.log`，宿主崩溃 `crash.log`；AppContainer 宿主的 TSF 日志实测写到
   `%LOCALAPPDATA%\Packages\<包族>\AC\Chaoset\tsf.log`（如 SearchApp 的
-  `Microsoft.Windows.Search_cw5n1h2txyewy\AC\Chaoset\tsf.log`）。托盘/设置窗问题
+  `Microsoft.Windows.Search_cw5n1h2txyewy\AC\Chaoset\tsf.log`）。托盘/设置中心问题
   同时看单例 UI 宿主 `chaoset-ui.exe` 是否在运行。
 - macOS：daemon 日志 `~/Library/Application Support/chaoset/chaosetd.log`；
   壳侧 IPC/候选窗失败写 macOS 统一日志：

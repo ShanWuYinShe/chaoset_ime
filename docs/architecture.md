@@ -3,8 +3,9 @@
 本文是 chaoset_ime 的架构地图与拆分契约。**新增/移动平台壳代码前先更新本文件与
 `tools/checkuiparity` 的模块清单**；文件规模与模块存在性由机器断言锁死（见文末）。
 
-> 2026-11-06 用户要求：按方案 A 把三端设置窗的设置逻辑/契约收敛到 Go；shims 里大文件
-> 太多，必须按职责拆分组织，「不要埋下屎山的隐患」。
+设置 UI 只有一份实现：Slint 跨平台设置中心（`shims/settings/`）。三端壳不再各自
+实现原生设置窗，只保留启动器把 `chaoset-settings` 拉起来（见 §2、§3）；shims 大文件
+按职责拆分，文件规模由 checkuiparity 机器断言。
 
 ## 1. 分层与依赖方向
 
@@ -33,9 +34,10 @@ shims/windows|macos|linux/   平台壳：只做平台集成 + 渲染 + 系统交
 
 ### 2.1 现状问题
 
-三端设置窗各自实现：默认值、取值/写值、学习数据统计/清空/导出、词库导入流程、
-中英状态作用域读写。三份实现容易漂移（此前已出现 mac/Linux 设置窗编译不过、
-页脚版本号不一致等）。
+设置 UI 唯一实现是 Slint 设置中心（`shims/settings`）：页面/控件/文案/视觉令牌只有
+一份。macOS AppKit / Windows GDI / Linux GTK 三套原生设置窗已删除，避免三份实现
+漂移（历史上出现过编译不过、页脚版本号不一致、文案不同步）。三端壳只保留启动器，
+设置中心冷路径读写统一走随包 `chaosetctl`。
 
 ### 2.2 目标结构
 
@@ -68,7 +70,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | 阶段 | 内容 | 状态 |
 | :--- | :--- | :--- |
 | A1 | Go 设置核心 + CLI + 单测 | 已完成（checkuiparity「设置核心（方案 A）」组锁定） |
-| A2 | 三端设置窗的「读取/写入设置项」改调 CLI（冷路径）；热路径缓存继续读原生存储 | Windows 已完成；macOS/Linux 未接线 |
+| A2 | 设置项冷路径读写统一走 CLI；输入热路径继续读本机缓存/原生存储 | 已完成（原「三端原生设置窗接线」随原生窗删除而收敛：唯一设置 UI 是 Slint 设置中心，经同目录 `chaosetctl` 读写） |
 | A3 | 学习数据（统计/清空/导出）与词库导入流程收敛到 Go（复用 chaoset-userdict / chaoset-import） | 已完成：三端词库导入均调 chaoset-import，学习数据经 daemon IPC 或 chaoset-userdict，壳只渲染 |
 | A4 | 热路径配置读取收敛 | **明确不做**：热路径零阻塞契约禁止在 TSF/IMK/ibus 回调里起进程，三端继续用本机 TTL/进程内缓存 |
 
@@ -102,8 +104,8 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `transport.cpp` `.hpp` | daemon 命名管道名/探测/PipeTransport | winutil | ≤500 |
 | `daemon.cpp` `.hpp` | daemon 懒启动/连接/熔断原语（仅 worker 调用） | winutil, transport, diagnostics | ≤500 |
 | `ui_client.cpp` `.hpp` | UI 宿主管道低层（命令/查询/拉起原语） | winutil, diagnostics | ≤700 |
-| `settings_window.cpp` `.hpp` | 设置窗（布局/绘制/控件/导入入口） | config, transport, diagnostics, winutil | ≤1600 |
-| `ui_host.cpp` `.hpp` | 单例 UI 宿主：UiTray、托盘菜单、runUiHost、命令管道线程 | ui_client, settings_window, config, diagnostics | ≤1000 |
+| `settings_launcher.cpp` `.hpp` | 统一设置中心启动器：定位/前置/启动 `chaoset-settings.exe`（不创建窗口、不在 TIP 进程调用） | diagnostics, winutil | ≤200 / ≤100 |
+| `ui_host.cpp` `.hpp` | 单例 UI 宿主：UiTray、托盘菜单、runUiHost、命令管道线程、设置中心入口 | ui_client, settings_launcher, config, diagnostics | ≤1000 |
 | `candidate_layout.hpp` | 候选窗纯布局数学（与 macOS 测试共用） | — | ≤200 |
 | `ui_main.cpp` | 几十行 UI 宿主入口（LoadLibrary + ChaosetRunUi） | — | ≤120 |
 
@@ -117,32 +119,22 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `CandidatePanelView.swift` | NSView 布局/绘制/鼠标命中 | ≤900 |
 | `CandidatePanelWindow.swift` | NSPanel 生命周期/回调装配 | ≤400 |
 | `CandidateTheme.swift` | 颜色/Layout 几何/齿轮参数 | ≤500 |
-| `CandidateSettings.swift` | Associate/ModeScope 设置模型 | ≤200 |
+| `CandidateSettings.swift` | 联想开关热路径模型（其余设置由设置中心写同一 UserDefaults 域） | ≤200 |
 | `EngineClient.swift` | 引擎 IPC 对外 API | ≤600 |
 | `DaemonTransport.swift` | Unix socket 连接/帧读写/重连 | ≤500 |
-| `SettingsWindow.swift` | 设置窗窗口骨架与控制器（show/makeContentView：导航/三页容器/页脚） | ≤600 |
-| `SettingsTheme.swift` | 设置窗视觉令牌（三端共享设计系统）+ 自绘基础视图与控件（窗口底/导航列/卡片/开关/胶囊/按钮/焦点环） | ≤600 |
-| `SettingsWindowPages.swift` | 三页视图构建（卡片/行/说明/按钮） | ≤700 |
-| `SettingsWindowTargets.swift` | @objc target/action | ≤400 |
+| `SettingsLauncher.swift` | 设置入口：拉起 app 内 `Contents/Resources/chaoset-settings`（找不到/启动失败只弹错误，不回退旧窗） | ≤200 |
 | `main.swift` | 入口 | ≤100 |
 
 （若实际拆分与上表不同，以本表为准更新；`checkuiparity` 断言上表文件存在且单文件不超过上表预算。）
 
-### 3.3 Linux（`shims/linux/setup/`）
+### 3.3 Linux 设置入口（`shims/linux/setup/`）
+
+设置 UI 由 Slint 设置中心提供；这里只剩一个纯 POSIX 启动器（ibus component 的
+`<setup>` 入口 `/usr/share/chaoset/chaoset-setup` 保持不变）：
 
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
-| `chaoset-setup.c` | GtkApplication/窗口骨架/导航/页脚/入口 | ≤400 |
-| `setup_page_input.c` | 输入页（联想开关、中英状态） | ≤400 |
-| `setup_page_dict.c` | 词库页（统计/清空/导出/导入入口） | ≤400 |
-| `setup_page_about.c` | 关于页 | ≤300 |
-| `setup_pages.h` | 页面构建函数声明 | ≤120 |
-| `setup_ctl.c` | 路径/tool_path/config 读写/输入法进程生命周期核心 | ≤700 |
-| `setup_internal.h` | 跨 TU 内部声明（result_*/find_tool/run_tool/路径/进程生命周期） | ≤120 |
-| `setup_import.c` | 词库导入流程 | ≤500 |
-| `setup_learn.c` | 学习数据统计/导出/清空流程 | ≤500 |
-| `setup_ctl.h` | 对外 API | ≤120 |
-| `test_setup_ctl.c` | setup_ctl 单测 | ≤200 |
+| `chaoset-setup.c` | 纯 POSIX 启动器：PATH → `/usr/bin/chaoset-settings` → 自身同目录，`execv`；找不到只报错（不链接 GTK、无回退 UI） | ≤200 |
 
 ### 3.4 Linux 原生引擎（`shims/linux/engine/`）
 
@@ -160,17 +152,18 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 
 ### 3.6 跨平台设置中心（`shims/settings/`）
 
-基于 Slint 实现的原生 GPU 加速设置窗口，对齐 `docs/ui-parity.md` 视觉令牌，完全脱离 Chromium/Electron 庞大体积：
+**唯一设置 UI**：基于 Slint 实现的跨平台设置中心，对齐 `docs/ui-parity.md` 视觉令牌，完全脱离 Chromium/Electron 庞大体积；三端壳只保留启动器。
 
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
 | `ui/tokens.slint` | 21 项视觉令牌定义（深色/浅色配色、卡片圆角、几何尺寸） | ≤100 |
 | `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览） | ≤400 |
 | `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 | ≤500 |
-| `src/bridge.rs` | Go CLI 桥接：读写 `chaoset config`、`chaoset userdict`、`chaoset import` | ≤300 |
+| `src/bridge.rs` | Go CLI 桥接：经同目录 `chaosetctl` 读写 `config`/`userdict`/`import`，并重启 daemon | ≤300 |
 | `src/lib.rs` | Slint 模块接入、系统深浅色感知、模块导出与无头测试桩 | ≤150 |
 | `src/events.rs` | 设置窗事件绑定（联想/模糊音/双拼/中英作用域/主题/学习数据/词库导入）与重启 daemon | ≤150 |
-| `src/main.rs` | Slint 初始化（读设置/统计/版本）与事件循环 | ≤150 |
+| `src/main.rs` | Slint 初始化（读设置/统计/版本）、单实例与事件循环 | ≤150 |
+| `src/single_instance.rs` | 单实例：Unix 本地 socket 转发页号 / Windows 命名互斥体 + 前置已有窗口 | ≤250 |
 
 ## 4. 机器断言（checkuiparity）
 

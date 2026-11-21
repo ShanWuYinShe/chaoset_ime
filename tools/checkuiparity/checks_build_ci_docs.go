@@ -50,7 +50,7 @@ func checkVersionSource(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, makefile,
 		"VERSION_SCRIPT", "VERSION_QUAD", "PKG_VERSION",
 		"s/@VERSION@/$(PKG_VERSION)/g", "version.sh", "CHAOS_VERSION_TAG")
-	for _, s := range []string{winBuild, macBuild, linuxSetupBuild} {
+	for _, s := range []string{winBuild, macBuild} {
 		checkContains(fsys, problems, group, s, "version.sh")
 		checkExcludes(fsys, problems, group, s, "git describe --tags")
 	}
@@ -103,8 +103,6 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/daemon.hpp", 300},
 	{"shims/windows/src/ui_client.cpp", 700},
 	{"shims/windows/src/ui_client.hpp", 300},
-	{"shims/windows/src/settings_window.cpp", 1600},
-	{"shims/windows/src/settings_window.hpp", 300},
 	{"shims/windows/src/ui_host.cpp", 1000},
 	{"shims/windows/src/ui_host.hpp", 300},
 	{"shims/windows/src/candidate_layout.hpp", 200},
@@ -118,24 +116,20 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/macos/src/CandidateSettings.swift", 200},
 	{"shims/macos/src/EngineClient.swift", 600},
 	{"shims/macos/src/DaemonTransport.swift", 500},
-	{"shims/macos/src/SettingsWindow.swift", 600},
 	// 2026-11-16「暖陶纸感」视觉升级把主题令牌与自绘控件抽成独立文件
 	// （三端共享设计系统 + 可被 checkuiparity 逐值断言）。
-	{"shims/macos/src/SettingsTheme.swift", 600},
-	{"shims/macos/src/SettingsWindowPages.swift", 700},
-	{"shims/macos/src/SettingsWindowTargets.swift", 400},
 	{"shims/macos/src/main.swift", 100},
-	{"shims/linux/setup/chaoset-setup.c", 400},
-	{"shims/linux/setup/setup_page_input.c", 400},
-	{"shims/linux/setup/setup_page_dict.c", 400},
-	{"shims/linux/setup/setup_page_about.c", 300},
-	{"shims/linux/setup/setup_pages.h", 120},
-	{"shims/linux/setup/setup_ctl.c", 700},
-	{"shims/linux/setup/setup_internal.h", 120},
-	{"shims/linux/setup/setup_import.c", 500},
-	{"shims/linux/setup/setup_learn.c", 500},
-	{"shims/linux/setup/setup_ctl.h", 120},
-	{"shims/linux/setup/test_setup_ctl.c", 200},
+	{"shims/linux/setup/chaoset-setup.c", 200},
+	// 统一设置中心启动器（三端只保留入口；唯一 UI 是 Slint 设置中心）。
+
+	{"shims/windows/src/settings_launcher.cpp", 200},
+
+	{"shims/windows/src/settings_launcher.hpp", 100},
+
+	{"shims/macos/src/SettingsLauncher.swift", 200},
+
+	{"shims/settings/src/single_instance.rs", 250},
+
 	// Linux 原生引擎（shims/linux/engine/）：此前不在模块地图与预算内，是
 	// 「大文件回潮」的盲区；docs/architecture.md §3.4 同步登记。
 	{"shims/linux/engine/main.cpp", 900},
@@ -155,7 +149,7 @@ var shimModuleBudgets = []shimModuleBudget{
 var shimDirLineLimits = map[string]int{
 	"shims/windows/src":  1600,
 	"shims/macos/src":    1000,
-	"shims/linux/setup":  800,
+	"shims/linux/setup":  200,
 	"shims/linux/engine": 1000,
 	"shims/common/ipc":   800,
 	"shims/settings/src": 800,
@@ -228,45 +222,39 @@ func checkArchitectureDoc(fsys fs.FS, problems *[]string) {
 // checkPackaging 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包；
 // macOS 运行组件必须随 ChaosetIME.app 安装。
 func checkPackaging(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip")
-	checkContains(fsys, problems, groupPackaging, installSh, "chaoset-setup")
-	checkContains(fsys, problems, groupPackaging, archScript, "chaoset-setup")
-	checkContains(fsys, problems, groupPackaging, releaseYML, "chaoset-setup", "chaoset-macos.zip")
+	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip", "build-settings", "chaoset-settings")
+	checkContains(fsys, problems, groupPackaging, installSh, "chaoset-setup", "chaoset-settings")
+	checkContains(fsys, problems, groupPackaging, archScript, "chaoset-setup", "chaoset-settings")
+	checkContains(fsys, problems, groupPackaging, releaseYML, "chaoset-setup", "chaoset-macos.zip", "chaoset-settings")
 	checkContains(fsys, problems, groupPackaging, linuxComp, "chaoset-setup")
-	checkContains(fsys, problems, groupPackaging, ciYML,
-		"build.sh", "test_setup_ctl")
-	// macOS：运行组件必须随 ChaosetIME.app 安装，且安装器/CLI 都从 app 内启动 daemon。
-	checkContains(fsys, problems, groupPackaging, macBuild,
-		"$APP/Contents/Resources/", "dict_common.tsv")
-	checkContains(fsys, problems, groupPackaging, macSetup,
-		"installedResource(\"chaosetd\")", "embeddedResource(\"chaoset-import\")", "installSetupApp")
-	checkContains(fsys, problems, groupPackaging, macInstall,
-		"$IM/ChaosetIME.app/Contents/Resources/chaosetd")
+	checkContains(fsys, problems, groupPackaging, ciYML, "shims/linux/setup/build.sh", "chaoset-settings")
+	// macOS：运行组件与统一设置中心（含其依赖的 chaosetctl）必须随 app 安装。
+	checkContains(fsys, problems, groupPackaging, macBuild, "$APP/Contents/Resources/", "dict_common.tsv", "chaoset-settings", "chaosetctl")
+	checkContains(fsys, problems, groupPackaging, macSetup, `installedResource("chaosetd")`, `embeddedResource("chaoset-import")`, "installSetupApp")
+	checkContains(fsys, problems, groupPackaging, macInstall, "$IM/ChaosetIME.app/Contents/Resources/chaosetd")
 }
 
 // checkCICoverage CI 覆盖不退化：按键路由/联想 E2E 回归测试必须存在且被 CI 调用；
 // 日常 CI 必须跑真实打包链（不能只靠打 tag 时的 release 冒烟）。
 func checkCICoverage(fsys fs.FS, problems *[]string) {
-	// key_routing 按键路由回归测试必须存在且被 CI 调用。
 	checkExists(fsys, problems, groupCICoverage, "shims/macos/tests/key_routing/run.sh")
 	checkContains(fsys, problems, groupCICoverage, ciYML, "key_routing")
-	// 联想端到端（EngineClient + 真实 daemon）同样必须存在且被 CI 调用。
 	checkExists(fsys, problems, groupCICoverage, "shims/macos/tests/associate/run.sh")
 	checkContains(fsys, problems, groupCICoverage, ciYML, "associate/run.sh")
-	// 安装包自检：日常 CI 必须构建 Linux 包并断言设置窗模块随包，
-	// 不能只靠打 tag 时的 release 冒烟。
+	// 安装包自检：日常 CI 必须构建 Linux 包并断言设置入口与 Slint 设置中心随包。
 	checkContains(fsys, problems, groupCICoverage, ciYML, "make package-linux", "Linux 安装包自检")
-	// 同理：日常 macos-build 必须跑真实打包链（zip），不能只 build。
+	// 日常 macos-build 必须跑真实打包链（zip），不能只 build。
 	checkContains(fsys, problems, groupCICoverage, ciYML, "make package-macos", "macOS 构建 + 安装包")
-	// equivalence.sh B 段用 bin/chaoset-import：macOS job 必须先 make build。
 	checkContains(fsys, problems, groupCICoverage, ciYML, "make build")
-	// CI 门禁必须覆盖 Slint 设置中心单元测试、类型检查与 Windows 交叉编译。
+	// Slint 设置中心：单元测试/类型检查 + 三端构建（mac universal / Windows）。
 	checkContains(fsys, problems, groupCICoverage, ciYML,
 		"cargo test --manifest-path shims/settings/Cargo.toml",
 		"cargo check --manifest-path shims/settings/Cargo.toml",
+		"make build-settings-universal",
 		"make build-settings-windows")
-	// 断言用例数守卫：防止有人删断言让回归测试静默变弱；并校验 expectedChecks
-	// 与实际 check( 数一致（加断言忘了同步会 FAIL）。
+	// 启动器冒烟：Windows 交叉编译产物必须内嵌设置中心文件名；Linux 启动器
+	// 编译/execv 冒烟步骤必须在 CI 里存在。
+	checkContains(fsys, problems, groupCICoverage, ciYML, "设置入口启动器编译与冒烟")
 	checkContains(fsys, problems, groupCICoverage, macKeyTest, "expectedChecks")
 	checkKeyRoutingCount(fsys, problems)
 }
@@ -275,10 +263,8 @@ func checkCICoverage(fsys fs.FS, problems *[]string) {
 // 历史阶段记录已移入 CHANGELOG，README 不得残留已过期的现状描述。
 func checkDocParity(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupDocParity, uiParityDoc,
-		"学习数据管理", "词库导入", groupSettingsSingleton, "Windows per-monitor DPI",
-		"双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
-	// 历史阶段记录已移入 CHANGELOG（README 只保留当前文档）；历史条目
-	// 不能留下「Linux 仍只有 CLI」这类已过期的现状描述，必须带「阶段 54 已补齐」。
+		"学习数据", "词库导入", "Slint", "chaoset-settings",
+		"Windows per-monitor DPI", "双拼 mspy", "无障碍", "鼠标点选候选", "滚轮翻页")
 	checkContains(fsys, problems, groupDocParity, changelogDoc, "阶段 54",
 		"Linux 设置窗补「词库导入」GUI")
 	checkExcludes(fsys, problems, groupDocParity, readmeDoc,
@@ -289,8 +275,10 @@ func checkDocParity(fsys fs.FS, problems *[]string) {
 // 图标必须随包。与 checkPackaging 同组、在注册表里位于原执行位置（daemon 单实例之后），
 // 保持既有失败输出顺序不变。
 func checkPackagingArtifacts(fsys fs.FS, problems *[]string) {
-	checkExists(fsys, problems, groupPackaging, linuxTest)
-	checkExists(fsys, problems, groupPackaging, linuxCtl)
+	checkExists(fsys, problems, groupPackaging, "shims/linux/setup/chaoset-setup.c")
+	checkExists(fsys, problems, groupPackaging, "shims/linux/setup/build.sh")
+	checkExists(fsys, problems, groupPackaging, "shims/windows/src/settings_launcher.cpp")
+	checkExists(fsys, problems, groupPackaging, "shims/macos/src/SettingsLauncher.swift")
 	for _, size := range []string{"16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256"} {
 		checkExists(fsys, problems, groupPackaging,
 			fmt.Sprintf("shims/linux/icons/hicolor/%s/apps/chaoset.png", size))

@@ -9,13 +9,14 @@ import UniformTypeIdentifiers
 // 启动方式：
 //   直接双击 = 图形界面
 //   ChaosetSetup --import = 图形界面并在窗口就绪后直接弹导入面板
-//     （输入法设置窗「导入词库…」按钮用，省一次点击）
+//     （给命令行/脚本用；macOS 统一设置中心的「导入词库…」直接调 chaosetctl
+//      import，不再经本 app）
 //   ChaosetSetup --selftest <supportDir> [词库文件...]  = 无界面自检（会话内验证用）
 //
 // 本 app 随包携带完整的 ChaosetIME.app（daemon / 导入工具 / 种子词库都在其
 // Contents/Resources 内）；安装时只把这一个 app 装入 ~/Library/Input Methods，
 // 不把运行组件散落到 Application Support。安装器自身也会装到 ~/Applications，
-// 供输入法设置窗的「导入词库」入口调用。
+// 供用户随时双击打开（安装/更新、导入词库、状态自检、卸载）。
 
 let imeTargetBundleName = "ChaosetIME.app"
 let imeResourceBundleName = "ChaosetIME.embedded"
@@ -324,8 +325,9 @@ func restartDaemon(support: String) -> String {
     return out
 }
 
-/// 把安装器自己装到 ~/Applications/Chaoset.app，供输入法设置窗「导入词库」
-/// 与后续更新入口使用；不把安装器留在临时解压目录里（用户可能随时删除）。
+/// 把安装器自己装到 ~/Applications/Chaoset.app，供用户后续双击打开
+/// （安装/更新、导入词库、状态自检、卸载）；不把安装器留在临时解压目录里
+/// （用户可能随时删除）。
 func installSetupApp() -> String {
     let fm = FileManager.default
     let src = URL(fileURLWithPath: Bundle.main.bundlePath).resolvingSymlinksInPath().path
@@ -652,8 +654,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         refresh()
 
-        // 输入法设置窗的「导入词库…」按钮以 `--import` 拉起本 app 时，
-        // 窗口就绪后直接弹出文件选择面板（省一次点击）；正常双击启动不带该参数。
+        // 以 `--import` 拉起本 app 时，窗口就绪后直接弹出文件选择面板
+        // （省一次点击）；正常双击启动不带该参数。
         if CommandLine.arguments.contains("--import") {
             DispatchQueue.main.async { [weak self] in self?.doImport() }
         }

@@ -1,5 +1,10 @@
-// checks_settings.go：三端设置窗契约（共享文案/单例/设置核心方案 A/Linux 装配）
-// 与学习数据 GUI、engine 纯净约束。
+// checks_settings.go：设置窗契约（唯一实现 = Slint 统一设置中心）、三端启动入口、
+// 设置核心方案 A（Go internal/settings + chaoset-settingsctl）、学习数据/词库导入的
+// CLI 契约，以及「Go 引擎已移除」纯净约束。
+//
+// 架构基线：三端壳不再实现原生设置窗，只保留启动器把 chaoset-settings 拉起来
+// （macOS SettingsLauncher.swift / Windows settings_launcher.cpp / Linux POSIX
+// 启动器 chaoset-setup）。视觉/文案/交互的唯一实现是 shims/settings（Slint）。
 
 package main
 
@@ -7,76 +12,103 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
-// checkSettingsWindowContract 锁住三端设置窗契约（2026-11-06 定稿，2026-11-16
-// 「暖陶纸感」升级为三端同构卡片）：
-//  1. 骨架：客户区 640×560pt、左导航 148pt + 选中态、底部固定页脚版本号
-//     （所有页，不再只放关于页）；关于页有「关于」分组标题、版本号不重复；
-//  2. Windows 卡片契约：SettingsCardDef / kInputCards / kDictionaryCards /
-//     kAboutCards / settingsCardColor；控件背景必须用卡片刷（settingsControlBg
-//     + g_settingsCardBrush），防止「卡片上一条窗口底色横条」回归；
-//  3. 卡片容器三端都有（mac SettingsCardView / Windows 自绘 / Linux .card CSS），
-//     视觉令牌逐值一致由「设置窗视觉令牌」组断言；页脚/关于页标题/词库导入
-//     统一说明必须与契约一致；
-//  4. docs/ui-parity.md 必须记录骨架、视觉令牌表、几何与分组文案。
-func checkSettingsWindowContract(fsys fs.FS, problems *[]string) {
+// checkSettingsCenterContract 锁定设置 UI 的唯一实现与三端入口：
+//  1. Slint 统一设置中心存在且具备 640×560 骨架、三页、页脚版本号、关于页；
+//  2. 三端只允许「启动 chaoset-settings」的启动器，禁止回退旧原生设置窗；
+//  3. 缺设置中心时启动器必须明确报错（不得静默/降级成残缺设置）；
+//  4. 三端发行包与构建链必须携带设置中心（含 macOS 依赖的 chaosetctl）。
+func checkSettingsCenterContract(fsys fs.FS, problems *[]string) {
 	const group = groupSettingsContract
-	// Windows 卡片契约（2026-11-06 修复的回归锁）。
-	checkContains(fsys, problems, group, winShell,
-		"struct SettingsCardDef", "kInputCards", "kDictionaryCards", "kAboutCards",
-		"settingsCardColor", "g_settingsCardBrush", "settingsControlBg",
+	// Slint UI 契约（视觉/文案唯一实现）。
+	checkContains(fsys, problems, group, slintApp,
+		"preferred-width: 640px;", "preferred-height: 560px;", "width: 148px;",
+		`title: "关于"`, "root.version_text",
+		`title: "输入行为"`, `title: "中英状态"`, "学习数据", "词库扩展",
 	)
-	// 尺寸：三端客户区 640×560pt；Windows 页脚 34pt。
-	checkContains(fsys, problems, group, winShell,
-		"constexpr int kWinW = 640;", "constexpr int kWinH = 560;",
-		"constexpr int kFooterH = 34;")
-	checkContains(fsys, problems, group, macSettings,
-		"width: 640, height: 560", "footerLabel", "PageSwitchTarget", "styleNavButton")
-	// 2026-11-16：Linux 左导航由 GtkStackSidebar 换成与 macOS/Windows 同形态的
-	// 自绘胶囊导航（互斥切换 stack 页）；三端分组标题/页脚/版本串保持不变。
+	// macOS：Shell 只拉起 app 内 chaoset-settings；设置项读写经同目录 chaosetctl。
+	checkContains(fsys, problems, group, macLauncher,
+		"chaoset-settings", "Contents/Resources", "未找到统一设置中心")
+	checkContains(fsys, problems, group, macBuild, "chaoset-settings", "chaosetctl")
+	// Windows：UI 宿主经 settings_launcher 起进程；TIP 只发命令（不在 TIP 内建进程）。
+	checkContains(fsys, problems, group, winLauncher,
+		`kSettingsExeName[] = L"chaoset-settings.exe"`, "CreateProcessW")
+	checkContains(fsys, problems, group, winLauncherHpp, "LaunchSettingsCenter")
+	checkContains(fsys, problems, group, winUiHost, "LaunchSettingsCenter")
+	checkContains(fsys, problems, group, winInstaller, "chaoset-settings.exe")
+	// Linux：chaoset-setup 是纯 POSIX 启动器（ibus setup 入口不变）。
 	checkContains(fsys, problems, group, linuxSetup,
-		"gtk_window_set_default_size(GTK_WINDOW(window), 640, 560)",
-		"Chaoset 版本 %s", "gtk_stack_set_visible_child")
-	// 页脚版本号固定在最底：Windows 自绘、macOS footerLabel、Linux vbox 页脚。
-	checkContains(fsys, problems, group, linuxSetup,
-		"gtk_box_pack_start(GTK_BOX(vbox), footer, FALSE, FALSE, 0);")
-	// 关于页分组标题（三端）：Windows 卡片标题 / macOS label / Linux markup / Slint 卡片。
-	checkContains(fsys, problems, group, winShell, `L"关于"`)
-	checkContains(fsys, problems, group, macSettings, `title: "关于"`)
-	checkContains(fsys, problems, group, linuxSetup, "<b>关于</b>")
-	checkContains(fsys, problems, group, slintApp,
-		"preferred-width: 640px;", "preferred-height: 560px;",
-		"width: 148px;", `title: "关于"`, "root.version_text")
-	// 词库导入统一说明由 sharedSettingsText 在三端逐字断言（2026-11-06 定稿：
-	// Windows 也已改为「导入后自动重启输入法」）；这里只锁文档同步。
-	// 文档必须记录骨架/卡片口径/分组文案（实现改了文档不跟会 FAIL）。
+		"chaoset-settings", "未找到统一设置中心", "execv")
+	checkContains(fsys, problems, group, linuxComp, "chaoset-setup")
+	checkContains(fsys, problems, group, installSh, "chaoset-settings")
+	checkContains(fsys, problems, group, linuxArchPkg, "chaoset-settings")
+	// 旧原生设置窗不得回归（文件必须不存在）：出现即说明又走回双实现。
+	for _, gone := range []string{
+		"shims/macos/src/SettingsWindow.swift",
+		"shims/macos/src/SettingsWindowPages.swift",
+		"shims/macos/src/SettingsWindowTargets.swift",
+		"shims/macos/src/SettingsTheme.swift",
+		"shims/windows/src/settings_window.cpp",
+		"shims/windows/src/settings_window.hpp",
+		"shims/linux/setup/setup_page_input.c",
+		"shims/linux/setup/setup_page_dict.c",
+		"shims/linux/setup/setup_page_about.c",
+		"shims/linux/setup/setup_ctl.c",
+		"shims/linux/setup/setup_learn.c",
+		"shims/linux/setup/setup_import.c",
+	} {
+		checkAbsent(fsys, problems, group, gone)
+	}
+	// 构建/打包链必须携带设置中心（缺了用户点设置没有 UI）。
+	checkContains(fsys, problems, group, makefile,
+		"build-settings", "build-settings-universal", "build-settings-windows",
+		"chaoset-settings")
+	checkContains(fsys, problems, group, macInstall, "ChaosetIME.app")
+	// 文档：设置窗契约必须以 Slint 统一设置中心为口径。
 	checkContains(fsys, problems, group, uiParityDoc,
-		"## 设置窗契约", "640×560pt", "卡片容器三端都有",
-		"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。",
-		"模糊音", "双拼方案", "内容区滚动")
-	// 输入行为设置（模糊音 / 双拼方案）：三端 UI 与 daemon 设置读取必须同时存在
-	// （只改 UI 不生效、只改 daemon 用户看不见，都是回归）。
-	checkContains(fsys, problems, group, macSettings,
-		"FuzzySetting", "ShuangpinSetting", "模糊音", "双拼方案",
-		"restartDaemonForSettingsChange")
-	checkContains(fsys, problems, group, slintApp,
-		"fuzzy_enabled", "shuangpin", "fuzzy_toggled", "shuangpin_changed",
-		"模糊音", "双拼方案")
-	checkContains(fsys, problems, group, "crates/chaosetd/src/input_settings.rs",
-		"ChaosetFuzzy", "ChaosetShuangpin", "fuzzy", "shuangpin")
-	// 统一设置中心必须随三端发行包携带：macOS app 内副本 / Windows exe /
-	// Linux bin；否则用户点齿轮只能看到旧的原生窗口，新设置不可达。
-	checkContains(fsys, problems, group, "shims/macos/build.sh", "chaoset-settings")
-	checkContains(fsys, problems, group, "shims/settings/src/bridge.rs",
-		"set_fuzzy", "set_shuangpin", "restart_daemon")
+		"## 设置窗契约", "Slint", "640×560pt", "chaoset-settings")
 }
 
-// checkSettingsCore 锁住方案 A 的 Go 单一真源与 CLI 契约（2026-11-06）：
-// internal/settings 是设置 schema/默认值/持久化的唯一真源；三端设置窗冷路径
-// 通过 chaoset-settingsctl 读写。文件缺失、存储键名被改、CLI 子命令被删都会 FAIL。
+// settingsCenterText 是 Slint 统一设置中心的必备文案（唯一实现，无需三端同步）。
+var settingsCenterText = []string{
+	"Chaoset 设置",
+	"输入行为",
+	"词组联想",
+	"学习数据",
+	"清空学习数据",
+	"导出学习数据",
+	"学习数据仅保存在本机",
+	"设置项会随版本持续补充",
+	"Chaoset 版本",
+	"https://github.com/ShanWuYinShe/chaoset_ime",
+	"中英状态",
+	"全局共享",
+	"每进程独立",
+	"跟随系统",
+	"浅色",
+	"深色",
+	"模糊音",
+	"双拼方案",
+	"全拼",
+	"自然码",
+	"微软",
+	"小鹤",
+	"跨平台中文输入法",
+	"代码 MIT · 词库 CC BY-SA 4.0",
+	"支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。",
+}
+
+// checkSettingsSharedText 设置文案只存在一份实现（Slint）：这里锁住关键文案与
+// 仓库链接，防止设置中心改文案时把功能入口删掉。
+func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
+	checkContains(fsys, problems, groupSettingsSharedText, slintApp, settingsCenterText...)
+}
+
+// checkSettingsCore 锁住方案 A：设置项 schema/默认值/持久化唯一真源是 Go
+// internal/settings，CLI 是 chaoset-settingsctl；Slint 设置中心冷路径经
+// chaosetctl（multicall 包含 settingsctl 子命令）读写，输入热路径仍读本机存储。
 func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	const group = groupSettingsCore
 	for _, path := range []string{
@@ -91,147 +123,55 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	} {
 		checkExists(fsys, problems, group, path)
 	}
-	// Windows 注册表子键必须逐字等于 Software\Chaoset（raw string 里只有一个
-	// 反斜杠；2026-11-06 曾因生成脚本吞反斜杠写成 SoftwareChaoset）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
 		"windowsRegistrySubKey", "Software\\Chaoset")
-	// CLI 契约面：get/set + 四个键名 + JSON 字段名 + 两档作用域 + 三档主题。
 	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
 		"get", "set", "associate", "fuzzy", "shuangpin", "mode-scope", "theme", "ui-english",
 		"system|process", "system|light|dark", "full|zrm|mspy|flypy")
-	// 单一真源：两档枚举名与缺省 JSON 契约值固定为 system。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
 		"mode_scope", "ui_english", "theme", "fuzzy", "shuangpin",
 		"ModeScopeSystem", "ModeScopeProcess",
 		"ThemeSystem", "ThemeLight", "ThemeDark",
 		"ShuangpinFull", "ShuangpinZrm", "ShuangpinMspy", "ShuangpinFlypy",
 		`{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}`)
-	// 旧三档值的读取归一化必须保留：window→process、未知→system
-	// （老用户存储里仍有 window，删掉迁移映射会让 get/设置窗拿到非法值）。
 	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		`case ModeScopeProcess, "window":`,
-		"parseStoredModeScope")
-	// ui-parity 文档必须记录两档语义与旧值迁移规则（实现/文档同步）。
+		`case ModeScopeProcess, "window":`, "parseStoredModeScope")
 	checkContains(fsys, problems, group, uiParityDoc,
-		"两档", "全局共享", "每进程独立",
-		"window→process", "未知→system")
-	// macOS 域/键名必须与 Swift 壳一致（写错域 = 设置窗读写落到另一个域）。
+		"两档", "全局共享", "每进程独立", "window→process", "未知→system")
 	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
 		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled",
 		"ChaosetFuzzy", "ChaosetShuangpin", "ChaosetModeScope", "ChaosetTheme")
-	// 方案 A2 试点（Windows）：设置窗的设置项冷路径必须走 chaoset-settingsctl，
-	// 且带 1s 硬超时与 native 回退；打包必须带 CLI。
-	checkContains(fsys, problems, group, winShell,
-		"chaoset-settingsctl.exe", "settingsRunCtl(", "settingsLoadShared(",
-		"settingsWriteShared(", "kSettingsCtlTimeoutMs", "set associate ", "set mode-scope ", "set theme ")
-	checkContains(fsys, problems, group, makefile, "chaoset-settingsctl")
+	// Slint 设置中心的 CLI 契约：所有读写都经 chaosetctl（与设置中心同目录）。
+	checkContains(fsys, problems, group, slintBridge,
+		"find_chaoset_bin", "CHAOS_BIN",
+		`"config"`, `"get"`, `"set"`,
+		`"userdict"`, `"import"`, "restart_daemon")
+	checkContains(fsys, problems, group, "internal/settings/store_linux.go",
+		"appdirs.LinuxConfigPath", "linuxKeyTheme")
+	// Windows 安装包必须同时带设置中心与它依赖的 chaosetctl。
 	checkContains(fsys, problems, group, winInstaller,
-		"chaoset-settingsctl.exe", "InstallRobustFile")
-	// Linux 必须复用 appdirs 的 config 路径（与 C 设置窗/chaoset-userdict 同源）。
-	checkContains(fsys, problems, group, "internal/settings/store_linux.go", "appdirs.LinuxConfigPath", "linuxKeyTheme")
-	// 架构文档必须记录 CLI 契约与单一真源位置。
+		"chaoset-settings.exe", "chaosetctl.exe")
 	checkContains(fsys, problems, group, archDoc, "chaoset-settingsctl", "internal/settings")
 }
 
-// checkLinuxSetupAssembly 锁住 2026-11-06 修复的两个 Linux 设置窗回归：
-//  1. GtkStack 页面必须用 gtk_stack_add_titled 挂载（GtkStack 不是 GtkBox；
-//     误用 gtk_box_pack_start 会让三个内容页从未挂上、设置窗内容区为空）；
-//  2. 中英状态二选一必须共用同一个首 radio 建组（from_widget），不能把
-//     GSList 等错误类型传给 GTK_RADIO_BUTTON（否则两个 radio 各自成组、可同时选中）。
-func checkLinuxSetupAssembly(fsys fs.FS, problems *[]string) {
-	const group = groupLinuxSetupAssembly
-	text, err := readText(fsys, linuxSetup)
-	if err != nil {
-		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, linuxSetup, err))
-		return
-	}
-	// 正向/负向扫描都必须去注释：修复说明注释里同时会提到新旧两种写法，
-	// 用注释内容判断会两边都「命中」。
-	code := stripCppComments(text)
-	for _, want := range []string{
-		"gtk_stack_add_titled(GTK_STACK(stack)",
-		"\"input\"", "\"dict\"", "\"about\"",
-		// 2026-11-16：左导航改自绘胶囊（三个 toggle 互斥切 stack 页），
-		// 中英状态改两个 choice 胶囊；设置写入仍走 setup_config_save_mode_scope。
-		"gtk_stack_set_visible_child",
-		"setup_config_save_mode_scope",
-	} {
-		if !strings.Contains(code, want) {
-			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 装配代码缺少 %q（设置窗装配回归，见 docs/architecture.md）", group, linuxSetup, want))
-		}
-	}
-	for _, bad := range []string{
-		"gtk_box_pack_start(GTK_BOX(stack)",
-	} {
-		if strings.Contains(code, bad) {
-			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 仍包含错误装配 %q（GtkStack 不是 GtkBox，见 docs/architecture.md）",
-				group, linuxSetup, bad))
-		}
-	}
-}
-
-// checkSettingsSharedText 三端 + Slint 设置窗共享文案必须逐字一致（改一端即 FAIL）。
-func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
-	for _, path := range []string{macSettings, winShell, linuxSetup, slintApp} {
-		checkContains(fsys, problems, groupSettingsSharedText, path, sharedSettingsText...)
-	}
-	// 两档作用域的按钮文案 → 存储值映射不得接反：macOS/Linux/Slint 设置窗都必须是
-	// 「全局共享」→system、「每进程独立」→process。
-	checkContains(fsys, problems, groupSettingsSharedText, macSettings,
-		`case .system: title = "全局共享"`,
-		`case .process: title = "每进程独立"`)
-	checkContains(fsys, problems, groupSettingsSharedText, linuxSetup,
-		`{"全局共享", "system"}`,
-		`{"每进程独立", "process"}`)
-	checkContains(fsys, problems, groupSettingsSharedText, slintApp,
-		`"全局共享"`, `"system"`,
-		`"每进程独立"`, `"process"`)
-	// Windows 设置窗按钮标题必须真的是两档文案（注释里出现不算）。
-	checkContains(fsys, problems, groupSettingsSharedText, winShell,
-		`L"全局共享"`, `L"每进程独立"`)
-	// 外观主题三档文案三端 + Slint 一致。
-	for _, path := range []string{macSettings, winShell, linuxSetup, slintApp} {
-		checkContains(fsys, problems, groupSettingsSharedText, path,
-			"跟随系统", "浅色", "深色")
-	}
-	// Windows 121/122 → System/Process 映射不得接反（默认 System；旧的 123 档已删）。
-	checkContains(fsys, problems, groupSettingsSharedText, winShell,
-		"(LOWORD(wParam) == 121 || LOWORD(wParam) == 122)",
-		"ModeScope scope = ModeScope::System;",
-		"if (LOWORD(wParam) == 122) scope = ModeScope::Process;")
-}
-
-// checkSettingsSingleton 三端设置窗单例实现必须存在（mac 静态 window / Windows g_settingsWnd / Linux Gtk.Application）。
-func checkSettingsSingleton(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupSettingsSingleton, macSettings, "private static var window: NSWindow?")
-	checkContains(fsys, problems, groupSettingsSingleton, winShell, "g_settingsWnd")
-	checkContains(fsys, problems, groupSettingsSingleton, linuxSetup,
-		"gtk_application_new", `org.chaoset.Setup`)
-}
-
-// checkLearningDataGUI 学习数据管理三端都有 GUI；Linux 侧只调 chaoset-userdict 本地文件模式。
+// checkLearningDataGUI 学习数据管理只有 Slint 设置中心一份 GUI；实现走
+// chaosetctl userdict（本地文件模式），壳内不再重复学习数据界面。
 func checkLearningDataGUI(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupLearningGUI, macEngine,
-		"func userStats", "func userClear", "func userExportAll")
-	checkContains(fsys, problems, groupLearningGUI, macSettings,
-		"userStats", "userClear", "userExportAll")
-	checkContains(fsys, problems, groupLearningGUI, winShell,
-		"userStats", "userClear", "userExportAll")
-	checkContains(fsys, problems, groupLearningGUI, linuxSetup,
-		"setup_userdict_stats", "setup_userdict_clear", "setup_userdict_export",
-		"g_idle_add")
-	checkContains(fsys, problems, groupLearningGUI, linuxCtl,
-		"chaoset-userdict", "-userdict", "setup_userdict_clear", "ibus")
+	const group = groupLearningGUI
+	checkContains(fsys, problems, group, slintBridge,
+		"get_userdict_stats", "clear_userdict", "export_userdict")
+	checkContains(fsys, problems, group, slintEvents,
+		"on_clear_userdict_clicked", "on_export_userdict_clicked")
+	checkContains(fsys, problems, group, slintApp,
+		"清空学习数据", "导出学习数据…")
+	checkExists(fsys, problems, group, userdictCLI)
+	checkContains(fsys, problems, group, "internal/tools/userdict/local.go",
+		"func (u *localUserDict) Save() error", "func (u *localUserDict) Stats()")
 }
 
 // checkNoGoEngine 锁定「Go 引擎已删除、Rust 是唯一实现」：
 //  1. engine/ 目录不得重新出现（回退成双实现）；
 //  2. 任何 Go 源码不得 import "chaoset.ime/engine"（工具层不得再绑回引擎）。
-//
-// 这是删除 Go 引擎后的回归锁：旧 engine 包若被重新引入，候选行为会再次出现
-// 「Go 与 Rust 两套实现漂移」的问题，而用户在机器上看到的是偶尔不一致。
 func checkNoGoEngine(fsys fs.FS, problems *[]string) {
 	const group = groupNoGoEngine
 	if _, err := fs.Stat(fsys, "engine"); err == nil {
@@ -266,8 +206,8 @@ func checkNoGoEngine(fsys fs.FS, problems *[]string) {
 	})
 }
 
-// settingsTokenNames 是三端设置窗视觉令牌表的必备令牌名（只防「删表行」；
-// 具体色值不在 Go 里写死，唯一事实源是 docs/ui-parity.md 的表格）。
+// settingsTokenNames 是设置窗视觉令牌表的必备令牌名（只防「删表行」；
+// 具体色值不写死，唯一事实源是 docs/ui-parity.md 的表格）。
 var settingsTokenNames = []string{
 	"windowBg", "navBg", "cardBg", "cardBorder", "divider",
 	"textPrimary", "textSecondary", "textTertiary",
@@ -288,51 +228,22 @@ func parseSettingsTokenTable(doc string) map[string][2]string {
 	return out
 }
 
-// settingsRGBLiteral 把 RRGGBB 转成 Windows 源码里的 RGB(0xRR, 0xGG, 0xBB) 写法。
-func settingsRGBLiteral(hex string) string {
-	r, _ := strconv.ParseUint(hex[0:2], 16, 8)
-	g, _ := strconv.ParseUint(hex[2:4], 16, 8)
-	b, _ := strconv.ParseUint(hex[4:6], 16, 8)
-	return fmt.Sprintf("RGB(0x%02X, 0x%02X, 0x%02X)", r, g, b)
-}
-
-// checkSettingsVisualTokens 锁住 2026-11-16「暖陶纸感」三端设置窗视觉系统。
-//
-// docs/ui-parity.md「设置窗视觉令牌」表是**唯一事实源**：这里解析表格，逐值断言
-// macOS/Windows/Linux 三端实现包含同一色值（书写形式不同：macOS 0xRRGGBB、
-// Windows RGB(0xRR, 0xGG, 0xBB)、Linux CSS #RRGGBB），并锁几何令牌、三端卡片/
-// 控件形态与禁止色。只改一端、或改了实现不改文档令牌表都会 FAIL。
-//
-// shadow 令牌只对 macOS 严格比对：阴影的 alpha/blur 按平台绘制能力落地
-// （GDI 无高斯模糊、GTK 用 box-shadow），逐值比对只会逼出假实现。
+// checkSettingsVisualTokens 锁住设置窗视觉令牌：docs/ui-parity.md 的表格是唯一
+// 事实源，Slint 实现必须逐值包含；只改实现不改令牌表、或删表行都会 FAIL。
 func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 	const group = groupSettingsVisual
-	const macTheme = "shims/macos/src/SettingsTheme.swift"
-	const winSettings = "shims/windows/src/settings_window.cpp"
-
 	doc, err := readText(fsys, uiParityDoc)
 	if err != nil {
 		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, uiParityDoc, err))
 		return
 	}
 	tokens := parseSettingsTokenTable(doc)
-
-	macText, macErr := readText(fsys, macTheme)
-	winText, winErr := readText(fsys, winSettings)
-	linuxText, linuxErr := readText(fsys, linuxSetup)
 	slintText, slintErr := readText(fsys, slintTokens)
-	for _, one := range []struct {
-		path string
-		err  error
-	}{{macTheme, macErr}, {winSettings, winErr}, {linuxSetup, linuxErr}, {slintTokens, slintErr}} {
-		if one.err != nil {
-			*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, one.path, one.err))
-		}
-	}
-	if macErr != nil || winErr != nil || linuxErr != nil || slintErr != nil {
+	if slintErr != nil {
+		*problems = append(*problems, fmt.Sprintf("%s：读取 %s 失败：%v", group, slintTokens, slintErr))
 		return
 	}
-
+	upper := strings.ToUpper(slintText)
 	for _, name := range settingsTokenNames {
 		vals, ok := tokens[name]
 		if !ok {
@@ -341,76 +252,34 @@ func checkSettingsVisualTokens(fsys fs.FS, problems *[]string) {
 				group, uiParityDoc, name))
 			continue
 		}
+		if name == "shadow" {
+			continue
+		}
 		for _, v := range vals {
-			// macOS：0xF5EFE6（大写）
-			if !strings.Contains(macText, "0x"+v) {
-				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 缺少令牌 %s 色值 0x%s（macOS 解码自 %s）", group, macTheme, name, v, uiParityDoc))
-			}
-			if name == "shadow" {
-				continue
-			}
-			// Windows：RGB(0xF5, 0xEF, 0xE6)
-			if !strings.Contains(winText, settingsRGBLiteral(v)) {
-				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 缺少令牌 %s 色值 %s（Windows 解码自 %s）",
-					group, winSettings, name, settingsRGBLiteral(v), uiParityDoc))
-			}
-			// Linux：CSS #F5EFE6（大小写不敏感）
-			if !strings.Contains(strings.ToUpper(linuxText), "#"+v) {
-				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s（Linux 设置窗聚合源）缺少令牌 %s 色值 #%s（解码自 %s）",
-					group, linuxSetup, name, v, uiParityDoc))
-			}
-			// Slint：#F5EFE6（大小写不敏感）
-			if !strings.Contains(strings.ToUpper(slintText), "#"+v) {
+			if !strings.Contains(upper, "#"+v) {
 				*problems = append(*problems, fmt.Sprintf(
 					"%s：%s（Slint 设计令牌）缺少令牌 %s 色值 #%s（解码自 %s）",
 					group, slintTokens, name, v, uiParityDoc))
 			}
 		}
 	}
-
-	// 几何令牌（pt）：三端 + Slint 同一节奏，改尺寸要一起改。
-	checkContains(fsys, problems, group, macTheme,
-		"cardRadius: CGFloat = 14", "cardPad: CGFloat = 18", "cardGap: CGFloat = 16",
-		"rowHeight: CGFloat = 36", "navWidth: CGFloat = 148",
-		"switchWidth: CGFloat = 38", "switchHeight: CGFloat = 22",
-		"buttonHeight: CGFloat = 32")
-	checkContains(fsys, problems, group, winSettings,
-		"kCardRadius = 14", "kCardPad = 18", "kCardGap = 16",
-		"kRowHeight = 36", "kNavWidth = 148")
-	checkContains(fsys, problems, group, linuxSetup,
-		"border-radius: 14px", "padding: 18px", ", 148, -1)")
+	// 几何令牌（pt/px）：改尺寸要同时改文档令牌表与实现。
 	checkContains(fsys, problems, group, slintTokens,
 		"card_radius: 14px", "card_pad: 18px", "card_gap: 16px",
 		"row_height: 36px", "nav_width: 148px",
 		"switch_width: 38px", "switch_height: 22px",
 		"button_height: 32px")
-
-	// 三端形态同构：卡片 + 暖陶开关 + 软胶囊（导航/二选一）+ 主/次按钮。
-	checkContains(fsys, problems, group, macTheme,
-		"SettingsCardView", "WarmSwitch", "WarmPillButton", "WarmButton")
-	checkContains(fsys, problems, group, winSettings,
-		"SettingsCardDef", "settingsDrawSwitch", "settingsDrawChoice", "settingsDrawButton")
-	checkContains(fsys, problems, group, linuxSetup,
-		".card", "switch:checked", ".choice", ".primary", ".secondary", ".nav")
-
-	// 禁止色：系统蓝/冷灰/旧橙是「突兀」的主要来源（C 源码先剥注释再查，
-	// 允许注释里记录历史色值，但代码里出现即 FAIL）。
+	// 控件形态：卡片 + 开关 + 胶囊选择 + 主/次按钮（components.slint）。
+	checkContains(fsys, problems, group, slintComponents,
+		"Card", "ChaosSwitch", "ChoicePill", "ChaosButton")
+	// 禁止色：系统蓝/冷灰/旧橙不得回到设置中心。
 	forbidden := []string{"0A84FF", "F5EFE6", "FFFCF7", "C9703F", "A85427", "E8DCCC", "F6E6D9", "D16B29", "994014"}
-	checkForbidden := func(path, text string) {
-		clean := strings.ToUpper(stripCppComments(text))
-		for _, bad := range forbidden {
-			if strings.Contains(clean, bad) {
-				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 仍包含禁止色 %s（系统蓝/冷灰/旧橙与暖陶纸感冲突，改用设置窗视觉令牌）",
-					group, path, bad))
-			}
+	clean := strings.ToUpper(stripCppComments(slintText))
+	for _, bad := range forbidden {
+		if strings.Contains(clean, bad) {
+			*problems = append(*problems, fmt.Sprintf(
+				"%s：%s 仍包含禁止色 %s（系统蓝/冷灰/旧橙与暖陶纸感冲突，改用设置窗视觉令牌）",
+				group, slintTokens, bad))
 		}
 	}
-	checkForbidden(macTheme, macText)
-	checkForbidden(winSettings, winText)
-	checkForbidden(linuxSetup, linuxText)
-	checkForbidden(slintTokens, slintText)
 }

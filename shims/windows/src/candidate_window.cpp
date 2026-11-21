@@ -675,7 +675,7 @@ void CandidateWindow::layoutAndPosition() {
     }
 
     // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧齿轮，
-    // 点击打开设置窗口（词组联想开关）。宽度与 mac SettingsGear.boxW=26pt 一致。
+    // 点击打开统一设置中心（词组联想开关）。宽度与 mac SettingsGear.boxW=26pt 一致。
     int totalW = pad * 2 + contentW + chevronBoxW + gearBoxW;
     // 最小窗宽与 mac contentSize 的 minW 同公式：
     // padding*2 + chevronBoxW + gearBoxW + 8pt（2026-10-30 审计 R10：此前

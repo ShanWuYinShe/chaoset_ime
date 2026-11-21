@@ -1,13 +1,15 @@
-// chaoset-ui.exe：单例 UI 宿主进程（托盘中英指示器 + 设置窗）。
+// chaoset-ui.exe：单例 UI 宿主进程（托盘中英指示器 + 统一设置中心启动入口）。
 //
 // 只有几十行：找到与自身同目录的 ChaosetIME.dll，调用导出 ChaosetRunUi。
-// 托盘绘制 / 设置窗 / 命名管道命令全部复用本 DLL 内的同一份实现，
-// 不存在第二套 UI 代码；也不把设置窗搬进 Go daemon（项目职责边界：UI 归平台 shim）。
+// 托盘绘制 / 设置中心进程启动 / 命名管道命令全部复用本 DLL 内的同一份实现，
+// 不存在第二套 UI 代码；设置 UI 唯一实现是跨平台 Slint 设置中心
+//（chaoset-settings.exe，项目职责边界：UI 归平台 shim）。
 //
 // 为什么需要独立进程见 ui_client.hpp / ui_host.hpp 的说明：
 //   - TSF 把 TIP 加载进每个宿主进程，进程内自绘托盘会变成任务栏多个图标；
-//   - 设置窗由宿主进程托管时，开始菜单/搜索（Low IL AppContainer）里打不开，
-//     且宿主退出会带走设置窗。
+//   - 开始菜单/搜索（Low IL AppContainer）里 TIP 不能 CreateProcess，
+//     设置中心必须由已运行的 UI 宿主拉起。
+
 //
 // 构建：x86_64-w64-mingw32-g++ -municode -mwindows（见 build.sh）。
 #define WIN32_LEAN_AND_MEAN
@@ -78,7 +80,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR /*cmdLine*/, int) {
         showLoadError(L"ChaosetIME.dll 缺少 ChaosetRunUi 导出（DLL 与 UI 宿主版本不匹配）。");
         return 1;
     }
-    // cmdLine 由 DLL 解析（--settings 表示首实例启动后直接打开设置窗）。
+    // cmdLine 由 DLL 解析（--settings 表示首实例启动后直接拉起统一设置中心）。
     // runUi（ChaosetRunUi）返回前已 join 命令管道线程并销毁本 DLL 创建的窗口，
     // 因此这里 FreeLibrary 是安全的（2026-11-05 评审 P0：否则线程可能仍在
     // 已卸载代码里运行）。

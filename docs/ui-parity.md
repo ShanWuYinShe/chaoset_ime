@@ -188,13 +188,13 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 
 | 能力 | macOS | Windows | Linux | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| 设置入口 | 候选栏齿轮（mouseUp 抬起才打开）→ AppKit 设置窗 | 候选栏齿轮（mouseUp 抬起才打开）/ 托盘图标 → 单例 UI 宿主里的 Win32 设置窗 | ibus-setup → GTK3 设置窗 | 三端设置窗单例；Windows 设置窗不属于 TIP 宿主进程（开始菜单/搜索等 AC 宿主里也能打开）；齿轮按下只记录、抬起且仍在齿轮区才触发 |
+| 设置入口 | 候选栏齿轮（mouseUp 抬起才打开）→ 拉起 Slint 统一设置中心 | 候选栏齿轮 / 托盘图标 → 单例 UI 宿主 → 拉起 Slint 统一设置中心 | ibus-setup「首选项」/ 系统菜单 → chaoset-setup 启动器 → 拉起 Slint 统一设置中心 | **设置 UI 只有 Slint 一处实现**（`shims/settings`，产物 `chaoset-settings`）；三端壳只保留启动器，不实现原生设置窗，也没有回退旧窗口；齿轮按下只记录、抬起且仍在齿轮区才触发 |
 | 中英状态指示器 | 无（系统菜单栏图标由系统绘制） | `chaoset-ui.exe` 的唯一托盘「中/英」图标，显示**当前输入上下文的实际状态**；中英状态由输入法自己维护（TSF 只提供线程隔间与焦点/激活原语，不代管中英模式），TIP 经命名管道上报，不在光标/鼠标旁弹提示。**两档同步方向**：`system`（全局共享）下托盘是权威——TIP 获得焦点时从托盘同步，托盘左键切换全局中英；`process`（每进程独立）下托盘是镜像——TIP 激活/切进程时把本进程状态上报到托盘，托盘左键只显示、不切换 | 由 ibus/桌面环境指示 | 每用户会话只许一个状态指示器；托盘可见性由 TSF 信号事件驱动：只要系统当前选中的输入法是本输入法就显示（与输入焦点解耦），切到其它输入法才隐藏（见下文「非激活与托盘可见性」） |
 | Windows UI 宿主 | — | `chaoset-ui.exe`（**不写登录 Run 项；TIP 首次激活带 --mode 懒启动；托盘可见性事件驱动（无周期定时器/心跳）：TSF 激活状态变化时 TIP 上报带中英值与 pid 的 `active 1`（显示并把该进程设为 owner）或 `active 0`（用户切到其它输入法；300ms 防抖后隐藏，失焦/前台离开/Deactivate 只退场不隐藏，owner 进程退出只清 owner 不隐藏），UI 宿主用 `OpenProcess`+`RegisterWaitForSingleObject` 监听 owner 退出并清理，隐藏保留 300ms 防抖；mode 只更新图标；启动 --mode 不显示**；`Local\ChaosetUi-<SID>` 单例）；托盘 + 设置窗唯一宿主，UI 实现仍在 `ChaosetIME.dll` | — | TSF 会把 TIP 加载进每个宿主进程，进程内自绘托盘会出现多个图标；升级/便携包必须清掉旧版 `ChaosetUi` Run 项 |
-| 关闭联想即时性 | 设置窗通知，已显示联想立即收起 | HWND_BROADCAST → 各宿主候选窗收起 | 下一次按键生效 | Linux 为平台机制差异 |
-| 学习数据管理 | 设置窗统计/清空/导出 | 同左 | 同左（调用 chaoset-userdict 本地模式） | 数据都在 daemon |
+| 关闭联想即时性 | 设置中心写入后，候选窗**下一次显示**时读取并收起联想 | 同左；候选窗自身保留 `Chaoset.AssociateChanged` 处理，齿轮快捷切换等进程内路径仍然即时 | 同左 | 设置中心是独立进程，不再有跨进程通知链（旧原生设置窗时代遗留）；文档口径为「下一次显示生效」 |
+| 学习数据管理 | 统一设置中心：统计/清空（二次确认）/导出，经同目录 `chaosetctl userdict` | 同左 | 同左 | 数据都在 daemon；设置中心不直接读写用户词典文件 |
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端统一两档：`system`（全局共享，默认）/ `process`（每进程独立）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process |
-| 词库导入 | Setup.app：选择文件 → chaoset-import -o -seed -backup → 重启 daemon | 设置窗同样调用 chaoset-import → 重启 daemon | 设置窗调用 chaoset-import → 重启 ibus | 合并在 Go 工具中完成 |
+| 词库导入 | 统一设置中心：选择文件 → `chaosetctl import -o … -backup` → 自动重启 daemon | 同左 | 同左 | 合并/备份/原子替换都在 Go `chaoset-import`；mac 安装器 Setup.app 仍保留导入面板 |
 | 鼠标点选候选 | 候选窗点击（按下记录、抬起上屏） | 同左（onLButtonDown 记录 / onLButtonUp 上屏） | CandidateClicked（ibus 面板决定点击语义） | 与数字键同语义；左键动作统一 mouseup（2026-11-06 用户要求） |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
 | 无障碍 | VoiceOver 候选文字/窗口级 | UIA 窗口级 provider | 由 ibus/桌面读屏决定 | Windows 候选子项未实现 |
@@ -208,7 +208,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 齿轮 hover | 无 | 无 | 刻意不做随输入变色 |
 | 齿轮触发时机 | mouseDown 只记录命中，mouseUp 仍在齿轮区才打开设置窗 | 同左（gearPressed_） | 不适用（ibus 面板无齿轮） | 同一条 mouseup 契约也适用于候选词点选/翻页：按下只记录、抬起才执行，按下后拖走不触发（2026-11-06 用户要求） |
 | 翻页箭头显示 | 双箭头：首页只有下箭头、末页只有上箭头、中间页都有；单页两枚置灰不可点 | 同左（同几何：6pt 箭头块 + 页码） | ibus 面板自绘，壳拿不到箭头绘制/命中回调，无法控制箭头显隐（按键语义一致） | Windows 像素效果需真机验收 |
-| 设置窗 | 左导航三页（输入/词库/关于，148pt）+ 卡片 + 底部页脚版本号，640×560pt；窗口蓝白底 + 透明标题栏，自绘蓝色开关/软胶囊/按钮，选中项 accentSoft 胶囊 | 左导航 148pt + 卡片 + 底部页脚版本号 + 滚动，640×560pt；蓝白底 + 深海军蓝深色，DWM 标题栏跟随；深色/DPI 需真机验收 | 自绘胶囊导航（148pt）+ 三页卡片 + 底部页脚版本号，640×560pt；蓝白 GTK CSS 主题（深浅跟随系统 + 用户主题选择），与 macOS/Windows 同令牌同形态 |
+| 设置中心 | Slint 统一设置中心：640×560、148pt 导航、三页卡片、页脚版本号；深浅主题跟随系统或用户选择；唯一 UI 实现 | 同左（同一份 Slint UI） | 同左（同一份 Slint UI） | 三端不再各自绘制；入口见「设置入口」行 |
 
 ## 非激活与托盘可见性（2026-11-07 用户要求）
 
@@ -271,25 +271,28 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   当前进程状态（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/
   切进程时把本进程状态上报到托盘，托盘左键只显示、不切换）。
 
-## 设置窗契约（三端同构 · 蓝白）
+## 设置窗契约（Slint 唯一实现 · 蓝白）
 
-三端设置窗共享骨架、视觉令牌、控件形态、分组标题与文案；配色为蓝白体系
-（对齐候选窗 #007AFF/#0066EB 高亮蓝 + 近白面板），用户也可在「输入」页切换
-跟随系统/浅色/深色。卡片容器三端都有
-（macOS `SettingsCardView` / Windows 自绘圆角卡片 / Linux `.card` CSS，以及统一跨平台设置中心 `shims/settings/`；统一设置中心随三端发行包携带：macOS app 内 `Contents/Resources/chaoset-settings`、Windows `chaoset-settings.exe`、Linux `bin/chaoset-settings`，三端入口优先打开它），
-由 tools/checkuiparity 的「设置窗视觉令牌」组逐值断言。
+设置 UI 只有一份实现：跨平台 Slint 设置中心（`shims/settings`，产物
+`chaoset-settings`）。macOS / Windows / Linux 壳**不实现原生设置窗**，只保留启动器
+把设置中心拉起来：
 
-- 尺寸与骨架：客户区 640×560pt；左侧导航列宽 148pt（导航标题 13pt semibold、
-  胶囊 112×34 左右内边距 12），三项「输入 / 词库 / 关于」，选中项 accentSoft 软胶囊 +
-  accentText 半粗字（不再用大面积实心 accent 底）；
-  内容区左边 = 导航列右侧 +24pt、右边 24pt、顶部 44pt（macOS 透明标题栏下避开
-  红绿灯）；页脚固定 34pt 高，**所有页**左下显示「Chaoset 版本 x.y.z」。
-  macOS/Windows 窗口固定 640×560pt（macOS 透明标题栏、Windows DWM 着色标题栏）；
-  Linux 客户区同样固定 640×560、非 resizable，标题栏由 GTK 自绘 headerbar（跟随窗口
-  底色，避免 GNOME/Wayland 的系统灰标题栏与另两端割裂；标题栏高度在客户区之外）。
-  字号按平台口径：macOS/Windows 用 pt，Linux 用 px——GTK 的 pt 按 96dpi 换算比 mac 的
-  pt 约大 33%，用 px 才能三端视觉字号一致（CJK 说明文字的换行位置也才对得上）。
-- 视觉令牌（**单一事实源**；三端实现逐值一致，浅色/深色两套 sRGB）：
+- macOS：`SettingsLauncher.swift` → app 内 `Contents/Resources/chaoset-settings`；
+- Windows：单例 UI 宿主 `chaoset-ui.exe` → `settings_launcher` → 同目录
+  `chaoset-settings.exe`（TIP 只经命名管道请求，不在 TSF 进程内建进程）；
+- Linux：`chaoset-setup`（纯 POSIX 启动器，不链接 GTK）→ PATH/`/usr/bin` 下的
+  `chaoset-settings`。
+
+设置中心的冷路径读写统一走同目录 `chaosetctl`（multicall：config/userdict/import），
+与 daemon 的设置单一真源（Go `internal/settings`）保持一致；找不到设置中心或启动
+失败时只明确报错，**不回退**旧原生窗口。随包位置：macOS app `Contents/Resources/`、
+Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接失败。
+
+- 尺寸与骨架：客户区 640×560；左侧导航列宽 148（三项「输入 / 词库 / 关于」，
+  选中项 accentSoft 软胶囊 + accentText 半粗字）；内容区顶部避开标题栏；页脚固定
+  高，**所有页**左下显示「Chaoset 版本 x.y.z」。Slint 自绘，无平台窗口差异。
+- 主题：跟随系统/浅色/深色三档，浅深两套令牌见下表；设置中心自身即时切换。
+- 视觉令牌（**单一事实源**；Slint `ui/tokens.slint` 逐值引用，浅色/深色两套 sRGB）：
 
   | 令牌 | light | dark | 用途 |
   | --- | --- | --- | --- |
@@ -313,54 +316,34 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   | knob | #FFFFFF | #F2F6FC | 开关滑钮 |
   | danger | #D32F2F | #FF7B72 | 危险操作文字 |
   | onAccent | #FFFFFF | #FFFFFF | accentStrong 上的文字 |
-  | shadow | #1B4A80 | #000000 | 卡片阴影（浅 12% / 深 38% 透明度；按平台绘制能力落地） |
+  | shadow | #1B4A80 | #000000 | 卡片阴影（浅 12% / 深 38% 透明度） |
 
-- 几何：卡片圆角 14pt、内边距 18pt、卡片间距 16pt；卡片标题 13pt semibold
-  textSecondary，标题带 y+16..38pt，内容从 y+50pt 起（标题与控件不重叠）；
-  行高 36pt；开关轨道 38×22pt（滑钮 16pt）；choice 胶囊高 30pt、圆角 9pt；
-  按钮高 32pt、圆角 9pt；说明 11pt textSecondary；页脚 11pt textSecondary。
-  Linux 用 px 落地且要按「含描边的总高」换算：GTK 的 `min-height` 是内容盒，
-  choice 写 28px、按钮写 30px 才得到含 1px 描边的 30/32px（与另两端等高）；
-  控件圆角取 12px（Windows 的 9pt 在 96dpi 就是 12px，比 mac 的 9pt 略圆，
-  抵消 GTK 1x 抗锯齿更硬造成的「更方」观感），导航项与品牌标同为 12px。
+  由 tools/checkuiparity 的「设置窗视觉令牌」组逐值断言（Slint 是唯一被断言的实现）。
+- 几何：卡片圆角 14、内边距 18、卡片间距 16；行高 36；开关轨道 38×22（滑钮 16）；
+  choice 胶囊高 30、圆角 9；按钮高 32、圆角 9；说明 11；页脚 11。
   文字与底色对比：正文 ≥4.5:1、大字号 ≥3:1；不引入纯黑纯白。
-- 控件形态（三端同构，绘制机制按平台落地）：
-  - 开关：标签左/开关右；开 = accent 轨道 + knob，关 = controlBg 轨道 + 1pt
-    controlBorder；hover 关 controlHover、开 accentPressed；
-  - 中英状态二选一：两个软胶囊（选中 accentSoft + 1pt accent 描边 + accentText
-    半粗，未选 controlBg + controlBorder + textPrimary，hover controlHover）；
-  - 按钮：主按钮 accentStrong 实底 + onAccent 文字（导入词库…），次按钮
-    controlBg + controlBorder + controlText（清空/导出；清空文字 danger）；
-  - 导航：选中 accentSoft 胶囊 + accentText；未选中透明底 + textPrimary，hover
-    controlHover 胶囊；focus 环统一 accent，不用系统蓝与系统虚线；
-  - 卡片：卡片底 + 1pt cardBorder + 柔和阴影，行/说明垂直排布（行间 8、行与
-    说明 10）。
-- 关于页：应用图标 44pt + 「Chaoset 输入法」+ 平台副标题 + 许可证
+- 控件形态（Slint `components.slint`）：`Card` / `ChaosSwitch` / `ChoicePill` /
+  `ChaosButton`：开关标签左/开关右；二选一与双拼四选一用软胶囊；主按钮
+  accentStrong 实底 + onAccent 文字，次按钮 controlBg + controlBorder（清空文字 danger）；
+  导航选中 accentSoft 胶囊 + accentText。
+- 关于页：应用图标 +「Chaoset 输入法」+ 平台副标题 + 许可证
   「代码 MIT · 词库 CC BY-SA 4.0」+「设置项会随版本持续补充」+ 仓库地址
-  （accentText，四端统一为 `https://github.com/ShanWuYinShe/chaoset_ime`）；
-  **版本号只在页脚**，关于卡片不放（避免重复）。
-- 分组与文案（三端统一）：
-  - 内容区滚动：设置项变多后固定 560pt 高度装不下，三端内容区都可滚动
-    （macOS `NSScrollView` + flipped documentView / Windows 原生滚动 /
-    Linux `GtkScrolledWindow`），滚动条按需显示、不占固定宽度。
-  - 输入页卡 1「输入行为」：行「词组联想」开关 + 行「模糊音」开关 +
-    双拼方案四选一胶囊「全拼 / 自然码 / 微软 / 小鹤」；说明覆盖三项：
-    「选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。」
-    「让 zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing 混用也能命中；
-    打开后候选可能变多。」「双拼方案：全拼（默认）/自然码/微软/小鹤，
-    两键一音节。修改后输入法会短暂重启以生效。」
-  - 输入页卡 2「中英状态」：二选一「全局共享 / 每进程独立」；说明「切一次
-    所有程序都生效（推荐）；每进程则各自独立。」
-  - 词库页卡 1「学习数据」：统计行 + 清空/导出按钮 + 说明「学习数据仅保存在
-    本机，用于调频与词组联想；清空后不可恢复。」
-  - 词库页卡 2「词库」：导入按钮 + 统一说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」
-    （macOS 导入机制不同，统一句后补「会打开『Chaoset 安装与设置』完成导入」括注。）
-  - 关于页卡「关于」：正文含「跨平台中文输入法」「代码 MIT · 词库 CC BY-SA 4.0」
-    「设置项会随版本持续补充」+ 仓库链接（四端同一 URL）。
-- 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
-  Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
+  `https://github.com/ShanWuYinShe/chaoset_ime`；**版本号只在页脚**，关于卡片不放。
+- 页面与文案：
+  - 输入页「输入行为」：词组联想开关、模糊音开关、双拼方案四选一胶囊
+    「全拼 / 自然码 / 微软 / 小鹤」（修改后自动重启 daemon 生效）；
+  - 输入页「中英状态」：二选一「全局共享 / 每进程独立」；
+  - 输入页「外观主题」：三选一「跟随系统 / 浅色 / 深色」；
+  - 词库页「学习数据」：统计行 + 清空（二次确认）/导出按钮；
+  - 词库页「词库」：导入按钮 + 说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」；
+  - 关于页「关于」：跨平台中文输入法、许可证、仓库链接。
+- 交互契约：单实例（`src/single_instance.rs`：Unix 本地 socket / Windows 命名互斥体 +
+  `FindWindowW` 前置已有窗口），重复启动只转发页号或前置窗口；导入成功/模糊音/双拼
+  修改后自动重启 daemon；清空学习数据先二次确认。
+- 已知差异：关闭联想后，已显示的候选窗在下一次显示时才收起（「下一次显示」生效；
+  设置中心与输入法壳是独立进程，不再有跨进程广播链）。
 - 禁止色：0A84FF / F5EFE6 / FFFCF7 / C9703F / A85427 / E8DCCC / F6E6D9 / D16B29 / 994014
-  不得出现在设置窗源码（旧系统蓝与暖陶色与蓝白设计冲突；蓝白令牌 #007AFF/#0066EB
+  不得出现在设置中心源码（旧系统蓝与暖陶色与蓝白设计冲突；蓝白令牌 #007AFF/#0066EB
   是允许且期望的强调色）。
 
 

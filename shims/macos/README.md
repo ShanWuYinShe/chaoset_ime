@@ -11,15 +11,20 @@ InputMethodKit 薄壳：只负责按键转发、文本上屏与原生候选窗�
 ~/Library/Input Methods/ChaosetIME.app/
   Contents/Resources/chaosetd
   Contents/Resources/chaoset-import
+  Contents/Resources/chaosetctl
+  Contents/Resources/chaoset-settings
   Contents/Resources/dict_common.tsv
   Contents/Resources/ChaosetIME-input.tiff
 ```
 
-- daemon/导入工具/种子词库都在 app 内，LaunchAgent 指向 app 内 daemon；
+- daemon/导入工具/统一设置中心与它依赖的 CLI/种子词库都在 app 内，LaunchAgent 指向
+  app 内 daemon；
+- 统一设置中心 `chaoset-settings` 依赖同目录随包的桥接 CLI `chaosetctl` 完成设置读写、
+  学习数据与词库导入（它按「可执行文件同目录」找 CLI），两者缺一不可；
 - `~/Library/Application Support/chaoset/` 放用户数据：`dict.tsv`、`userdict.json`、
   `chaoset.sock`、`chaosetd.log`；
-- 安装器 `ChaosetSetup.app` 同时把「Chaoset 安装与设置」装到 `~/Applications/Chaoset.app`，
-  设置窗的「导入词库」入口调用它；
+- 安装器 `ChaosetSetup.app` 同时把「Chaoset 安装与设置」装到 `~/Applications/Chaoset.app`
+  （负责安装/更新/卸载与状态自检）；
 - 发布包是 **universal**（arm64 + x86_64），ad-hoc 签名，不需要 Apple 开发者账号，
   不使用 DMG。
 
@@ -60,11 +65,15 @@ CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.s
 ### 从源码
 
 ```sh
+make build-settings        # 先编 Slint 统一设置中心（产出 bin/chaoset-settings）
 ./shims/macos/build.sh     # build/ChaosetIME.app、build/ChaosetSetup.app、build/tis、build/smoke
 ./shims/macos/install.sh   # 装入 ~/Library/Input Methods
 ./shims/macos/reregister.sh # 普通终端尽力登记并启用（不保证免注销）
 ./shims/macos/verify.sh     # TIS/daemon/IPC 全链路自检
 ```
+
+`build.sh` **必带**统一设置中心：找不到 `chaoset-settings` 时直接报错并提示先跑
+`make build-settings`（不会再产出「点齿轮没反应/回退旧窗口」的包）。
 
 `build.sh` 默认构建 universal（`ARCHS="arm64 x86_64"`），本地迭代可用
 `ARCHS=arm64 ./shims/macos/build.sh`。图标由 `tools/make-icon.swift` 现场绘制，
@@ -164,19 +173,25 @@ macOS 第三方输入法只有 bundle 级与 mode 级两套图标键：
 输入法进程本身由系统 IMK 拉起，不再安装第二个常驻 LaunchAgent；
 `install.sh` 会清理旧的 `ime.chaoset.inputmethod` 残留。
 
-## 设置窗口
+## 设置窗口（统一设置中心）
 
-候选栏右侧齿轮 →「Chaoset 设置」：
+macOS 壳**没有原生 AppKit 设置窗**：候选栏右侧齿轮 → `src/SettingsLauncher.swift`
+拉起随包的 Slint 统一设置中心（`Contents/Resources/chaoset-settings`，三端同一个
+设置中心、同一套视觉令牌）：
 
-- 输入行为：词组联想开关，保存即生效；
-- 学习数据：调频词/用户词组/上下文统计、清空（二次确认）、导出 TSV；
-  经 `EngineClient` IPC 操作 daemon，内存与磁盘一次生效；
-- 词库：打开 `~/Applications/Chaoset.app --import`，由 Setup.app 弹出文件选择，
-  合并 → 备份 → 原子替换 → 重启 daemon；
+- 输入行为：词组联想（保存即生效）、模糊音、双拼方案（后两者保存后重启 daemon 生效）；
+- 中英状态：全局共享 / 每进程独立；
+- 外观主题：跟随系统 / 浅色 / 深色；
+- 学习数据：调频词/用户词组/上下文统计、清空（不可恢复）、导出 TSV；
+  经随包 `chaosetctl` 走 IPC 操作 daemon，内存与磁盘一次生效；
+- 词库扩展：「导入词库...」选择 dict.yaml / CC-CEDICT txt / TSV，
+  合并 → 备份 → 原子替换 → 重启输入法后生效；
 - 底部显示 `Chaoset 版本 x.y.z`。
 
-设置窗与 macOS 输入法进程同源，不持有 TIP 裸指针；关闭联想通过通知让已显示
-联想候选立即收起。
+设置中心是独立 GUI 进程（不经输入法壳自绘，不占 Dock、不持有 TIP 裸指针）；
+壳内没有「找不到设置中心就打开旧窗口」的回退——找不到/启动失败时弹 NSAlert 明确
+提示「未找到统一设置中心（chaoset-settings）」。齿轮在 mouseUp 且抬起点仍在齿轮区
+才触发（按下后拖走再松开不打开设置）。
 
 ## 日志
 

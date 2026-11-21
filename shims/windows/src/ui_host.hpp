@@ -6,7 +6,7 @@
 // 启动/停止原语（依赖倒置，避免 leaf 反向引用 TIP TU）。
 //
 // 进程模型：chaoset-ui.exe 只有几十行（LoadLibrary 本 DLL + 调用导出
-// ChaosetRunUi），托盘绘制/设置窗/命名管道全部复用本模块，不存在第二套
+// ChaosetRunUi），托盘绘制/设置中心进程启动/命名管道全部复用本模块，不存在第二套
 // UI 实现。单实例：Local\ChaosetUi-<SID>-<session> 互斥体。
 
 #ifndef CHAOSET_WIN_UI_HOST_HPP_

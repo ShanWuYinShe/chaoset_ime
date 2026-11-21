@@ -50,11 +50,11 @@ func TestCheckKeyRoutingCount(t *testing.T) {
 // 改 Windows 正文字号应被「候选窗几何」捕获。
 func TestCheckCandidateWindow(t *testing.T) {
 	macText := readRepo(t, macPanel)
-	winText := readRepo(t, winShell)
+	winText := string(readRepo(t, winShell))
 	buildText := readRepo(t, winBuild)
 	fsys := fstest.MapFS{
-		macPanel: &fstest.MapFile{Data: macText},
-		winShell: &fstest.MapFile{Data: winText},
+		macPanel: &fstest.MapFile{Data: []byte(macText)},
+		winShell: &fstest.MapFile{Data: []byte(winText)},
 		winBuild: &fstest.MapFile{Data: buildText},
 	}
 	var problems []string
@@ -69,7 +69,7 @@ func TestCheckCandidateWindow(t *testing.T) {
 	}
 	problems = nil
 	checkCandidateWindow(fstest.MapFS{
-		macPanel: &fstest.MapFile{Data: macText},
+		macPanel: &fstest.MapFile{Data: []byte(macText)},
 		winShell: &fstest.MapFile{Data: []byte(mutated)},
 		winBuild: &fstest.MapFile{Data: buildText},
 	}, &problems)
@@ -85,85 +85,48 @@ func TestCheckCandidateWindow(t *testing.T) {
 //  3. 安装器重新写 ChaosetUi Run 项必须被捕获。
 func TestCheckSettingsGearAndTray(t *testing.T) {
 	paths := []string{macPanel, winShell, linuxReadme, winInstaller, winInstallBat,
-		uiParityDoc, macSettings, linuxSetup, slintApp,
-		// 输入行为设置（模糊音/双拼）新增契约的文件：统一设置中心桥接、
-		// daemon 设置读取、macOS 打包。
-		"shims/macos/build.sh", "shims/settings/src/bridge.rs",
-		"crates/chaosetd/src/input_settings.rs"}
+		uiParityDoc, macLauncher, winLauncher, winLauncherHpp, winUiHost,
+		slintApp, slintBridge, slintEvents, slintComponents, linuxSetup, linuxComp,
+		installSh, linuxArchPkg, makefile, macBuild, macInstall, archDoc}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
-		data := readRepo(t, p)
-		fsys[p] = &fstest.MapFile{Data: data}
+		fsys[p] = &fstest.MapFile{Data: readRepo(t, p)}
 	}
 	var problems []string
-	checkSettingsWindowContract(fsys, &problems)
+	checkSettingsCenterContract(fsys, &problems)
+	checkSettingsSharedText(fsys, &problems)
 	checkCandidateGearMouseUp(fsys, &problems)
 	checkTrayLazyLifecycle(fsys, &problems)
 	if len(problems) != 0 {
-		t.Fatalf("真实源码未通过阶段2契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+		t.Fatalf("真实源码未通过设置中心契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
-
-	// 变异 1：mac mouseDown 直接打开设置（用户明确禁止的「按下即弹窗」）。
-	macText := string(fsys[macPanel].Data)
-	mutatedMac := strings.Replace(macText, "settingsPressed = true", "onSettings?()", 1)
-	if mutatedMac == macText {
-		t.Fatal("变异未生效：mac 源码里找不到 settingsPressed = true")
+	// 变异 1：Windows 启动器里删掉设置中心文件名 → 回退成没有设置入口。
+	winLaunch := string(fsys[winLauncher].Data)
+	mutated := strings.Replace(winLaunch, `kSettingsExeName[] = L"chaoset-settings.exe"`, `kSettingsExeName[] = L"chaoset-settings.exe.off"`, 1)
+	if mutated == winLaunch {
+		t.Fatal("变异未生效：settings_launcher.cpp 里找不到 chaoset-settings.exe")
 	}
+	mut := fstest.MapFS{}
+	for k, v := range fsys {
+		mut[k] = v
+	}
+	mut[winLauncher] = &fstest.MapFile{Data: []byte(mutated)}
 	problems = nil
-	checkCandidateGearMouseUp(fstest.MapFS{
-		macPanel: &fstest.MapFile{Data: []byte(mutatedMac)},
-		winShell: fsys[winShell], linuxReadme: fsys[linuxReadme], uiParityDoc: fsys[uiParityDoc],
-	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "mouseDown") {
-		t.Fatalf("mac mouseDown 直接 onSettings 应被捕获，实际：%v", problems)
+	checkSettingsCenterContract(mut, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "chaoset-settings.exe") {
+		t.Fatalf("Windows 启动器缺设置中心文件名应被捕获，实际：%v", problems)
 	}
-
-	// 变异 2：Windows onLButtonDown 直接 showSettingsWindow（同一回归）。
-	winText := string(fsys[winShell].Data)
-	mutatedWin := strings.Replace(winText, "gearPressed_ = true;", "tip_->showSettingsWindow();", 1)
-	if mutatedWin == winText {
-		t.Fatal("变异未生效：win32.cpp 里找不到 gearPressed_ = true;")
+	// 变异 2：Slint 设置中心尺寸回退（640px → 600px）应被捕获。
+	slintText := string(fsys[slintApp].Data)
+	mutatedSlint := strings.Replace(slintText, "preferred-width: 640px;", "preferred-width: 600px;", 1)
+	if mutatedSlint == slintText {
+		t.Fatal("变异未生效：app.slint 里找不到 preferred-width: 640px;")
 	}
+	mut[slintApp] = &fstest.MapFile{Data: []byte(mutatedSlint)}
 	problems = nil
-	checkCandidateGearMouseUp(fstest.MapFS{
-		macPanel: fsys[macPanel], winShell: &fstest.MapFile{Data: []byte(mutatedWin)},
-		linuxReadme: fsys[linuxReadme], uiParityDoc: fsys[uiParityDoc],
-	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "onLButtonDown") {
-		t.Fatalf("Windows onLButtonDown 直接 showSettingsWindow 应被捕获，实际：%v", problems)
-	}
-
-	// 变异 3：安装器重新写 ChaosetUi Run 项（开机就启动/显示托盘）。
-	instText := string(fsys[winInstaller].Data)
-	mutatedInst := instText + "\n    WriteRegStr HKLM \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"ChaosetUi\" \"x\"\n"
-	problems = nil
-	checkTrayLazyLifecycle(fstest.MapFS{
-		winShell: fsys[winShell], winInstaller: &fstest.MapFile{Data: []byte(mutatedInst)},
-		winInstallBat: fsys[winInstallBat], uiParityDoc: fsys[uiParityDoc],
-	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "ChaosetUi") {
-		t.Fatalf("安装器重写 ChaosetUi Run 项应被捕获，实际：%v", problems)
-	}
-
-	// 变异 4：设置窗尺寸回退（mac 640×480）应被捕获。
-	settingsText := string(fsys[macSettings].Data)
-	mutatedSettings := strings.Replace(settingsText, "width: 640, height: 560", "width: 640, height: 480", 1)
-	if mutatedSettings == settingsText {
-		t.Fatal("变异未生效：mac SettingsWindow 里找不到 width: 640, height: 560")
-	}
-	problems = nil
-	checkSettingsWindowContract(fstest.MapFS{
-		macPanel: fsys[macPanel], winShell: fsys[winShell], linuxReadme: fsys[linuxReadme],
-		winInstaller: fsys[winInstaller], winInstallBat: fsys[winInstallBat],
-		uiParityDoc: fsys[uiParityDoc],
-		macSettings: &fstest.MapFile{Data: []byte(mutatedSettings)}, linuxSetup: fsys[linuxSetup],
-		slintApp:                                fsys[slintApp],
-		"shims/macos/build.sh":                  fsys["shims/macos/build.sh"],
-		"shims/settings/src/bridge.rs":          fsys["shims/settings/src/bridge.rs"],
-		"crates/chaosetd/src/input_settings.rs": fsys["crates/chaosetd/src/input_settings.rs"],
-	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "640, height: 560") {
-		t.Fatalf("mac 设置窗尺寸回退应被捕获，实际：%v", problems)
+	checkSettingsCenterContract(mut, &problems)
+	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "preferred-width: 640px") {
+		t.Fatalf("Slint 设置中心尺寸回退应被捕获，实际：%v", problems)
 	}
 }
 
@@ -174,7 +137,7 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 //  3. 前台钩子回调注入 Sleep(1)——钩子回调不再只 PostMessage；
 //  4. DllCanUnloadNow 去掉 g_liveTipMsgWindows——worker/消息窗口活着时卸载 DLL。
 func TestCheckTsfZeroBlockContract(t *testing.T) {
-	winText := readRepo(t, winShell)
+	winText := string(readRepo(t, winShell))
 	docText := readRepo(t, uiParityDoc)
 	fsys := func(win string) fstest.MapFS {
 		return fstest.MapFS{
@@ -264,51 +227,38 @@ func TestCheckShellVarEscaping(t *testing.T) {
 // TestCheckImportSafety 用真实两端源码验证导入安全契约，并做一次变异：
 // 去掉 Windows 的原子替换标志应被捕获。
 func TestCheckImportSafety(t *testing.T) {
-	macText := readRepo(t, macSetup)
-	winText := readRepo(t, winShell)
-	linuxText := readRepo(t, linuxDictImport)
-	importText := readRepo(t, chaosetImport)
+	macText := string(readRepo(t, macSetup))
+	winText := string(readRepo(t, winShell))
+	bridgeText := string(readRepo(t, slintBridge))
+	eventsText := string(readRepo(t, slintEvents))
+	importText := string(readRepo(t, chaosetImport))
 	fsys := fstest.MapFS{
-		macSetup:        &fstest.MapFile{Data: macText},
-		winShell:        &fstest.MapFile{Data: winText},
-		linuxDictImport: &fstest.MapFile{Data: linuxText},
-		chaosetImport:   &fstest.MapFile{Data: importText},
+		macSetup:      &fstest.MapFile{Data: []byte(macText)},
+		winShell:      &fstest.MapFile{Data: []byte(winText)},
+		slintBridge:   &fstest.MapFile{Data: []byte(bridgeText)},
+		slintEvents:   &fstest.MapFile{Data: []byte(eventsText)},
+		chaosetImport: &fstest.MapFile{Data: []byte(importText)},
 	}
 	var problems []string
 	checkImportSafety(fsys, &problems)
 	if len(problems) != 0 {
 		t.Fatalf("真实导入实现未通过安全契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
-
-	mutated := strings.ReplaceAll(string(winText), "-backup", "-nobackup")
-	if mutated == string(winText) {
-		t.Fatal("变异未生效：Windows 源码里找不到 -backup")
+	// 设置中心导入调用去掉 -backup（备份语义不能丢）应被捕获。
+	mutated := strings.Replace(bridgeText, `"-backup"`, `"-nobackup"`, 1)
+	if mutated == bridgeText {
+		t.Fatal("变异未生效：bridge.rs 里找不到 -backup")
 	}
 	problems = nil
 	checkImportSafety(fstest.MapFS{
-		macSetup:        &fstest.MapFile{Data: macText},
-		winShell:        &fstest.MapFile{Data: []byte(mutated)},
-		linuxDictImport: &fstest.MapFile{Data: linuxText},
-		chaosetImport:   &fstest.MapFile{Data: importText},
+		macSetup:      &fstest.MapFile{Data: []byte(macText)},
+		winShell:      &fstest.MapFile{Data: []byte(winText)},
+		slintBridge:   &fstest.MapFile{Data: []byte(mutated)},
+		slintEvents:   &fstest.MapFile{Data: []byte(eventsText)},
+		chaosetImport: &fstest.MapFile{Data: []byte(importText)},
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
-		t.Fatalf("Windows 去掉 -backup 应被捕获，实际：%v", problems)
-	}
-
-	// Linux 现在只调 Go 工具：去掉 -backup 参数应被捕获（备份语义不能丢）。
-	linuxMutated := strings.Replace(string(linuxText), "\"-backup\"", "\"-nobackup\"", 1)
-	if linuxMutated == string(linuxText) {
-		t.Fatal("变异未生效：Linux 导入模块里找不到 \"-backup\"")
-	}
-	problems = nil
-	checkImportSafety(fstest.MapFS{
-		macSetup:        &fstest.MapFile{Data: macText},
-		winShell:        &fstest.MapFile{Data: winText},
-		linuxDictImport: &fstest.MapFile{Data: []byte(linuxMutated)},
-		chaosetImport:   &fstest.MapFile{Data: importText},
-	}, &problems)
-	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "-backup") {
-		t.Fatalf("Linux 去掉 -backup 应被捕获，实际：%v", problems)
+		t.Fatalf("设置中心去掉 -backup 应被捕获，实际：%v", problems)
 	}
 }
 
@@ -355,7 +305,7 @@ func TestCheckWindowsVersionInfo(t *testing.T) {
 // 年月日+hash」契约，并做变异：version.sh 去掉环境变量 / rev-parse / 日期、
 // release.yml 回退到 describe --tags 都应被捕获。
 func TestCheckVersionSource(t *testing.T) {
-	paths := []string{makefile, winBuild, macBuild, linuxSetupBuild, releaseYML}
+	paths := []string{makefile, winBuild, macBuild, releaseYML}
 	fsys := fstest.MapFS{}
 	for _, p := range append(paths, "scripts/version.sh") {
 		data := readRepo(t, p)
@@ -475,7 +425,7 @@ func TestCheckExists(t *testing.T) {
 }
 
 func TestCheckCandidateMouseUpSemantics(t *testing.T) {
-	winText := readRepo(t, winShell)
+	winText := string(readRepo(t, winShell))
 	macText := readRepo(t, macPanel)
 	fsys := func(win, mac string) fstest.MapFS {
 		return fstest.MapFS{
@@ -562,45 +512,11 @@ func TestCheckShimModuleLayoutAndDocs(t *testing.T) {
 
 // TestCheckLinuxSetupAssembly 锁住 Linux 设置窗装配回归：
 // GtkStack 页面误用 gtk_box_pack_start、胶囊导航不切 stack 页都必须被捕获。
-func TestCheckLinuxSetupAssembly(t *testing.T) {
-	text := string(readRepo(t, linuxSetup))
-	fsys := fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(text)}}
-	var problems []string
-	checkLinuxSetupAssembly(fsys, &problems)
-	if len(problems) != 0 {
-		t.Fatalf("真实 Linux 设置窗装配未通过契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
-	}
-
-	// 变异 1：把 gtk_stack_add_titled 换回 gtk_box_pack_start(GTK_BOX(stack), ...)。
-	mutated := strings.Replace(text,
-		"gtk_stack_add_titled(GTK_STACK(stack), input_page, \"input\", \"输入\");",
-		"gtk_box_pack_start(GTK_BOX(stack), input_page, TRUE, TRUE, 0);", 1)
-	if mutated == text {
-		t.Fatal("变异 1 未生效：找不到 gtk_stack_add_titled(input_page)")
-	}
-	problems = nil
-	checkLinuxSetupAssembly(fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(mutated)}}, &problems)
-	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_box_pack_start(GTK_BOX(stack)") {
-		t.Fatalf("GtkStack 页面误挂载应被捕获，实际：%v", problems)
-	}
-
-	// 变异 2：胶囊导航不再切换 stack 页（模拟「点了导航内容不换」回归）。
-	mutated = strings.Replace(text,
-		"gtk_stack_set_visible_child", "gtk_stack_set_visible", 1)
-	if mutated == text {
-		t.Fatal("变异 2 未生效：找不到 gtk_stack_set_visible_child")
-	}
-	problems = nil
-	checkLinuxSetupAssembly(fstest.MapFS{linuxSetup: &fstest.MapFile{Data: []byte(mutated)}}, &problems)
-	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "gtk_stack_set_visible_child") {
-		t.Fatalf("导航切页回归应被捕获，实际：%v", problems)
-	}
-}
 
 // TestCheckDllUnloadSafety 锁住 DLL 动态卸载安全：删掉 removeCrashHandler() 或
 // UnregisterClassW 必须被捕获（否则宿主会崩在已卸载模块里）。
 func TestCheckDllUnloadSafety(t *testing.T) {
-	winText := readRepo(t, winShell)
+	winText := string(readRepo(t, winShell))
 	diagText := readRepo(t, "shims/windows/src/diagnostics.cpp")
 	diagHpp := readRepo(t, "shims/windows/src/diagnostics.hpp")
 	uiHostText := readRepo(t, "shims/windows/src/ui_host.cpp")

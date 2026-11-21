@@ -131,10 +131,12 @@ Section "MainSection" SEC01
     ; 新文件（或预约重启替换）；已打开的旧程序继续用旧版 DLL，重新打开后加载新
     ; 版，绝不以关闭用户程序为代价追求「立即全面生效」。
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
-    ; chaoset-ui.exe 是本输入法自己的后台 UI 宿主（托盘中英指示器 + 设置窗），
-    ; 不是用户程序：升级时必须结束，否则旧进程会继续加载旧 DLL 并占着单例
-    ; 互斥体与命令管道，新版本的托盘/设置窗行为不会生效。
+    ; chaoset-ui.exe 是本输入法自己的后台 UI 宿主（托盘中英指示器 + 统一设置
+    ; 中心启动入口），chaoset-settings.exe 是唯一设置 UI。两者都不是用户程序：
+    ; 升级时必须结束，否则旧进程会继续占着单例互斥体/命令管道，或占着 .exe
+    ; 导致无法替换，新版本的托盘/设置中心行为不会生效。
     nsExec::Exec 'taskkill /IM chaoset-ui.exe /F'
+    nsExec::Exec 'taskkill /IM chaoset-settings.exe /F'
     Sleep 300
 
     ; 安全写入核心二进制文件与资源（支持热替换）
@@ -143,9 +145,10 @@ Section "MainSection" SEC01
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetd.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaosetctl.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-ui.exe"
-    !if /FileExists "..\..\..\dist\chaoset-windows-x64\chaoset-settings.exe"
-        !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settings.exe"
-    !endif
+    ; 统一设置中心是 Windows 唯一设置 UI（壳里已删除原生设置窗）：这里**无条件**
+    ; 安装。File 在编译期找不到产物会直接报错——安装包缺 chaoset-settings.exe
+    ; 即构建失败，不允许出现「装完设置打不开」的半成品包。
+    !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "chaoset-settings.exe"
     !insertmacro InstallRobustFile "..\..\..\dist\chaoset-windows-x64" "dict.tsv"
 
     ; 清理旧版本遗留的独立小工具（功能已全部由统一全能控制命令行工具 chaosetctl.exe 提供）
@@ -263,7 +266,7 @@ Section "MainSection" SEC01
     ; 当前用户的 LOCALAPPDATA（不覆盖用户已导入的词库）。
     WriteRegExpandStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ChaosetDaemon" '"$INSTDIR\chaosetd.exe" -pipe -dict "%LOCALAPPDATA%\Chaoset\dict.tsv" -seeddict "$INSTDIR\dict.tsv" -userdict "%LOCALAPPDATA%\Chaoset\userdict.json" -log "%LOCALAPPDATA%\Chaoset\chaosetd.log"'
 
-    ; UI 宿主：托盘中英指示器 + 设置窗的唯一进程（每用户会话一个）。
+    ; UI 宿主：托盘中英指示器 + 统一设置中心启动入口的唯一进程（每用户会话一个）。
     ; 它必须以**当前登录用户**身份在正常完整性下运行（安装器是提升后的管理员，
     ; 不能在这里启动）。2026-11-06 用户要求「托盘图标只在切换到/使用输入法后
     ; 才显示，不能开机就启动并显示」：因此**不写登录 Run 项**，改由 TSF 首次
@@ -299,7 +302,7 @@ Section "MainSection" SEC01
     ; 与 DisplayVersion 同源；此前曾写死 0.2.12，发版时必然漏改（2026-10-26 修复）。
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
-    ; 开始菜单快捷方式
+    ; 开始菜单快捷方式：「Chaoset 设置」直指统一设置中心（Windows 唯一设置 UI）。
     CreateDirectory "$SMPROGRAMS\Chaoset"
     CreateShortcut "$SMPROGRAMS\Chaoset\Chaoset 设置.lnk" "$INSTDIR\chaoset-settings.exe" "" "$INSTDIR\chaoset.ico" 0
     CreateShortcut "$SMPROGRAMS\Chaoset\卸载 Chaoset 输入法.lnk" "$INSTDIR\uninstall.exe"
@@ -316,9 +319,10 @@ Section "Uninstall"
         SetRegView 64
     ${EndIf}
 
-    ; 终止后台服务/UI 宿主并等待句柄完全释放（都是本输入法自己的进程）
+    ; 终止后台服务/UI 宿主/设置中心并等待句柄完全释放（都是本输入法自己的进程）
     nsExec::Exec 'taskkill /IM chaosetd.exe /F'
     nsExec::Exec 'taskkill /IM chaoset-ui.exe /F'
+    nsExec::Exec 'taskkill /IM chaoset-settings.exe /F'
     Sleep 300
 
     ; 从用户语言列表中移除输入法（同样用 64 位 PowerShell，避免 WOW64 重定向）
@@ -381,6 +385,8 @@ Section "Uninstall"
     Delete /REBOOTOK "$INSTDIR\ChaosetIME32.dll.old2"
     Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old"
     Delete /REBOOTOK "$INSTDIR\chaoset-ui.exe.old2"
+    Delete /REBOOTOK "$INSTDIR\chaoset-settings.exe.old"
+    Delete /REBOOTOK "$INSTDIR\chaoset-settings.exe.old2"
     Delete /REBOOTOK "$INSTDIR\chaoset-settingsctl.exe.old"
     Delete /REBOOTOK "$INSTDIR\chaoset-settingsctl.exe.old2"
     RMDir /REBOOTOK "$INSTDIR"

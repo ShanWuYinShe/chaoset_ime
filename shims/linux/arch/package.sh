@@ -27,11 +27,16 @@ mkdir -p "$TMP_DIR/usr/share/chaoset"
 mkdir -p "$TMP_DIR/usr/share/ibus/component"
 mkdir -p "$TMP_DIR/usr/share/icons"
 
+# 统一设置中心是设置界面的唯一实现：包里缺了它设置入口只剩报错，直接打包失败。
+if [ ! -x "$SRC_DIR/bin/chaoset-settings" ]; then
+    echo "错误：打包源缺少统一设置中心 bin/chaoset-settings" >&2
+    exit 1
+fi
 cp -d "$SRC_DIR/bin/"* "$TMP_DIR/usr/bin/"
 cp "$SRC_DIR/data/dict.tsv" "$TMP_DIR/usr/share/chaoset/"
-# 设置窗口：component XML 的 <setup> 指向 /usr/share/chaoset/chaoset-setup，
-# 此前 Arch 二进制包漏装该文件 → ibus-setup「首选项」点了没反应（2026-10-30 审计
-# B-P1-6；deb/tar.gz 两个包本来就有，只有 Arch 缺）。发布冒烟现在也断言它存在。
+# 设置启动器：component XML 的 <setup> 指向 /usr/share/chaoset/chaoset-setup
+# （纯 POSIX C，只 exec chaoset-settings）。此前 Arch 二进制包漏装该文件 →
+# ibus-setup「首选项」点了没反应；deb/tar.gz 两个包本来就有，只有 Arch 缺。
 cp "$SRC_DIR/setup/chaoset-setup" "$TMP_DIR/usr/share/chaoset/"
 cp "$SRC_DIR/component/chaoset.xml" "$TMP_DIR/usr/share/ibus/component/"
 cp -r "$SRC_DIR/icons/hicolor" "$TMP_DIR/usr/share/icons/"
@@ -72,7 +77,6 @@ size = ${TOTAL_SIZE}
 arch = x86_64
 license = MIT
 depend = ibus
-depend = gtk3
 EOF
 chmod 0644 "$TMP_DIR/.PKGINFO"
 
