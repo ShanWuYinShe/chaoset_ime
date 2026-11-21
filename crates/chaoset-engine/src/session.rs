@@ -181,7 +181,7 @@ impl Session {
                         (
                             Candidate {
                                 text: display_text,
-                                syllables: entry.pinyin.clone(),
+                                syllables: entry.syllables.join("'"),
                                 score: 0,
                                 from_user,
                             },
@@ -211,7 +211,7 @@ impl Session {
                             (
                                 Candidate {
                                     text: display_text,
-                                    syllables: entry.pinyin.clone(),
+                                    syllables: entry.syllables.join("'"),
                                     score: 0,
                                     from_user: false,
                                 },
@@ -240,7 +240,7 @@ impl Session {
                             (
                                 Candidate {
                                     text: display_text,
-                                    syllables: entry.pinyin.clone(),
+                                    syllables: entry.syllables.join("'"),
                                     score: 0,
                                     from_user: false,
                                 },
@@ -452,7 +452,7 @@ impl Session {
                 };
                 Candidate {
                     text,
-                    syllables: e.pinyin.clone(),
+                    syllables: e.syllables.join("'"),
                     score: 0,
                     from_user: false,
                 }
