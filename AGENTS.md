@@ -94,6 +94,18 @@ make check-version  # 断言源码里没有写死的版本号、没有回退到 
 - 版本号、tag、Release 由用户决定并发起；需要发版时按用户指示操作。
 - CHANGELOG 的 `## 未发布` 段落可以持续累积多条，等用户发版时再改成 `## vX.Y.Z（日期）`。
 
+## PR 证据图（禁止提交进仓库）
+
+UI 改动的 Before/After 截图用 `gh` 的 `--attach` 上传，**不得 `git add`/`commit` 进本仓库**。
+`.github/pr-evidence/` 不承载一次性截图，不得重建。
+
+- 压缩：`~/.agents/bin/pr-evidence shrink <图...>`（输出到 `.workwork/evidence/`，随任务清理）
+- 上传：`gh pr create --body-file <正文> --attach 'before.png#改前' --attach 'after.png#改后'`；
+  正文照常写 `![改前](./before.png)`，gh 会把本地路径替换成附件地址
+- 追加到已有 PR：`gh pr comment <PR> --body "…" --attach "…"`
+- 上传不可撤销；附件未被 PR 引用时匿名访问是 404，建 PR 后用
+  `~/.agents/bin/pr-evidence check --body <正文> --post` 复核正文里确实是可访问的远程地址
+
 ## 候选质量（拼音匹配 / 输入预测）
 
 改动 `crates/chaoset-engine` 里任何「输入串 → 候选列表」的逻辑（切分、匹配层级、排序打分、
