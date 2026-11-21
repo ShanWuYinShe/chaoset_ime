@@ -252,10 +252,10 @@ func installDaemonLaunchAgent(support: String) -> String {
         //（install.sh 实测：缺该 key 时满载下 IPC p99 452ms，补上后 17ms）。
         try plist.write(toFile: path, atomically: true, encoding: .utf8)
         let lint = runTool("/usr/bin/plutil", ["-lint", path])
-        if lint.status != 0 { return "⚠ LaunchAgent 校验失败：\(lint.output)\n" }
+        if lint.status != 0 { return "[注意] LaunchAgent 校验失败：\(lint.output)\n" }
         return ""
     } catch {
-        return "⚠ 写入 LaunchAgent 失败：\(error)\n"
+        return "[注意] 写入 LaunchAgent 失败：\(error)\n"
     }
 }
 
@@ -299,12 +299,12 @@ func restartDaemon(support: String) -> String {
     // 可能在新 bootstrap 之后才退出，形成两个 chaosetd 的瞬间/常驻竞争。
     _ = runTool("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
     if !waitLaunchdGone(domain: domain, label: label) {
-        out += "⚠ 旧 LaunchAgent 未在 3 秒内卸载，未启动新 daemon\n"
+        out += "[注意] 旧 LaunchAgent 未在 3 秒内卸载，未启动新 daemon\n"
         return out
     }
     _ = runTool("/usr/bin/killall", ["chaosetd"])
     if !waitProcessGone("chaosetd") {
-        out += "⚠ 旧 chaosetd 未在 3 秒内退出，未启动新 daemon\n"
+        out += "[注意] 旧 chaosetd 未在 3 秒内退出，未启动新 daemon\n"
         return out
     }
 
@@ -321,7 +321,7 @@ func restartDaemon(support: String) -> String {
     // 旧实现会在 LaunchAgent 慢启动时兜底启动第二个进程，单实例锁只能让
     // 其中一个退出，但活动监视器会短暂/持续看到两个 chaosetd，且 KeepAlive
     // 会不断重试。这里只报告失败，让用户重试安装，保持单一 owner。
-    out += "⚠ LaunchAgent 未能拉起 daemon（IPC 8 秒未就绪）；未额外启动进程，请重试。\n"
+    out += "[注意] LaunchAgent 未能拉起 daemon（IPC 8 秒未就绪）；未额外启动进程，请重试。\n"
     return out
 }
 
@@ -344,7 +344,7 @@ func installSetupApp() -> String {
         try? fm.createSymbolicLink(atPath: alias, withDestinationPath: "Chaoset.app")
         return "已安装图形界面工具：\(dest)\n"
     } catch {
-        return "⚠ 安装图形界面工具失败：\(error)\n"
+        return "[注意] 安装图形界面工具失败：\(error)\n"
     }
 }
 
@@ -443,8 +443,8 @@ func installIME() -> String {
     if let s = findSource() {
         _ = TISEnableInputSource(s)
         _ = TISSelectInputSource(s)
-        out += "🎉 系统已收录本输入法，已为您自动启用并选中！\n"
-        out += "👉 提示：使用快捷键【Ctrl + 空格】（或 Fn / 🌐 键）即可随时切换。\n"
+        out += "完成：系统已收录本输入法，已为您自动启用并选中！\n"
+        out += "提示：使用快捷键【Ctrl + 空格】（或 Fn / 地球仪键）即可随时切换。\n"
     } else {
         out += "\n提示：首次安装后，macOS 需在登录时扩充输入源表。\n"
         out += "请【注销并重新登录】一次，即可在菜单栏直接切换或在「系统设置 → 键盘 → 输入法」中添加「Chaoset」。\n"
@@ -454,7 +454,7 @@ func installIME() -> String {
     let n = chaosetSourceCount()
     out += "系统输入源表 Chaoset 条目：\(n) 条（预期 2：父容器 + Pinyin 模式）\n"
     if n > 2 {
-        out += "⚠ 发现重复条目：系统存在旧版本缓存，请注销并重新登录一次即可自动刷新并重建输入源表。\n"
+        out += "[注意] 发现重复条目：系统存在旧版本缓存，请注销并重新登录一次即可自动刷新并重建输入源表。\n"
     }
     return out
 }

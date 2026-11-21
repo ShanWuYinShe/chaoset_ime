@@ -63,6 +63,15 @@ func checkExists(fsys fs.FS, problems *[]string, group, path string) {
 	}
 }
 
+// addProblem 记一条带行号的问题（行号 0 表示与具体行无关）。
+func addProblem(problems *[]string, group, path string, line int, msg string) {
+	if line > 0 {
+		*problems = append(*problems, fmt.Sprintf("%s：%s:%d %s", group, path, line, msg))
+		return
+	}
+	*problems = append(*problems, fmt.Sprintf("%s：%s %s", group, path, msg))
+}
+
 func readText(fsys fs.FS, path string) (string, error) {
 	data, err := fs.ReadFile(fsys, path)
 	if err != nil {

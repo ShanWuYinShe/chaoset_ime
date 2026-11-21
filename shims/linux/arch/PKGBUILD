@@ -59,6 +59,7 @@ package() {
     sh shims/linux/setup/build.sh "$pkgdir/usr/share/chaoset/chaoset-setup"
 
     # Icons
+    install -Dm644 shims/linux/chaoset-settings.desktop "$pkgdir/usr/share/applications/chaoset-settings.desktop"
     install -Dm644 shims/linux/icons/hicolor/48x48/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/48x48/apps/chaoset.png"
     install -Dm644 shims/linux/icons/hicolor/128x128/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/chaoset.png"
     install -Dm644 shims/linux/icons/hicolor/256x256/apps/chaoset.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/chaoset.png"

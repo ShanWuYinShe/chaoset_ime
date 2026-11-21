@@ -117,7 +117,7 @@ export component ChaosButton {
 // ---- 卡片容器 ----
 export component Card inherits Rectangle {
     in property <string> title: "";
-    in property <string> icon: "";
+    in property <image> icon;
     in property <string> hint: "";
 
     border-radius: Theme.card_radius;
@@ -135,10 +135,11 @@ export component Card inherits Rectangle {
         if root.title != "" : HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            if root.icon != "" : Text {
-                text: root.icon;
-                font-size: 14px;
-                vertical-alignment: center;
+            Image {
+                source: root.icon;
+                width: 14px;
+                height: 14px;
+                colorize: Theme.text_secondary;
             }
             Text {
                 text: root.title;
@@ -252,17 +253,17 @@ export component CandidatePreview inherits Rectangle {
         HorizontalLayout {
             spacing: 6px;
             alignment: center;
-            Text {
-                text: "▲";
-                color: Theme.text_tertiary;
-                font-size: 8px;
-                vertical-alignment: center;
+            Image {
+                source: @image-url("icons/arrow-up.svg");
+                width: 8px;
+                height: 8px;
+                colorize: Theme.text_tertiary;
             }
-            Text {
-                text: "▼";
-                color: Theme.text_secondary;
-                font-size: 8px;
-                vertical-alignment: center;
+            Image {
+                source: @image-url("icons/arrow-down.svg");
+                width: 8px;
+                height: 8px;
+                colorize: Theme.text_secondary;
             }
             Text {
                 text: "1/4";
@@ -270,11 +271,11 @@ export component CandidatePreview inherits Rectangle {
                 font-size: 11px;
                 vertical-alignment: center;
             }
-            Text {
-                text: "⚙";
-                color: Theme.text_secondary;
-                font-size: 13px;
-                vertical-alignment: center;
+            Image {
+                source: @image-url("icons/gear.svg");
+                width: 13px;
+                height: 13px;
+                colorize: Theme.text_secondary;
             }
         }
     }

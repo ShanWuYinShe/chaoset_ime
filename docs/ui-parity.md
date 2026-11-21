@@ -277,7 +277,8 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 `chaoset-settings`）。macOS / Windows / Linux 壳**不实现原生设置窗**，只保留启动器
 把设置中心拉起来：
 
-- macOS：`SettingsLauncher.swift` → app 内 `Contents/Resources/chaoset-settings`；
+- macOS：`SettingsLauncher.swift` → app 内 `Contents/Resources/ChaosetSettings.app/Contents/MacOS/chaoset-settings`
+  （独立 app bundle：有 Info.plist 与品牌图标，Finder/Dock 不会显示通用可执行文件图标）；
 - Windows：单例 UI 宿主 `chaoset-ui.exe` → `settings_launcher` → 同目录
   `chaoset-settings.exe`（TIP 只经命名管道请求，不在 TSF 进程内建进程）；
 - Linux：`chaoset-setup`（纯 POSIX 启动器，不链接 GTK）→ PATH/`/usr/bin` 下的
@@ -326,7 +327,10 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   `ChaosButton`：开关标签左/开关右；二选一与双拼四选一用软胶囊；主按钮
   accentStrong 实底 + onAccent 文字，次按钮 controlBg + controlBorder（清空文字 danger）；
   导航选中 accentSoft 胶囊 + accentText。
-- 关于页：应用图标 +「Chaoset 输入法」+ 平台副标题 + 许可证
+- 图标规范：页面图标只用 **SVG**（`shims/settings/ui/icons/*.svg`，`Image` 的 `colorize` 跟随主题令牌着色），
+  **禁止用 emoji/Unicode 符号当图标**（导航、卡片标题、候选预览箭头/齿轮、关于页品牌图同一口径）；
+  `tools/checkuiparity`「图标规范」组机器断言 Slint 页面不含 emoji、引用的 SVG 均存在。
+- 关于页：应用图标（品牌 `app.svg`）+「Chaoset 输入法」+ 平台副标题 + 许可证
   「代码 MIT · 词库 CC BY-SA 4.0」+「设置项会随版本持续补充」+ 仓库地址
   `https://github.com/ShanWuYinShe/chaoset_ime`；**版本号只在页脚**，关于卡片不放。
 - 页面与文案：

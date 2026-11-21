@@ -20,6 +20,7 @@ const (
 	groupLetterCaseComposition = "字母入组词大小写"
 	groupSettingsContract      = "设置窗契约"
 	groupSettingsVisual        = "设置窗视觉令牌"
+	groupIconRules             = "图标规范"
 	groupSettingsCore          = "设置核心（方案 A）"
 
 	// Windows 壳专属契约。

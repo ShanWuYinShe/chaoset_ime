@@ -122,7 +122,7 @@ CLI 契约（供 shim 调用；**冷路径**使用，热路径仍读本机缓存
 | `CandidateSettings.swift` | 联想开关热路径模型（其余设置由设置中心写同一 UserDefaults 域） | ≤200 |
 | `EngineClient.swift` | 引擎 IPC 对外 API | ≤600 |
 | `DaemonTransport.swift` | Unix socket 连接/帧读写/重连 | ≤500 |
-| `SettingsLauncher.swift` | 设置入口：拉起 app 内 `Contents/Resources/chaoset-settings`（找不到/启动失败只弹错误，不回退旧窗） | ≤200 |
+| `SettingsLauncher.swift` | 设置入口：拉起 app 内 `Contents/Resources/ChaosetSettings.app/Contents/MacOS/chaoset-settings`（找不到/启动失败只弹错误，不回退旧窗） | ≤200 |
 | `main.swift` | 入口 | ≤100 |
 
 （若实际拆分与上表不同，以本表为准更新；`checkuiparity` 断言上表文件存在且单文件不超过上表预算。）

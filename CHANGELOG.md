@@ -2,6 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **优化(图标)：设置中心页面图标全部改用 SVG，三端 GUI app 图标补齐**：
+  - Slint 设置中心 9 处 emoji/符号图标（导航、卡片标题、候选预览箭头/齿轮）全部替换为 `shims/settings/ui/icons/*.svg`，`Image.colorize` 跟随主题令牌着色；关于页品牌图由文字「C」改为真实 `app.svg`（Slint 窗口图标也用 SVG）；
+  - macOS 设置中心打包为独立 `ChaosetSettings.app`（Info.plist + 品牌 icns + 版本号），Finder/Dock 不再显示通用可执行文件图标，启动器指向 bundle 内可执行文件；
+  - Linux 新增 `chaoset-settings.desktop`（Icon=chaoset）并接入 tar.gz/deb/Arch 安装，应用菜单里可以直接打开带图标的「Chaoset 设置」；Windows 设置中心 exe 的 ico 资源与安装器图标沿用 build.rs/NSIS 嵌入，`ChaosetSetup.app` 图标校验补齐；
+  - `checkuiparity` 新增「图标规范」组（页面无 emoji、SVG 引用存在、mac bundle/Windows ico/Linux desktop 齐备），`docs/ui-parity.md`/`AGENTS.md`/`docs/architecture.md`/`shims/macos/README.md` 同步。
+
 ## v0.4.0（2026-11-21）
 
 > **本版本最终状态**：Rust 引擎（`crates/chaoset-engine`）与 Rust daemon（`crates/chaosetd`）是唯一实现；

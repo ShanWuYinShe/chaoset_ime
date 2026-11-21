@@ -337,11 +337,53 @@ cp build/chaosetd build/chaoset-import build/chaosetctl ../../data/dict_common.t
 chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import" \
           "$APP/Contents/Resources/chaosetctl"
 
-# 统一设置中心（build/chaoset-settings 已在脚本开头解析并签名）：拷入 app，
-# 与 chaosetctl 同目录，候选栏齿轮才能拉起它。
-cp "$SETTINGS_BUILT" "$APP/Contents/Resources/chaoset-settings"
-chmod 755 "$APP/Contents/Resources/chaoset-settings"
-codesign --force -s - "$APP/Contents/Resources/chaoset-settings"
+# 统一设置中心打包为独立的 ChaosetSettings.app：它是 GUI app，必须有
+# Info.plist 与品牌图标，否则 Finder/Dock 只会显示通用可执行文件图标。
+# 直接 exec 其 Contents/MacOS/chaoset-settings 时 NSBundle 会自动识别外层
+# app bundle（拿 Info.plist / 图标 / CFBundleName），所以启动器不需要改启动方式。
+SETTINGS_APP="$APP/Contents/Resources/ChaosetSettings.app"
+rm -rf "$SETTINGS_APP"
+mkdir -p "$SETTINGS_APP/Contents/MacOS" "$SETTINGS_APP/Contents/Resources"
+cp "$SETTINGS_BUILT" "$SETTINGS_APP/Contents/MacOS/chaoset-settings"
+chmod 755 "$SETTINGS_APP/Contents/MacOS/chaoset-settings"
+cp build/Resources/ChaosetIME.icns "$SETTINGS_APP/Contents/Resources/ChaosetSettings.icns"
+cat > "$SETTINGS_APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleDisplayName</key>
+	<string>Chaoset 设置</string>
+	<key>CFBundleExecutable</key>
+	<string>chaoset-settings</string>
+	<key>CFBundleIconFile</key>
+	<string>ChaosetSettings</string>
+	<key>CFBundleIdentifier</key>
+	<string>ime.chaoset.settings</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>ChaosetSettings</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$VERSION</string>
+	<key>CFBundleVersion</key>
+	<string>$VERSION</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+plutil -lint "$SETTINGS_APP/Contents/Info.plist" >/dev/null
+codesign --force -s - "$SETTINGS_APP/Contents/MacOS/chaoset-settings"
+codesign --force -s - "$SETTINGS_APP"
 codesign --force -s - "$APP"
 
 echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."

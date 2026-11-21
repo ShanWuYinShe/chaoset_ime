@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="azureGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4DA3FF"/>
+      <stop offset="48%" stop-color="#007AFF"/>
+      <stop offset="100%" stop-color="#0062CC"/>
+    </linearGradient>
+    <clipPath id="squircleClip">
+      <rect x="0" y="0" width="512" height="512" rx="51.2" ry="51.2"/>
+    </clipPath>
+  </defs>
+
+  <!-- 1. Full-bleed Squircle Base: 0 pad 占满 -->
+  <rect x="0" y="0" width="512" height="512" rx="51.2" ry="51.2" fill="url(#azureGrad)"/>
+
+  <!-- 2. Clipped Texture & Highlights -->
+  <g clip-path="url(#squircleClip)">
+    <circle cx="256.0" cy="256.0" r="153.6" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="235.5" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <circle cx="256.0" cy="256.0" r="317.4" stroke="#EAF3FF" stroke-opacity="0.15" stroke-width="2.6" fill="none"/>
+    <!-- Top-edge Specular Rim Line -->
+    <rect x="1" y="1" width="510.0" height="510.0" rx="50.2" ry="50.2" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2.0" fill="none"/>
+  </g>
+
+  <!-- 3. Monogram C -->
+  <text x="215.0" y="378.9" text-anchor="middle" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Liberation Sans', Arial, sans-serif" font-size="348.2" font-weight="900" fill="#FFFFFF">C</text>
+
+  <!-- 4. Bright Star (✦) -->
+  <path d="M 389.12 40.96 Q 389.12 143.36 491.52 143.36 Q 389.12 143.36 389.12 245.76 Q 389.12 143.36 286.72 143.36 Q 389.12 143.36 389.12 40.96 Z" fill="#FFFFFF"/>
+
+  <!-- 5. Bottom Brand Subtext -->
+  <text x="256.0" y="476.2" text-anchor="middle" font-family="'Segoe UI', 'Liberation Sans', Arial, sans-serif" font-size="23.0" font-weight="bold" letter-spacing="5.1" fill="#EAF3FF" fill-opacity="0.85">CHAOS</text>
+</svg>

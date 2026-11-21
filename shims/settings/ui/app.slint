@@ -4,7 +4,7 @@ import { ChaosSwitch, ChoicePill, ChaosButton, Card, CandidatePreview } from "co
 
 export component MainWindow inherits Window {
     title: "Chaoset 设置";
-    icon: @image-url("../../windows/resources/chaoset.ico");
+    icon: @image-url("icons/app.svg");
     preferred-width: 640px;
     preferred-height: 560px;
     min-width: 640px;
@@ -77,10 +77,11 @@ export component MainWindow inherits Window {
                         padding-left: 14px;
                         spacing: 8px;
                         alignment: start;
-                        Text {
-                            text: "⚡️";
-                            font-size: 13px;
-                            vertical-alignment: center;
+                        Image {
+                            source: @image-url("icons/input.svg");
+                            width: 16px;
+                            height: 16px;
+                            colorize: root.current_page == 0 ? Theme.accent_text : Theme.text_secondary;
                         }
                         Text {
                             text: "输入";
@@ -117,10 +118,11 @@ export component MainWindow inherits Window {
                         padding-left: 14px;
                         spacing: 8px;
                         alignment: start;
-                        Text {
-                            text: "📊";
-                            font-size: 13px;
-                            vertical-alignment: center;
+                        Image {
+                            source: @image-url("icons/dict.svg");
+                            width: 16px;
+                            height: 16px;
+                            colorize: root.current_page == 1 ? Theme.accent_text : Theme.text_secondary;
                         }
                         Text {
                             text: "词库";
@@ -157,10 +159,11 @@ export component MainWindow inherits Window {
                         padding-left: 14px;
                         spacing: 8px;
                         alignment: start;
-                        Text {
-                            text: "ℹ️";
-                            font-size: 13px;
-                            vertical-alignment: center;
+                        Image {
+                            source: @image-url("icons/about.svg");
+                            width: 16px;
+                            height: 16px;
+                            colorize: root.current_page == 2 ? Theme.accent_text : Theme.text_secondary;
                         }
                         Text {
                             text: "关于";
@@ -205,7 +208,7 @@ export component MainWindow inherits Window {
                 // 卡片 1: 输入行为（联想 / 模糊音 / 双拼方案）
                 Card {
                     title: "输入行为";
-                    icon: "⚡️";
+                    icon: @image-url("icons/input.svg");
                     hint: "选词上屏后展示可续接的词组候选；模糊音让 zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing 混用也能命中；双拼两键一音节。修改后输入法会短暂重启以生效。";
 
                     HorizontalLayout {
@@ -271,7 +274,7 @@ export component MainWindow inherits Window {
                 // 卡片 2: 中英状态作用域
                 Card {
                     title: "中英状态";
-                    icon: "🌐";
+                    icon: @image-url("icons/lang.svg");
                     hint: "切一次所有程序都生效（推荐）；每进程则各自独立。";
 
                     HorizontalLayout {
@@ -292,7 +295,7 @@ export component MainWindow inherits Window {
                 // 卡片 3: 外观主题与实机微预览
                 Card {
                     title: "外观主题";
-                    icon: "🎨";
+                    icon: @image-url("icons/theme.svg");
                     hint: "跟随系统则随操作系统浅/深色自动切换；也可固定浅色或深色。";
 
                     HorizontalLayout {
@@ -326,7 +329,7 @@ export component MainWindow inherits Window {
                 // 卡片 1: 学习数据管理
                 Card {
                     title: "学习数据";
-                    icon: "📊";
+                    icon: @image-url("icons/learning.svg");
                     hint: "学习数据仅保存在本机，用于调频与词组联想；清空后不可恢复。";
 
                     Text {
@@ -355,7 +358,7 @@ export component MainWindow inherits Window {
                 // 卡片 2: 外部词库扩展
                 Card {
                     title: "词库扩展";
-                    icon: "📥";
+                    icon: @image-url("icons/import.svg");
                     hint: "支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。";
 
                     ChaosButton {
@@ -373,25 +376,16 @@ export component MainWindow inherits Window {
 
                 Card {
                     title: "关于";
-                    icon: "ℹ️";
+                    icon: @image-url("icons/about.svg");
 
                     VerticalLayout {
                         spacing: 12px;
                         alignment: center;
 
-                        Rectangle {
+                        Image {
+                            source: @image-url("icons/app.svg");
                             width: 44px;
                             height: 44px;
-                            border-radius: 10px;
-                            background: Theme.accent;
-                            Text {
-                                text: "C";
-                                color: #FFFFFF;
-                                font-size: 24px;
-                                font-weight: 800;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
                         }
 
                         Text {

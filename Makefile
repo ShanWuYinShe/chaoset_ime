@@ -225,8 +225,15 @@ package-macos:
 		lipo -info "$$b" 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
 			|| { echo "错误：$$b 不是 universal："; lipo -info "$$b" 2>&1; exit 1; }; \
 	done
-	@lipo -info shims/macos/build/ChaosetIME.app/Contents/Resources/chaoset-settings 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
-		|| { echo "错误：ChaosetIME.app 内 chaoset-settings 不是 universal" >&2; exit 1; }
+	@SETTINGS_APP="shims/macos/build/ChaosetIME.app/Contents/Resources/ChaosetSettings.app"; \
+		test -x "$$SETTINGS_APP/Contents/MacOS/chaoset-settings" \
+			|| { echo "错误：ChaosetIME.app 缺 ChaosetSettings.app（设置中心 app bundle）" >&2; exit 1; }; \
+		test -f "$$SETTINGS_APP/Contents/Info.plist" \
+			|| { echo "错误：ChaosetSettings.app 缺 Info.plist" >&2; exit 1; }; \
+		test -f "$$SETTINGS_APP/Contents/Resources/ChaosetSettings.icns" \
+			|| { echo "错误：ChaosetSettings.app 缺图标" >&2; exit 1; }; \
+		lipo -info "$$SETTINGS_APP/Contents/MacOS/chaoset-settings" 2>/dev/null | grep -q 'x86_64 arm64\|arm64 x86_64' \
+			|| { echo "错误：ChaosetSettings.app 内设置中心不是 universal" >&2; exit 1; }
 	@test -x shims/macos/build/ChaosetIME.app/Contents/Resources/chaosetd \
 		|| { echo "错误：ChaosetIME.app 缺 daemon"; exit 1; }
 	@test -f shims/macos/build/ChaosetIME.app/Contents/Resources/dict_common.tsv \
@@ -279,6 +286,7 @@ package-linux:
 	sh shims/linux/engine/build.sh dist/chaoset-linux-x86_64/bin/chaoset-engine
 	sed "s/@VERSION@/$(VERSION)/g" shims/linux/component/chaoset.xml > dist/chaoset-linux-x86_64/component/chaoset.xml
 	cp -r shims/linux/icons/hicolor dist/chaoset-linux-x86_64/icons/
+	cp shims/linux/chaoset-settings.desktop dist/chaoset-linux-x86_64/
 	# 词库：随包携带常用词库（dict_common.tsv），安装到 /usr/share/chaoset/dict.tsv。
 	# 此前只带 558 条的 dict_seed.tsv 而引擎默认要 dict_common.tsv，是装完
 	# 「引擎启动即退出」的直接原因。
@@ -309,6 +317,7 @@ package-linux:
 		mkdir -p dist/deb_staging/usr/share/chaoset; \
 		mkdir -p dist/deb_staging/usr/share/ibus/component; \
 		mkdir -p dist/deb_staging/usr/share/icons; \
+		mkdir -p dist/deb_staging/usr/share/applications; \
 		chmod 0755 dist/deb_staging dist/deb_staging/DEBIAN; \
 		cp -d dist/chaoset-linux-x86_64/bin/* dist/deb_staging/usr/bin/; \
 		cp dist/chaoset-linux-x86_64/data/dict.tsv dist/deb_staging/usr/share/chaoset/; \
@@ -316,6 +325,7 @@ package-linux:
 		install -Dm755 dist/chaoset-linux-x86_64/setup/chaoset-setup dist/deb_staging/usr/share/chaoset/chaoset-setup; \
 		sed "s/@VERSION@/$(VERSION)/g" dist/chaoset-linux-x86_64/component/chaoset.xml > dist/deb_staging/usr/share/ibus/component/chaoset.xml; \
 		cp -r dist/chaoset-linux-x86_64/icons/hicolor dist/deb_staging/usr/share/icons/; \
+		install -Dm644 dist/chaoset-linux-x86_64/chaoset-settings.desktop dist/deb_staging/usr/share/applications/chaoset-settings.desktop; \
 		sed -e '/^#/d' -e "s/@VERSION@/$(PKG_VERSION)/g" shims/linux/debian/control > dist/deb_staging/DEBIAN/control; \
 		mkdir -p dist/deb_staging/usr/share/doc/chaoset-ime; \
 		cp LICENSE dist/deb_staging/usr/share/doc/chaoset-ime/copyright; \

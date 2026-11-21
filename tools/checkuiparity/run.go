@@ -73,6 +73,8 @@ var checkGroups = []checkGroup{
 	{groupSettingsContract, onLogical(checkSettingsCenterContract)},
 	// 设置窗三端视觉令牌（docs/ui-parity.md 令牌表 = 单一事实源）。
 	{groupSettingsVisual, onLogical(checkSettingsVisualTokens)},
+	// 图标规范：SVG-only、无 emoji，三端 GUI app 图标齐备。
+	{groupIconRules, onLogical(checkIconRules)},
 	{groupCandidateGearMouseUp, onLogical(checkCandidateGearMouseUp)},
 	{groupTrayLifecycle, onLogical(checkTrayLazyLifecycle)},
 	{groupTrayActive, onLogical(checkTrayActiveLifecycle)},
