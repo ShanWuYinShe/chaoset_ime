@@ -9,7 +9,7 @@ url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
 # 设置界面唯一实现是 Slint 统一设置中心 chaoset-settings（不再有 GTK3 设置窗），
 # 因此运行时/构建时都不需要 gtk3。
-depends=('ibus')
+depends=('ibus' 'libxkbcommon' 'libxkbcommon-x11' 'fontconfig')
 makedepends=('go' 'rust' 'gcc' 'pkgconf' 'ibus')
 install=chaoset-ime.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ShanWuYinShe/chaoset_ime/archive/refs/tags/v$pkgver.tar.gz")

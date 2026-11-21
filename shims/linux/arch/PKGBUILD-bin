@@ -9,7 +9,7 @@ arch=('x86_64')
 url="https://github.com/ShanWuYinShe/chaoset_ime"
 license=('MIT')
 # 设置由 Slint 统一设置中心（chaoset-settings）提供，不再依赖 GTK3。
-depends=('ibus')
+depends=('ibus' 'libxkbcommon' 'libxkbcommon-x11' 'fontconfig')
 provides=('chaoset-ime')
 conflicts=('chaoset-ime')
 install=chaoset-ime.install
