@@ -560,32 +560,31 @@ impl UserDict {
         let now = current_timestamp();
         let mut out: Vec<TokenHit> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut consider =
-            |word: &str,
-             sylls: Vec<String>,
-             freq: i32,
-             segs: Vec<String>,
-             out: &mut Vec<TokenHit>,
-             seen: &mut std::collections::HashSet<String>| {
-                if sylls.len() != tokens.len() {
+        let consider = |word: &str,
+                        sylls: Vec<String>,
+                        freq: i32,
+                        segs: Vec<String>,
+                        out: &mut Vec<TokenHit>,
+                        seen: &mut std::collections::HashSet<String>| {
+            if sylls.len() != tokens.len() {
+                return;
+            }
+            for (i, (tok, exact)) in tokens.iter().enumerate() {
+                if !token_matches(&sylls[i], tok, *exact) {
                     return;
                 }
-                for (i, (tok, exact)) in tokens.iter().enumerate() {
-                    if !token_matches(&sylls[i], tok, *exact) {
-                        return;
-                    }
-                }
-                let key = format!("{}\u{0}{}", word, sylls.join(" "));
-                if !seen.insert(key) {
-                    return;
-                }
-                out.push(TokenHit {
-                    word: word.to_string(),
-                    syllables: sylls,
-                    freq,
-                    segs,
-                });
-            };
+            }
+            let key = format!("{}\u{0}{}", word, sylls.join(" "));
+            if !seen.insert(key) {
+                return;
+            }
+            out.push(TokenHit {
+                word: word.to_string(),
+                syllables: sylls,
+                freq,
+                segs,
+            });
+        };
         for rec in data.phrases.values() {
             let freq =
                 ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
