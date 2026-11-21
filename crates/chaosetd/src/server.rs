@@ -165,9 +165,12 @@ fn create_named_pipe_instance(
     use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    // PIPE_ACCESS_DUPLEX 是 FILE_FLAGS_AND_ATTRIBUTES，定义在 Storage::FileSystem
+    // （System::Pipes 只有 NAMED_PIPE_MODE 那组常量）；导错模块在 CI 的 Windows
+    // 构建里是硬错误，macOS/Linux 因 cfg(windows) 不编译而无法暴露。
+    use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
     use windows_sys::Win32::System::Pipes::{
-        CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-        PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
 
     let wide_name: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
