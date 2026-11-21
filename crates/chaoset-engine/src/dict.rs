@@ -195,11 +195,20 @@ impl Dictionary {
         }
     }
 
-    /// 精确匹配音节序列的词条（声母碎片按碎片导航展开）
-    pub fn query_exact(&self, syllables: &[&str]) -> Vec<&WordEntry> {
+    /// 精确匹配音节序列的词条（声母碎片按碎片导航展开；碎片导航会展开
+    /// 多个子树，按词频降序截断到 limit——对齐 Go QueryTokensExact 的上限
+    /// 口径：单音节全拼/单段声母/单字兜底 300、多段简拼 120、回退层 10）
+    pub fn query_exact(&self, syllables: &[&str], limit: usize) -> Vec<&WordEntry> {
         let mut indices = Vec::new();
         Self::walk(&self.trie, syllables, false, &mut indices);
-        indices.iter().map(|&idx| &self.entries[idx]).collect()
+        let entries = &self.entries;
+        indices.sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
+        indices.dedup();
+        indices
+            .into_iter()
+            .take(limit)
+            .map(|idx| &entries[idx])
+            .collect()
     }
 
     /// 前缀匹配音节序列的所有词条（包含以其为前缀的多字词；碎片导航
@@ -216,6 +225,123 @@ impl Dictionary {
             .take(limit)
             .map(|idx| &self.entries[idx])
             .collect()
+    }
+
+    /// 沿音节序列精确下钻，返回全部终点节点（不走碎片导航——续接查询的
+    /// tokens 都是完整音节）。
+    fn walk_nodes<'a>(node: &'a TrieNode, sylls: &[&str], out: &mut Vec<&'a TrieNode>) {
+        if sylls.is_empty() {
+            out.push(node);
+            return;
+        }
+        if let Some(next) = node.children.get(sylls[0]) {
+            Self::walk_nodes(next, &sylls[1..], out);
+        }
+    }
+
+    /// 末段残缺续接查询（对齐 Go Dictionary.QueryContinuation）：head 音节
+    /// 全部精确消耗后，把 frag 视为**一个尚未打完的音节**，沿以其为前缀的
+    /// 下探两层（覆盖 中国 / 中国人 这类衍生词），返回（词条索引, 需补全的
+    /// 尾巴）。补全越短越可能：中国(remain "o") 优先于 中关村(remain "an")。
+    pub fn query_continuation(
+        &self,
+        tokens: &[&str],
+        frag: &str,
+        max_results: usize,
+    ) -> Vec<(usize, String)> {
+        if frag.is_empty() || tokens.is_empty() {
+            return Vec::new();
+        }
+        let mut terminals: Vec<&TrieNode> = Vec::new();
+        Self::walk_nodes(&self.trie, tokens, &mut terminals);
+
+        let entries = &self.entries;
+        let mut out: Vec<(usize, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        fn walk_layers<'a>(
+            node: &'a TrieNode,
+            depth: usize,
+            remain: &str,
+            frag: &str,
+            out: &mut Vec<(usize, String)>,
+            seen: &mut std::collections::HashSet<usize>,
+            entries: &'a [WordEntry],
+        ) {
+            if depth > 2 {
+                return;
+            }
+            for (syl, child) in node.children.iter() {
+                if !syl.starts_with(frag) {
+                    continue;
+                }
+                let r = if depth == 0 {
+                    syl[frag.len()..].to_string()
+                } else {
+                    remain.to_string()
+                };
+                for &id in &child.exact_words {
+                    if seen.insert(id) {
+                        out.push((id, r.clone()));
+                    }
+                }
+                walk_layers(child, depth + 1, &r, frag, out, seen, entries);
+            }
+        }
+        for node in terminals {
+            walk_layers(node, 0, "", frag, &mut out, &mut seen, entries);
+        }
+        // 补全越短越可能：remain 长度升序 → 词频降序 → 字典序
+        out.sort_by(|a, b| {
+            let (ia, ra) = a;
+            let (ib, rb) = b;
+            ra.len()
+                .cmp(&rb.len())
+                .then(entries[*ib].freq.cmp(&entries[*ia].freq))
+                .then(entries[*ia].word.cmp(&entries[*ib].word))
+        });
+        out.truncate(max_results);
+        out
+    }
+
+    /// Go queryTokens 的双池语义：exact 池 = 该音节路径节点上的词条（含
+    /// 单字同音字全量），prefix 池 = 其子孙词条（更长的词组）。两池独立
+    /// 上限、独立截断（exact 300/120 与 prefix 20 的分配依据见 Go
+    /// compose_query.go addTokenMatches 注释）；prefix 池的排除集用
+    /// **未截断**的 exact 全集，避免截断尾巴漏进前缀池。碎片导航展开的
+    /// 多个终点节点同样适用。
+    pub fn query_exact_and_prefix(
+        &self,
+        syllables: &[&str],
+        exact_limit: usize,
+        prefix_limit: usize,
+    ) -> (Vec<&WordEntry>, Vec<&WordEntry>) {
+        let entries = &self.entries;
+
+        // exact 全集：碎片导航展开的各终点节点词条并集，词频降序
+        let mut exact_all: Vec<usize> = Vec::new();
+        Self::walk(&self.trie, syllables, false, &mut exact_all);
+        exact_all.sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
+        exact_all.dedup();
+
+        // 全子树（终点节点词条 + 子孙词条），词频降序
+        let mut all: Vec<usize> = Vec::new();
+        Self::walk(&self.trie, syllables, true, &mut all);
+        all.sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
+        all.dedup();
+
+        let exact_set: std::collections::HashSet<usize> = exact_all.iter().copied().collect();
+        let exact_pool: Vec<&WordEntry> = exact_all
+            .iter()
+            .take(exact_limit)
+            .map(|idx| &entries[*idx])
+            .collect();
+        let prefix_pool: Vec<&WordEntry> = all
+            .iter()
+            .filter(|i| !exact_set.contains(i))
+            .take(prefix_limit)
+            .map(|idx| &entries[*idx])
+            .collect();
+        (exact_pool, prefix_pool)
     }
 }
 
@@ -246,7 +372,7 @@ mod tests {
         });
         dict.sort_nodes();
 
-        let exact = dict.query_exact(&["ni", "hao"]);
+        let exact = dict.query_exact(&["ni", "hao"], 20);
         assert_eq!(exact.len(), 1);
         assert_eq!(exact[0].word, "你好");
 
@@ -293,7 +419,7 @@ mod tests {
         assert_eq!(x_hits[0].word, "先");
 
         // 碎片精确匹配（词级）：query_exact(["xian"]) 只有整音节路径。
-        let exact_xian = dict.query_exact(&["xian"]);
+        let exact_xian = dict.query_exact(&["xian"], 20);
         assert_eq!(exact_xian.len(), 1);
         assert_eq!(exact_xian[0].word, "先");
     }

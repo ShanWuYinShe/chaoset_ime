@@ -8,6 +8,13 @@
   - 同一份场景语料（`tools/engineparity/scenarios.jsonl`：切分/简拼/翻页/退格/渐进上屏/标点/联想/纠错/模糊音/繁体/双拼共 30 场景）分别驱动 Go `engine.Session` 与 Rust `chaoset-engine::Session`（后者经 `crates/chaoset-engine` 的 `replay` bin），逐场景逐步骤对比用户可见行为（候选序列、preedit、页码、committed）；候选打分 score 只做信息性统计；
   - 首次基线（`make engineparity` 取数）：30 场景一致 4 个、差异 26 个；主要缺口为排序键、召回范围（page_count）、非小写字符过滤、无候选兜底、简拼展开与退格后组词保留，后续迁移按此清单逐项推进并以该工具复验；
   - 修复 Rust 候选音节分隔符协议漂移：`Candidate.syllables` 由空格连接改为撇号连接（`ni hao` → `ni'hao`），与 Go `compose_state.go` 及三端壳消费口径一致。
+- **重构(engine)：Rust 召回分层体系对齐 Go（`compose_query`/`compose_rank` 核心迁移），末段残缺命中率 32%→89%**：
+  - `dict.rs`：新增 `query_exact_and_prefix` 双池查询（exact=音节路径词条同音字全量、prefix=子孙词组，独立上限独立截断）与 `query_continuation` 末段续接查询（head 精确下钻 + frag 前缀展开两层）；
+  - `session.rs`：引入匹配层级（rank）——层级是第一排序维度，词频打分只在同层内起作用，替换旧的「词频 × 5000/1000 加成」打分模拟方案；新增末段残缺续接双路径（末音节可延长 zhonggu→中国、末段整体非音节 quanmia→全面，补全按字符数折价 `continuationPenalty=30`）、逐级回退（drop≤6、≥4 段首音节放开同音字全量、nihaox 置顶提升特例）、首段全量单字收尾（rankSingleBackfill）、单段输入只出单字硬约束（xian 只出单字，西安需显式 xi'an；zh/ch/sh 双字母简拼仍出词）、超段仲裁（仅全拼输入，完全消耗优先于音节超段）；
+  - `syllable.rs`：新增 `syllable_continuations`/`split_exact_syllables`/`partial_tail_splits` 续接辅助；
+  - 量化对比（`tools/engineparity` + skill 口径确定性语料 1,131 词 × 5 形态）：tail1（打一半，最高频形态）命中率 31.9%→**89.0%**（Go 88.8%）、首选率 13.8%→**45.3%**（Go 45.4%），tail2 命中率 42.8%→**59.9%**（Go 58.5%），full/initials/mixed 持平或略优，首屏全同 88.9%–98.5%；30 场景差分一致 4→7、score 信息性差异 186→21；
+  - 新增 5 项双向回归测试（续接压过巧合词、残缺末段领跑、单段只出单字、回退置顶+单字收尾、超段仲裁），合计 22 项单测全过；
+  - 未迁移项（后续清单）：组合候选层（rankComposition 的分词 DP）、DP 纠错（typo_dp）与错拼固定第 3 位、TypoSuspicious 形态的纠错主路径。
 - **重构(engine)：Rust 声母碎片导航与输入过滤对齐 Go 契约（基线缺口「字符过滤/简拼展开/无候选兜底」三项关闭）**：
   - `dict.rs`：`query_prefix`/`query_exact` 统一走碎片感知 walk——单/双字母声母 token（z/x/n/zh…）按「音节以该声母开头」展开子树（此前 Trie 只认整音节键，`nh`/`zzz` 一类碎片输入召回为空）；
   - `session.rs` compose：两阶段切分仲裁——纯音节 pattern 优先召回，全部空手而归才回退含碎片的 pattern（`xian` 不再混入 `xia'n` 切分的瞎闹/下奶类候选；碎片只在整段无音节解时兜底，对齐 Go 观察行为）；

@@ -41,8 +41,8 @@ pub const SYLLABLE_TABLE: &[&str] = &[
 
 /// 声母列表（用于简拼判定与前缀切分）
 pub const INITIALS: &[&str] = &[
-    "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h",
-    "j", "q", "x", "zh", "ch", "sh", "r", "z", "c", "s", "y", "w",
+    "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "zh", "ch", "sh", "r",
+    "z", "c", "s", "y", "w",
 ];
 
 pub const MAX_SYLLABLE_LEN: usize = 6; // 最长音节如 zhuang / shuang (6)
@@ -59,6 +59,85 @@ pub fn syllables_with_prefix(frag: &str) -> Vec<&'static str> {
         .copied()
         .filter(|s| s.starts_with(frag))
         .collect()
+}
+
+/// 返回「以 syl 为前缀、比 syl 更长的合法音节」中 syl 之后需要补敲的那一段
+/// （如 gu → ["o","i","ang"…]）。空结果表示该音节无法再延长，没有续接
+/// 预测价值。对齐 Go engine/session.go syllableContinuations。
+pub fn syllable_continuations(syl: &str) -> Vec<String> {
+    if syl.is_empty() {
+        return Vec::new();
+    }
+    SYLLABLE_TABLE
+        .iter()
+        .filter(|s| s.len() > syl.len() && s.starts_with(syl))
+        .map(|s| s[syl.len()..].to_string())
+        .collect()
+}
+
+/// 把一段拼音贪心切成完整音节；有任何字符无法归入合法音节时返回 None。
+/// 对齐 Go engine/session.go splitExactSyllables。
+pub fn split_exact_syllables(chunk: &str) -> Option<Vec<String>> {
+    let mut syls = Vec::new();
+    let mut rest = chunk;
+    while !rest.is_empty() {
+        let max_l = rest.len().min(MAX_SYLLABLE_LEN);
+        let mut matched = false;
+        for l in (1..=max_l).rev() {
+            if is_syllable(&rest[..l]) {
+                syls.push(rest[..l].to_string());
+                rest = &rest[l..];
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return None;
+        }
+    }
+    Some(syls)
+}
+
+/// 末段残缺续接的拆分形态：（前面已完整的音节序列, 待补全串 frag）。
+/// 与「末音节可延长」那条路径的区别：这里末段连完整音节都不是（quanmia
+/// 的 mia / nchen 的 chen），必须整段作为 prefix 去续接，否则只会被切成
+/// 碎片出「全米啊」这类假词。frag 从 2 字符起递增（1 字符属声母简拼领域，
+/// 交给常规路径）；优先把最长的一段当前置完整音节（quanmia → quan + mia）；
+/// frag 本身已是合法音节时停止（由上一条路径覆盖）。最多返回 2 条。
+/// 对齐 Go engine/session.go partialTailSplits。
+pub fn partial_tail_splits(input: &str) -> Vec<(Vec<String>, String)> {
+    if input.is_empty() || input.ends_with('\'') {
+        return Vec::new();
+    }
+    let last_chunk = match input.rfind('\'') {
+        Some(i) => &input[i + 1..],
+        None => input,
+    };
+    if last_chunk.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fl in 2..=MAX_SYLLABLE_LEN {
+        if out.len() >= 2 {
+            break;
+        }
+        if fl >= last_chunk.len() {
+            continue;
+        }
+        let frag = &last_chunk[last_chunk.len() - fl..];
+        if is_syllable(frag) {
+            break;
+        }
+        let head = &last_chunk[..last_chunk.len() - fl];
+        let Some(syls) = split_exact_syllables(head) else {
+            continue;
+        };
+        if syls.is_empty() {
+            continue;
+        }
+        out.push((syls, frag.to_string()));
+    }
+    out
 }
 
 /// 音节别名映射与规范化（如 lue -> lve, nue -> nve, shuei -> shui 等）
@@ -124,12 +203,7 @@ pub fn tokenize_chunk(input: &str) -> Vec<Vec<Token>> {
         return results;
     }
 
-    fn dfs(
-        chars: &[char],
-        idx: usize,
-        current: &mut Vec<Token>,
-        results: &mut Vec<Vec<Token>>,
-    ) {
+    fn dfs(chars: &[char], idx: usize, current: &mut Vec<Token>, results: &mut Vec<Vec<Token>>) {
         if idx >= chars.len() {
             results.push(current.clone());
             return;
@@ -291,7 +365,10 @@ pub fn typo_corrections(input: &str, max_results: usize) -> Vec<TypoCorrection> 
         }
         if has_clean_syllable_split(&cand) {
             seen.insert(cand.clone());
-            results.push(TypoCorrection { text: cand, is_near });
+            results.push(TypoCorrection {
+                text: cand,
+                is_near,
+            });
         }
     };
 
