@@ -193,13 +193,15 @@ jobs:
             grep -q "$f" /tmp/pkg-list.txt || { echo "tar.gz 缺少 $f"; exit 1; }
           done
           # Slint 设置中心的运行时动态库必须齐全（缺库时用户点设置直接打不开）。
-          # 并在 Xvfb 下做一次无头启动冒烟：3s 后仍在运行（timeout=124）或正常退出都算
-          # 启动成功，其他退出码视为崩溃（例如缺 libfontconfig/libxkbcommon）。
-          if ldd dist/chaoset-linux-x86_64/bin/chaoset-settings | grep -q 'not found'; then
-            echo "chaoset-settings 运行时缺库："; ldd dist/chaoset-linux-x86_64/bin/chaoset-settings; exit 1
+          # package-linux 结束后会清掉解包目录，从 tar.gz 里取设置中心做冒烟。
+          rm -rf /tmp/pkg-smoke && mkdir -p /tmp/pkg-smoke
+          tar -xzf dist/chaoset-linux-x86_64.tar.gz -C /tmp/pkg-smoke
+          SMOKE_BIN=/tmp/pkg-smoke/chaoset-linux-x86_64/bin/chaoset-settings
+          if ldd "$SMOKE_BIN" | grep -q 'not found'; then
+            echo "chaoset-settings 运行时缺库："; ldd "$SMOKE_BIN"; exit 1
           fi
           set +e
-          xvfb-run -a timeout 3 dist/chaoset-linux-x86_64/bin/chaoset-settings > /tmp/settings-smoke.log 2>&1
+          xvfb-run -a timeout 3 "$SMOKE_BIN" > /tmp/settings-smoke.log 2>&1
           SMOKE=$?
           set -e
           if [ "$SMOKE" -ne 0 ] && [ "$SMOKE" -ne 124 ]; then

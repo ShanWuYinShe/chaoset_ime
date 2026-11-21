@@ -146,7 +146,7 @@ mod imp {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    pub fn acquire(_page: usize) -> Option<Guard> {
+    pub fn acquire(_page: i32) -> Option<Guard> {
         let name = wide("Local\\ChaosetSettingsCenter");
         let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
         if handle.is_null() {
@@ -171,7 +171,7 @@ mod imp {
 #[cfg(not(any(unix, windows)))]
 mod imp {
     use super::*;
-    pub fn acquire(_page: usize) -> Option<Guard> {
+    pub fn acquire(_page: i32) -> Option<Guard> {
         Some(Guard {})
     }
 }
