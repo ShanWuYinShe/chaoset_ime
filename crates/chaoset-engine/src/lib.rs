@@ -1,6 +1,7 @@
 //! Chaoset IME 纯 Rust 高性能、零 GC 输入法引擎核心库。
 
 pub mod dict;
+pub mod dict_binary;
 pub mod fuzzy;
 pub mod punct;
 pub mod s2t;

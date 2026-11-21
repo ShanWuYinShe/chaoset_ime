@@ -1,0 +1,18 @@
+feat(dict): 新增发布用二进制词库（CSDB v1）与 daemon 缓存加载
+
+- 新增 dict_binary.rs：CSDB v1 格式（魔数/版本/音节表/词条，单遍顺序写、单遍解析、
+  精确预分配），提供 write_binary/load_binary/load_auto/load_with_cache；
+- 新增 dictc 编译器 bin：dictc <input.tsv> [output.bin]（可复现字节、超限报错不截断）；
+- daemon 改为 load_with_cache：同目录同 stem .bin 缓存优先（mtime 新于源），
+  缺失/过期/损坏回退 TSV 并原子重建缓存；多 -dict 只写各自新增词条，只读目录不 panic；
+- 删除 WordEntry.pinyin 字段（无读取方）并去掉 insert 的 syllables 深拷贝：
+  结构体 80→56B、词库约 -6.9MB；replay/daemon 均支持 .tsv/.bin；
+- 新增 8 个测试：TSV↔bin 逐条等价、41 场景回放 stdout 逐字节相同、损坏拒绝、
+  缓存首建/命中/重建/损坏回退/多源隔离/只读目录。
+
+实测（release，200000 条）：TSV 4.67MB → bin 3.61MB（-22.7%）；加载 139–170ms →
+91–124ms（1.4–1.7x）；daemon 启动 0.187s → 0.135s；RSS -5~6%；两次编译 sha256 相同。
+
+Harness: DeepSeek Harness (dsh)
+Model: deepseek-v4.1-flash
+Co-authored-by: DeepSeek <noreply@deepseek.com>

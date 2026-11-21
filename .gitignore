@@ -11,6 +11,11 @@ target/
 shims/linux/setup/chaoset-setup
 
 # 运行产物
+# 二进制词库（CSDB）：daemon 首次加载 <词库>.tsv 时自动生成同 stem 的 .bin 缓存，
+# dictc 本地编译也产出 .bin；发布产物由打包脚本生成，仓库只保留 TSV 源，.bin 不入库。
+*.bin
+# 缓存写回中途的临时文件（<词库>.bin.<pid>.tmp；正常路径会被 rename/清理）
+*.bin.*.tmp
 *.sock
 # daemon 单实例 flock 锁文件（<socket>.lock）与损坏用户词典备份
 # （userdict.json.corrupt-<时间戳>）。2026-10-31 审计 P2：此前未忽略，
