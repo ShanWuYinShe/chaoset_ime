@@ -67,6 +67,9 @@ func checkSettingsWindowContract(fsys fs.FS, problems *[]string) {
 		"模糊音", "双拼方案")
 	checkContains(fsys, problems, group, "crates/chaosetd/src/input_settings.rs",
 		"ChaosetFuzzy", "ChaosetShuangpin", "fuzzy", "shuangpin")
+	// 统一设置中心必须随三端发行包携带：macOS app 内副本 / Windows exe /
+	// Linux bin；否则用户点齿轮只能看到旧的原生窗口，新设置不可达。
+	checkContains(fsys, problems, group, "shims/macos/build.sh", "chaoset-settings")
 	checkContains(fsys, problems, group, "shims/settings/src/bridge.rs",
 		"set_fuzzy", "set_shuangpin", "restart_daemon")
 }
