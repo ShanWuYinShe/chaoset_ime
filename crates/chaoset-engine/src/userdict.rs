@@ -162,6 +162,47 @@ impl UserDict {
         (total_bonus.round() as u32, from_user)
     }
 
+    /// 按「拼音连写 == 输入」匹配用户学习记录（Go UserDict.QueryJoinedPinyin）：
+    /// Words 调频词与 Phrases 词组进化两张表都查，同一词去重后按调频分降序。
+    pub fn query_joined_pinyin(&self, input: &str, max_results: usize) -> Vec<WordPrefixHit> {
+        if input.is_empty() {
+            return Vec::new();
+        }
+        let limit = if max_results == 0 { 20 } else { max_results };
+        let data = self.data.read().unwrap();
+        let now = current_timestamp();
+        let mut out: Vec<WordPrefixHit> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut add = |word: &str, sylls: Vec<String>, freq: i32, segs: Vec<String>| {
+            if sylls.is_empty() || sylls.join("") != input {
+                return;
+            }
+            let key = format!("{}|{}", word, sylls.join(" "));
+            if !seen.insert(key) {
+                return;
+            }
+            out.push(WordPrefixHit {
+                word: word.to_string(),
+                syllables: sylls,
+                freq,
+                segs,
+            });
+        };
+        for (word, rec) in data.words.iter() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            add(word, split_sylls(&rec.sylls), freq, rec.segs.clone());
+        }
+        for rec in data.phrases.values() {
+            let freq =
+                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+            add(&rec.word, split_sylls(&rec.sylls), freq, rec.segs.clone());
+        }
+        WordPrefixHit::sort(&mut out);
+        out.truncate(limit);
+        out
+    }
+
     /// 按**词字面**前缀查词组进化记录（Go QueryPhrasesByWordPrefix）。
     pub fn query_phrases_by_word_prefix(&self, prefix: &str) -> Vec<WordPrefixHit> {
         let data = self.data.read().unwrap();

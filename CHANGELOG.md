@@ -4,6 +4,13 @@
 
 ## 未发布
 
+- **重构(引擎)：Rust 召回层保真——连写匹配层、错拼闸门、模糊变体笛卡尔积、上限口径对齐**：
+  - 新增「拼音连写 == 输入」匹配层（Go `addJoinedMatches`，rankExact）：不依赖切分枚举、只沿词库已有词条匹配，兜住枚举上限导致的漏匹配；主词典与用户词库各一份查询；错拼形态与含显式分隔符的输入不参与（Go 同闸门）；
+  - 错拼形态闸门（Go `addTokenMatches`）：主查询换 `QueryTokensExact`（不展开 prefix 子树）、不做逐级回退、不追加单字兜底——项目硬约束「错拼输入不追加单字兜底」补齐；
+  - 模糊音改在 token 主循环内做**变体笛卡尔积**（Go `expandTokenVariants`，封顶 8 条路径），删除原先只模糊首音节的简化层——模糊候选与 Go 一样进入正常层级而非固定降权；
+  - 召回上限分配顺序对齐 Go（单段 300 → 多段简拼 120 → 常规 20）：单段声母残留输入（渐进上屏后的 `x`）此前被当成简拼只取 120，逐字挑选不可达；
+  - 差分场景一致 28→30（`fuzzy-shishi`、`select-prefix-progressive` 转一致）；语料 5,655 场景首屏全同 mixed 99.5%→99.6%，其余持平（无退化）；
+  - 新增 `test_expand_token_variants`（关模糊一条原路径、开模糊首条为原路径且封顶 8）。
 - **重构(引擎)：Rust 联想（Associate）迁移——按上屏词的字续接 + 上下文共现排序**：
   - 主词典新增 `query_word_prefix`（Go `QueryWordPrefix`）：只续接「以刚上屏词开头且更长」的词条，按词频降序；
   - 用户词库新增 `QueryPhrasesByWordPrefix` / `QueryWordsByWordPrefix`（词组进化 + 调频词两张表）与 `score_full`（Words 调频 + Bigram 共现，与组词打分的 `score()` 口径分开）；`UserRecord` 补 `sylls` 字段（serde 默认，向后兼容）；

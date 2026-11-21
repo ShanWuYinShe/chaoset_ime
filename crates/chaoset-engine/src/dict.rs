@@ -226,6 +226,72 @@ impl Dictionary {
     pub fn contains_word(&self, word: &str, syllables: &[&str]) -> bool {
         self.exact_words(syllables).iter().any(|e| e.word == word)
     }
+    /// 按「拼音连写 == 输入」匹配词库里已有的词条（Go Dictionary.QueryJoinedPinyin）。
+    ///
+    /// 不依赖切分枚举、也不造词：只沿 Trie 上已有词条的路径边走，用输入串直接
+    /// 对齐音节边界。用于兜住切分枚举上限导致的漏匹配（用户要求：词库里有的
+    /// 词仍要能用 DP 匹配到）。空输入返回空。
+    pub fn query_joined_pinyin(&self, input: &str, max_results: usize) -> Vec<&WordEntry> {
+        if input.is_empty() {
+            return Vec::new();
+        }
+        let limit = if max_results == 0 { 20 } else { max_results };
+        let bytes = input.as_bytes();
+        let mut out: Vec<usize> = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        fn dfs(
+            node: &TrieNode,
+            bytes: &[u8],
+            pos: usize,
+            out: &mut Vec<usize>,
+            seen: &mut std::collections::HashSet<usize>,
+        ) {
+            if pos == bytes.len() {
+                for &id in &node.exact_words {
+                    if seen.insert(id) {
+                        out.push(id);
+                    }
+                }
+                return;
+            }
+            for l in 1..=crate::syllable::MAX_SYLLABLE_LEN {
+                if pos + l > bytes.len() {
+                    break;
+                }
+                let key = std::str::from_utf8(&bytes[pos..pos + l]).unwrap_or_default();
+                if let Some(child) = node.children.get(key) {
+                    dfs(child, bytes, pos + l, out, seen);
+                }
+            }
+        }
+        dfs(&self.trie, bytes, 0, &mut out, &mut seen);
+        if out.is_empty() {
+            return Vec::new();
+        }
+        let entries = &self.entries;
+        out.sort_by(|&a, &b| {
+            entries[b]
+                .freq
+                .cmp(&entries[a].freq)
+                .then(
+                    entries[a]
+                        .word
+                        .chars()
+                        .count()
+                        .cmp(&entries[b].word.chars().count()),
+                )
+                .then(entries[a].word.cmp(&entries[b].word))
+                .then(
+                    entries[a]
+                        .syllables
+                        .join("'")
+                        .cmp(&entries[b].syllables.join("'")),
+                )
+        });
+        out.truncate(limit);
+        out.iter().map(|&i| &entries[i]).collect()
+    }
+
     /// 按**词字面**前缀查词条（Go Dictionary.QueryWordPrefix）：联想续接按
     /// 上屏词的字走（测试→测试题/测试员），只要词库里以该词开头、且比它更长
     /// 的词（同词本身不算续接）。排序：词频降序 → 词字典序 → 音节串，保证
