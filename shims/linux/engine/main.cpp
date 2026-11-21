@@ -273,7 +273,9 @@ public:
             return true;
         }
 
-        if (keyval >= 'a' && keyval <= 'z') {
+        // 大小写字母都进组词：大写按原样保存（回车原样上屏），拼音匹配由
+        // 引擎按小写口径处理——用户不必为大写切输入法。
+        if ((keyval >= 'a' && keyval <= 'z') || (keyval >= 'A' && keyval <= 'Z')) {
             const std::string text(1, static_cast<char>(keyval));
             refresh(callComp([&] { return daemon_.session().input(text, halfWidth_); }));
             return true;

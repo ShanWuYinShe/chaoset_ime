@@ -703,18 +703,15 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return false;
     }
 
-    // 字母：追加组词。Shift+字母（大写英文，含 CapsLock）不进组词：
-    // 放行原字符，组词中先清空——此前无条件小写化，Shift+A 会变成 a
-    // 混进拼音（mac 壳 isCompositionChar 只认小写，此处对齐）。
+    // 字母：追加组词。大小写都进组词——大写按**原样**保存（回车原样上屏，
+    // 用户不必为大写切输入法），拼音匹配由引擎按小写口径处理（mac/Linux 壳
+    // 同口径）。Shift+A 因此是组词里的 A，不再被放行成英文。
     if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
-        if (shiftActive()) {
-            // 大写英文不进组词：放行原字符，组词先收尾（已确认段随透传落盘）
-            if (isComposing() || !confirmedPreedit_.empty()) {
-                flushOrCancel(pic);
-            }
-            return false;
-        }
-        std::string ch(1, static_cast<char>('a' + (vk - kVkFirstLetter)));
+        // 实际大小写 = Shift ⊕ CapsLock（两者同按回到小写，与系统字母行为一致）。
+        const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+        const char base = (shiftDown != capsOn) ? 'A' : 'a';
+        std::string ch(1, static_cast<char>(base + (vk - kVkFirstLetter)));
         comp_ = session_.input(ch, halfWidth_);
         if (!comp_.ok) {
             // daemon 确实不可达：收尾（已确认段落盘，不因 daemon 故障丢字）

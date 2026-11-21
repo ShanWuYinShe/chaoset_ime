@@ -519,8 +519,11 @@ extension ChaosetController {
 
     private func isCompositionChar(_ chars: String) -> Bool {
         for scalar in chars.unicodeScalars {
-            let isLower = scalar.value >= 97 && scalar.value <= 122 // a-z
-            if !isLower && scalar != "'" { return false }
+            // a-z / A-Z 都进组词：大写保留在输入里（回车原样上屏），
+            // 拼音匹配由引擎按小写口径处理——用户不必为大写切输入法。
+            let isLetter = (scalar.value >= 97 && scalar.value <= 122)
+                || (scalar.value >= 65 && scalar.value <= 90)
+            if !isLetter && scalar != "'" { return false }
         }
         return true
     }

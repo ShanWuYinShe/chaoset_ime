@@ -67,7 +67,7 @@ func (st *composeState) addTypoCorrections() {
 		mistakeOnly := st.shape.MistakeInput
 		var fixes []typoCorrection
 		if mistakeOnly {
-			clusterFixes := commonMistakeFixes(s.input)
+			clusterFixes := commonMistakeFixes(s.matchInput())
 			st.typo.clusterFixCount = len(clusterFixes)
 			for _, f := range clusterFixes {
 				fixes = append(fixes, typoCorrection{text: f, isNear: true})
@@ -75,10 +75,10 @@ func (st *composeState) addTypoCorrections() {
 			// 归位修正之外仍保留通用纠错作为兜底/补充：单字候选来自这里
 			// （chagnshuru 的「差/茶馆」），保证「单字始终保留」不被破坏；
 			// 归位候选会无条件提升到精确层，仍排在前面。
-			fixes = append(fixes, typoCorrections(s.input, typoMaxCorrections)...)
+			fixes = append(fixes, typoCorrections(s.matchInput(), typoMaxCorrections)...)
 		}
 		if len(fixes) == 0 {
-			fixes = typoCorrections(s.input, typoMaxCorrections)
+			fixes = typoCorrections(s.matchInput(), typoMaxCorrections)
 		}
 		if mistakeOnly && len(fixes) > 0 {
 			if pats := enumerateAllTokens(strings.Split(fixes[0].text, "'")); len(pats) > 0 && len(pats[0]) > 0 {
@@ -159,7 +159,7 @@ func (st *composeState) addTypoCorrections() {
 			// 不会靠奖励分把「关系/发票/你好/我们」这些真正的纠错结果挤掉。
 			// tailSuspicious（合法混拼的末位声母，如 chifanl / nihap）不生成；
 			// 替换/插入类修正也不生成（单词语义已能覆盖，组合只会带来噪声）。
-			phraseBonus, phraseOK := typoFixPhraseBonus(s.input, fix.text)
+			phraseBonus, phraseOK := typoFixPhraseBonus(s.matchInput(), fix.text)
 			if !tailSuspicious && phraseOK && st.typo.phraseQueries < typoMaxPhraseQueries {
 				st.typo.phraseQueries++
 				fixBonus := phraseBonus

@@ -52,6 +52,7 @@ var checkGroups = []checkGroup{
 	{groupModifierMapping, onLogical(checkModifierMapping)},
 	{groupShiftAccounting, onLogical(checkShiftToggleAccounting)},
 	{groupResetSemantics, onLogical(checkResetSemantics)},
+	{groupLetterCaseComposition, onLogical(checkLetterCaseComposition)},
 	// Windows TSF 壳零阻塞/生命周期契约。
 	{groupPopupOwner, onLogical(checkPopupOwner)},
 	{groupUILess, onLogical(checkUILessCapability)},

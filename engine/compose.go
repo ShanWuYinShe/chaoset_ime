@@ -3,6 +3,7 @@ package engine
 import (
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // compose.go —— Compose() 的组词编排（原 compose() 1009 行函数的骨架）。
@@ -95,6 +96,46 @@ func (st *composeState) filterSingleSegment() {
 	st.items = kept
 }
 
+// preeditWithCase 按切分边界重建预编辑，并**保留用户输入的大小写**。
+//
+// 预编辑是「按 Enter 会原样上屏的内容」的预览：用户敲 NIHAO 时看到 NI'HAO，
+// 而不是被悄悄小写的 ni'hao。做法是把输入去掉显式分隔符后与音节文本逐个
+// 字符对齐——长度不匹配（别名归一 lue→lve、双拼解码等）或字符不同（同上）
+// 时退回音节文本本身，保证任何形态都不会错位。
+func preeditWithCase(input string, tokens []Token) string {
+	src := []rune(strings.ReplaceAll(input, "'", ""))
+	var canon []rune
+	for _, tok := range tokens {
+		canon = append(canon, []rune(tok.Text)...)
+	}
+	var b strings.Builder
+	if len(src) != len(canon) {
+		for i, tok := range tokens {
+			if i > 0 {
+				b.WriteByte('\'')
+			}
+			b.WriteString(tok.Text)
+		}
+		return b.String()
+	}
+	idx := 0
+	for i, tok := range tokens {
+		if i > 0 {
+			b.WriteByte('\'')
+		}
+		for _, c := range tok.Text {
+			// 音节文本是规范化小写；原字符只可能在大小写上不同。
+			if unicode.ToLower(src[idx]) == c {
+				b.WriteRune(src[idx])
+			} else {
+				b.WriteRune(c)
+			}
+			idx++
+		}
+	}
+	return b.String()
+}
+
 // buildComposition 是分页/preedit 收尾（原 compose() 的 O 段）。
 //
 // 必须保留两处副作用：
@@ -124,11 +165,7 @@ func (st *composeState) buildComposition(comp Composition) Composition {
 
 	preedit := s.input
 	if len(merged) > 0 && len(st.patterns) > 0 && len(st.patterns[0]) > 0 {
-		var parts []string
-		for _, tok := range st.patterns[0] {
-			parts = append(parts, tok.Text)
-		}
-		preedit = strings.Join(parts, "'")
+		preedit = preeditWithCase(s.input, st.patterns[0])
 	}
 
 	comp.Preedit = preedit

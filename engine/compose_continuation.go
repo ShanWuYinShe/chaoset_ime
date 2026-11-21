@@ -54,7 +54,7 @@ func (st *composeState) addContinuations() {
 	// 常规切分会把残缺段拆成「完整音节 + 声母 + 韵母」的碎片（quan'mi'a），
 	// 命中「全米啊」这类假词。这里把「前面已完整 + 末段整体当作待补全串」
 	// 再查一次，才能出「全面 / 上面」。
-	for _, tail := range partialTailSplits(s.input) {
+	for _, tail := range partialTailSplits(s.matchInput()) {
 		entryList := s.dict.QueryContinuation(tail.tokens, tail.frag, 24)
 		if s.user != nil {
 			entryList = append(entryList, s.user.QueryContinuation(tail.tokens, tail.frag, 8)...)

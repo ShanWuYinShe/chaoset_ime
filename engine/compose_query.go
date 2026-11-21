@@ -24,7 +24,7 @@ func (st *composeState) addJoinedMatches() {
 	if st.shape.TypoSuspicious || strings.ContainsRune(s.input, '\'') {
 		return
 	}
-	joined := s.input
+	joined := s.matchInput()
 	for _, e := range s.dict.QueryJoinedPinyin(joined, 20) {
 		boost := 0
 		if s.user != nil {

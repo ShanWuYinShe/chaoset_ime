@@ -75,15 +75,53 @@ func TestComposeFragmentPrefix(t *testing.T) {
 	}
 }
 
-// 非 [a-z'] 字符被过滤，大写归一化。
+// 非字母字符被过滤；**大写字母保留**（用户直接按 Enter 原样上屏），
+// 拼音匹配按小写口径。
 func TestInputFiltersNonLetters(t *testing.T) {
 	s := NewSession(mustDict(t), nil)
 	comp, _ := s.Input("NI1hao!?", false)
-	if comp.Input != "nihao" {
-		t.Fatalf("过滤后输入 = %q, 期望 nihao", comp.Input)
+	if comp.Input != "NIhao" {
+		t.Fatalf("过滤后输入 = %q, 期望 NIhao（大写保留、非字母丢弃）", comp.Input)
 	}
 	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "你好" {
-		t.Fatalf("第一候选应为「你好」，得到 %+v", comp.Candidates)
+		t.Fatalf("第一候选应为「你好」（大写按小写匹配），得到 %+v", comp.Candidates)
+	}
+}
+
+// 大写输入：匹配与全小写等价，预编辑与原始输入都保留大小写，
+// CommitRaw（Enter 原样上屏）返回用户实际敲的字母。
+func TestUppercaseInputPreserved(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	comp, _ := s.Input("NIHAO", false)
+	if comp.Input != "NIHAO" {
+		t.Fatalf("原始输入应保留大小写，得到 %q", comp.Input)
+	}
+	if comp.Preedit != "NI'HAO" {
+		t.Fatalf("预编辑应保留大小写，得到 %q", comp.Preedit)
+	}
+	if len(comp.Candidates) == 0 || comp.Candidates[0].Text != "你好" {
+		t.Fatalf("大写应按小写匹配出「你好」，得到 %+v", comp.Candidates)
+	}
+	// 逐字符退格同样保留剩余部分的大小写
+	comp, _ = s.Backspace()
+	if comp.Input != "NIHA" {
+		t.Fatalf("退格后输入 = %q, 期望 NIHA", comp.Input)
+	}
+}
+
+// CommitRaw 必须原样返回用户敲的字符（含大小写），这样中文模式下直接
+// 敲大写字母 + Enter 就能上屏英文，不必切换输入法。
+func TestCommitRawKeepsCase(t *testing.T) {
+	s := NewSession(mustDict(t), nil)
+	if _, err := s.Input("HelloWorld", false); err != nil {
+		t.Fatalf("Input 失败: %v", err)
+	}
+	raw, err := s.CommitRaw()
+	if err != nil {
+		t.Fatalf("CommitRaw 失败: %v", err)
+	}
+	if raw != "HelloWorld" {
+		t.Fatalf("CommitRaw = %q, 期望原样 HelloWorld", raw)
 	}
 }
 
