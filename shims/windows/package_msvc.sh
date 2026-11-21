@@ -20,6 +20,18 @@ VMINOR=$(echo "$QUAD" | cut -d. -f2)
 VPATCH=$(echo "$QUAD" | cut -d. -f3)
 VBUILD=$(echo "$QUAD" | cut -d. -f4)
 
+# Git Bash 自带的 /usr/bin/link.exe（GNU coreutils 的 link）会遮蔽 MSVC 的
+# link.exe：cargo 链接 Rust 产物时按 PATH 找 linker，会调用 GNU link 并报
+# 「extra operand ... .rcgu.o」。把 MSVC 工具目录前置（cl.exe 同目录还有
+# link.exe/lib.exe），保证 cargo 找到的是 MSVC 工具链。
+if command -v cl.exe >/dev/null 2>&1; then
+  MSVC_BIN_DIR=$(dirname "$(command -v cl.exe)")
+  case ":$PATH:" in
+    *":$MSVC_BIN_DIR:"*) ;;
+    *) PATH="$MSVC_BIN_DIR:$PATH"; export PATH ;;
+  esac
+fi
+
 echo "==> 构建版本: $VERSION ($QUAD)"
 
 # 2. 准备输出目录
