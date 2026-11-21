@@ -22,14 +22,16 @@ VBUILD=$(echo "$QUAD" | cut -d. -f4)
 
 # Git Bash 自带的 /usr/bin/link.exe（GNU coreutils 的 link）会遮蔽 MSVC 的
 # link.exe：cargo 链接 Rust 产物时按 PATH 找 linker，会调用 GNU link 并报
-# 「extra operand ... .rcgu.o」。把 MSVC 工具目录前置（cl.exe 同目录还有
-# link.exe/lib.exe），保证 cargo 找到的是 MSVC 工具链。
+# 「extra operand ... .rcgu.o」。必须把 MSVC 工具目录**放到 PATH 最前**
+#（cl.exe 同目录还有 link.exe/lib.exe）；注意 MSVC 目录本来就在 PATH 里、
+# 只是不在最前，所以不能按「已在 PATH 就跳过」——重复项无害，顺序才关键。
 if command -v cl.exe >/dev/null 2>&1; then
   MSVC_BIN_DIR=$(dirname "$(command -v cl.exe)")
-  case ":$PATH:" in
-    *":$MSVC_BIN_DIR:"*) ;;
-    *) PATH="$MSVC_BIN_DIR:$PATH"; export PATH ;;
-  esac
+  PATH="$MSVC_BIN_DIR:$PATH"
+  export PATH
+  echo "==> MSVC 工具链目录前置: $MSVC_BIN_DIR"
+else
+  echo "警告: PATH 上找不到 cl.exe，Rust daemon 构建可能选错 linker" >&2
 fi
 
 echo "==> 构建版本: $VERSION ($QUAD)"
