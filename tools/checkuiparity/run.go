@@ -63,6 +63,8 @@ var checkGroups = []checkGroup{
 	{groupPackaging, onLogical(checkPackaging)},
 	{groupWindowsInstall, onLogical(checkWindowsInstallSafety)},
 	{groupWindowsVersionInfo, onLogical(checkWindowsVersionInfo)},
+	// 发行面 Rust 化：构建/打包链与三分发入口（Go 只保留 dictgen/静态检查）。
+	{groupRustCLIShipping, onLogical(checkRustCLIShipping)},
 	{groupVersionSource, onLogical(checkVersionSource)},
 	// 非激活零副作用 / daemon 生命周期 / 托盘。
 	{groupInactiveNoAction, onLogical(checkInactiveNoAction)},

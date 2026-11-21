@@ -78,11 +78,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
       # 与日常 CI（ci.yml 的 macos-build job）走同一条打包链：Makefile 的
       # package-macos 负责 universal 自检（主壳/安装器/app 内置工具）、app 版本号
       # 一致性、app 资源清单与 zip 生成。此前 release 手写了一份更弱的复制品
@@ -91,7 +86,7 @@ jobs:
       - name: 编译 Slint macOS 设置中心（universal）
         run: make build-settings-universal
 
-      - name: 构建 Go 工具与 macOS 安装包（make package-macos）
+      - name: 构建 Rust CLI 与 macOS 安装包（make package-macos）
         run: |
           make build
           make package-macos
@@ -112,10 +107,10 @@ jobs:
           chmod +x shims/macos/tests/equivalence.sh
           ./shims/macos/tests/equivalence.sh
 
-      # 双端视觉一致性（Go 贴图端 vs macOS 原生端）需要 swiftc，只能在
+      # 双端视觉一致性（Windows 原生端 vs macOS 原生端）需要 swiftc，只能在
       # macOS runner 上跑，所以在 package-macos job 里单独成步，失败原因比
       # 埋在 equivalence.sh 的 F 段里更醒目。
-      - name: 双端视觉一致性（Go 贴图端 vs macOS 原生端）
+      - name: 双端视觉一致性（Windows vs macOS 原生端）
         run: ./shims/macos/tests/visual-parity.sh
 
       - name: 上传产物
@@ -132,11 +127,6 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v7
-
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
 
       - name: 安装 ibus 与 zstd 测试依赖
         run: |
@@ -209,11 +199,6 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v7
-
-      - name: 安装 Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
 
       - name: 配置 MSVC (x64) 编译环境
         uses: ilammy/msvc-dev-cmd@v1

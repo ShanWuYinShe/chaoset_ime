@@ -21,7 +21,7 @@ const (
 	groupSettingsContract      = "设置窗契约"
 	groupSettingsVisual        = "设置窗视觉令牌"
 	groupIconRules             = "图标规范"
-	groupSettingsCore          = "设置核心（方案 A）"
+	groupSettingsCore          = "设置核心（Rust 单一真源）"
 
 	// Windows 壳专属契约。
 	groupUILess             = "UILess 能力"
@@ -43,7 +43,10 @@ const (
 	groupWindowsVersionInfo = "Windows 版本信息"
 
 	// 构建/打包/CI/文档。
-	groupPackaging       = "打包安装"
+	groupPackaging = "打包安装"
+	// 发行面 Rust 化：构建/打包链只从 crates/chaosetctl 产出 chaosetctl，三分发
+	// 入口统一 chaosetctl import，已删除的 Go 工具路径不得回归。
+	groupRustCLIShipping = "Rust CLI 发行面"
 	groupVersionSource   = "版本号来源"
 	groupCICoverage      = "CI 覆盖"
 	groupDocParity       = "文档对照"

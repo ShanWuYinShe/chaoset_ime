@@ -10,17 +10,22 @@ InputMethodKit 薄壳：只负责按键转发、文本上屏与原生候选窗�
 ```
 ~/Library/Input Methods/ChaosetIME.app/
   Contents/Resources/chaosetd
-  Contents/Resources/chaoset-import
   Contents/Resources/chaosetctl
+  Contents/Resources/chaoset-import
   Contents/Resources/ChaosetSettings.app/Contents/MacOS/chaoset-settings（独立 app bundle，带品牌图标）
   Contents/Resources/dict_common.tsv
+  Contents/Resources/dict_common.bin
   Contents/Resources/ChaosetIME-input.tiff
 ```
 
-- daemon/导入工具/统一设置中心与它依赖的 CLI/种子词库都在 app 内，LaunchAgent 指向
-  app 内 daemon；
-- 统一设置中心 `chaoset-settings` 依赖同目录随包的桥接 CLI `chaosetctl` 完成设置读写、
-  学习数据与词库导入（它按「可执行文件同目录」找 CLI），两者缺一不可；
+- daemon/CLI/统一设置中心与种子词库都在 app 内，LaunchAgent 指向 app 内 daemon；
+- `chaosetctl` 与 `chaoset-import` 是**同一个 Rust 产物的两份同源副本**（argv[0] multicall：
+  以 `chaoset-import` 调用时自动分发 import 子命令），随包存放、**各自独立签名**；
+  签名后两个文件的签名区不同（app 内副本与 build/ 对应文件仍逐字节一致，等价性检查按此口径）；
+  **没有独立的 Go 导入工具**；
+- 统一设置中心 `chaoset-settings` 依赖同目录随包的 CLI `chaosetctl` 完成设置读写、
+  学习数据与词库导入（它按「可执行文件同目录」找 CLI），两者缺一不可；打包缺
+  `chaosetctl` 会直接失败；
 - `~/Library/Application Support/chaoset/` 放用户数据：`dict.tsv`、`userdict.json`、
   `chaoset.sock`、`chaosetd.log`；
 - 安装器 `ChaosetSetup.app` 同时把「Chaoset 安装与设置」装到 `~/Applications/Chaoset.app`
@@ -31,8 +36,8 @@ InputMethodKit 薄壳：只负责按键转发、文本上屏与原生候选窗�
 `dict.tsv` 是 daemon 实际加载的词库。安装/升级时不能盲目保留或覆盖：
 
 - 首行是内置词库头 → 未导入过的纯种子副本，替换为新内置词库（先备份）；
-- 首行是 `chaoset-import` 输出头 → 用 `chaoset-import -replace` 合并新内置词库，
-  用户新增词保留；
+- 首行是 `chaoset-import` 输出头 → 用 `chaoset-import -replace` 合并新内置词库
+  （app 内副本 = `chaosetctl` 同一二进制），用户新增词保留；
 - `dict.builtin.sha256` 记录已合并的内置版本，版本未变则跳过。
 
 ## 构建与安装
@@ -66,7 +71,8 @@ CHAOSET_ZIP=/path/to/chaoset-macos.zip CHAOSET_NO_LAUNCH=1 bash install-online.s
 
 ```sh
 make build-settings        # 先编 Slint 统一设置中心（产出 bin/chaoset-settings）
-./shims/macos/build.sh     # build/ChaosetIME.app、build/ChaosetSetup.app、build/tis、build/smoke
+./shims/macos/build.sh     # cargo 构建 universal 的 chaosetd/chaosetctl/chaoset-import（同一产物两份副本），
+                           # 产出 build/ChaosetIME.app、build/ChaosetSetup.app、build/tis、build/smoke
 ./shims/macos/install.sh   # 装入 ~/Library/Input Methods
 ./shims/macos/reregister.sh # 普通终端尽力登记并启用（不保证免注销）
 ./shims/macos/verify.sh     # TIS/daemon/IPC 全链路自检
@@ -204,7 +210,8 @@ macOS 壳**没有原生 AppKit 设置窗**：候选栏右侧齿轮 → `src/Sett
 log show --last 10m --predicate 'subsystem == "ime.chaoset.inputmethod"' --info --debug
 ```
 
-排障先跑 `.../Contents/Resources/chaosetd -version`，再对照 daemon 与统一日志。
+排障先跑 `.../Contents/Resources/chaosetctl version`（daemon 侧 `chaosetd -version` 也可用），
+再对照 daemon 与统一日志。
 
 ## 卸载
 

@@ -49,7 +49,7 @@ except Exception as e: print('失败:',e)
 `ECONNREFUSED (errno 61)` 而 daemon 进程还在跑，就是僵尸——daemon 持有的
 unix socket 对象（lsof 里那串 `0x...`）与磁盘上的 inode 不是同一个。
 
-成因：daemon 启动时若在 `net.Listen` 前 `os.Remove(socket)`，会误删另一个运行中
+成因：daemon 启动时若在 listen 前删除套接字文件，会误删另一个运行中
 daemon 的套接字。现行实现（Rust）用 flock 单实例锁规避（`crates/chaosetd/src/singleton.rs`）。
 
 ### 第 2 步：daemon 是否被 SIGTERM 打断
@@ -68,14 +68,16 @@ launchctl print "gui/$(id -u)/ime.chaoset.daemon" | grep -E 'state|last exit'
 都不能丢键**——daemon 不可达时必须 `passThrough` 放行原键，绝不能
 `current = nil; return true`（那正是首字母凭空消失的直接原因）。
 
-### 第 4 步：超时是否与 GC 尖峰咬合
+### 第 4 步：超时是否与 daemon 侧尖峰咬合
 
 ```bash
-# daemon 单键处理 p50 约 1.5ms 但 p99 可达 51ms（GC），客户端超时 100ms 时
-# 会偶发拿不到响应 → 壳判定失败 → 丢键。
+# daemon（Rust）没有 GC 停顿，单键处理在微秒级。若壳偶发拿不到响应 → 判定失败 →
+# 丢键，先查：daemon 是否刚启动/正在重建词库 .bin 缓存（首次解析大 TSV 的短暂窗口）、
+# 系统是否高负载、是否多个 daemon 在抢单实例锁。
 ```
-现行实现：daemon `runtime/debug.SetGCPercent(400)`（p99 → 18ms），客户端超时
-放宽到 250ms，读类方法失败重试一次（写类不重试，避免学习数据记两遍）。
+现行实现：客户端每次调用 5s 截止（`crates/chaoset-ipc`），壳侧收发超时 250ms 作为
+安全边界（`DaemonTransport.swift`）；读类方法失败重试一次（写类不重试，避免学习数据
+记两遍）。超时/IO 错误会关闭连接，靠壳的懒启动/重连逻辑恢复。
 
 ## 二、多实例 / 重复条目的排查
 
@@ -161,7 +163,8 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
   再看 `tsf.log` 的 `daemon lazy start`、`pipe connect failed`、
   `daemon request failed`。
 - 手动复现：`chaosetd.exe -pipe -dict ... -seeddict ... -userdict ... -log ...`，
-  再用 `chaoset-cli.exe -pipe` 验 IPC；不要以管理员身份启动 daemon。
+  再用 `chaosetctl.exe client -pipe` 验 IPC（唯一命令行工具；不认 `chaoset-cli.exe`）；
+  不要以管理员身份启动 daemon。
 - 安装/升级不得强杀用户程序或系统输入宿主；被占用 DLL 由改名/重启替换。
 - 设置窗导入词库后重启 daemon 走 detached 启动，不能用等待进程退出的
   `settingsRunProcess`。
@@ -179,22 +182,26 @@ cd shims/macos
 
 ### 本地只跑轻量项，重活交给 CI
 
-提交前本地只需 `gofmt -l $(git ls-files '*.go')`（应无输出）、`go build ./...` 与 `make vet`（静态契约检查，均秒级）；
+提交前本地只需 `gofmt -l $(git ls-files '*.go')`（应无输出；剩余 Go = `cmd/chaoset-dictgen` 与
+`tools/check*`）、`go build ./...` 与 `make vet`（静态契约检查，均秒级）；
+`make build` 是 Go-free 的 Rust 构建（CLI + daemon + dictc），词库生成器另用 `make build-tools`。
 本地跑测试会占用 CPU 影响正常使用电脑。其余由 7 个并行 job 覆盖（单次提交约 3-5 分钟出全部结论；
 本地/CI 分工见项目 AGENTS.md「CI 门禁与本地验证分工」）：
 
 | CI job | 覆盖内容 | 为什么不在本地跑 |
 |---|---|---|
-| lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 三端 UI 一致性（`check-uiparity`）/ 构建 | 快，但统一在 CI 跑保证一致 |
-| test | go test ./...（数据契约/引擎/壳行为测试） | 约 30s |
-| race | `go test -race` | 最重的一项，本机 45s+ |
-| linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页；Linux 安装包自检（tar.gz/deb 必含设置窗模块） | 需要 dbus + ibus，占资源 |
-| macos-build | macOS 壳构建 + universal 自检 + ZIP 安装包 + 等价性 + 双端视觉一致性 | swiftc 构建 2-3 分钟 |
-| windows-build | Windows 壳 mingw 交叉编译 + `core_test`（真实 daemon）+ `makensis` 安装包编译 + ZIP 自检 | 需要 mingw-w64/NSIS，本机不装；每次提交都验证（不只在打 tag 时） |
-| settings-windows | `windows-latest` 上真实运行 `internal/settings` 注册表存储单测（DWORD/REG_SZ 往返、类型损坏回退，测试后恢复键值） | 需要真实 Windows runner，交叉编译验证不了注册表行为 |
+| lint | gofmt / go vet / workflow 结构 / 版本检查 / Windows GDI 契约 / 三端 UI 一致性（`check-uiparity`，含 Rust CLI 发行面）/ `make build`（Rust CLI+daemon+dictc） | 快，但统一在 CI 跑保证一致 |
+| test | `go test ./...`（剩余 Go = dictgen + checker）+ `cargo test`（crates 与 Slint 设置中心）+ core_test（真实 Rust daemon） | 约 30s |
+| race | `go test -race ./...`（剩余 Go 单测） | 最重的一项，本机 45s+ |
+| linux-e2e | 真实 ibus-daemon 下的组词/上屏/多实例隔离/中英切换/翻页；Linux 安装包自检（tar.gz/deb 必含设置窗模块与 `chaosetctl`） | 需要 dbus + ibus，占资源 |
+| macos-build | Rust universal 构建（chaosetd/chaosetctl/chaoset-import）+ macOS 壳 + ZIP 安装包 + 等价性 + 双端视觉一致性 + Rust 设置存储单测 | swiftc/cargo 构建 2-3 分钟 |
+| windows-build | `package_msvc.sh`（MSVC 编译 DLL/UI 宿主/`chaosetctl.exe` + NSIS 安装包 + ZIP 自检）；Go 无参与 | 需要 Windows runner + MSVC/NSIS，本机不装；每次提交都验证（不只在打 tag 时） |
+| settings-windows | `windows-latest` 上真实运行 Rust `chaoset-config` 的 Windows 注册表存储单测（DWORD/REG_SZ 往返、类型损坏回退，测试后恢复键值）：`cargo test -p chaoset-config windows_store` | 需要真实 Windows runner，交叉编译验证不了注册表行为 |
 
 本地真需要跑完整验证时，`make test`、`shims/linux/test-ci.sh`、
 `shims/macos/tests/equivalence.sh` 都能直接执行（与 CI 同一套脚本）。
+词库重新生成仍走 Go：`go run ./cmd/chaoset-dictgen ...`（`make build-tools` 只产出 `bin/chaoset-dictgen`）；
+CLI 侧统一用 `chaosetctl version` / `chaosetctl client` / `chaosetctl userdict`。
 
 ### 陷阱：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
 

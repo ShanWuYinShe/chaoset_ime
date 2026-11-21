@@ -79,8 +79,8 @@ fn main() {
 - 命中判定必须**同时匹配词与音节序列**（`c.text == word && c.syllables == sylls.join("'")`），
   否则同形词的不同切分会被误判为命中；
 - release 构建下采样规模单次约 10 秒量级；性能数据要多次采样；
-- README「实测数据」里的数字是**迁移前 Go 引擎口径**，Rust 侧必须用本扫描器重新取数，
-  不要把旧数字当现状；
+- README「实测数据」里的数字是某一固定口径下的历史基线，不是当前实测值；Rust 侧改动必须
+  用本扫描器重新取数，不要把旧数字当现状；
 
 场景定义（缺一不可，覆盖输入法的真实形态）：
 
@@ -311,7 +311,7 @@ git status --short                            # 确认改动回来了
 ## 四、改动后的验证清单
 
 ```sh
-# 格式与静态检查（engine 是 Rust，Go 侧只有工具/checker）
+# 格式与静态检查（engine 是 Rust；Go 只剩 dictgen 与 checker）
 cargo fmt --all --manifest-path crates/Cargo.toml --check
 go build ./...
 make vet
@@ -319,8 +319,13 @@ make vet
 # 单元测试 + 数据契约 + 41 场景冻结基线（行为回归会自动红）
 cargo test --manifest-path crates/Cargo.toml
 
-# 发布构建与本机实测
+# Rust 发布构建与本机实测（Go-free：CLI + daemon + dictc）
 make build
+
+# 词库重新生成仍走 Go 构建期工具（`make build-tools` 产出 bin/chaoset-dictgen）
+go run ./cmd/chaoset-dictgen ...
+
+# CLI 统一用 chaosetctl（单二进制 multicall）：chaosetctl version / client / config ...
 ```
 
 41 个冻结场景（`crates/chaoset-engine/tests/parity_scenarios.rs` +

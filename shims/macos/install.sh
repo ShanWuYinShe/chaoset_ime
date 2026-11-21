@@ -163,7 +163,8 @@ if [ -x "$DAEMON" ]; then
   #      的**纯种子副本**（任意旧版本），可安全替换（先备份）；
   #   ③ 首行是 chaoset-import 输出头（或其它内容）→ 用户导入/合并过词库，
   #      不能整体覆盖：用 chaoset-import -replace 把新内置词库合并进去，内置词条
-  #      刷新为新词频，用户新增词条保留（合并/备份/原子替换仍在 Go 工具内）。
+  #      刷新为新词频，用户新增词条保留（合并/备份/原子替换在 Rust chaoset-tools，
+  #      经 chaoset-import/chaosetctl import 调用）。
   # dict.builtin.sha256 记录「词库已合并到哪个内置版本」：版本没变就跳过，
   # 避免每次安装都重写词库。
   BUILTIN_DICT="$IM/ChaosetIME.app/Contents/Resources/dict_common.tsv"

@@ -41,14 +41,9 @@ chaoset-userdict.json.corrupt-*
 # 既不匹配任何忽略规则也不在 bin/ 下，`git add -A` 会把它提交进来）
 /analyze_*
 
-# 误在仓库根跑 `go build ./cmd/xxx` 会直接产出二进制到当前目录（不带 -o 时
-# Go 以包名命名）。2026-10-26 就误出过一个 chaosetd，差点被提交。
-/chaosetd
-/chaoset-cli
-/chaoset-import
+# 误在仓库根跑 `go build ./...` 会直接产出二进制到当前目录（不带 -o 时
+# Go 以包名命名）。保留构建期 Go 工具（dictgen/checker）的忽略项。
 /chaoset-dictgen
-/chaoset-userdict
-/chaoset-engine
-# 工具编译产物（2026-10-30 曾被 git add -A 意外带入仓库，a0d4bcc）
 /checkgdi
 /checkworkflows
+/checkuiparity

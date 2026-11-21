@@ -75,7 +75,7 @@ func checkIconRules(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, makefile, "ChaosetSettings.app", "ChaosetSettings.icns")
 
 	// 5) Windows：设置中心 exe 的图标由 build.rs 以 rc.exe/windres 嵌入（release 必须生效）。
-	checkContains(fsys, problems, group, "shims/settings/build.rs", "1 ICON", "chaoset.ico", "rustc-link-arg")
+	checkContains(fsys, problems, group, "shims/settings/build.rs", "chaoset.rc", "chaoset.ico", "rustc-link-arg")
 	checkContains(fsys, problems, group, "shims/windows/resources/chaoset.rc", "1 ICON")
 	checkContains(fsys, problems, group, winInstaller, "MUI_ICON")
 

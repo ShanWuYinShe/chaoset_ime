@@ -47,22 +47,26 @@ func checkShellVarEscaping(fsys fs.FS, problems *[]string) {
 //  1. 必须检查导入器退出码，不能只看产物文件存在（导入器会写出残缺产物）；
 //  2. 必须先备份旧词库，再原子替换，不能 remove+move；
 //  3. 失败要留下可排查的日志（Windows import.log / mac 返回 log 文本）；
-//  4. 文件合并/备份/原子替换属于工具逻辑，必须由 Go `chaoset-import` 实现；
+//  4. 文件合并/备份/原子替换属于工具逻辑，必须由 Rust `crates/chaoset-tools` 实现；
 //     三端壳只调用工具（-seed/-backup），不再自己 temp/copy/replace。
 //
 // 这里锁住实现关键片段，防止重构时把安全流程删掉。
 func checkImportSafety(fsys fs.FS, problems *[]string) {
 	const group = groupImportSafety
-	// 词库导入的唯一 GUI 是 Slint 统一设置中心（bridge 调 Go chaoset-import）。
+	// 词库导入的唯一 GUI 是 Slint 统一设置中心（bridge 调 chaosetctl import）。
 	checkContains(fsys, problems, group, slintBridge, `"import"`, `"-o"`, `"-backup"`)
 	checkContains(fsys, problems, group, slintEvents, "on_import_dict_clicked")
-	// mac 安装器的导入面板同样只调 Go 工具（退出码检查 + seed/backup）。
+	// mac 安装器的导入面板同样只调工具（退出码检查 + seed/backup；调用名随包副本不变）。
 	checkContains(fsys, problems, group, macSetup, "r.status == 0", `"-seed"`, `"-backup"`)
 	checkExcludes(fsys, problems, group, macSetup, "replaceItemAt")
 	// 壳内不得自己备份/替换（历史事故：直接 move 会丢词库中间态）。
 	checkExcludes(fsys, problems, group, winShell, "MoveFileExW(", "MOVEFILE_REPLACE_EXISTING")
-	// Go 工具是这些安全语义的唯一实现：seed/backup/原子替换都在这里。
-	checkContains(fsys, problems, group, chaosetImport, `"seed"`, `"backup"`, "backupFile(", "os.Rename(")
+	// Rust 工具是这些安全语义的唯一实现：seed/backup/原子替换都在这里。
+	checkContains(fsys, problems, group, chaosetImport,
+		"-seed", "-backup", "pub fn backup_file", "create_new(true)",
+		`".chaoset-import-"`, `".tmp"`)
+	checkContains(fsys, problems, group, rustImportFs,
+		"fs::rename(", "create_new(true)", "replace_file")
 }
 
 // checkShiftToggleAccounting 锁住三端 Shift 空按的「记账」契约：

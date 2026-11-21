@@ -1,5 +1,5 @@
 #!/bin/sh
-# 构建 macOS 输入法壳：编译 Swift 壳 + Go daemon，组装 ChaosetIME.app。
+# 构建 macOS 输入法壳：编译 Swift 壳 + Rust daemon/CLI，组装 ChaosetIME.app。
 set -e
 cd "$(dirname "$0")"
 
@@ -7,7 +7,7 @@ mkdir -p build
 ROOT=$(cd ../.. && pwd)
 
 # ---- 输出架构：默认 universal（arm64 + x86_64）----
-# 背景：CI 的 macos-latest 是 Apple Silicon runner，裸 swiftc/go build 只产出
+# 背景：CI 的 macos-latest 是 Apple Silicon runner，裸 swiftc/cargo build 只产出
 # arm64，Intel Mac 用户装上会直接提示「无法打开」。因此默认同时构建两种架构
 # 并用 lipo 合并；设 ARCHS=arm64 可只出单架构（本地快速迭代用）。
 ARCHS=${ARCHS:-"arm64 x86_64"}
@@ -21,6 +21,14 @@ if [ -z "${VERSION:-}" ]; then
   VERSION=$(sh "$ROOT/scripts/version.sh")
 fi
 export VERSION
+# Rust 产物的版本注入：build.rs 读 CHAOSET_BUILD_VERSION / CHAOSET_VERSION_QUAD
+# （PE 资源与 version 输出用；macOS 也保持一致口径）。Makefile 已 export 同名变量，
+# 直接跑 build.sh 时在这里补齐。
+export CHAOSET_BUILD_VERSION="$VERSION"
+if [ -z "${CHAOSET_VERSION_QUAD:-}" ]; then
+  CHAOSET_VERSION_QUAD=$(sh "$ROOT/scripts/version.sh" --quad)
+fi
+export CHAOSET_VERSION_QUAD
 # 交叉编译 Swift 需要独立的模块缓存目录：默认缓存在部分环境不可写
 # （沙盒 / 只读 HOME），统一放到 build/（已 gitignore）下且可复用。
 MODCACHE="$ROOT/shims/macos/build/modulecache"
@@ -69,11 +77,11 @@ swift_universal() {
   fi
 }
 
-# rust_universal_daemon <输出>
-# daemon 由 Rust 实现（crates/chaosetd）：分别构建两种架构再 lipo 合并。
+# rust_universal <输出> <cargo bin 名>
+# Rust 组件（daemon/CLI）：分别构建两种架构再 lipo 合并。
 # rustup 目标缺失时自动补装（CI 的 macos runner 首次构建 x86_64 需要）。
-rust_universal_daemon() {
-  out=$1
+rust_universal() {
+  out=$1; bin=$2
   rm -f "$out"
   for arch in $ARCHS; do
     case "$arch" in
@@ -82,8 +90,8 @@ rust_universal_daemon() {
       *) echo "未知架构: $arch" >&2; return 1 ;;
     esac
     rustup target add "$rtarget" >/dev/null 2>&1 || true
-    (cd "$ROOT" && cargo build --release --bin chaosetd --target "$rtarget"       --manifest-path crates/Cargo.toml) || return 1
-    cp "$ROOT/crates/target/$rtarget/release/chaosetd" "$out.$arch" || return 1
+    (cd "$ROOT" && cargo build --release --bin "$bin" --target "$rtarget" --manifest-path crates/Cargo.toml) || return 1
+    cp "$ROOT/crates/target/$rtarget/release/$bin" "$out.$arch" || return 1
   done
   if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
     lipo -create "$out".* -output "$out"
@@ -93,33 +101,14 @@ rust_universal_daemon() {
   fi
 }
 
-# go_universal <输出> <包路径>
-go_universal() {
-  out=$1; pkg=$2
-  rm -f "$out"
-  for arch in $ARCHS; do
-    # Go 的目标架构名与 lipo/Swift 不同：x86_64 在 Go 里叫 amd64。
-    case "$arch" in
-      arm64)  goarch=arm64 ;;
-      x86_64) goarch=amd64 ;;
-      *) echo "未知架构: $arch" >&2; return 1 ;;
-    esac
-    (cd "$ROOT" && GOOS=darwin GOARCH=$goarch CGO_ENABLED=0 go build -o "$out.$arch" "$pkg") || return 1
-  done
-  if [ $(echo $ARCHS | wc -w) -gt 1 ]; then
-    lipo -create "$out".* -output "$out"
-    rm -f "$out".arm64 "$out".x86_64
-  else
-    mv "$out.$ARCHS" "$out"
-  fi
-}
-
-echo "[1/5] 编译 Go daemon 与导入工具（架构: ${ARCHS}）..."
-rust_universal_daemon "$ROOT/shims/macos/build/chaosetd"
-# chaoset-import 必须随输入法 app 一起安装：统一设置中心导入词库时经
-# chaosetctl 调它，导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到
-# 用户目录。
-go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
+echo "[1/5] 编译 Rust daemon 与 chaosetctl（架构: ${ARCHS}）..."
+rust_universal "$ROOT/shims/macos/build/chaosetd" chaosetd
+# chaoset-import 必须随输入法 app 一起安装：统一设置中心/壳导入词库时调它。
+# 发行链已全部 Rust——chaosetctl 是唯一 CLI 二进制（argv[0] 为 chaoset-import
+# 时分发 import 子命令），这里复制出 app 内真实文件名 chaoset-import（不用软链：
+# app 内资源要 codesign，软链会让签名/等价性检查失真）。两个副本后续都要签名。
+rust_universal "$ROOT/shims/macos/build/chaosetctl" chaosetctl
+cp build/chaosetctl build/chaoset-import
 
 # 发布用二进制词库（CSDB）：构建期把仓库 TSV 编译成二进制随包分发，daemon 启动
 # 直接加载（比 TSV 快 1.4–1.7x）；用户导入词库后按 mtime 自动重建缓存。
@@ -129,7 +118,7 @@ echo "[1.5/5] 编译发布词库（TSV → CSDB 二进制）..."
 # 统一设置中心（chaoset-settings）的读写全部经 multicall CLI chaosetctl：
 # bridge 的 find_chaoset_bin 优先看设置中心可执行文件同目录，两者必须一起随包，
 # 否则设置中心每个控件都会报「执行 chaosetctl 失败」（Windows/Linux 发行包同口径）。
-go_universal "$ROOT/shims/macos/build/chaosetctl" ./cmd/chaosetctl
+# chaosetctl 已在上面与 daemon 一起构建；chaoset-import 是它的副本。
 # 先给 build 产物做 ad-hoc 签名，再拷进 app；这样“build/ 与 app 内资源逐字节
 # 相同”的等价性测试仍有意义（app 签名只签主程序，不再改嵌套资源）。
 codesign --force -s - build/chaosetd build/chaoset-import build/chaosetctl

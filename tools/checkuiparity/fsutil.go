@@ -44,13 +44,13 @@ func checkExcludes(fsys fs.FS, problems *[]string, group, path string, needles .
 	}
 }
 
-// checkAbsent 断言路径不存在：用于锁定「删除的原生实现不得回归」。
+// checkAbsent 断言路径不存在：用于锁定「删除的旧实现不得回归」。
 
 func checkAbsent(fsys fs.FS, problems *[]string, group, path string) {
 
 	if _, err := fs.Stat(fsys, path); err == nil {
 
-		*problems = append(*problems, fmt.Sprintf("%s：%s 不应存在（架构已收敛为 Slint 唯一设置中心）", group, path))
+		*problems = append(*problems, fmt.Sprintf("%s：%s 不应存在（架构已收敛到新实现，旧路径不得回归）", group, path))
 
 	}
 

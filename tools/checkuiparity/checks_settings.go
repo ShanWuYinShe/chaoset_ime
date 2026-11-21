@@ -106,77 +106,88 @@ func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupSettingsSharedText, slintApp, settingsCenterText...)
 }
 
-// checkSettingsCore 锁住方案 A：设置项 schema/默认值/持久化唯一真源是 Go
-// internal/settings，CLI 是 chaoset-settingsctl；Slint 设置中心冷路径经
-// chaosetctl（multicall 包含 settingsctl 子命令）读写，输入热路径仍读本机存储。
+// checkSettingsCore 锁住「设置核心 = Rust 单一真源」：crates/chaoset-config 提供
+// 三端设置 schema/默认值/持久化与黄金 JSON，crates/chaosetctl 提供 config/settingsctl
+// 子命令；Slint 设置中心冷路径经同目录 chaosetctl 读写，输入热路径读本机存储。
+// Go internal/settings 与 chaoset-settingsctl 已删除，不得作为断言对象回归。
 func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	const group = groupSettingsCore
-	for _, path := range []string{
-		"internal/settings/settings.go",
-		"internal/settings/store_windows.go",
-		"internal/settings/store_darwin.go",
-		"internal/settings/store_linux.go",
-		"internal/settings/settings_test.go",
-		"internal/settings/store_linux_test.go",
-		"cmd/chaoset-settingsctl/main.go",
-		"cmd/chaoset-settingsctl/main_test.go",
-	} {
-		checkExists(fsys, problems, group, path)
-	}
-	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		"windowsRegistrySubKey", "Software\\Chaoset")
-	checkContains(fsys, problems, group, "cmd/chaoset-settingsctl/main.go",
-		"get", "set", "associate", "fuzzy", "shuangpin", "mode-scope", "theme", "ui-english",
-		"system|process", "system|light|dark", "full|zrm|mspy|flypy")
-	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		"mode_scope", "ui_english", "theme", "fuzzy", "shuangpin",
-		"ModeScopeSystem", "ModeScopeProcess",
-		"ThemeSystem", "ThemeLight", "ThemeDark",
-		"ShuangpinFull", "ShuangpinZrm", "ShuangpinMspy", "ShuangpinFlypy",
-		`{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}`)
-	checkContains(fsys, problems, group, "internal/settings/settings.go",
-		`case ModeScopeProcess, "window":`, "parseStoredModeScope")
-	checkContains(fsys, problems, group, uiParityDoc,
-		"两档", "全局共享", "每进程独立", "window→process", "未知→system")
-	checkContains(fsys, problems, group, "internal/settings/store_darwin.go",
-		"ime.chaoset.inputmethod.ChaosetIME", "AssociateEnabled",
-		"ChaosetFuzzy", "ChaosetShuangpin", "ChaosetModeScope", "ChaosetTheme")
-	// Slint 设置中心的 CLI 契约：所有读写都经 chaosetctl（与设置中心同目录）。
-	checkContains(fsys, problems, group, slintBridge,
-		"find_chaoset_bin", "CHAOS_BIN",
-		`"config"`, `"get"`, `"set"`,
-		`"userdict"`, `"import"`, "restart_daemon")
-	checkContains(fsys, problems, group, "internal/settings/store_linux.go",
-		"appdirs.LinuxConfigPath", "linuxKeyTheme")
-	// Windows 安装包必须同时带设置中心与它依赖的 chaosetctl。
-	checkContains(fsys, problems, group, winInstaller,
-		"chaoset-settings.exe", "chaosetctl.exe")
-	checkContains(fsys, problems, group, archDoc, "chaoset-settingsctl", "internal/settings")
-
-	// Rust daemon 与后续 Rust CLI 共用的设置/路径实现（Go CLI 迁移完成后
-	// internal/settings 删除，这里的存在性断言会转成唯一真源断言）。
+	// Rust 侧唯一实现：lib/model/parse/constants/behavior + 三端 store + 契约测试 + CLI。
 	for _, path := range []string{
 		"crates/chaoset-config/src/lib.rs",
 		"crates/chaoset-config/src/model.rs",
 		"crates/chaoset-config/src/parse.rs",
+		"crates/chaoset-config/src/constants.rs",
+		"crates/chaoset-config/src/behavior.rs",
 		"crates/chaoset-config/src/store/mod.rs",
 		"crates/chaoset-config/src/store/darwin.rs",
 		"crates/chaoset-config/src/store/linux.rs",
 		"crates/chaoset-config/src/store/windows.rs",
 		"crates/chaoset-config/tests/constants_lock.rs",
+		"crates/chaoset-config/tests/darwin_store.rs",
 		"crates/chaoset-config/tests/linux_store.rs",
+		"crates/chaoset-config/tests/windows_store.rs",
+		rustCtlMain,
+		rustCtlMulticall,
+		rustCtlSettings,
 	} {
 		checkExists(fsys, problems, group, path)
 	}
+	// 三端存储键名/域名/注册表子键/CLI 连字符名是跨进程契约，只在 constants.rs 定义。
 	checkContains(fsys, problems, group, "crates/chaoset-config/src/constants.rs",
-		"WINDOWS_REG_SUBKEY", "MAC_DEFAULTS_DOMAIN", "CLI_ITEM_MODE_SCOPE", "DEFAULTS_JSON")
+		"WINDOWS_REG_SUBKEY", `Software\\Chaoset`,
+		"MAC_DEFAULTS_DOMAIN", "ime.chaoset.inputmethod.ChaosetIME",
+		"CLI_ITEM_MODE_SCOPE", `"mode-scope"`,
+		"WIN_VALUE_ASSOCIATE", "WIN_VALUE_MODE_SCOPE", "WIN_VALUE_UI_ENGLISH",
+		"MAC_KEY_ASSOCIATE", "MAC_KEY_MODE_SCOPE",
+		"LINUX_KEY_ASSOCIATE", "LINUX_KEY_MODE_SCOPE")
+	// 黄金 JSON 串逐字（设置中心/脚本解析契约，字段顺序固定）：唯一真源在 constants.rs。
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/constants.rs",
+		`{"associate":true,"fuzzy":false,"shuangpin":"","mode_scope":"system","ui_english":false,"theme":"system"}`)
+	// schema 字段/取值/JSON 键顺序。
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/model.rs",
+		"pub struct Settings", "pub associate", "pub fuzzy", "pub shuangpin",
+		"pub mode_scope", "pub ui_english", "pub theme",
+		"ModeScope::System", "ModeScope::Process",
+		"Theme::System", "Theme::Light", "Theme::Dark",
+		`"mode_scope"`, `"ui_english"`)
+	// 归一化：旧三档 window→process、未知/空→system（存储读取永不失败）。
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/parse.rs",
+		"parse_mode_scope", "normalize_mode_scope", `"window"`,
+		"ModeScope::Process", "ModeScope::System")
+	// 三端存储实现：Windows HKCU 注册表、macOS defaults、Linux XDG config.json。
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/store/windows.rs",
+		"WINDOWS_REG_SUBKEY", "RegCreateKeyExW", "RegOpenKeyExW", "RegQueryValueExW",
+		"REG_DWORD", "REG_SZ")
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/store/darwin.rs",
+		"/usr/bin/defaults", "MAC_DEFAULTS_DOMAIN", "parse_defaults_bool")
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/store/linux.rs",
+		"config.json", "LINUX_KEY_MODE_SCOPE", "normalize_mode_scope")
+	// daemon 热路径用 lenient 的 behavior::load()（读不到用缺省，绝不让输入法起不来）。
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/behavior.rs",
+		"pub fn load()", "unwrap_or_default")
 	checkContains(fsys, problems, group, "crates/chaosetd/src/main.rs", "chaoset_config::behavior::load()")
-	checkContains(fsys, problems, group, "shims/settings/src/bridge.rs", "mode-scope")
-	checkNotContains(fsys, problems, group, "shims/settings/src/bridge.rs", `"config", "set", "mode_scope"`)
+	// CLI：chaosetctl 的 config/settings 子命令（multicall）→ settingsctl 实现。
+	checkContains(fsys, problems, group, rustCtlMulticall,
+		`"settingsctl" | "settings" | "config"`, "settingsctl::run")
+	checkContains(fsys, problems, group, rustCtlSettings,
+		"get", "set", "associate", "fuzzy", "shuangpin", "mode-scope", "theme", "ui-english",
+		"system|process", "system|light|dark", "full|zrm|mspy|flypy")
+	// Slint 设置中心冷路径全部经 chaosetctl；mode-scope 必须连字符（历史 bug 防回归）。
+	checkContains(fsys, problems, group, slintBridge,
+		"find_chaoset_bin", "CHAOS_BIN", `"config"`, `"get"`, `"set"`,
+		`"userdict"`, `"import"`, "restart_daemon", "mode-scope")
+	checkNotContains(fsys, problems, group, slintBridge, `"config", "set", "mode_scope"`)
+	// Windows 安装包必须同时带设置中心与它依赖的 chaosetctl。
+	checkContains(fsys, problems, group, winInstaller, "chaoset-settings.exe", "chaosetctl.exe")
+	// 文档：设置核心以 Rust 单一真源 + chaosetctl 为口径。
+	checkContains(fsys, problems, group, uiParityDoc,
+		"两档", "全局共享", "每进程独立", "window→process", "未知→system")
+	checkContains(fsys, problems, group, archDoc, "crates/chaoset-config", "chaosetctl")
 }
 
-// checkLearningDataGUI 学习数据管理只有 Slint 设置中心一份 GUI；实现走
-// chaosetctl userdict（本地文件模式），壳内不再重复学习数据界面。
+// checkLearningDataGUI 学习数据管理只有 Slint 设置中心一份 GUI；实现走 Rust
+// crates/chaoset-tools 的本地文件模式与 chaosetctl userdict 子命令，壳内不再重复界面。
 func checkLearningDataGUI(fsys fs.FS, problems *[]string) {
 	const group = groupLearningGUI
 	checkContains(fsys, problems, group, slintBridge,
@@ -185,9 +196,12 @@ func checkLearningDataGUI(fsys fs.FS, problems *[]string) {
 		"on_clear_userdict_clicked", "on_export_userdict_clicked")
 	checkContains(fsys, problems, group, slintApp,
 		"清空学习数据", "导出学习数据…")
-	checkExists(fsys, problems, group, userdictCLI)
-	checkContains(fsys, problems, group, "internal/tools/userdict/local.go",
-		"func (u *localUserDict) Save() error", "func (u *localUserDict) Stats()")
+	// 学习数据实现只在 Rust：tools 的本地文件模式 + ctl 的 userdict 子命令与删除文案。
+	checkExists(fsys, problems, group, rustUserdictCLI)
+	checkContains(fsys, problems, group, rustUserdictCLI,
+		"pub fn run_local", "pub fn run_local_cli", "stats", "clear", "delete", "export")
+	checkContains(fsys, problems, group, userdictCLI,
+		`"delete"`, "client.user_delete", "已删除「{word}」的学习记录")
 }
 
 // checkNoGoEngine 锁定「Go 引擎已删除、Rust 是唯一实现」：

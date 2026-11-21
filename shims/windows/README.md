@@ -37,18 +37,24 @@ install.bat                 便携 ZIP 安装/卸载脚本。
 ## 构建
 
 ```sh
-# macOS 上交叉编译（需要 brew install mingw-w64）。
-# 产物：build/ChaosetIME.dll、build/chaoset-ui.exe、build/core_test（make package-windows
-# 另出 32 位 ChaosetIME32.dll）。
+# 本机/CI 冒烟：core_test（真实 Rust daemon）+ mingw 交叉编译壳（需要 brew install mingw-w64）。
+# 产物：build/ChaosetIME.dll、build/chaoset-ui.exe、build/core_test。
 ./shims/windows/build.sh
 
-# 完整 Windows 分发包与 NSIS 安装包（需要 mingw-w64 + makensis）。
+# 完整 Windows 分发包与 NSIS 安装包：必须在 Windows（Git Bash/MSYS）+ MSVC + NSIS 上跑，
+# 委派 shims/windows/package_msvc.sh；非 Windows 平台直接报错。
 make package-windows
 ```
 
-`make package-windows` 生成 `dist/chaoset-windows-x64.zip` 与 `dist/ChaosetSetup.exe`。
-ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.exe`、`chaoset-cli.exe`、
-`chaoset-import.exe`、`chaoset-userdict.exe`、`dict.tsv`、`install.bat` 和本 README。
+`make package-windows` 在 Windows（Git Bash/MSYS）下委派 `shims/windows/package_msvc.sh`
+（MSVC + NSIS），生成 `dist/chaoset-windows-x64.zip` 与 `dist/ChaosetSetup.exe`；
+非 Windows 平台直接报错（不再用 mingw/Go 交叉打包）。
+ZIP 内含 64/32 位 DLL（`ChaosetIME.dll`/`ChaosetIME32.dll`）、`chaoset-ui.exe`（单例 UI 宿主）、
+`chaosetctl.exe`（唯一命令行工具，multicall：config/import/userdict/client/version）、
+`chaosetd.exe`、`chaoset-settings.exe`、`chaoset-dictc.exe`、`dict.tsv`、`dict.bin`、
+`chaoset.ico`、`install.bat`、`README.md`、`LICENSE`。
+**没有** `chaoset-cli.exe` / `chaoset-import.exe` / `chaoset-userdict.exe` 独立小工具——
+它们都收进 `chaosetctl.exe`。
 
 ## 安装
 
@@ -62,8 +68,8 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
   由每个登录用户展开）；不写 `ChaosetUi` Run 项——单例 UI 宿主（托盘中英状态 +
   统一设置中心入口）由 TIP 首次输入激活时懒启动，安装器/升级只负责清掉旧版
   `ChaosetUi` Run 项；
-- 用 Go 导入器把随包底库合并到当前用户 `%LOCALAPPDATA%\Chaoset\dict.tsv`
-  （保留已导入词，旧文件备份）；
+- 用 Rust 导入器（`chaosetctl.exe import -o ... -seed ... -backup`）把随包底库合并到
+  当前用户 `%LOCALAPPDATA%\Chaoset\dict.tsv`（保留已导入词，旧文件备份）；
 - 写入标准卸载信息。
 
 安装器**不关闭任何已运行程序**：被占用的 DLL 由改名/重启替换处理。已打开程序继续
@@ -71,11 +77,14 @@ ZIP 内含 64/32 位 DLL、`chaoset-ui.exe`（单例 UI 宿主）、`chaosetd.ex
 
 ### 版本信息与 app 信息
 
-`ChaosetSetup.exe` 与安装目录里的 PE 二进制（`ChaosetIME.dll`、
-`ChaosetIME32.dll`、`chaoset-ui.exe`）都带 `VS_VERSION_INFO`：
+`ChaosetSetup.exe` 与安装目录里的发行 PE 二进制——`ChaosetIME.dll`、
+`ChaosetIME32.dll`、`chaoset-ui.exe`，以及 Rust 发行 exe `chaosetctl.exe` /
+`chaosetd.exe` / `chaoset-settings.exe`——都带图标与 `VS_VERSION_INFO`
+（`chaoset-dictc.exe` 是构建期词库工具、不带版本资源，版本自检只校验它是有效 PE）：
 右键「属性 → 详细信息」可看到「Chaoset 拼音输入法」、公司
-`ShanWuYinShe`、版权、文件说明、原始文件名、`@VERSION@`（如 0.3.17）
-与 4 段数字版本（如 0.3.17.0）。安装器向导欢迎页标题也带版本。
+`ShanWuYinShe`、版权、文件说明、原始文件名、显示版本（`$(VERSION)`，如
+`20261122-abcdef123456` 或 tag 版本）与 4 段数字版本（`$(VERSION_QUAD)`）。
+安装器向导欢迎页标题也带版本。
 
 版本号**只有一个真源**：`scripts/version.sh`（Makefile 的 `$(VERSION)`）。
 它只读环境变量 `CHAOS_VERSION_TAG`：`release.yml` 顶层 env 在 **push tag 触发**
@@ -88,9 +97,10 @@ NSIS `VIProductVersion` 与 PE `VS_FIXEDFILEINFO` 只接受数字；日期与完
 放在属性页字符串字段。deb/Arch 的包版本用 `$(PKG_VERSION)`
 （`0.0.0+<日期>.<hash>`，保证以数字开头）。
 NSIS 脚本用 `${VERSION}` / `${VERSION_QUAD}`，资源模板
-`shims/windows/resources/chaoset.rc` 用 `@VERSION@` 等占位符，二者都由
-`make package-windows` / `build.sh` 注入，源码不写死版本号。中文说明必须
-用 `windres -c 65001` 编译，否则属性页会显示 mojibake。
+`shims/windows/resources/chaoset.rc` 用 `@VERSION@` 等占位符：Rust 发行 exe 的图标/版本资源由
+`crates/chaosetctl/build.rs`、`crates/chaosetd/build.rs` 注入，DLL/UI 宿主的资源由
+`package_msvc.sh` / `build.sh` 生成注入，源码不写死版本号。中文说明必须用
+`rc.exe /c 65001`（或 mingw 下 `windres --codepage=65001`）编译，否则属性页会显示 mojibake。
 
 「设置 → 应用 → 已安装的应用」里的 Chaoset 条目还写入
 `DisplayVersion`、`InstallLocation`、`InstallDate`（YYYYMMDD）、
@@ -224,17 +234,16 @@ TIP/宿主进程内实现——唯一实现是跨平台 Slint 设置中心 `chao
 - ACL：当前用户 + SYSTEM + ALL APPLICATION PACKAGES 读写；其他本地用户不可连。
 - 强制完整性标签：低完整性可写（`S:(ML;;NW;;;LW)`）。AppContainer 宿主（开始菜单、
   搜索框、UWP）是低完整性进程，缺这个标签时 DACL 放行了也只能连不能写，表现就是
-  「按了键、daemon 也在、没有候选」。见 `ipc/pipe_sddl.go`。
+  「按了键、daemon 也在、没有候选」。见 `crates/chaosetd/src/server.rs` 的 SDDL 构造。
 - 没有网络端口、没有 TCP 回退：管道连不上就是连不上，壳按约定降级放行按键。
 
 ## 日志与排障
 
-先确认二进制构建。**用 `chaoset-cli.exe -version`**：`chaosetd.exe` 以
-`-H=windowsgui` 构建（不挂控制台），在 cmd 里跑 `-version` 没有任何输出，
-不能据此判断程序坏了。
+先确认二进制构建。**用 `chaosetctl.exe version`**：`chaosetd.exe` 以 Windows 子系统构建
+（不挂控制台），在 cmd 里跑 `-version` 没有任何输出，不能据此判断程序坏了。
 
 ```bat
-chaoset-cli.exe -version
+chaosetctl.exe version
 ```
 
 - `%LOCALAPPDATA%\Chaoset\chaosetd.log`：daemon 启动构建、用户词典路径、词库加载、
@@ -274,7 +283,7 @@ chaoset-cli.exe -version
 3. **直接验 IPC**（最硬）：
 
    ```bat
-   chaoset-cli.exe -pipe
+   chaosetctl.exe client -pipe
    ```
 
    能进交互测试台并输入拼音出候选 = daemon + IPC + 引擎全通，问题只在 TSF 壳；
@@ -286,7 +295,7 @@ chaoset-cli.exe -version
    （连上了但请求失败/超时，性质不同）。注意 exe 不存在时不会写 lazy start 行，
    且每进程只有 200 条预算，日志里没有不代表 TIP 没激活。
 
-排查后仍只有英文，用 `chaoset-cli.exe -pipe` 的结果区分「daemon 侧」与「壳侧」，
+排查后仍只有英文，用 `chaosetctl.exe client -pipe` 的结果区分「daemon 侧」与「壳侧」，
 再按上表定位。
 
 ## 命令行工具
@@ -294,11 +303,18 @@ chaoset-cli.exe -version
 ```bat
 REM 终端测试台（注意：CLI 本身不会拉起 daemon。daemon 未运行时先在任意
 REM 程序里打一次拼音，或在安装目录手动运行 chaosetd.exe -pipe）
-chaoset-cli.exe -pipe
+chaosetctl.exe client -pipe
+
+REM 设置读写（与设置中心冷路径同一 CLI 契约）
+chaosetctl.exe config get
+chaosetctl.exe config set fuzzy on
 
 REM 用户词典统计/清空/导出
-chaoset-userdict.exe -pipe stats
-chaoset-userdict.exe -pipe export -o userdict-backup.tsv
+chaosetctl.exe userdict -pipe stats
+chaosetctl.exe userdict -pipe export -o userdict-backup.tsv
+
+REM 版本信息（单行：版本/平台/rev/构建时间）
+chaosetctl.exe version
 ```
 
 ## 功能与验收

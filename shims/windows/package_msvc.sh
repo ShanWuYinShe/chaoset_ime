@@ -20,6 +20,12 @@ VMINOR=$(echo "$QUAD" | cut -d. -f2)
 VPATCH=$(echo "$QUAD" | cut -d. -f3)
 VBUILD=$(echo "$QUAD" | cut -d. -f4)
 
+# 所有 cargo 构建继承版本注入：Rust build.rs 读 CHAOSET_BUILD_VERSION /
+# CHAOSET_VERSION_QUAD 生成 Windows PE 图标 + VS_VERSION_INFO（chaosetctl/chaosetd/
+# chaoset-settings 都由 build.rs 负责，本脚本不再手写 rc/编译 res）。
+export CHAOSET_BUILD_VERSION="$VERSION"
+export CHAOSET_VERSION_QUAD="$QUAD"
+
 # Git Bash 自带的 /usr/bin/link.exe（GNU coreutils 的 link）会遮蔽 MSVC 的
 # link.exe：cargo 链接 Rust 产物时按 PATH 找 linker，会调用 GNU link 并报
 # 「extra operand ... .rcgu.o」。必须把 MSVC 工具目录**放到 PATH 最前**
@@ -48,8 +54,10 @@ OUTDIR="dist/chaoset-windows-x64"
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 
-# 3. 生成与编译 Windows 资源文件 (全可执行程序图标与版本信息)
-echo "==> 生成与编译 Windows 资源 (chaoset64.res, chaoset32.res, chaoset-ui.res, chaosetctl.res, chaosetd.res)..."
+# 3. 生成与编译 C++ 二进制的 Windows 资源文件（图标与版本信息）
+#    注意：Rust 产物（chaosetctl.exe / chaosetd.exe / chaoset-settings.exe）的资源
+#    由各自 crate 的 build.rs 生成并链接，这里只处理 MSVC 编译的 DLL / UI 宿主。
+echo "==> 生成与编译 Windows 资源 (chaoset64.res, chaoset32.res, chaoset-ui.res)..."
 gen_rc() {
   local target_rc="$1"
   local desc="$2"
@@ -74,20 +82,18 @@ gen_rc() {
 gen_rc "$OUTDIR/chaoset64.rc" "Chaoset 拼音输入法 TSF 前端（64 位）" "ChaosetIME" "ChaosetIME.dll" 2 ""
 gen_rc "$OUTDIR/chaoset32.rc" "Chaoset 拼音输入法 TSF 前端（32 位）" "ChaosetIME32" "ChaosetIME32.dll" 2 ""
 gen_rc "$OUTDIR/chaoset-ui.rc" "Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置中心入口）" "chaoset-ui" "chaoset-ui.exe" 1 '1 24 "chaoset-ui.manifest"'
-gen_rc "$OUTDIR/chaosetctl.rc" "Chaoset 拼音输入法全能控制工具" "chaosetctl" "chaosetctl.exe" 1 ""
-gen_rc "$OUTDIR/chaosetd.rc" "Chaoset 拼音输入法核心守护进程" "chaosetd" "chaosetd.exe" 1 ""
 
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset64.res" "$OUTDIR/chaoset64.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset32.res" "$OUTDIR/chaoset32.rc"
 rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaoset-ui.res" "$OUTDIR/chaoset-ui.rc"
-rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetctl.res" "$OUTDIR/chaosetctl.rc"
-rc.exe /c 65001 /l 0x0804 /i shims/windows/resources /fo "$OUTDIR/chaosetd.res" "$OUTDIR/chaosetd.rc"
 
-# 4. 编译二进制：chaosetctl.exe（Go 全能工具）+ chaosetd.exe（Rust daemon）
-echo "==> 编译 chaosetctl.exe（Go）与 chaosetd.exe（Rust）..."
-go build -ldflags "-s -w" -o "$OUTDIR/chaosetctl.exe" ./cmd/chaosetctl
-# daemon 由 Rust 实现（crates/chaosetd）：release 构建带 windows 子系统属性，
-# 不弹控制台窗口；MSVC 工具链由 CI 的 ilammy/msvc-dev-cmd 提供。
+# 4. 编译二进制：chaosetctl.exe（Rust 全能 CLI）+ chaosetd.exe（Rust daemon）
+#    两者都由 crates/*/build.rs 注入图标与 VS_VERSION_INFO（读取上面 export 的
+#    CHAOSET_BUILD_VERSION / CHAOSET_VERSION_QUAD）；MSVC 工具链由 CI 的
+#    ilammy/msvc-dev-cmd（或本地 VS 开发者环境）提供。
+echo "==> 编译 chaosetctl.exe 与 chaosetd.exe（cargo，MSVC）..."
+cargo build --release --bin chaosetctl --manifest-path crates/Cargo.toml
+cp crates/target/release/chaosetctl.exe "$OUTDIR/chaosetctl.exe"
 cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 cp crates/target/release/chaosetd.exe "$OUTDIR/chaosetd.exe"
 

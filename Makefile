@@ -1,4 +1,4 @@
-.PHONY: build build-settings build-settings-universal build-settings-windows test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
+.PHONY: build build-tools build-settings build-settings-universal build-settings-windows test vet fmt cover race run-cli run-daemon icons lint-workflows check-fmt check-win32-gdi check-uiparity package-linux package-windows package-macos package-all version check-version
 
 # ── 版本号：单一真源 ────────────────────────────────────────────────
 #
@@ -25,6 +25,11 @@ VER_MAJOR := $(word 1,$(subst ., ,$(VERSION_QUAD)))
 VER_MINOR := $(word 2,$(subst ., ,$(VERSION_QUAD)))
 VER_PATCH := $(word 3,$(subst ., ,$(VERSION_QUAD)))
 VER_BUILD := $(word 4,$(subst ., ,$(VERSION_QUAD)))
+
+# 所有 cargo 构建继承版本注入：Rust build.rs 用它们生成 Windows PE 资源
+# （图标 + VS_VERSION_INFO）与 CLI 版本输出；单一真源仍是 scripts/version.sh。
+export CHAOSET_BUILD_VERSION := $(VERSION)
+export CHAOSET_VERSION_QUAD := $(VERSION_QUAD)
 
 version:
 	@echo $(VERSION)
@@ -77,22 +82,59 @@ check-version:
 		grep -q 'version.sh' "$$s" \
 			|| { echo "错误：$$s 未使用 scripts/version.sh"; exit 1; }; \
 	done
-	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 年月日-commit hash；含 Windows 安装器/二进制版本资源）"
+	@# 发行链已切到 Rust CLI（chaosetctl 单二进制 + argv[0] multicall）：构建/打包
+	@# 必须用 cargo 构建 chaosetctl，版本经 CHAOSET_BUILD_VERSION / CHAOSET_VERSION_QUAD
+	@# 注入（Rust build.rs 读它们生成 Windows PE 图标 + VS_VERSION_INFO）。
+	@grep -q 'export CHAOSET_BUILD_VERSION := $$(VERSION)' Makefile \
+		|| { echo "错误：Makefile 未 export CHAOSET_BUILD_VERSION（Rust 构建拿不到版本）"; exit 1; }
+	@grep -q 'export CHAOSET_VERSION_QUAD := $$(VERSION_QUAD)' Makefile \
+		|| { echo "错误：Makefile 未 export CHAOSET_VERSION_QUAD（PE 版本资源拿不到数字版本）"; exit 1; }
+	@grep -q -- '--bin chaosetctl' Makefile \
+		|| { echo "错误：Makefile 未用 cargo 构建 chaosetctl"; exit 1; }
+	@grep -q -- '--bin chaosetctl' shims/windows/package_msvc.sh \
+		|| { echo "错误：package_msvc.sh 未用 cargo 构建 chaosetctl.exe"; exit 1; }
+	@grep -q 'chaosetctl.exe" import' shims/windows/installer/chaoset.nsi \
+		|| { echo "错误：NSIS 词库刷新未改用 chaosetctl.exe import"; exit 1; }
+	@# 发行链不得再引用已删除的 Go CLI 命令（Go 只保留构建期词库生成与静态检查）。
+	@# 分两段匹配：含 "go build" 的行与含 cmd/<已迁移命令> 的行分开写，
+	@# 避免本断言自身被工具或 grep 误判成真实构建命令。
+	@if grep -rn 'go build' Makefile shims scripts 2>/dev/null \
+		| grep -qE 'cmd/chaoset(ctl|-cli|-import|-userdict|-settingsctl)'; then \
+		echo "错误：发行/打包脚本仍在用 Go 构建已迁移到 Rust 的 CLI 命令"; exit 1; \
+	fi
+	@echo "版本号单一真源检查通过（tag CI 用 tag，其余用 年月日-commit hash；含 Windows 安装器/二进制版本资源与 Rust CLI 发行链）"
+
+# 发行链已从 Go 切到 Rust：chaosetctl 是唯一的全能 CLI 二进制
+# （argv[0] multicall：chaoset / chaoset-cli / chaoset-import / chaoset-userdict /
+# chaoset-settingsctl），daemon 与 dictc 也都是 Rust。本目标不再调用 go build。
+# 发行名必须保持：POSIX 用相对软链指向 chaosetctl；Windows/MSYS 没有可靠软链
+# （且可执行文件必须是 .exe），直接复制副本。
+EXE_SUFFIX := $(if $(filter Windows_NT,$(OS)),.exe,)
+BIN_ALIASES := chaoset chaoset-cli chaoset-import chaoset-userdict chaoset-settingsctl
+ifeq ($(OS),Windows_NT)
+  BIN_ALIAS_CMD = for n in $(BIN_ALIASES); do cp "bin/chaosetctl$(EXE_SUFFIX)" "bin/$$n$(EXE_SUFFIX)"; done
+else
+  BIN_ALIAS_CMD = for n in $(BIN_ALIASES); do ln -sf chaosetctl "bin/$$n"; done
+endif
 
 build:
-	go build -o bin/chaosetctl ./cmd/chaosetctl
-	go build -o bin/chaoset ./cmd/chaoset
+	@# 发行链已切到 Rust CLI：chaosetctl 单二进制 + argv[0] multicall（软链/副本）。
+	cargo build --release --bin chaosetctl --manifest-path crates/Cargo.toml
 	# daemon 唯一实现是 Rust（crates/chaosetd）：Go 版已删除。
 	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
-	cp crates/target/release/chaosetd bin/chaosetd
 	# 发布用二进制词库编译器（构建期工具，不随包分发）：TSV 是仓库源，打包时编译为 CSDB。
 	cargo build --release --bin dictc --manifest-path crates/Cargo.toml
-	cp crates/target/release/dictc bin/chaoset-dictc
-	go build -o bin/chaoset-cli ./cmd/chaoset-cli
-	go build -o bin/chaoset-import ./cmd/chaoset-import
-	go build -o bin/chaoset-dictgen ./cmd/chaoset-dictgen
-	go build -o bin/chaoset-userdict ./cmd/chaoset-userdict
-	go build -o bin/chaoset-settingsctl ./cmd/chaoset-settingsctl
+	mkdir -p bin
+	cp crates/target/release/chaosetctl$(EXE_SUFFIX) bin/chaosetctl$(EXE_SUFFIX)
+	cp crates/target/release/chaosetd$(EXE_SUFFIX) bin/chaosetd$(EXE_SUFFIX)
+	cp crates/target/release/dictc$(EXE_SUFFIX) bin/chaoset-dictc$(EXE_SUFFIX)
+	$(BIN_ALIAS_CMD)
+
+# 仅存的 Go 构建期工具：内置词库生成器（data/dict_common.tsv 的生成源）。
+# 发行链（CLI/daemon/dictc/设置中心）已全部 Rust，本目标以外构建不再需要 Go。
+build-tools:
+	mkdir -p bin
+	go build -o bin/chaoset-dictgen$(EXE_SUFFIX) ./cmd/chaoset-dictgen
 
 build-settings:
 	# 注入显示版本（scripts/version.sh 单一真源）：设置中心标题只显示当前构建版本。
@@ -193,7 +235,7 @@ race:
 
 run-cli:
 	@echo "需要先起 daemon（另开终端）：make run-daemon；CLI 缺省连接平台默认 socket"
-	go run ./cmd/chaoset-cli
+	cargo run --release --bin chaosetctl --manifest-path crates/Cargo.toml -- cli
 
 run-daemon:
 	cargo run --quiet --release --bin chaosetd --manifest-path crates/Cargo.toml
@@ -256,23 +298,27 @@ package-macos:
 	@test -f dist/chaoset-macos.zip || { echo "错误：未生成 dist/chaoset-macos.zip"; exit 1; }
 	@echo "✓ macOS 安装包：dist/chaoset-macos.zip（不发布 DMG）"
 
-# package-linux：显式交叉编译到 linux/amd64。
+# package-linux：Linux 发行包（tar.gz / deb / Arch）必须在 Linux 上原生构建。
 #
-# 必须显式指定 GOOS/GOARCH：此前的写法是裸 `go build`，在 macOS 开发机上打包
-# 会把 Darwin Mach-O 二进制塞进 Linux 包（2026-10-25 实测确认），
-# 而 CI 因为跑在 Linux runner 上恰好看不出这个问题——本机打包才会踩到。
-LINUX_GOENV = GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+# 历史：chaosetctl 曾用 GOOS/GOARCH 交叉编译，在 macOS 开发机上打包会把 Darwin
+# Mach-O 塞进 Linux 包（2026-10-25 实测确认），而 CI 跑在 Linux runner 上恰好看
+# 不出这个问题。发行链切到 Rust 后 chaosetctl 与 chaosetd 一样由 cargo host 构建
+# （不做跨平台交叉链接），因此非 Linux 直接报错，不再产出错误的包。
 
 package-linux:
 	rm -rf dist/chaoset-linux-x86_64
+	@test "$$(uname -s)" = Linux || { echo "错误：Linux 发行包必须在 Linux 上构建（chaosetctl/chaosetd 均为 cargo host 构建，不做跨平台交叉链接）" >&2; exit 1; }
 	mkdir -p dist/chaoset-linux-x86_64/bin
 	mkdir -p dist/chaoset-linux-x86_64/component
 	mkdir -p dist/chaoset-linux-x86_64/icons
 	mkdir -p dist/chaoset-linux-x86_64/data
-	$(LINUX_GOENV) go build -ldflags "-s -w" -o dist/chaoset-linux-x86_64/bin/chaosetctl ./cmd/chaosetctl
+	# 全能 CLI 是 Rust 单二进制（crates/chaosetctl，argv[0] multicall）；
+	# 发行名 chaoset/chaoset-cli/chaoset-import/chaoset-userdict 由下面的软链提供。
+	cargo build --release --bin chaosetctl --manifest-path crates/Cargo.toml
+	cp crates/target/release/chaosetctl dist/chaoset-linux-x86_64/bin/chaosetctl
+	strip dist/chaoset-linux-x86_64/bin/chaosetctl 2>/dev/null || true
 	# daemon 由 Rust 实现（crates/chaosetd，已接替发行包）：交叉链接不可靠，
 	# Linux 包必须在 Linux 上构建（release.yml 的 package-linux 用 ubuntu runner）。
-	@test "$$(uname -s)" = Linux || { echo "错误：Linux 发行包的 chaosetd 需在 Linux 上构建（Rust 不做跨平台交叉链接）" >&2; exit 1; }
 	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
 	cp crates/target/release/chaosetd dist/chaoset-linux-x86_64/bin/chaosetd
 	strip dist/chaoset-linux-x86_64/bin/chaosetd 2>/dev/null || true
@@ -282,7 +328,7 @@ package-linux:
 	@test -x shims/settings/target/release/chaoset-settings || { echo "错误：缺少统一设置中心 chaoset-settings（先 make build-settings）" >&2; exit 1; }
 	cp shims/settings/target/release/chaoset-settings dist/chaoset-linux-x86_64/bin/chaoset-settings
 	# 引擎是平台原生壳（C++/libibus），只做 IBus UI 与按键路由；拼音/联想
-	# 由 Go chaosetd 通过 Unix socket 提供。必须在 Linux 上构建（CI/容器）。
+	# 由 Rust chaosetd 通过 Unix socket 提供。必须在 Linux 上构建（CI/容器）。
 	sh shims/linux/engine/build.sh dist/chaoset-linux-x86_64/bin/chaoset-engine
 	sed "s/@VERSION@/$(VERSION)/g" shims/linux/component/chaoset.xml > dist/chaoset-linux-x86_64/component/chaoset.xml
 	cp -r shims/linux/icons/hicolor dist/chaoset-linux-x86_64/icons/
@@ -344,138 +390,24 @@ package-linux:
 	fi
 	rm -rf dist/chaoset-linux-x86_64
 
-# package-windows：交叉编译到 windows/amd64（Go）与 mingw-w64（DLL + UI 宿主）。
+# package-windows：Windows 原生 MSVC + NSIS 打包，唯一权威实现是
+# shims/windows/package_msvc.sh（CI 的 windows-build job 直接跑同一脚本）。
 #
-# 与 Linux 同理，必须显式指定 GOOS/GOARCH：裸 go build 会把开发机的
-# Mach-O/ELF 二进制塞进 Windows 包。包内自带 install.bat，
-# 用户右键「以管理员身份运行」即可完成 regsvr32 注册 + daemon 启动，
-# 不必再手工敲命令。同时编译 64 位与 32 位两个 TSF DLL，实现合体安装包全面支持。
-#
-# chaoset-ui.exe：单例 UI 宿主（托盘中英指示器 + 设置窗）。只有 64 位一份——
-# 它是独立进程，与宿主进程位数无关；必须与 ChaosetIME.dll 同目录（LoadLibrary
-# 同目录 DLL 后调用导出 ChaosetRunUi）。
-WIN_GOENV = GOOS=windows GOARCH=amd64 CGO_ENABLED=0
-# TSF DLL 的源 = shims/windows/src/*.cpp 去掉 UI 宿主入口 ui_main.cpp
-# （docs/architecture.md §3.1 的真实 TU；wildcard 后新增叶子模块不用再手改）。
-# UI 宿主仍然只编 ui_main.cpp，且必须 LoadLibrary 同目录 DLL 复用实现。
-WIN_DLL_SRCS := $(filter-out shims/windows/src/ui_main.cpp,$(wildcard shims/windows/src/*.cpp))
-
+# 历史：这里曾用 mingw-w64 交叉编译 TSF DLL / UI 宿主，并用 Go 交叉编译
+# chaosetctl.exe。发行链切到 Rust CLI 后 chaosetctl.exe 由 cargo 构建
+# （PE 图标与 VS_VERSION_INFO 由 crates/chaosetctl/build.rs 注入），Windows 包
+# 必须在 Windows 上用 MSVC + NSIS 原生构建——mingw 交叉链与 MSVC 产物不是同一
+# 套实现，保留两份只会让「本地能打、CI 打不出」的漂移长期存在。
 package-windows:
-	rm -rf dist/chaoset-windows-x64
-	mkdir -p dist/chaoset-windows-x64
-	# 统一全能命令行控制工具 chaosetctl.exe 集成 cli / import / settingsctl / userdict 子命令，
-	# 消除独立小工具造成的安装包体积冗余（原 chaoset-cli/import/settingsctl/userdict 独立编译占用近 12MB）。
-	$(WIN_GOENV) go build -ldflags "-s -w" -o dist/chaoset-windows-x64/chaosetctl.exe ./cmd/chaosetctl
-	# daemon 由 Rust 实现（crates/chaosetd，release 为 windows 子系统，无控制台闪窗）。
-	# Windows 包在 windows-latest 原生构建（release.yml 的 package-windows）。
-	cargo build --release --bin chaosetd --manifest-path crates/Cargo.toml
-	cp crates/target/release/chaosetd.exe dist/chaoset-windows-x64/chaosetd.exe
-	# 设置窗只保留 Slint 统一设置中心：缺少它用户点设置将无窗口可用，打包必须失败。
-	@test -x shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe || { echo "错误：缺少统一设置中心 chaoset-settings.exe（先 make build-settings-windows）" >&2; exit 1; }
-	cp shims/settings/target/x86_64-pc-windows-gnu/release/chaoset-settings.exe dist/chaoset-windows-x64/chaoset-settings.exe
-	# 资源模板 chaoset.rc 含图标 + VS_VERSION_INFO（@VERSION@ 等占位符）。
-	# 单一真源：$(VERSION)/$(VERSION_QUAD) 由 git tag 推导，sed 注入后交给 windres；
-	# 64/32 位 DLL 与 UI 宿主各生成一份带各自 FileDescription 的资源，让
-	# 「右键属性 → 详细信息」在安装目录的每个二进制上都显示版本与 app 信息。
-	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
-		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
-		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
-		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（64 位）/g' \
-		-e 's/@FILE_TYPE@/2/g' \
-		-e 's/@INTERNAL_NAME@/ChaosetIME/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME.dll/g' \
-		-e 's|@EXTRA_RESOURCE@||g' \
-		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset64.rc
-	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
-		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
-		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
-		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 TSF 前端（32 位）/g' \
-		-e 's/@FILE_TYPE@/2/g' \
-		-e 's/@INTERNAL_NAME@/ChaosetIME32/g' -e 's/@ORIGINAL_FILENAME@/ChaosetIME32.dll/g' \
-		-e 's|@EXTRA_RESOURCE@||g' \
-		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset32.rc
-	@sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@VERSION_QUAD@/$(VERSION_QUAD)/g' \
-		-e 's/@VER_MAJOR@/$(VER_MAJOR)/g' -e 's/@VER_MINOR@/$(VER_MINOR)/g' \
-		-e 's/@VER_PATCH@/$(VER_PATCH)/g' -e 's/@VER_BUILD@/$(VER_BUILD)/g' \
-		-e 's/@FILE_DESCRIPTION@/Chaoset 拼音输入法 UI 宿主（托盘中英状态 + 设置窗）/g' \
-		-e 's/@FILE_TYPE@/1/g' \
-		-e 's/@INTERNAL_NAME@/chaoset-ui/g' -e 's/@ORIGINAL_FILENAME@/chaoset-ui.exe/g' \
-		-e 's|@EXTRA_RESOURCE@|1 24 "chaoset-ui.manifest"|g' \
-		shims/windows/resources/chaoset.rc > dist/chaoset-windows-x64/chaoset-ui.rc
-	# -c 65001：模板里的中文说明是 UTF-8，windres 默认按 ANSI/Latin-1 解释
-	# 会把「拼音输入法」存成 mojibake，属性页全是乱码（2026-11-06 打包验证）。
-	x86_64-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset64.rc -O coff -o dist/chaoset-windows-x64/chaoset_res64.o
-	i686-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset32.rc -O coff -o dist/chaoset-windows-x64/chaoset_res32.o
-	x86_64-w64-mingw32-windres -c 65001 -I shims/windows/resources dist/chaoset-windows-x64/chaoset-ui.rc -O coff -o dist/chaoset-windows-x64/chaoset_ui_res.o
-	# 64 位 TSF 前端 DLL
-	# -Wl,--export-all-symbols：ChaosetRunUi 用了 __declspec(dllexport)，
-	# mingw 一旦发现显式 dllexport 就不再自动导出其余全局符号——COM 入口
-	# DllRegisterServer/DllGetClassObject/DllCanUnloadNow 会消失，regsvr32
-	# 注册失败（2026-11-06 打包自检发现）。显式打开全量导出恢复 COM 入口。
-	x86_64-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -s -Wall -Wextra -shared -static -Wl,--export-all-symbols \
-		-DCHAOSET_VERSION='"$(VERSION)"' \
-		-o dist/chaoset-windows-x64/ChaosetIME.dll \
-		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res64.o \
-		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
-	# 32 位 WOW64 前端 DLL（-Wl,--kill-at 去除 stdcall 的 @0 修饰，确保 regsvr32 识别入口）
-	i686-w64-mingw32-g++ -std=c++17 -I shims/common/ipc -O2 -s -Wall -Wextra -shared -static -Wl,--kill-at -Wl,--export-all-symbols \
-		-DCHAOSET_VERSION='"$(VERSION)"' \
-		-o dist/chaoset-windows-x64/ChaosetIME32.dll \
-		$(WIN_DLL_SRCS) shims/common/ipc/core.cpp dist/chaoset-windows-x64/chaoset_res32.o \
-		-lole32 -loleaut32 -luuid -luser32 -lkernel32 -ladvapi32 -lgdi32 -lshell32 -lcomdlg32 -limm32
-	# 单例 UI 宿主：托盘「中/英」与设置窗的唯一宿主。几十行的 LoadLibrary 壳，
-	# UI 实现全部在 ChaosetIME.dll 内（导出 ChaosetRunUi），不复制 UI 代码。
-	# 版本资源链进 UI 宿主：独立 EXE 的属性页也要显示产品名/公司/版本。
-	x86_64-w64-mingw32-g++ -std=c++17 -O2 -s -Wall -Wextra -municode -mwindows -static \
-		-o dist/chaoset-windows-x64/chaoset-ui.exe shims/windows/src/ui_main.cpp \
-		dist/chaoset-windows-x64/chaoset_ui_res.o
-	@if command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then \
-		x86_64-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME.dll dist/chaoset-windows-x64/chaoset-ui.exe dist/chaoset-windows-x64/chaoset-settings.exe 2>/dev/null || true; \
-	fi
-	@if command -v i686-w64-mingw32-strip >/dev/null 2>&1; then \
-		i686-w64-mingw32-strip --strip-unneeded dist/chaoset-windows-x64/ChaosetIME32.dll 2>/dev/null || true; \
-	fi
-	# 三个资源（64/32 DLL + UI 宿主）都链接完之后再删中间产物。
-	rm -f dist/chaoset-windows-x64/chaoset_res64.o dist/chaoset-windows-x64/chaoset_res32.o \
-		dist/chaoset-windows-x64/chaoset_ui_res.o \
-		dist/chaoset-windows-x64/chaoset64.rc dist/chaoset-windows-x64/chaoset32.rc \
-		dist/chaoset-windows-x64/chaoset-ui.rc
-	cp shims/windows/resources/chaoset.ico dist/chaoset-windows-x64/
-	# 词库：随包携带常用词库，文件名与 install.bat / README 里的约定一致（dict.tsv）。
-	# 此前放的是 558 条的 dict_seed.tsv 而 README 却让用户传 -dict dict.tsv，
-	# 名字对不上——用户照做会直接启动失败。
-	cp data/dict_common.tsv dist/chaoset-windows-x64/dict.tsv
-	# 发布用二进制词库：Windows 安装器用 dictc.exe 为用户词库预生成 dict.bin 缓存
-	# （LOCALAPPDATA 词库随后第一次 daemon 启动即可直接加载二进制）。
-	cargo build --release --bin dictc --manifest-path crates/Cargo.toml
-	cp crates/target/release/dictc.exe dist/chaoset-windows-x64/chaoset-dictc.exe
-	./dist/chaoset-windows-x64/chaoset-dictc.exe data/dict_common.tsv dist/chaoset-windows-x64/dict.bin
-	cp shims/windows/install.bat dist/chaoset-windows-x64/
-	cp shims/windows/README.md dist/chaoset-windows-x64/
-	@# 架构自检：Go 二进制必须是 PE，DLL 必须同时产出 64 位与 32 位且导出标准 COM 入口
-	@for b in dist/chaoset-windows-x64/chaosetd.exe dist/chaoset-windows-x64/chaosetctl.exe dist/chaoset-windows-x64/chaoset-dictc.exe; do \
-		file "$$b" | grep -q 'PE32+' || { echo "错误：$$b 不是 Windows PE 可执行文件："; file "$$b"; exit 1; }; \
-	done
-	@file dist/chaoset-windows-x64/ChaosetIME.dll | grep -q 'PE32+' || { echo "错误：ChaosetIME.dll 不是 64 位 PE："; file dist/chaoset-windows-x64/ChaosetIME.dll; exit 1; }
-	@file dist/chaoset-windows-x64/ChaosetIME32.dll | grep -q 'PE32 ' || { echo "错误：ChaosetIME32.dll 不是 32 位 PE："; file dist/chaoset-windows-x64/ChaosetIME32.dll; exit 1; }
-	@file dist/chaoset-windows-x64/chaoset-ui.exe | grep -q 'PE32+' || { echo "错误：chaoset-ui.exe 不是 64 位 PE："; file dist/chaoset-windows-x64/chaoset-ui.exe; exit 1; }
-	@# UI 宿主必须靠导出复用 DLL 实现；缺导出/被静态链接都会让托盘与设置窗整体失效
-	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
-		| grep -q ChaosetRunUi || { echo "错误：ChaosetIME.dll 缺少 ChaosetRunUi 导出（chaoset-ui.exe 无法工作）"; exit 1; }
-	@if x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/chaoset-ui.exe | grep -qi 'DLL Name:.*ChaosetIME'; then \
-		echo "错误：chaoset-ui.exe 静态导入了 ChaosetIME.dll（必须 LoadLibrary 动态加载）"; exit 1; fi
-	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
-		| grep -q DllRegisterServer || { echo "错误：ChaosetIME.dll 缺少 DllRegisterServer 导出"; exit 1; }
-	@x86_64-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME.dll \
-		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-	@i686-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME32.dll \
-		| grep -q DllRegisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllRegisterServer 导出"; exit 1; }
-	@i686-w64-mingw32-objdump -p dist/chaoset-windows-x64/ChaosetIME32.dll \
-		| grep -q DllUnregisterServer || { echo "错误：ChaosetIME32.dll 缺少 DllUnregisterServer 导出"; exit 1; }
-	@if command -v makensis >/dev/null 2>&1; then \
-		echo "==> 构建 Windows 单文件图形安装包 (ChaosetSetup.exe)..."; \
-		(cd shims/windows/installer && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 makensis -DVERSION=$(VERSION) -DVERSION_QUAD=$(VERSION_QUAD) chaoset.nsi); \
-	fi
-	(cd dist && zip -r chaoset-windows-x64.zip chaoset-windows-x64)
-	rm -rf dist/chaoset-windows-x64
+	@case "$$(uname -s)" in \
+		MINGW*|MSYS*|CYGWIN*) \
+			echo "==> Windows 发行包：委派 shims/windows/package_msvc.sh（MSVC + NSIS）"; \
+			bash shims/windows/package_msvc.sh ;; \
+		*) \
+			echo "错误：Windows 发行包必须在 Windows（Git Bash/MSYS）上构建。" >&2; \
+			echo "      用 MSVC + NSIS 原生构建：bash shims/windows/package_msvc.sh" >&2; \
+			echo "      （Linux/macOS 不再做 mingw 交叉打包，chaosetctl.exe 由 cargo 生成）" >&2; \
+			exit 1 ;; \
+	esac
 
 package-all: package-macos package-linux package-windows

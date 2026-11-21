@@ -204,7 +204,7 @@ func checkModeIndicator(fsys fs.FS, problems *[]string) {
 	// 构建/打包/安装三条链路都必须带上 UI 宿主，否则托盘与设置窗整体不可用。
 	checkContains(fsys, problems, group, winBuild,
 		"chaoset-ui.exe", "ui_main.cpp", "ChaosetRunUi")
-	checkContains(fsys, problems, group, "Makefile",
+	checkContains(fsys, problems, group, winPackageMsvc,
 		"chaoset-ui.exe", "ChaosetRunUi")
 	checkContains(fsys, problems, group, winInstaller,
 		"chaoset-ui.exe", "ChaosetUi")
@@ -246,9 +246,13 @@ func checkPopupOwner(fsys fs.FS, problems *[]string) {
 
 // checkWindowsVersionInfo 锁住「安装程序与 Windows 二进制都带版本信息 / app
 // 信息」契约（2026-11-06 用户反馈：ChaosetSetup.exe 属性页全空，无法判断
-// 装的是哪一版）。版本号必须来自单一真源 git tag——NSIS 用注入的
+// 装的是哪一版）。版本号必须来自单一真源 scripts/version.sh——NSIS 用注入的
 // ${VERSION}/${VERSION_QUAD}，资源模板用 @VERSION@ 占位符，
 // 任何一处写死数字都会被 make check-version 拦下。
+//
+// 发行面 Rust 化后，Rust exe（chaosetctl / chaosetd / chaoset-settings）也必须带
+// VS_VERSION_INFO：ctl/daemon 由 build.rs 从同一份 rc 模板 + CHAOSET_VERSION_QUAD
+// 注入，scripts/check_windows_version_info.py 统一校验包内所有 PE 二进制与图标资源。
 func checkWindowsVersionInfo(fsys fs.FS, problems *[]string) {
 	const group = groupWindowsVersionInfo
 	// 安装器 EXE：VS_FIXEDFILEINFO（数字 4 段）+ 属性页字符串键。
@@ -280,20 +284,29 @@ func checkWindowsVersionInfo(fsys fs.FS, problems *[]string) {
 		`"ProductName"`, `"ProductVersion"`, `"LegalCopyright"`,
 		"@VERSION@", "@VERSION_QUAD@", "@VER_MAJOR@",
 		"@FILE_DESCRIPTION@", "@ORIGINAL_FILENAME@", "@FILE_TYPE@")
-	// 两条构建链都必须：注入占位符、以 UTF-8 代码页编译版本资源、把 UI 宿主
-	// 资源链进 exe；且 NSIS 收到 VERSION_QUAD。
+	// 发行链切到 Rust 后，Makefile 只负责把版本注入 cargo（build.rs 生成 PE 资源）；
+	// Windows 原生资源/NSIS 调用在 package_msvc.sh，mingw 本地链在 build.sh。
 	checkContains(fsys, problems, group, makefile,
-		"@VERSION@", "@VERSION_QUAD@", "-c 65001",
-		"chaoset-ui.rc", "chaoset_ui_res.o",
-		"VERSION_QUAD := ", "-DVERSION_QUAD=$(VERSION_QUAD)",
-		"-Wl,--export-all-symbols", "makensis -DVERSION=$(VERSION)")
+		"CHAOSET_BUILD_VERSION", "CHAOSET_VERSION_QUAD")
+	checkContains(fsys, problems, group, winPackageMsvc,
+		"@VERSION@", "@VERSION_QUAD@", "/c 65001",
+		"chaoset-ui.rc", "cargo build", "--bin chaosetctl",
+		"chaosetctl.exe", "/DVERSION_QUAD")
 	checkContains(fsys, problems, group, winBuild,
 		"@VERSION@", "@VERSION_QUAD@", "-c 65001",
 		"ui.gen.rc", "ui_rc.o",
 		"gen_rc", "VERSION_QUAD", "-Wl,--export-all-symbols")
-	// 发行包自检必须真的验证版本资源，而不只是「文件存在」。
+	// 发行面 Rust 化：chaosetctl/chaosetd 由 build.rs 从同一份 rc 模板注入版本资源。
+	for _, path := range []string{rustCtlBuildScript, rustDaemonBuildScript} {
+		checkContains(fsys, problems, group, path, "chaoset.rc", "CHAOSET_VERSION_QUAD")
+	}
+	// 发行包自检必须真的验证版本资源与图标（包内 Rust exe 全部在 DEFAULT_FILES 里），
+	// 而不只是「文件存在」。
+	checkContains(fsys, problems, group, winVersionCheck,
+		"DEFAULT_FILES", "chaosetctl.exe", "chaosetd.exe", "chaoset-settings.exe",
+		"RT_GROUP_ICON")
 	checkContains(fsys, problems, group, releaseYML,
-		"VS_VERSION_INFO", "ChaosetSetup.exe")
+		"check_windows_version_info.py", "ChaosetSetup.exe")
 }
 
 // checkInactiveNoAction 锁住 2026-11-06 用户反馈的契约：**输入法未激活时不许有
@@ -954,11 +967,11 @@ func checkWindowsInstallSafety(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winShell,
 		"ensureDaemonStarted", "ensureDaemonConnected", "-seeddict")
 	// 设置中心/daemon 重启由 Slint bridge 承担（壳内不再有设置窗进程逻辑）。
-	// 词库刷新必须走 Go 导入器（保留用户导入词 + 备份 + 原子替换），不能
-	// 用 CopyFiles 直接覆盖用户词库。
+	// 词库刷新必须走 Rust chaosetctl 的 import 子命令（保留用户导入词 + 备份 +
+	// 原子替换），不能用 CopyFiles 直接覆盖用户词库；Go chaoset-import.exe 已删除。
 	checkContains(fsys, problems, group, winInstaller,
-		"chaoset-import.exe", "-seed", "-backup")
-	checkContains(fsys, problems, group, winInstallBat, "chaoset-import.exe")
+		"chaosetctl.exe", " import ", "-seed", "-backup")
+	checkContains(fsys, problems, group, winInstallBat, "chaosetctl.exe", " import ")
 	checkExcludes(fsys, problems, group, winInstaller,
 		`CopyFiles /SILENT "$INSTDIR\dict.tsv"`)
 	// 安装器不得自己启动 daemon（管理员上下文会写错用户数据/管道）。
