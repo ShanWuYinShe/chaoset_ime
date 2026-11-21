@@ -270,6 +270,55 @@ impl Pool {
 /// 层 rankTypoFix 加入候选池并打 typo_fix 标记；对可组合的修正做分词 DP。
 /// 只有输入形态被判定为可疑（typo/mid/tail）时才执行。
 #[allow(clippy::too_many_arguments)]
+/// 单条切分路径的模糊变体笛卡尔积（Go expandTokenVariants）：完整音节按
+/// fuzzyVariants 展开、碎片原样保留，首条必为原路径，封顶 maxFuzzyPaths=8。
+fn expand_token_variants(tokens: &[Token], fuzzy: bool) -> Vec<Vec<Token>> {
+    const MAX_FUZZY_PATHS: usize = 8;
+    if !fuzzy || tokens.is_empty() {
+        return vec![tokens.to_vec()];
+    }
+    let sets: Vec<Vec<Token>> = tokens
+        .iter()
+        .map(|tok| {
+            if tok.is_exact {
+                crate::fuzzy::fuzzy_syllable_variants(&tok.text)
+                    .into_iter()
+                    .map(|fz| Token {
+                        text: fz,
+                        is_exact: true,
+                    })
+                    .collect()
+            } else {
+                vec![tok.clone()]
+            }
+        })
+        .collect();
+    let mut out: Vec<Vec<Token>> = Vec::new();
+    let mut cur: Vec<Token> = Vec::new();
+    fn build(
+        i: usize,
+        sets: &[Vec<Token>],
+        cur: &mut Vec<Token>,
+        out: &mut Vec<Vec<Token>>,
+        max: usize,
+    ) {
+        if out.len() >= max {
+            return;
+        }
+        if i == sets.len() {
+            out.push(cur.clone());
+            return;
+        }
+        for v in &sets[i] {
+            cur.push(v.clone());
+            build(i + 1, sets, cur, out, max);
+            cur.pop();
+        }
+    }
+    build(0, &sets, &mut cur, &mut out, MAX_FUZZY_PATHS);
+    out
+}
+
 fn add_typo_corrections(
     dict: &Dictionary,
     user: Option<&UserDict>,
@@ -1001,6 +1050,53 @@ impl Session {
             }
         }
 
+        // 4.1.5 连写匹配（Go addJoinedMatches）：拼音连写恰好等于输入的词条，
+        // 按精确层推出——不依赖切分枚举，兜住枚举上限导致的漏匹配。错拼形态
+        // 不做（产物全是假词），输入含显式分隔符时也不做（用户已划分音节，
+        // 去掉分隔符按连写匹配会把 b'a 误当成 ba）。
+        if !shape.typo_suspicious && !self.input_raw.contains('\'') {
+            for e in self.dict.query_joined_pinyin(&match_input, 20) {
+                let (boost, from_user) = if let Some(ref u) = self.user_dict {
+                    let (b, f) = u.score(&e.word, prev);
+                    (b as i32, f)
+                } else {
+                    (0, false)
+                };
+                let display_text = if traditional {
+                    to_traditional(&e.word)
+                } else {
+                    e.word.clone()
+                };
+                pool.add(
+                    &e.word.clone(),
+                    display_text,
+                    e.syllables.join("'"),
+                    e.freq as i32 + boost,
+                    from_user,
+                    RANK_EXACT,
+                    false,
+                );
+            }
+            if let Some(ref u) = self.user_dict {
+                for h in u.query_joined_pinyin(&match_input, 10) {
+                    let display_text = if traditional {
+                        to_traditional(&h.word)
+                    } else {
+                        h.word.clone()
+                    };
+                    pool.add(
+                        &h.word,
+                        display_text,
+                        h.syllables.join("'"),
+                        h.freq,
+                        true,
+                        RANK_EXACT,
+                        false,
+                    );
+                }
+            }
+        }
+
         // 4.2 错拼修正（Go addTypoCorrections）+ 组合候选提升（F）
         add_typo_corrections(
             &self.dict,
@@ -1039,154 +1135,134 @@ impl Session {
                 .iter()
                 .filter(|p| pattern_has_fragment(p) == want_fragment)
             {
-                let has_fragment_in_pat = pattern_has_fragment(pat);
-                let tokens: Vec<&str> = pat.iter().map(|t| t.text.as_str()).collect();
+                for qp in expand_token_variants(pat, self.fuzzy) {
+                    let has_fragment_in_pat = pattern_has_fragment(&qp);
+                    let tokens: Vec<&str> = qp.iter().map(|t| t.text.as_str()).collect();
 
-                let exact_limit = if has_fragment_in_pat {
-                    INITIALS_EXACT_LIMIT
-                } else if tokens.len() == 1 {
-                    SINGLE_SYLLABLE_EXACT_LIMIT
-                } else {
-                    20
-                };
-                let single_seg_single_char =
-                    tokens.len() == 1 && (pat[0].is_exact || pat[0].text.chars().count() == 1);
+                    // 上限分配与 Go 同序（顺序有意义）：单段（含单段声母）放开到
+                    // 单字上限 300——逐字挑选时才能选到 top 之外的同声母单字；
+                    // 多段简拼/混拼 120；常规多音节 20（歧义切分是乘法放大）。
+                    let exact_limit = if tokens.len() == 1 {
+                        SINGLE_SYLLABLE_EXACT_LIMIT
+                    } else if has_fragment_in_pat {
+                        INITIALS_EXACT_LIMIT
+                    } else {
+                        20
+                    };
+                    let single_seg_single_char =
+                        tokens.len() == 1 && (qp[0].is_exact || qp[0].text.chars().count() == 1);
 
-                // Go drop 段：回退上限 6 层；回退到单个完整音节且原输入 ≥4 段
-                // 时放开同音字全量（对齐单音节口径，SelectPrefix 逐字挑选才选
-                // 得到 top 之外的字），其余回退层 10。
-                let backoff_floor = tokens.len().saturating_sub(6).max(1);
-                // Go drop 段的提升特例：整串没有任何精确命中、去掉 1 段后剩余
-                // 全部是完整音节、且被去掉的段里有声母碎片（nihaox → [ni,hao] +
-                // 碎片 x）时，把「你好」这类回退命中提升到精确层置顶推出。
-                let mut full_exact_len: usize = 0;
-                for l in (backoff_floor..=tokens.len()).rev() {
-                    let sub = &tokens[..l];
-                    let is_full = l == tokens.len();
-                    let (exacts, prefixes) = if is_full {
-                        let (e, p) = self.dict.query_exact_and_prefix(sub, exact_limit, 20);
-                        (e, p)
-                    } else {
-                        let first_exact = pat.first().map(|t| t.is_exact).unwrap_or(false);
-                        let backoff_limit = if sub.len() == 1 && first_exact && tokens.len() >= 4 {
-                            SINGLE_SYLLABLE_EXACT_LIMIT
-                        } else {
-                            10
-                        };
-                        (self.dict.query_exact(sub, backoff_limit), Vec::new())
-                    };
-                    if is_full {
-                        full_exact_len = exacts.len();
-                    }
-
-                    let rank_exact = if has_fragment_in_pat {
-                        RANK_INITIAL_EXACT
-                    } else {
-                        RANK_EXACT
-                    };
-                    let rank_prefix = if has_fragment_in_pat {
-                        RANK_INITIAL_PREFIX
-                    } else {
-                        RANK_PREFIX
-                    };
-                    // Go rankBackoff + drop：回退越深（l 越小）排越后
-                    let backoff_rank = RANK_BACKOFF + (tokens.len() - l) as i32;
-                    // 提升特例（见上）：drop=1、剩余全整音节、整串无精确命中、
-                    // 被去掉的末段含碎片
-                    let promote_to_exact = !is_full
-                        && full_exact_len == 0
-                        && (tokens.len() - l) == 1
-                        && pat[..l].iter().all(|t| t.is_exact)
-                        && pat[l..].iter().any(|t| !t.is_exact);
-                    let effective_rank = if promote_to_exact {
-                        RANK_EXACT
-                    } else {
-                        backoff_rank
-                    };
-
-                    for e in exacts {
-                        let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                            let (b, f) = u.score(&e.word, prev);
-                            (b as i32, f)
-                        } else {
-                            (0, false)
-                        };
-                        let rank = if is_full { rank_exact } else { effective_rank };
-                        let display_text = if traditional {
-                            to_traditional(&e.word)
-                        } else {
-                            e.word.clone()
-                        };
-                        pool.add(
-                            &e.word.clone(),
-                            display_text,
-                            e.syllables.join("'"),
-                            e.freq as i32 + boost,
-                            from_user,
-                            rank,
-                            false,
-                        );
-                    }
-                    // 单段输入只出单字：前缀扩展词不进池（exact 池天然只有单字）
-                    for e in prefixes {
-                        if single_seg_single_char {
+                    // Go drop 段：回退上限 6 层；回退到单个完整音节且原输入 ≥4 段
+                    // 时放开同音字全量（对齐单音节口径，SelectPrefix 逐字挑选才选
+                    // 得到 top 之外的字），其余回退层 10。
+                    let backoff_floor = tokens.len().saturating_sub(6).max(1);
+                    // Go drop 段的提升特例：整串没有任何精确命中、去掉 1 段后剩余
+                    // 全部是完整音节、且被去掉的段里有声母碎片（nihaox → [ni,hao] +
+                    // 碎片 x）时，把「你好」这类回退命中提升到精确层置顶推出。
+                    let mut full_exact_len: usize = 0;
+                    // 错拼形态（Go addTokenMatches）：主查询换 QueryTokensExact（不展开
+                    // prefix 子树——碎片前缀的 BFS 展开量大且产物全是假词），且不做逐级
+                    // 回退（回退层产物同样会被纠错候选压掉，只徒增页数）。
+                    let typo_shape = shape.typo_suspicious;
+                    for l in (backoff_floor..=tokens.len()).rev() {
+                        if typo_shape && l != tokens.len() {
                             continue;
                         }
-                        let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                            let (b, f) = u.score(&e.word, prev);
-                            (b as i32, f)
+                        let sub = &tokens[..l];
+                        let is_full = l == tokens.len();
+                        let (exacts, prefixes) = if typo_shape {
+                            (self.dict.query_exact(sub, 20), Vec::new())
+                        } else if is_full {
+                            let (e, p) = self.dict.query_exact_and_prefix(sub, exact_limit, 20);
+                            (e, p)
                         } else {
-                            (0, false)
+                            let first_exact = qp.first().map(|t| t.is_exact).unwrap_or(false);
+                            let backoff_limit =
+                                if sub.len() == 1 && first_exact && tokens.len() >= 4 {
+                                    SINGLE_SYLLABLE_EXACT_LIMIT
+                                } else {
+                                    10
+                                };
+                            (self.dict.query_exact(sub, backoff_limit), Vec::new())
                         };
-                        let display_text = if traditional {
-                            to_traditional(&e.word)
-                        } else {
-                            e.word.clone()
-                        };
-                        pool.add(
-                            &e.word.clone(),
-                            display_text,
-                            e.syllables.join("'"),
-                            e.freq as i32 + boost,
-                            from_user,
-                            rank_prefix,
-                            false,
-                        );
-                    }
-                }
-            }
-        }
+                        if is_full {
+                            full_exact_len = exacts.len();
+                        }
 
-        // 4.4 模糊音召回（保持既有行为：首选音节的模糊变体，稍降权）
-        let best_syll_slices: Vec<&str> = best_pattern.iter().map(|t| t.text.as_str()).collect();
-        if self.fuzzy && !best_syll_slices.is_empty() {
-            let first_syll = best_syll_slices[0];
-            let fuzzy_vars = fuzzy_syllable_variants(first_syll);
-            for var in fuzzy_vars {
-                if var != first_syll {
-                    let mut alt_sylls = best_syll_slices.clone();
-                    alt_sylls[0] = &var;
-                    let hits: Vec<(String, Vec<String>, u32)> = self
-                        .dict
-                        .query_prefix(&alt_sylls, 16)
-                        .iter()
-                        .map(|e| (e.word.clone(), e.syllables.clone(), e.freq))
-                        .collect();
-                    for (word, syllables_vec, freq) in hits {
-                        let display_text = if traditional {
-                            to_traditional(&word)
+                        let rank_exact = if has_fragment_in_pat {
+                            RANK_INITIAL_EXACT
                         } else {
-                            word.clone()
+                            RANK_EXACT
                         };
-                        pool.add(
-                            &word,
-                            display_text,
-                            syllables_vec.join("'"),
-                            freq.saturating_sub(200) as i32, // 模糊候选稍降权
-                            false,
-                            RANK_EXACT,
-                            false,
-                        );
+                        let rank_prefix = if has_fragment_in_pat {
+                            RANK_INITIAL_PREFIX
+                        } else {
+                            RANK_PREFIX
+                        };
+                        // Go rankBackoff + drop：回退越深（l 越小）排越后
+                        let backoff_rank = RANK_BACKOFF + (tokens.len() - l) as i32;
+                        // 提升特例（见上）：drop=1、剩余全整音节、整串无精确命中、
+                        // 被去掉的末段含碎片
+                        let promote_to_exact = !is_full
+                            && full_exact_len == 0
+                            && (tokens.len() - l) == 1
+                            && qp[..l].iter().all(|t| t.is_exact)
+                            && qp[l..].iter().any(|t| !t.is_exact);
+                        let effective_rank = if promote_to_exact {
+                            RANK_EXACT
+                        } else {
+                            backoff_rank
+                        };
+
+                        for e in exacts {
+                            let (boost, from_user) = if let Some(ref u) = self.user_dict {
+                                let (b, f) = u.score(&e.word, prev);
+                                (b as i32, f)
+                            } else {
+                                (0, false)
+                            };
+                            let rank = if is_full { rank_exact } else { effective_rank };
+                            let display_text = if traditional {
+                                to_traditional(&e.word)
+                            } else {
+                                e.word.clone()
+                            };
+                            pool.add(
+                                &e.word.clone(),
+                                display_text,
+                                e.syllables.join("'"),
+                                e.freq as i32 + boost,
+                                from_user,
+                                rank,
+                                false,
+                            );
+                        }
+                        // 单段输入只出单字：前缀扩展词不进池（exact 池天然只有单字）
+                        for e in prefixes {
+                            if single_seg_single_char {
+                                continue;
+                            }
+                            let (boost, from_user) = if let Some(ref u) = self.user_dict {
+                                let (b, f) = u.score(&e.word, prev);
+                                (b as i32, f)
+                            } else {
+                                (0, false)
+                            };
+                            let display_text = if traditional {
+                                to_traditional(&e.word)
+                            } else {
+                                e.word.clone()
+                            };
+                            pool.add(
+                                &e.word.clone(),
+                                display_text,
+                                e.syllables.join("'"),
+                                e.freq as i32 + boost,
+                                from_user,
+                                rank_prefix,
+                                false,
+                            );
+                        }
                     }
                 }
             }
@@ -2372,5 +2448,44 @@ mod tests {
             "未确认的分段边界不得提供整词尾巴: {:?}",
             assoc.iter().map(|c| c.text.as_str()).collect::<Vec<_>>()
         );
+    }
+    /// 模糊变体展开（Go expandTokenVariants）：关模糊时原样一条；开模糊时
+    /// 完整音节展开、碎片保留，首条必为原路径，路径数封顶 8。
+    #[test]
+    fn test_expand_token_variants() {
+        let tokens = vec![Token {
+            text: "shi".to_string(),
+            is_exact: true,
+        }];
+        let off = expand_token_variants(&tokens, false);
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0][0].text, "shi");
+
+        let on = expand_token_variants(&tokens, true);
+        assert_eq!(on[0][0].text, "shi", "首条必须是原路径");
+        assert!(on.len() > 1, "模糊变体应展开出多条路径: {}", on.len());
+        assert!(on.len() <= 8, "路径数封顶 8: {}", on.len());
+        assert!(
+            on.iter().flatten().any(|t| t.text == "si"),
+            "shi 的模糊变体应含 si"
+        );
+
+        // 多音节：各音节变体做笛卡尔积（受 8 条上限约束）
+        let multi = vec![
+            Token {
+                text: "shi".to_string(),
+                is_exact: true,
+            },
+            Token {
+                text: "shi".to_string(),
+                is_exact: true,
+            },
+        ];
+        let paths = expand_token_variants(&multi, true);
+        assert!(paths.len() > 1);
+        assert!(paths.len() <= 8);
+        for p in &paths {
+            assert_eq!(p.len(), 2, "每条路径音节数不变");
+        }
     }
 }
