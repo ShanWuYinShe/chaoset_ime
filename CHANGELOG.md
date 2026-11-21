@@ -2,7 +2,7 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.5.0（2026-11-22）
 
 - **重构(发行面)：命令行/工具链 100% Rust，单二进制 `chaosetctl` 取代全部 Go 小工具**：
   - 发行面不再有 Go 可执行文件：`config`（设置读写）/ `import`（词库导入合并）/ `userdict`（用户词典统计/清空/导出/删除）/ `client`（终端测试台）/ `version` 全部由 `crates/chaosetctl` 一个二进制提供；Linux 包 `bin/` 用 `chaoset`/`chaoset-cli`/`chaoset-import`/`chaoset-userdict` 四个软链复用同一文件，macOS app 放 `chaosetctl` 与 `chaoset-import` 两份同源副本（同一 cargo 产物 cp 两份、各自独立签名），Windows 只有 `chaosetctl.exe`——不再安装 `chaoset-cli.exe`/`chaoset-import.exe`/`chaoset-userdict.exe`/`chaoset-settingsctl.exe`；
