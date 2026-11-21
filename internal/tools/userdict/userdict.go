@@ -169,7 +169,7 @@ func RunDaemon(ep ipc.Endpoint, cmd string, args CmdArgs, stdout io.Writer) erro
 		if err != nil {
 			return err
 		}
-		printStats(st, stdout)
+		printStats(st.Words, st.Phrases, st.Bigrams, stdout)
 	case "clear":
 		before, err := c.UserStats()
 		if err != nil {
@@ -205,7 +205,8 @@ func RunLocal(path, cmd string, args CmdArgs, stdout io.Writer) error {
 	}
 	switch cmd {
 	case "stats":
-		printStats(u.Stats(), stdout)
+		st := u.Stats()
+		printStats(st.Words, st.Phrases, st.Bigrams, stdout)
 	case "clear":
 		before := u.Stats()
 		if err := u.Clear(); err != nil {
@@ -236,8 +237,10 @@ func printDeleteResult(word string, deleted bool, stdout io.Writer) {
 	fmt.Fprintf(stdout, "未找到「%s」的学习记录（可能未学习过或已删除）\n", word)
 }
 
-func printStats(st engine.UserStats, stdout io.Writer) {
-	fmt.Fprintf(stdout, "词 %d 条 / 词组 %d 条 / 上下文 %d 条\n", st.Words, st.Phrases, st.Bigrams)
+// printStats 打印三类学习记录条目数。参数拆开而不是收一个结构体：
+// daemon 路径拿 ipc.UserStats、本地路径拿 engine.UserStats，二者字段相同。
+func printStats(words, phrases, bigrams int, stdout io.Writer) {
+	fmt.Fprintf(stdout, "词 %d 条 / 词组 %d 条 / 上下文 %d 条\n", words, phrases, bigrams)
 }
 
 func WriteOut(out, content string, stdout io.Writer) error {

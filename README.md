@@ -105,7 +105,7 @@ docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内�
                    渲染链路
 cmd/
   chaosetd/          守护进程二进制（Rust 实现；-dict 可多次叠加）
-  chaoset-cli/       终端测试台（本地内嵌引擎或连接 daemon）
+  chaoset-cli/       终端测试台（连接 daemon 的 IPC 客户端）
   chaoset-import/    热词导入工具（合并输出 TSV）
   chaoset-dictgen/   内置词库生成工具（常用性门槛词表 + wordfreq/HanLP 词频 → TSV）
   chaoset-userdict/  用户词典管理工具（统计/清空/导出，IPC 或本地文件）
@@ -416,7 +416,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 默认关闭，`-fuzzy` 开启（daemon 与本地测试台均支持）：
 
 ```sh
-bin/chaosetd -fuzzy          # 或 chaoset-cli -fuzzy（本地模式）
+bin/chaosetd -fuzzy          # 或设置窗「模糊音」开关后重启 daemon（持久生效）
 ```
 
 规则（微软拼音常用集）：声母对 zh/z、ch/c、sh/s、n/l；韵母对
@@ -473,14 +473,13 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 > `chaoset-userdict` 仅作为无 GUI 环境/高级用户兜底。
 
 ```sh
-# 本地内嵌引擎模式
-go run ./cmd/chaoset-cli
-
-# 或经 IPC 连接 daemon（先起 daemon；默认 socket 在平台用户目录）
+# CLI 是 daemon 的 IPC 客户端：先起 daemon（另开终端；本地内嵌引擎已移除）
 cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml &
+# 缺省连接平台默认 socket（与 daemon 同一路径规则）
+go run ./cmd/chaoset-cli
 # 显式指定 cwd 下的 socket 便于本地调试：
 # cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -socket chaoset.sock &
-# go run ./cmd/chaoset-cli --socket chaoset.sock
+# go run ./cmd/chaoset-cli -socket chaoset.sock
 
 # Windows 命名管道（推荐；daemon/CLI 都按当前用户 SID 自动算管道名）
 cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -pipe &
@@ -491,8 +490,8 @@ cargo run --release --bin chaosetd --manifest-path crates/Cargo.toml -- -version
 go run ./cmd/chaoset-cli -version
 ```
 
-测试台与 daemon 默认都加载内置常用词库 `data/dict_common.tsv`（见「内置词库与再生成」），
-想换小词库或叠加自备词库用 `-dict` 指定（可多次）。
+daemon 默认加载内置常用词库 `data/dict_common.tsv`（见「内置词库与再生成」），
+想换小词库或叠加自备词库在启动 daemon 时用 `-dict` 指定（可多次）。
 
 测试台操作：输入拼音回车看候选（如 `nihao`、`xian`、`xi'an`、`nih`）；
 单独一个数字 `1`–`9` 选择对应候选并「上屏」——与三端壳一致走**渐进上屏**：

@@ -82,7 +82,7 @@ make version     # 当前版本（tag CI 用 tag 号，其余用 年月日-commi
 make check-version  # 断言源码里没有写死的版本号、没有回退到 git describe --tags
 ```
 
-- 交互测试台：`make run-cli`（本地内嵌引擎）或先 `make run-daemon` 再测试 socket 通信。
+- 交互测试台：先 `make run-daemon` 起 daemon（另开终端），再 `make run-cli` 经 IPC 连接（CLI 缺省连平台默认 socket；本地内嵌引擎已随 Go 引擎退役删除）。
 
 ### 发布必须由用户触发（禁止代理自行发版）
 

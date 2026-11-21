@@ -168,6 +168,7 @@ race:
 	go test -race -count=1 ./...
 
 run-cli:
+	@echo "需要先起 daemon（另开终端）：make run-daemon；CLI 缺省连接平台默认 socket"
 	go run ./cmd/chaoset-cli
 
 run-daemon:
