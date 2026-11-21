@@ -25,6 +25,66 @@ enum AssociateSetting {
     }
 }
 
+// MARK: - 模糊音（输入行为）
+
+/// 模糊音开关的持久化与读取（三端同语义：macOS UserDefaults `ChaosetFuzzy`、
+/// Windows HKCU `Fuzzy`、Linux config.json `fuzzy`，缺省关闭）。
+/// daemon 启动时读同一键；设置窗改动后由 target 重启 daemon 生效。
+enum FuzzySetting {
+    static let key = "ChaosetFuzzy"
+
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+}
+
+// MARK: - 双拼方案（输入行为）
+
+/// 双拼方案（与 daemon `-shuangpin` / 引擎 ShuangpinScheme 名逐字一致）：
+/// 空串 = 全拼；zrm 自然码；mspy 微软；flypy 小鹤。
+enum Shuangpin: String, CaseIterable {
+    case full = ""
+    case zrm
+    case mspy
+    case flypy
+
+    /// 设置窗分段控件显示名。
+    var displayName: String {
+        switch self {
+        case .full: return "全拼"
+        case .zrm: return "自然码"
+        case .mspy: return "微软"
+        case .flypy: return "小鹤"
+        }
+    }
+
+    /// 存储读取的宽容归一化：大小写/首尾空白容忍，未知回退全拼
+    /// （与 Go settings.parseStoredShuangpin 同口径）。
+    static func normalized(raw: String) -> Shuangpin {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "zrm": return .zrm
+        case "mspy": return .mspy
+        case "flypy": return .flypy
+        default: return .full
+        }
+    }
+}
+
+enum ShuangpinSetting {
+    static let key = "ChaosetShuangpin"
+
+    static var current: Shuangpin {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: key) else {
+                return .full
+            }
+            return Shuangpin.normalized(raw: raw)
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
+
 /// 中英状态的共享作用域（与 Windows HKCU\Software\Chaoset\ModeScope、
 /// Linux config.json mode_scope 同语义，三端统一两档）。
 ///

@@ -32,11 +32,20 @@ import AppKit
 // 三页视图构建见 SettingsWindowPages.swift，@objc target 见
 // SettingsWindowTargets.swift。
 
+/// 内容的翻转容器：NSScrollView 的 documentView 默认非 flipped，内容会贴底，
+/// 包一层 flipped 视图让内容从顶部开始排（与 Windows/Linux 滚动区一致）。
+final class SettingsFlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 // MARK: - 设置窗控制器
 
 enum SettingsWindowController {
     private static var window: NSWindow?
     private static let switchTarget = AssociateSwitchTarget()
+    /// 输入行为：模糊音开关 / 双拼方案（改动后重启 daemon 生效）。
+    private static let fuzzyTarget = FuzzySwitchTarget()
+    private static let shuangpinTarget = ShuangpinTarget()
     private static let learningTarget = LearningDataTarget()
     private static let dictImportTarget = DictionaryImportTarget()
     /// 设置窗口独立使用一个 EngineClient（与输入法主流程的实例互不影响；
@@ -135,8 +144,9 @@ enum SettingsWindowController {
     static func makeContentView() -> NSView {
         // —— 三页内容 ——（视图构建见 SettingsWindowPages.swift）
         let inputPage = SettingsWindowPages.makeInputPage(
-            switchTarget: switchTarget, modeTarget: modeTarget,
-            themeTarget: themeTarget)
+            switchTarget: switchTarget, fuzzyTarget: fuzzyTarget,
+            shuangpinTarget: shuangpinTarget,
+            modeTarget: modeTarget, themeTarget: themeTarget)
         let dictPage = SettingsWindowPages.makeDictPage(
             learningTarget: learningTarget, dictImportTarget: dictImportTarget)
         let aboutPage = SettingsWindowPages.makeAboutPage()
@@ -186,10 +196,24 @@ enum SettingsWindowController {
         pageStack.alignment = .leading
         pageStack.spacing = 0
         pageStack.translatesAutoresizingMaskIntoConstraints = false
-        contentArea.addSubview(pageStack)
         for page in [inputPage, dictPage, aboutPage] {
             page.widthAnchor.constraint(equalTo: pageStack.widthAnchor).isActive = true
         }
+
+        // 内容区滚动：设置项变多后固定高度装不下（输入页已有四张卡），
+        // 与 Windows（原生滚动）/Linux（GtkScrolledWindow）口径一致。
+        // NSScrollView 的 documentView 用 flipped 容器，滚动原点在顶部。
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        let documentView = SettingsFlippedDocumentView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+        documentView.addSubview(pageStack)
+        contentArea.addSubview(scrollView)
         dictPage.isHidden = true
         aboutPage.isHidden = true
         PageSwitchTarget.shared.select(0)
@@ -220,10 +244,20 @@ enum SettingsWindowController {
             contentArea.bottomAnchor.constraint(equalTo: root.bottomAnchor,
                                                constant: -SettingsTheme.footerBottom - 20),
 
-            pageStack.topAnchor.constraint(equalTo: contentArea.topAnchor),
-            pageStack.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-            pageStack.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-            pageStack.bottomAnchor.constraint(lessThanOrEqualTo: contentArea.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: contentArea.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            pageStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            pageStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            pageStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            pageStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
 
             footerLabel.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
             footerLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor,

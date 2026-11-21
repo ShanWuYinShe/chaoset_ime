@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod events;
 
 slint::include_modules!();
 

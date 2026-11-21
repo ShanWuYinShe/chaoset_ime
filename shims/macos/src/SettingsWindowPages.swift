@@ -69,21 +69,44 @@ enum SettingsWindowPages {
 
     // MARK: 输入页
 
-    /// 输入页：输入行为（词组联想开关）+ 中英状态（共享作用域二选一）
+    /// 输入页：输入行为（词组联想/模糊音/双拼方案）+ 中英状态（共享作用域二选一）
     /// + 外观主题（跟随系统/浅色/深色）。
     static func makeInputPage(switchTarget: AssociateSwitchTarget,
+                               fuzzyTarget: FuzzySwitchTarget,
+                               shuangpinTarget: ShuangpinTarget,
                                modeTarget: ModeScopeTarget,
                                themeTarget: ThemeSegmentTarget) -> NSView {
         let page = makePage()
 
-        // 卡 1：词组联想开关（自绘蓝白开关，三端同形态）
+        // 卡 1：输入行为——词组联想 / 模糊音 / 双拼方案（自绘蓝白开关与软胶囊，
+        // 三端同形态）。模糊音与双拼由 daemon 启动时读取，改动后 target 里重启 daemon。
         let toggle = WarmSwitch()
         toggle.state = AssociateSetting.enabled ? .on : .off
         toggle.target = switchTarget
         toggle.action = #selector(AssociateSwitchTarget.switchChanged(_:))
+
+        let fuzzyToggle = WarmSwitch()
+        fuzzyToggle.state = FuzzySetting.enabled ? .on : .off
+        fuzzyToggle.target = fuzzyTarget
+        fuzzyToggle.action = #selector(FuzzySwitchTarget.switchChanged(_:))
+
+        var shuangpinButtons: [WarmPillButton] = []
+        for scheme in Shuangpin.allCases {
+            let button = WarmPillButton(title: scheme.displayName, kind: .choice)
+            button.target = shuangpinTarget
+            button.action = #selector(ShuangpinTarget.schemeChanged(_:))
+            button.setPillSelected(ShuangpinSetting.current == scheme)
+            shuangpinButtons.append(button)
+        }
+        shuangpinTarget.shuangpinButtons = shuangpinButtons
+
         addCard(SettingsCardView(title: "输入行为", content: [
             .full(makeRow(labelText: "词组联想", control: toggle)),
             .full(makeHint("选词上屏后展示可续接的词组候选；关闭后不再弹出联想候选。")),
+            .full(makeRow(labelText: "模糊音", control: fuzzyToggle)),
+            .full(makeHint("让 zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing 混用也能命中；打开后候选可能变多。")),
+            .natural(makeButtonRow(shuangpinButtons)),
+            .full(makeHint("双拼方案：全拼（默认）/自然码/微软/小鹤，两键一音节。修改后输入法会短暂重启以生效。")),
         ]), to: page)
 
         // 卡 2：中英状态二选一（两个软胶囊，选中 accentSoft + accentText）
