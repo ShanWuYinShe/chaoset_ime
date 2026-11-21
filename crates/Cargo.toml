@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "chaoset-engine",
+    "chaoset-config",
     "chaosetd",
 ]
 resolver = "2"
