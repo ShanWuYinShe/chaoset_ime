@@ -195,66 +195,196 @@ pub struct Token {
     pub is_exact: bool,
 }
 
-/// 贪心最长匹配 + 声母碎片切分
+// 两段式切分器常量（Go session.go）
+const MAX_PATHS_PER_CHUNK: usize = 8;
+
+/// 单段声母判定（Go isInitial）：zh/ch/sh 恒真；单字母 a-z 且不为 u/i
+/// （v 是 ü 的键盘写法，保留可使 zxcv 这类串走常规回退拿声母单字候选）。
+fn is_initial_token(s: &str) -> bool {
+    if s == "zh" || s == "ch" || s == "sh" {
+        return true;
+    }
+    if s.len() == 1 {
+        let b = s.as_bytes()[0];
+        return (b >= b'a' && b <= b'z') && b != b'u' && b != b'i';
+    }
+    false
+}
+
+/// 一段拼音的音节切分（Go tokenizeChunk 两段式镜像）：
+///
+/// 1. 优先寻找能完整覆盖片段的**纯全拼**音节序列（最长贪心 + dead-end
+///    记忆化剪枝）；存在即只返回纯全拼路径——错拼输入（zhonguo）在纯全拼
+///    阶段切不出完整路径，patterns 为空交给形态判定走纠错，不会像单段
+///    DFS 那样混出 [z,o,n,guo] 碎片假路径。
+/// 2. 仅当纯全拼切分不存在时（简拼 zg/bj/jsj、混拼 zhongg/womd/chifl），
+///    启用声母简拼约束的混拼切分：完整音节 + zh/ch/sh 双字母 + 单字母
+///    声母（同位置有 ≥2 字母音节可匹配时不出单字母碎片）。
+///
+/// 复杂度：failedFull/failedMixed dead-end 记忆化，杜绝指数回溯。
 pub fn tokenize_chunk(input: &str) -> Vec<Vec<Token>> {
-    let mut results = Vec::new();
+    if input.is_empty() {
+        return Vec::new();
+    }
     let chars: Vec<char> = input.chars().collect();
-    if chars.is_empty() {
-        return results;
+    let n = chars.len();
+
+    // ── 阶段 1：纯全拼（所有 token 都是完整音节）──
+    let mut full_paths: Vec<Vec<Token>> = Vec::new();
+    let mut cur_full: Vec<Token> = Vec::new();
+    let mut failed_full = vec![false; n + 1];
+    dfs_full(&chars, 0, &mut cur_full, &mut full_paths, &mut failed_full);
+
+    if !full_paths.is_empty() {
+        // 单字母零声母（a/o/e）本身是独立音节（啊/哦/饿），亦作为该元音
+        // 开头音节（an/ai/ao、ou、en/er）的简拼声母（如 x'a 匹配「西安」）。
+        if n == 1 && (input == "a" || input == "o" || input == "e") {
+            full_paths.push(vec![Token {
+                text: input.to_string(),
+                is_exact: false,
+            }]);
+        }
+        return full_paths;
     }
 
-    fn dfs(chars: &[char], idx: usize, current: &mut Vec<Token>, results: &mut Vec<Vec<Token>>) {
-        if idx >= chars.len() {
-            results.push(current.clone());
-            return;
-        }
+    // ── 阶段 2：混拼（完整音节 + zh/ch/sh 双字母 + 单字母声母）──
+    let mut mixed_paths: Vec<Vec<Token>> = Vec::new();
+    let mut cur_mixed: Vec<Token> = Vec::new();
+    let mut failed_mixed = vec![false; n + 1];
+    dfs_mixed(
+        &chars,
+        0,
+        &mut cur_mixed,
+        &mut mixed_paths,
+        &mut failed_mixed,
+    );
+    mixed_paths
+}
 
-        // 优先最长合法音节匹配
-        let max_len = (chars.len() - idx).min(MAX_SYLLABLE_LEN);
-        let mut matched_exact = false;
-
-        for l in (1..=max_len).rev() {
-            let sub: String = chars[idx..idx + l].iter().collect();
-            let canon = canonical_syllable(&sub);
-            if is_syllable(&canon) {
-                matched_exact = true;
-                current.push(Token {
-                    text: canon.to_string(),
-                    is_exact: true,
-                });
-                dfs(chars, idx + l, current, results);
-                current.pop();
+fn dfs_full(
+    chars: &[char],
+    pos: usize,
+    cur: &mut Vec<Token>,
+    paths: &mut Vec<Vec<Token>>,
+    failed: &mut [bool],
+) -> bool {
+    let n = chars.len();
+    if pos == n {
+        paths.push(cur.clone());
+        return true;
+    }
+    if paths.len() >= MAX_PATHS_PER_CHUNK {
+        return true;
+    }
+    if failed[pos] {
+        return false;
+    }
+    let max_len = (n - pos).min(MAX_SYLLABLE_LEN);
+    let mut any_success = false;
+    for l in (1..=max_len).rev() {
+        let sub: String = chars[pos..pos + l].iter().collect();
+        let canon = canonical_syllable(&sub);
+        if is_syllable(&canon) {
+            cur.push(Token {
+                text: canon.to_string(),
+                is_exact: true,
+            });
+            if dfs_full(chars, pos + l, cur, paths, failed) {
+                any_success = true;
+            }
+            cur.pop();
+            if paths.len() >= MAX_PATHS_PER_CHUNK {
+                return true;
             }
         }
+    }
+    if !any_success {
+        failed[pos] = true;
+    }
+    any_success
+}
 
-        // 如果没有完全精确匹配，尝试声母碎片（简拼）
-        if !matched_exact {
-            for l in (1..=2.min(chars.len() - idx)).rev() {
-                let sub: String = chars[idx..idx + l].iter().collect();
-                if INITIALS.contains(&sub.as_str()) {
-                    current.push(Token {
-                        text: sub,
-                        is_exact: false,
-                    });
-                    dfs(chars, idx + l, current, results);
-                    current.pop();
+fn dfs_mixed(
+    chars: &[char],
+    pos: usize,
+    cur: &mut Vec<Token>,
+    paths: &mut Vec<Vec<Token>>,
+    failed: &mut [bool],
+) -> bool {
+    let n = chars.len();
+    if pos == n {
+        paths.push(cur.clone());
+        return true;
+    }
+    if paths.len() >= MAX_PATHS_PER_CHUNK {
+        return true;
+    }
+    if failed[pos] {
+        return false;
+    }
+    let max_len = (n - pos).min(MAX_SYLLABLE_LEN);
+    let mut any_success = false;
+    let mut found_multi_syllable = false;
+    for l in (1..=max_len).rev() {
+        let sub: String = chars[pos..pos + l].iter().collect();
+        if is_syllable(&sub) {
+            if l >= 2 {
+                found_multi_syllable = true;
+            }
+            cur.push(Token {
+                text: sub,
+                is_exact: true,
+            });
+            if dfs_mixed(chars, pos + l, cur, paths, failed) {
+                any_success = true;
+            }
+            cur.pop();
+            if paths.len() >= MAX_PATHS_PER_CHUNK {
+                return true;
+            }
+        }
+    }
+
+    // 同位置已有 ≥2 字母音节可匹配时不出碎片（对齐 Go foundMultiSyllable 门控）
+    if !found_multi_syllable {
+        if pos + 2 <= n {
+            let sub: String = chars[pos..pos + 2].iter().collect();
+            if sub == "zh" || sub == "ch" || sub == "sh" {
+                cur.push(Token {
+                    text: sub,
+                    is_exact: false,
+                });
+                if dfs_mixed(chars, pos + 2, cur, paths, failed) {
+                    any_success = true;
+                }
+                cur.pop();
+                if paths.len() >= MAX_PATHS_PER_CHUNK {
+                    return true;
+                }
+            }
+        }
+        if pos + 1 <= n {
+            let sub: String = chars[pos..pos + 1].iter().collect();
+            if is_initial_token(&sub) {
+                cur.push(Token {
+                    text: sub,
+                    is_exact: false,
+                });
+                if dfs_mixed(chars, pos + 1, cur, paths, failed) {
+                    any_success = true;
+                }
+                cur.pop();
+                if paths.len() >= MAX_PATHS_PER_CHUNK {
+                    return true;
                 }
             }
         }
     }
 
-    let mut current = Vec::new();
-    dfs(&chars, 0, &mut current, &mut results);
-
-    // 如果无法切分，放入单一原样 Token
-    if results.is_empty() {
-        results.push(vec![Token {
-            text: input.to_string(),
-            is_exact: false,
-        }]);
+    if !any_success {
+        failed[pos] = true;
     }
-
-    results
+    any_success
 }
 
 /// 支持 ' 显式分段的多段切分组合方案
@@ -436,22 +566,14 @@ pub fn common_mistake_fixes(input: &str) -> Vec<String> {
 ///   - 整串能切成完整音节时，反序组合可能跨音节边界（gongneng 的 gn），
 ///     不判手误；
 ///   - 含「反序双字母」组合（gn/hz/hc/hs）且无法完整切分 → 手误；
-///   - 切分路径为空（zhonguo/jisuanjii/niihao 都切不动）→ 手误；
+///   - 切分路径为空（zhonguo 两段式纯全拼/混拼都切不出完整路径）→ 手误；
 ///   - 任一条切分路径里出现完整音节（≥2 字母）→ 信任为正常混拼；
 ///   - 短串（≤4 字母，如 zg/bj/jsj）一律信任。
 pub fn misspelled_from_patterns(s: &str, patterns: &[Vec<Token>]) -> bool {
     if s.is_empty() {
         return false;
     }
-    // Rust tokenize_chunk 对「无任何完整切分」的输入回退成单条原样碎片
-    // token——语义上等价于 Go 的空切分路径（整串切不动）。Go 侧 patterns
-    // 为空时该回退不存在；PR-B 移植两段式切分器后此桥接可移除。
-    let effectively_empty = patterns.is_empty()
-        || (patterns.len() == 1
-            && patterns[0].len() == 1
-            && !patterns[0][0].is_exact
-            && patterns[0][0].text == s);
-    if !effectively_empty && all_initial_patterns(patterns) {
+    if all_initial_patterns(patterns) {
         return false;
     }
     if has_clean_full_split(patterns) {
@@ -460,7 +582,7 @@ pub fn misspelled_from_patterns(s: &str, patterns: &[Vec<Token>]) -> bool {
     if has_common_mistake_cluster(s) {
         return true;
     }
-    if effectively_empty {
+    if patterns.is_empty() {
         return true;
     }
     for pat in patterns {
