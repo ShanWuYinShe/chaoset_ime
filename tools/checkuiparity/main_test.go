@@ -85,7 +85,11 @@ func TestCheckCandidateWindow(t *testing.T) {
 //  3. 安装器重新写 ChaosetUi Run 项必须被捕获。
 func TestCheckSettingsGearAndTray(t *testing.T) {
 	paths := []string{macPanel, winShell, linuxReadme, winInstaller, winInstallBat,
-		uiParityDoc, macSettings, linuxSetup, slintApp}
+		uiParityDoc, macSettings, linuxSetup, slintApp,
+		// 输入行为设置（模糊音/双拼）新增契约的文件：统一设置中心桥接、
+		// daemon 设置读取、macOS 打包。
+		"shims/macos/build.sh", "shims/settings/src/bridge.rs",
+		"crates/chaosetd/src/input_settings.rs"}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
 		data := readRepo(t, p)
@@ -153,7 +157,10 @@ func TestCheckSettingsGearAndTray(t *testing.T) {
 		winInstaller: fsys[winInstaller], winInstallBat: fsys[winInstallBat],
 		uiParityDoc: fsys[uiParityDoc],
 		macSettings: &fstest.MapFile{Data: []byte(mutatedSettings)}, linuxSetup: fsys[linuxSetup],
-		slintApp: fsys[slintApp],
+		slintApp:                                fsys[slintApp],
+		"shims/macos/build.sh":                  fsys["shims/macos/build.sh"],
+		"shims/settings/src/bridge.rs":          fsys["shims/settings/src/bridge.rs"],
+		"crates/chaosetd/src/input_settings.rs": fsys["crates/chaosetd/src/input_settings.rs"],
 	}, &problems)
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "640, height: 560") {
 		t.Fatalf("mac 设置窗尺寸回退应被捕获，实际：%v", problems)
