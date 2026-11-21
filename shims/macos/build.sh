@@ -120,6 +120,12 @@ rust_universal_daemon "$ROOT/shims/macos/build/chaosetd"
 # chaosetctl 调它，导入逻辑只保留 Go 工具一份；把它放进 app bundle，避免再拷到
 # 用户目录。
 go_universal "$ROOT/shims/macos/build/chaoset-import" ./cmd/chaoset-import
+
+# 发布用二进制词库（CSDB）：构建期把仓库 TSV 编译成二进制随包分发，daemon 启动
+# 直接加载（比 TSV 快 1.4–1.7x）；用户导入词库后按 mtime 自动重建缓存。
+echo "[1.5/5] 编译发布词库（TSV → CSDB 二进制）..."
+(cd "$ROOT" && cargo build --release --bin dictc --manifest-path crates/Cargo.toml) || exit 1
+"$ROOT/crates/target/release/dictc" "$ROOT/data/dict_common.tsv" "$ROOT/shims/macos/build/dict_common.bin"
 # 统一设置中心（chaoset-settings）的读写全部经 multicall CLI chaosetctl：
 # bridge 的 find_chaoset_bin 优先看设置中心可执行文件同目录，两者必须一起随包，
 # 否则设置中心每个控件都会报「执行 chaosetctl 失败」（Windows/Linux 发行包同口径）。
@@ -326,6 +332,7 @@ plutil -lint "$APP/Contents/Info.plist"
 # 依赖的 CLI、种子词库。此前 daemon 被单独拷到 Application Support，导致 app
 # 版本与 daemon 版本可能漂移，也给用户留下“输入法为什么散落好几处”的困惑。
 cp build/chaosetd build/chaoset-import build/chaosetctl ../../data/dict_common.tsv \
+   build/dict_common.bin \
    "$APP/Contents/Resources/"
 chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import" \
           "$APP/Contents/Resources/chaosetctl"

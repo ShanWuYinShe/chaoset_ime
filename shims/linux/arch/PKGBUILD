@@ -27,6 +27,8 @@ build() {
     # Slint 统一设置中心（chaoset-settings）：Linux 设置的唯一实现，必须随包分发。
     cargo build --release --manifest-path shims/settings/Cargo.toml
     install -Dm755 shims/settings/target/release/chaoset-settings bin/chaoset-settings
+    # 发布用二进制词库编译器（构建期）：TSV 仍入库，打包装配为 CSDB。
+    cargo build --release --bin dictc --manifest-path crates/Cargo.toml
     # Linux 引擎是原生 C++/libibus 壳，必须用 g++ 与 ibus 头文件构建；
     # 拼音/联想在 Rust daemon（crates/chaosetd）中通过 Unix socket 提供。
     sh shims/linux/engine/build.sh bin/chaoset-engine
@@ -48,6 +50,7 @@ package() {
 
     # Dictionary
     install -Dm644 data/dict_common.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
+    crates/target/release/dictc data/dict_common.tsv "$pkgdir/usr/share/chaoset/dict.bin"
 
     # IBus component
     install -Dm644 shims/linux/component/chaoset.xml "$pkgdir/usr/share/ibus/component/chaoset.xml"

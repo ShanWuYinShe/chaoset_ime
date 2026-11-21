@@ -30,6 +30,7 @@ package() {
     ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaoset-cli"
 
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
+    install -Dm644 data/dict.bin "$pkgdir/usr/share/chaoset/dict.bin"
     # 设置启动器（component XML 的 <setup> 指向它）：纯 POSIX C，只 exec
     # chaoset-settings；此前漏装导致 ibus-setup「首选项」点了没反应。
     install -Dm755 setup/chaoset-setup "$pkgdir/usr/share/chaoset/chaoset-setup"

@@ -222,15 +222,19 @@ func checkArchitectureDoc(fsys fs.FS, problems *[]string) {
 // checkPackaging 打包/安装一致性：Linux 设置窗脚本、学习数据模块、小图标都要随包；
 // macOS 运行组件必须随 ChaosetIME.app 安装。
 func checkPackaging(fsys fs.FS, problems *[]string) {
-	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip", "build-settings", "chaoset-settings")
-	checkContains(fsys, problems, groupPackaging, installSh, "chaoset-setup", "chaoset-settings")
-	checkContains(fsys, problems, groupPackaging, archScript, "chaoset-setup", "chaoset-settings")
+	checkContains(fsys, problems, groupPackaging, makefile, "chaoset-setup", "chaoset-macos.zip", "build-settings", "chaoset-settings", "dict.bin")
+	checkContains(fsys, problems, groupPackaging, installSh, "chaoset-setup", "chaoset-settings", "dict.bin")
+	checkContains(fsys, problems, groupPackaging, archScript, "chaoset-setup", "chaoset-settings", "dict.bin")
 	checkContains(fsys, problems, groupPackaging, releaseYML, "chaoset-setup", "chaoset-macos.zip", "chaoset-settings")
 	checkContains(fsys, problems, groupPackaging, linuxComp, "chaoset-setup")
-	checkContains(fsys, problems, groupPackaging, ciYML, "shims/linux/setup/build.sh", "chaoset-settings")
+	checkContains(fsys, problems, groupPackaging, ciYML, "shims/linux/setup/build.sh", "chaoset-settings", "data/dict.bin")
 	// macOS：运行组件与统一设置中心（含其依赖的 chaosetctl）必须随 app 安装。
-	checkContains(fsys, problems, groupPackaging, macBuild, "$APP/Contents/Resources/", "dict_common.tsv", "chaoset-settings", "chaosetctl")
+	checkContains(fsys, problems, groupPackaging, macBuild, "$APP/Contents/Resources/", "dict_common.tsv", "dict_common.bin", "chaoset-settings", "chaosetctl")
 	checkContains(fsys, problems, groupPackaging, macSetup, `installedResource("chaosetd")`, `embeddedResource("chaoset-import")`, "installSetupApp")
+	// 发布词库二进制化：TSV 仍是仓库源，打包期编译 CSDB；daemon 优先加载缓存。
+	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/dict_binary.rs")
+	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/bin/dictc.rs")
+	checkContains(fsys, problems, groupPackaging, "crates/chaosetd/src/main.rs", "load_with_cache")
 	checkContains(fsys, problems, groupPackaging, macInstall, "$IM/ChaosetIME.app/Contents/Resources/chaosetd")
 }
 

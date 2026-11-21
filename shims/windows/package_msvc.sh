@@ -178,6 +178,11 @@ rm -f build32.bat
 # 10. 拷贝其它发行文件
 echo "==> 拷贝词库与配置文件..."
 cp data/dict_common.tsv "$OUTDIR/dict.tsv"
+# 发布用二进制词库：构建期把 TSV 编译为 CSDB；chaoset-dictc.exe 随包供安装器
+# 为用户词库预生成 dict.bin（daemon 启动即可直接加载二进制缓存）。
+cargo build --release --bin dictc --manifest-path crates/Cargo.toml
+cp crates/target/release/dictc.exe "$OUTDIR/chaoset-dictc.exe"
+"$OUTDIR/chaoset-dictc.exe" data/dict_common.tsv "$OUTDIR/dict.bin"
 cp shims/windows/resources/chaoset.ico "$OUTDIR/chaoset.ico"
 cp shims/windows/install.bat "$OUTDIR/install.bat"
 cp shims/windows/README.md "$OUTDIR/README.md"
@@ -188,7 +193,7 @@ rm -f "$OUTDIR"/*.obj "$OUTDIR"/*.res "$OUTDIR"/*.rc "$OUTDIR"/*.lib "$OUTDIR"/*
 
 # 11. 校验生成文件与导出符号
 echo "==> 校验生成的二进制与 COM 导出符号..."
-for f in install.bat dict.tsv ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaosetctl.exe chaoset-ui.exe chaoset-settings.exe README.md; do
+for f in install.bat dict.tsv dict.bin chaoset-dictc.exe ChaosetIME.dll ChaosetIME32.dll chaosetd.exe chaosetctl.exe chaoset-ui.exe chaoset-settings.exe README.md; do
   test -f "$OUTDIR/$f" || { echo "缺少必要文件: $f"; ls -la "$OUTDIR"; exit 1; }
 done
 

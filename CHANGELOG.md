@@ -11,6 +11,11 @@
 > 41 个差分场景已冻结为 Rust 回放基线（`crates/chaoset-engine/tests/parity_scenarios.rs`）。
 
 - **修复(设置窗)：关于页占位文案与仓库链接四端对齐**：统一设置中心已提供「模糊音/双拼方案」等设置，原占位句「更多设置将在后续版本提供」已过时，四端（Slint 统一设置中心 / macOS / Windows / Linux 原生设置窗）改为「设置项会随版本持续补充」；Slint 关于页仓库链接此前误写为 `github.com/chaoset/chaoset_ime`（404），改为与另外三端一致的 `https://github.com/ShanWuYinShe/chaoset_ime`，并把该 URL 加入 `checkuiparity` 共享文案断言（四端逐字一致），`docs/ui-parity.md` 同步。
+- **重构(词库)：发布产物改为二进制词库（CSDB v1），仓库仍只保留 TSV**：
+  - 新增 `crates/chaoset-engine/src/dict_binary.rs`（CSDB v1：魔数/版本/音节表/词条，单遍写入与解析、精确预分配、损坏数据明确报错）与构建器 `dictc`（TSV→bin，可复现字节）；daemon `load_with_cache` 优先加载同目录同 stem 的 `.bin`（mtime 不旧于源），缺失/过期/损坏回退 TSV 并原子重建缓存，用户导入词库后自动刷新；
+  - 内存优化：删除无读取方的 `WordEntry.pinyin` 字段并去掉 `insert` 的 syllables 深拷贝（结构体 80→56B，词库约 -6.9MB）；
+  - 实测（200000 条，release）：4.67MB → 3.61MB（-22.7%），加载 139–170ms → 91–124ms（1.4–1.7x），daemon 启动 0.187s → 0.135s，RSS 约 -5~6%；`crates/chaoset-engine/tests/dict_binary.rs` 断言 TSV/bin 逐条等价、41 场景回放 stdout 逐字节相同、坏缓存回退；
+  - 打包接线：macOS app 带 `dict_common.bin`（install.sh 部署/升级时同步 `dict.bin`）；Linux 包带 `/usr/share/chaoset/dict.bin`（deb/tar.gz/Arch 同步，CI 断言）；Windows 安装器随包 `chaoset-dictc.exe` 为 `%LOCALAPPDATA%\Chaoset\dict.tsv` 预生成 `dict.bin`；`.bin` 为生成产物已加入 `.gitignore`；`docs/dict.md`/`AGENTS.md` 同步。
 - **重构(设置)：设置 UI 收敛为 Slint 唯一实现，三端原生设置窗全部删除**：
   - 删除 macOS AppKit 设置窗（`SettingsWindow*.swift`/`SettingsTheme.swift`，-1263 行）、Windows GDI 设置窗（`settings_window.cpp/.hpp`，-1625 行）、Linux GTK3 设置窗（`setup_page_*.c`/`setup_ctl.c`/`setup_learn.c`/`setup_import.c`，-2113 行）；三端只保留启动器：macOS `SettingsLauncher.swift`、Windows `settings_launcher.cpp`（由单例 UI 宿主启动，TIP 只发命名管道请求）、Linux 纯 POSIX 启动器 `chaoset-setup.c`（不链接 GTK）；找不到/启动失败只明确报错，无回退窗口；
   - 设置入口直达 Slint 统一设置中心（`shims/settings`）：macOS app 包内 `Contents/Resources/chaoset-settings` 并同时携带它依赖的 `chaosetctl`（此前 macOS 包没带 chaosetctl，设置中心所有读写都会失败）；Windows 安装包强制包含 `chaoset-settings.exe`；Linux deb/Arch 包强制包含 `/usr/bin/chaoset-settings`；缺任一项打包直接失败；
