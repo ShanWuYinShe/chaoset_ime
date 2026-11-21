@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"chaoset.ime/engine"
+	"chaoset.ime/internal/dict"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -23,12 +23,12 @@ func readEntries(t *testing.T, path string) map[string]int {
 	if err != nil {
 		t.Fatalf("读输出失败: %v", err)
 	}
-	d, _, err := engine.ParseDictAuto(strings.NewReader(string(data)))
+	entries, _, err := dict.ParseAuto(strings.NewReader(string(data)))
 	if err != nil {
 		t.Fatalf("解析输出失败: %v", err)
 	}
 	out := make(map[string]int)
-	for _, e := range d.Entries() {
+	for _, e := range entries {
 		out[e.Word+"\x00"+strings.Join(e.Syllables, " ")] = e.Freq
 	}
 	return out

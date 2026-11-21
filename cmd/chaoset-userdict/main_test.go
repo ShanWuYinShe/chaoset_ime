@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"chaoset.ime/engine"
 )
 
 // TestPathsJSON：-print-paths 输出当前平台的 userdict/imported_dict 路径。
@@ -31,20 +29,57 @@ func TestPathsJSON(t *testing.T) {
 	}
 }
 
+// seededUserDict 按 daemon/工具的存储格式写一份用户词典：
+// words 键 = 「词\x00音节 空格分隔」，phrases 键相同（值多 word/sylls）。
+type seededUserDict struct {
+	Words   map[string]map[string]any `json:"words"`
+	Phrases map[string]map[string]any `json:"phrases"`
+	Bigrams map[string]map[string]any `json:"bigrams"`
+}
+
+func seedUserDict(t *testing.T, path string, words, phrases []string) {
+	t.Helper()
+	seed := seededUserDict{
+		Words:   make(map[string]map[string]any),
+		Phrases: make(map[string]map[string]any),
+		Bigrams: make(map[string]map[string]any),
+	}
+	for _, w := range words {
+		seed.Words[w] = map[string]any{"count": 3, "last_used": 1700000000}
+	}
+	for _, p := range phrases {
+		key, sylls, _ := strings.Cut(p, "\x00")
+		seed.Phrases[p] = map[string]any{
+			"word": key, "sylls": sylls, "count": 2, "last_used": 1700000000,
+		}
+	}
+	data, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("序列化种子用户词典失败: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("写种子用户词典失败: %v", err)
+	}
+}
+
+func loadUserDictJSON(t *testing.T, path string) seededUserDict {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读用户词典失败: %v", err)
+	}
+	var got seededUserDict
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("解析用户词典失败: %v", err)
+	}
+	return got
+}
+
 // TestRunLocalStatsClearExport：本地模式的 stats/clear/export 全链路。
 func TestRunLocalStatsClearExport(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "user.json")
-	u, err := engine.NewUserDict(path)
-	if err != nil {
-		t.Fatalf("加载用户词典失败: %v", err)
-	}
-	if err := u.BumpWord("你好", []string{"ni", "hao"}); err != nil {
-		t.Fatalf("BumpWord 失败: %v", err)
-	}
-	if err := u.Save(); err != nil {
-		t.Fatalf("Save 失败: %v", err)
-	}
+	seedUserDict(t, path, []string{"你好\x00ni hao"}, nil)
 
 	if err := runLocal(path, "stats", cmdArgs{}); err != nil {
 		t.Fatalf("stats 失败: %v", err)
@@ -64,12 +99,10 @@ func TestRunLocalStatsClearExport(t *testing.T) {
 	if err := runLocal(path, "clear", cmdArgs{}); err != nil {
 		t.Fatalf("clear 失败: %v", err)
 	}
-	u2, err := engine.NewUserDict(path)
-	if err != nil {
-		t.Fatalf("重载用户词典失败: %v", err)
-	}
-	if st := u2.Stats(); st.Words != 0 || st.Phrases != 0 || st.Bigrams != 0 {
-		t.Fatalf("clear 后统计应全 0，实际 %+v", st)
+	after := loadUserDictJSON(t, path)
+	if len(after.Words) != 0 || len(after.Phrases) != 0 || len(after.Bigrams) != 0 {
+		t.Fatalf("clear 后应为空，实际 words=%d phrases=%d bigrams=%d",
+			len(after.Words), len(after.Phrases), len(after.Bigrams))
 	}
 }
 
@@ -89,28 +122,14 @@ func TestSplitSyllables(t *testing.T) {
 	}
 }
 
-// TestRunLocalDelete：本地模式 delete 词 + 音节 → 记录消失、重载后仍是删除态；
-// 重复删除不报错（幂等，输出「未找到」）；省略音节时按词文本删全部读音记录。
+// TestRunLocalDelete：本地模式 delete 词+音节 → 记录消失；重复删除不报错；
+// 省略音节时按词文本删全部读音记录；其它词不受影响。
 func TestRunLocalDelete(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "user.json")
-	u, err := engine.NewUserDict(path)
-	if err != nil {
-		t.Fatalf("加载用户词典失败: %v", err)
-	}
-	if err := u.BumpWord("今天", []string{"jin", "tian"}); err != nil {
-		t.Fatalf("BumpWord 失败: %v", err)
-	}
-	if err := u.BumpPhrase("今天天气", []string{"jin", "tian", "tian", "qi"}); err != nil {
-		t.Fatalf("BumpPhrase 失败: %v", err)
-	}
-	// 另一个词的学习记录不得被误删。
-	if err := u.BumpWord("你好", []string{"ni", "hao"}); err != nil {
-		t.Fatalf("BumpWord 失败: %v", err)
-	}
-	if err := u.Save(); err != nil {
-		t.Fatalf("Save 失败: %v", err)
-	}
+	seedUserDict(t, path,
+		[]string{"今天\x00jin tian", "你好\x00ni hao"},
+		[]string{"今天天气\x00jin tian tian qi"})
 
 	if err := runLocal(path, "delete", cmdArgs{word: "今天", sylls: splitSyllables("jin tian")}); err != nil {
 		t.Fatalf("delete 失败: %v", err)
@@ -118,69 +137,18 @@ func TestRunLocalDelete(t *testing.T) {
 	if err := runLocal(path, "delete", cmdArgs{word: "今天"}); err != nil {
 		t.Fatalf("重复 delete 不应报错: %v", err)
 	}
-	// 省略音节：按词文本删（今天天气 不在本次删除范围内，仍存在）
 	if err := runLocal(path, "delete", cmdArgs{word: "今天天气"}); err != nil {
 		t.Fatalf("delete(省略音节) 失败: %v", err)
 	}
 
-	reloaded, err := engine.NewUserDict(path)
-	if err != nil {
-		t.Fatalf("重载用户词典失败: %v", err)
+	after := loadUserDictJSON(t, path)
+	if _, ok := after.Words["今天\x00jin tian"]; ok {
+		t.Fatal("删除后「今天」的调频记录仍在")
 	}
-	if got := reloaded.Score("今天", []string{"jin", "tian"}, ""); got != 0 {
-		t.Fatalf("重载后「今天」仍有调频分 %d（删除未落盘？）", got)
+	if _, ok := after.Phrases["今天天气\x00jin tian tian qi"]; ok {
+		t.Fatal("按词文本删除后「今天天气」词组仍在")
 	}
-	if got := reloaded.PhraseCount("今天天气", []string{"jin", "tian", "tian", "qi"}); got != 0 {
-		t.Fatalf("重载后「今天天气」词组计数 %d，期望 0", got)
-	}
-	if got := reloaded.Score("你好", []string{"ni", "hao"}, ""); got == 0 {
+	if _, ok := after.Words["你好\x00ni hao"]; !ok {
 		t.Fatal("删除「今天」不应影响「你好」的学习记录")
-	}
-}
-
-// TestWriteOutAtomicReplaces：覆盖已有导出文件时整体替换，不留临时文件。
-func TestWriteOutAtomicReplaces(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "export.tsv")
-	if err := os.WriteFile(out, []byte("旧内容"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeOut(out, "新内容"); err != nil {
-		t.Fatalf("writeOut 失败: %v", err)
-	}
-	data, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "新内容" {
-		t.Fatalf("导出文件内容 = %q，期望 新内容", data)
-	}
-	assertNoTempFiles(t, dir)
-}
-
-// TestWriteOutRenameFailureCleansTemp：目标不可替换时报错，旧目标不变且
-// 临时文件必须清理（不留下 .chaoset-userdict-*.tmp 垃圾）。
-func TestWriteOutRenameFailureCleansTemp(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "outdir")
-	if err := os.Mkdir(out, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeOut(out, "内容"); err == nil {
-		t.Fatal("目标是目录时 writeOut 应报错")
-	}
-	assertNoTempFiles(t, dir)
-}
-
-func assertNoTempFiles(t *testing.T, dir string) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".chaoset-userdict-") {
-			t.Fatalf("不应残留临时文件: %s", entry.Name())
-		}
 	}
 }

@@ -38,7 +38,7 @@ import (
 	"strconv"
 	"strings"
 
-	"chaoset.ime/engine"
+	"chaoset.ime/internal/dict"
 )
 
 const (
@@ -83,8 +83,6 @@ type options struct {
 	hotPath   string
 	reviewOut string
 	outPath   string
-	binPath   string
-	compile   bool
 
 	// basePath 非空时进入「单字刷新」模式：保留基线词库的多字词，
 	// 只按最新 pinyin-data/large_pinyin 重算单字读音与词频，并追加
@@ -143,8 +141,6 @@ func main() {
 	flag.StringVar(&o.hotPath, "hot", "", "现代/热词补充词表 data/dict_hot.tsv（必填）")
 	flag.StringVar(&o.reviewOut, "review-out", "", "补拼音人工校对清单输出路径（可选）")
 	flag.StringVar(&o.outPath, "o", "", "输出 TSV 路径（必填）")
-	flag.StringVar(&o.binPath, "bin", "", "同时输出紧凑二进制格式词库路径（.bin/CDB1，用于发布与极速加载）")
-	flag.BoolVar(&o.compile, "compile", false, "独立编译模式：将 -base 指定的 TSV 编译为 -o 指定的二进制词库")
 	flag.IntVar(&o.highfreqTop, "highfreqtop", 20000, "词频源里按词频取前 N 个词进入词表（高频用法）")
 	flag.Float64Var(&o.highfreqConf, "highfreqconf", 0.9, "高频用法词只用字读音统计补拼音时的最低置信度（低于此值不收录）")
 	flag.Float64Var(&o.freqGamma, "freqgamma", 1.15, "词频归一化后的幂次（>1 拉开高频差距；默认 1.15 由固定词表扫描定型，见 README）")
@@ -157,9 +153,7 @@ func main() {
 		os.Exit(2)
 	}
 	var err error
-	if o.compile {
-		err = runCompile(o)
-	} else if o.basePath != "" {
+	if o.basePath != "" {
 		if o.pinyinPath == "" && o.singlePath == "" && o.charfreqPath == "" {
 			err = runMergeManual(o)
 		} else {
@@ -177,12 +171,6 @@ func main() {
 func validateOptions(o options) error {
 	if o.outPath == "" {
 		return fmt.Errorf("-o 必填")
-	}
-	if o.compile {
-		if o.basePath == "" {
-			return fmt.Errorf("-compile 模式需要 -base <input.tsv>")
-		}
-		return nil
 	}
 	if o.readingShare < 0 || o.readingShare > 1 {
 		return fmt.Errorf("-readingshare 必须在 0..1 之间")
@@ -369,7 +357,7 @@ func run(o options) error {
 	simplifiedExists := make(map[string]bool, len(phrase))
 	for w := range phrase {
 		if cjkWordOK(w) {
-			simplifiedExists[engine.ToSimplified(w)] = true
+			simplifiedExists[dict.ToSimplified(w)] = true
 		}
 	}
 
@@ -403,10 +391,10 @@ func run(o options) error {
 		}
 		origin := allowed[word]
 		// 繁体变体剔除只对「高频用法」来源生效：规范常用词/HSK/手工词表本身
-		// 都是简体词，且 engine.ToSimplified 是 OpenCC 简→繁表的反向映射，对
+		// 都是简体词，且 dict.ToSimplified 是 OpenCC 简→繁表的反向映射，对
 		// 「像/象」这类简繁同形字会误判（实测 好像→好象，导致常用词被误删）。
 		if origin == "highfreq" {
-			if sw := engine.ToSimplified(word); sw != word && simplifiedExists[sw] {
+			if sw := dict.ToSimplified(word); sw != word && simplifiedExists[sw] {
 				continue
 			}
 		}
@@ -519,11 +507,6 @@ func run(o options) error {
 	sortEntries(entries)
 	if err := writeTSV(o.outPath, entries, o); err != nil {
 		return err
-	}
-	if o.binPath != "" {
-		if err := writeBin(o.binPath, entries); err != nil {
-			return err
-		}
 	}
 
 	multi := len(entries) - singleEntries
@@ -915,13 +898,13 @@ func parsePhrasePinyin(path string) (map[string][]string, map[rune]map[string]in
 		if i := strings.IndexByte(py, '#'); i >= 0 {
 			py = py[:i]
 		}
-		sylls := engine.NormalizePinyin(py)
+		sylls := dict.NormalizePinyin(py)
 		if len(sylls) != len([]rune(word)) {
 			continue
 		}
 		valid := true
 		for _, s := range sylls {
-			if !engine.IsSyllable(s) {
+			if !dict.IsSyllable(s) {
 				valid = false
 				break
 			}
@@ -981,8 +964,8 @@ func parseSinglePinyin(path string) (map[rune][]string, error) {
 			if raw == "" {
 				continue
 			}
-			sylls := engine.NormalizePinyin(raw)
-			if len(sylls) != 1 || !engine.IsSyllable(sylls[0]) || seen[sylls[0]] {
+			sylls := dict.NormalizePinyin(raw)
+			if len(sylls) != 1 || !dict.IsSyllable(sylls[0]) || seen[sylls[0]] {
 				continue
 			}
 			seen[sylls[0]] = true
@@ -1319,7 +1302,7 @@ func parseHanLPPinyin(path string) (map[string][]string, error) {
 		valid := true
 		for _, raw := range strings.Split(py, ",") {
 			s := normalizeToneNumber(raw)
-			if s == "" || !engine.IsSyllable(s) {
+			if s == "" || !dict.IsSyllable(s) {
 				valid = false
 				break
 			}
@@ -1388,7 +1371,7 @@ func parseManualTable(path string) ([]manualRow, error) {
 			return nil, fmt.Errorf("%s 第 %d 行音节数与字数不等: %s / %v", path, lineNo, word, sylls)
 		}
 		for _, s := range sylls {
-			if !engine.IsSyllable(s) {
+			if !dict.IsSyllable(s) {
 				return nil, fmt.Errorf("%s 第 %d 行存在非法音节 %q", path, lineNo, s)
 			}
 		}
@@ -1594,11 +1577,6 @@ func runRefreshSingles(o options) error {
 	if err := writeTSV(o.outPath, entries, o); err != nil {
 		return err
 	}
-	if o.binPath != "" {
-		if err := writeBin(o.binPath, entries); err != nil {
-			return err
-		}
-	}
 	fmt.Printf("单字刷新完成：%d → %d 条（丢弃次读音 %d；补充词表新增 %d）\n",
 		len(baseMulti)+countSingles(baseSingles), len(entries), dropped, manualAdded)
 	return nil
@@ -1674,11 +1652,6 @@ func runMergeManual(o options) error {
 	if err := writeTSV(o.outPath, entries, o); err != nil {
 		return err
 	}
-	if o.binPath != "" {
-		if err := writeBin(o.binPath, entries); err != nil {
-			return err
-		}
-	}
 	fmt.Printf("补充词表增量合并完成：%d 条（基线 %d 条；新增 %d 条）\n",
 		len(entries), len(baseMulti)+countSingles(baseSingles), manualAdded)
 	return nil
@@ -1732,51 +1705,6 @@ func readBaseDict(path string) ([]entry, map[rune]map[string]int, map[string]boo
 		multi = append(multi, entry{word: word, sylls: append([]string(nil), sylls...), freq: freq})
 	}
 	return multi, singles, existing, nil
-}
-
-// writeTSV 写出三列 TSV；文件头按词频模式声明来源与许可，并附再生成命令。
-func runCompile(o options) error {
-	d, err := engine.LoadDictFiles([]string{o.basePath})
-	if err != nil {
-		return fmt.Errorf("加载源词库 %s 失败: %w", o.basePath, err)
-	}
-	f, err := os.Create(o.outPath)
-	if err != nil {
-		return fmt.Errorf("创建目标二进制词库 %s 失败: %w", o.outPath, err)
-	}
-	defer f.Close()
-	if err := engine.WriteBinaryDict(f, d.Entries()); err != nil {
-		return fmt.Errorf("写入二进制词库失败: %w", err)
-	}
-	fmt.Printf("已编译二进制词库 %s（共 %d 条）\n", o.outPath, d.Len())
-	return nil
-}
-
-func writeBin(path string, entries []entry) error {
-	dir := filepath.Dir(path)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("创建二进制词库 %s 失败: %w", path, err)
-	}
-	defer f.Close()
-	engEntries := make([]*engine.Entry, len(entries))
-	for i, e := range entries {
-		engEntries[i] = &engine.Entry{
-			Word:      e.word,
-			Syllables: e.sylls,
-			Freq:      e.freq,
-		}
-	}
-	if err := engine.WriteBinaryDict(f, engEntries); err != nil {
-		return fmt.Errorf("写入二进制词库 %s 失败: %w", path, err)
-	}
-	fmt.Printf("已写出二进制词库: %s（共 %d 条）\n", path, len(entries))
-	return nil
 }
 
 func writeTSV(path string, entries []entry, o options) error {

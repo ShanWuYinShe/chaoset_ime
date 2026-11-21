@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"chaoset.ime/engine"
 	"chaoset.ime/internal/appdirs"
 	"chaoset.ime/internal/buildinfo"
 	"chaoset.ime/ipc"
@@ -199,20 +198,20 @@ func RunLocal(path, cmd string, args CmdArgs, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = os.Stdout
 	}
-	u, err := engine.NewUserDict(path)
+	u, err := newLocalUserDict(path)
 	if err != nil {
 		return err
 	}
 	switch cmd {
 	case "stats":
-		st := u.Stats()
-		printStats(st.Words, st.Phrases, st.Bigrams, stdout)
+		w, p, b := u.Stats()
+		printStats(w, p, b, stdout)
 	case "clear":
-		before := u.Stats()
+		w, p, b := u.Stats()
 		if err := u.Clear(); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", before.Words, before.Phrases, before.Bigrams)
+		fmt.Fprintf(stdout, "已清空：词 %d 条、词组 %d 条、上下文 %d 条\n", w, p, b)
 	case "delete":
 		deleted, err := u.DeleteWord(args.Word, args.Sylls)
 		if err != nil {
