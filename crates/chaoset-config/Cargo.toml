@@ -1,0 +1,22 @@
+[package]
+name = "chaoset-config"
+version = "0.4.0"
+edition = "2021"
+authors = ["Li You <winliyou@outlook.com>"]
+description = "Chaoset IME 三端统一设置 schema/默认值/校验与平台持久化（Rust 唯一实现）"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde_json = { version = "1.0", features = ["raw_value"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3.10"

@@ -152,6 +152,27 @@ func checkSettingsCore(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winInstaller,
 		"chaoset-settings.exe", "chaosetctl.exe")
 	checkContains(fsys, problems, group, archDoc, "chaoset-settingsctl", "internal/settings")
+
+	// Rust daemon 与后续 Rust CLI 共用的设置/路径实现（Go CLI 迁移完成后
+	// internal/settings 删除，这里的存在性断言会转成唯一真源断言）。
+	for _, path := range []string{
+		"crates/chaoset-config/src/lib.rs",
+		"crates/chaoset-config/src/model.rs",
+		"crates/chaoset-config/src/parse.rs",
+		"crates/chaoset-config/src/store/mod.rs",
+		"crates/chaoset-config/src/store/darwin.rs",
+		"crates/chaoset-config/src/store/linux.rs",
+		"crates/chaoset-config/src/store/windows.rs",
+		"crates/chaoset-config/tests/constants_lock.rs",
+		"crates/chaoset-config/tests/linux_store.rs",
+	} {
+		checkExists(fsys, problems, group, path)
+	}
+	checkContains(fsys, problems, group, "crates/chaoset-config/src/constants.rs",
+		"WINDOWS_REG_SUBKEY", "MAC_DEFAULTS_DOMAIN", "CLI_ITEM_MODE_SCOPE", "DEFAULTS_JSON")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/main.rs", "chaoset_config::behavior::load()")
+	checkContains(fsys, problems, group, "shims/settings/src/bridge.rs", "mode-scope")
+	checkNotContains(fsys, problems, group, "shims/settings/src/bridge.rs", `"config", "set", "mode_scope"`)
 }
 
 // checkLearningDataGUI 学习数据管理只有 Slint 设置中心一份 GUI；实现走

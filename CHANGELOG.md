@@ -4,6 +4,11 @@
 
 ## 未发布
 
+- **重构(设置)：设置核心开始收敛到 Rust 共享 crate，并修复中英作用域从未落盘的 bug**：
+  - 新增 `crates/chaoset-config`：三端设置 schema/默认值/校验/单行 JSON 契约 + macOS UserDefaults、Windows 注册表、Linux config.json 存储的**唯一 Rust 实现**；daemon 改用 `behavior::load()`（lenient，读不到用缺省），删除 `crates/chaosetd/src/{appdirs,input_settings}.rs` 两份重复实现；
+  - 修复设置中心把 CLI 参数写成 `mode_scope`（下划线）导致 `config set mode-scope` 始终失败、中英作用域从未落盘的问题（`bridge.rs` 改连字符，checker 增加反向断言防回归）；
+  - 新增 Linux 存储字节格式/文件与目录权限/未知键原样保留（`traditional`、`1.50`）/损坏拒绝/常量契约单测；macOS 用注入 runner 断言 `defaults` 实际参数。
+
 - **优化(图标)：设置中心页面图标全部改用 SVG，三端 GUI app 图标补齐**：
   - Slint 设置中心 9 处 emoji/符号图标（导航、卡片标题、候选预览箭头/齿轮）全部替换为 `shims/settings/ui/icons/*.svg`，`Image.colorize` 跟随主题令牌着色；关于页品牌图由文字「C」改为真实 `app.svg`（Slint 窗口图标也用 SVG）；
   - macOS 设置中心打包为独立 `ChaosetSettings.app`（Info.plist + 品牌 icns + 版本号），Finder/Dock 不再显示通用可执行文件图标，启动器指向 bundle 内可执行文件；
