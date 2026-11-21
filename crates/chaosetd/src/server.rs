@@ -174,7 +174,8 @@ fn create_named_pipe_instance(
     };
 
     let wide_name: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let sid = chaoset_config::paths::default_pipe_name()?
+    let sid = chaoset_config::paths::default_pipe_name()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
         .strip_prefix(r"\\.\pipe\chaoset-")
         .unwrap_or("")
         .to_string();
