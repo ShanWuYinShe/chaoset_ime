@@ -27,6 +27,40 @@ const RANK_BACKOFF: i32 = 5; // 逐级回退前缀（nihaox → 你好）
 const RANK_CONTINUATION_LEAD: i32 = 6; // 无法干净切分时的续接领跑（quanmia → 全面）
 const RANK_TYPO_FIX: i32 = 7; // 错拼修正候选初始层级（最低，仅保证列表末尾可见）
 
+/// 按切分边界重建预编辑，并**保留用户输入的大小写**（对齐 Go preeditWithCase）。
+///
+/// 预编辑是「按回车会原样上屏的内容」的预览：用户敲 NIHAO 时看到 NI'HAO。
+/// 做法是把输入去掉显式分隔符后与音节文本逐个字符对齐——长度不匹配（别名
+/// 归一 lue→lve、双拼解码等）或字符不同（同上）时退回音节文本本身。
+fn preedit_with_case(input: &str, tokens: &[Token]) -> String {
+    let src: Vec<char> = input.chars().filter(|c| *c != '\'').collect();
+    let canon: Vec<char> = tokens.iter().flat_map(|t| t.text.chars()).collect();
+    if src.len() != canon.len() {
+        return tokens
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join("'");
+    }
+    let mut out = String::new();
+    let mut idx = 0;
+    for (i, tok) in tokens.iter().enumerate() {
+        if i > 0 {
+            out.push('\'');
+        }
+        for c in tok.text.chars() {
+            // 音节文本是规范化小写；原字符只可能在大小写上不同。
+            if src[idx].to_ascii_lowercase() == c {
+                out.push(src[idx]);
+            } else {
+                out.push(c);
+            }
+            idx += 1;
+        }
+    }
+    out
+}
+
 /// 输入形态判定结果（Go composeShape 的 Rust 版，纯函数产出）。
 /// 决定续接层级、常规路径是否走昂贵的 prefix 收集、超段仲裁口径与错拼
 /// 走不走纠错路径。
@@ -796,7 +830,7 @@ impl Session {
             }
             decoded
         } else {
-            self.input_raw.clone()
+            self.match_input()
         };
 
         // 2. 音节切分
@@ -804,13 +838,8 @@ impl Session {
         let best_pattern = patterns.first().cloned().unwrap_or_default();
         self.tokens = best_pattern.clone();
 
-        // 3. 构建音节序列与 preedit 显示
-        let mut preedit_parts: Vec<String> = Vec::new();
-        for tok in &best_pattern {
-            preedit_parts.push(tok.text.clone());
-        }
-
-        let preedit = preedit_parts.join("'");
+        // 3. 构建音节序列与 preedit 显示（保留用户输入的大小写）
+        let preedit = preedit_with_case(&self.input_raw, &best_pattern);
 
         // 4. 召回与打分（分层召回，对齐 Go compose.go 的编排顺序）：
         // 层级是第一排序维度，词频打分只在同层内决定先后——这是与 Go 一致的
@@ -820,7 +849,8 @@ impl Session {
         // 调用顺序即语义，不能交换（见 Go compose.go 注释）：
         //   续接（D）→ 错拼（E）→ 组合提升（F）→ 常规 token（H）→ 单字收尾（I）
         //   → 纠错提升（K）→ 单段过滤（L）→ 排序（M）→ 纠错固定位（N）。
-        let shape = analyze_shape(&self.input_raw, &patterns);
+        let match_input = self.match_input();
+        let shape = analyze_shape(&match_input, &patterns);
         let mut typo = TypoState::default();
         let mut pool = Pool::new();
 
@@ -885,7 +915,7 @@ impl Session {
                 );
             }
         }
-        for (head_syls, frag) in crate::syllable::partial_tail_splits(&self.input_raw.clone()) {
+        for (head_syls, frag) in crate::syllable::partial_tail_splits(&match_input) {
             let head: Vec<&str> = head_syls.iter().map(|s| s.as_str()).collect();
             let hits: Vec<(String, Vec<String>, u32, String)> = self
                 .dict
@@ -925,7 +955,7 @@ impl Session {
         add_typo_corrections(
             &self.dict,
             self.user_dict.as_deref(),
-            &self.input_raw,
+            &match_input,
             &shape,
             prev,
             traditional,
@@ -1146,7 +1176,7 @@ impl Session {
 
         // 4.6 纠错层级提升（Go promoteTypoCorrections）：必须在常规/单字收集
         // 完之后、单段过滤之前——它按 rank 反推「纯错拼来源」。
-        promote_typo_corrections(&mut pool, &typo, &shape, &self.input_raw);
+        promote_typo_corrections(&mut pool, &typo, &shape, &match_input);
 
         // 4.7 单段输入只出单字（Go filterSingleSegment）
         filter_single_segment(&mut pool, &patterns);
@@ -1249,18 +1279,36 @@ impl Session {
     }
 
     /// 用户键盘输入
+    ///
+    /// 与 Go engine.Session.Input 同契约：壳是标点唯一真源，input 只收拼音
+    /// 字母，其余字符静默丢弃（标点走 punct()）。**大小写都收且保留原样**：
+    /// 用户回车（commit_raw）应原样上屏自己敲的字母，不必为大写切输入法；
+    /// 拼音匹配另走 match_input() 小写视图。双拼按键与大小写无关，统一小写
+    /// 后成对解码。例外：双拼模式 ';' 是韵母键（mspy 的 ing），必须放行。
     pub fn input(&mut self, text: &str, _half_width: bool) -> Result<Composition, String> {
-        // 与 Go engine.Session.Input 同契约：壳是标点唯一真源，input 只收
-        // 拼音字母（先整体小写，非 [a-z'] 一律静默丢弃，标点走 punct()）。
-        // 例外：双拼模式 ';' 是韵母键（mspy 的 ing），必须放行参与成对解码。
-        for c in text.to_lowercase().chars() {
-            if c.is_ascii_lowercase() || c == '\'' || (c == ';' && self.shuangpin_decoder.is_some())
-            {
+        let shuangpin = self.shuangpin_decoder.is_some();
+        for c in text.chars() {
+            if shuangpin {
+                let lower = c.to_ascii_lowercase();
+                if lower.is_ascii_lowercase() || lower == ';' {
+                    self.input_raw.push(lower);
+                }
+                continue;
+            }
+            if c.is_ascii_alphabetic() || c == '\'' {
                 self.input_raw.push(c);
             }
         }
 
         Ok(self.compose())
+    }
+
+    /// 用于拼音**匹配**的小写视图（对齐 Go matchInput）。
+    ///
+    /// 大写字母保留在 input_raw 里供预编辑显示与回车原样上屏；切分、查词、
+    /// 纠错、联想一律按小写口径，保证「NIHAO」与「nihao」候选一致。
+    fn match_input(&self) -> String {
+        self.input_raw.to_ascii_lowercase()
     }
 
     /// 退格删除最后一个按键字符
@@ -1516,8 +1564,9 @@ mod tests {
     fn test_input_filters_non_pinyin_chars() {
         let mut sess = create_test_session();
         let comp = sess.input("NI1hao!?", false).unwrap();
-        assert_eq!(comp.input, "nihao");
-        assert_eq!(comp.preedit, "ni'hao");
+        // 大小写保留（回车原样上屏），非字母丢弃；预编辑同样保留大小写。
+        assert_eq!(comp.input, "NIhao");
+        assert_eq!(comp.preedit, "NI'hao");
         assert!(comp.committed.is_empty(), "input 不得代行标点上屏");
         assert_eq!(comp.candidates[0].text, "你好");
 
@@ -1527,6 +1576,35 @@ mod tests {
         let comp2 = sess2.input("123", false).unwrap();
         assert!(comp2.input.is_empty());
         assert!(comp2.candidates.is_empty());
+    }
+
+    /// 大写输入：匹配与全小写等价，输入/预编辑保留大小写，退格保留剩余大小写，
+    /// commit_raw 原样返回 —— 中文模式下直接敲大写 + 回车即可上屏英文。
+    #[test]
+    fn test_uppercase_input_preserved() {
+        let mut sess = create_test_session();
+        let comp = sess.input("NIHAO", false).unwrap();
+        assert_eq!(comp.input, "NIHAO");
+        assert_eq!(comp.preedit, "NI'HAO");
+        assert_eq!(
+            comp.candidates[0].text, "你好",
+            "大写应按小写匹配: {:?}",
+            comp.candidates
+        );
+
+        let comp = sess.backspace();
+        assert_eq!(comp.input, "NIHA");
+
+        let raw = sess.commit_raw().unwrap();
+        assert_eq!(raw, "NIHA", "commit_raw 应原样返回用户敲的字符");
+    }
+
+    /// CommitRaw 全串原样（含大小写）——Enter 直接上屏英文。
+    #[test]
+    fn test_commit_raw_keeps_case() {
+        let mut sess = create_test_session();
+        sess.input("HelloWorld", false).unwrap();
+        assert_eq!(sess.commit_raw().unwrap(), "HelloWorld");
     }
 
     /// 纯音节切分优先于声母碎片：xian 是合法音节，不得混入 xia'n
