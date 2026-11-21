@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"chaoset.ime/engine"
 	"chaoset.ime/internal/buildinfo"
+	"chaoset.ime/internal/dict"
 )
 
 type acc struct {
@@ -76,9 +76,9 @@ func Run(outPath, seed string, backup bool, replace bool, inputs []string) error
 		}
 	}
 
-	entries := make([]*engine.Entry, 0, len(merged))
+	entries := make([]*dict.Entry, 0, len(merged))
 	for _, a := range merged {
-		entries = append(entries, &engine.Entry{Word: a.word, Syllables: a.sylls, Freq: a.freq})
+		entries = append(entries, &dict.Entry{Word: a.word, Syllables: a.sylls, Freq: a.freq})
 	}
 	dir := filepath.Dir(outPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -99,7 +99,7 @@ func Run(outPath, seed string, backup bool, replace bool, inputs []string) error
 	}
 	tmpName := tmp.Name()
 	removeTmp := func() { _ = os.Remove(tmpName) }
-	if err := engine.WriteTSV(tmp, entries); err != nil {
+	if err := dict.WriteTSV(tmp, entries); err != nil {
 		_ = tmp.Close()
 		removeTmp()
 		return fmt.Errorf("写出词库失败: %w", err)
@@ -125,11 +125,11 @@ func absorbFile(merged map[string]*acc, path string, replace bool) error {
 	if err != nil {
 		return fmt.Errorf("读取 %s 失败: %w", path, err)
 	}
-	d, skipped, perr := engine.ParseDictAuto(bytes.NewReader(data))
+	entries, skipped, perr := dict.ParseAuto(bytes.NewReader(data))
 	if perr != nil {
 		return fmt.Errorf("解析 %s 失败: %w", path, perr)
 	}
-	absorb(merged, d.Entries(), replace)
+	absorb(merged, entries, replace)
 	if skipped > 0 {
 		fmt.Fprintf(os.Stderr, "%s: 跳过 %d 行无效词条\n", path, skipped)
 	}
@@ -171,7 +171,7 @@ func BackupFile(path string) error {
 	return nil
 }
 
-func absorb(merged map[string]*acc, entries []*engine.Entry, replace bool) {
+func absorb(merged map[string]*acc, entries []*dict.Entry, replace bool) {
 	for _, e := range entries {
 		key := e.Word + "\x00" + joinSylls(e.Syllables)
 		if old, ok := merged[key]; ok {
