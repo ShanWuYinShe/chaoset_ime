@@ -8,12 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"chaoset.ime/engine"
 )
 
-// Client 是 daemon 的客户端句柄，实现 engine.Controller，
-// 与本地 engine.Session 可互换使用（CLI / 平台壳只面对接口）。
+// Client 是 daemon 的客户端句柄，实现 Controller（协议见 types.go）。
 type Client struct {
 	conn net.Conn
 	br   *bufio.Reader
@@ -116,47 +113,47 @@ func (c *Client) callLocked(method string, params any, result any, timeout time.
 
 // Input 带全/半角标点状态处理输入（宽度只对本次请求生效，daemon 不保存）。
 // 双拼模式下 ';' 经 input 路径产生标点时，引擎必须用本次壳状态。
-func (c *Client) Input(text string, halfWidth bool) (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) Input(text string, halfWidth bool) (Composition, error) {
+	var comp Composition
 	err := c.call("input", map[string]any{"text": text, "half": halfWidth}, &comp)
 	return comp, err
 }
 
-func (c *Client) Backspace() (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) Backspace() (Composition, error) {
+	var comp Composition
 	err := c.call("backspace", nil, &comp)
 	return comp, err
 }
 
-func (c *Client) BackspaceWord() (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) BackspaceWord() (Composition, error) {
+	var comp Composition
 	err := c.call("backspaceWord", nil, &comp)
 	return comp, err
 }
 
-func (c *Client) Reset() (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) Reset() (Composition, error) {
+	var comp Composition
 	err := c.call("reset", nil, &comp)
 	return comp, err
 }
 
 // ResetComposition 只丢弃当前组词，保留学习上下文（prev/history）。
-// 与 Reset 的区别见 engine.Session.ResetComposition 的注释。
-func (c *Client) ResetComposition() (engine.Composition, error) {
-	var comp engine.Composition
+// 与 Reset 的区别见 daemon 引擎 ResetComposition 的语义（只丢组词、保留学习上下文）。
+func (c *Client) ResetComposition() (Composition, error) {
+	var comp Composition
 	err := c.call("resetComposition", nil, &comp)
 	return comp, err
 }
 
 // NextPage / PrevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
-func (c *Client) NextPage() (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) NextPage() (Composition, error) {
+	var comp Composition
 	err := c.call("nextPage", nil, &comp)
 	return comp, err
 }
 
-func (c *Client) PrevPage() (engine.Composition, error) {
-	var comp engine.Composition
+func (c *Client) PrevPage() (Composition, error) {
+	var comp Composition
 	err := c.call("prevPage", nil, &comp)
 	return comp, err
 }
@@ -182,8 +179,6 @@ func (c *Client) CommitRaw() (string, error) {
 	return out.Committed, nil
 }
 
-// Punct 提交一个标点键：组词中先上屏首选候选，随后输出映射后的
-// 中文标点；空组词直接输出中文标点（映射规则见 engine.Session.Punct）。
 // Punct 提交标点键；halfWidth 随请求下发（daemon 不保存该状态）。
 func (c *Client) Punct(key string, halfWidth bool) (string, error) {
 	var out struct {
@@ -196,8 +191,8 @@ func (c *Client) Punct(key string, halfWidth bool) (string, error) {
 }
 
 // UserStats 查询用户词典三类学习记录的条目数。
-func (c *Client) UserStats() (engine.UserStats, error) {
-	var st engine.UserStats
+func (c *Client) UserStats() (UserStats, error) {
+	var st UserStats
 	err := c.call("userStats", nil, &st)
 	return st, err
 }
@@ -279,17 +274,17 @@ func (c *Client) UserExport(phrasesOnly bool) (string, error) {
 // SelectPrefix 渐进上屏：选中候选后只消耗其音节对应的 input 前缀，
 // 剩余拼音回灌继续组词。返回剩余组词态（Committed=已上屏前缀段文本，
 // Preedit=剩余拼音，Candidates=剩余候选）与本次上屏文本，签名与本地
-// engine.Session.SelectPrefix 一致，供 engine.Controller 统一调用。
-func (c *Client) SelectPrefix(index int) (engine.Composition, string, error) {
-	var comp engine.Composition
+// daemon selectPrefix 的语义：供 Controller 统一调用。
+func (c *Client) SelectPrefix(index int) (Composition, string, error) {
+	var comp Composition
 	err := c.call("selectPrefix", map[string]int{"index": index}, &comp)
 	return comp, comp.Committed, err
 }
 
 // Associate 查询上屏词的续接候选（联想）：daemon 端协议方法 associate，
 // 与 macOS EngineClient / Windows core 的联想查询同语义。
-func (c *Client) Associate(sylls []string) ([]engine.Candidate, error) {
-	var comp engine.Composition
+func (c *Client) Associate(sylls []string) ([]Candidate, error) {
+	var comp Composition
 	if err := c.call("associate", map[string]any{"sylls": sylls}, &comp); err != nil {
 		return nil, err
 	}

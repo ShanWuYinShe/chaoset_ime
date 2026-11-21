@@ -8,11 +8,13 @@ import (
 	"os"
 	"strings"
 
-	"chaoset.ime/engine"
+	"chaoset.ime/internal/appdirs"
 	"chaoset.ime/internal/buildinfo"
-	"chaoset.ime/internal/cliutil"
 	"chaoset.ime/ipc"
 )
+
+// 编译期断言：*ipc.Client 满足 Controller（daemon-only 后没有第二个实现）。
+var _ ipc.Controller = (*ipc.Client)(nil)
 
 func Main(args []string) int {
 	return RunCLI(args, os.Stdout, os.Stderr, os.Stdin)
@@ -32,14 +34,8 @@ func RunCLI(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 	fs := flag.NewFlagSet("cli", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	socket := fs.String("socket", "", "连接该 Unix 套接字上的 chaosetd；与 -pipe 二选一，都为空则使用本地内嵌引擎")
+	socket := fs.String("socket", "", "连接该 Unix 套接字上的 chaosetd；与 -pipe 二选一，缺省用平台默认 daemon socket")
 	usePipe := fs.Bool("pipe", false, "经 Windows 命名管道连接 chaosetd（按当前用户 SID 自动命名；仅 Windows）")
-	var dicts cliutil.RepeatFlag
-	fs.Var(&dicts, "dict", "主词典 TSV 路径，可多次传入（仅本地模式）")
-	userPath := fs.String("userdict", "chaoset-userdict.json", "用户词典路径（仅本地模式，空串表示不落盘）")
-	fuzzy := fs.Bool("fuzzy", false, "启用模糊音（仅本地模式；daemon 模式由 chaosetd 的 -fuzzy 决定）")
-	trad := fs.Bool("traditional", false, "候选输出繁体（仅本地模式；daemon 模式由 chaosetd 的 -traditional 决定）")
-	sp := fs.String("shuangpin", "", "双拼方案：zrm（自然码）/ mspy（微软）/ flypy（小鹤）；空关闭（仅本地模式；daemon 模式由 chaosetd 的 -shuangpin 决定）")
 	showVersion := fs.Bool("version", false, "打印构建信息（提交号/构建时间）后退出")
 
 	if err := fs.Parse(args); err != nil {
@@ -53,11 +49,15 @@ func RunCLI(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 		fmt.Fprintln(stderr, "-socket / -pipe 只能二选一")
 		return 2
 	}
-	if len(dicts) == 0 {
-		dicts = cliutil.RepeatFlag{"data/dict_common.tsv"}
+	if *socket == "" && !*usePipe {
+		p, err := appdirs.SocketPath()
+		if err != nil {
+			fmt.Fprintln(stderr, "无法确定默认 daemon socket：", err)
+			return 1
+		}
+		*socket = p
 	}
-
-	ctrl, closeFn, err := BuildController(*socket, *usePipe, dicts, *userPath, *fuzzy, *trad, *sp)
+	ctrl, closeFn, err := BuildController(*socket, *usePipe)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -129,7 +129,7 @@ func RunCLI(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 			if comp.Input != "" {
 				PrintComposition(comp, stdout)
 			}
-		case len(line) == 1 && engine.IsPunctKey(rune(line[0])):
+		case len(line) == 1 && isPunctKey(rune(line[0])):
 			text, err := ctrl.Punct(line, false)
 			if err != nil {
 				fmt.Fprintln(stdout, "错误:", err)
@@ -157,46 +157,37 @@ func RunCLI(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 	return 0
 }
 
-func BuildController(socket string, usePipe bool, dicts []string, userPath string, fuzzy bool, trad bool, sp string) (engine.Controller, func(), error) {
-	if socket != "" || usePipe {
-		ep := ipc.Endpoint{Network: "unix", Address: socket}
-		if usePipe {
-			name, err := ipc.DefaultPipeName()
-			if err != nil {
-				return nil, nil, err
-			}
-			ep = ipc.Endpoint{Network: "pipe", Address: name}
-		}
-		c, err := ipc.DialEndpoint(ep)
+// BuildController 连接 daemon（-socket / -pipe 二选一）。
+//
+// 本地内嵌引擎已随 Go 引擎退役删除：CLI 只作为 daemon 的终端测试台，
+// 不复制任何组词逻辑。未指定传输时直接报错并提示先起 daemon，
+// 不静默回退（回退会掩盖「以为测的是 daemon、其实测的是本地引擎」）。
+func BuildController(socket string, usePipe bool) (ipc.Controller, func(), error) {
+	if socket == "" && !usePipe {
+		return nil, nil, fmt.Errorf("必须用 -socket 或 -pipe 连接 chaosetd（本地内嵌引擎已移除；先 make run-daemon）")
+	}
+	ep := ipc.Endpoint{Network: "unix", Address: socket}
+	if usePipe {
+		name, err := ipc.DefaultPipeName()
 		if err != nil {
 			return nil, nil, err
 		}
-		return c, func() { c.Close() }, nil
+		ep = ipc.Endpoint{Network: "pipe", Address: name}
 	}
-	dict, dictWarnings, err := engine.LoadDictFilesLenient(dicts)
+	c, err := ipc.DialEndpoint(ep)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, w := range dictWarnings {
-		fmt.Fprintf(os.Stderr, "警告: %s\n", w)
-	}
-	if dict.Len() == 0 {
-		return nil, nil, fmt.Errorf("没有加载到任何词条，请检查 -dict 指定的词库是否为空或格式不对")
-	}
-	user, err := engine.NewUserDict(userPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	sess := engine.NewSession(dict, user)
-	sess.SetFuzzy(fuzzy)
-	sess.SetTraditional(trad)
-	sess.SetDoublePinyin(sp)
-	return sess, func() {
-		_ = user.Save()
-	}, nil
+	return c, func() { c.Close() }, nil
 }
 
-func PrintComposition(comp engine.Composition, stdout io.Writer) {
+// isPunctKey 报告该字符是否为由 daemon 接管的标点键（终端测试台用）。
+// 键集与 daemon 引擎一致：ASCII 标点 + 引号（引号空组词时才是标点）。
+func isPunctKey(r rune) bool {
+	return strings.ContainsRune(",.;:?!()[]<>\\~^'\"", r)
+}
+
+func PrintComposition(comp ipc.Composition, stdout io.Writer) {
 	if stdout == nil {
 		stdout = os.Stdout
 	}
