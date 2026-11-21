@@ -38,6 +38,9 @@ pub struct UserRecord {
     pub last_used: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub segs: Vec<String>,
+    /// 音节串（空格分隔）：联想按字前缀剥前缀时需要知道词条的音节切分。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sylls: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -65,6 +68,35 @@ pub struct UserStats {
     pub words: usize,
     pub phrases: usize,
     pub bigrams: usize,
+}
+
+/// 字前缀查询命中（联想续接用）：Go 的 *Entry + Segs 口径。
+/// 词条音节串解析：用户记录可能来自 Go（空格分隔）或 Rust 学习路径
+/// （' 连接），两种都按统一口径切开，联想剥前缀才能按音节数对齐。
+fn split_sylls(s: &str) -> Vec<String> {
+    s.split(|c: char| c == '\'' || c.is_whitespace())
+        .filter(|x| !x.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+pub struct WordPrefixHit {
+    pub word: String,
+    pub syllables: Vec<String>,
+    pub freq: i32,
+    pub segs: Vec<String>,
+}
+
+impl WordPrefixHit {
+    /// 与 Go 同序：调频分降序 → 词字典序 → 音节串（多读音同词时确定性）。
+    fn sort(v: &mut [WordPrefixHit]) {
+        v.sort_by(|a, b| {
+            b.freq
+                .cmp(&a.freq)
+                .then(a.word.cmp(&b.word))
+                .then(a.syllables.join("'").cmp(&b.syllables.join("'")))
+        });
+    }
 }
 
 pub struct UserDict {
@@ -130,13 +162,85 @@ impl UserDict {
         (total_bonus.round() as u32, from_user)
     }
 
+    /// 按**词字面**前缀查词组进化记录（Go QueryPhrasesByWordPrefix）。
+    pub fn query_phrases_by_word_prefix(&self, prefix: &str) -> Vec<WordPrefixHit> {
+        let data = self.data.read().unwrap();
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let now = current_timestamp();
+        let prefix_len = prefix.chars().count();
+        let mut out: Vec<WordPrefixHit> = data
+            .phrases
+            .values()
+            .filter(|rec| rec.word.chars().count() > prefix_len && rec.word.starts_with(prefix))
+            .map(|rec| WordPrefixHit {
+                word: rec.word.clone(),
+                syllables: split_sylls(&rec.sylls),
+                freq: ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now))
+                    as i32,
+                segs: rec.segs.clone(),
+            })
+            .collect();
+        WordPrefixHit::sort(&mut out);
+        out
+    }
+
+    /// 按**词字面**前缀查用户调频词条（Go QueryWordsByWordPrefix）：用户整句
+    /// 上屏/选词的记录都在 Words 表，是「之前输入过的词」的主体——联想续接
+    /// 按上屏词的字走时必须查它，否则用户打过的词不会出现在联想候选。
+    pub fn query_words_by_word_prefix(&self, prefix: &str) -> Vec<WordPrefixHit> {
+        let data = self.data.read().unwrap();
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let now = current_timestamp();
+        let prefix_len = prefix.chars().count();
+        let mut out: Vec<WordPrefixHit> = data
+            .words
+            .iter()
+            .filter(|(word, _)| word.chars().count() > prefix_len && word.starts_with(prefix))
+            .map(|(word, rec)| WordPrefixHit {
+                word: word.clone(),
+                syllables: split_sylls(&rec.sylls),
+                freq: ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now))
+                    as i32,
+                segs: rec.segs.clone(),
+            })
+            .collect();
+        WordPrefixHit::sort(&mut out);
+        out
+    }
+
+    /// 联想上下文加成（Go UserDict.Score）：只含 Words 调频 + Bigram 共现，
+    /// **不含** Phrases——与组词打分用的 score() 口径不同，不要混用。
+    pub fn score_full(&self, word: &str, prev: Option<&str>) -> i32 {
+        let data = self.data.read().unwrap();
+        let now = current_timestamp();
+        let mut score = 0i32;
+        if let Some(rec) = data.words.get(word) {
+            score = ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
+        }
+        if let Some(prev) = prev {
+            let key = format!("{}->{}", prev, word);
+            if let Some(rec) = data.bigrams.get(&key) {
+                let n = rec.count.min(BIGRAM_MAX_COUNT);
+                score += n * BIGRAM_BONUS_PER_COUNT as i32;
+            }
+        }
+        score
+    }
+
     /// 用户选择词上屏，累加调频与上下文共现
-    pub fn bump_word(&self, word: &str, segs: Option<Vec<String>>) {
+    pub fn bump_word(&self, word: &str, sylls: Option<&str>, segs: Option<Vec<String>>) {
         let mut data = self.data.write().unwrap();
         let now = current_timestamp();
         let entry = data.words.entry(word.to_string()).or_default();
         entry.count += 1;
         entry.last_used = now;
+        if let Some(s) = sylls {
+            entry.sylls = s.to_string();
+        }
         if let Some(s) = segs {
             entry.segs = s;
         }
@@ -173,7 +277,9 @@ impl UserDict {
 
         if !syllables.is_empty() {
             let sylls_joined = syllables.join(" ");
-            let phrase_key_match = data.phrases.iter()
+            let phrase_key_match = data
+                .phrases
+                .iter()
                 .find(|(_, p)| p.word == word && p.sylls == sylls_joined)
                 .map(|(k, _)| k.clone());
             if let Some(k) = phrase_key_match {
@@ -195,7 +301,9 @@ impl UserDict {
         let keys_to_remove: Vec<String> = data
             .bigrams
             .keys()
-            .filter(|k| k.starts_with(&format!("{}->", word)) || k.ends_with(&format!("->{}", word)))
+            .filter(|k| {
+                k.starts_with(&format!("{}->", word)) || k.ends_with(&format!("->{}", word))
+            })
             .cloned()
             .collect();
 
@@ -268,7 +376,10 @@ impl UserDict {
                 }
             });
             for (w, r) in phrase_rows {
-                out.push_str(&format!("{}\t{}\t{}\t{}\n", w, r.sylls, r.count, r.last_used));
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    w, r.sylls, r.count, r.last_used
+                ));
             }
         }
 
@@ -337,7 +448,7 @@ mod tests {
         assert_eq!(initial_score, 0);
         assert!(!from_user);
 
-        udict.bump_word("测试", None);
+        udict.bump_word("测试", Some("ce'shi"), None);
         let (bumped_score, from_user) = udict.score("测试", None);
         assert!(bumped_score >= 500);
         assert!(from_user);

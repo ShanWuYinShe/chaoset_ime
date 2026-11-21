@@ -4,6 +4,13 @@
 
 ## 未发布
 
+- **重构(引擎)：Rust 联想（Associate）迁移——按上屏词的字续接 + 上下文共现排序**：
+  - 主词典新增 `query_word_prefix`（Go `QueryWordPrefix`）：只续接「以刚上屏词开头且更长」的词条，按词频降序；
+  - 用户词库新增 `QueryPhrasesByWordPrefix` / `QueryWordsByWordPrefix`（词组进化 + 调频词两张表）与 `score_full`（Words 调频 + Bigram 共现，与组词打分的 `score()` 口径分开）；`UserRecord` 补 `sylls` 字段（serde 默认，向后兼容）；
+  - 会话侧补 `prev_sylls`（Go `s.prevSylls`）与 `infer_segs` / `entry_segs` / `strip_at_segment_boundary`：**整句式学习记录只在用户确认过的分段边界剥前缀**（项目红线：上屏「今天」给「星期一」，上屏「今」绝不给「天星期一」）；
+  - 排序与去重对齐 Go：字前缀层优先、层内按加成后得分降序、同分按文本稳定排序，上限 30；
+  - 差分场景一致 27→28（`associate-basic` 由「错误地按拼音前缀返回」修正为与 Go 相同的空结果）；语料 5,655 场景指标与本轮前完全一致（组词路径未受影响）；
+  - 新增双向回归：`test_associate_word_prefix`（同字续接、不混入同音其它字、词频降序）与 `test_associate_sentence_only_at_segment_boundary`（边界给续接、非边界不给整词尾巴）。
 - **修复(输入体验)：中文模式下大写字母直接入组词，回车原样上屏英文——不必为大写切输入法**：
   - 三端壳此前都先丢大写（macOS `isCompositionChar` 只认 a-z、Windows Shift+字母直接放行给宿主、Linux 只转发 a-z），引擎再 `ToLower` 后过滤一次，用户想打一段大写英文只能来回切中英；
   - 现在三端壳把 a-z/A-Z 都转发给引擎（Windows 按 Shift⊕CapsLock 还原正确大小写），引擎把字母**原样保留**在组词串里（`s.input`），回车/`CommitRaw` 原样上屏；拼音切分、查词、纠错、联想一律走 `matchInput()` 小写视图，`NIHAO` 与 `nihao` 候选一致；
@@ -2577,3 +2584,10 @@
 
 各项的具体实现位置、部署命令、诊断工具均已在对应 README 与脚本中就位，
 条件满足后无需额外准备即可继续。
+- **重构(引擎)：Rust 联想（Associate）迁移——按上屏词的字续接 + 上下文共现排序**：
+  - 主词典新增 `query_word_prefix`（Go `QueryWordPrefix`）：只续接「以刚上屏词开头且更长」的词条，按词频降序；
+  - 用户词库新增 `QueryPhrasesByWordPrefix` / `QueryWordsByWordPrefix`（词组进化 + 调频词两张表）与 `score_full`（Words 调频 + Bigram 共现，与组词打分的 `score()` 口径分开）；`UserRecord` 补 `sylls` 字段（serde 默认，向后兼容）；
+  - 会话侧补 `prev_sylls`（Go `s.prevSylls`）与 `infer_segs` / `entry_segs` / `strip_at_segment_boundary`：**整句式学习记录只在用户确认过的分段边界剥前缀**（项目红线：上屏「今天」给「星期一」，上屏「今」绝不给「天星期一」）；
+  - 排序与去重对齐 Go：字前缀层优先、层内按加成后得分降序、同分按文本稳定排序，上限 30；
+  - 差分场景一致 27→28（`associate-basic` 由「错误地按拼音前缀返回」修正为与 Go 相同的空结果）；语料 5,655 场景指标与本轮前完全一致（组词路径未受影响）；
+  - 新增双向回归：`test_associate_word_prefix`（同字续接、不混入同音其它字、词频降序）与 `test_associate_sentence_only_at_segment_boundary`（边界给续接、非边界不给整词尾巴）。
