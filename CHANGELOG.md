@@ -11,6 +11,7 @@
   - daemon `-log` 真正落盘（此前 Rust 版忽略该参数）：启动即把 stderr 重定向到指定日志文件（目录不存在先建，打不开时回退临时目录 + PID 后缀），与 Go daemon `-log` 同口径——三端壳都靠它排障；
   - `docs/architecture.md` 模块地图、`AGENTS.md` 架构首行与 `README.md` 架构图/运行命令同步；
   - 验证：`make build` 产出 Rust `bin/chaosetd`（2.3MB vs Go 6.2MB）+ `bin/chaosetd-go` 对照；Rust/Go daemon 用同一 `chaoset-cli` 回放同一输入序列，候选/预编辑/页码/上屏文本**逐字节一致**；`-log` 落盘实测有内容；`make vet` 54 组通过；`make engineparity` 41/41 一致；
+  - 修 CI 暴露的两处差异：① `-userdict ""` 在 Go 语义里是**内存态用户词典**（学习/删除/导出可用、不落盘），Rust 此前当「未启用」导致 user* 方法报错、三端 core_test 的 userDelete 断言失败——抽出 `resolve_user_dict` 与 Go 对齐并加单测；② Windows 打包在 Git Bash 下 cargo 链接时被 `/usr/bin/link.exe`（GNU link）遮蔽 MSVC `link.exe`，改为把 MSVC 工具目录前置到 PATH；
   - 已知跟进：源码构建用的 Arch `PKGBUILD` 仍构建 Go daemon（需引入 cargo makedepends 与 crates 依赖策略，单独跟进）；Go daemon 源码暂保留作对照，后续再删。
 - **重构(引擎)：Rust 用户词库参与组词召回——差分 41 场景**全部一致（含 score）**：
   - 用户词库不再是「只加权不召回」：补齐 Go 的 6 个接入点——末段续接两条路径（dict 24 + 用户 8）、token 主查询（用户 queryTokens 10）、回退层（QueryTokensExact 5）、首音节单字兜底（300）、错拼修正（queryTokens 4）；用户学过的词/词组进化/整句记录现在都能作为候选出现；
