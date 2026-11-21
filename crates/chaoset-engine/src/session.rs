@@ -807,6 +807,8 @@ pub struct Session {
     page_size: usize,
 
     last_committed: Option<String>,
+    /// 刚上屏词的音节（Go s.prevSylls）：联想剥前缀的切分基准，壳传的不可信。
+    prev_sylls: Vec<String>,
 }
 
 impl Session {
@@ -825,6 +827,7 @@ impl Session {
             page: 0,
             page_size: PAGE_SIZE,
             last_committed: None,
+            prev_sylls: Vec::new(),
         }
     }
 
@@ -1416,13 +1419,14 @@ impl Session {
 
         // 记录用户调频与共现
         if let Some(ref u) = self.user_dict {
-            u.bump_word(&cand.text, None);
+            u.bump_word(&cand.text, Some(&cand.syllables), None);
             if let Some(ref prev) = self.last_committed {
                 u.bump_bigram(prev, &cand.text);
             }
         }
 
         self.last_committed = Some(cand.text.clone());
+        self.prev_sylls = cand.syllables.split('\'').map(|s| s.to_string()).collect();
         self.input_raw.clear();
         self.compose();
 
@@ -1459,12 +1463,13 @@ impl Session {
 
         // 记录调频
         if let Some(ref u) = self.user_dict {
-            u.bump_word(&cand.text, None);
+            u.bump_word(&cand.text, Some(&cand.syllables), None);
             if let Some(ref prev) = self.last_committed {
                 u.bump_bigram(prev, &cand.text);
             }
         }
         self.last_committed = Some(cand.text.clone());
+        self.prev_sylls = cand.syllables.split('\'').map(|s| s.to_string()).collect();
 
         let mut comp = self.compose();
         comp.committed = cand.text;
@@ -1498,6 +1503,7 @@ impl Session {
     pub fn reset(&mut self) -> Composition {
         self.input_raw.clear();
         self.last_committed = None;
+        self.prev_sylls.clear();
         self.punct_state.reset();
         self.compose()
     }
@@ -1517,38 +1523,241 @@ impl Session {
     }
 
     /// 联想候选查询
-    pub fn associate(&self, sylls: &[String]) -> Vec<Candidate> {
-        let syll_slices: Vec<&str> = sylls.iter().map(|s| s.as_str()).collect();
-        let matched = self.dict.query_prefix(&syll_slices, 16);
 
-        matched
-            .into_iter()
-            .map(|e| {
-                let text = if self.traditional {
-                    to_traditional(&e.word)
+    /// 推断学习词条的分段（Go inferSegs）：整句记录没有 Segs 时的兼容路径。
+    /// 要求逐字对应音节、**每个分段都是词典词**、且能切成 ≥2 段；切不出或
+    /// 本身已是词典词（普通词）时返回空（宁可当普通词，也不臆造边界）。
+    fn infer_segs(&self, word: &str, syllables: &[String]) -> Vec<String> {
+        if syllables.is_empty() {
+            return Vec::new();
+        }
+        let runes: Vec<char> = word.chars().collect();
+        if runes.len() != syllables.len() {
+            return Vec::new();
+        }
+        let syl_refs: Vec<&str> = syllables.iter().map(|s| s.as_str()).collect();
+        if self.dict.contains_word(word, &syl_refs) {
+            return Vec::new();
+        }
+        let n = runes.len();
+        let mut best = vec![i32::MAX; n + 1];
+        let mut prev = vec![0usize; n + 1];
+        best[0] = 0;
+        for pos in 0..n {
+            if best[pos] == i32::MAX {
+                continue;
+            }
+            for k in 1..=(n - pos) {
+                let seg: String = runes[pos..pos + k].iter().collect();
+                if !self.dict.contains_word(&seg, &syl_refs[pos..pos + k]) {
+                    continue;
+                }
+                if best[pos] + 1 < best[pos + k] {
+                    best[pos + k] = best[pos] + 1;
+                    prev[pos + k] = pos;
+                }
+            }
+        }
+        if best[n] < 2 {
+            return Vec::new();
+        }
+        let mut segs: Vec<String> = Vec::new();
+        let mut pos = n;
+        while pos > 0 {
+            let p = prev[pos];
+            segs.push(runes[p..pos].iter().collect());
+            pos = p;
+        }
+        segs.reverse();
+        segs
+    }
+
+    /// 学习词条的分段（Go entrySegs）：优先取记录里的 Segs（新数据），
+    /// 旧数据没有 Segs 时用词典最长词切分推断，推断不出则视为普通词。
+    fn entry_segs(&self, word: &str, syllables: &[String], segs: &[String]) -> Vec<String> {
+        if segs.len() >= 2 {
+            return segs.to_vec();
+        }
+        self.infer_segs(word, syllables)
+    }
+
+    /// 在整句式学习记录的分段边界上剥掉已上屏前缀（Go stripAtSegmentBoundary）：
+    /// prev_word 必须恰好等于前 k 段（k≥1 且 k<总段数）的拼接且音节数一致；
+    /// 不在边界上返回 None——调用方不应提供该「尾巴」候选。
+    fn strip_at_segment_boundary(
+        &self,
+        word: &str,
+        syllables: &[String],
+        segs: &[String],
+        prev_word: &str,
+        prev_sylls: &[String],
+    ) -> Option<(String, String)> {
+        if prev_word.is_empty() || prev_sylls.is_empty() || segs.len() < 2 {
+            return None;
+        }
+        let word_runes: Vec<char> = word.chars().collect();
+        let total_syls = syllables.len();
+        let mut rune_count = 0usize;
+        let mut syl_count = 0usize;
+        for (k, seg) in segs.iter().enumerate() {
+            let n = seg.chars().count();
+            rune_count += n;
+            syl_count += n;
+            if rune_count > word_runes.len() || syl_count > total_syls {
+                return None;
+            }
+            let prefix: String = word_runes[..rune_count].iter().collect();
+            if prefix == prev_word && syl_count == prev_sylls.len() {
+                if rune_count >= word_runes.len() || syl_count >= total_syls {
+                    return None; // 恰好等于整词：没有续接部分
+                }
+                let text: String = word_runes[rune_count..].iter().collect();
+                return Some((text, syllables[syl_count..].join("'")));
+            }
+            if k == segs.len() - 1 {
+                break;
+            }
+        }
+        None
+    }
+
+    pub fn associate(&self, sylls: &[String]) -> Vec<Candidate> {
+        const MAX_ASSOCIATE: usize = 30;
+        // 必须刚上屏过词（s.prev）：联想的语义是「词组续接」，不是按拼音猜词。
+        let prev = match self.last_committed.as_deref() {
+            Some(p) if !p.is_empty() => p,
+            _ => return Vec::new(),
+        };
+        // 剥前缀的切分基准一律取引擎自己记录的上屏音节（Go s.prevSylls），
+        // 调用方传的 sylls 只作兜底：壳传来的数组长度不可信（Linux/Windows 壳
+        // 的渐进上屏收尾把「上屏词文本」当音节传，单字「题」会被当成 1 个音节）。
+        let prev_sylls: Vec<String> = if !self.prev_sylls.is_empty() {
+            self.prev_sylls.clone()
+        } else {
+            sylls.to_vec()
+        };
+
+        // 1. 字前缀层命中：主词典 + 用户词组 + 用户调频词。
+        // 严格按**字**（不回退音节前缀）：回退层会混入同音其它字的续接词
+        // （选「测试」也弹「策士团」）。字前缀没有续接词时不弹联想。
+        struct RawHit {
+            word: String,
+            syllables: Vec<String>,
+            freq: i32,
+            segs: Vec<String>,
+            learned: bool,
+        }
+        let mut raw: Vec<RawHit> = Vec::new();
+        for e in self.dict.query_word_prefix(prev, 200) {
+            raw.push(RawHit {
+                word: e.word.clone(),
+                syllables: e.syllables.clone(),
+                freq: e.freq as i32,
+                segs: Vec::new(),
+                learned: false,
+            });
+        }
+        if let Some(u) = &self.user_dict {
+            for h in u.query_phrases_by_word_prefix(prev) {
+                raw.push(RawHit {
+                    word: h.word,
+                    syllables: h.syllables,
+                    freq: h.freq,
+                    segs: h.segs,
+                    learned: true,
+                });
+            }
+            for h in u.query_words_by_word_prefix(prev) {
+                raw.push(RawHit {
+                    word: h.word,
+                    syllables: h.syllables,
+                    freq: h.freq,
+                    segs: h.segs,
+                    learned: true,
+                });
+            }
+        }
+
+        // 2. 剥掉已上屏前缀：整句式学习记录只在用户确认过的分段边界剥
+        // （打「今」绝不给「天星期一」）。
+        let prev_chars = prev.chars().count();
+        let mut out: Vec<(Candidate, bool)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for h in raw {
+            let key = format!("{}|{}", h.word, h.syllables.join("'"));
+            if !seen.insert(key) {
+                continue;
+            }
+            let mut text = h.word.clone();
+            let mut syl_str = h.syllables.join("'");
+            if h.word.starts_with(prev) && h.syllables.len() > prev_sylls.len() {
+                if h.learned {
+                    let segs = self.entry_segs(&h.word, &h.syllables, &h.segs);
+                    if segs.len() >= 2 {
+                        match self.strip_at_segment_boundary(
+                            &h.word,
+                            &h.syllables,
+                            &segs,
+                            prev,
+                            &prev_sylls,
+                        ) {
+                            Some((t, s)) => {
+                                text = t;
+                                syl_str = s;
+                            }
+                            None => continue, // 不在确认过的分段边界：不提供整词尾巴
+                        }
+                    } else {
+                        text = h.word.chars().skip(prev_chars).collect();
+                        syl_str = h.syllables[prev_sylls.len()..].join("'");
+                    }
                 } else {
-                    e.word.clone()
-                };
+                    text = h.word.chars().skip(prev_chars).collect();
+                    syl_str = h.syllables[prev_sylls.len()..].join("'");
+                }
+                if text.is_empty() {
+                    continue;
+                }
+            }
+            out.push((
                 Candidate {
                     text,
-                    syllables: e.syllables.join("'"),
-                    score: 0,
+                    syllables: syl_str,
+                    score: h.freq,
                     from_user: false,
                     typo_fix: false,
-                }
-            })
-            .collect()
+                },
+                true, // 全部来自字前缀层
+            ));
+        }
+
+        // 3. 上下文加成：调频 + 「上屏词 → 联想词」共现（Bigram）。
+        if let Some(u) = &self.user_dict {
+            for item in out.iter_mut() {
+                item.0.score += u.score_full(&item.0.text, Some(prev));
+            }
+        }
+
+        // 4. 字前缀层优先，层内按加成后得分降序、同分按文本（与 Go 稳定排序一致）
+        out.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then(b.0.score.cmp(&a.0.score))
+                .then(a.0.text.cmp(&b.0.text))
+        });
+        out.truncate(MAX_ASSOCIATE);
+        out.into_iter().map(|(c, _)| c).collect()
     }
 
     /// 联想词直接上屏
-    pub fn associate_select(&mut self, word: &str, _sylls: &[String]) -> Result<String, String> {
+    pub fn associate_select(&mut self, word: &str, sylls: &[String]) -> Result<String, String> {
         if let Some(ref u) = self.user_dict {
-            u.bump_word(word, None);
+            u.bump_word(word, Some(&sylls.join("'")), None);
             if let Some(ref prev) = self.last_committed {
                 u.bump_bigram(prev, word);
             }
         }
         self.last_committed = Some(word.to_string());
+        self.prev_sylls = sylls.to_vec();
         Ok(word.to_string())
     }
 
@@ -2099,5 +2308,69 @@ mod tests {
                 comp.candidates[0].text
             );
         }
+    }
+    /// 联想按**上屏词的字**续接（Go Associate）：选「测试」→ 联想「测试题/测试员」，
+    /// 不混入同音其它字的续接词（策士团），层内按词频降序。
+    #[test]
+    fn test_associate_word_prefix() {
+        let mut dict = Dictionary::new();
+        for (word, pinyin, freq) in [
+            ("测试", "ce'shi", 100u32),
+            ("测试题", "ce'shi'ti", 40),
+            ("测试员", "ce'shi'yuan", 30),
+            ("策士团", "ce'shi'tuan", 90),
+        ] {
+            dict.insert(crate::dict::WordEntry {
+                word: word.to_string(),
+                pinyin: pinyin.to_string(),
+                syllables: pinyin.split('\'').map(|s| s.to_string()).collect(),
+                freq,
+            });
+        }
+        dict.sort_nodes();
+        let mut sess = Session::new(std::sync::Arc::new(dict), None);
+        sess.input("ceshi", false).unwrap();
+        let idx = sess
+            .all_candidates
+            .iter()
+            .position(|(c, _)| c.text == "测试")
+            .expect("应有「测试」候选");
+        sess.select(idx).unwrap();
+        let assoc = sess.associate(&["ce".to_string(), "shi".to_string()]);
+        let texts: Vec<&str> = assoc.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["题", "员"], "只续接同字前缀、按词频降序: {texts:?}");
+    }
+
+    /// 整句安全约束（项目红线）：整句式学习记录只在用户确认过的**分段边界**
+    /// 剥前缀——确认过「今天 / 星期一」时，上屏「今天」给出「星期一」，
+    /// 上屏「今」绝不给「天星期一」。
+    #[test]
+    fn test_associate_sentence_only_at_segment_boundary() {
+        let dict = std::sync::Arc::new(Dictionary::new());
+        let user = std::sync::Arc::new(UserDict::new::<&str>(None));
+        user.bump_word(
+            "今天星期一",
+            Some("jin'tian'xing'qi'yi"),
+            Some(vec!["今天".to_string(), "星期一".to_string()]),
+        );
+        let mut sess = Session::new(dict, Some(user));
+
+        // 边界：上屏「今天」→ 只给「星期一」
+        sess.last_committed = Some("今天".to_string());
+        sess.prev_sylls = vec!["jin".to_string(), "tian".to_string()];
+        let assoc = sess.associate(&[]);
+        let texts: Vec<&str> = assoc.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["星期一"], "分段边界上应给出续接段: {texts:?}");
+        assert_eq!(assoc[0].syllables, "xing'qi'yi");
+
+        // 非边界：上屏「今」→ 不得给出整词尾巴「天星期一」
+        sess.last_committed = Some("今".to_string());
+        sess.prev_sylls = vec!["jin".to_string()];
+        let assoc = sess.associate(&[]);
+        assert!(
+            assoc.is_empty(),
+            "未确认的分段边界不得提供整词尾巴: {:?}",
+            assoc.iter().map(|c| c.text.as_str()).collect::<Vec<_>>()
+        );
     }
 }

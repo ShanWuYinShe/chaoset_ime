@@ -226,6 +226,29 @@ impl Dictionary {
     pub fn contains_word(&self, word: &str, syllables: &[&str]) -> bool {
         self.exact_words(syllables).iter().any(|e| e.word == word)
     }
+    /// 按**词字面**前缀查词条（Go Dictionary.QueryWordPrefix）：联想续接按
+    /// 上屏词的字走（测试→测试题/测试员），只要词库里以该词开头、且比它更长
+    /// 的词（同词本身不算续接）。排序：词频降序 → 词字典序 → 音节串，保证
+    /// 多读音同词时的确定性；最多 max_results 条。
+    pub fn query_word_prefix(&self, prefix: &str, max_results: usize) -> Vec<&WordEntry> {
+        if prefix.is_empty() || max_results == 0 {
+            return Vec::new();
+        }
+        let prefix_len = prefix.chars().count();
+        let mut out: Vec<&WordEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.word.chars().count() > prefix_len && e.word.starts_with(prefix))
+            .collect();
+        out.sort_by(|a, b| {
+            b.freq
+                .cmp(&a.freq)
+                .then(a.word.cmp(&b.word))
+                .then(a.syllables.join("'").cmp(&b.syllables.join("'")))
+        });
+        out.truncate(max_results);
+        out
+    }
 
     /// 精确匹配音节序列的词条（声母碎片按碎片导航展开；碎片导航会展开
     /// 多个子树，按词频降序截断到 limit——对齐 Go QueryTokensExact 的上限
