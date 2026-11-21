@@ -284,7 +284,7 @@ func checkCICoverage(fsys fs.FS, problems *[]string) {
 	}
 	checkContains(fsys, problems, groupCICoverage, ciYML,
 		"cargo test --manifest-path crates/Cargo.toml -p chaoset-config -- --nocapture",
-		"cargo test --manifest-path crates/Cargo.toml -p chaoset-config windows_store -- --nocapture",
+		"cargo test --manifest-path crates/Cargo.toml -p chaoset-config --test windows_store -- --nocapture",
 		"设置存储单测（macOS defaults）",
 		"Windows 设置存储单测（注册表往返）",
 		"build/chaosetctl")
