@@ -7,6 +7,7 @@ pub mod s2t;
 pub mod session;
 pub mod shuangpin;
 pub mod syllable;
+pub mod typo;
 pub mod userdict;
 
 pub use dict::{Dictionary, WordEntry};
