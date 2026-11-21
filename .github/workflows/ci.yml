@@ -154,7 +154,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ibus dbus dbus-x11 gir1.2-ibus-1.0 libibus-1.0-dev \
-            build-essential file xvfb
+            build-essential file xvfb libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libwayland-dev
 
       - name: ibus 引擎端到端（组词/上屏/多实例隔离/中英切换/翻页）
         run: |
