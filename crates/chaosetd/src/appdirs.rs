@@ -12,11 +12,17 @@ pub fn data_dir() -> std::io::Result<PathBuf> {
     }
     #[cfg(target_os = "windows")]
     {
-        let base = std::env::var("LOCALAPPDATA").or_else(|_| {
-            let userprofile = std::env::var("USERPROFILE")
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-            Ok(format!("{}\\AppData\\Local", userprofile))
-        })?;
+        // 注意别用 or_else 闭包：or_else 的 E 是原 Result 的 VarError，闭包里
+        // 用 `?` 转换 io::Error 会撞类型（Windows 专属代码在 macOS/Linux 不编译，
+        // 本地无法暴露，CI 的 Windows 构建会报 E0282）。match 最直白。
+        let base = match std::env::var("LOCALAPPDATA") {
+            Ok(v) => v,
+            Err(_) => {
+                let userprofile = std::env::var("USERPROFILE")
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                format!("{}\\AppData\\Local", userprofile)
+            }
+        };
         Ok(PathBuf::from(base).join("Chaoset"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
