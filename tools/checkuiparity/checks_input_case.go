@@ -32,6 +32,13 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 		"preeditWithCase(s.input, st.patterns[0])",
 	)
 
+	// Rust 引擎（迁移目标）：同契约——原样保存 + 小写匹配视图 + 预编辑还原大小写。
+	checkContains(fsys, problems, group, "crates/chaoset-engine/src/session.rs",
+		"fn match_input(&self) -> String {",
+		"fn preedit_with_case(input: &str, tokens: &[Token]) -> String {",
+		"c.is_ascii_alphabetic()",
+	)
+
 	// macOS 壳：a-z 与 A-Z 都算组词字符（大写不再 passThrough）。
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
 		"scalar.value >= 65 && scalar.value <= 90",
