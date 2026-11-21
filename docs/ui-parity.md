@@ -452,9 +452,9 @@ Backspace/Delete 按音节回退、Shift/Ctrl/Super+Backspace/Delete 全部删�
 
 ## 性能参考
 
-macOS/Windows 候选数据都来自 daemon 的纯数据 IPC；daemon 单键处理基准在
-engine/scale_bench_test.go，用 go test ./engine -bench . 复跑，不以固定数字作为
-硬指标。壳侧回归跑 macOS visual-parity.sh、Windows core_test 与 release 冒烟。
+macOS/Windows 候选数据都来自 daemon 的纯数据 IPC；单键处理性能以真实输入体验与
+`cargo test --release` 为准，不在文档里写死数字。壳侧回归跑 macOS visual-parity.sh、
+Windows core_test 与 release 冒烟。
 
 ## 渐进上屏的跨程序兼容模型
 

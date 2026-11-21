@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-static CHARS_DATA: &str = include_str!("../../../engine/dp_data/STCharacters.txt");
-static PHRASES_DATA: &str = include_str!("../../../engine/dp_data/STPhrases.txt");
+static CHARS_DATA: &str = include_str!("data/s2t/STCharacters.txt");
+static PHRASES_DATA: &str = include_str!("data/s2t/STPhrases.txt");
 
 struct S2tData {
     chars: HashMap<char, char>,

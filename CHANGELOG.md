@@ -4,13 +4,20 @@
 
 ## 未发布
 
+- **重构(引擎)：删除 Go 引擎（`engine/`）与差分工具，Rust 成为唯一实现**：
+  - 前置解耦：`ipc` 客户端 DTO 收进 `ipc/types.go`、`chaoset-cli` 改为纯 daemon 客户端、`chaoset-import`/`chaoset-userdict`/`chaoset-dictgen` 改用新增的 `internal/dict` 与本地文件实现，Go 工具不再 import `chaoset.ime/engine`；同时删除已无运行时消费者的二进制词库（`data/dict_common.bin`、dictgen `-bin`/`-compile`）；
+  - 删除 `engine/`（Go 算法/测试）与 `tools/engineparity`（Go↔Rust 差分工具，`make engineparity` 同步移除）；41 个差分场景转为 **Rust 冻结回放基线**（`crates/chaoset-engine/tests/parity_scenarios.rs` + `tests/data/*.jsonl`，含候选打分），行为回归仍会被 CI 捕获；
+  - 数据契约迁到 Rust：`crates/chaoset-engine/tests/dict_contract.rs` 严格解析内置词库与手工补充表（规模/音节数/词频/已合并）并校验运行时加载与 `PAGE_SIZE`；OpenCC 简繁数据从 `engine/dp_data/` 移到 `crates/chaoset-engine/src/data/s2t/`（Rust 内嵌、Go 生成工具按仓库路径读取，单一数据源）；
+  - `tools/checkuiparity`：「engine 纯净约束」组改为「Go 引擎已移除」——断言 `engine/` 不存在、任何 Go 文件不得 import `chaoset.ime/engine`；每页候选数/字母大小写/右键删除等断言真源切到 Rust 源；
+  - `docs/architecture.md`/`README.md`/`docs/dict.md`/`docs/ui-parity.md`/`AGENTS.md` 同步删除 Go 引擎段落与基准数字，改为 Rust 模块路径与 `cargo test` 口径；
+  - 验证：`go build ./...`、`make vet`（54 组）、`go test ./...`、`cargo test --manifest-path crates/Cargo.toml` 全过（新增数据契约与 41 场景冻结基线测试）；CI 7 个 job 全绿。
 - **体验(设置)：新增「模糊音 / 双拼方案」设置，三端可配置并即时生效**：此前两项只能靠 daemon 启动参数、macOS/Windows 用户无法启用。Go 设置核心（internal/settings + chaoset-settingsctl）新增 fuzzy/shuangpin（三平台存储键与现有键逐字兼容）；Rust daemon 启动时读平台设置（UserDefaults/HKCU/config.json，显式参数优先，启动日志打印生效值与来源）；Slint 统一设置中心「输入行为」卡新增模糊音开关与双拼四选一胶囊；macOS AppKit 设置窗同步（含内容区滚动）；改完自动重启 daemon 生效；macOS 发行包开始携带 Slint 统一设置中心（此前代码优先打开它但从未打包，实际只会回退旧窗口）。
 - **重构(迁移)：删除 Go daemon（`cmd/chaosetd` 与 `ipc` 服务端），Rust daemon 成为唯一实现**：
   - 删除 `cmd/chaosetd`（含 `run_test.go`/`listen_unix_test.go`/`seed_test.go`/`run_test.go`/singleton 等 6 个文件）与 `ipc/server.go`、服务端管道 ACL（`pipe_sddl.go`）、daemon 侧 UI 宿主拉起（`ui_*.go`）及其 8 个服务端/集成测试；`ipc` 包只保留客户端侧（`Endpoint`+`DialEndpoint`、`Client`、命名管道名/拨号）；
   - `Makefile` 不再构建 `bin/chaosetd-go`（回滚路径随 Go daemon 一起删除）；Arch `PKGBUILD` 改 cargo 构建 Rust daemon（`makedepends` 加 `rust`）；
   - `tools/checkuiparity` 的 daemon 侧契约断言从 Go 源码迁到 Rust 源：单实例锁位置（`crates/chaosetd/src/main.rs`）、Windows 互斥体（`singleton.rs`）、IPC 方法分发（`ipc.rs`）、UI 宿主代拉起（`ui.rs`）、reset/userDelete 语义；
-  - `AGENTS.md`/`docs/architecture.md`/daemon 生命周期 skill 同步：daemon 唯一实现为 Rust；Go 引擎仅作差分基线临时保留（下一批删除）。- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
-  - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版保留为 `bin/chaosetd-go`（对照与回滚路径，算法层已由 `make engineparity` 差分 41 场景对齐）；
+  - `AGENTS.md`/`docs/architecture.md`/daemon 生命周期 skill 同步：daemon 唯一实现为 Rust；Go 引擎仅作差分基线临时保留（已在本轮删除，见下条）。- **重构(打包)：Rust daemon（`crates/chaosetd`）接替发行包——三端 Makefile/构建脚本从 Go `cmd/chaosetd` 切到 Rust**：
+  - `make build` / `make run-daemon` / `make package-linux` / `make package-windows` / macOS `build.sh` / Windows `package_msvc.sh` / Linux `test-ci.sh` 全部改为构建 Rust daemon；Go 版保留为 `bin/chaosetd-go`（对照与回滚路径，算法层已由 `make engineparity` 差分 41 场景对齐；后续 PR 已删除 Go 版）；
   - macOS：Rust daemon 同样产出 **universal 二进制**（aarch64 + x86_64 交叉构建后 lipo，缺失的 rustup 目标自动补装）；
   - Windows：release 构建带 `windows_subsystem = "windows"`（无控制台闪窗，对应原 Go `-H=windowsgui`），并补齐 `Win32_System_Console` feature；
   - daemon `-log` 真正落盘（此前 Rust 版忽略该参数）：启动即把 stderr 重定向到指定日志文件（目录不存在先建，打不开时回退临时目录 + PID 后缀），与 Go daemon `-log` 同口径——三端壳都靠它排障；

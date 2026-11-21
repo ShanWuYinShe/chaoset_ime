@@ -111,9 +111,9 @@ func checkCandidateDelete(fsys fs.FS, problems *[]string) {
 		"deleteCandidateByIndex", "userDelete", "assocSylls_")
 	checkContains(fsys, problems, group, winCoreHpp, "userDelete")
 	checkContains(fsys, problems, group, winCoreCpp, "userDelete")
-	// Go：引擎删除 API + IPC 分发/客户端 + CLI 子命令（daemon 与本地文件两模式）。
-	checkContains(fsys, problems, group, userdictGo,
-		"func (u *UserDict) DeleteWord", "u.file.Phrases")
+	// Rust 引擎：删除 API（Words 调频 + Phrases 用户词组；Bigrams 刻意保留）。
+	checkContains(fsys, problems, group, rustUserdict,
+		"pub fn delete_word", "phrases")
 	checkContains(fsys, problems, group, ipcServer, "\"userDelete\" =>", "delete_word")
 	checkContains(fsys, problems, group, ipcClient, "func (c *Client) UserDelete")
 	checkContains(fsys, problems, group, userdictCLI,
@@ -477,8 +477,8 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 
 // checkCandidatePageSize 「每页候选数」三端与引擎一致（2026-11-08）。
 //
-// 唯一真源是 engine/session.go 的 pageSize（引擎按它分页，PageSize() 导出该口径；
-// engine/api_contract_test.go 另有一道硬断言）。三端壳为了「联想候选本地分页 +
+// 唯一真源是 Rust 引擎的 PAGE_SIZE（crates/chaoset-engine/src/session.rs，引擎按它
+// 分页；crates/chaoset-engine/tests/dict_contract.rs 另有一道硬断言）。三端壳为了「联想候选本地分页 +
 // 数字键 1..N 指位」各自维护了页容量常量，都是显式字面量、可静态精确定位：
 //   - macOS  shims/macos/src/ChaosetController.swift  associatePageSize（KeyRouter 复用）；
 //   - Windows shims/windows/src/win32.cpp             kPageSize；
@@ -490,14 +490,11 @@ func checkCandidateWindow(fsys fs.FS, problems *[]string) {
 // 本地页容量常量」而不是删除本组。
 func checkCandidatePageSize(fsys fs.FS, problems *[]string) {
 	const group = groupCandidatePageSize
-	session := mustRead(fsys, "engine/session.go")
-	engineSize, ok := firstInt(session, `(?m)^\s*pageSize = ([0-9]+)\s*$`)
+	session := mustRead(fsys, "crates/chaoset-engine/src/session.rs")
+	engineSize, ok := firstInt(session, `(?m)^pub const PAGE_SIZE: usize = ([0-9]+);`)
 	if !ok {
-		*problems = append(*problems, group+"：无法从 engine/session.go 解析 pageSize 常量（实现可能已重构，需同步更新检查器）")
+		*problems = append(*problems, group+"：无法从 crates/chaoset-engine/src/session.rs 解析 PAGE_SIZE 常量（实现可能已重构，需同步更新检查器）")
 		return
-	}
-	if !strings.Contains(session, "func PageSize() int { return pageSize }") {
-		*problems = append(*problems, group+"：engine/session.go 缺少 func PageSize() int { return pageSize }（壳依赖该导出口径判定数字键范围）")
 	}
 	ends := []struct {
 		name string

@@ -12,27 +12,12 @@ import (
 //  2. 引擎把原始大小写保存在组词串里，回车（CommitRaw）原样上屏；
 //  3. 拼音匹配走小写视图（matchInput），候选与全小写一致。
 //
-// 这项契约跨「Go 引擎 + 三个壳」，任一端回退（例如壳重新只认 a-z、引擎
+// 这项契约跨「Rust 引擎 + 三个壳」，任一端回退（例如壳重新只认 a-z、引擎
 // 重新 ToLower 后过滤）都会让用户重新被迫切输入法，所以静态锁死。
 func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 	const group = groupLetterCaseComposition
 
-	// 引擎：接收大小写原样保存 + 匹配用小写视图 + 预编辑保留大小写。
-	checkContains(fsys, problems, group, "engine/session.go",
-		"func (s *Session) matchInput() string {",
-		"strings.ToLower(s.input)",
-		"r >= 'A' && r <= 'Z'",
-		"s.input += string(r)", // 原样保存（先于 matchInput 的小写视图）
-	)
-	checkContains(fsys, problems, group, "engine/compose_state.go",
-		"s.matchInput()",
-	)
-	checkContains(fsys, problems, group, "engine/compose.go",
-		"func preeditWithCase(input string, tokens []Token) string {",
-		"preeditWithCase(s.input, st.patterns[0])",
-	)
-
-	// Rust 引擎（迁移目标）：同契约——原样保存 + 小写匹配视图 + 预编辑还原大小写。
+	// Rust 引擎（唯一实现）：原样保存 + 小写匹配视图 + 预编辑还原大小写。
 	checkContains(fsys, problems, group, "crates/chaoset-engine/src/session.rs",
 		"fn match_input(&self) -> String {",
 		"fn preedit_with_case(input: &str, tokens: &[Token]) -> String {",

@@ -662,8 +662,38 @@ func TestGroupRegistry(t *testing.T) {
 
 // TestCheckCandidatePageSize 锁住「每页候选数」四端一致：真实仓库必须通过；
 // 引擎 pageSize 漂移、macOS associatePageSize 漂移都必须被捕获。
+// TestCheckNoGoEngine 锁住「Go 引擎已删除」：真实仓库必须通过；engine/ 目录
+// 重新出现或任何 Go 文件 import chaoset.ime/engine 都必须被捕获（双实现漂移回归）。
+func TestCheckNoGoEngine(t *testing.T) {
+	var problems []string
+	checkNoGoEngine(os.DirFS("../../"), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实仓库不应存在 Go 引擎依赖（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	// 变异 1：engine/ 目录重新出现。
+	fsys := fstest.MapFS{
+		"engine/session.go": {Data: []byte("package engine\n")},
+	}
+	problems = nil
+	checkNoGoEngine(fsys, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "engine/ 目录不应存在") {
+		t.Fatalf("engine/ 目录回退应被捕获，实际：%v", problems)
+	}
+
+	// 变异 2：Go 文件重新 import 引擎包（注释里的同名字样不算）。
+	fsys = fstest.MapFS{
+		"cmd/foo/main.go": {Data: []byte("package main\n\nimport (\n\t\"chaoset.ime/engine\"\n)\n")},
+	}
+	problems = nil
+	checkNoGoEngine(fsys, &problems)
+	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "仍 import chaoset.ime/engine") {
+		t.Fatalf("Go 文件重新依赖引擎应被捕获，实际：%v", problems)
+	}
+}
+
 func TestCheckCandidatePageSize(t *testing.T) {
-	pageSizePaths := []string{"engine/session.go", macController, winShell, linuxEngine}
+	pageSizePaths := []string{rustSession, macController, winShell, linuxEngine}
 	makeFS := func(overrides map[string]string) fstest.MapFS {
 		fsys := fstest.MapFS{}
 		for _, p := range pageSizePaths {
@@ -682,13 +712,13 @@ func TestCheckCandidatePageSize(t *testing.T) {
 	}
 
 	// 变异 1：引擎 pageSize 6 -> 9，三端都应报错。
-	engineText := string(readRepo(t, "engine/session.go"))
-	mutatedEngine := strings.Replace(engineText, "pageSize = 6", "pageSize = 9", 1)
+	engineText := string(readRepo(t, rustSession))
+	mutatedEngine := strings.Replace(engineText, "pub const PAGE_SIZE: usize = 6;", "pub const PAGE_SIZE: usize = 9;", 1)
 	if mutatedEngine == engineText {
-		t.Fatal("变异未生效：engine/session.go 里找不到 pageSize = 6")
+		t.Fatal("变异未生效：session.rs 里找不到 PAGE_SIZE = 6")
 	}
 	problems = nil
-	checkCandidatePageSize(makeFS(map[string]string{"engine/session.go": mutatedEngine}), &problems)
+	checkCandidatePageSize(makeFS(map[string]string{rustSession: mutatedEngine}), &problems)
 	joined := strings.Join(problems, "\n")
 	for _, end := range []string{"macOS", "Windows", "Linux"} {
 		if !strings.Contains(joined, end+" 每页候选数 = 6") {

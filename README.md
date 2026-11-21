@@ -45,15 +45,15 @@
 
 ## 架构概览
 
-架构：**Go 引擎 + 守护进程（daemon）+ 各平台原生薄壳**。拼音/联想算法只写一份
-在 `engine/`；平台壳只负责「按键转发 + 文本上屏 + UI」。三端壳都通过 IPC 连
+架构：**Rust 引擎 + 守护进程（daemon）+ 各平台原生薄壳**。拼音/联想算法只写一份
+在 `crates/chaoset-engine/`；平台壳只负责「按键转发 + 文本上屏 + UI」。三端壳都通过 IPC 连
 daemon（Linux 为原生 C++/libibus 壳 + Unix socket；macOS 为 Swift IMK；
 Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + WeaselServer、
 搜狗的多进程形态、macOS InputMethodKit 本身就是进程间模型）。
 
 ```
 ┌─────────────── chaosetd (Rust，crates/chaosetd) ───────────────┐
-│  engine：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
+│  引擎：拼音切分 / 词典检索 / 候选排序 / 词组进化自学习  │
 │  ipc  ：length-prefixed JSON（Unix socket / 命名管道）      │
 └───────┬───────────────────┬───────────────────┬────────┘
         │ macOS             │ Windows           │ Linux
@@ -63,12 +63,12 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 
 ## 与 Squirrel / Rime 的关系（本项目不含其代码）
 
-本项目是**从零实现**的：Go 引擎（`engine/`）、IPC（`ipc/`）、视觉参数真源
+本项目是**从零实现**的：Rust 引擎（`crates/chaoset-engine/`）、IPC（`ipc/`）、视觉参数真源
 、三端薄壳（`shims/`）全部为本仓库自研代码，
 `git ls-files` 中没有任何 Squirrel / librime 源码，也没有引用其图标素材。
 来自第三方的只有**数据**：
 
-- OpenCC 简繁词典（Apache-2.0，内嵌于 `engine/dp_data/`，见其 README）；
+- OpenCC 简繁词典（Apache-2.0，编入 `crates/chaoset-engine/src/data/s2t/`，见其 README）；
 - 可选导入的 CC-CEDICT 词库（CC-BY-SA 4.0，仓库不分发，由用户自行下载后合并）；
 - 内置常用词库 `data/dict_common.tsv`：由 `cmd/chaoset-dictgen` 按「常用性门槛」
   流水线生成——词表来自《现代汉语常用词表》+ HSK 3.0 + 高频用法 + 现代热词补充表，
@@ -78,7 +78,7 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
   [pinyin-data](https://github.com/mozillazg/pinyin-data)（均 MIT）。它是本仓库的
   **生成产物**而非拷贝的词库文件，再生成方式见「内置词库与再生成」。
   **代码 MIT，生成的词库数据 CC BY-SA 4.0**（署名见 `data/NOTICE.md`）；
-- `engine/double_pinyin.go` 的双拼键位按 Rime schema 的 speller algebra 规则
+- `crates/chaoset-engine/src/shuangpin.rs` 的双拼键位按 Rime schema 的 speller algebra 规则
   **转写生成**（表由本项目正向生成并做完整性测试，不是拷贝实现）。
 
 > 排障提示：系统「输入法」列表里的**鼠须管**（`im.rime.inputmethod.Squirrel`）是
@@ -87,24 +87,25 @@ Windows 为 C++ TSF）。该形态已被业界验证（小狼毫的 TSF DLL + We
 ## 目录结构
 
 ```
-engine/            核心引擎（纯逻辑，不依赖任何 OS API，全部可单测）
-  syllable.go        无声调标准音节表（ü 以 v 输入：nv=女、lve=略）
-  dict.go            音节 Trie 词典 + TSV 词库解析 + 多词库合并加载
-  session.go         组词会话状态机（输入/退格/重置/选候选/词组进化）
-  punct.go           中文标点映射（直映表 + 引号开闭配对 + 循环）
-  fuzzy.go           模糊音等价展开（zh/z、n/l、an/ang 等，默认关闭）
-  s2t.go             简繁单字映射（零错误策略，默认关闭）
-  double_pinyin.go   自然码双拼键码管线（Rime algebra 忠实转写，默认关闭）
-  userdict.go        用户数据：调频记录、合成词组、上下文共现
-  import.go          Rime dict.yaml / TSV 宽容解析（热词导入）
-ipc/               IPC 协议与服务端/客户端（client 实现 engine.Controller）
+crates/chaoset-engine/  核心引擎（纯 Rust 逻辑，不依赖任何 OS API/UI，全部可单测）
+  src/syllable.rs       无声调标准音节表（ü 以 v 输入：nv=女、lve=略）
+  src/dict.rs           音节 Trie 词典 + TSV 词库解析 + 多词库合并加载
+  src/session.rs        组词会话状态机（输入/退格/重置/选候选/词组进化/联想）
+  src/punct.rs          中文标点映射（直映表 + 引号开闭配对 + 循环）
+  src/fuzzy.rs          模糊音等价展开（zh/z、n/l、an/ang 等，默认关闭）
+  src/s2t.rs            简繁字词映射（数据在 src/data/s2t/，默认关闭）
+  src/shuangpin.rs      自然码/微软/小鹤双拼键码管线（默认关闭）
+  src/userdict.rs       用户数据：调频记录、合成词组、上下文共现
+  tests/dict_contract.rs     内置词库严格契约（CI 门禁）
+  tests/parity_scenarios.rs  41 个冻结回放场景（行为回归基线）
+crates/chaosetd/        守护进程（Rust；-dict 可多次叠加）
+ipc/               IPC 帧协议与客户端（client 实现 ipc.Controller；服务端在 Rust）
 docs/ui-parity.md  候选窗视觉基准与三端差异表（期望值同时内联在 visual-parity.sh）：
                    无运行时消费者——实际渲染是 macOS CandidatePanelView.swift 与
-                   Windows candidate_window.cpp 两份实现；Go↔macOS 的布局/色值一致性由
+                   Windows candidate_window.cpp 两份实现；三端布局/色值期望由
                    shims/macos/tests/visual-parity.sh 机器断言；daemon 不提供贴图
                    渲染链路
 cmd/
-  chaosetd/          守护进程二进制（Rust 实现；-dict 可多次叠加）
   chaoset-cli/       终端测试台（连接 daemon 的 IPC 客户端）
   chaoset-import/    热词导入工具（合并输出 TSV）
   chaoset-dictgen/   内置词库生成工具（常用性门槛词表 + wordfreq/HanLP 词频 → TSV）
@@ -145,19 +146,19 @@ shims/
 
 ## 中文标点
 
-标点键由引擎统一映射（`engine.IsPunctKey` / `Session.Punct`），三端壳只转发按键：
+标点键由引擎统一映射（`crates/chaoset-engine/src/punct.rs` 的 `is_punct_key` 与标点状态机），三端壳只转发按键：
 组词中打标点先上屏首选候选再出标点（`nihao` + `,` → `你好，`）；空组词直接映射
 （`,` → `，`、`\` → `、`、`<` → `《`）；双/单引号各自按开闭交替配对；
 句号/逗号同键连按在「全角→半角」间循环（。→.→。，，→,），任何其他
 输入/上屏即回到首项。组词中的 `'` 仍是音节分隔符，不作为标点。
-完整映射表见 `engine/punct.go`。
+完整映射表见 `crates/chaoset-engine/src/punct.rs`。
 
 ## 输入预测（末音节续接）
 
 用户在打字时，**每个音节的最后一个字母之前都处于「没打完」状态**——这是输入法
 最高频的输入形态。普通匹配容易给出巧合碎词：`zhonggu` 出「中古」、
 `beijin` 出「被进」、`daxu` 出「大需」，真正想打的「中国 / 北京 / 大学」
-反而找不到。本项目把末段当作**待补全的音节**去词典续接（`engine.QueryContinuation`）：
+反而找不到。本项目把末段当作**待补全的音节**去词典续接（`Dictionary::query_continuation`）：
 
 | 输入 | 普通匹配首选 | 续接首选 | 续接依据 |
 |---|---|---|---|
@@ -225,13 +226,11 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
   「关系」），最多提升 8 个；候选带整串消费标记，选中即上屏；
 - 单字候选始终保留，组合候选不妨碍逐字挑选。
 
-回归测试把边界锁死：`engine/sentence_test.go`（真实词条优先 + 组合只能由已有词
-组成）、`engine/typo_dp_test.go`（错拼提升 / 正确输入低优先级 / 分段存在性）、
-`engine/typo_test.go`（既有纠错首选不变）、`engine/user_history_test.go`
-（用户历史优先）。
+回归测试把边界锁死：`crates/chaoset-engine/src/session.rs` 的单元测试（真实词条优先 +
+组合只能由已有词组成 / 错拼提升 / 用户历史优先），以及 `tests/parity_scenarios.rs`
+的 41 个冻结回放场景（候选与打分整体行为）。
 
-固定口径扫描的 top1/top3 见下方「实测数据」；热路径为微秒级，基准见
-`engine/scale_bench_test.go` 的 `BenchmarkComposeCommonDict`。
+固定口径扫描的 top1/top3 见下方「实测数据」；热路径为微秒级。
 
 ### 引擎候选规则速览（当前）
 
@@ -290,21 +289,19 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 - **词库**：内置 65k 条常用性门槛词库（方案 A，数据 CC BY-SA 4.0，见
   `data/NOTICE.md`）；手工补充表 `data/dict_extra.tsv`（口语）与
   `data/dict_hot.tsv`（现代/热词，随版本更新）。
-- **回归测试**：候选来源总闸门 `engine/sentence_test.go`、错拼/组合
-  `engine/typo_dp_test.go` / `engine/typo_test.go`、用户历史
-  `engine/user_history_test.go`、单字兜底 `engine/short_pinyin_single_test.go` /
-  `engine/initials_test.go`、歧义切分 `engine/initials_test.go`、连写匹配
-  `engine/dp_match_test.go`、词库契约 `engine/data_contract_test.go`。
+- **回归测试**：候选来源总闸门、错拼/组合、用户历史、单字兜底、歧义切分、连写匹配
+  都在 `crates/chaoset-engine/src/session.rs` 的单元测试里；词库契约在
+  `crates/chaoset-engine/tests/dict_contract.rs`。
 
 ### ü 的两种写法
 
 音节表与小词库统一用 `v` 记写 ü（`nv`=女、`lve`=略），但用户键盘上更常敲 `u`。
-现在 `lue`/ `nue` 会归一为 `lve`/`nve`（`engine.syllableAliases`），
+现在 `lue`/ `nue` 会归一为 `lve`/`nve`（`crates/chaoset-engine/src/syllable.rs` 的 `canonical_syllable`），
 两者都能打出「略 / 虐」。`jue/que/xue/yue` 本来就以 u 记写，不在别名表里，不受影响。
 
 ### 实测数据（固定口径）
 
-下列数字来自内部固定口径扫描（扫描器不随仓库分发）；日常回归以 `engine/` 的测试
+下列数字来自内部固定口径扫描（扫描器不随仓库分发）；日常回归以 `crates/chaoset-engine` 的测试
 与基准为准，改排序前后应使用同一口径重新取数，不要直接跨版本比较绝对值：
 
 - 词条池：`data/dict_common.tsv` 中 2–4 音节、词频 ≥30、词长 == 音节数
@@ -333,7 +330,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 漏敲一个字母（`zhonguo`）、敲错一个键。普通匹配对这些输入要么给出一堆碎片
 假词（`zhogn` → 「中欧国内」），要么直接无候选。
 
-现在对输入做**单次编辑与粘键折叠**修正后重新查询（`engine/typoCorrections`），覆盖六类手误与拼音习惯：
+现在对输入做**单次编辑与粘键折叠**修正后重新查询（`crates/chaoset-engine/src/syllable.rs` 的 `typo_corrections`），覆盖六类手误与拼音习惯：
 
 | 类型 | 例子 | 修正后 | 结果 |
 |---|---|---|---|
@@ -357,7 +354,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 **跨音节边界不算反序手误**：`gongneng` = `gong`+`neng` 的 `gn` 是合法拼写；
 纯声母简拼 `gn`（= gong+neng）同样合法。整串能切成完整音节、或所有切分路径
 都是纯声母碎片时，不触发反序手误判定，常规候选与单字兜底照常工作（回归：
-`engine/initials_test.go` 的 `TestValidPinyinCrossBoundaryGN`）。
+`crates/chaoset-engine/src/session.rs` 的跨音节边界单元测试）。
 
 韵母级反序 **ao/oa、ua/au、ue/eu** 在拼音音节里不出现，但可能与「合法混拼」同形
 （如 `oa` = o+a），归为软纠错（`softMistakePairs`）：只在纠错路径里作为最高
@@ -381,8 +378,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 - 如果纠错候选之外没有足够的正常候选（只有纠错结果，或候选总数不足 3 个），
   纠错从第 1 位开始（没有可填充的正常候选）。
 
-回归测试：`engine/typo_test.go`、`engine/typo_common_mistakes_test.go` 中的
-`assertTypoCorrectionPosition`。
+回归测试：`crates/chaoset-engine/src/session.rs` 中 `promote_typo_corrections` 的单元测试。
 
 **刻意不做**：`ai/ia`、`ui/iu`、`ou/uo`、`ei/ie`、`an/na`、`en/ne`、
 `in/ni`、`un/nu` 这类**两侧都合法**的相邻互换（如 `shuoji` 对 `shouji`、
@@ -413,7 +409,7 @@ xianjiaotongdaxue）；这一步只沿词库已有词条边前进，不会造词
 
 ## 模糊音
 
-默认关闭，`-fuzzy` 开启（daemon 与本地测试台均支持）：
+默认关闭：设置窗「模糊音」开关（写入平台设置，daemon 启动时读取），或 daemon 启动参数 `-fuzzy`：
 
 ```sh
 bin/chaosetd -fuzzy          # 或设置窗「模糊音」开关后重启 daemon（持久生效）
@@ -423,25 +419,25 @@ bin/chaosetd -fuzzy          # 或设置窗「模糊音」开关后重启 daemon
 an/ang、en/eng、in/ing（含 ian/iang、uan/uang）。输入侧展开等价
 音节后并集查询：`ni` 同时出「泥/里」，`zhu` 同时出「主/组」，
 声母+韵母可叠加（zhang → zang/zhan/zan）。残缺音节前缀查询不做
-模糊；变体组合每路径封顶 8 条。规则表见 `engine/fuzzy.go`。
+模糊；变体组合每路径封顶 8 条。规则表见 `crates/chaoset-engine/src/fuzzy.rs`。
 
 ## 简繁转换
 
-默认关闭，`-traditional` 开启（daemon 与本地测试台均支持）：
+默认关闭，daemon 启动参数 `-traditional` 开启：
 
 ```sh
 bin/chaosetd -traditional       # 候选与上屏均为繁体
 ```
 
-数据来自 OpenCC 官方词典（Apache-2.0，内嵌于 `engine/dp_data/`）：
+数据来自 OpenCC 官方词典（Apache-2.0，编入 `crates/chaoset-engine/src/data/s2t/`）：
 **词级最长匹配**优先（头发→頭髮、出发→出發、公里→公里——一对多字
 的上下文判定由 4.9 万条词组表完成），未命中词组的单字查 4,029 条
 单字表（中国→中國、时间→時間），表外字符原样保留。首次使用惰性
-解析。数据与许可说明见 `engine/dp_data/README.md`。
+解析。数据与许可说明见 `crates/chaoset-engine/src/data/s2t/README.md`。
 
 ## 双拼
 
-默认关闭，`-shuangpin zrm|mspy|flypy` 选择方案（daemon 与本地测试台均支持）：
+默认关闭：设置窗「双拼方案」（全拼/自然码/微软/小鹤），或 daemon 启动参数 `-shuangpin zrm|mspy|flypy`：
 
 ```sh
 bin/chaosetd -shuangpin zrm     # 自然码：两键一音节，nihao = n i h k
@@ -453,7 +449,7 @@ bin/chaosetd -shuangpin flypy   # 小鹤双拼：nihao = n i h c；iao 在 n 键
 微软/小鹤）的 speller algebra 规则管线，对全部合法音节正向生成两键
 码后建反向表，完整性测试保证全表无冲突、逐音节可解码。首键暂存、
 成对解码，无效键码对整体丢弃；退格按按键事件粒度整段回滚。
-见 `engine/double_pinyin.go`。
+见 `crates/chaoset-engine/src/shuangpin.rs`。
 
 **`;` 键的三端路由**：mspy 的 `ing` 韵母键是 `;`，而 `;` 平时是
 中文标点键。引擎在 `Composition` 里下发 `shuangpin` 方案名，三端壳据此把双拼
@@ -525,10 +521,10 @@ TSV，每行三列（`#` 开头为注释）：
 
 - 运行期 `-dict` 词库（含 `data/` 下两份）走**宽松模式**（见「词库校验」表）：
   坏行跳过并汇总警告、拼音归一化（去声调/ü→v/连写切分）、缺省词频补 20、超过 99 的**压到 99**；
-- 构建期**严格模式**只用于内置产物与测试：要求恰好 3 列、每个音节合法、词频为正（`engine/data_contract_test.go` 在 CI 严格解析）。
+- 构建期**严格模式**只用于内置产物与测试：要求恰好 3 列、每个音节合法、词频为正（`crates/chaoset-engine/tests/dict_contract.rs` 在 CI 严格解析）。
 
 上限之所以是 99 而不是「越大越好」，是因为静态词频只是**基础分**：用户学习权重
-按次累加（`engine.UserBoostPerCount = 500`，上下文共现
+按次累加（`crates/chaoset-engine/src/userdict.rs` 的 `USER_BOOST_PER_COUNT = 500`，上下文共现
 `BigramBonusPerCount = 250`），**一次上屏就远超整个 1–99 区间**。
 所以把上游词频压缩进 1–99 完全够用，且不妨碍「越用越顺手」：选过的词
 靠 500×次数×时间衰减排到前面。反过来说，把词库词频写成几百上千既没有收益，

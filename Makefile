@@ -103,12 +103,6 @@ build-settings-windows:
 build-rust:
 	cargo build --release --manifest-path crates/Cargo.toml
 
-# 引擎差分对比（Go ↔ Rust 重构基线）：同一场景语料驱动两套引擎，对比用户可见
-# 行为；rust 迁移推进时按需手动执行，全部场景一致后可升级为 CI 门禁。
-engineparity:
-	go run ./tools/engineparity -mode compare -dict data/dict_common.tsv \
-		-scenarios tools/engineparity/scenarios.jsonl
-
 test:
 	go test ./...
 	cargo test --manifest-path shims/settings/Cargo.toml
@@ -137,7 +131,7 @@ check-win32-gdi:
 	go run ./tools/checkgdi shims/windows/src
 
 # 三端 UI 一致性契约（2026-10-31）：设置窗共享文案逐字一致、三端单例、
-# 学习数据 GUI 存在且 Linux 不引入引擎 DBus（engine 包纯净约束）、词库导入
+# 学习数据 GUI 存在且 Linux 不引入引擎 DBus（Go 引擎已移除）、词库导入
 # 入口、打包安装一致性（chaoset-setup/hicolor）、ui-parity
 # 关键差异行存在。详见 tools/checkuiparity 文件头。
 check-uiparity:

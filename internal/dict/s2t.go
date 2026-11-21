@@ -1,21 +1,25 @@
 package dict
 
 import (
-	"embed"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
 
-// 简繁转换数据来自 OpenCC（Apache-2.0，见 data/README.md）：
+// 简繁转换数据来自 OpenCC（Apache-2.0，见 crates/chaoset-engine/src/data/s2t/README.md）：
 //   - STCharacters.txt 单字映射（繁体多候选取首个推荐项）
 //   - STPhrases.txt 词级映射（一词一行，解决 发/干/面/里/后 等歧义字
 //     的上下文判定，如 头发→頭髮、公里→公里）
 //
 // 转换策略：词级最长匹配优先，未命中词组的单字查字表，表外字符
-// 原样保留。数据经 go:embed 内嵌，首次使用时惰性解析（sync.Once）。
+// 原样保留。数据与 Rust 引擎共用同一份（crates/chaoset-engine/src/data/s2t/），
+// 按仓库相对路径运行时读取——ToSimplified 只被离线生成工具 cmd/chaoset-dictgen
+// 使用，不进发行包，因此不再维护一份 go:embed 副本（避免两份数据漂移）。
+// 可用环境变量 CHAOSET_S2T_DIR 覆盖数据目录。
 //
-//go:embed data/STCharacters.txt data/STPhrases.txt
-var s2tDataFS embed.FS
+// 首次使用时惰性解析（sync.Once）。
 
 var (
 	s2tOnce      sync.Once
@@ -32,9 +36,9 @@ func s2tLazyInit() {
 		s2tMaxPhrase = 0
 
 		load := func(name string, phrase bool) {
-			data, err := s2tDataFS.ReadFile("data/" + name)
+			data, err := readS2TData(name)
 			if err != nil {
-				panic("engine: 读取内嵌简繁数据失败: " + err.Error())
+				panic("dict: 读取简繁数据失败: " + err.Error())
 			}
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
@@ -111,9 +115,9 @@ var (
 func t2sLazyInit() {
 	t2sOnce.Do(func() {
 		t2sChars = make(map[rune]rune, 8192)
-		data, err := s2tDataFS.ReadFile("data/STCharacters.txt")
+		data, err := readS2TData("STCharacters.txt")
 		if err != nil {
-			panic("engine: 读取内嵌简繁数据失败: " + err.Error())
+			panic("dict: 读取简繁数据失败: " + err.Error())
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
@@ -158,4 +162,34 @@ func ToSimplified(s string) string {
 		return s
 	}
 	return string(runes)
+}
+
+// readS2TData 读取简繁转换数据文件（见文件头注释）。
+// 查找顺序：CHAOSET_S2T_DIR → 从当前目录向上最多 8 层的
+// crates/chaoset-engine/src/data/s2t/。找不到时返回错误（错误信息带修复提示）。
+func readS2TData(name string) ([]byte, error) {
+	if dir := os.Getenv("CHAOSET_S2T_DIR"); dir != "" {
+		p := filepath.Join(dir, name)
+		if data, err := os.ReadFile(p); err == nil {
+			return data, nil
+		} else {
+			return nil, fmt.Errorf("CHAOSET_S2T_DIR=%s 下读取 %s 失败: %w", dir, name, err)
+		}
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("无法确定当前目录: %w", err)
+	}
+	for i := 0; i < 8; i++ {
+		cand := filepath.Join(dir, "crates", "chaoset-engine", "src", "data", "s2t", name)
+		if data, rerr := os.ReadFile(cand); rerr == nil {
+			return data, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return nil, fmt.Errorf("找不到 %s（应在 crates/chaoset-engine/src/data/s2t/ 下；可用 CHAOSET_S2T_DIR 指定）", name)
 }

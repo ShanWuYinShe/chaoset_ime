@@ -43,7 +43,7 @@ var checkGroups = []checkGroup{
 	{groupSettingsSharedText, onLogical(checkSettingsSharedText)},
 	{groupSettingsSingleton, onLogical(checkSettingsSingleton)},
 	{groupLearningGUI, onLogical(checkLearningDataGUI)},
-	{groupEnginePurity, onLogical(checkEnginePurity)},
+	{groupNoGoEngine, onPhysical(checkNoGoEngine)},
 	// 词库导入与三端键位语义。
 	{groupImportEntries, onLogical(checkImportEntries)},
 	{groupImportSafety, onLogical(checkImportSafety)},
