@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- **体验(设置)：新增「模糊音 / 双拼方案」设置，三端可配置并即时生效**：此前两项只能靠 daemon 启动参数、macOS/Windows 用户无法启用。Go 设置核心（internal/settings + chaoset-settingsctl）新增 fuzzy/shuangpin（三平台存储键与现有键逐字兼容）；Rust daemon 启动时读平台设置（UserDefaults/HKCU/config.json，显式参数优先，启动日志打印生效值与来源）；Slint 统一设置中心「输入行为」卡新增模糊音开关与双拼四选一胶囊；macOS AppKit 设置窗同步（含内容区滚动）；改完自动重启 daemon 生效；macOS 发行包开始携带 Slint 统一设置中心（此前代码优先打开它但从未打包，实际只会回退旧窗口）。
 - **重构(迁移)：删除 Go daemon（`cmd/chaosetd` 与 `ipc` 服务端），Rust daemon 成为唯一实现**：
   - 删除 `cmd/chaosetd`（含 `run_test.go`/`listen_unix_test.go`/`seed_test.go`/`run_test.go`/singleton 等 6 个文件）与 `ipc/server.go`、服务端管道 ACL（`pipe_sddl.go`）、daemon 侧 UI 宿主拉起（`ui_*.go`）及其 8 个服务端/集成测试；`ipc` 包只保留客户端侧（`Endpoint`+`DialEndpoint`、`Client`、命名管道名/拨号）；
   - `Makefile` 不再构建 `bin/chaosetd-go`（回滚路径随 Go daemon 一起删除）；Arch `PKGBUILD` 改 cargo 构建 Rust daemon（`makedepends` 加 `rust`）；

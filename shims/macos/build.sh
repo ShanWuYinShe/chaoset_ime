@@ -303,6 +303,20 @@ plutil -lint "$APP/Contents/Info.plist"
 cp build/chaosetd build/chaoset-import ../../data/dict_common.tsv \
    "$APP/Contents/Resources/"
 chmod 755 "$APP/Contents/Resources/chaosetd" "$APP/Contents/Resources/chaoset-import"
+
+# Slint 统一设置中心（chaoset-settings）随包携带：候选栏齿轮优先打开它（
+# SettingsWindowController.show 先找 Bundle 内副本），与 Linux dist /
+# Windows 安装包口径一致（三端同一个设置中心）。开发构建没编 Slint 时
+# 跳过，回退 AppKit 设置窗。
+SETTINGS_BIN=""
+for cand in "$ROOT/shims/settings/target/release/chaoset-settings" "$ROOT/bin/chaoset-settings"; do
+  if [ -x "$cand" ]; then SETTINGS_BIN="$cand"; break; fi
+done
+if [ -n "$SETTINGS_BIN" ]; then
+  cp "$SETTINGS_BIN" "$APP/Contents/Resources/chaoset-settings"
+  chmod 755 "$APP/Contents/Resources/chaoset-settings"
+  codesign --force -s - "$APP/Contents/Resources/chaoset-settings"
+fi
 codesign --force -s - "$APP"
 
 echo "[5/5] 组装图形化安装/设置 app（Chaoset.app）..."
