@@ -110,8 +110,10 @@ var sharedSettingsText = []string{
 	"清空学习数据",
 	"导出学习数据",
 	"学习数据仅保存在本机",
-	"更多设置将在后续版本提供",
+	"设置项会随版本持续补充",
 	"Chaoset 版本",
+	// 关于页仓库链接必须四端一致（此前 Slint 端误写为 github.com/chaoset/...，404）。
+	"https://github.com/ShanWuYinShe/chaoset_ime",
 	"中英状态",
 	// 中英状态作用域只有两档（全局共享 / 每进程独立）；三端按钮文案逐字一致。
 	"全局共享",

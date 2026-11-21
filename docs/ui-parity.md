@@ -336,8 +336,9 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   - 卡片：卡片底 + 1pt cardBorder + 柔和阴影，行/说明垂直排布（行间 8、行与
     说明 10）。
 - 关于页：应用图标 44pt + 「Chaoset 输入法」+ 平台副标题 + 许可证
-  「代码 MIT · 词库 CC BY-SA 4.0」+「更多设置将在后续版本提供」+ 仓库地址
-  （accentText）；**版本号只在页脚**，关于卡片不放（避免重复）。
+  「代码 MIT · 词库 CC BY-SA 4.0」+「设置项会随版本持续补充」+ 仓库地址
+  （accentText，四端统一为 `https://github.com/ShanWuYinShe/chaoset_ime`）；
+  **版本号只在页脚**，关于卡片不放（避免重复）。
 - 分组与文案（三端统一）：
   - 内容区滚动：设置项变多后固定 560pt 高度装不下，三端内容区都可滚动
     （macOS `NSScrollView` + flipped documentView / Windows 原生滚动 /
@@ -355,7 +356,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   - 词库页卡 2「词库」：导入按钮 + 统一说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」
     （macOS 导入机制不同，统一句后补「会打开『Chaoset 安装与设置』完成导入」括注。）
   - 关于页卡「关于」：正文含「跨平台中文输入法」「代码 MIT · 词库 CC BY-SA 4.0」
-    「更多设置将在后续版本提供」+ 仓库链接。
+    「设置项会随版本持续补充」+ 仓库链接（四端同一 URL）。
 - 入口：候选栏齿轮（macOS/Windows，mouseUp 抬起才打开）或 Windows 托盘图标；
   Linux 为 ibus-setup「首选项」/ 系统菜单里的设置入口。
 - 禁止色：0A84FF / F5EFE6 / FFFCF7 / C9703F / A85427 / E8DCCC / F6E6D9 / D16B29 / 994014

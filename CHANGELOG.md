@@ -10,6 +10,7 @@
 > 下方迁移过程条目里的「Go 对照实现」「差分工具」「二进制词库」均为阶段性产物，最终已移除；
 > 41 个差分场景已冻结为 Rust 回放基线（`crates/chaoset-engine/tests/parity_scenarios.rs`）。
 
+- **修复(设置窗)：关于页占位文案与仓库链接四端对齐**：统一设置中心已提供「模糊音/双拼方案」等设置，原占位句「更多设置将在后续版本提供」已过时，四端（Slint 统一设置中心 / macOS / Windows / Linux 原生设置窗）改为「设置项会随版本持续补充」；Slint 关于页仓库链接此前误写为 `github.com/chaoset/chaoset_ime`（404），改为与另外三端一致的 `https://github.com/ShanWuYinShe/chaoset_ime`，并把该 URL 加入 `checkuiparity` 共享文案断言（四端逐字一致），`docs/ui-parity.md` 同步。
 - **重构(引擎)：删除 Go 引擎（`engine/`）与差分工具，Rust 成为唯一实现**：
   - 前置解耦：`ipc` 客户端 DTO 收进 `ipc/types.go`、`chaoset-cli` 改为纯 daemon 客户端、`chaoset-import`/`chaoset-userdict`/`chaoset-dictgen` 改用新增的 `internal/dict` 与本地文件实现，Go 工具不再 import `chaoset.ime/engine`；同时删除已无运行时消费者的二进制词库（`data/dict_common.bin`、dictgen `-bin`/`-compile`）；
   - 删除 `engine/`（Go 算法/测试）与 `tools/engineparity`（Go↔Rust 差分工具，`make engineparity` 同步移除）；41 个差分场景转为 **Rust 冻结回放基线**（`crates/chaoset-engine/tests/parity_scenarios.rs` + `tests/data/*.jsonl`，含候选打分），行为回归仍会被 CI 捕获；

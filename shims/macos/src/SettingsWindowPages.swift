@@ -214,7 +214,7 @@ enum SettingsWindowPages {
         let license = NSTextField(labelWithString: "代码 MIT · 词库 CC BY-SA 4.0")
         license.font = .systemFont(ofSize: 11)
         license.textColor = SettingsTheme.textSecondary
-        let more = NSTextField(labelWithString: "更多设置将在后续版本提供")
+        let more = NSTextField(labelWithString: "设置项会随版本持续补充")
         more.font = .systemFont(ofSize: 11)
         more.textColor = SettingsTheme.textTertiary
         let repo = NSTextField(labelWithString: "https://github.com/ShanWuYinShe/chaoset_ime")

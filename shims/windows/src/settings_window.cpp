@@ -614,7 +614,7 @@ static void settingsPaint(HDC dc, HWND wnd) {
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SetTextColor(dc, c.textTertiary);
         RECT l2{x, settingsPt(ly + 22), right, settingsPt(ly + 40)};
-        DrawTextW(dc, L"更多设置将在后续版本提供", -1, &l2,
+        DrawTextW(dc, L"设置项会随版本持续补充", -1, &l2,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SetTextColor(dc, c.accentText);
         RECT l3{x, settingsPt(ly + 44), right, settingsPt(ly + 62)};
