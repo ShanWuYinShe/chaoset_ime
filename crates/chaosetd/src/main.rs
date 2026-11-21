@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appdirs;
+mod input_settings;
 mod ipc;
 mod server;
 mod singleton;
@@ -27,8 +28,10 @@ struct CliArgs {
     user_dict_set: bool,
     log_path: Option<String>,
     fuzzy: bool,
+    fuzzy_set: bool,
     traditional: bool,
     shuangpin: Option<String>,
+    shuangpin_set: bool,
     show_version: bool,
 }
 
@@ -50,6 +53,7 @@ fn parse_args() -> CliArgs {
             }
             "fuzzy" => {
                 args.fuzzy = true;
+                args.fuzzy_set = true;
             }
             "traditional" => {
                 args.traditional = true;
@@ -88,6 +92,7 @@ fn parse_args() -> CliArgs {
                 }
             }
             "shuangpin" => {
+                args.shuangpin_set = true;
                 if i + 1 < raw.len() {
                     i += 1;
                     args.shuangpin = Some(raw[i].clone());
@@ -338,12 +343,42 @@ fn main() {
     }
     eprintln!("已加载词典 {} 条（{}）", line_count, dict_paths.join(", "));
 
-    let shuangpin_scheme = args.shuangpin.as_deref().and_then(|s| match s {
-        "zrm" => Some(ShuangpinScheme::Zrm),
-        "mspy" => Some(ShuangpinScheme::Mspy),
-        "flypy" => Some(ShuangpinScheme::Flypy),
-        _ => None,
-    });
+    // 输入行为设置：显式命令行参数 > 平台设置（设置窗写入）> 缺省。
+    // daemon 自己读平台设置的原因见 input_settings 模块注释（LaunchAgent /
+    // 安装器 Run 项的静态参数无法随设置变化）。
+    let platform_settings = input_settings::load();
+    let fuzzy = if args.fuzzy_set {
+        args.fuzzy
+    } else {
+        platform_settings.fuzzy
+    };
+    let shuangpin_raw = if args.shuangpin_set {
+        args.shuangpin.clone().unwrap_or_default()
+    } else {
+        platform_settings.shuangpin.clone()
+    };
+    let (shuangpin_scheme, shuangpin_note) = match shuangpin_raw.as_str() {
+        "" => (None, "全拼".to_string()),
+        "zrm" => (Some(ShuangpinScheme::Zrm), "自然码".to_string()),
+        "mspy" => (Some(ShuangpinScheme::Mspy), "微软双拼".to_string()),
+        "flypy" => (Some(ShuangpinScheme::Flypy), "小鹤双拼".to_string()),
+        other => {
+            eprintln!("警告: 未知双拼方案 {other:?}（只支持 zrm/mspy/flypy），按全拼处理");
+            (None, "全拼".to_string())
+        }
+    };
+    let fuzzy_source = if args.fuzzy_set { "参数" } else { "设置" };
+    let shuangpin_source = if args.shuangpin_set {
+        "参数"
+    } else {
+        "设置"
+    };
+    eprintln!(
+        "模糊音: {}（来源: {}）",
+        if fuzzy { "开" } else { "关" },
+        fuzzy_source
+    );
+    eprintln!("双拼: {}（来源: {}）", shuangpin_note, shuangpin_source);
 
     let running = Arc::new(AtomicBool::new(true));
 
@@ -363,7 +398,7 @@ fn main() {
     let config = ServerConfig {
         dict: Arc::new(dict),
         user_dict: user_dict.clone(),
-        fuzzy: args.fuzzy,
+        fuzzy,
         traditional: args.traditional,
         shuangpin: shuangpin_scheme,
     };
