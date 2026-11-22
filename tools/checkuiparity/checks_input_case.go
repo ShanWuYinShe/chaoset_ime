@@ -25,8 +25,9 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 	)
 
 	// macOS 壳：a-z 与 A-Z 都算组词字符（大写不再 passThrough），且字符级路由
-	// 必须用 event.characters 取实际大小写；charactersIgnoringModifiers 会把
-	// Shift+字母吞成小写，导致预编辑/回车原样上屏丢大小写（用户真机反馈）。
+	// 必须用 event.characters 取实际大小写；charactersIgnoringModifiers 会忽略
+	// CapsLock（Shift 仍生效），CapsLock 字母会被吞成小写，导致预编辑/回车原样
+	// 上屏丢大小写（用户真机反馈）。
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
 		"scalar.value >= 65 && scalar.value <= 90",
 		"guard let chars = event.characters,",
@@ -34,8 +35,16 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 	checkExcludes(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
 		"guard let chars = event.charactersIgnoringModifiers",
 	)
+	// 合成事件的 charactersIgnoringModifiers 必须符合 AppKit 语义（CapsLock 被
+	// 忽略、Shift 生效）：CapsLock 用例显式传 ignoring 小写，否则测试会拿大写
+	// ignoring 自我实现「通过」，旧壳的丢大写路径就测不出来。
 	checkContains(fsys, problems, group, "shims/macos/tests/key_routing/main.swift",
 		"Shift+字母预编辑保留大小写", "回车原样上屏大写拼音",
+		"CapsLock 字母预编辑保留大小写", "回车原样上屏 CapsLock 大写拼音",
+		"ignoring: ch.lowercased()",
+	)
+	checkExcludes(fsys, problems, group, "shims/macos/tests/key_routing/main.swift",
+		"charactersIgnoringModifiers: chars.lowercased()",
 	)
 
 	// Windows 壳：按 Shift 状态转发大写字母，不再「大写英文不进组词」。
