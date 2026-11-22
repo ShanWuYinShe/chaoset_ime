@@ -25,3 +25,14 @@ pub fn info() -> String {
     }
     parts.join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn info_is_single_line_with_platform() {
+        let line = super::info();
+        assert!(line.starts_with("chaoset "));
+        assert!(line.contains(std::env::consts::OS));
+        assert_eq!(line.lines().count(), 1);
+    }
+}

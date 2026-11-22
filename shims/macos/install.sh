@@ -26,6 +26,36 @@ if ! ( : > "$IM/.chaoset-write-test" ) 2>/dev/null; then
 fi
 rm -f "$IM/.chaoset-write-test"
 
+SUPPORT="$HOME/Library/Application Support/chaoset"
+
+# —— 升级/覆盖安装前先停旧进程 ——
+# TIS 在当前登录会话按 bundle 路径登记输入源；旧 IMK 进程存活时替换 app bundle，
+# 同一输入源可能被记成两份（只能注销重登重建）。旧 daemon 也不能留着：它会继续
+# 持有旧版用户词典格式并在退出时写回，导致新版本读到旧格式后迁移、丢失多读音数据。
+pkill -9 -f "ChaosetIME.app/Contents/MacOS/ChaosetIME" 2>/dev/null || true
+/usr/bin/killall chaosetd 2>/dev/null || true
+j=0
+while [ $j -lt 30 ]; do
+  if ! pgrep -U "$(id -u)" -x chaosetd >/dev/null 2>&1 \
+     && ! pgrep -f "ChaosetIME.app/Contents/MacOS/ChaosetIME" >/dev/null 2>&1; then
+    break
+  fi
+  j=$((j + 1))
+  sleep 0.1
+done
+if pgrep -f "ChaosetIME.app/Contents/MacOS/ChaosetIME" >/dev/null 2>&1; then
+  echo "✗ 旧输入法进程未能退出，请注销重登后重试（避免 TIS 表出现重复条目）" >&2
+  exit 1
+fi
+
+# 升级前备份用户词典（学习数据）：任何版本切换都可能改文件格式，先留一份可回滚副本。
+if [ -f "$SUPPORT/userdict.json" ]; then
+  mkdir -p "$SUPPORT/backups"
+  ud_bak="$SUPPORT/backups/userdict-$(date +%Y%m%d-%H%M%S).json"
+  cp "$SUPPORT/userdict.json" "$ud_bak" 2>/dev/null && echo "用户词典已备份: $ud_bak" || true
+  ls -1dt "$SUPPORT/backups"/userdict-*.json 2>/dev/null | tail -n +6 | while IFS= read -r old; do rm -rf "$old"; done
+fi
+
 # 同名 bundle 并存时系统可能沿用旧缓存，先移除旧输入法再拷入；
 # 旧版备份移至 .workwork/backups（不能以 .app 后缀残留在 Input Methods 目录，
 # 否则 LaunchServices 会并存多个同 ID 的 app，导致系统设置和图标服务持续命中旧备份）。
@@ -145,7 +175,6 @@ fi
 
 # 2) 确认 app 内置 daemon 与种子词库（运行组件随 ChaosetIME.app 安装，
 #    Application Support 只放用户数据/词库/socket）
-SUPPORT="$HOME/Library/Application Support/chaoset"
 DAEMON="$IM/ChaosetIME.app/Contents/Resources/chaosetd"
 if [ -x "$DAEMON" ]; then
   mkdir -p "$SUPPORT"

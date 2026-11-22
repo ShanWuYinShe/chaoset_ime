@@ -93,6 +93,18 @@ func checkRustCLIShipping(fsys fs.FS, problems *[]string) {
 	for _, path := range []string{rustCtlBuildScript, rustDaemonBuildScript} {
 		checkContains(fsys, problems, group, path, "chaoset.rc", "CHAOSET_VERSION_QUAD")
 	}
+	// 9) 版本可追溯：两个 Rust 二进制都从 build.rs 注入 git rev/构建时间/脏标记，
+	//    daemon 的 -version 不能再显示 Cargo.toml 里的静态版本。
+	for _, path := range []string{rustCtlBuildScript, rustDaemonBuildScript} {
+		checkContains(fsys, problems, group, path, "CHAOSET_BUILD_REV", "CHAOSET_BUILD_TIME", "CHAOSET_BUILD_DIRTY")
+	}
+	checkContains(fsys, problems, group, "crates/chaosetctl/src/buildinfo.rs", "CHAOSET_BUILD_REV")
+	checkContains(fsys, problems, group, "crates/chaosetd/src/main.rs", `option_env!("CHAOSET_BUILD_VERSION")`)
+	// 10) macOS 升级安全：先停旧 IME/daemon 再替换 app（防 TIS 重复输入源与旧 daemon 写回），
+	//     并在升级前备份用户词典。
+	checkContains(fsys, problems, group, macInstall,
+		"升级/覆盖安装前先停旧进程", "userdict-", "用户词典已备份")
+
 	// 8) 已删除的 Go 运行期实现不得回归（Rust 是唯一实现）。
 	for _, gone := range []string{
 		"cmd/chaosetctl",

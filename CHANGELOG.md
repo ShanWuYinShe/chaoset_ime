@@ -2,6 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(升级/版本显示)：v0.5.0 真机验收发现的问题**：
+  - macOS 安装/覆盖升级前先停止旧输入法进程与旧 `chaosetd`：旧 IME 存活时替换 app bundle 会在当前登录会话留下重复 TIS 输入源（只能注销重登重建），旧 daemon 还会在退出时把旧格式用户词典写回；
+  - 升级前自动备份用户词典到 `~/Library/Application Support/chaoset/backups/userdict-<时间>.json`（保留最近 5 份），版本切换导致格式迁移时可回滚；
+  - `chaosetctl version` 与 `chaosetd -version` 现在显示构建版本 + git rev/提交时间/脏工作区（此前分别为 `no-vcs` 与 Cargo.toml 静态版本），真机排障可直接确认装的是哪个提交；
+  - 若当前登录会话已存在重复输入源，仍需注销重登一次重建 TIS 表（macOS 无公开反注册 API，脚本会明确提示）。
+
 ## v0.5.0（2026-11-22）
 
 - **重构(发行面)：命令行/工具链 100% Rust，单二进制 `chaosetctl` 取代全部 Go 小工具**：
