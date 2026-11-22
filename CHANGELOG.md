@@ -2,7 +2,7 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.5.3（2026-11-22）
 
 - **修复(macOS 输入)：Shift/CapsLock 输入的大写字母不再被壳吞成小写**：`KeyRouter` 之前用 `charactersIgnoringModifiers` 取字符（忽略 Shift/CapsLock），大写字母在进引擎前就变成小写，导致中文模式下的预编辑全部显示小写，且「直接敲大写英文 + 回车原样上屏」会丢失大小写。现在字符级路由改用 `event.characters`（数字/翻页/标点同样按实际字符判定，与 Windows/Linux 字符级口径一致），引擎继续按小写匹配拼音、原样保存输入；`key_routing` 回归测试与 `checkuiparity` 断言锁住该行为。
 
