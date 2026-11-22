@@ -244,16 +244,23 @@ func checkPackaging(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupPackaging, winPackageMsvc, "chaosetctl.exe")
 	checkContains(fsys, problems, groupPackaging, winInstaller, "chaosetctl.exe")
 	checkContains(fsys, problems, groupPackaging, linuxArchPkg, "chaosetctl")
-	// FHS：/usr/local 属于系统管理员区域，Arch 包与 PKGBUILD 都不得写入；
-	// 旧版本遗留的 /usr/local/bin 兼容链只允许由 install 钩子清理（与 Debian/
-	// install.sh 同一口径，避免两套 PATH 命中）。
+	// FHS：/usr/local 属于系统管理员区域，Arch 三条打包路径（package.sh /
+	// PKGBUILD / PKGBUILD-bin）都不得写入；旧版本遗留的 /usr/local/bin 兼容链
+	// 只允许由 install 钩子清理（与 Debian/install.sh 同一口径，避免两套 PATH
+	// 命中）。
 	checkExcludes(fsys, problems, groupPackaging, archScript,
 		`mkdir -p "$TMP_DIR/usr/local/bin"`, "ln -sf /usr/bin/chaoset")
-	checkContains(fsys, problems, groupPackaging, archScript, "FHS", "不得写入 /usr/local")
-	checkExcludes(fsys, problems, groupPackaging, linuxArchPkg,
-		`install -d "$pkgdir/usr/local/bin"`, "ln -sf /usr/bin/chaoset")
-	checkContains(fsys, problems, groupPackaging, "shims/linux/arch/chaoset-ime.install",
-		"cleanup_legacy_usr_local")
+	checkContains(fsys, problems, groupPackaging, archScript,
+		"FHS", "不得写入 /usr/local", `if [ -e "$TMP_DIR/usr/local" ]`)
+	for _, pkgbuild := range []string{linuxArchPkg, linuxArchPkgBin} {
+		checkExcludes(fsys, problems, groupPackaging, pkgbuild,
+			`install -d "$pkgdir/usr/local/bin"`, "ln -sf /usr/bin/chaoset")
+		checkContains(fsys, problems, groupPackaging, pkgbuild, "FHS")
+	}
+	checkContains(fsys, problems, groupPackaging, linuxArchInstall,
+		"cleanup_legacy_usr_local", "/usr/local/bin/chaosetctl",
+		"/usr/local/bin/chaoset-cli", "/usr/local/bin/chaoset-engine",
+		"/usr/local/bin/chaosetd")
 	// 发布词库二进制化：TSV 仍是仓库源，打包期编译 CSDB；daemon 优先加载缓存。
 	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/dict_binary.rs")
 	checkExists(fsys, problems, groupPackaging, "crates/chaoset-engine/src/bin/dictc.rs")

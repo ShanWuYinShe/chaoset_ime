@@ -4,7 +4,7 @@
 
 ## 未发布
 
-- **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）与 `PKGBUILD` 此前安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在两处打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），Arch `.install` 钩子在安装/升级/卸载时清理旧版本遗留链。
+- **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）、源码 `PKGBUILD` 与预编译 `PKGBUILD-bin` 此前都安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在三条打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），`checkuiparity`「打包安装」组锁住三条路径不得写 `/usr/local` 且 install 钩子必须清理旧版本遗留链。
 
 ## v0.5.3（2026-11-22）
 
