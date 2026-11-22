@@ -23,11 +23,8 @@ package() {
     # 设置入口依赖统一设置中心：包里缺了它「首选项」只会报错，视为打包失败。
     test -x "$pkgdir/usr/bin/chaoset-settings" || { echo "错误：缺少统一设置中心 chaoset-settings" >&2; exit 1; }
 
-    install -d "$pkgdir/usr/local/bin"
-    ln -sf /usr/bin/chaoset-engine "$pkgdir/usr/local/bin/chaoset-engine"
-    ln -sf /usr/bin/chaosetd "$pkgdir/usr/local/bin/chaosetd"
-    ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaosetctl"
-    ln -sf /usr/bin/chaosetctl "$pkgdir/usr/local/bin/chaoset-cli"
+    # FHS：/usr/local 属于系统管理员区域，包不得写入；旧版本遗留兼容链由
+    # chaoset-ime.install 的安装/升级钩子清理。
 
     install -Dm644 data/dict.tsv "$pkgdir/usr/share/chaoset/dict.tsv"
     install -Dm644 data/dict.bin "$pkgdir/usr/share/chaoset/dict.bin"
