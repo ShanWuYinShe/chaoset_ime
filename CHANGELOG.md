@@ -9,6 +9,8 @@
 - **修复(macOS 安装器)：升级后「已安装输入法版本」立即刷新**：Setup 状态页原先用 `Bundle(url:)` 读取已安装 app 的 Info.plist，Foundation 按路径缓存 bundle，覆盖安装同路径 app 后仍显示旧版本，用户会误以为升级失败；改为直接解析 plist，并在「Rust CLI 发行面」检查中断言不得回退。
 - **改进(设置中心)：关于页新增常用快捷键帮助与检查更新入口**：新用户不必翻 README 就能看到 Shift/空格/方向键/回车等操作；「检查更新」打开 GitHub 最新 Release，「项目主页」打开仓库，桥接通过系统默认浏览器（macOS open / Windows cmd start / Linux xdg-open），不引入新依赖。
 
+- **修复(设置中心)：侧边栏图标/文字垂直对齐、候选窗预览与真实候选窗同构**：导航项改为图标/文字绝对定位并垂直居中（此前 `HorizontalLayout` 顶端对齐，图标比文字高约 5pt）；「外观主题」下方预览重做为真实候选窗结构（序号键帽、蓝色预选胶囊、学习绿星、右侧齿轮/页码/上下箭头，移除预编辑），深浅配色对齐 `CandidateTheme`；压缩输入页留白，使 640×560 窗口内预览完整可见（此前底部被裁切）。
+
 ## v0.5.4（2026-11-22）
 
 - **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）与 `PKGBUILD` 此前安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在两处打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），Arch `.install` 钩子在安装/升级/卸载时清理旧版本遗留链。
