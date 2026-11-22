@@ -108,6 +108,11 @@ func checkRustCLIShipping(fsys fs.FS, problems *[]string) {
 	// 否则发布包用户仍会在替换 bundle 时触发 TIS 重复登记/旧 daemon 写回。
 	checkContains(fsys, problems, group, macSetup,
 		"升级/覆盖安装前先停旧进程", "用户词典已备份", "ChaosetIME.app/Contents/MacOS/ChaosetIME", "killall")
+	// 已安装版本必须直接解析 Info.plist：Bundle(url:) 按路径缓存，覆盖升级后状态页仍读旧版本。
+	checkContains(fsys, problems, group, macSetup,
+		"NSDictionary(contentsOfFile:", `installedInfoValue("CFBundleShortVersionString")`)
+	checkExcludes(fsys, problems, group, macSetup,
+		"Bundle(url: URL(fileURLWithPath: imeAppPath()))", "Bundle(url: URL(fileURLWithPath: app))")
 
 	// 8) 已删除的 Go 运行期实现不得回归（Rust 是唯一实现）。
 	for _, gone := range []string{

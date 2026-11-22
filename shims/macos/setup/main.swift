@@ -25,6 +25,15 @@ let modeID = "ime.chaoset.inputmethod.ChaosetIME.Pinyin"
 
 func res(_ name: String) -> String { (Bundle.main.resourcePath ?? ".") + "/" + name }
 func supportDir() -> String { NSHomeDirectory() + "/Library/Application Support/chaoset" }
+/// 读取已安装 app 的 Info.plist 值。
+/// 不能再用 `Bundle(url:)`：Foundation 会按路径缓存 bundle，升级覆盖同路径 app 后，
+/// 状态页仍读到旧版本（用户会误以为更新失败）。直接解析 plist，保证刷新即最新。
+func installedInfoValue(_ key: String) -> String? {
+    let plist = imeAppPath() + "/Contents/Info.plist"
+    guard let dict = NSDictionary(contentsOfFile: plist) as? [String: Any] else { return nil }
+    return dict[key] as? String
+}
+
 func appVersion() -> String {
     (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
 }
@@ -513,9 +522,7 @@ func verifyText() -> String {
 
     // 1) 输入法装入（且 Info.plist 键齐全——与 verify.sh 的 plutil 检查等价）
     let app = imeAppPath()
-    let keys = fm.fileExists(atPath: app)
-        ? Bundle(url: URL(fileURLWithPath: app))?
-            .object(forInfoDictionaryKey: "TISInputSourceID") as? String : nil
+    let keys = fm.fileExists(atPath: app) ? installedInfoValue("TISInputSourceID") : nil
     if keys == sourceID {
         out += "PASS 1) 输入法已装入，Info.plist 输入源键齐全\n"
     } else {
@@ -584,8 +591,7 @@ func statusText() -> String {
     let fm = FileManager.default
     var out = ""
     out += "Chaoset 版本 \(appVersion())\n"
-    if let installed = Bundle(url: URL(fileURLWithPath: imeAppPath()))?
-        .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+    if let installed = installedInfoValue("CFBundleShortVersionString") {
         out += "已安装输入法版本：\(installed)\n"
     }
     out += fm.fileExists(atPath: imeAppPath()) ? "✓ 输入法已装入\n" : "✗ 输入法尚未装入（点「安装 / 更新」）\n"
