@@ -2,6 +2,10 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(macOS 输入)：Shift/CapsLock 输入的大写字母不再被壳吞成小写**：`KeyRouter` 之前用 `charactersIgnoringModifiers` 取字符（忽略 Shift/CapsLock），大写字母在进引擎前就变成小写，导致中文模式下的预编辑全部显示小写，且「直接敲大写英文 + 回车原样上屏」会丢失大小写。现在字符级路由改用 `event.characters`（数字/翻页/标点同样按实际字符判定，与 Windows/Linux 字符级口径一致），引擎继续按小写匹配拼音、原样保存输入；`key_routing` 回归测试与 `checkuiparity` 断言锁住该行为。
+
 ## v0.5.2（2026-11-22）
 
 - **修复(macOS 安装)：GUI 安装器补齐升级安全契约**：v0.5.1 只改了开发用 `install.sh`，用户双击的 `ChaosetSetup.app` 仍会在旧 IME/daemon 存活时替换 app bundle——同样会触发 TIS 重复登记、旧 daemon 写回旧格式用户词典。现在 `installIME()` 与 CLI 安装器一致：替换前先停旧 IME/daemon 并等待退出、升级前备份 `userdict.json`（保留 5 份）；`checkuiparity` 增加 GUI 安装器断言，防止两套安装路径再次漂移。
