@@ -22,7 +22,6 @@ trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
 # 组装文件树
 mkdir -p "$TMP_DIR/usr/bin"
-mkdir -p "$TMP_DIR/usr/local/bin"
 mkdir -p "$TMP_DIR/usr/share/chaoset"
 mkdir -p "$TMP_DIR/usr/share/ibus/component"
 mkdir -p "$TMP_DIR/usr/share/icons"
@@ -44,10 +43,13 @@ cp "$SRC_DIR/component/chaoset.xml" "$TMP_DIR/usr/share/ibus/component/"
 cp -r "$SRC_DIR/icons/hicolor" "$TMP_DIR/usr/share/icons/"
 cp "$SRC_DIR/chaoset-settings.desktop" "$TMP_DIR/usr/share/applications/chaoset-settings.desktop"
 
-# 创建兼容软链接到 /usr/local/bin
-ln -sf /usr/bin/chaoset-engine "$TMP_DIR/usr/local/bin/chaoset-engine"
-ln -sf /usr/bin/chaosetd "$TMP_DIR/usr/local/bin/chaosetd"
-ln -sf /usr/bin/chaoset-cli "$TMP_DIR/usr/local/bin/chaoset-cli"
+# FHS：/usr/local 属于系统管理员自建内容区域，发行包不得写入；旧版本遗留的
+# /usr/local/bin 兼容链由 chaoset-ime.install 的安装/升级钩子清理。这里显式断言
+# 打包结果不含 /usr/local，防止再次悄悄加回兼容链。
+if [ -e "$TMP_DIR/usr/local" ]; then
+    echo "错误：Arch 包不得写入 /usr/local（FHS；旧兼容链由 install 钩子清理）" >&2
+    exit 1
+fi
 
 chmod 0755 "$TMP_DIR/usr/bin/"*
 chmod 0755 "$TMP_DIR/usr/share/chaoset/chaoset-setup"

@@ -2,6 +2,10 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）与 `PKGBUILD` 此前安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在两处打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），Arch `.install` 钩子在安装/升级/卸载时清理旧版本遗留链。
+
 ## v0.5.3（2026-11-22）
 
 - **修复(macOS 输入)：CapsLock 输入的大写字母不再被壳吞成小写**：`KeyRouter` 之前用 `charactersIgnoringModifiers` 取字符——它忽略 CapsLock（Shift 仍生效，Shift+A 本来就是大写），CapsLock 下字母在进引擎前就变成小写，导致中文模式预编辑全小写、「大写英文 + 回车原样上屏」丢大小写。现在字符级路由改用 `event.characters`（包含 CapsLock/Shift 结果；数字、翻页与标点同样按实际字符判定），引擎继续按小写匹配拼音、原样保存输入；`key_routing` 用符合 AppKit 真实语义的合成事件补 CapsLock 回归（Shift 用例保留），`checkuiparity` 断言锁住取字符来源与回归用例。

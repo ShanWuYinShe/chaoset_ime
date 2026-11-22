@@ -1,4 +1,12 @@
+cleanup_legacy_usr_local() {
+    # 旧版本包曾向 /usr/local/bin 写兼容链；升级/卸载时清理（FHS 禁止包写该目录）。
+    rm -f /usr/local/bin/chaosetctl /usr/local/bin/chaoset-cli \
+          /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd 2>/dev/null || true
+}
+
 post_install() {
+    cleanup_legacy_usr_local
+
     # 刷新桌面图标缓存
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
@@ -17,7 +25,7 @@ post_upgrade() {
 }
 
 post_remove() {
-    rm -f /usr/local/bin/chaoset-engine /usr/local/bin/chaosetd /usr/local/bin/chaoset-cli 2>/dev/null || true
+    cleanup_legacy_usr_local
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
     fi
