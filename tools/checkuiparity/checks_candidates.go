@@ -270,6 +270,44 @@ func checkCandidateGearMouseUp(fsys fs.FS, problems *[]string) {
 	}
 }
 
+// checkWindowsBlankAreaDismiss 锁住 onLButtonUp 的空白区收起语义：
+//  1. 空白区 hide() 必须位于所有命中分支之后（不能拿 tip_ == nullptr 分支的
+//     hide() 冒充）；
+//  2. 翻页分支必须 return，否则翻页后会落到空白区 hide()，刚翻出来的候选窗
+//     被立刻收起（2026-11-23 PR #119 回归）。
+func checkWindowsBlankAreaDismiss(group, path, body string, problems *[]string) {
+	const chevronGuard = "if (wasChevron != 0)"
+	chevronIdx := strings.Index(body, chevronGuard)
+	if chevronIdx < 0 {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 onLButtonUp 缺少翻页命中分支（%s）", group, path, chevronGuard))
+		return
+	}
+	hideIdx := strings.LastIndex(body, "hide()")
+	if hideIdx < chevronIdx {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 onLButtonUp 未在空白区点击时 hide() 收起候选窗（hide 必须位于所有命中分支之后，不能只在 tip_ == nullptr 分支）",
+			group, path))
+		return
+	}
+	tail := body[chevronIdx:hideIdx]
+	flipIdx := strings.LastIndex(tail, "flipPage(")
+	if i := strings.LastIndex(tail, "flipAssociateFromPanel("); i > flipIdx {
+		flipIdx = i
+	}
+	if flipIdx < 0 {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 onLButtonUp 翻页分支缺少 flipPage/flipAssociateFromPanel 调用",
+			group, path))
+		return
+	}
+	if retIdx := strings.LastIndex(tail, "return;"); retIdx < flipIdx {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：%s 的 onLButtonUp 翻页分支缺少 return（翻页后会落到空白区 hide()，候选窗被误收起）",
+			group, path))
+	}
+}
+
 // checkCandidateMouseUpSemantics 锁住 2026-11-06 用户要求：候选窗左键的全部
 // 动作（候选上屏 / 翻页 / 打开设置）都必须在鼠标抬起时触发；按下只记录命中，
 // 抬起点仍在同一目标上才执行（按下后拖走再松开不触发）。此前候选词是按下即
@@ -314,11 +352,7 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 				}
 			}
 			// 空白区点击必须收起候选窗（2026-10-29 鼠标零干扰契约；11-06 改 mouseup 时漏回）。
-			if !strings.Contains(body, "hide()") {
-				*problems = append(*problems, fmt.Sprintf(
-					"%s：%s 的 onLButtonUp 未在空白区点击时 hide() 收起候选窗",
-					group, winShell))
-			}
+			checkWindowsBlankAreaDismiss(group, winShell, body, problems)
 		}
 	}
 	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
@@ -365,6 +399,17 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 				*problems = append(*problems, fmt.Sprintf(
 					"%s：%s 的 mouseUp 未在空白区点击时 onDismiss?()", group, macPanel))
 			}
+			// 视图声明 onDismiss 不等于控制器接线：Controller.show 必须把回调
+			// 接到 hide()，hide() 时清空，避免面板/闭包残留。
+			for _, needle := range []string{
+				"v.onDismiss = { CandidatePanelController.hide() }",
+				"view?.onDismiss = nil",
+			} {
+				if !strings.Contains(text, needle) {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s：%s 的 CandidatePanelController 未接线或未清理 %s", group, macPanel, needle))
+				}
+			}
 		}
 	}
 }
@@ -376,7 +421,7 @@ func checkCandidateClick(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupCandidateClick, macPanel, "onDismiss")
 	checkContains(fsys, problems, groupCandidateClick, winShell, "WM_LBUTTONDOWN", "WM_LBUTTONUP", "pressedItemIndex_")
 	checkContains(fsys, problems, groupCandidateClick, linuxEngine, "candidate_clicked")
-	checkContains(fsys, problems, groupCandidateClick, uiParityDoc, "鼠标点选候选")
+	checkContains(fsys, problems, groupCandidateClick, uiParityDoc, "鼠标点选候选", "候选窗空白区点击")
 	// linux-e2e 必须真实验证 CandidateClicked（不只是单测）：防止 E2E 用例被删。
 	checkContains(fsys, problems, groupCandidateClick, linuxE2E, "CandidateClicked", "CommitText")
 }

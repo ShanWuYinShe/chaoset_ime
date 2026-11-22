@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- **修复(候选窗)：翻页箭头点击不再误收起候选窗**：PR #119 在 `onLButtonUp` 末尾补空白区 `hide()` 时，翻页分支没有 `return`，点上下箭头翻页后会继续落到 `hide()`，刚翻出来的候选窗立刻被收起（首页/末页/联想分页同样受影响）。现在翻页命中分支显式返回，空白区收起只对真正未命中候选/齿轮/翻页的点击生效；`checkuiparity`「候选点选（mouseup）」加强为「空白区 `hide()` 必须在所有命中分支之后 + 翻页分支必须 `return`」，并补 macOS 控制器 `onDismiss` 接线断言与变异测试。
+
 - **修复(Linux Arch 预编译打包)：`PKGBUILD-bin` 不再写入 `/usr/local/bin`**：v0.5.4 已修 `package.sh` 与 `PKGBUILD`，但 Arch 的第三条打包路径 `shims/linux/arch/PKGBUILD-bin` 仍会安装 `/usr/local/bin` 兼容链（预编译二进制包），同样违反 FHS。现在该路径删除兼容链并加 FHS 说明；`checkuiparity`「打包安装」组把 `package.sh`、`PKGBUILD`、`PKGBUILD-bin` 三条路径都纳入断言，并加强 install 钩子旧链清理检查。
 
 - **修复(macOS 安装器)：升级后「已安装输入法版本」立即刷新**：Setup 状态页原先用 `Bundle(url:)` 读取已安装 app 的 Info.plist，Foundation 按路径缓存 bundle，覆盖安装同路径 app 后仍显示旧版本，用户会误以为升级失败；改为直接解析 plist，并在「Rust CLI 发行面」检查中断言不得回退。

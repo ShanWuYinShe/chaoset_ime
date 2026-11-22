@@ -1124,8 +1124,8 @@ void CandidateWindow::onLButtonUp(int x, int y) {
                 tip_->flipPage(dirDown);
             }
         }
+        return;  // 翻页命中后不得落到空白区 hide()（否则刚翻出的候选窗被收起）。
     }
-
     // 空白区点击（未命中候选/齿轮/翻页）：收起候选窗，不再静默吞掉鼠标事件。
     // 2026-10-29 鼠标零干扰契约；2026-11-06 改 mouseup 时被漏掉，本次恢复。
     hide();

@@ -475,6 +475,44 @@ func TestCheckCandidateMouseUpSemantics(t *testing.T) {
 	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "mouseDown") || !strings.Contains(joined, "onSelect?(") {
 		t.Fatalf("macOS mouseDown 直接上屏应被捕获，实际：%v", problems)
 	}
+
+	// 变异 3：只删 Windows 空白区 hide()，保留 tip_ == nullptr 分支的 hide()。
+	// 旧断言只查「函数体包含 hide()」会被这个分支冒充而漏报。
+	const winBlankHide = "\n    // 空白区点击（未命中候选/齿轮/翻页）：收起候选窗，不再静默吞掉鼠标事件。\n    // 2026-10-29 鼠标零干扰契约；2026-11-06 改 mouseup 时被漏掉，本次恢复。\n    hide();"
+	mutatedWin = strings.Replace(string(winText), winBlankHide, "", 1)
+	if mutatedWin == string(winText) {
+		t.Fatal("变异 3 未生效：源码里找不到空白区 hide()")
+	}
+	problems = nil
+	checkCandidateMouseUpSemantics(fsys(mutatedWin, string(macText)), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "未在空白区点击时 hide()") {
+		t.Fatalf("Windows 空白区 hide() 被删应被捕获，实际：%v", problems)
+	}
+
+	// 变异 4：翻页分支去掉 return，翻页后落到空白区 hide()（PR #119 回归）。
+	mutatedWin = strings.Replace(string(winText),
+		"        return;  // 翻页命中后不得落到空白区 hide()（否则刚翻出的候选窗被收起）。\n",
+		"", 1)
+	if mutatedWin == string(winText) {
+		t.Fatal("变异 4 未生效：源码里找不到翻页分支的 return")
+	}
+	problems = nil
+	checkCandidateMouseUpSemantics(fsys(mutatedWin, string(macText)), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "翻页分支缺少 return") {
+		t.Fatalf("Windows 翻页分支缺 return 应被捕获，实际：%v", problems)
+	}
+
+	// 变异 5：删 macOS 控制器 onDismiss 接线（视图声明仍在，不能算通过）。
+	mutatedMac = strings.Replace(string(macText),
+		"        v.onDismiss = { CandidatePanelController.hide() }\n", "", 1)
+	if mutatedMac == string(macText) {
+		t.Fatal("变异 5 未生效：源码里找不到 onDismiss 接线")
+	}
+	problems = nil
+	checkCandidateMouseUpSemantics(fsys(string(winText), mutatedMac), &problems)
+	if joined = strings.Join(problems, "\n"); !strings.Contains(joined, "CandidatePanelController") {
+		t.Fatalf("macOS 控制器 onDismiss 未接线应被捕获，实际：%v", problems)
+	}
 }
 
 // TestCheckShimModuleLayoutAndDocs 锁住 2026-11-06 架构拆分：
