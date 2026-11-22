@@ -3,7 +3,8 @@ import InputMethodKit
 
 // 按键路由回归测试：用合成 NSEvent 直接驱动 ChaosetController.handle，
 // 覆盖 keyUp 放行、字母进组词、Cmd/Ctrl/Option 放行、Shift 空按切换中英、
-// Shift+字母不误切换、Option+Backspace 按音节回退（2026-10-31 三端统一）、
+// Shift+字母不误切换、CapsLock 大写保留（2026-11-22 用户反馈）、
+// Option+Backspace 按音节回退（2026-10-31 三端统一）、
 // 方向键页内预选与空格确认预选项（issue#2，2026-11-12），
 // 以及「退格删最后一个拼音字母」在忽略空插入的客户端上也能一次删空
 // （2026-11-01 用户真机反馈，根因见 clearMarkedText 注释）。
@@ -69,10 +70,14 @@ final class MockClient: NSObject, IMKTextInput {
     func string(from range: NSRange, actualRange: NSRangePointer!) -> String! { return "" }
 }
 
+/// 合成按键事件。charactersIgnoringModifiers 的语义必须与 AppKit 一致：
+/// 它忽略除 Shift 外的修饰键——CapsLock 被忽略（CapsLock+A 返回 "a"），
+/// Shift 仍生效（Shift+A 返回 "A"）。默认与 characters 相同；CapsLock 大写
+/// 用例显式传小写 ignoring，才能复现旧壳把大写吞成小写的真实路径。
 func ev(_ chars: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [],
-        _ type: NSEvent.EventType = .keyDown) -> NSEvent {
+        _ type: NSEvent.EventType = .keyDown, ignoring: String? = nil) -> NSEvent {
     NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
-                     context: nil, characters: chars, charactersIgnoringModifiers: chars.lowercased(),
+                     context: nil, characters: chars, charactersIgnoringModifiers: ignoring ?? chars,
                      isARepeat: false, keyCode: code)!
 }
 
@@ -125,9 +130,21 @@ _ = c.handle(ev("", 56, [], .flagsChanged), client: m)     // Shift 松开
 let r7 = c.handle(ev("b", 11), client: m)
 check("Shift+字母不误切换（仍中文）", r7 == true, "ret=\(r7)")
 
-// 大写保留（用户反馈）：中文模式下 Shift+字母输入的原始大小写必须原样
-// 进引擎——预编辑显示 NI'HAO，回车原样上屏 NIHAO；修复前壳用
-// charactersIgnoringModifiers 取字符，大小写在这一步就被吞掉。
+// 大写保留（用户反馈）：charactersIgnoringModifiers 会忽略 CapsLock（返回
+// 小写），修复前壳读它，CapsLock 大写在这一步就被吞成小写（Shift 不受影响，
+// 它仍然生效）。合成事件的 ignoring 必须按 AppKit 真实语义传（CapsLock 被
+// 忽略、Shift 不被忽略），否则会把 Shift 伪造成失败、掩盖根因。
+_ = c.handle(ev("", 53), client: m) // Esc 清空
+for (ch, code) in [("N", 45), ("I", 34), ("H", 4), ("A", 0), ("O", 31)] {
+    _ = c.handle(ev(ch, UInt16(code), [.capsLock], ignoring: ch.lowercased()), client: m)
+}
+check("CapsLock 字母预编辑保留大小写", m.marked == "NI'HAO", "marked=\(m.marked)")
+let rCaps = c.handle(ev("\r", 36), client: m)
+check("回车原样上屏 CapsLock 大写拼音", rCaps == true && m.inserted.contains("NIHAO"),
+      "ret=\(rCaps) inserted=\(m.inserted)")
+
+// Shift 大写本来就由 charactersIgnoringModifiers 保留（它不忽略 Shift）；
+// 这条断言防止后续改动把 Shift 路径改坏，不代表旧壳在这里丢大写。
 _ = c.handle(ev("", 53), client: m) // Esc 清空
 for (ch, code) in [("N", 45), ("I", 34), ("H", 4), ("A", 0), ("O", 31)] {
     _ = c.handle(ev(ch, UInt16(code), [.shift]), client: m)
@@ -354,7 +371,7 @@ _ = c.handle(ev("", 53), client: m) // Esc：恢复干净状态，供后续断�
 
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 52
+let expectedChecks = 54
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")
