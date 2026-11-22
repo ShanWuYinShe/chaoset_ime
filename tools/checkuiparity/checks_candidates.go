@@ -313,6 +313,12 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 						group, winShell, want))
 				}
 			}
+			// 空白区点击必须收起候选窗（2026-10-29 鼠标零干扰契约；11-06 改 mouseup 时漏回）。
+			if !strings.Contains(body, "hide()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 onLButtonUp 未在空白区点击时 hide() 收起候选窗",
+					group, winShell))
+			}
 		}
 	}
 	if data, err := fs.ReadFile(fsys, macPanel); err == nil {
@@ -354,6 +360,11 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 						"%s：%s 的 mouseUp 未派发 %s", group, macPanel, want))
 				}
 			}
+			// 空白区点击必须收起候选窗（与 Windows 同契约）。
+			if !strings.Contains(body, "onDismiss?()") {
+				*problems = append(*problems, fmt.Sprintf(
+					"%s：%s 的 mouseUp 未在空白区点击时 onDismiss?()", group, macPanel))
+			}
 		}
 	}
 }
@@ -362,6 +373,7 @@ func checkCandidateMouseUpSemantics(fsys fs.FS, problems *[]string) {
 // 回引擎；linux-e2e 必须真实验证 CandidateClicked（不只是单测）。
 func checkCandidateClick(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupCandidateClick, macPanel, "mouseDown", "mouseUp", "pressedIndex")
+	checkContains(fsys, problems, groupCandidateClick, macPanel, "onDismiss")
 	checkContains(fsys, problems, groupCandidateClick, winShell, "WM_LBUTTONDOWN", "WM_LBUTTONUP", "pressedItemIndex_")
 	checkContains(fsys, problems, groupCandidateClick, linuxEngine, "candidate_clicked")
 	checkContains(fsys, problems, groupCandidateClick, uiParityDoc, "鼠标点选候选")

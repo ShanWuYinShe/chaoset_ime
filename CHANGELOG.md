@@ -11,6 +11,8 @@
 
 - **修复(设置中心)：侧边栏图标/文字垂直对齐、候选窗预览与真实候选窗同构**：导航项改为图标/文字绝对定位并垂直居中（此前 `HorizontalLayout` 顶端对齐，图标比文字高约 5pt）；「外观主题」下方预览重做为真实候选窗结构（序号键帽、蓝色预选胶囊、学习绿星、右侧齿轮/页码/上下箭头，移除预编辑），深浅配色对齐 `CandidateTheme`；压缩输入页留白，使 640×560 窗口内预览完整可见（此前底部被裁切）。
 
+- **修复(候选窗)：恢复「空白区点击收起候选窗」的鼠标零干扰契约**：2026-10-29 曾把候选栏空白区点击改为收起候选窗（不再静默吞掉），2026-11-06 左键动作统一改 mouseup 时漏回；当前 macOS/Windows 空白区点击被吞掉，用户会感觉「点击鼠标没反应」。现 macOS mouseUp 空白区调用 `onDismiss` 收起、Windows onLButtonUp 空白区 `hide()`，并加 `checkuiparity`「候选点选（mouseup）」断言防再回退。
+
 ## v0.5.4（2026-11-22）
 
 - **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）与 `PKGBUILD` 此前安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在两处打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），Arch `.install` 钩子在安装/升级/卸载时清理旧版本遗留链。

@@ -31,6 +31,10 @@ final class CandidatePanelView: NSView {
     var onSettings: (() -> Void)?
     /// 右键候选「删除该词」回调：index 与 onSelect 同约定（当前页切片内序号）。
     var onDelete: ((Int) -> Void)?
+    /// 空白区点击（未命中候选/翻页/齿轮）→ 收起候选窗。
+    /// 2026-10-29「候选栏空白区点击不得静默吞掉」在 11-06 改 mouseup 时漏回；
+    /// 这里恢复旧零干扰契约：点击被消费的那一下至少让面板消失，下一次点击落到宿主。
+    var onDismiss: (() -> Void)?
 
     private let textFont = NSFont.systemFont(ofSize: Layout.fontSize)
     private let indexFont = NSFont.systemFont(ofSize: Layout.indexFontSize)
@@ -467,7 +471,12 @@ final class CandidatePanelView: NSView {
         }
         guard let index = wasIndex,
               hitAreas.contains(where: { $0.index == index && $0.rect.contains(point) })
-        else { return }
+        else {
+            // 按在候选/齿轮/翻页上但抬起时已移出：不执行动作即可；
+            // 若按下本就在空白区，则收起候选窗，避免静默吞掉这次点击。
+            if wasIndex == nil, !wasSettings { onDismiss?() }
+            return
+        }
         switch index {
         case -1: onPageDown?()
         case -2: onPageUp?()

@@ -91,6 +91,7 @@ enum CandidatePanelController {
         v.onPageUp = { onPageUp?() }
         v.onSettings = { onSettings?() }
         v.onDelete = { onDelete?($0) }
+        v.onDismiss = { CandidatePanelController.hide() }
         // 新输入/翻页/选词后的刷新：页内预选归零（方向键跨页移动时由
         // KeyRouter 在 show 之后用 setSelectedIndex 指定末项/首项）。
         selectedIndex = 0
@@ -110,6 +111,7 @@ enum CandidatePanelController {
         onPageUp = nil
         onSettings = nil
         onDelete = nil
+        view?.onDismiss = nil
     }
 
     private static func ensurePanel() -> NSPanel {
