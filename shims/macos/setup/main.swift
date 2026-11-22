@@ -386,6 +386,38 @@ func installIME() -> String {
     var out = ""
     let src = res(imeResourceBundleName)
     guard fm.fileExists(atPath: src) else { return "随包缺少 \(imeResourceBundleName)，请重新构建。" }
+
+    // —— 升级/覆盖安装前先停旧进程 ——
+    // 旧 IME 存活时替换 bundle 会在当前登录会话留下重复 TIS 输入源；旧 daemon
+    // 必须退出，避免它把旧格式用户词典写回。与 shims/macos/install.sh 同一契约。
+    _ = runTool("/usr/bin/pkill", ["-9", "-f", "ChaosetIME.app/Contents/MacOS/ChaosetIME"])
+    _ = runTool("/usr/bin/killall", ["chaosetd"])
+    let stopDeadline = Date().addingTimeInterval(3)
+    while Date() < stopDeadline {
+        let imeRunning = runTool("/usr/bin/pgrep", ["-f", "ChaosetIME.app/Contents/MacOS/ChaosetIME"]).status == 0
+        let daemonRunning = runTool("/usr/bin/pgrep", ["-U", String(getuid()), "-x", "chaosetd"]).status == 0
+        if !imeRunning && !daemonRunning { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    if runTool("/usr/bin/pgrep", ["-f", "ChaosetIME.app/Contents/MacOS/ChaosetIME"]).status == 0 {
+        return "旧输入法进程未能退出，请注销重登后重试（避免 TIS 表重复条目与用户词典被旧 daemon 写回）。"
+    }
+
+    // 升级前备份用户词典（学习数据）：版本切换改文件格式时可回滚；保留最近 5 份。
+    let support = supportDir()
+    let backupDir = support + "/backups"
+    try? fm.createDirectory(atPath: backupDir, withIntermediateDirectories: true)
+    if fm.fileExists(atPath: support + "/userdict.json") {
+        let udBak = backupDir + "/userdict-" + stamp() + ".json"
+        if (try? fm.copyItem(atPath: support + "/userdict.json", toPath: udBak)) != nil {
+            out += "用户词典已备份：\(udBak)\n"
+        }
+        let olds = ((try? fm.contentsOfDirectory(atPath: backupDir)) ?? [])
+            .filter { $0.hasPrefix("userdict-") && $0.hasSuffix(".json") }
+            .sorted()
+        for old in olds.dropLast(5) { try? fm.removeItem(atPath: backupDir + "/" + old) }
+    }
+
     try? fm.createDirectory(atPath: inputMethodsDir(), withIntermediateDirectories: true)
     let dst = imeAppPath()
     if fm.fileExists(atPath: dst) {
@@ -420,7 +452,6 @@ func installIME() -> String {
         out += st == noErr ? "已向系统登记（TISRegisterInputSource）\n" : "登记失败（状态码 \(st)）\n"
 
     }
-    let support = supportDir()
     try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
     // 运行组件已随 ChaosetIME.app 安装；Application Support 只放用户数据。
     let seed = embeddedResource("dict_common.tsv")
