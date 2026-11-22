@@ -560,7 +560,8 @@ func TestCheckDllUnloadSafety(t *testing.T) {
 // Makefile 恢复一条 go build ./cmd/chaosetctl 必须被捕获（回退双实现）。
 func TestCheckRustCLIShipping(t *testing.T) {
 	paths := []string{makefile, macBuild, winPackageMsvc, linuxArchPkg, winInstaller,
-		winInstallBat, winVersionCheck, rustCtlBuildScript, rustDaemonBuildScript}
+		winInstallBat, winVersionCheck, rustCtlBuildScript, rustDaemonBuildScript,
+		"crates/chaosetctl/src/buildinfo.rs", "crates/chaosetd/src/main.rs", macInstall}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
 		fsys[p] = &fstest.MapFile{Data: readRepo(t, p)}
