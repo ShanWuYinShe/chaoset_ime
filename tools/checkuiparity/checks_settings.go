@@ -81,6 +81,8 @@ var settingsCenterText = []string{
 	"导出学习数据",
 	"学习数据仅保存在本机",
 	"设置项会随版本持续补充",
+	"常用快捷键",
+	"检查更新",
 	"Chaoset 版本",
 	"https://github.com/ShanWuYinShe/chaoset_ime",
 	"中英状态",
@@ -104,6 +106,11 @@ var settingsCenterText = []string{
 // 仓库链接，防止设置中心改文案时把功能入口删掉。
 func checkSettingsSharedText(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, groupSettingsSharedText, slintApp, settingsCenterText...)
+	// 关于页的快捷键帮助与检查更新入口依赖系统浏览器桥接，防止只加 UI 不接线。
+	checkContains(fsys, problems, groupSettingsSharedText, "shims/settings/src/events.rs",
+		"on_open_url", "crate::open_url::open_url")
+	checkContains(fsys, problems, groupSettingsSharedText, "shims/settings/src/open_url.rs",
+		"pub fn open_url")
 }
 
 // checkSettingsCore 锁住「设置核心 = Rust 单一真源」：crates/chaoset-config 提供

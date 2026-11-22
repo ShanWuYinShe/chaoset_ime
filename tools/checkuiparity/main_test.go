@@ -86,7 +86,7 @@ func TestCheckCandidateWindow(t *testing.T) {
 func TestCheckSettingsGearAndTray(t *testing.T) {
 	paths := []string{macPanel, winShell, linuxReadme, winInstaller, winInstallBat,
 		uiParityDoc, macLauncher, winLauncher, winLauncherHpp, winUiHost,
-		slintApp, slintBridge, slintEvents, slintComponents, linuxSetup, linuxComp,
+		slintApp, slintBridge, slintEvents, slintOpenUrl, slintComponents, linuxSetup, linuxComp,
 		installSh, linuxArchPkg, makefile, macBuild, macInstall, archDoc}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {

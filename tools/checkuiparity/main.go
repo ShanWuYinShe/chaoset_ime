@@ -91,6 +91,7 @@ const (
 	slintComponents       = "shims/settings/ui/components.slint"
 	slintBridge           = "shims/settings/src/bridge.rs"
 	slintEvents           = "shims/settings/src/events.rs"
+	slintOpenUrl          = "shims/settings/src/open_url.rs"
 	macLauncher           = "shims/macos/src/SettingsLauncher.swift"
 	winLauncher           = "shims/windows/src/settings_launcher.cpp"
 	winLauncherHpp        = "shims/windows/src/settings_launcher.hpp"

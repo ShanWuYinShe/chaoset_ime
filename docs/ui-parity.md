@@ -330,7 +330,9 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
 - 图标规范：页面图标只用 **SVG**（`shims/settings/ui/icons/*.svg`，`Image` 的 `colorize` 跟随主题令牌着色），
   **禁止用 emoji/Unicode 符号当图标**（导航、卡片标题、候选预览箭头/齿轮、关于页品牌图同一口径）；
   `tools/checkuiparity`「图标规范」组机器断言 Slint 页面不含 emoji、引用的 SVG 均存在。
-- 关于页：应用图标（品牌 `app.svg`）+「Chaoset 输入法」+ 平台副标题 + 许可证
+- 关于页：应用图标（品牌 `app.svg`）+「Chaoset 输入法」+ 平台副标题 + 「常用快捷键」
+  帮助区（Shift / Shift+空格 / Ctrl+空格 / 方向键 / 空格/回车 / 数字 / Esc）+
+  「检查更新」「项目主页」按钮（经系统浏览器打开 Release/仓库）+ 许可证
   「代码 MIT · 词库 CC BY-SA 4.0」+「设置项会随版本持续补充」+ 仓库地址
   `https://github.com/ShanWuYinShe/chaoset_ime`；**版本号只在页脚**，关于卡片不放。
 - 页面与文案：
@@ -340,7 +342,7 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   - 输入页「外观主题」：三选一「跟随系统 / 浅色 / 深色」；
   - 词库页「学习数据」：统计行 + 清空（二次确认）/导出按钮；
   - 词库页「词库」：导入按钮 + 说明「支持 dict.yaml / CC-CEDICT txt / TSV；导入后自动重启输入法。」；
-  - 关于页「关于」：跨平台中文输入法、许可证、仓库链接。
+  - 关于页「关于」：跨平台中文输入法、常用快捷键帮助、检查更新/项目主页按钮、许可证、仓库链接。
 - 交互契约：单实例（`src/single_instance.rs`：Unix 本地 socket / Windows 命名互斥体 +
   `FindWindowW` 前置已有窗口），重复启动只转发页号或前置窗口；导入成功/模糊音/双拼
   修改后自动重启 daemon；清空学习数据先二次确认。

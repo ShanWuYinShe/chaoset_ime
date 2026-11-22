@@ -102,6 +102,11 @@ pub fn wire(window: &MainWindow) {
         }
     });
 
+    // 9. 事件绑定：打开外部链接（检查更新 / 项目主页）。
+    window.on_open_url(|url| {
+        let _ = crate::open_url::open_url(url.as_str());
+    });
+
     // 9. 事件绑定：导入外部词库
     let w_handle = window.as_weak();
     window.on_import_dict_clicked(move || {
