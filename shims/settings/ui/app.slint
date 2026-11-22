@@ -1,6 +1,6 @@
 import { Theme } from "tokens.slint";
 export { Theme }
-import { ChaosSwitch, ChoicePill, ChaosButton, Card, CandidatePreview } from "components.slint";
+import { ChaosSwitch, ChoicePill, ChaosButton, Card, CandidatePreview, ShortcutRow } from "components.slint";
 
 export component MainWindow inherits Window {
     title: "Chaoset 设置";
@@ -30,6 +30,7 @@ export component MainWindow inherits Window {
     callback clear_userdict_clicked();
     callback export_userdict_clicked();
     callback import_dict_clicked();
+    callback open_url(string);
 
     HorizontalLayout {
         padding: 0px;
@@ -379,33 +380,81 @@ export component MainWindow inherits Window {
                     icon: @image-url("icons/about.svg");
 
                     VerticalLayout {
-                        spacing: 12px;
-                        alignment: center;
+                        spacing: 10px;
+                        alignment: start;
 
-                        Image {
-                            source: @image-url("icons/app.svg");
-                            width: 44px;
-                            height: 44px;
-                        }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: start;
 
-                        Text {
-                            text: "Chaoset 拼音输入法";
-                            font-size: 16px;
-                            font-weight: 700;
-                            color: Theme.text_primary;
-                            horizontal-alignment: center;
-                        }
+                            Image {
+                                source: @image-url("icons/app.svg");
+                                width: 38px;
+                                height: 38px;
+                            }
 
-                        Text {
-                            text: "跨平台中文输入法";
-                            font-size: 12px;
-                            color: Theme.text_secondary;
-                            horizontal-alignment: center;
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: center;
+
+                                Text {
+                                    text: "Chaoset 拼音输入法";
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                    color: Theme.text_primary;
+                                }
+
+                                Text {
+                                    text: "跨平台中文输入法";
+                                    font-size: 12px;
+                                    color: Theme.text_secondary;
+                                }
+                            }
                         }
 
                         Rectangle {
                             height: 1px;
                             background: Theme.divider;
+                        }
+
+                        Text {
+                            text: "常用快捷键";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Theme.text_secondary;
+                        }
+
+                        VerticalLayout {
+                            spacing: 4px;
+
+                            ShortcutRow { keys: "Shift"; action: "切换中 / 英"; }
+                            ShortcutRow { keys: "Shift + 空格"; action: "切换全 / 半角标点"; }
+                            ShortcutRow { keys: "Ctrl + 空格"; action: "切换输入法（系统快捷键）"; }
+                            ShortcutRow { keys: "↑ / ↓"; action: "候选翻页（也可用 - = PgUp/PgDn）"; }
+                            ShortcutRow { keys: "← / →"; action: "页内预选移动"; }
+                            ShortcutRow { keys: "空格 / 回车"; action: "确认候选 / 原样上屏"; }
+                            ShortcutRow { keys: "1–9"; action: "选择本页候选"; }
+                            ShortcutRow { keys: "Esc"; action: "取消当前组词"; }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.divider;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            ChaosButton {
+                                text: "检查更新";
+                                primary: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.open_url("https://github.com/ShanWuYinShe/chaoset_ime/releases/latest"); }
+                            }
+                            ChaosButton {
+                                text: "项目主页";
+                                horizontal-stretch: 1;
+                                clicked => { root.open_url("https://github.com/ShanWuYinShe/chaoset_ime"); }
+                            }
                         }
 
                         Text {

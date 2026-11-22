@@ -7,6 +7,7 @@
 - **修复(Linux Arch 预编译打包)：`PKGBUILD-bin` 不再写入 `/usr/local/bin`**：v0.5.4 已修 `package.sh` 与 `PKGBUILD`，但 Arch 的第三条打包路径 `shims/linux/arch/PKGBUILD-bin` 仍会安装 `/usr/local/bin` 兼容链（预编译二进制包），同样违反 FHS。现在该路径删除兼容链并加 FHS 说明；`checkuiparity`「打包安装」组把 `package.sh`、`PKGBUILD`、`PKGBUILD-bin` 三条路径都纳入断言，并加强 install 钩子旧链清理检查。
 
 - **修复(macOS 安装器)：升级后「已安装输入法版本」立即刷新**：Setup 状态页原先用 `Bundle(url:)` 读取已安装 app 的 Info.plist，Foundation 按路径缓存 bundle，覆盖安装同路径 app 后仍显示旧版本，用户会误以为升级失败；改为直接解析 plist，并在「Rust CLI 发行面」检查中断言不得回退。
+- **改进(设置中心)：关于页新增常用快捷键帮助与检查更新入口**：新用户不必翻 README 就能看到 Shift/空格/方向键/回车等操作；「检查更新」打开 GitHub 最新 Release，「项目主页」打开仓库，桥接通过系统默认浏览器（macOS open / Windows cmd start / Linux xdg-open），不引入新依赖。
 
 ## v0.5.4（2026-11-22）
 

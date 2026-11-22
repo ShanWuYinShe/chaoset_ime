@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod events;
+pub mod open_url;
 
 slint::include_modules!();
 

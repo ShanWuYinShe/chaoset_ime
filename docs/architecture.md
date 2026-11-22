@@ -229,11 +229,12 @@ Windows 只有 `chaosetctl.exe`。）
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
 | `ui/tokens.slint` | 21 项视觉令牌定义（深色/浅色配色、卡片圆角、几何尺寸） | ≤100 |
-| `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览） | ≤400 |
+| `ui/components.slint` | 自绘组件（ChaosSwitch 开关、ChoicePill 胶囊、ChaosButton、Card 卡片、候选窗实机微预览、ShortcutRow 快捷键行） | ≤400 |
 | `ui/app.slint` | 主设置窗口：640×560pt，148pt 左导航列（输入、词库、关于），右侧卡片式分组布局 | ≤500 |
 | `src/bridge.rs` | CLI 桥接：经同目录 `chaosetctl` 读写 `config`/`userdict`/`import`，并重启 daemon | ≤300 |
+| `src/open_url.rs` | 系统默认浏览器打开链接（检查更新/项目主页，用户点击冷路径） | ≤60 |
 | `src/lib.rs` | Slint 模块接入、系统深浅色感知、模块导出与无头测试桩 | ≤150 |
-| `src/events.rs` | 设置窗事件绑定（联想/模糊音/双拼/中英作用域/主题/学习数据/词库导入）与重启 daemon | ≤150 |
+| `src/events.rs` | 设置窗事件绑定（联想/模糊音/双拼/中英作用域/主题/学习数据/词库导入/打开链接）与重启 daemon | ≤150 |
 | `src/main.rs` | Slint 初始化（读设置/统计/版本）、单实例与事件循环 | ≤150 |
 | `src/single_instance.rs` | 单实例：Unix 本地 socket 转发页号 / Windows 命名互斥体 + 前置已有窗口 | ≤250 |
 

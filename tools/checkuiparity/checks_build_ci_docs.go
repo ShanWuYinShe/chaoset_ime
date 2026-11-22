@@ -141,6 +141,7 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/settings/ui/components.slint", 400},
 	{"shims/settings/ui/app.slint", 500},
 	{"shims/settings/src/bridge.rs", 300},
+	{"shims/settings/src/open_url.rs", 60},
 	{"shims/settings/src/events.rs", 150},
 	{"shims/settings/src/lib.rs", 150},
 	{"shims/settings/src/main.rs", 150},

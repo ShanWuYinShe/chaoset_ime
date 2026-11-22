@@ -114,6 +114,33 @@ export component ChaosButton {
     }
 }
 
+// ---- 关于页快捷键行（两列：按键 + 说明） ----
+export component ShortcutRow {
+    in property <string> keys;
+    in property <string> action;
+
+    height: 16px;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Text {
+            text: root.keys;
+            width: 96px;
+            font-size: 11px;
+            font-weight: 600;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.action;
+            font-size: 11px;
+            color: Theme.text_secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // ---- 卡片容器 ----
 export component Card inherits Rectangle {
     in property <string> title: "";
