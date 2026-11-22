@@ -91,6 +91,10 @@ pgrep -fl 'Application Support/chaoset/chaosetd'   # 应恰好 1 条
 Application Support），别急着当成 bug。真正的双实例是单实例锁缺失导致的，
 现在 `<socket>.lock` 的 flock 会拒绝第二个。
 
+若 daemon 路径是仓库 `shims/macos/build/chaosetd` 而不是已安装 app 的
+`Contents/Resources/chaosetd`，是开发机旧构建产物被 IME 拉起：kill 掉并删除
+`shims/macos/build` 里的旧 app/daemon，再启动 app 内 daemon；发布包用户不会遇到。
+
 ### 菜单栏/系统设置出现多个 Chaoset
 
 两个独立原因，都要查：
@@ -105,8 +109,12 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
    统一走随包 `tis register`，**不要在安装/重注册代码里直接调 `TISRegisterInputSource`**
    （由 `checkuiparity` 的「macOS 输入源登记幂等」组断言）。
    已出现重复时：`./build/tis dedupe` 是尽力而为（全部 disable 让 TIS 合并、再只启用
-   一个，直接 enable 无效）；**部分 macOS 版本上 disable/enable 不合并（条目数不变）**，
+   一个，直接 enable 无效）；**当前 macOS 实测同一登录会话内（含跨进程重试）条目数不变**，
    此时唯一可靠修法是**注销重登**——登录扫描会按「已装 app + HIToolbox 首选项」重建表。
+   `tis dedupe` 在仍无法合并时会明确提示需要注销重登，不再谎报“已消除”。
+   升级/覆盖安装前 `install.sh` 会先停旧 IME 与旧 daemon 再替换 app，并把用户词典备份到
+   `~/Library/Application Support/chaoset/backups/userdict-<时间>.json`（保留 5 份）：
+   旧 IME 存活时替换 bundle 可能重复登记；旧 daemon 退出时可能把旧格式用户词典写回。
    重登前先确认 `AppleEnabledInputSources` 里只有 1 个父容器 + 1 个 Pinyin 条目：
    `defaults export com.apple.HIToolbox - | grep -c Chaoset`（备份用同一命令导出到文件）。
 2. **父容器被禁用**：反例是 `tis sync` 把父容器 `ime.chaoset.inputmethod.ChaosetIME`
@@ -201,7 +209,7 @@ cd shims/macos
 本地真需要跑完整验证时，`make test`、`shims/linux/test-ci.sh`、
 `shims/macos/tests/equivalence.sh` 都能直接执行（与 CI 同一套脚本）。
 词库重新生成仍走 Go：`go run ./cmd/chaoset-dictgen ...`（`make build-tools` 只产出 `bin/chaoset-dictgen`）；
-CLI 侧统一用 `chaosetctl version` / `chaosetctl client` / `chaosetctl userdict`。
+CLI 侧统一用 `chaosetctl version`（单行：版本/平台/rev/构建时间，工作区脏时带 dirty；daemon 侧 `chaosetd -version` 同口径）/ `chaosetctl client` / `chaosetctl userdict`。
 
 ### 陷阱：concurrency 的 cancel-in-progress 会取消正在跑的旧流水
 
