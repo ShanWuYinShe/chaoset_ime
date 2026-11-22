@@ -96,6 +96,8 @@ const (
 	winLauncherHpp        = "shims/windows/src/settings_launcher.hpp"
 	winUiHost             = "shims/windows/src/ui_host.cpp"
 	linuxArchPkg          = "shims/linux/arch/PKGBUILD"
+	linuxArchPkgBin       = "shims/linux/arch/PKGBUILD-bin"
+	linuxArchInstall      = "shims/linux/arch/chaoset-ime.install"
 	slintApp              = "shims/settings/ui/app.slint"
 )
 
