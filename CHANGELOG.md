@@ -2,7 +2,7 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.5.2（2026-11-22）
 
 - **修复(macOS 安装)：GUI 安装器补齐升级安全契约**：v0.5.1 只改了开发用 `install.sh`，用户双击的 `ChaosetSetup.app` 仍会在旧 IME/daemon 存活时替换 app bundle——同样会触发 TIS 重复登记、旧 daemon 写回旧格式用户词典。现在 `installIME()` 与 CLI 安装器一致：替换前先停旧 IME/daemon 并等待退出、升级前备份 `userdict.json`（保留 5 份）；`checkuiparity` 增加 GUI 安装器断言，防止两套安装路径再次漂移。
 
