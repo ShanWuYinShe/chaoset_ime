@@ -276,11 +276,13 @@ export component CandidatePreview inherits Rectangle {
             background: Theme.is_dark ? rgba(255, 255, 255, 0.12) : rgba(0, 0, 0, 0.08);
         }
 
+        // 齿轮与真实候选窗一致用 chipDigit（浅色 #1D1D1F / 深色 #F2F6FC）；
+        // 弱化的 pageColor/chevron 灰只用于页码与箭头，两者不要混用。
         Image {
             source: @image-url("icons/gear.svg");
             width: 14px;
             height: 14px;
-            colorize: Theme.is_dark ? #7E90AC : #8E8E93;
+            colorize: Theme.is_dark ? #F2F6FC : #1D1D1F;
         }
 
         VerticalLayout {
