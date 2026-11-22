@@ -7,9 +7,41 @@ fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
 }
 
+fn run_git(root: &std::path::Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// 注入 git 元数据，供 `version` 显示 rev/构建时间/脏工作区；无 git 时静默跳过。
+fn emit_git_meta(root: &std::path::Path) {
+    if let Some(rev) = run_git(root, &["rev-parse", "--short=12", "HEAD"]) {
+        println!("cargo:rustc-env=CHAOSET_BUILD_REV={rev}");
+    }
+    if let Some(built) = run_git(root, &["show", "-s", "--format=%cI", "HEAD"]) {
+        println!("cargo:rustc-env=CHAOSET_BUILD_TIME={built}");
+    }
+    if let Some(status) = run_git(root, &["status", "--porcelain", "--untracked-files=no"]) {
+        if !status.is_empty() {
+            println!("cargo:rustc-env=CHAOSET_BUILD_DIRTY=1");
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=CHAOSET_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=CHAOSET_VERSION_QUAD");
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        emit_git_meta(&std::path::Path::new(&manifest_dir).join("../.."));
+    }
     if let Ok(version) = std::env::var("CHAOSET_BUILD_VERSION") {
         println!("cargo:rustc-env=CHAOSET_BUILD_VERSION={version}");
     }

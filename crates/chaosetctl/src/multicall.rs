@@ -98,7 +98,7 @@ pub fn run(
 }
 
 /// 拉起同目录/ PATH 中的设置中心；子进程退出码透传。
-fn launch_settings_gui(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32 {
+fn launch_settings_gui(args: &[String], _stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32 {
     let exe_name = if cfg!(windows) { "chaoset-settings.exe" } else { "chaoset-settings" };
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {

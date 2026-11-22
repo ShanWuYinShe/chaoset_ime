@@ -211,10 +211,12 @@ case "dedupe":
     let targets = ["ime.chaoset.inputmethod.ChaosetIME",
                    "ime.chaoset.inputmethod.ChaosetIME.Pinyin"]
     var fixedAny = false
+    var hadDuplicate = false
     for target in targets {
         let insts = (TISCreateInputSourceList(nil, true).takeRetainedValue() as! [TISInputSource])
             .filter { prop($0, kTISPropertyInputSourceID) == target }
         if insts.count <= 1 { continue }
+        hadDuplicate = true
         print("发现 \(target) 有 \(insts.count) 个重复实例，正在合并…")
         for s in insts { _ = TISDisableInputSource(s) }
         Thread.sleep(forTimeInterval: 1.0)
@@ -224,11 +226,19 @@ case "dedupe":
             _ = TISEnableInputSource(first)
         }
         print("  \(target) 合并后实例数: \(after.count)")
-        fixedAny = true
+        if after.count > 1 {
+            // TIS 在同一登录会话内不会真正合并重复实例（只能注销重登重建表）。
+            // 不能谎报“已消除”，否则用户会以为菜单栏重复已经好了。
+            print("⚠ 当前登录会话内 TIS 表未合并重复项：请注销重登一次重建输入源表")
+        } else {
+            fixedAny = true
+        }
     }
     if fixedAny {
         syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")
         print("已消除重复输入源实例")
+    } else if hadDuplicate {
+        syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")
     } else {
         print("未发现重复实例，无需处理")
     }
@@ -250,11 +260,16 @@ case "sync":
         }
     }
     // 父容器与 Pinyin 模式都启用，与系统输入法的结构保持一致。
+    // 每个 ID 只启用第一个实例：TIS 表里若已有重复条目，逐个 enable 会把所有
+    // 重复项都重新激活，安装/升级时反而把重复固定下来。
+    var enabledIDs = Set<String>()
     for source in allSources() {
         let id = prop(source, kTISPropertyInputSourceID)
         if id == "ime.chaoset.inputmethod.ChaosetIME"
             || id == "ime.chaoset.inputmethod.ChaosetIME.Pinyin" {
-            _ = TISEnableInputSource(source)
+            if enabledIDs.insert(id).inserted {
+                _ = TISEnableInputSource(source)
+            }
         }
     }
     syncHIToolboxPreferences(enableSourceID: "ime.chaoset.inputmethod.ChaosetIME.Pinyin")

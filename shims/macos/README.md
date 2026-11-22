@@ -243,3 +243,8 @@ rm -rf ~/Applications/Chaoset.app ~/Applications/ChaosetSetup.app
 - 修改 app 后重装会清 TIS 缓存；若系统设置一直开着，关闭再打开才能看到新列表。
   已添加的输入法在列表中呈灰色表示已启用，不能再添加一次。
 - 打字闭环的真机交互（GUI 点选、注销重登）需人工验收，脚本化测试不能完全替代。
+
+安装/升级会先停止旧输入法进程与旧 `chaosetd`，并在替换 app 前把用户词典备份到
+`~/Library/Application Support/chaoset/backups/userdict-<时间>.json`（保留最近 5 份）。
+如果当前登录会话里已经出现重复的 Chaoset 输入源，TIS 没有公开反注销 API，
+仍需注销重登一次重建输入源表。

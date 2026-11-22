@@ -294,13 +294,32 @@ fn attach_log_file(path: &str) {
     std::mem::forget(file); // fd/句柄在进程生命周期内保持打开
 }
 
+
+/// 单行构建信息：版本优先取构建注入（scripts/version.sh，单一真源），
+/// 本地裸 cargo 构建回退 Cargo 版本；rev/构建时间/脏工作区来自 build.rs 的 git 探测。
+fn version_info() -> String {
+    let version = option_env!("CHAOSET_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    let mut text = format!("chaosetd {version} {}/{}", std::env::consts::OS, std::env::consts::ARCH);
+    if let Some(rev) = option_env!("CHAOSET_BUILD_REV") {
+        text.push_str(&format!(" rev={rev}"));
+    }
+    if let Some(built) = option_env!("CHAOSET_BUILD_TIME") {
+        text.push_str(&format!(" built={built}"));
+    }
+    if option_env!("CHAOSET_BUILD_DIRTY") == Some("1") {
+        text.push_str(" dirty");
+    }
+    if option_env!("CHAOSET_BUILD_REV").is_none() && option_env!("CHAOSET_BUILD_TIME").is_none() {
+        text.push_str(" no-vcs");
+    }
+    text
+}
+
 fn main() {
     let args = parse_args();
 
     if args.show_version {
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-        println!("chaosetd {} {}/{}", env!("CARGO_PKG_VERSION"), os, arch);
+        println!("{}", version_info());
         return;
     }
 
@@ -494,6 +513,13 @@ mod tests {
     /// `-userdict ""` 必须是**内存态用户词典**（学习/删除/导出可用、不落盘），
     /// 不是「未启用」：Go daemon 的 NewUserDict("") 同语义，三端 core_test
     /// 依赖 userDelete 返回 deleted=true/false 而不是「未启用用户词典」错误。
+    #[test]
+    fn version_info_is_single_line_with_binary_name() {
+        let line = super::version_info();
+        assert!(line.starts_with("chaosetd "));
+        assert_eq!(line.lines().count(), 1);
+    }
+
     #[test]
     fn empty_userdict_flag_means_in_memory_dict() {
         let ud = resolve_user_dict(&args_with(Some(""))).expect("用户词典必须存在");
