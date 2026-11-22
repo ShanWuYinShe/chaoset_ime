@@ -125,6 +125,18 @@ _ = c.handle(ev("", 56, [], .flagsChanged), client: m)     // Shift 松开
 let r7 = c.handle(ev("b", 11), client: m)
 check("Shift+字母不误切换（仍中文）", r7 == true, "ret=\(r7)")
 
+// 大写保留（用户反馈）：中文模式下 Shift+字母输入的原始大小写必须原样
+// 进引擎——预编辑显示 NI'HAO，回车原样上屏 NIHAO；修复前壳用
+// charactersIgnoringModifiers 取字符，大小写在这一步就被吞掉。
+_ = c.handle(ev("", 53), client: m) // Esc 清空
+for (ch, code) in [("N", 45), ("I", 34), ("H", 4), ("A", 0), ("O", 31)] {
+    _ = c.handle(ev(ch, UInt16(code), [.shift]), client: m)
+}
+check("Shift+字母预编辑保留大小写", m.marked == "NI'HAO", "marked=\(m.marked)")
+let rUpper = c.handle(ev("\r", 36), client: m)
+check("回车原样上屏大写拼音", rUpper == true && m.inserted.contains("NIHAO"),
+      "ret=\(rUpper) inserted=\(m.inserted)")
+
 // Option+Backspace（⌥⌫）：组词中按音节回退（三端统一，2026-10-31）。
 // 先 Esc 清空上面的残余组词，再输入 nihao → ⌥⌫ 应回退到 ni。
 _ = c.handle(ev("", 53), client: m) // Esc
@@ -342,7 +354,7 @@ _ = c.handle(ev("", 53), client: m) // Esc：恢复干净状态，供后续断�
 
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 50
+let expectedChecks = 52
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

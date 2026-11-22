@@ -345,7 +345,12 @@ extension ChaosetController {
             return true
         }
 
-        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
+        // 字符级判定用 characters（包含 Shift/CapsLock 的结果），**不要**用
+        // charactersIgnoringModifiers：后者会把 Shift+字母统一成小写，导致
+        // 大写字母永远进不了引擎，预编辑被显示为小写、回车原样上屏也变成小写。
+        // 大写字母要原样进引擎，由引擎负责「小写匹配 + 原样保存」；数字/翻页/
+        // 标点也按实际字符判定，与 Windows/Linux 字符级口径一致。
+        guard let chars = event.characters, !chars.isEmpty else {
             return passThrough(client)
         }
 

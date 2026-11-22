@@ -24,9 +24,18 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 		"c.is_ascii_alphabetic()",
 	)
 
-	// macOS 壳：a-z 与 A-Z 都算组词字符（大写不再 passThrough）。
+	// macOS 壳：a-z 与 A-Z 都算组词字符（大写不再 passThrough），且字符级路由
+	// 必须用 event.characters 取实际大小写；charactersIgnoringModifiers 会把
+	// Shift+字母吞成小写，导致预编辑/回车原样上屏丢大小写（用户真机反馈）。
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
 		"scalar.value >= 65 && scalar.value <= 90",
+		"guard let chars = event.characters,",
+	)
+	checkExcludes(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
+		"guard let chars = event.charactersIgnoringModifiers",
+	)
+	checkContains(fsys, problems, group, "shims/macos/tests/key_routing/main.swift",
+		"Shift+字母预编辑保留大小写", "回车原样上屏大写拼音",
 	)
 
 	// Windows 壳：按 Shift 状态转发大写字母，不再「大写英文不进组词」。
