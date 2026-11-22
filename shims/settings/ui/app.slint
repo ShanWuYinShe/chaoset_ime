@@ -74,23 +74,23 @@ export component MainWindow inherits Window {
                         background: Theme.accent;
                     }
 
-                    HorizontalLayout {
-                        padding-left: 14px;
-                        spacing: 8px;
-                        alignment: start;
-                        Image {
-                            source: @image-url("icons/input.svg");
-                            width: 16px;
-                            height: 16px;
-                            colorize: root.current_page == 0 ? Theme.accent_text : Theme.text_secondary;
-                        }
-                        Text {
-                            text: "输入";
-                            font-size: 13px;
-                            font-weight: root.current_page == 0 ? 600 : 400;
-                            color: root.current_page == 0 ? Theme.accent_text : Theme.text_primary;
-                            vertical-alignment: center;
-                        }
+                    Image {
+                        x: 14px;
+                        y: 10px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("icons/input.svg");
+                        colorize: root.current_page == 0 ? Theme.accent_text : Theme.text_secondary;
+                    }
+                    Text {
+                        x: 38px;
+                        y: 0px;
+                        height: 36px;
+                        text: "输入";
+                        font-size: 13px;
+                        font-weight: root.current_page == 0 ? 600 : 400;
+                        color: root.current_page == 0 ? Theme.accent_text : Theme.text_primary;
+                        vertical-alignment: center;
                     }
                     nav_touch_0 := TouchArea {
                         clicked => { root.current_page = 0; }
@@ -115,23 +115,23 @@ export component MainWindow inherits Window {
                         background: Theme.accent;
                     }
 
-                    HorizontalLayout {
-                        padding-left: 14px;
-                        spacing: 8px;
-                        alignment: start;
-                        Image {
-                            source: @image-url("icons/dict.svg");
-                            width: 16px;
-                            height: 16px;
-                            colorize: root.current_page == 1 ? Theme.accent_text : Theme.text_secondary;
-                        }
-                        Text {
-                            text: "词库";
-                            font-size: 13px;
-                            font-weight: root.current_page == 1 ? 600 : 400;
-                            color: root.current_page == 1 ? Theme.accent_text : Theme.text_primary;
-                            vertical-alignment: center;
-                        }
+                    Image {
+                        x: 14px;
+                        y: 10px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("icons/dict.svg");
+                        colorize: root.current_page == 1 ? Theme.accent_text : Theme.text_secondary;
+                    }
+                    Text {
+                        x: 38px;
+                        y: 0px;
+                        height: 36px;
+                        text: "词库";
+                        font-size: 13px;
+                        font-weight: root.current_page == 1 ? 600 : 400;
+                        color: root.current_page == 1 ? Theme.accent_text : Theme.text_primary;
+                        vertical-alignment: center;
                     }
                     nav_touch_1 := TouchArea {
                         clicked => { root.current_page = 1; }
@@ -156,23 +156,23 @@ export component MainWindow inherits Window {
                         background: Theme.accent;
                     }
 
-                    HorizontalLayout {
-                        padding-left: 14px;
-                        spacing: 8px;
-                        alignment: start;
-                        Image {
-                            source: @image-url("icons/about.svg");
-                            width: 16px;
-                            height: 16px;
-                            colorize: root.current_page == 2 ? Theme.accent_text : Theme.text_secondary;
-                        }
-                        Text {
-                            text: "关于";
-                            font-size: 13px;
-                            font-weight: root.current_page == 2 ? 600 : 400;
-                            color: root.current_page == 2 ? Theme.accent_text : Theme.text_primary;
-                            vertical-alignment: center;
-                        }
+                    Image {
+                        x: 14px;
+                        y: 10px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("icons/about.svg");
+                        colorize: root.current_page == 2 ? Theme.accent_text : Theme.text_secondary;
+                    }
+                    Text {
+                        x: 38px;
+                        y: 0px;
+                        height: 36px;
+                        text: "关于";
+                        font-size: 13px;
+                        font-weight: root.current_page == 2 ? 600 : 400;
+                        color: root.current_page == 2 ? Theme.accent_text : Theme.text_primary;
+                        vertical-alignment: center;
                     }
                     nav_touch_2 := TouchArea {
                         clicked => { root.current_page = 2; }
@@ -198,19 +198,20 @@ export component MainWindow inherits Window {
             horizontal-stretch: 1;
 
             VerticalLayout {
-                padding: 24px;
-                padding-top: 20px;
+                padding: 20px;
+                padding-top: 8px;
+                padding-bottom: 8px;
 
                 // Page 0: 输入页
                 if root.current_page == 0 : VerticalLayout {
-                spacing: 16px;
+                spacing: 8px;
                 alignment: start;
 
                 // 卡片 1: 输入行为（联想 / 模糊音 / 双拼方案）
                 Card {
                     title: "输入行为";
                     icon: @image-url("icons/input.svg");
-                    hint: "选词上屏后展示可续接的词组候选；模糊音让 zh/z、ch/c、sh/s、n/l、an/ang、en/eng、in/ing 混用也能命中；双拼两键一音节。修改后输入法会短暂重启以生效。";
+                    hint: "选词后展示续接候选；模糊音可混用；双拼两键一音节；修改后自动重启。";
 
                     HorizontalLayout {
                         alignment: space-between;
@@ -297,7 +298,6 @@ export component MainWindow inherits Window {
                 Card {
                     title: "外观主题";
                     icon: @image-url("icons/theme.svg");
-                    hint: "跟随系统则随操作系统浅/深色自动切换；也可固定浅色或深色。";
 
                     HorizontalLayout {
                         spacing: 8px;

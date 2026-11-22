@@ -189,120 +189,121 @@ export component Card inherits Rectangle {
 }
 
 // ---- 候选窗实机微预览条 ----
-export component CandidatePreview inherits Rectangle {
-    height: 42px;
-    border-radius: 8px;
-    background: Theme.is_dark ? #131B2E : #F8FAFC;
-    border-width: 1px;
-    border-color: Theme.card_border;
+// 色值/几何对齐 shims/macos/src/CandidateTheme.swift 的深浅两套候选窗；改真实候选窗
+// 视觉时必须同步本预览，避免设置页展示与实机再次漂移。
+// 与 macOS/Windows 真实候选窗同构：候选序号键帽、蓝色预选胶囊、学习绿星、
+// 右侧「齿轮 + 页码 + 上下翻页箭头」。不画预编辑（真实候选窗外的拼音由宿主内联）。
+export component CandidatePreviewItem inherits Rectangle {
+    in property <string> index: "";
+    in property <string> text: "";
+    in property <bool> selected: false;
+    in property <bool> learned: false;
+
+    height: 27px;
+    border-radius: 5px;
+    background: root.selected ? (Theme.is_dark ? #0066EB : #007AFF) : Colors.transparent;
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-        alignment: center;
+        padding-left: 4px;
+        padding-right: 5px;
+        spacing: 3px;
+        alignment: start;
 
-        // 拼音预编辑
+        // 序号键帽：未选中双层描边，选中为胶囊内半透白单层键帽。
+        Rectangle {
+            width: 14px;
+            height: 17px;
+            border-radius: 3px;
+            background: root.selected
+                ? rgba(255, 255, 255, 0.27)
+                : (Theme.is_dark ? #223353 : #FFFFFF);
+            border-width: root.selected ? 0px : 1px;
+            border-color: Theme.is_dark ? rgba(255, 255, 255, 0.25) : rgba(0, 0, 0, 0.24);
+
+            Text {
+                text: root.index;
+                width: 100%;
+                height: 100%;
+                color: root.selected ? #FFFFFF : (Theme.is_dark ? #F2F6FC : #1D1D1F);
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
         Text {
-            text: "ni'hao";
-            color: Theme.accent_text;
-            font-size: 13px;
-            font-weight: 500;
+            text: root.text;
+            color: root.selected ? #FFFFFF : (Theme.is_dark ? #F2F6FC : #1D1D1F);
+            font-size: 11px;
             vertical-alignment: center;
         }
 
-        // 首选蓝胶囊
+        Text {
+            text: "*";
+            visible: root.learned;
+            color: Theme.is_dark ? #30D158 : #34C759;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component CandidatePreview inherits Rectangle {
+    height: 42px;
+    border-radius: 8px;
+    background: Theme.is_dark ? #1A2740 : #F6F6F8;
+    border-width: 1px;
+    border-color: Theme.is_dark ? rgba(255, 255, 255, 0.14) : rgba(0, 0, 0, 0.10);
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 5px;
+        alignment: start;
+
+        CandidatePreviewItem { index: "1"; text: "真实"; selected: true; learned: true; }
+        CandidatePreviewItem { index: "2"; text: "真是"; learned: true; }
+        CandidatePreviewItem { index: "3"; text: "珍视"; }
+        CandidatePreviewItem { index: "4"; text: "阵式"; }
+        CandidatePreviewItem { index: "5"; text: "阵势"; }
+        CandidatePreviewItem { index: "6"; text: "诊室"; }
+
+        Rectangle { horizontal-stretch: 1; }
+
         Rectangle {
-            height: 26px;
-            border-radius: 4px;
-            background: Theme.accent;
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 4px;
-                Text {
-                    text: "1.";
-                    color: #FFFFFF;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "你好";
-                    color: #FFFFFF;
-                    font-size: 13px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-            }
+            width: 1px;
+            height: 22px;
+            background: Theme.is_dark ? rgba(255, 255, 255, 0.12) : rgba(0, 0, 0, 0.08);
         }
 
-        // 次选
-        HorizontalLayout {
-            spacing: 3px;
-            Text {
-                text: "2.";
-                color: Theme.text_tertiary;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: "您好";
-                color: Theme.text_primary;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
+        Image {
+            source: @image-url("icons/gear.svg");
+            width: 14px;
+            height: 14px;
+            colorize: Theme.is_dark ? #7E90AC : #8E8E93;
         }
 
-        // 学习词
-        HorizontalLayout {
-            spacing: 3px;
-            Text {
-                text: "3.";
-                color: Theme.text_tertiary;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: "拟好";
-                color: Theme.text_primary;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: "*";
-                color: Theme.accent_text;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-        }
-
-        // 翻页箭头与微齿轮
-        HorizontalLayout {
-            spacing: 6px;
+        VerticalLayout {
+            spacing: 0px;
             alignment: center;
+
             Image {
                 source: @image-url("icons/arrow-up.svg");
-                width: 8px;
-                height: 8px;
-                colorize: Theme.text_tertiary;
+                width: 7px;
+                height: 7px;
+                colorize: Theme.is_dark ? #7E90AC : #8E8E93;
+            }
+            Text {
+                text: "1/12";
+                color: Theme.is_dark ? #7E90AC : #8E8E93;
+                font-size: 9px;
+                horizontal-alignment: center;
             }
             Image {
                 source: @image-url("icons/arrow-down.svg");
-                width: 8px;
-                height: 8px;
-                colorize: Theme.text_secondary;
-            }
-            Text {
-                text: "1/4";
-                color: Theme.text_tertiary;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            Image {
-                source: @image-url("icons/gear.svg");
-                width: 13px;
-                height: 13px;
-                colorize: Theme.text_secondary;
+                width: 7px;
+                height: 7px;
+                colorize: Theme.is_dark ? #7E90AC : #8E8E93;
             }
         }
     }
