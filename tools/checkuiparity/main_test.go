@@ -561,7 +561,7 @@ func TestCheckDllUnloadSafety(t *testing.T) {
 func TestCheckRustCLIShipping(t *testing.T) {
 	paths := []string{makefile, macBuild, winPackageMsvc, linuxArchPkg, winInstaller,
 		winInstallBat, winVersionCheck, rustCtlBuildScript, rustDaemonBuildScript,
-		"crates/chaosetctl/src/buildinfo.rs", "crates/chaosetd/src/main.rs", macInstall}
+		"crates/chaosetctl/src/buildinfo.rs", "crates/chaosetd/src/main.rs", macInstall, macSetup}
 	fsys := fstest.MapFS{}
 	for _, p := range paths {
 		fsys[p] = &fstest.MapFile{Data: readRepo(t, p)}

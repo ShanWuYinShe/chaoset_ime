@@ -104,6 +104,10 @@ func checkRustCLIShipping(fsys fs.FS, problems *[]string) {
 	//     并在升级前备份用户词典。
 	checkContains(fsys, problems, group, macInstall,
 		"升级/覆盖安装前先停旧进程", "userdict-", "用户词典已备份")
+	// GUI 安装器（用户实际双击的 Setup.app）必须与 CLI 安装器同一升级契约，
+	// 否则发布包用户仍会在替换 bundle 时触发 TIS 重复登记/旧 daemon 写回。
+	checkContains(fsys, problems, group, macSetup,
+		"升级/覆盖安装前先停旧进程", "用户词典已备份", "ChaosetIME.app/Contents/MacOS/ChaosetIME", "killall")
 
 	// 8) 已删除的 Go 运行期实现不得回归（Rust 是唯一实现）。
 	for _, gone := range []string{
