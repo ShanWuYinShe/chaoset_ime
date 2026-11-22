@@ -196,6 +196,7 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
 | 中英状态作用域 | UserDefaults ChaosetModeScope | HKCU Software\Chaoset\ModeScope | 配置文件 mode_scope | 三端统一两档：`system`（全局共享，默认）/ `process`（每进程独立）；旧三档值读取时归一化（window→process，未知→system），新写入只写 system/process |
 | 词库导入 | 统一设置中心：选择文件 → `chaosetctl import -o … -backup` → 自动重启 daemon | 同左 | 同左 | 合并/备份/原子替换唯一实现是 Rust `crates/chaoset-tools`（CLI 入口 `chaosetctl import`，macOS app 内副本 `chaoset-import` 是同一 Rust 二进制）；mac 安装器 Setup.app 仍保留导入面板 |
 | 鼠标点选候选 | 候选窗点击（按下记录、抬起上屏） | 同左（onLButtonDown 记录 / onLButtonUp 上屏） | CandidateClicked（ibus 面板决定点击语义） | 与数字键同语义；左键动作统一 mouseup（2026-11-06 用户要求） |
+| 候选窗空白区点击 | 收起候选窗，不静默吞掉点击 | 同左（mouseup 空白区 hide） | ibus 面板自绘，不可控 | 2026-10-29 鼠标零干扰契约；2026-11-06 改 mouseup 时漏回，现恢复并加机器断言 |
 | 滚轮翻页 | 未实现 | 不可行：候选窗不获得焦点，需全局鼠标钩子 | 不适用 | 三端不做，避免干扰游戏鼠标 |
 | 无障碍 | VoiceOver 候选文字/窗口级 | UIA 窗口级 provider | 由 ibus/桌面读屏决定 | Windows 候选子项未实现 |
 | Windows per-monitor DPI | 系统自动 | GetDpiForMonitor 按锚点/窗口 DPI，处理 WM_DPICHANGED | 由桌面环境决定 | 混合 DPI 多屏需真机验收 |

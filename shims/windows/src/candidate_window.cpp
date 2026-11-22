@@ -1095,7 +1095,7 @@ void CandidateWindow::onLButtonUp(int x, int y) {
     gearPressed_ = false;
     pressedItemIndex_ = -1;
     chevronPressed_ = 0;
-    if (tip_ == nullptr) return;
+    if (tip_ == nullptr) { hide(); return; }
     if (wasGear) {
         if (PtInRect(&settingsRect_, pt)) tip_->showSettingsWindow();
         return;
@@ -1125,6 +1125,10 @@ void CandidateWindow::onLButtonUp(int x, int y) {
             }
         }
     }
+
+    // 空白区点击（未命中候选/齿轮/翻页）：收起候选窗，不再静默吞掉鼠标事件。
+    // 2026-10-29 鼠标零干扰契约；2026-11-06 改 mouseup 时被漏掉，本次恢复。
+    hide();
 }
 
 void CandidateWindow::onRButtonUp(int x, int y) {
