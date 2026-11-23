@@ -10,11 +10,13 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace chaoset;
 
@@ -29,6 +31,125 @@ void check(bool cond, const std::string& msg) {
         ++failures;
         std::fprintf(stderr, "FAIL: %s\n", msg.c_str());
     }
+}
+
+// 脚本化传输：按预设脚本返回「读超时」或「注入一段字节」，不碰真实 socket。
+// 用来把「读超时不断连 + 迟到响应按帧丢弃」这条契约变成可跑的 UT（用户要求：
+// 之前修复的问题被回归引入，必须有单元测试把关）。
+class ScriptedTransport : public Transport {
+public:
+    struct Step {
+        bool timeout;   // true = 本次 readAll 报「等到截止无数据」
+        std::string bytes;  // 否则把这段字节追加到待读缓冲
+    };
+    std::vector<Step> steps;
+    bool failWrite = false;
+    bool closeCalled = false;
+    int closeCount = 0;
+    std::vector<std::string> writes;
+
+    bool writeAll(const std::uint8_t* data, std::size_t len) override {
+        if (failWrite) return false;
+        writes.emplace_back(reinterpret_cast<const char*>(data), len);
+        return true;
+    }
+
+    bool readAll(std::uint8_t* buf, std::size_t len) override {
+        timedOut_ = false;
+        while (pending_.size() < len) {
+            if (next_ >= steps.size()) {
+                // 脚本耗尽：视为超时（保留连接），由用例断言是否该走到这一步。
+                timedOut_ = true;
+                return false;
+            }
+            const Step& s = steps[next_++];
+            if (s.timeout) {
+                timedOut_ = true;
+                return false;
+            }
+            pending_ += s.bytes;
+        }
+        std::memcpy(buf, pending_.data(), len);
+        pending_.erase(0, len);
+        return true;
+    }
+
+    void closeConn() override {
+        closeCalled = true;
+        ++closeCount;
+    }
+    bool lastReadTimedOut() const override { return timedOut_; }
+
+    /// 换一批脚本并**重置消费游标**（只 clear() 不重置 next_ 会让下一轮从错误的
+    /// step 开始读——UT 自身踩过这个坑）。
+    void resetSteps(std::vector<Step> next) {
+        steps = std::move(next);
+        next_ = 0;
+    }
+
+private:
+    std::string pending_;
+    std::size_t next_ = 0;
+    bool timedOut_ = false;
+};
+
+// 构造一帧（4 字节大端长度 + JSON），与 daemon 写出的帧格式一致。
+std::string frame(const std::string& json) {
+    const std::uint32_t n = static_cast<std::uint32_t>(json.size());
+    std::string out;
+    out.push_back(static_cast<char>((n >> 24) & 0xFF));
+    out.push_back(static_cast<char>((n >> 16) & 0xFF));
+    out.push_back(static_cast<char>((n >> 8) & 0xFF));
+    out.push_back(static_cast<char>(n & 0xFF));
+    out += json;
+    return out;
+}
+
+// 「读超时不断连」契约：超时只放弃本次响应，连接与会话保留；迟到响应在下一次
+// 请求前被按帧长丢弃，本次请求拿到的是自己的响应（不错位、不上屏错字）。
+void testReadTimeoutKeepsConnection() {
+    ScriptedTransport t;
+    Session s(t);
+    // 第 1 次 call：写成功，读帧头时超时（daemon 慢）。
+    t.steps.push_back({true, ""});
+    bool ok = true;
+    Comp first = s.input("ni", false);
+    (void)first;
+    check(!t.closeCalled, "读超时不得断开连接（daemon 会话必须保留）");
+    check(t.writes.size() == 1, "读超时前请求已完整写出");
+
+    // 第 2 次 call：管道里先有第 1 次的迟到响应（id=1），然后才是本次响应（id=2）。
+    t.resetSteps({});
+    t.steps.push_back({false, frame("{\"id\":1,\"result\":{\"input\":\"ni\",\"preedit\":\"ni\","
+                                       "\"candidates\":[{\"text\":\"你\"}]}}")});
+    t.steps.push_back({false, frame("{\"id\":2,\"result\":{\"input\":\"niha\",\"preedit\":\"ni'ha\","
+                                       "\"candidates\":[{\"text\":\"你哈\"}]}}")});
+    Comp second = s.input("ha", false);
+    if (second.candidates.empty() || second.candidates[0].text != "你哈") {
+        std::fprintf(stderr, "  [diag] second: input=%s preedit=%s cands=%zu close=%d writes=%zu\n",
+                     second.input.c_str(), second.preedit.c_str(), second.candidates.size(),
+                     t.closeCalled ? 1 : 0, t.writes.size());
+    }
+    ok = !second.candidates.empty() && second.candidates[0].text == "你哈";
+    check(ok, "迟到响应被丢弃后，本次请求拿到自己的响应（不上屏错字）");
+    check(second.input == "niha", "会话状态来自本次响应（input=niha）");
+    check(!t.closeCalled, "丢弃迟到响应不得断开连接");
+
+    // 连续超时超过上限（2 次）后必须断连重整，避免无限积累。
+    ScriptedTransport t2;
+    Session s2(t2);
+    for (int i = 0; i < 3; ++i) {
+        t2.resetSteps({{true, ""}});
+        (void)s2.input("a", false);
+    }
+    check(t2.closeCalled, "连续读超时超过上限必须断连重整（防止无限积累）");
+
+    // 写失败（含写超时）必须断连：请求帧可能只写了一半，字节流无法再对齐。
+    ScriptedTransport t3;
+    Session s3(t3);
+    t3.failWrite = true;
+    (void)s3.input("a", false);
+    check(t3.closeCalled, "写失败必须断连（帧完整性无法恢复）");
 }
 
 // 撇号分隔的音节串 → 音节数组（与 win32.cpp splitSyllables 同规则）。
@@ -128,6 +249,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "用法: core_test <socket-path>\n");
         return 2;
     }
+
+    // ---- IPC 读超时韧性（用户要求：修复过的问题不得被回归引入，UT 把关）----
+    testReadTimeoutKeepsConnection();
 
     // ---- JSON 单元断言 ----
     bool ok = false;

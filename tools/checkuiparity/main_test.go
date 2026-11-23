@@ -767,6 +767,7 @@ func TestCheckTimeoutResilience(t *testing.T) {
 	files := []string{
 		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
 		rustDaemonServer, rustDaemonPipe, uiParityDoc,
+		winTransport, winCoreTest, macTransport,
 	}
 	orig := map[string]string{}
 	for _, p := range files {
@@ -831,6 +832,16 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		`let base = params.get("base").and_then(|v| v.as_str());`,
 		"let base: Option<&str> = None;",
 		`params.get(`)
+	// 读超时又改回断连（用户明确要求「不要因为超时就断开连接」）：
+	// Windows 的读超时分支不再直接返回、macOS 的不再保留连接，都必须被捕获。
+	expect("Windows 读超时又断连", winTransport,
+		"                        if (!isWrite) {",
+		"                        if (false) {",
+		"读/写超时的区分")
+	expect("macOS 读超时又断连", macTransport,
+		"            if lastReadTimedOut && staleResponses < 2 {",
+		"            if false {",
+		"lastReadTimedOut")
 }
 
 // TestCheckCandidateNoPrivilege 锁住「候选窗无特权：焦点离开即收」的三端契约：

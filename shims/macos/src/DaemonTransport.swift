@@ -11,7 +11,11 @@ import os
 final class DaemonTransport {
     private var fd: Int32 = -1
     private var nextID: UInt64 = 0
-
+    /// 已放弃但响应可能迟到、尚留在 socket 缓冲里的响应个数（一次一问一答，
+    /// 正常只有 0 或 1）。读超时**不断连**时用它记账，下次请求前按帧长丢弃。
+    private var staleResponses = 0
+    /// 上一次 readAll 失败是否只是「等到截止仍无数据」（区别于 EOF / I/O 错误）。
+    private var lastReadTimedOut = false
     private var lastFailAt: TimeInterval = 0
     private let cooldown: TimeInterval = 1.0 // 连不上时的重试冷却，避免每次击键都白连
     // 懒启动 daemon 的节流时间戳与间隔。必须与 lastFailAt 的 1s 连接冷却分开：
@@ -225,12 +229,23 @@ final class DaemonTransport {
         return true
     }
 
+    /// 读满 count 字节。失败返回 nil，区分两种性质（调用方据此决定是否断连）：
+    ///   * `lastReadTimedOut = true`：等到 SO_RCVTIMEO 仍无数据——**连接没坏**，
+    ///     daemon 只是算得慢，响应会迟到；保留连接 + 记账，下次请求前丢弃迟到响应。
+    ///   * `lastReadTimedOut = false`：对端关闭（n == 0）或真错误，必须断连。
     private func readAll(_ count: Int) -> [UInt8]? {
+        lastReadTimedOut = false
         var out = [UInt8](repeating: 0, count: count)
         var off = 0
         while off < count {
             let n = out.withUnsafeMutableBufferPointer { buf in
                 Darwin.recv(fd, buf.baseAddress! + off, count - off, 0)
+            }
+            if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 超时（SO_RCVTIMEO，250ms）：连接保留，见函数头注释。
+                lastReadTimedOut = true
+                logFailure("IPC recv 超时（保留连接）method-pending fd=\(fd)")
+                return nil
             }
             guard n > 0 else {
                 logFailure("IPC recv 失败/EOF errno=\(errno) fd=\(fd)")
@@ -241,8 +256,25 @@ final class DaemonTransport {
         return out
     }
 
+    /// 丢弃一个迟到的响应（按帧长整帧读掉，不看 id——它对应的请求已放弃）。
+    /// 读不到就保持计数、下次再试；帧长非法说明流已错位，断连。
+    private func drainStaleResponse() {
+        guard staleResponses > 0 else { return }
+        guard let head = readAll(4) else { return }
+        let size = Int(head[0]) << 24 | Int(head[1]) << 16 | Int(head[2]) << 8 | Int(head[3])
+        guard size > 0, size <= (1 << 20), readAll(size) != nil else {
+            logFailure("IPC 迟到帧无法对齐，断开重连")
+            disconnect()
+            staleResponses = 0
+            return
+        }
+        staleResponses -= 1
+    }
+
     func callOnce(method: String, params: [String: Any]) -> [String: Any]? {
         guard connectIfNeeded() else { return nil }
+        // 上一次读超时留下的迟到响应：先按帧长丢弃，避免被当成本次响应。
+        drainStaleResponse()
         nextID += 1
         let reqID = nextID
         var req: [String: Any] = ["id": reqID, "method": method]
@@ -257,9 +289,22 @@ final class DaemonTransport {
             UInt8((len >> 24) & 0xFF), UInt8((len >> 16) & 0xFF),
             UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF),
         ]
-        guard writeAll(header + [UInt8](payload)),
-              let headBytes = readAll(4) else {
-            logFailure("IPC 帧头收发失败 method=\(method)")
+        guard writeAll(header + [UInt8](payload)) else {
+            // 写失败（含写超时）：请求帧可能只写了一半，字节流无法再对齐 → 断连。
+            logFailure("IPC 帧头写入失败 method=\(method)")
+            disconnect()
+            return nil
+        }
+        guard let headBytes = readAll(4) else {
+            if lastReadTimedOut && staleResponses < 2 {
+                // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话（daemon 的
+                // Session 原地保留，下一键就是正常增量输入），把这次响应记为迟到
+                // 待丢；本次返回 nil 由调用方按「超时」处理（不是 fail-open）。
+                staleResponses += 1
+                logFailure("IPC 响应超时，保留连接待下次丢弃 method=\(method)")
+                return nil
+            }
+            logFailure("IPC 帧头读取失败 method=\(method)")
             disconnect()
             return nil
         }
