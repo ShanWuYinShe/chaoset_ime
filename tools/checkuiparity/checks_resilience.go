@@ -135,6 +135,36 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		fail("%s 找不到 ensureDaemonFast 定义", winShell)
 	}
 
+	// a5) **读超时不断连**（用户要求：不要因为超时就断开连接导致不能输入中文）。
+	// 断连会让 daemon 会话随连接消失、用户已输入的拼音全丢；保留连接时 daemon 的
+	// Session 原地不动，下一键就是正常增量输入。写超时仍必须断连（帧可能只写了
+	// 一半、字节流无法再对齐），这条区分不能混。
+	checkContains(fsys, problems, group, winTransport,
+		"bool lastReadTimedOut() const override", "lastReadTimedOut_ = !isWrite",
+		"读超时：保留连接")
+	if body, line, ok := cppFunctionBody(stripCppComments(mustRead(fsys, winTransport)),
+		"bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len)"); ok {
+		// 读超时分支必须直接返回（不断连），写超时分支必须 failConn。
+		if !strings.Contains(body, "if (!isWrite) {") {
+			fail("%s 的 pipeIo（约第 %d 行）缺少读/写超时的区分——读超时不得断连", winTransport, line)
+		}
+	} else {
+		fail("%s 找不到 pipeIo 定义", winTransport)
+	}
+	checkContains(fsys, problems, group, winCoreHpp,
+		"virtual bool lastReadTimedOut() const", "staleResponses_")
+	checkContains(fsys, problems, group, winCoreCpp,
+		"bool Session::drainStaleResponse()", "++staleResponses_")
+	// macOS 侧同一契约（Swift 独立实现，必须一起保持）。
+	checkContains(fsys, problems, group, macTransport,
+		"lastReadTimedOut = true", "func drainStaleResponse()",
+		// 结构片段：读超时必须走「保留连接 + 记账待丢」这一支，不能改回无条件 disconnect。
+		"if lastReadTimedOut && staleResponses < 2 {", "staleResponses += 1")
+	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
+	checkContains(fsys, problems, group, winCoreTest,
+		"testReadTimeoutKeepsConnection", "ScriptedTransport",
+		"读超时不得断开连接", "迟到响应被丢弃", "写失败必须断连")
+
 	// b) 协议三处都认 input 的 base。
 	checkContains(fsys, problems, group, winShell, "daemonDesynced_", "pendingKeys_", "lastIoWasTimeout(")
 	checkContains(fsys, problems, group, winCoreHpp, "const char* base = nullptr")

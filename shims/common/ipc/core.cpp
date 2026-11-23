@@ -273,9 +273,41 @@ std::string parseCommitted(const JsonValue& result) {
     return out;
 }
 
+/// 读超时后保留连接的实现（见 core.hpp「超时不断连」契约）。
+///
+/// 为什么要保留连接：读超时只说明 daemon 这次算得慢，**连接本身没坏**。旧实现
+/// 超时即 closeConn/failConn，daemon 侧会话随连接消失，用户已输入的拼音全部丢
+/// 失、需要重连 + base 整串重建才能恢复（失步恢复是补救）；而不断连时 daemon 的
+/// Session 原地保留，下一键就是正常增量输入，用户完全无感。
+///
+/// 代价是管道里会留着一个「迟到的响应」：它的请求已经被放弃，若不清掉，下一次
+/// call 会把它当成本次响应（id 不匹配 → 旧实现直接断连，等于白保留）。所以每次
+/// call 之前先按帧长把它读掉丢弃（不看 id）。
+bool Session::drainStaleResponse() {
+    if (staleResponses_ <= 0) return true;
+    std::uint8_t head[4];
+    if (!t_.readAll(head, 4)) return false;  // 仍然没到或真断：保持计数，下次再试
+    const std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) |
+                               (static_cast<std::uint32_t>(head[1]) << 16) |
+                               (static_cast<std::uint32_t>(head[2]) << 8) |
+                               static_cast<std::uint32_t>(head[3]);
+    if (size == 0 || size > kMaxMessageSize) {
+        t_.closeConn();
+        staleResponses_ = 0;
+        return false;
+    }
+    std::string body(size, '\0');
+    if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) return false;
+    --staleResponses_;
+    return true;
+}
+
 JsonValue Session::call(const std::string& method, const std::string& params, bool* ok) {
     JsonValue none;
     if (ok != nullptr) *ok = false;
+    // 上一次读超时留下的迟到响应：先丢弃，避免被当成本次响应。drain 不动连接，
+    // 读不到就保持计数、本次正常发送（响应仍会按顺序返回，id 校验兜底）。
+    (void)drainStaleResponse();
     ++nextID_;
     const std::uint64_t reqID = nextID_;
     std::string req = buildRequest(reqID, method, params);
@@ -294,7 +326,15 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     }
     std::uint8_t head[4];
     if (!t_.readAll(head, 4)) {
+        if (t_.lastReadTimedOut() && staleResponses_ < 2) {
+            // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
+            // 记为「迟到待丢」，下次 call 前 drain；本次返回失败由调用方决定
+            //（TSF 路径保留本地组词，不 fail-open）。
+            ++staleResponses_;
+            return none;
+        }
         t_.closeConn();
+        staleResponses_ = 0;
         return none;
     }
     std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) | (static_cast<std::uint32_t>(head[1]) << 16) |
@@ -305,7 +345,10 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     }
     std::string body(size, '\0');
     if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) {
+        // 帧头已收到、帧体超时：半个帧留在连接里，无法再对齐，只能断连。
+        //（帧头都还没到的超时在上面按「迟到响应」处理，那里可以保留连接。）
         t_.closeConn();
+        staleResponses_ = 0;
         return none;
     }
     bool parsed = false;

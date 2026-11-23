@@ -65,6 +65,7 @@ public:
     // 上一次 I/O 失败是否为「等到截止仍无应答」（区别于断管/写失败/连不上）。
     // TSF 按键路径据此决定超时后保留本地组词、下一键重建（issue #122）。
     bool lastIoWasTimeout() const { return lastIoWasTimeout_; }
+    bool lastReadTimedOut() const override { return lastReadTimedOut_; }
 
     bool ensureConnected() {
         if (pipe_ != INVALID_HANDLE_VALUE) return true;
@@ -123,10 +124,18 @@ public:
     }
 
 private:
-    // 重叠 I/O + 有界等待：单次 I/O 等待上限 deadlineMs_；超时立即 CancelIoEx +
-    // 断开连接并返回（绝不 WaitForSingleObject(INFINITE)，审计 T2）。
+    // 重叠 I/O + 有界等待：单次 I/O 等待上限 deadlineMs_（绝不
+    // WaitForSingleObject(INFINITE)，审计 T2）。
+    //
+    // 超时的处置按方向区分（2026-11-24 用户要求「不要因为超时就断开连接」）：
+    //   * **写超时 → 断连**：请求帧可能只写了一半，连接上的字节流再也对不齐；
+    //   * **读超时 → 保留连接**：请求已完整发出，daemon 只是算得慢，响应会迟到。
+    //     断连会让 daemon 会话随连接消失（用户已输入的拼音全丢），而保留连接时
+    //     daemon 的 Session 原地不动，下一键就是正常增量输入。迟到响应由
+    //     Session::call 在下次请求前按帧长丢弃（core.cpp drainStaleResponse）。
     bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len) {
         lastIoWasTimeout_ = false;
+        lastReadTimedOut_ = false;
         std::size_t off = 0;
         while (off < len) {
             DWORD chunk = static_cast<DWORD>(
@@ -149,10 +158,16 @@ private:
                     if (wait == WAIT_OBJECT_0) {
                         ok = ::GetOverlappedResult(pipe_, &ov, &done, FALSE);
                     } else {
-                        // 有界失败：关闭管道会取消未完成 I/O；此处不再等待。
+                        // 有界失败（不等待）：先取消本次重叠 I/O，释放事件。
                         ::CancelIoEx(pipe_, &ov);
                         ::CloseHandle(ov.hEvent);
                         lastIoWasTimeout_ = true;
+                        lastReadTimedOut_ = !isWrite;
+                        if (!isWrite) {
+                            // 读超时：保留连接（见函数头注释）。daemon 的响应会迟到，
+                            // 由上层记为「待丢弃」并在下次请求前 drain。
+                            return false;
+                        }
                         failConn();
                         return false;
                     }
@@ -183,6 +198,8 @@ private:
     DWORD deadlineMs_ = 200;
     bool autoConnect_ = true;
     bool lastIoWasTimeout_ = false;
+    /// 仅读方向：上一次 readAll 失败是「等到截止仍无数据」（区别于写超时/断管）。
+    bool lastReadTimedOut_ = false;
     std::wstring pipeName_;
 };
 

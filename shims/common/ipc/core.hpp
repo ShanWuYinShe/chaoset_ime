@@ -45,6 +45,11 @@ public:
     virtual bool writeAll(const std::uint8_t* data, std::size_t len) = 0;
     virtual bool readAll(std::uint8_t* buf, std::size_t len) = 0;
     virtual void closeConn() = 0;
+    /// 上一次 readAll 失败是否只是「等到截止仍无数据」（超时），而不是对端关闭/
+    /// I/O 错误。超时**不代表连接坏了**：请求已完整发出，daemon 只是算得慢，
+    /// 响应会迟到。壳据此保留连接（daemon 会话状态不丢），只在下次请求前把迟到
+    /// 响应按 id 丢弃（见 Session::drainStaleResponse）。
+    virtual bool lastReadTimedOut() const { return false; }
 };
 
 // 极小 JSON 值树：足以解析 daemon 响应（对象/数组/字符串/数字/字面量）。
@@ -155,8 +160,15 @@ public:
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);
+    /// 读超时后保留连接：把管道/socket 里迟到的响应读掉丢弃（按帧长读完整一帧，
+    /// 不看 id——迟到响应对应的请求已经放弃）。返回 false 表示读不到（真断或
+    /// 仍无数据），此时由调用方决定是否断连。
+    bool drainStaleResponse();
     Transport& t_;
     std::uint64_t nextID_ = 0;
+    /// 已放弃但响应可能迟到、尚留在传输缓冲里的响应个数（一次一问一答，
+    /// 正常只有 0 或 1）。超过上限说明 daemon 持续跟不上，那时才断连重来。
+    int staleResponses_ = 0;
 };
 
 }  // namespace chaoset

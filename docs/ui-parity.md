@@ -406,6 +406,15 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断（`circuitOpen`）只用于 worker 的
   慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不熔断**——每键只做一次非阻塞
   `tryConnectOnce`，超时后的下一键才能立刻重连。
+- **读超时不断连（三端）**：I/O 超时的处置按方向区分——读超时只说明 daemon 这次算得
+  慢，**连接没坏**，断连会让 daemon 会话随连接消失、用户已输入拼音全丢（失步恢复 +
+  `base` 重建只是补救）。现在读超时保留连接，把该响应记为「迟到待丢」，下次请求前
+  按帧长整帧读掉丢弃（不看 id，对应请求已放弃）：Windows `PipeTransport::lastReadTimedOut`
+  + `pipeIo` 读分支直接返回、共用 `Session::call`/`drainStaleResponse`（`shims/common/ipc`）、
+  macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF。写超时、对端
+  关闭、帧体读到一半才超时仍必须断连（帧无法再对齐）；连续读超时超 2 次也断连重整。
+  由 `core_test::testReadTimeoutKeepsConnection`（6 条）与 `checkuiparity`「超时韧性」组的
+  变异测试断言。
 - **fail-open（daemon 不在）**：连不上/管道断开时 `ensureDaemonFast` 单次非阻塞
   探测，失败即原样放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键
   恢复候选。首 1–2 个内容键可能按英文直入（已确认可接受）。
