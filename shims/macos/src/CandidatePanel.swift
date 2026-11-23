@@ -44,6 +44,9 @@ enum CandidatePanelController {
     static var onSettings: (() -> Void)?
     /// 右键候选「删除该词」回调，与 onSelect 同约定。
     static var onDelete: ((Int) -> Void)?
+    /// 面板失去 key 状态时的回调（控制器用它结束会话；候选窗没有特权，失键即收）。
+    /// 由控制器在装焦点守卫时设置一次，hide() 不清。
+    static var onResignKey: (() -> Void)?
     /// 页内预选序号（0 起，当前页切片内）。方向键移动、空格确认与高亮 pill
     /// 共用；show()（新输入/翻页/选词刷新）时归零。
     static var selectedIndex = 0
@@ -123,8 +126,14 @@ enum CandidatePanelController {
         let built = CandidatePanelWindow.make()
         panel = built.panel
         view = built.view
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: built.panel, queue: .main
+        ) { _ in onResignKey?() }
         return built.panel
     }
+
+    /// 面板当前是否可见（单测断言「失焦后候选窗已收起」用）。
+    static var isVisible: Bool { panel?.isVisible ?? false }
 }
 
 // MARK: - 模式切换提示（短暂 toast）

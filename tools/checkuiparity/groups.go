@@ -62,6 +62,7 @@ const (
 	groupCandidatePageSize    = "候选每页数量"
 	groupCandidateMouseUp     = "候选点选（mouseup）"
 	groupCandidateClick       = "候选点选"
+	groupCandidateNoPrivilege = "候选窗无特权（失焦即收）"
 	groupCandidateDelete      = "候选右键删除"
 	groupCandidateGearMouseUp = "候选窗齿轮 mouseUp"
 	// issue#2：方向键页内预选与上下双翻页箭头（Windows/macOS/Linux 按键语义）。

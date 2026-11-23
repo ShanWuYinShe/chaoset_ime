@@ -272,6 +272,31 @@ Windows 面板为不透明底 + 系统阴影/圆角；macOS 为半透明底 + 1p
   当前进程状态（每个程序各自记住中英状态，同一程序的多个 TIP 实例共享；TIP 激活/
   切进程时把本进程状态上报到托盘，托盘左键只显示、不切换）。
 
+## 候选窗没有特权：焦点离开即收（2026-11-23 用户要求）
+
+候选窗只是一个普通弹出窗口，不得在他处截走鼠标。用户切到别处（Cmd+Tab / Dock /
+点击别的应用、切换 Space、面板失去 key）时它必须消失，候选与输入一并清掉；三端
+语义一致：**已确认段先落盘、剩余拼音丢弃、联想退出、面板与提示收起**。
+
+- **macOS（`ChaosetController` 焦点守卫）**：IMK 只在客户端文本焦点变化时回调
+  `commitComposition` / `deactivateServer`——应用切换、Space 切换与联想态（没有
+  marked text）都不会触发它们，旧实现候选窗因此留在新应用上面（`canJoinAllSpaces`
+  浮在所有 Space）。现在进程级监听 `NSWorkspace.didActivateApplicationNotification`
+  与 `activeSpaceDidChangeNotification`（`installFocusGuardIfNeeded`，只装一次），
+  交给 `activeController`（`refresh` 入口登记）调 `abandonSessionOnFocusLoss`：走
+  `endSession(client:)` 与 `commitComposition` 同语义，再 `refresh(lastClient)` 清掉
+  客户端 marked 区（走 `clearMarkedText` 的忽略空插入兜底）；客户端取最近一次按键
+  事件带来的 `lastClient`，不向 IMK 重新要（焦点通知不是 IMK 回调）。面板若曾成为
+  key 窗口，`NSWindow.didResignKeyNotification` 经 `CandidatePanelController.onResignKey`
+  同样结束会话。自己进程激活（面板 `nonactivatingPanel`，理论不会）忽略。
+- **Windows**：`OnSetFocus(FALSE)` 对已激活实例 `resetSession` 并 `endComposition`
+  （收候选窗；已确认段先落盘），前台离开本进程由前台钩子收口（见「零阻塞契约」）。
+- **Linux（ibus）**：`focus_out` → `focusOut()`：已确认段 `commit`、`sessionReset`、
+  `exitAssociate`、`hidePreedit`、`hideLookupTable`。
+- 回归：macOS `tests/key_routing` 直接驱动 `ChaosetController.handleFocusLossSignal`
+  （组词态 / 渐进已确认段落盘 / 联想退出 / 幂等 / 自己进程忽略，共 10 条）；
+  `checkuiparity`「候选窗无特权（失焦即收）」组锁住三端实现与本文档（含变异测试）。
+
 ## 设置窗契约（Slint 唯一实现 · 蓝白）
 
 设置 UI 只有一份实现：跨平台 Slint 设置中心（`shims/settings`，产物

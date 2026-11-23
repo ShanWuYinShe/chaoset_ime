@@ -369,9 +369,47 @@ check("CapsLock flagsChanged 放行",
       c.handle(flagsEv(57, [.capsLock]), client: m) == false)
 _ = c.handle(ev("", 53), client: m) // Esc：恢复干净状态，供后续断言使用
 
+// ---- 候选窗没有特权：焦点离开即收起并清空（2026-11-23 用户反馈）----
+// Cmd+Tab / Dock 切应用、切换 Space、联想态都不会触发 commitComposition /
+// deactivateServer，旧实现候选窗留在新应用上面截走鼠标。进程级焦点守卫：别的
+// 应用激活 / Space 切换 → 已确认段落盘、剩余拼音丢弃、联想退出、面板收起。
+_ = c.handle(ev("", 53), client: m) // Esc：干净状态
+for key in [("n", UInt16(45)), ("i", UInt16(34))] {
+    _ = c.handle(ev(key.0, key.1), client: m)
+}
+check("焦点守卫前：字母进组词且候选窗可见",
+      (c.current?.input ?? "") == "ni" && CandidatePanelController.isVisible,
+      "input=\(c.current?.input ?? "nil") visible=\(CandidatePanelController.isVisible)")
+ChaosetController.handleFocusLossSignal(pid: ProcessInfo.processInfo.processIdentifier)
+check("自己进程激活不结束会话", (c.current?.input ?? "") == "ni")
+ChaosetController.handleFocusLossSignal(pid: 99999) // 别的应用激活
+check("别的应用激活：组词清空", (c.current?.input ?? "").isEmpty && (c.current?.candidates.isEmpty ?? true),
+      "current=\(String(describing: c.current?.input))")
+check("别的应用激活：候选窗收起", !CandidatePanelController.isVisible)
+check("别的应用激活：联想退出", c.associateCandidates == nil)
+check("别的应用激活：客户端标记区清掉", m.marked.isEmpty, "marked=\(m.marked)")
+// 幂等：没有待收尾状态时再次触发（Space 切换信号）不插入任何文本
+let insertedBefore = m.inserted.count
+ChaosetController.handleFocusLossSignal(pid: nil)
+check("无会话时焦点信号零副作用", m.inserted.count == insertedBefore && (c.current?.input ?? "").isEmpty)
+// 渐进上屏后失焦：已确认段落盘，剩余拼音丢弃
+for ch in "nihaoshijie" {
+    _ = c.handle(ev(String(ch), UInt16(ch.asciiValue ?? 0)), client: m)
+}
+_ = c.handle(ev("1", 18), client: m) // 选 1「你好」→ 已确认段「你好」+ 剩余 shijie
+check("渐进上屏前置于失焦用例：已确认段存在", c.confirmedText == "你好",
+      "confirmed=\(c.confirmedText) input=\(c.current?.input ?? "nil")")
+let insertedProgressive = m.inserted.count
+ChaosetController.handleFocusLossSignal(pid: 99999)
+check("失焦时已确认段落盘", m.inserted.count >= insertedProgressive + 1
+      && m.inserted[insertedProgressive] == "你好", "inserted=\(m.inserted.suffix(2))")
+check("失焦后无残留状态", (c.current?.input ?? "").isEmpty && c.confirmedText.isEmpty
+      && !CandidatePanelController.isVisible && m.marked.isEmpty)
+
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-let expectedChecks = 54
+// 64 = 原有 54 + 「候选窗没有特权：焦点离开即收」10 条。
+let expectedChecks = 64
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

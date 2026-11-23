@@ -832,3 +832,57 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"let base: Option<&str> = None;",
 		`params.get(`)
 }
+
+// TestCheckCandidateNoPrivilege 锁住「候选窗无特权：焦点离开即收」的三端契约：
+// 真实仓库必须通过；以下回退都必须被捕获：
+//  1. macOS 去掉应用切换/Space 切换的 NSWorkspace 守卫（候选窗留在别的应用上截鼠标）；
+//  2. macOS 焦点收尾不再清客户端 marked 区（下划线拼音残留）；
+//  3. Windows OnSetFocus(FALSE) 不再 resetSession；
+//  4. Linux focus_out 不再收 lookup table。
+func TestCheckCandidateNoPrivilege(t *testing.T) {
+	files := []string{macController, macPanel, macKeyTest, winShell, linuxEngine, uiParityDoc}
+	orig := map[string]string{}
+	for _, p := range files {
+		orig[p] = string(readRepo(t, p))
+	}
+	build := func(mut map[string]string) fstest.MapFS {
+		m := fstest.MapFS{}
+		for _, p := range files {
+			data := orig[p]
+			if s, ok := mut[p]; ok {
+				data = s
+			}
+			m[p] = &fstest.MapFile{Data: []byte(data)}
+		}
+		return m
+	}
+
+	var problems []string
+	checkCandidateNoPrivilege(build(nil), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实实现未通过候选窗无特权契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	expect := func(name, path, old, new string) {
+		t.Helper()
+		if !strings.Contains(orig[path], old) {
+			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
+		}
+		var problems []string
+		checkCandidateNoPrivilege(build(map[string]string{path: strings.Replace(orig[path], old, new, 1)}), &problems)
+		if len(problems) == 0 {
+			t.Fatalf("%s 应被捕获，实际无问题", name)
+		}
+		if !strings.Contains(strings.Join(problems, "\n"), groupCandidateNoPrivilege) {
+			t.Fatalf("%s 应报在 %s 组，实际：%v", name, groupCandidateNoPrivilege, problems)
+		}
+	}
+
+	expect("macOS 去掉 Space 切换守卫", macController,
+		"forName: NSWorkspace.activeSpaceDidChangeNotification", "forName: NSWorkspace.didHideNotification")
+	expect("macOS 焦点收尾不清 marked 区", macController, "        refresh(lastClient)\n", "")
+	expect("Windows 失焦不重置会话", winShell, "        if (isComposing() || !confirmedPreedit_.empty()) {\n            resetSession();", "        if (isComposing() || !confirmedPreedit_.empty()) {")
+	expect("Linux focus_out 不收 lookup table", linuxEngine,
+		"        exitAssociate();\n        hidePreedit();\n        hideLookupTable();\n        last_ = chaoset::Comp();\n    }\n    void reset() {",
+		"        exitAssociate();\n        hidePreedit();\n        last_ = chaoset::Comp();\n    }\n    void reset() {")
+}
