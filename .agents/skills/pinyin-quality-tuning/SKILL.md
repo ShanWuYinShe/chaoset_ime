@@ -378,7 +378,7 @@ go run ./cmd/chaoset-dictgen ...
 # CLI 统一用 chaosetctl（单二进制 multicall）：chaosetctl version / client / config ...
 ```
 
-41 个冻结场景（`crates/chaoset-engine/tests/parity_scenarios.rs` +
+全部冻结场景（`crates/chaoset-engine/tests/parity_scenarios.rs` +
 `tests/data/parity_expected.jsonl`）覆盖候选文本/打分/预编辑/分页/上屏；**任何
 匹配/排序行为的有意改动都会让它失败**，必须重新生成快照并在 PR 里说明依据：
 
