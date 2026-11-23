@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- **修复(IPC/三端壳)：读超时后的迟到响应不再被误当成本次响应**：`drainStaleResponse` 在下一键发起时也可能超时（迟到帧还没到），旧实现随后把迟到的旧帧读成本次响应，id 不匹配即断连——#134 的「读超时保留连接」在这段时序下失效，连接与会话仍会丢。现在 `Session::call`（`shims/common/ipc/core.cpp`）与 macOS `DaemonTransport.callOnce` 在收到 id 不匹配的帧时先按 `staleResponses_`/`staleResponses` 计数丢弃迟到帧，再继续等待本次响应；计数为 0 的真错位仍断连。`core_test::testReadTimeoutKeepsConnection` 新增「预清理也超时」与「无待丢计数仍断连」断言，`docs/ui-parity.md` 同步。
+
 - **修复(Windows 中英切换)：`Ctrl+Shift+Space` 在输入框内不再双翻转、不会误 flush 组词**：UI 宿主的全局热键翻转后，TIP 的 Shift 空按状态机还会在松 Shift 时再翻一次——系统吞掉了 Space，TIP 只看到 Ctrl/Shift 的按下与释放，于是把 `Ctrl+Shift+Space` 误判成「单独轻按 Shift」。结果是有焦点时热键看起来不生效（两次翻转抵消）并把当前组词 flush；`mode_scope=process` 下还会绕过 UI 宿主的 no-op 改当前进程状态。现在 `beginShiftHold` 在开始一次 Shift 按住会话时检查 Ctrl/Alt/Win 物理状态：组合键里的 Shift 不再算空按；单独 Shift 轻按、Shift+空格、Shift+字母不受影响。`checkuiparity`「Shift 记账」组新增该守卫断言与变异测试；`docs/ui-parity.md` 同步。
 
 ## v0.6.1（2026-11-24）

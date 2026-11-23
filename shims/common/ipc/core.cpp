@@ -286,7 +286,13 @@ std::string parseCommitted(const JsonValue& result) {
 bool Session::drainStaleResponse() {
     if (staleResponses_ <= 0) return true;
     std::uint8_t head[4];
-    if (!t_.readAll(head, 4)) return false;  // 仍然没到或真断：保持计数，下次再试
+    if (!t_.readAll(head, 4)) {
+        // 读超时：迟到帧还没到，保持计数、下次再试（本次请求的响应循环会兜住
+        // 「发出后才到」的时序）；真断/EOF：待丢帧随连接消失，计数必须清零，
+        // 否则下一次干净连接会一直等一个永远不会来的旧帧。
+        if (!t_.lastReadTimedOut()) staleResponses_ = 0;
+        return false;
+    }
     const std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) |
                                (static_cast<std::uint32_t>(head[1]) << 16) |
                                (static_cast<std::uint32_t>(head[2]) << 8) |
@@ -297,7 +303,13 @@ bool Session::drainStaleResponse() {
         return false;
     }
     std::string body(size, '\0');
-    if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) return false;
+    if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) {
+        // 帧体读不完整：字节流已错位，无法再对齐，只能断连（与 call 的帧体
+        // 超时分支同口径）。
+        t_.closeConn();
+        staleResponses_ = 0;
+        return false;
+    }
     --staleResponses_;
     return true;
 }
@@ -305,8 +317,9 @@ bool Session::drainStaleResponse() {
 JsonValue Session::call(const std::string& method, const std::string& params, bool* ok) {
     JsonValue none;
     if (ok != nullptr) *ok = false;
-    // 上一次读超时留下的迟到响应：先丢弃，避免被当成本次响应。drain 不动连接，
-    // 读不到就保持计数、本次正常发送（响应仍会按顺序返回，id 校验兜底）。
+    // 上一次读超时留下的迟到响应：先尽量丢弃，避免被当成本次响应。drain 不动
+    // 连接，读不到（自己也超时）就保持计数、本次正常发送——迟到帧会在下面的
+    // 响应循环里按计数丢弃。
     (void)drainStaleResponse();
     ++nextID_;
     const std::uint64_t reqID = nextID_;
@@ -322,52 +335,68 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     packet.append(req);
     if (!t_.writeAll(reinterpret_cast<const std::uint8_t*>(packet.data()), packet.size())) {
         t_.closeConn();
+        staleResponses_ = 0;  // 连接已断，待丢的迟到帧不可达
         return none;
     }
-    std::uint8_t head[4];
-    if (!t_.readAll(head, 4)) {
-        if (t_.lastReadTimedOut() && staleResponses_ < 2) {
-            // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
-            // 记为「迟到待丢」，下次 call 前 drain；本次返回失败由调用方决定
-            //（TSF 路径保留本地组词，不 fail-open）。
-            ++staleResponses_;
+    // 读响应。正常情况下第一帧就是本次响应；但上一次读超时留下的迟到响应可能
+    // 在 drainStaleResponse 时还没到（drain 自己也超时），直到本次请求发出后才
+    // 到达——它会排在本帧前面。此时按 staleResponses_ 计数丢弃它并继续读，不能
+    // 把旧帧当成本次响应；计数为 0 的 id 错位才是真正的协议错位，仍断连。
+    JsonValue resp;
+    for (;;) {
+        std::uint8_t head[4];
+        if (!t_.readAll(head, 4)) {
+            if (t_.lastReadTimedOut() && staleResponses_ < 2) {
+                // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
+                // 记为「迟到待丢」，下次 call 前 drain；本次返回失败由调用方决定
+                //（TSF 路径保留本地组词，不 fail-open）。
+                ++staleResponses_;
+                return none;
+            }
+            t_.closeConn();
+            staleResponses_ = 0;
             return none;
         }
-        t_.closeConn();
-        staleResponses_ = 0;
-        return none;
-    }
-    std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) | (static_cast<std::uint32_t>(head[1]) << 16) |
-                         (static_cast<std::uint32_t>(head[2]) << 8) | static_cast<std::uint32_t>(head[3]);
-    if (size == 0 || size > kMaxMessageSize) {
-        t_.closeConn();
-        return none;
-    }
-    std::string body(size, '\0');
-    if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) {
-        // 帧头已收到、帧体超时：半个帧留在连接里，无法再对齐，只能断连。
-        //（帧头都还没到的超时在上面按「迟到响应」处理，那里可以保留连接。）
-        t_.closeConn();
-        staleResponses_ = 0;
-        return none;
-    }
-    bool parsed = false;
-    JsonValue resp = jsonParse(body, &parsed);
-    if (!parsed || resp.type != JsonValue::Type::Obj) {
-        t_.closeConn();
-        return none;
-    }
-    // 校验响应 id 必须与本次请求 id 一致。
-    //
-    // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前调用是全
-    // 串行的一问一答，理论上不会错位；但一旦将来引入并发、连接池或 daemon
-    // 侧改为乱序响应，不校验就会把**别的请求的结果当成本次的结果**——在
-    // 输入法里这意味着上屏错字。防御成本很低，出错即断开重连。
-    const JsonValue* rid = resp.find("id");
-    if (rid == nullptr || rid->type != JsonValue::Type::Num ||
-        static_cast<std::uint64_t>(rid->number) != reqID) {
-        t_.closeConn();
-        return none;
+        std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) | (static_cast<std::uint32_t>(head[1]) << 16) |
+                             (static_cast<std::uint32_t>(head[2]) << 8) | static_cast<std::uint32_t>(head[3]);
+        if (size == 0 || size > kMaxMessageSize) {
+            t_.closeConn();
+            staleResponses_ = 0;
+            return none;
+        }
+        std::string body(size, '\0');
+        if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) {
+            // 帧头已收到、帧体超时：半个帧留在连接里，无法再对齐，只能断连。
+            //（帧头都还没到的超时在上面按「迟到响应」处理，那里可以保留连接。）
+            t_.closeConn();
+            staleResponses_ = 0;
+            return none;
+        }
+        bool parsed = false;
+        resp = jsonParse(body, &parsed);
+        if (!parsed || resp.type != JsonValue::Type::Obj) {
+            t_.closeConn();
+            staleResponses_ = 0;
+            return none;
+        }
+        // 校验响应 id 必须与本次请求 id 一致。
+        //
+        // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前调用是全
+        // 串行的一问一答，理论上不会错位；但一旦将来引入并发、连接池或 daemon
+        // 侧改为乱序响应，不校验就会把**别的请求的结果当成本次的结果**——在
+        // 输入法里这意味着上屏错字。迟到的旧响应是唯一允许的 id 不匹配，按
+        // staleResponses_ 计数丢弃；其余错位立即断开重连。
+        const JsonValue* rid = resp.find("id");
+        if (rid == nullptr || rid->type != JsonValue::Type::Num ||
+            static_cast<std::uint64_t>(rid->number) != reqID) {
+            if (staleResponses_ > 0) {
+                --staleResponses_;  // 预清理时还没到、现在才到的旧响应
+                continue;
+            }
+            t_.closeConn();
+            return none;
+        }
+        break;
     }
     const JsonValue* err = resp.find("error");
     if (err != nullptr && err->type != JsonValue::Type::Null) {

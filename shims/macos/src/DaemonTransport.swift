@@ -53,6 +53,9 @@ final class DaemonTransport {
             Darwin.close(fd)
             fd = -1
         }
+        // 连接断开后待丢的迟到帧已不可达；不清零会让下一次干净连接误把正常响应
+        // 当成 stale 丢掉。
+        staleResponses = 0
     }
 
     private func connectIfNeeded() -> Bool {
@@ -260,12 +263,17 @@ final class DaemonTransport {
     /// 读不到就保持计数、下次再试；帧长非法说明流已错位，断连。
     private func drainStaleResponse() {
         guard staleResponses > 0 else { return }
-        guard let head = readAll(4) else { return }
+        guard let head = readAll(4) else {
+            // 读超时：迟到帧还没到，保持计数、下次再试（本次请求的响应循环会
+            // 兜住「发出后才到」的时序）；真断/EOF：待丢帧随连接消失，计数清零，
+            // 否则下一次干净连接会一直等一个永远不会来的旧帧。
+            if !lastReadTimedOut { staleResponses = 0 }
+            return
+        }
         let size = Int(head[0]) << 24 | Int(head[1]) << 16 | Int(head[2]) << 8 | Int(head[3])
         guard size > 0, size <= (1 << 20), readAll(size) != nil else {
             logFailure("IPC 迟到帧无法对齐，断开重连")
             disconnect()
-            staleResponses = 0
             return
         }
         staleResponses -= 1
@@ -295,37 +303,52 @@ final class DaemonTransport {
             disconnect()
             return nil
         }
-        guard let headBytes = readAll(4) else {
-            if lastReadTimedOut && staleResponses < 2 {
-                // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话（daemon 的
-                // Session 原地保留，下一键就是正常增量输入），把这次响应记为迟到
-                // 待丢；本次返回 nil 由调用方按「超时」处理（不是 fail-open）。
-                staleResponses += 1
-                logFailure("IPC 响应超时，保留连接待下次丢弃 method=\(method)")
+        // 读响应。正常情况下第一帧就是本次响应；但上一次读超时留下的迟到响应可能
+        // 在 drainStaleResponse 时还没到（drain 自己也超时），直到本次请求发出后
+        // 才到达——它会排在本帧前面。此时按 staleResponses 计数丢弃并继续读，不能
+        // 把旧帧当成本次响应；计数为 0 的 id 错位才是真正的协议错位，仍断连。
+        var response: [String: Any]?
+        while true {
+            guard let headBytes = readAll(4) else {
+                if lastReadTimedOut && staleResponses < 2 {
+                    // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话（daemon 的
+                    // Session 原地保留，下一键就是正常增量输入），把这次响应记为迟到
+                    // 待丢；本次返回 nil 由调用方按「超时」处理（不是 fail-open）。
+                    staleResponses += 1
+                    logFailure("IPC 响应超时，保留连接待下次丢弃 method=\(method)")
+                    return nil
+                }
+                logFailure("IPC 帧头读取失败 method=\(method)")
+                disconnect()
                 return nil
             }
-            logFailure("IPC 帧头读取失败 method=\(method)")
-            disconnect()
-            return nil
+            let size = Int(headBytes[0]) << 24 | Int(headBytes[1]) << 16 | Int(headBytes[2]) << 8 | Int(headBytes[3])
+            guard size > 0, size <= (1 << 20), let body = readAll(size),
+                  let resp = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
+                logFailure("IPC 响应帧无效 method=\(method) size=\(size)")
+                disconnect()
+                return nil
+            }
+            // 响应 id 必须与本次请求一致。
+            //
+            // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前是实现
+            // 全串行的一问一答，理论上不会错位；但一旦将来引入并发或连接复用，
+            // 不校验就会把**别的请求的结果当成本次的**——在输入法里就是上屏错字。
+            // 迟到的旧响应是唯一允许的 id 不匹配，按 staleResponses 计数丢弃；
+            // 其余错位立即断开重连，让下一次按键走干净路径。
+            guard let respID = resp["id"] as? UInt64, respID == reqID else {
+                if staleResponses > 0 {
+                    staleResponses -= 1  // 预清理时还没到、现在才到的旧响应
+                    continue
+                }
+                logFailure("IPC 响应 id 不匹配 method=\(method) req=\(reqID)")
+                disconnect()
+                return nil
+            }
+            response = resp
+            break
         }
-        let size = Int(headBytes[0]) << 24 | Int(headBytes[1]) << 16 | Int(headBytes[2]) << 8 | Int(headBytes[3])
-        guard size > 0, size <= (1 << 20), let body = readAll(size),
-              let resp = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
-            logFailure("IPC 响应帧无效 method=\(method) size=\(size)")
-            disconnect()
-            return nil
-        }
-        // 响应 id 必须与本次请求一致。
-        //
-        // 协议规定请求/响应经 id 关联（见 Go 侧 ipc/protocol.go）。当前是实现
-        // 全串行的一问一答，理论上不会错位；但一旦将来引入并发或连接复用，
-        // 不校验就会把**别的请求的结果当成本次的**——在输入法里就是上屏错字。
-        // 出问题即断开重连，让下一次按键走干净路径（2026-10-26 审查发现）。
-        guard let respID = resp["id"] as? UInt64, respID == reqID else {
-            logFailure("IPC 响应 id 不匹配 method=\(method) req=\(reqID)")
-            disconnect()
-            return nil
-        }
+        guard let resp = response else { return nil }
         if let error = resp["error"] as? String {
             logFailure("daemon 业务错误 method=\(method): \(error)")
             return nil
