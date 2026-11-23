@@ -135,7 +135,9 @@ UI 改动的 Before/After 截图用 `gh` 的 `--attach` 上传，**不得 `git a
   不剔位——逐级回退的真实词组排在用户学过的单字之后是既有语义，Linux E2E 导入词用例守着）。上屏学习三条路径（`session/learn.rs`）缺一不可：调频+共现
   （`learn_selection`）、相邻共现词组进化（`learn_phrase`，阈值 2 次）、渐进选段整句固化
   （`seq_segs` + `learn_progressive_sequence`，组词从空重启即作废）——Rust 移植时曾整体丢失，
-  用户拼过的词组从不进词库。排序键顺序、回归测试清单与判据见 skill
+  用户拼过的词组从不进词库；渐进上屏必须按音节消费输入前缀（`select_prefix` →
+  `consume_input_prefix`，显式分隔符/省写/错拼整串），否则剩余串与整句学习都会被污染。
+  排序键顺序、回归测试清单与判据见 skill
   `pinyin-quality-tuning`「1.1 当前排序键与用户优先规则」。
 
 ## 约束

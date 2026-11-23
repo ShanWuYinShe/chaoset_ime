@@ -18,11 +18,10 @@ pub const PAGE_SIZE: usize = 6;
 // 层级是第一排序维度：跨层的先后由 rank 决定，词频打分只在同层内起作用。
 const RANK_EXACT: i32 = 0; // 全拼单词完全匹配（jingchang → 经常）
 const RANK_INITIAL_EXACT: i32 = 1; // 简拼/混拼单词完全匹配（zg → 中国）
-                                   // 注：Go 侧该常量同样仅在层级表中定义——续接候选的实际层级由 shape 决定
-                                   // （存在干净解析取 rankExact，否则取 rankContinuationLead 领跑）。保留
-                                   // 常量以维持与 Go 层级表的逐值对应。
-#[allow(dead_code)]
-const RANK_CONTINUATION: i32 = 2; // 末段残缺续接（zhonggu → 中国，daxu → 大学）
+// 末段残缺续接（zhonggu → 中国，daxu → 大学）：存在干净解析时落在该层，
+// 严格排在完整消费输入的精确匹配之后；无法干净切分时改用
+// RANK_CONTINUATION_LEAD 领跑（见 compose 里的 continuation_rank）。
+const RANK_CONTINUATION: i32 = 2;
 const RANK_INITIAL_PREFIX: i32 = 3; // 简拼偏长词（zg → 中国人民）
 const RANK_PREFIX: i32 = 4; // 全拼偏长词续接（jing → 经济）
 const RANK_BACKOFF: i32 = 5; // 逐级回退前缀（nihaox → 你好）
@@ -942,6 +941,100 @@ pub struct Session {
     seq_segs: Vec<(String, Vec<String>)>,
 }
 
+/// 从输入串开头按音节消费候选（Go consumeInputPrefix 的 Rust 版）。
+///
+/// 输入保留用户原始敲法：可能是省写/别名（xve→xue、niou→niu）、模糊形态
+/// （zheng 命中 zen）、声母（nh）或半截拼音（zhongg），候选音节是规范拼写。
+/// 因此不能按「token 字母数」切字节串——`ni'hao` 会从 hao 中间截断；必须
+/// 逐音节块匹配，并在块之间跳过显式分隔符。返回 (剩余输入, 已匹配音节数)；
+/// matched==0 表示一个音节都对不上，调用方回退整串上屏语义。
+fn consume_input_prefix(input: &str, sylls: &[String], fuzzy: bool) -> (String, usize) {
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    let mut matched = 0usize;
+    for syl in sylls {
+        if syl.is_empty() {
+            continue;
+        }
+        while i < bytes.len() && bytes[i] == b'\'' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        // 当前音节块（到下一个 ' 或输入结尾）：匹配不跨块。
+        let end = bytes[i..]
+            .iter()
+            .position(|&b| b == b'\'')
+            .map(|p| i + p)
+            .unwrap_or(bytes.len());
+        let n = match_syllable_chunk(&input[i..end], syl, fuzzy);
+        if n == 0 {
+            break;
+        }
+        i += n;
+        matched += 1;
+    }
+    while i < bytes.len() && bytes[i] == b'\'' {
+        i += 1;
+    }
+    (input[i..].to_string(), matched)
+}
+
+/// 输入块开头与候选音节匹配的字母数（Go matchSyllableChunk）：
+/// 1) 块开头是完整音节/省写别名/模糊等价 → 最长匹配；
+/// 2) 块开头是完整音节且是候选音节前缀（gu→guo）→ 匹配该完整音节；
+/// 3) 块开头没有完整音节：整块是候选前缀（zho→zhong）或块首声母是候选
+///    前缀（k→kan、zh→zhong）→ 匹配整块/声母；否则 0。
+///
+/// 完整音节不匹配时**不再退回声母**：用户敲的是另一个音节（zheng ≠ zen），
+/// 不能把 zheng 拆成 z + heng 混进后续音节；zzz 对 jin 必须整体不匹配。
+fn match_syllable_chunk(chunk: &str, syl: &str, fuzzy: bool) -> usize {
+    let max_l = chunk.len().min(crate::syllable::MAX_SYLLABLE_LEN);
+    // 1) 完整音节 / 省写别名 / 模糊形态：块开头最长子串优先。
+    for l in (1..=max_l).rev() {
+        let canon = crate::syllable::canonical_syllable(&chunk[..l]);
+        if canon.as_ref() == syl {
+            return l;
+        }
+        if fuzzy
+            && crate::fuzzy::fuzzy_syllable_variants(syl)
+                .iter()
+                .any(|v| v == canon.as_ref())
+        {
+            return l;
+        }
+    }
+    // 2) 块开头是完整音节、且是候选音节的前缀（gu → guo，用户只打了一半）。
+    let mut longest = 0usize;
+    for l in (1..=max_l).rev() {
+        if crate::syllable::is_syllable(&chunk[..l]) {
+            longest = l;
+            break;
+        }
+    }
+    if longest > 0 {
+        return if syl.starts_with(&chunk[..longest]) {
+            longest
+        } else {
+            0
+        };
+    }
+    // 3) 块开头没有完整音节：整块是候选音节前缀，或块首合法声母是前缀。
+    if syl.starts_with(chunk) {
+        return chunk.len();
+    }
+    let init = ["zh", "ch", "sh"]
+        .iter()
+        .find(|c| chunk.starts_with(**c))
+        .copied()
+        .unwrap_or(&chunk[..chunk.len().min(1)]);
+    if !init.is_empty() && syl.starts_with(init) {
+        return init.len();
+    }
+    0
+}
+
 impl Session {
     pub fn new(dict: Arc<Dictionary>, user_dict: Option<Arc<UserDict>>) -> Self {
         Self {
@@ -1852,23 +1945,32 @@ impl Session {
         }
 
         let cand = self.all_candidates[global_idx].0.clone();
-        let syll_count = cand.syllables.split('\'').count();
+        let sylls: Vec<String> = cand.syllables.split('\'').map(|s| s.to_string()).collect();
 
-        // 消耗前面 syll_count 个 token 对应的字符
-        let mut consumed_chars = 0;
-        for tok in self.tokens.iter().take(syll_count) {
-            consumed_chars += tok.text.len();
-        }
-
-        let rest_empty = consumed_chars >= self.input_raw.len();
+        // 按音节消费输入前缀（Go consumeInputPrefix）：显式分隔符、省写/别名
+        // （niou→niu）、模糊形态与半截拼音都按音节块匹配，不能按 token 字母数
+        // 切字节串——旧实现选完「你好」后 `ni'hao'shi'jie` 会剩 `o'shi'jie`。
+        // 一个音节都对不上（整句/简拼展开形态差异）或候选是纯错拼修正时回退
+        // 整串上屏语义（Go 同口径：错拼修正候选把整串都解释掉了，残留字母不
+        // 是待续组词的拼音）。
+        let lower = self.input_raw.to_ascii_lowercase();
+        let (rest, matched) = consume_input_prefix(&lower, &sylls, self.fuzzy);
+        let rest = if matched == 0 || cand.typo_fix {
+            String::new()
+        } else {
+            rest
+        };
+        let rest_empty = rest.is_empty();
         if rest_empty {
             self.input_raw.clear();
         } else {
-            self.input_raw = self.input_raw[consumed_chars..].to_string();
+            // rest 来自小写视图，ASCII 长度与原输入一致：按长度切回原输入，
+            // 保留剩余字母的大小写。
+            let keep = self.input_raw.len() - rest.len();
+            self.input_raw = self.input_raw[keep..].to_string();
         }
 
         // 记录调频、共现、历史与词组进化
-        let sylls: Vec<String> = cand.syllables.split('\'').map(|s| s.to_string()).collect();
         let segs = self.candidate_segs(&cand, &sylls);
         self.learn_selection(&cand.text, &sylls, &segs);
         // 组词内容变了回到第一页（Go 同口径）：否则在第 N 页选段后，剩余拼音
