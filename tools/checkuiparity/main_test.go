@@ -897,3 +897,59 @@ func TestCheckCandidateNoPrivilege(t *testing.T) {
 		"        exitAssociate();\n        hidePreedit();\n        hideLookupTable();\n        last_ = chaoset::Comp();\n    }\n    void reset() {",
 		"        exitAssociate();\n        hidePreedit();\n        last_ = chaoset::Comp();\n    }\n    void reset() {")
 }
+
+// TestCheckToggleModeHotkey 锁住 issue #132「无文本输入焦点时的中英切换热键」契约：
+// 真实仓库必须通过；以下回退都必须被捕获：
+//  1. 不注册系统热键（功能消失）；
+//  2. 去掉 MOD_NOREPEAT（按住会来回快速切中英）；
+//  3. 销毁时不注销（组合键被进程一直占着，其它程序收不到）；
+//  4. WM_HOTKEY 分支直接翻转状态（绕过 mode_scope，Process 档会污染全局）。
+func TestCheckToggleModeHotkey(t *testing.T) {
+	files := []string{winModeHotkey, winUiHost, uiParityDoc}
+	orig := map[string]string{}
+	for _, p := range files {
+		orig[p] = string(readRepo(t, p))
+	}
+	build := func(mut map[string]string) fstest.MapFS {
+		m := fstest.MapFS{}
+		for _, p := range files {
+			data := orig[p]
+			if s, ok := mut[p]; ok {
+				data = s
+			}
+			m[p] = &fstest.MapFile{Data: []byte(data)}
+		}
+		return m
+	}
+
+	var problems []string
+	checkToggleModeHotkey(build(nil), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实实现未通过无焦点中英切换热键契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	expect := func(name, path, old, new string) {
+		t.Helper()
+		if !strings.Contains(orig[path], old) {
+			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
+		}
+		var problems []string
+		checkToggleModeHotkey(build(map[string]string{path: strings.Replace(orig[path], old, new, 1)}), &problems)
+		if len(problems) == 0 {
+			t.Fatalf("%s 应被捕获，实际无问题", name)
+		}
+		if !strings.Contains(strings.Join(problems, "\n"), groupToggleModeHotkey) {
+			t.Fatalf("%s 应报在 %s 组，实际：%v", name, groupToggleModeHotkey, problems)
+		}
+	}
+
+	expect("不注册系统热键", winModeHotkey,
+		"::RegisterHotKey(hwnd, kToggleHotkeyId, kToggleHotkeyMods, kToggleHotkeyVk)", "false")
+	expect("去掉 MOD_NOREPEAT", winModeHotkey,
+		"MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT", "MOD_CONTROL | MOD_SHIFT")
+	expect("销毁时不注销热键", winModeHotkey,
+		"::UnregisterHotKey(hwnd, kToggleHotkeyId);", "")
+	expect("WM_HOTKEY 直接翻转状态绕过 mode_scope", winUiHost,
+		"                PostMessageW(hwnd, kUiToggleModeMsg, 0, 0);",
+		"                uiApplyEnglish(!g_uiEnglish);")
+}

@@ -180,7 +180,8 @@ Windows 只有 `chaosetctl.exe`。）
 | `daemon.cpp` `.hpp` | daemon 懒启动/连接/熔断原语（仅 worker 调用） | winutil, transport, diagnostics | ≤500 |
 | `ui_client.cpp` `.hpp` | UI 宿主管道低层（命令/查询/拉起原语） | winutil, diagnostics | ≤700 |
 | `settings_launcher.cpp` `.hpp` | 统一设置中心启动器：定位/前置/启动 `chaoset-settings.exe`（不创建窗口、不在 TIP 进程调用） | diagnostics, winutil | ≤200 / ≤100 |
-| `ui_host.cpp` `.hpp` | 单例 UI 宿主：UiTray、托盘菜单、runUiHost、命令管道线程、设置中心入口 | ui_client, settings_launcher, config, diagnostics | ≤1000 |
+| `ui_host.cpp` `.hpp` | 单例 UI 宿主：UiTray、托盘菜单、runUiHost、命令管道线程、设置中心入口 | ui_client, settings_launcher, config, diagnostics, mode_hotkey | ≤1000 |
+| `mode_hotkey.cpp` `.hpp` | 无文本输入焦点时的中英切换热键（issue #132）：`RegisterHotKey` 注册/注销与 WM_HOTKEY 判定；叶子模块，不引用 TIP/候选窗/托盘类型 | diagnostics | ≤200 |
 | `candidate_layout.hpp` | 候选窗纯布局数学（与 macOS 测试共用） | — | ≤200 |
 | `ui_main.cpp` | 几十行 UI 宿主入口（LoadLibrary + ChaosetRunUi） | — | ≤120 |
 

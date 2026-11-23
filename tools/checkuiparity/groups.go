@@ -37,6 +37,7 @@ const (
 	groupTrayModeScope      = "托盘与中英作用域"
 	groupTrayLifecycle      = "托盘生命周期"
 	groupTrayActive         = "托盘可见性（active）"
+	groupToggleModeHotkey   = "无焦点中英切换热键"
 	groupTrayPalette        = "托盘配色"
 	groupTsfZeroBlock       = "TSF 回调零跨进程等待"
 	groupTimeoutResilience  = "超时韧性"

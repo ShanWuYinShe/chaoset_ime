@@ -106,6 +106,7 @@ const (
 	winLauncher           = "shims/windows/src/settings_launcher.cpp"
 	winLauncherHpp        = "shims/windows/src/settings_launcher.hpp"
 	winUiHost             = "shims/windows/src/ui_host.cpp"
+	winModeHotkey         = "shims/windows/src/mode_hotkey.cpp"
 	linuxArchPkg          = "shims/linux/arch/PKGBUILD"
 	linuxArchPkgBin       = "shims/linux/arch/PKGBUILD-bin"
 	linuxArchInstall      = "shims/linux/arch/chaoset-ime.install"

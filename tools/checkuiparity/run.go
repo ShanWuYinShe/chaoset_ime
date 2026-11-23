@@ -80,6 +80,8 @@ var checkGroups = []checkGroup{
 	{groupCandidateGearMouseUp, onLogical(checkCandidateGearMouseUp)},
 	{groupTrayLifecycle, onLogical(checkTrayLazyLifecycle)},
 	{groupTrayActive, onLogical(checkTrayActiveLifecycle)},
+	// 无文本输入焦点时的中英切换（issue #132）：UI 宿主系统热键，禁止全局钩子。
+	{groupToggleModeHotkey, onLogical(checkToggleModeHotkey)},
 	{groupTrayPalette, onLogical(checkTrayPalette)},
 	{groupTsfZeroBlock, onLogical(checkTsfZeroBlockContract)},
 	// 超时韧性：引擎请求超时不拆组词（壳/协议/daemon 管道服务端三段契约）。

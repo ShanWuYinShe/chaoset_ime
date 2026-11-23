@@ -107,6 +107,7 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/ui_client.cpp", 700},
 	{"shims/windows/src/ui_client.hpp", 300},
 	{"shims/windows/src/ui_host.cpp", 1000},
+	{"shims/windows/src/mode_hotkey.cpp", 200},
 	{"shims/windows/src/ui_host.hpp", 300},
 	{"shims/windows/src/candidate_layout.hpp", 200},
 	{"shims/windows/src/ui_main.cpp", 120},
