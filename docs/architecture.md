@@ -114,7 +114,8 @@ CLI 契约（供 shim/脚本调用；**冷路径**使用，热路径仍读本机
 
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
-| `chaoset-engine/src/session.rs` | 组词会话状态机：切分/召回/排序/学习/联想 | ≤3000 |
+| `chaoset-engine/src/session.rs` | 组词会话状态机：切分/召回/排序/分页/渐进选择/联想（词典词组封顶 `cap_dict_phrases`） | ≤3000 |
+| `chaoset-engine/src/session/learn.rs` | 上屏学习：调频/共现/历史/词组进化（`learn_selection`/`learn_phrase`）、渐进选段整句固化（`seq_segs`）、分段推断与整句式记录的边界剥前缀 | ≤600 |
 | `chaoset-engine/src/dict.rs` | 音节 Trie 词典、TSV 加载、查询/续接/连写 DP（单测在同目录 `dict/tests.rs`：含 `query_exact_and_prefix` 对旧算法参考实现的逐条等价性） | ≤800 |
 | `chaoset-engine/src/userdict.rs` | 用户调频/词组/上下文学习记录与查询、持久化 | ≤1100 |
 | `chaoset-engine/src/shuangpin.rs` | 自然码/微软/小鹤双拼键码管线 | ≤1100 |
