@@ -204,11 +204,27 @@ void ChaosetTIP::suspendShiftHoldOnFocusLost() {
 }
 
 
+// Ctrl/Alt/Win 此刻是否物理按下。用于区分「单独轻按 Shift」与「组合键里的
+// Shift」：后者不是空按。典型场景是 UI 宿主注册的 Ctrl+Shift+Space 全局热键——
+// 系统会吞掉 Space，TIP 只看到 Ctrl/Shift 的按下与释放；若仍把 Shift 当空按，
+// UI 宿主已经翻转一次，TIP 松 Shift 时又翻转一次（双翻转），并把当前组词 flush。
+// 只在开始一次按住会话时查询，正常打字路径零额外开销。
+static bool otherModifierPhysicallyDown() {
+    return (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_MENU) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+}
+
+
 // 开始一次「按住会话」：位运算幂等（auto-repeat / 重复投递都不累积）。
 void ChaosetTIP::beginShiftHold(unsigned bit) {
     if ((shiftHeld_ & bit) != 0) return;
     if (shiftHeld_ == 0) {
-        sinceShift_ = false;
+        // Ctrl/Alt/Win 已按住时，这次 Shift 是组合键的一部分，不是空按。
+        // Shift 先按、其它修饰键后按的路径由 OnTestKeyDown/OnKeyDown 里的
+        // sinceShift_ = true 覆盖。
+        sinceShift_ = otherModifierPhysicallyDown();
         shiftHoldSuspended_ = false;
     }
     shiftHeld_ |= bit;
