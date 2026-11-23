@@ -235,7 +235,7 @@ may experience longer queue times"。macos-build 排队几分钟是正常现象�
 操作；GitHub runner 本身就是一次性 VM，再套 docker 要多花时间拉镜像、装 ibus。
 `test-ci.sh` 直接在 runner 上起 dbus + ibus-daemon 跑同样的断言。
 
-本机不要用 docker 预演这套 E2E（容器内装 ibus 耗时不可控），直接推 CI 跑。
+常规 linux-e2e 交 CI 跑（runner 上直接起 dbus + ibus，无需套容器）；本地排障可临时用 `setup-container.sh` 起容器预演，验证完清理容器，不作为常规验证路径。
 
 ## 六、输入源置灰 / 无法选择
 

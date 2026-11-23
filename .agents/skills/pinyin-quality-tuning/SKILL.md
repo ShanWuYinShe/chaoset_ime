@@ -146,7 +146,9 @@ fn main() {
 词候选用 `INITIALS_EXACT_LIMIT`=120（放大到 300 会让 zg/dz 候选膨胀到 ~80 页，
 稀释单字页位）。
 
-### 2. 拿基线：用 git stash 而不是另开目录
+### 2. 拿基线：优先独立 worktree，确因构建成本才用 git stash
+
+优先在独立 worktree/另一检出跑 main 基线，不动当前工作区；确因构建成本必须留在当前目录时，用下面的 stash 流程，`pop` 后核对 `git status`：
 
 ```sh
 git stash push -- crates/chaoset-engine/src/   # 暂时退回 main 的引擎实现
