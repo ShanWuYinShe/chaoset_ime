@@ -300,13 +300,21 @@ git status --short                            # 确认改动回来了
 「今天」首选不受影响。只测正向的话，「有整句记录就无条件置顶」这种粗暴实现也能
 通过。
 
-两个容易漏的边界：
+三个容易漏的边界：
 
 - **渐进段累积要随组词中止清理**：`seq_segs`（`session/learn.rs`）若只在 `select` 清，
   退格到空后重新组词会把已经上屏的段拼成伪整句（「今天」→退格到空→打 wo 选「我」
   →写出「今天我 segs=[今天 我]」）。现行清理点：`input` 从空组词开始时、`reset`、
   `select`、`associate_select`（回归：`learn::progressive_segments_reset_when_composition_restarts`）；
-- **旧数据分段推断不能用最长词贪心**（见上）。
+- **旧数据分段推断不能用最长词贪心**（见上）；
+- **渐进上屏必须按音节消费输入**：`select_prefix` 不能按首选切分 token 的字母数切
+  `input_raw`——显式分隔符（`ni'hao'shi'jie`）会从 `hao` 中间截断、省写
+  （`niou`→`niu`）会多留字母、错拼修正候选会残留碎片；错误剩余串既污染候选，
+  也让 `seq_segs` 的整句学习失效。现行实现 `session.rs::consume_input_prefix`
+  （Go 同口径：逐音节块匹配省写/别名/模糊/声母/半截拼音，块间跳过分隔符；
+  整串匹配不上或 `typo_fix` 候选按整串上屏清空）。回归：
+  `learn::progressive_selection_with_separators_learns_sentence`、
+  `learn::select_prefix_consumes_aliases_and_typo_fixes`。
 
 ### 陷阱 7：移植/重构把学习路径整体丢掉
 

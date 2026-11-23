@@ -390,6 +390,47 @@ mod tests {
         );
     }
 
+    /// 显式音节分隔符：渐进上屏按音节消费输入，不能从字母中间截断剩余串，
+    /// 也不能因此丢掉整句学习（`ni'hao'shi'jie` 与 `nihaoshijie` 等价）。
+    #[test]
+    fn progressive_selection_with_separators_learns_sentence() {
+        let user = Arc::new(UserDict::new::<&str>(None));
+        let mut sess = fresh(Some(Arc::clone(&user)));
+        for key in "ni'hao'shi'jie".chars() {
+            sess.input(&key.to_string(), false).unwrap();
+        }
+        let comp = sess.compose();
+        let rest = sess.select_prefix(pick(&comp, "你好", "ni'hao")).unwrap();
+        assert_eq!(rest.input, "shi'jie", "剩余输入不得从音节中间截断");
+        let rest = sess.select_prefix(pick(&rest, "世界", "shi'jie")).unwrap();
+        assert!(rest.input.is_empty(), "整串应已消费完");
+        assert_eq!(
+            user.word_segs("你好世界"),
+            vec!["你好".to_string(), "世界".to_string()],
+            "带分隔符的渐进拼句同样要固化整句"
+        );
+    }
+
+    /// 省写韵母（niou→niu）与纯错拼修正（lianxiagn→联想）都要按整串消费：
+    /// 前者不能按 token 规范拼写的字母数切原输入，后者残留的字母不是待续拼音。
+    #[test]
+    fn select_prefix_consumes_aliases_and_typo_fixes() {
+        let mut sess = fresh(None);
+        let comp = sess.input("niou", false).unwrap();
+        let rest = sess.select_prefix(pick(&comp, "牛", "niu")).unwrap();
+        assert!(rest.input.is_empty(), "niou 选「牛」应消费整串: {rest:?}");
+
+        let mut sess = fresh(None);
+        let comp = sess.input("lianxiagn", false).unwrap();
+        let rest = sess
+            .select_prefix(pick(&comp, "联想", "lian'xiang"))
+            .unwrap();
+        assert!(
+            rest.input.is_empty(),
+            "错拼修正候选应消费整串输入: {rest:?}"
+        );
+    }
+
     /// 正向：相邻两次上屏「今天」「天气」共现 2 次 → 固化为用户词组「今天天气」（带分段），
     /// 下次完整输入 jintiantianqi 置顶。
     /// 反向：只共现 1 次不固化（阈值 LEARN_THRESHOLD=2）；词典已有的词不重复学。
