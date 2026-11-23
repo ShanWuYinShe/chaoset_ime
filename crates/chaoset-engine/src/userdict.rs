@@ -584,6 +584,28 @@ impl UserDict {
         *self.dirty.write().unwrap() = true;
     }
 
+    /// 相邻两词的共现次数（Go PairCount）：词组进化的固化阈值判据。
+    pub fn pair_count(&self, prev_word: &str, word: &str) -> i32 {
+        self.data
+            .read()
+            .unwrap()
+            .bigrams
+            .get(&format!("{}->{}", prev_word, word))
+            .map(|r| r.count)
+            .unwrap_or(0)
+    }
+
+    /// 用户调频词记录自带的分段（整句式学习记录 ≥2 段；普通词为空）。
+    pub fn word_segs(&self, word: &str) -> Vec<String> {
+        self.data
+            .read()
+            .unwrap()
+            .words
+            .get(word)
+            .map(|r| r.segs.clone())
+            .unwrap_or_default()
+    }
+
     pub fn bump_bigram(&self, prev_word: &str, word: &str) {
         let mut data = self.data.write().unwrap();
         let now = current_timestamp();

@@ -99,7 +99,8 @@ fn main() {
 查询（精确 / 前缀 / 末段续接 / 逐级回退）→ 组合候选
 （`RANK_COMPOSITION`，`add_composition_candidates`）→ 单字兜底
 （`RANK_SINGLE_BACKFILL`）→ 错拼修正与提升（`add_typo_corrections` /
-`promote_typo_corrections`）→ 排序 → 纠错固定第 3 位 → 分页（`PAGE_SIZE`=6）。
+`promote_typo_corrections`）→ 排序 → 纠错固定第 3 位 → 词典词组封顶 2 页
+（`cap_dict_phrases`）→ 分页（`PAGE_SIZE`=6）。
 
 匹配层级常量（数值越小越靠前，`session.rs` 顶部）：
 `RANK_EXACT`=0、`RANK_INITIAL_EXACT`=1、`RANK_CONTINUATION`=2、
@@ -115,12 +116,18 @@ fn main() {
    数不是音节数，**不做**超段仲裁。显式分段 `tu'an`（2 段）下，学过「图案」
    （2 音节）不被当超段，可按用户输入优先；单段输入只出单字、不存在词语候选，
    不参与该仲裁；
-3. **用户输入 > 默认字频**：`from_user` 候选优先（词 / 单字 / 整句记录）；
-4. 匹配层级 `rank`；
-5. 综合得分（词频 + 用户加权 − 续接代价 `CONTINUATION_PENALTY`）、词长、字典序。
+3. **完整消费输入优先**：`rank <= RANK_INITIAL_EXACT`（精确/简拼精确，含提升到精确层的
+   纠错）先于续接/偏长词——`shiji` 的 shi'ji 全部排在 shi'jie 之前；学过的续接词
+   （shiji 下学过「世界」）也不越过精确层；
+4. **用户输入 > 默认字频**：`from_user` 候选在同一消费层级内置顶（词 / 单字 / 整句
+   记录），完整消费输入的用户词组查询无上限（`USER_PHRASES_UNLIMITED`）；
+5. 匹配层级 `rank`（干净切分下的续接落 `RANK_CONTINUATION`=2，不再与精确同层比分）；
+6. 综合得分（词频 + 用户加权 − 续接代价 `CONTINUATION_PENALTY`）、词长、字典序。
 
 排序之后：高置信度纠错候选固定插到第 3 位（`promote_typo_corrections` 的排序契约），
-再按 `PAGE_SIZE` 分页。
+再由 `cap_dict_phrases` 把**非用户多字词组封顶 2 页**（`MAX_DICT_PHRASES`=12；用户词组
+与单字不计、不截断；只数不剔位——回退层的真实词组排在用户学过的单字之后是既有语义，
+不要加「单字之后无词组」之类的剔除，Linux E2E 的导入词用例会红），最后按 `PAGE_SIZE` 分页。
 
 **单字兜底**：任何多段非错拼输入都在列表末尾追加首段全量单字
 （≤`SINGLE_SYLLABLE_EXACT_LIMIT`=300），层级 `RANK_SINGLE_BACKFILL`，列表最末
@@ -152,7 +159,7 @@ git status --short                            # 确认改动回来了
 扫描器放在 `examples/`，**不要**把它放进被 stash 的 `src/`；跑完记得删除
 `examples/scan.rs`（`git status` 确认），不要提交扫描器。
 
-## 二、六个打分陷阱
+## 二、七个打分陷阱
 
 ### 陷阱 1：拼合造词的边界
 
@@ -205,11 +212,14 @@ git status --short                            # 确认改动回来了
 如果无条件把续接候选置于最高优先级，「一霎」会被高频的「以上」压掉（旧 Go 实现
 实测全拼首选率 80.75% → 77.95%，Rust 侧请用扫描器复测，不要沿用旧数字）。
 
-正确做法：让两种解析**同层竞争**，由「词频 − `CONTINUATION_PENALTY` × 补全字符数」
-决出，不做场景特判。`CONTINUATION_PENALTY`=30 是唯一同时保住「完整输入首选率」
-与「末音节残缺首选率」的扫描定型值（中国 85−30=55 > 中古 36，见 `session.rs`
-常量注释），只对「输入压根无法切成干净音节」（`quanmia` → `quan'mi'a`）的情况
-让续接强制领跑（`RANK_CONTINUATION_LEAD`）。
+现行做法（用户明确要求「完全消耗所有输入拼音的结果优先」）：干净切分下续接落
+`RANK_CONTINUATION`=2，**严格排在精确层之后**，层内再按「词频 − `CONTINUATION_PENALTY` ×
+补全字符数」竞争；只对「输入压根无法切成干净音节」（`quanmia` → `quan'mi'a`）的情况
+让续接强制领跑（`RANK_CONTINUATION_LEAD`）。固定口径扫描（1131 词 × 5 形态）：full 首选
+80.3→80.5、首页命中不变；tail1 首选 46.5→43.0、首页 88.2→87.0——这是已知且被接受的
+代价（`zhonggu` 先给 中古，中国 紧随首页第 2～4 位仍可达）。`CONTINUATION_PENALTY`=30
+仍是层内定序的定型值，续接不要再提回 `RANK_EXACT` 同层比分（那是旧行为：高频续接
+「世界」会插到 `shiji` 的精确词「事迹」前面）。
 
 ### 陷阱 3：把「末段是完整音节」当成不需要预测
 
@@ -272,11 +282,11 @@ git status --short                            # 确认改动回来了
   形成污染循环；
 - 音节数多的组合在只约束 Phrases 表时可能完全学不到。
 
-正确做法（`session.rs` 的整句学习/联想剥前缀逻辑 + `userdict.rs` 的 `segs` 字段）：
+正确做法（`session/learn.rs` 的上屏学习与联想剥前缀逻辑 + `userdict.rs` 的 `segs` 字段）：
 1. 学习记录带**分段**：整句 `今天星期一` → `segs=[今天,星期一]`
    （`userdict.rs` 的 `bump_word` / `bump_phrase` 均接受 `segs`）；
 2. 整句候选**只在完整输入**时参与（部分输入的前缀层过滤整句式记录，
-   `session.rs::is_sentence_entry`）；
+   `session/learn.rs::is_sentence_entry`）；
 3. 联想剥前缀只允许在**分段边界**（`strip_at_segment_boundary`）：今天→星期一 ✓、
    今→天星期一 ✗；普通词典词/词组进化的行为不变；
 4. 「一键整句上屏」按逐段确认的等价路径学习分段词，与逐段选择落同一套数据；
@@ -292,11 +302,32 @@ git status --short                            # 确认改动回来了
 
 两个容易漏的边界：
 
-- **渐进段累积要随组词中止清理**：`seqSegs` 若只在 `reset`/`select` 清，退格到空
-  后重新组词会把已经上屏的段拼成伪整句（「今天」→退格到空→打 wo 选「我」
-  →写出「今天我 segs=[今天 我]」）。`input`/`backspace`/`backspace_word`/`punct`
-  在组词清空时必须一并清空；
+- **渐进段累积要随组词中止清理**：`seq_segs`（`session/learn.rs`）若只在 `select` 清，
+  退格到空后重新组词会把已经上屏的段拼成伪整句（「今天」→退格到空→打 wo 选「我」
+  →写出「今天我 segs=[今天 我]」）。现行清理点：`input` 从空组词开始时、`reset`、
+  `select`、`associate_select`（回归：`learn::progressive_segments_reset_when_composition_restarts`）；
 - **旧数据分段推断不能用最长词贪心**（见上）。
+
+### 陷阱 7：移植/重构把学习路径整体丢掉
+
+Rust 移植 Go 引擎时，`learnSelection`（history + `learnPhrase` 词组进化）与 `seqSegs`
+（渐进选段整句固化）都没有带过来：`select`/`select_prefix` 只对单段 `bump_word`，
+用户逐段拼出的「你好世界」从不进词库，表现为「自己输入过的词组没有自动记忆」。
+这类丢失**不会让任何现有测试变红**（冻结快照只回放输入/选词，不验证学习结果），
+只能靠「学过 → 再输入置顶」的端到端用例抓住。
+
+核对方法（移植、跨语言重写、按职责拆文件后各跑一次）：
+
+```sh
+# 源实现里每个只被学习路径引用的符号，在新实现里必须能找到对应物；
+# 找不到就是丢了，不是「优化掉了」
+git log --oneline -S'seqSegs' -- engine/            # 源实现的符号出现在哪些文件
+grep -rn 'seq_segs\|learn_phrase\|learn_selection' crates/chaoset-engine/src/
+```
+
+判据：学习入口必须只有一处（`session/learn.rs::learn_selection`），`select` /
+`select_prefix` / `associate_select` 都走它；端到端回归至少覆盖「渐进拼词 → 再输入
+置顶」「相邻共现满阈值 → 词组」「部分输入不出整句尾巴」三条（`learn.rs` tests）。
 
 ## 三、参数扫描纪律
 

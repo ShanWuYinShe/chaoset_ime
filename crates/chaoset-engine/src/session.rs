@@ -9,6 +9,9 @@ use crate::shuangpin::{ShuangpinDecoder, ShuangpinScheme};
 use crate::syllable::{tokenize_pinyin, Token, TypoCorrection};
 use crate::userdict::UserDict;
 
+// 上屏学习（调频/共现/历史/词组进化、渐进整句固化、分段推断）按职责独立成文件。
+mod learn;
+
 pub const PAGE_SIZE: usize = 6;
 
 // ── 匹配层级常量（对齐 Go compose_rank.go，数值相对关系不能变）────────
@@ -836,6 +839,27 @@ fn filter_single_segment(pool: &mut Pool, patterns: &[Vec<Token>]) {
     });
 }
 
+/// 词典多字词组封顶（MAX_DICT_PHRASES = 2 页）：按排好的顺序数过去，超出上限的
+/// 非用户多字候选直接丢弃；用户词组与单字不计数、不截断。只数不剔位：逐级回退的
+/// 真实词组排在用户学过的单字之后是既有语义（Linux E2E：`n'ce'shi'ci` 下学过的
+/// 「你」在前、导入词「测试词」紧随其后必须在首页），不能按「单字之后无词组」剔掉。
+fn cap_dict_phrases(sorted: Vec<(Candidate, i32, i32)>) -> Vec<(Candidate, i32, i32)> {
+    let mut kept_phrases = 0usize;
+    sorted
+        .into_iter()
+        .filter(|(c, _, _)| {
+            if c.from_user || c.text.chars().count() < 2 {
+                return true;
+            }
+            if kept_phrases >= MAX_DICT_PHRASES {
+                return false;
+            }
+            kept_phrases += 1;
+            true
+        })
+        .collect()
+}
+
 // 组合候选层（Go rankComposition = rankBackoff+64）：把多音节输入切成「词库里
 // 真实存在的词」序列（changshuru → 长+输入）。放在所有真实词条与逐级回退碎片
 // 之后，只作为列表末尾的额外选项——组合没有语言模型，不得改变原有候选先后。
@@ -852,7 +876,15 @@ const CONTINUATION_PENALTY: i32 = 30;
 const SINGLE_SYLLABLE_EXACT_LIMIT: usize = 300;
 /// 多段简拼/混拼的词候选上限：放大到 300 会让 zg/dz 候选膨胀到 ~80 页，稀释单字页位。
 const INITIALS_EXACT_LIMIT: usize = 120;
-
+/// 用户学习词组（完整消费输入的那部分）的查询上限：**不设上限**——用户明确要求
+/// 自己输入过的词组全部展示、数目不限。实际条数受用户词典规模约束（几百条量级），
+/// 续接/回退层的用户词仍各用自己的小上限（它们不消费完整输入，属预测而非匹配）。
+const USER_PHRASES_UNLIMITED: usize = usize::MAX;
+/// 预制（词典）多字词组在候选列表里的封顶 = 2 页。超出部分直接截掉，其后紧接首段
+/// 全量单字：用户要的词不在前 2 页时，第 3 页起就能逐字/部分选取拼词，不必翻过
+/// 几十页词典词组（实测 shiji 46 条 8 页、zg 140 条 24 页才到单字）；拼出的词经
+/// 学习成为用户词组，下次置顶且不计入本上限。单字与用户词组不截断。
+const MAX_DICT_PHRASES: usize = 2 * PAGE_SIZE;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Candidate {
     pub text: String,
@@ -903,6 +935,11 @@ pub struct Session {
     last_committed: Option<String>,
     /// 刚上屏词的音节（Go s.prevSylls）：联想剥前缀的切分基准，壳传的不可信。
     prev_sylls: Vec<String>,
+    /// 最近几次上屏（词, 音节），词组进化观察「相邻共现」用（Go s.history）。
+    history: Vec<(String, Vec<String>)>,
+    /// 本次组词中已「渐进上屏」的各段（词, 音节）。整串耗尽时拼成整句习惯写入
+    /// 用户词库（见 `learn_progressive_sequence`）；从空组词重新开始时作废。
+    seq_segs: Vec<(String, Vec<String>)>,
 }
 
 impl Session {
@@ -924,6 +961,8 @@ impl Session {
             page_size: PAGE_SIZE,
             last_committed: None,
             prev_sylls: Vec::new(),
+            history: Vec::new(),
+            seq_segs: Vec::new(),
         }
     }
 
@@ -985,10 +1024,13 @@ impl Session {
         let mut typo = TypoState::default();
         let mut pool = Pool::new();
 
-        // 两条续接路径共用层级：存在干净解析时与 rankExact 同层竞争（词频 −
-        // 补全折价决定）；否则常规候选全是碎片假词，续接必须领跑。
+        // 两条续接路径共用层级：存在干净解析时落在 RANK_CONTINUATION——严格排在
+        // 「完整消费输入」的精确匹配之后（用户要求：输入 shiji 先给 shi'ji 的词，
+        // 再给 shi'jie/shi'jian 这类还要补字母的续接；此前与精确层同层按「词频 −
+        // 补全折价」竞争，高频续接 世界 会插到 事迹 前面）。无法干净切分时常规
+        // 候选全是碎片假词，续接必须领跑。
         let continuation_rank = if shape.all_exact_shape {
-            RANK_EXACT
+            RANK_CONTINUATION
         } else {
             RANK_CONTINUATION_LEAD
         };
@@ -1128,7 +1170,7 @@ impl Session {
                 );
             }
             if let Some(ref u) = self.user_dict {
-                for h in u.query_joined_pinyin(&match_input, 10) {
+                for h in u.query_joined_pinyin(&match_input, USER_PHRASES_UNLIMITED) {
                     let display_text = if traditional {
                         to_traditional(&h.word)
                     } else {
@@ -1321,7 +1363,10 @@ impl Session {
                             if is_full {
                                 let qp_pairs: Vec<(&str, bool)> =
                                     qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
-                                let (u_exacts, u_prefixes) = u.query_tokens(&qp_pairs, 10);
+                                // 用户词组不设上限（用户明确要求：自己输入过的词组
+                                // 数目不限、全部展示；它们经排序置顶且不受词典封顶约束）。
+                                let (u_exacts, u_prefixes) =
+                                    u.query_tokens(&qp_pairs, USER_PHRASES_UNLIMITED);
                                 for hit in u_exacts {
                                     let display_text = if traditional {
                                         to_traditional(&hit.word)
@@ -1467,7 +1512,10 @@ impl Session {
         // sort_by 稳定排序 = Go sort.SliceStable）：① 回退层后置；② 超段仲裁
         // （仅全拼输入，候选音节数多于输入段数的后置——用户候选按 maxInputSegs
         // 判，非用户按首选切分判；简拼/混拼 token 数不是音节数，不参与）；
-        // ③ 用户加权候选优先；④ 层级；⑤ 得分降序、词长、字典序。
+        // ③ 完整消费输入的候选（RANK_EXACT / RANK_INITIAL_EXACT，含提升到精确层
+        // 的纠错）优先于还要补字母的续接/偏长词——用户词组只在同一消费层级内置顶，
+        // 学过的续接词（shiji 下的 世界）仍排在 shi'ji 的词典词之后；
+        // ④ 用户加权候选优先；⑤ 层级；⑥ 得分降序、词长、字典序。
         let input_segs = shape.input_segs;
         let max_input_segs = shape.max_input_segs;
         let input_has_initials = shape.input_has_initials;
@@ -1496,6 +1544,15 @@ impl Session {
                     };
                 }
             }
+            let a_full = a.2 <= RANK_INITIAL_EXACT;
+            let b_full = b.2 <= RANK_INITIAL_EXACT;
+            if a_full != b_full {
+                return if a_full {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
             if a.0.from_user != b.0.from_user {
                 return if a.0.from_user {
                     Ordering::Less
@@ -1515,9 +1572,10 @@ impl Session {
             }
             a.0.text.cmp(&b.0.text)
         });
-        // 纠错固定第 3 位（Go placeTypoFixedPosition）
+        // 纠错固定第 3 位（Go placeTypoFixedPosition）；之后再做词典词组封顶——
+        // 固定位在索引 2，必在前 2 页之内，不会被封顶截掉。
         let sorted = place_typo_fixed_position(sorted);
-        self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
+        let sorted = cap_dict_phrases(sorted);        self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
 
         // 预编辑（Go buildComposition 口径）：默认原样输入；有候选且有首选切分时
         // 按切分边界重建并保留大小写（如 NI'HAO）——无候选（打错字/无切分）时
@@ -1578,6 +1636,11 @@ impl Session {
     /// 拼音匹配另走 match_input() 小写视图。双拼按键与大小写无关，统一小写
     /// 后成对解码。例外：双拼模式 ';' 是韵母键（mspy 的 ing），必须放行。
     pub fn input(&mut self, text: &str, half_width: bool) -> Result<Composition, String> {
+        // 从空组词重新开始：上一轮渐进上屏的未完成分段不能带入本轮组词（否则
+        // 渐进选「今天」→ 退格到空 → 打 wo 选「我」会把 [今天 我] 拼成伪整句）。
+        if self.input_raw.is_empty() {
+            self.seq_segs.clear();
+        }
         // 与 Go engine.Session.Input 同契约：壳是标点唯一真源，input 只收拼音
         // 字母，其余字符静默丢弃（标点走 punct()）。**大小写都收且保留原样**：
         // 用户回车（commit_raw）应原样上屏自己敲的字母，不必为大写切输入法；
@@ -1764,17 +1827,11 @@ impl Session {
         }
 
         let cand = self.all_candidates[global_idx].0.clone();
-
-        // 记录用户调频与共现
-        if let Some(ref u) = self.user_dict {
-            u.bump_word(&cand.text, Some(&cand.syllables), None);
-            if let Some(ref prev) = self.last_committed {
-                u.bump_bigram(prev, &cand.text);
-            }
-        }
-
-        self.last_committed = Some(cand.text.clone());
-        self.prev_sylls = cand.syllables.split('\'').map(|s| s.to_string()).collect();
+        let sylls: Vec<String> = cand.syllables.split('\'').map(|s| s.to_string()).collect();
+        // 记录用户调频、共现、历史与词组进化（整句式记录按分段逐段学）
+        let segs = self.candidate_segs(&cand, &sylls);
+        self.learn_selection(&cand.text, &sylls, &segs);
+        self.seq_segs.clear(); // 一次整词上屏：本次组词的渐进分段作废
         self.input_raw.clear();
         self.compose();
 
@@ -1803,21 +1860,31 @@ impl Session {
             consumed_chars += tok.text.len();
         }
 
-        if consumed_chars >= self.input_raw.len() {
+        let rest_empty = consumed_chars >= self.input_raw.len();
+        if rest_empty {
             self.input_raw.clear();
         } else {
             self.input_raw = self.input_raw[consumed_chars..].to_string();
         }
 
-        // 记录调频
-        if let Some(ref u) = self.user_dict {
-            u.bump_word(&cand.text, Some(&cand.syllables), None);
-            if let Some(ref prev) = self.last_committed {
-                u.bump_bigram(prev, &cand.text);
+        // 记录调频、共现、历史与词组进化
+        let sylls: Vec<String> = cand.syllables.split('\'').map(|s| s.to_string()).collect();
+        let segs = self.candidate_segs(&cand, &sylls);
+        self.learn_selection(&cand.text, &sylls, &segs);
+        // 组词内容变了回到第一页（Go 同口径）：否则在第 N 页选段后，剩余拼音
+        // 会停在原页码，首屏候选被跳过。
+        self.page = 0;
+        if rest_empty {
+            // 本次组词由若干渐进上屏段拼完：把整串固化成整句习惯（分段 = 各段
+            // 上屏词）。单段选完整个输入不触发（不是整句）。
+            if !self.seq_segs.is_empty() {
+                let mut all = std::mem::take(&mut self.seq_segs);
+                all.push((cand.text.clone(), sylls.clone()));
+                self.learn_progressive_sequence(&all);
             }
+        } else {
+            self.seq_segs.push((cand.text.clone(), sylls.clone()));
         }
-        self.last_committed = Some(cand.text.clone());
-        self.prev_sylls = cand.syllables.split('\'').map(|s| s.to_string()).collect();
 
         let mut comp = self.compose();
         comp.committed = cand.text;
@@ -1852,6 +1919,8 @@ impl Session {
         self.input_raw.clear();
         self.last_committed = None;
         self.prev_sylls.clear();
+        self.history.clear();
+        self.seq_segs.clear();
         self.punct_state.reset();
         self.compose()
     }
@@ -1873,125 +1942,6 @@ impl Session {
     }
 
     /// 联想候选查询
-
-    /// 推断学习词条的分段（Go inferSegs）：整句记录没有 Segs 时的兼容路径。
-    /// 要求逐字对应音节、**每个分段都是词典词**、且能切成 ≥2 段；切不出或
-    /// 本身已是词典词（普通词）时返回空（宁可当普通词，也不臆造边界）。
-    fn infer_segs(&self, word: &str, syllables: &[String]) -> Vec<String> {
-        if syllables.is_empty() {
-            return Vec::new();
-        }
-        let runes: Vec<char> = word.chars().collect();
-        if runes.len() != syllables.len() {
-            return Vec::new();
-        }
-        let syl_refs: Vec<&str> = syllables.iter().map(|s| s.as_str()).collect();
-        if self.dict.contains_word(word, &syl_refs) {
-            return Vec::new();
-        }
-        let n = runes.len();
-        let mut best = vec![i32::MAX; n + 1];
-        let mut prev = vec![0usize; n + 1];
-        best[0] = 0;
-        for pos in 0..n {
-            if best[pos] == i32::MAX {
-                continue;
-            }
-            for k in 1..=(n - pos) {
-                let seg: String = runes[pos..pos + k].iter().collect();
-                if !self.dict.contains_word(&seg, &syl_refs[pos..pos + k]) {
-                    continue;
-                }
-                if best[pos] + 1 < best[pos + k] {
-                    best[pos + k] = best[pos] + 1;
-                    prev[pos + k] = pos;
-                }
-            }
-        }
-        if best[n] < 2 {
-            return Vec::new();
-        }
-        let mut segs: Vec<String> = Vec::new();
-        let mut pos = n;
-        while pos > 0 {
-            let p = prev[pos];
-            segs.push(runes[p..pos].iter().collect());
-            pos = p;
-        }
-        segs.reverse();
-        segs
-    }
-
-    /// 学习词条的分段（Go entrySegs）：优先取记录里的 Segs（新数据），
-    /// 旧数据没有 Segs 时用词典最长词切分推断，推断不出则视为普通词。
-    fn entry_segs(&self, word: &str, syllables: &[String], segs: &[String]) -> Vec<String> {
-        if segs.len() >= 2 {
-            return segs.to_vec();
-        }
-        self.infer_segs(word, syllables)
-    }
-
-    /// 整句式学习记录判定（Go isSentenceEntry）：新数据看 Segs（≥2 段即整句），
-    /// 旧数据看「>4 音节且不在词典」或能推断出 ≥2 段。整句式记录**不参与部分
-    /// 输入的前缀候选**——否则打「今」就能看到「今天星期一」，正是用户反对的
-    /// 整词贪婪匹配（项目候选硬约束）。
-    fn is_sentence_entry(&self, word: &str, syllables: &[String], segs: &[String]) -> bool {
-        if syllables.len() < 2 {
-            return false;
-        }
-        if segs.len() >= 2 {
-            return true;
-        }
-        let syl_refs: Vec<&str> = syllables.iter().map(|s| s.as_str()).collect();
-        if self.dict.contains_word(word, &syl_refs) {
-            return false;
-        }
-        if syllables.len() > 4 {
-            return true; // 旧数据：>4 音节且不在词典，只可能是整句
-        }
-        self.infer_segs(word, syllables).len() >= 2
-    }
-
-    /// 在整句式学习记录的分段边界上剥掉已上屏前缀（Go stripAtSegmentBoundary）：
-    /// prev_word 必须恰好等于前 k 段（k≥1 且 k<总段数）的拼接且音节数一致；
-    /// 不在边界上返回 None——调用方不应提供该「尾巴」候选。
-    fn strip_at_segment_boundary(
-        &self,
-        word: &str,
-        syllables: &[String],
-        segs: &[String],
-        prev_word: &str,
-        prev_sylls: &[String],
-    ) -> Option<(String, String)> {
-        if prev_word.is_empty() || prev_sylls.is_empty() || segs.len() < 2 {
-            return None;
-        }
-        let word_runes: Vec<char> = word.chars().collect();
-        let total_syls = syllables.len();
-        let mut rune_count = 0usize;
-        let mut syl_count = 0usize;
-        for (k, seg) in segs.iter().enumerate() {
-            let n = seg.chars().count();
-            rune_count += n;
-            syl_count += n;
-            if rune_count > word_runes.len() || syl_count > total_syls {
-                return None;
-            }
-            let prefix: String = word_runes[..rune_count].iter().collect();
-            if prefix == prev_word && syl_count == prev_sylls.len() {
-                if rune_count >= word_runes.len() || syl_count >= total_syls {
-                    return None; // 恰好等于整词：没有续接部分
-                }
-                let text: String = word_runes[rune_count..].iter().collect();
-                return Some((text, syllables[syl_count..].join("'")));
-            }
-            if k == segs.len() - 1 {
-                break;
-            }
-        }
-        None
-    }
-
     pub fn associate(&self, sylls: &[String]) -> Vec<Candidate> {
         const MAX_ASSOCIATE: usize = 30;
         // 必须刚上屏过词（s.prev）：联想的语义是「词组续接」，不是按拼音猜词。
@@ -2121,14 +2071,11 @@ impl Session {
 
     /// 联想词直接上屏
     pub fn associate_select(&mut self, word: &str, sylls: &[String]) -> Result<String, String> {
-        if let Some(ref u) = self.user_dict {
-            u.bump_word(word, Some(&sylls.join("'")), None);
-            if let Some(ref prev) = self.last_committed {
-                u.bump_bigram(prev, word);
-            }
-        }
-        self.last_committed = Some(word.to_string());
-        self.prev_sylls = sylls.to_vec();
+        // 联想上屏只回传 word+sylls：分段用主词典推断（Go 同口径），走与选词
+        // 相同的学习入口（调频 / 共现 / 历史 / 词组进化）。
+        let segs = self.infer_segs(word, sylls);
+        self.learn_selection(word, sylls, &segs);
+        self.seq_segs.clear();
         Ok(word.to_string())
     }
 
@@ -2333,10 +2280,11 @@ mod tests {
         );
     }
 
-    /// 末段残缺续接（rankContinuation）：zhonggu 的末音节 gu 是 guo 的前缀，
-    /// 中国（词频 85，补 o 后 55）应压过 中古（36）成为首选；daxu → 大学。
+    /// 末段残缺续接（RANK_CONTINUATION）严格排在完整消费输入的精确匹配之后：
+    /// zhonggu 先给 中古（zhong'gu），续接 中国（gu→guo，词频再高也在精确层之后）
+    /// 留在首页可达；daxu 没有精确竞争者，续接 大学 仍是首选。
     #[test]
-    fn test_continuation_beats_partial_word() {
+    fn test_exact_consumption_beats_continuation() {
         let mut dict = Dictionary::new();
         dict.insert(crate::dict::WordEntry {
             word: "中国".to_string(),
@@ -2358,8 +2306,13 @@ mod tests {
 
         let comp = sess.input("zhonggu", false).unwrap();
         assert_eq!(
-            comp.candidates[0].text, "中国",
-            "续接应让 中国 压过 中古: {:?}",
+            comp.candidates[0].text, "中古",
+            "完整消费输入的 中古 应先于续接 中国: {:?}",
+            comp.candidates
+        );
+        assert_eq!(
+            comp.candidates[1].text, "中国",
+            "续接 中国 须紧随其后、首页可达: {:?}",
             comp.candidates
         );
 

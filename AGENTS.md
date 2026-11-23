@@ -128,8 +128,15 @@ UI 改动的 Before/After 截图用 `gh` 的 `--attach` 上传，**不得 `git a
   `pinyin-quality-tuning` 陷阱 6。
 - **候选/排序硬约束**：候选只来自真实词条；组合候选只在 `rankComposition`，单字兜底
   只在 `rankSingleBackfill`（列表最末纯单字收尾）；错拼输入不追加单字兜底（纠错固定
-  第 3 位）；单段输入只出单字；超段仲裁仅全拼。排序键顺序、回归测试清单与判据见
-  skill `pinyin-quality-tuning`「1.1 当前排序键与用户优先规则」。
+  第 3 位）；单段输入只出单字；超段仲裁仅全拼。**用户词组优先且不限数**（完整消费输入的
+  用户词组查询无上限、在同一消费层级内置顶）；**完整消费输入优先**（`rankExact`/
+  `rankInitialExact` 先于续接/偏长词，续接层内再按词频−续接代价竞争）；**词典词组封顶
+  2 页**（`MAX_DICT_PHRASES`=12，用户词组与单字不计，由 `cap_dict_phrases` 执行；只数
+  不剔位——逐级回退的真实词组排在用户学过的单字之后是既有语义，Linux E2E 导入词用例守着）。上屏学习三条路径（`session/learn.rs`）缺一不可：调频+共现
+  （`learn_selection`）、相邻共现词组进化（`learn_phrase`，阈值 2 次）、渐进选段整句固化
+  （`seq_segs` + `learn_progressive_sequence`，组词从空重启即作废）——Rust 移植时曾整体丢失，
+  用户拼过的词组从不进词库。排序键顺序、回归测试清单与判据见 skill
+  `pinyin-quality-tuning`「1.1 当前排序键与用户优先规则」。
 
 ## 约束
 
