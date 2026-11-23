@@ -45,6 +45,8 @@ final class ChaosetController: IMKInputController {
     var associatePage = 0
 
     var candidateWindow: IMKCandidates?
+    /// 最近一次按键事件带来的客户端（handle 入口记录），焦点离开收尾时落盘用。
+    weak var lastClient: (any IMKTextInput)?
 
     // 中英模式：英文模式下按键全部放行（组词/选词/标点映射不介入）。
     // 切换手势为 Shift **空按**：按下先装填，松开时若期间没有其它按键才切换。
@@ -350,6 +352,8 @@ final class ChaosetController: IMKInputController {
     }
 
     func refresh(_ client: (any IMKTextInput)?) {
+        // 候选窗/联想一旦出现，本实例就是进程级焦点守卫要收尾的对象。
+        Self.noteActive(self)
         // 组词开始即退出联想（新输入优先于联想展示）
         if current?.input.isEmpty == false {
             associateCandidates = nil
@@ -544,16 +548,7 @@ final class ChaosetController: IMKInputController {
         // 宿主要求结束本次输入会话（点击文本框外/切换应用）：已确认段先落盘
         //（用户确认过的字不能丢；旧实现里这些段早已在文档，净效果一致），
         // 剩余拼音丢弃。
-        flushConfirmed(self.client())
-        if current?.input.isEmpty == false {
-            current = engine.reset()
-        } else {
-            current = nil
-        }
-        exitAssociate()
-        Self.hideCandidatePanel()
-        ModeToastController.hide()
-        candidateWindow?.hide()
+        endSession(client: self.client())
     }
 
     override func activateServer(_ sender: Any!) {
@@ -565,6 +560,77 @@ final class ChaosetController: IMKInputController {
         // 已确认段缓冲同样不得带入：此时写入会插进**新的**输入上下文。
         current = nil
         confirmedText = ""
+        exitAssociate()
+        Self.hideCandidatePanel()
+        ModeToastController.hide()
+        candidateWindow?.hide()
+    }
+
+    // MARK: - 焦点离开即结束会话（候选窗没有特权）
+
+    // 候选窗只是一个普通弹出窗口：用户切到别处（Cmd+Tab / Dock / 点击别的应用、
+    // 切换 Space、面板失键）时它必须消失，候选与输入一并清掉，不能留在别的
+    // 应用上面截走鼠标。IMK 只在「客户端文本焦点变化」时回调 commitComposition /
+    // deactivateServer；应用切换、Space 切换与联想态（没有 marked text）都不会
+    // 触发它们，面板因此会一直浮在新应用上。这里用进程级 NSWorkspace 通知补上，
+    // 语义与 Windows OnSetFocus(FALSE)、Linux focus_out 一致：已确认段落盘，
+    // 剩余拼音丢弃，联想退出，面板/提示收起。
+
+    /// 当前持有候选窗（组词中或联想中）的控制器。IMK 为每个输入上下文各建一个
+    /// 实例，进程级焦点通知只需要交给这一个（refresh 入口登记）。
+    static weak var activeController: ChaosetController?
+    private static var focusGuardInstalled = false
+
+    /// 登记为活动控制器，并确保进程级焦点守卫只安装一次。
+    static func noteActive(_ controller: ChaosetController) {
+        activeController = controller
+        installFocusGuardIfNeeded()
+    }
+
+    private static func installFocusGuardIfNeeded() {
+        guard !focusGuardInstalled else { return }
+        focusGuardInstalled = true
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            handleFocusLossSignal(pid: app?.processIdentifier ?? -1)
+        }
+        center.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { _ in handleFocusLossSignal(pid: nil) }
+        // 面板若曾成为 key 窗口（becomesKeyOnlyIfNeeded 的兜底），失键即结束会话。
+        CandidatePanelController.onResignKey = { activeController?.abandonSessionOnFocusLoss() }
+    }
+
+    /// 焦点离开信号的统一入口（单测直接驱动，模拟通知）：`pid` 为刚激活的应用，
+    /// 自己进程激活（面板 nonactivating，理论上不会）忽略；`nil` = Space 切换。
+    static func handleFocusLossSignal(pid: pid_t?) {
+        if let pid, pid == ProcessInfo.processInfo.processIdentifier { return }
+        activeController?.abandonSessionOnFocusLoss()
+    }
+
+    /// 焦点离开的收尾：与 commitComposition 同语义（已确认段落盘、剩余拼音丢弃、
+    /// 联想退出、面板与提示收起）；没有待收尾的状态时什么都不做。客户端取最近一次
+    /// 按键事件带来的（焦点通知不是 IMK 回调，不向 IMK 重新要 client）。
+    func abandonSessionOnFocusLoss() {
+        // engine.reset() 返回的是空 Comp 而非 nil，按「有无待收尾内容」判，不看 nil。
+        guard current?.input.isEmpty == false || associateCandidates != nil || !confirmedText.isEmpty else { return }
+        endSession(client: lastClient)
+        // 候选与输入一并清掉：客户端里的 marked 区也要收掉（走 clearMarkedText 的
+        // 忽略空插入兜底），否则下划线拼音会留在文档里。
+        refresh(lastClient)
+    }
+
+    /// 会话结束的公共收尾（commitComposition / 焦点离开共用）。
+    private func endSession(client: (any IMKTextInput)?) {
+        flushConfirmed(client)
+        if current?.input.isEmpty == false {
+            current = engine.reset()
+        } else {
+            current = nil
+        }
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()

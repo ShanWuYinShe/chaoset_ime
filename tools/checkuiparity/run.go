@@ -98,6 +98,7 @@ var checkGroups = []checkGroup{
 	// CI 覆盖（原执行位置在候选窗之后），随后是候选点选与右键删除。
 	{groupCICoverage, onLogical(checkCICoverage)},
 	{groupCandidateClick, onLogical(checkCandidateClick)},
+	{groupCandidateNoPrivilege, onLogical(checkCandidateNoPrivilege)},
 	{groupCandidateDelete, onLogical(checkCandidateDelete)},
 	// issue#2：翻页箭头可用性与方向键页内预选（三端按键语义 + 双端绘制）。
 	{groupCandidatePageArrows, onLogical(checkCandidatePageArrows)},

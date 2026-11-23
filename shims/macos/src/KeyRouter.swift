@@ -24,6 +24,9 @@ extension ChaosetController {
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         let client = sender as? any IMKTextInput
+        // 最近一次按键事件的客户端：进程级焦点通知不是 IMK 回调，收尾时不再向 IMK
+        // 要 client（无会话时会崩），直接用这里记下的。
+        lastClient = client
 
         // 只处理 keyDown 与 flagsChanged；keyUp 一律放行，
         // 否则同一个按键会被处理两次（重复组词／重复上屏）。
