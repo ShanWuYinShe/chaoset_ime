@@ -32,6 +32,13 @@ import (
 	"strings"
 )
 
+// daemon 命名管道服务端（Windows）与平台无关的监听池骨架；单独成块，避免
+// 挤动下方常量块的对齐。
+const (
+	rustDaemonServer = "crates/chaosetd/src/server.rs"
+	rustDaemonPipe   = "crates/chaosetd/src/server/pipe.rs"
+)
+
 const (
 	macPanel        = "shims/macos/src/CandidatePanel.swift"
 	macEngine       = "shims/macos/src/EngineClient.swift"

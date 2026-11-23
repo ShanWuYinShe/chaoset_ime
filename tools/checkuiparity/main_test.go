@@ -754,3 +754,81 @@ func TestCheckMacTisRegisterIdempotent(t *testing.T) {
 		t.Fatalf("删除幂等分支应被捕获，实际：%v", problems)
 	}
 }
+
+// TestCheckTimeoutResilience 锁住「超时韧性」契约：真实仓库必须通过；以下回退
+// 都必须被捕获（任何一条都会让 issue #122 的症状复现）：
+//  1. 字母追加失败点去掉超时保留——超时又直接 fail-open 擦掉拼音；
+//  2. 翻页失败点去掉超时分流；
+//  3. 按键路径重新套上 5s 熔断——超时后的下一键重连不了；
+//  4. 失步处理器改走 flushOrCancel 拆组词；
+//  5. daemon 主循环里阻塞等连接（旧的单监听实例模型）；
+//  6. daemon 不再认 input 的 base。
+func TestCheckTimeoutResilience(t *testing.T) {
+	files := []string{
+		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
+		rustDaemonServer, rustDaemonPipe, uiParityDoc,
+	}
+	orig := map[string]string{}
+	for _, p := range files {
+		orig[p] = string(readRepo(t, p))
+	}
+	build := func(mut map[string]string) fstest.MapFS {
+		m := fstest.MapFS{}
+		for _, p := range files {
+			data := orig[p]
+			if s, ok := mut[p]; ok {
+				data = s
+			}
+			m[p] = &fstest.MapFile{Data: []byte(data)}
+		}
+		return m
+	}
+
+	var problems []string
+	checkTimeoutResilience(build(nil), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实实现未通过超时韧性契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	expect := func(name, path, old, new string, want ...string) {
+		t.Helper()
+		if !strings.Contains(orig[path], old) {
+			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
+		}
+		mut := map[string]string{path: strings.Replace(orig[path], old, new, 1)}
+		var problems []string
+		checkTimeoutResilience(build(mut), &problems)
+		joined := strings.Join(problems, "\n")
+		if !strings.Contains(joined, groupTimeoutResilience) {
+			t.Fatalf("%s 应被捕获，实际：%v", name, problems)
+		}
+		for _, w := range want {
+			if !strings.Contains(joined, w) {
+				t.Fatalf("%s 应报出 %q，实际：%v", name, w, problems)
+			}
+		}
+	}
+
+	expect("字母追加去掉超时保留", winShell,
+		"if (keepCompositionOnTimeout(prev, ch, pic)) return true;", "",
+		"字母追加")
+	expect("翻页失败点去掉超时分流", winShell,
+		"if (enterDesyncOnTimeout(prev)) return true;", "",
+		"翻页键")
+	expect("按键路径重新套熔断", winShell,
+		"    if (transport.isConnected()) return true;\n    if (transport.tryConnectOnce()) return true;\n",
+		"    if (transport.isConnected()) return true;\n    if (transport.circuitOpen()) return false;\n    if (transport.tryConnectOnce()) return true;\n",
+		"circuitOpen")
+	expect("失步处理器拆组词", winShell,
+		"        resetComposition();\n        commit(pic, raw);\n        *eaten = false;",
+		"        flushOrCancel(pic);\n        *eaten = false;",
+		"flushOrCancel(")
+	expect("daemon 主循环阻塞等连接", rustDaemonPipe,
+		"    let pipe_name = pipe_name.to_string();\n    run_listener_pool(",
+		"    let pipe_name = pipe_name.to_string();\n    let _ = ConnectNamedPipe(std::ptr::null_mut(), std::ptr::null_mut());\n    run_listener_pool(",
+		"ConnectNamedPipe")
+	expect("daemon 不认 base", ipcServer,
+		`let base = params.get("base").and_then(|v| v.as_str());`,
+		"let base: Option<&str> = None;",
+		`params.get(`)
+}

@@ -41,6 +41,15 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
     // 剩余拼音回灌继续组词——同一个候选窗两种选词语义。macOS
     // ChaosetController.commit 与下方键盘路径都先 selectPrefix，失败
     //（daemon 不可达/越界）才回退整句上屏。
+    // 失步中（issue #122，见 tip_desync.cpp）：先重建并刷新候选——屏幕上的旧
+    // 候选对应的是重建前的输入，本次点击只用于补课，不照旧列表选词。
+    if (daemonDesynced_) {
+        if (syncDaemonInput() == SyncResult::kSynced) {
+            candidateWnd_.setSelectedIndex(0);
+            render(ctx.get());
+        }
+        return;
+    }
     const std::string pickedSyllables = comp_.candidates[index].syllables;
     chaoset::Comp rest;
     if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
@@ -60,6 +69,7 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
         }
         return;
     }
+    if (enterDesyncOnTimeout(comp_)) return;  // 超时：保留组词（issue #122）
     std::string committed;
     if (session_.select(index, &committed)) {
         const std::string all = confirmedPreedit_ + committed;
@@ -124,9 +134,20 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
     }
     if (!hasCandidates()) return;
     if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) return;
+    // 失步中（issue #122，见 tip_desync.cpp）：先重建并刷新候选——屏幕上的旧
+    // 候选对应的是重建前的输入，本次点击只用于补课。
+    if (daemonDesynced_) {
+        ContextRef ctx(focusContext());
+        if (syncDaemonInput() == SyncResult::kSynced) {
+            candidateWnd_.setSelectedIndex(0);
+            render(ctx.get());
+        }
+        return;
+    }
     const chaoset::Candidate pick = comp_.candidates[index];
     bool deleted = false;
     if (!session_.userDelete(pick.text, splitSyllables(pick.syllables), &deleted)) {
+        enterDesyncOnTimeout(comp_);  // 超时：保留组词（issue #122）
         showToast(L"删除失败：daemon 不可达", true);
         return;
     }
@@ -150,6 +171,7 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
     }
     // 重新组词刷新候选。已确认段 confirmedPreedit_ 是壳侧状态，不影响。
     ContextRef ctx(focusContext());
+    const chaoset::Comp prev = comp_;
     const std::string raw = comp_.input;
     resetComposition();
     if (raw.empty()) {
@@ -158,6 +180,11 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
     } else {
         chaoset::Comp rest = session_.input(raw, halfWidth_);
         if (!rest.ok) {
+            // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
+            if (enterDesyncOnTimeout(prev)) {
+                showToast(L"删除后刷新候选失败", true);
+                return;
+            }
             // 极端故障（daemon 半死）：已确认段先落盘，避免合成悬空丢字。
             diagDaemonRequestFailure(transport_, "input(refresh)");
             comp_ = chaoset::Comp();
@@ -218,8 +245,19 @@ void ChaosetTIP::flipPage(bool next) {
     if (!hasCandidates() || comp_.pageCount <= 1) return;
     g_lastOp = kOpCandidateClick;
     ContextRef ctx(focusContext());
+    // 失步中（issue #122）：先重建并刷新候选，本次点击只用于补课。
+    if (daemonDesynced_) {
+        if (syncDaemonInput() == SyncResult::kSynced) {
+            candidateWnd_.setSelectedIndex(0);
+            render(ctx.get());
+        }
+        return;
+    }
+    const chaoset::Comp prev = comp_;
     comp_ = next ? session_.nextPage() : session_.prevPage();
     if (!comp_.ok) {
+        // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
+        if (enterDesyncOnTimeout(prev)) return;
         // daemon 故障：已确认段先落盘收尾，不能随翻页失败被 endComposition 丢弃
         diagDaemonRequestFailure(transport_, "page(mouse)");
         flushOrCancel(ctx.get());

@@ -358,6 +358,48 @@ int main(int argc, char** argv) {
         session.reset();
     }
 
+    // 重连重建（issue #122）：壳侧请求超时后管道断开，daemon 会话随连接消失；
+    // 新连接上 input 的 base 参数把「上次确认的输入串」整体重建后再追加 text，
+    // 结果必须与逐键输入完全一致——否则用户已输入的拼音会丢、候选对不上。
+    {
+        // 参照：新会话逐键敲出 duanko
+        UnixTransport refTransport(argv[1]);
+        Session ref(refTransport);
+        Comp refc;
+        bool refOk = true;
+        for (char key : std::string("duanko")) {
+            refc = ref.input(std::string(1, key), false);
+            refOk = refOk && refc.ok;
+        }
+        check(refOk && refc.input == "duanko" && !refc.candidates.empty(),
+              "重连重建前置：逐键输入 duanko 有候选");
+
+        // 模拟超时：旧连接上已确认 duank，随后管道断开（daemon 侧会话消失）
+        session.reset();
+        session.input("duank", false);
+        transport.closeConn();
+        // 新连接：base=duank + 追加 o，一次请求重建
+        Comp rebuilt = session.input("o", false, "duank");
+        check(rebuilt.ok && rebuilt.input == "duanko", "重连重建：base + 追加键得到完整输入串");
+        bool same = rebuilt.candidates.size() == refc.candidates.size();
+        for (std::size_t i = 0; same && i < refc.candidates.size(); ++i) {
+            same = rebuilt.candidates[i].text == refc.candidates[i].text &&
+                   rebuilt.candidates[i].syllables == refc.candidates[i].syllables &&
+                   rebuilt.candidates[i].fromUser == refc.candidates[i].fromUser;
+        }
+        check(same && rebuilt.preedit == refc.preedit,
+              "重连重建：候选/音节/学习标记/预编辑与逐键输入逐条一致");
+        // 重建后的后续操作也必须一致：退格
+        Comp rb = session.backspace();
+        Comp rbb = ref.backspace();
+        check(rb.ok && rbb.ok && rb.input == rbb.input, "重连重建后退格与逐键输入一致");
+
+        // 不带 base 的调用点行为不变
+        session.reset();
+        Comp plain = session.input("nihao", false);
+        check(plain.ok && plain.preedit == "ni'hao", "不带 base 的 input 行为不变");
+    }
+
     if (failures == 0) {
         std::printf("PASS: core 全部检查通过\n");
         return 0;

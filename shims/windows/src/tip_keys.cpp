@@ -385,8 +385,11 @@ void ChaosetTIP::flipCompositionPage(bool next, ITfContext* pic) {
     } else {
         if (comp_.page <= 0) return;  // 首页：保持不动
     }
+    const chaoset::Comp prev = comp_;
     comp_ = next ? session_.nextPage() : session_.prevPage();
     if (!comp_.ok) {
+        // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
+        if (enterDesyncOnTimeout(prev)) return;
         diagDaemonRequestFailure(transport_, "page(dir)");
         flushOrCancel(pic);  // daemon 故障：已确认段先落盘，不吞键
         return;
@@ -536,6 +539,13 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return false;  // 放行给宿主
     }
 
+    // daemon 失步中（issue #122，见 tip_desync.cpp）：本键先按失步规则分流；只有
+    // 重建成功且语义明确的键才落回下方的正常流程。
+    if (daemonDesynced_) {
+        bool eaten = true;
+        if (handleKeyDesynced(vk, pic, &eaten)) return eaten;
+    }
+
     // 零阻塞（审计 T4）：Key-only 宿主（Chrome/conhost/Terminal 不投递 Test
     // 阶段）在这里补一次非阻塞连接探测；失败时各分支 fail-open（不阻塞、
     // 按键原样进文档）。Test 阶段已连接时这里只是一次分支预测。
@@ -650,11 +660,16 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             return true;
         }
         if (alt) {
+            const chaoset::Comp prev = comp_;
             comp_ = session_.backspaceWord();
             if (!comp_.ok) {
-                diagDaemonRequestFailure(transport_, "backspaceWord");
-                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-                return true;
+                // 超时：本地按音节回退并保留组词（issue #122，见 tip_desync.cpp）
+                if (!enterDesyncOnTimeout(prev)) {
+                    diagDaemonRequestFailure(transport_, "backspaceWord");
+                    flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
+                    return true;
+                }
+                backspaceLocally(comp_, pendingKeys_, !dpScheme_.empty(), true);
             }
             syncDpScheme(comp_);
             if (comp_.input.empty()) {
@@ -712,8 +727,12 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         const bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         const char base = (shiftDown != capsOn) ? 'A' : 'a';
         std::string ch(1, static_cast<char>(base + (vk - kVkFirstLetter)));
+        const chaoset::Comp prev = comp_;
         comp_ = session_.input(ch, halfWidth_);
         if (!comp_.ok) {
+            // 超时（而非断管/连不上）：保留本地组词进入失步，下一键重建
+            // （issue #122，见 tip_desync.cpp）；其余情况照旧收尾放行
+            if (keepCompositionOnTimeout(prev, ch, pic)) return true;
             // daemon 确实不可达：收尾（已确认段落盘，不因 daemon 故障丢字）
             // 并放行原键，保证宿主应用不卡死
             diagDaemonRequestFailure(transport_, "input");
@@ -748,8 +767,11 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                             vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
     if (isPageKey && isComposing() && hasCandidates()) {
         bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
+        const chaoset::Comp prev = comp_;
         comp_ = isPrev ? session_.prevPage() : session_.nextPage();
         if (!comp_.ok) {
+            // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
+            if (enterDesyncOnTimeout(prev)) return true;
             diagDaemonRequestFailure(transport_, "page");
             flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
             return true;
@@ -777,8 +799,10 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // 不是 punct，引擎才能在双拼键位状态机里看到它。Shift+; 产生的
     // ':' 不在此列（仍走下方标点分支），与 mac 的字符级判定一致。
     if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftActive())) {
+        const chaoset::Comp prev = comp_;
         comp_ = session_.input(";", halfWidth_);
         if (!comp_.ok) {
+            if (keepCompositionOnTimeout(prev, ";", pic)) return true;  // 超时：保留组词（issue #122）
             diagDaemonRequestFailure(transport_, "input;");
             flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
             return false;       // 绝不吞键：daemon 不可达时让 ; 原样进文档
@@ -803,8 +827,10 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     if (const char* key = keyPunctChar(vk, shiftActive())) {
         if (vk == kVkOemQuotes && isComposing()) {
             // 组词中的撇号是音节分隔符，走组词流程
+            const chaoset::Comp prev = comp_;
             comp_ = session_.input("'", halfWidth_);
             if (!comp_.ok) {
+                if (keepCompositionOnTimeout(prev, "'", pic)) return true;  // 超时：保留组词（issue #122）
                 diagDaemonRequestFailure(transport_, "input'");
                 flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
                 return false;
@@ -824,6 +850,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             if (commit(pic, all) || composing) return true;
             return false;
         }
+        // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
+        if (composing && enterDesyncOnTimeout(comp_)) return true;
         // daemon 不可达：收尾（已确认段落盘）后放行原键，不卡宿主应用
         if (composing || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
@@ -854,11 +882,16 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // Delete 与 Backspace 同语义（对齐 macOS 组词中两者都删拼音）；
     // 带修饰的组合已在上面按映射处理。
     if (vk == kVkBackspace || vk == kVkDelete) {
+        const chaoset::Comp prev = comp_;
         comp_ = session_.backspace();
         if (!comp_.ok) {
-            diagDaemonRequestFailure(transport_, "backspace");
-            flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-            return true;
+            // 超时：本地回退一格并保留组词（issue #122，见 tip_desync.cpp）
+            if (!enterDesyncOnTimeout(prev)) {
+                diagDaemonRequestFailure(transport_, "backspace");
+                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
+                return true;
+            }
+            backspaceLocally(comp_, pendingKeys_, !dpScheme_.empty(), false);
         }
         syncDpScheme(comp_);
         if (comp_.input.empty()) {
@@ -922,6 +955,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                     commit(pic, all);
                     enterAssociate(pickedSyllables);
                 }
+            } else if (enterDesyncOnTimeout(comp_)) {
+                return true;  // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
             } else {
                 // daemon 不可达/越界：回退整句上屏（现状语义）
                 std::string committed;
@@ -973,6 +1008,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                 }
                 return true;
             }
+            // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
+            if (enterDesyncOnTimeout(comp_)) return true;
             std::string committed;
             if (session_.select(sel, &committed)) {
                 const std::string all = confirmedPreedit_ + committed;

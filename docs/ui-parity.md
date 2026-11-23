@@ -368,7 +368,8 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   OnSetThreadFocus / OnKillThreadFocus / OnActivated / OnTestKeyDown / OnKeyDown /
   OnTestKeyUp / OnKeyUp / render / handleKey / showSettingsWindow /
   onForegroundChanged / selectCandidateByIndex / deleteCandidateByIndex /
-  flipPage / CandidateWindow::show。
+  flipPage / CandidateWindow::show，以及失步恢复的 handleKeyDesynced /
+  syncDaemonInput / keepCompositionOnTimeout。
 - **副作用统一入口**：每进程一个 `ShellWorker` 后台线程（`ShellTask` 任务队列）
   + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipModeAuthorityMsg`/
   `kTipShowToastMsg` 回投结果）；建进程、管道重试、
@@ -377,10 +378,22 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘
   （`candidate shown` 整条删除），前台风暴日志限流 5s。
 - **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（TSF 路径 30ms、
-  worker/设置窗 200ms，`setDeadlineMs`）+ 5s 熔断（`circuitOpen`）。
-- **fail-open**：daemon 未就绪时 `ensureDaemonFast` 单次非阻塞探测，失败即原样
-  放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键恢复候选。
-  首 1–2 个内容键可能按英文直入（已确认可接受）。
+  worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断（`circuitOpen`）只用于 worker 的
+  慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不熔断**——每键只做一次非阻塞
+  `tryConnectOnce`，超时后的下一键才能立刻重连。
+- **fail-open（daemon 不在）**：连不上/管道断开时 `ensureDaemonFast` 单次非阻塞
+  探测，失败即原样放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键
+  恢复候选。首 1–2 个内容键可能按英文直入（已确认可接受）。
+- **超时不拆组词（失步恢复，`tip_desync.cpp`）**：30ms 截止在桌面系统上会被偶发
+  调度停顿击穿，所以「超时」与「daemon 不在」分开处理。组词中任一引擎请求超时
+  （`lastIoWasTimeout`）都经 `enterDesyncOnTimeout` 保留本地组词并置
+  `daemonDesynced_`：追加键记入 `pendingKeys_` 并乐观显示在预编辑里；失步中的按键
+  由 `handleKeyDesynced` 分流（退格 / Esc / 回车本地处理；选词、翻页、鼠标点选先
+  重建、只刷新候选不动作；标点重建后照常处理）；重连后 `syncDaemonInput` 用
+  `input` 的 `base` 参数把整串重建到新会话（daemon 侧 `Session::restore_input`）。
+  daemon 在 2s 宽限期内一直连不上才放弃：本地内容按原始串落盘（一个键都不丢）。
+  首键（尚无组词）仍 fail-open。由 `tools/checkuiparity` 的「超时韧性」组机器断言
+  （含变异测试）。
 - **配置缓存**：ModeScope / Associate / 深色主题 / 全屏抑制 / UILess 激活开关
   均带 TTL 缓存，候选窗每键不再做注册表/Shell 查询。
 - **前台钩子**：每线程最多一个系统级钩子，回调体内只 `PostMessage`（不 hide、

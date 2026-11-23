@@ -39,6 +39,7 @@ const (
 	groupTrayActive         = "托盘可见性（active）"
 	groupTrayPalette        = "托盘配色"
 	groupTsfZeroBlock       = "TSF 回调零跨进程等待"
+	groupTimeoutResilience  = "超时韧性"
 	groupWindowsInstall     = "Windows 安装安全"
 	groupWindowsVersionInfo = "Windows 版本信息"
 

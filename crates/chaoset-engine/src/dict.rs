@@ -22,6 +22,9 @@ struct TrieNode {
     /// 子树内最小词条下标（Go dictNode.subtreeMin）：prefix 逐层展开的确定性
     /// 次序键——同层节点子树互不相交，该键唯一，构成全序。
     subtree_min: usize,
+    /// 本节点 exact_words 的最高词频（节点无词条为 0）。insert / rebuild_trie
+    /// 增量维护、sort_nodes 复核；prefix 池排名直接读它，不必每次扫全节点词条。
+    max_freq: u32,
 }
 
 /// 主词典
@@ -145,6 +148,9 @@ impl Dictionary {
             node = node.children.entry(syll.clone()).or_default();
         }
         node.exact_words.push(idx);
+        if entry.freq > node.max_freq {
+            node.max_freq = entry.freq;
+        }
 
         self.entries.push(entry);
     }
@@ -163,6 +169,9 @@ impl Dictionary {
                 node = node.children.entry(syll.clone()).or_default();
             }
             node.exact_words.push(idx);
+            if entry.freq > node.max_freq {
+                node.max_freq = entry.freq;
+            }
         }
     }
 
@@ -172,6 +181,13 @@ impl Dictionary {
         fn sort_recursive(node: &mut TrieNode, entries: &[WordEntry]) {
             node.exact_words
                 .sort_by(|&a, &b| entries[b].freq.cmp(&entries[a].freq));
+            // 排序后首条即最高词频：复核增量维护的 max_freq（任何建树路径都以
+            // sort_nodes 收尾，这里兜住绕过 insert/rebuild_trie 的写法）。
+            node.max_freq = node
+                .exact_words
+                .first()
+                .map(|&id| entries[id].freq)
+                .unwrap_or(0);
             // 注意是**子树内最小词条下标**（Go dictNode.subtreeMin），不是排序后
             // 第一个——exact_words 按词频降序，first() 是最高频词的索引，会让
             // prefix BFS 的确定性次序键与 Go 不一致（简拼 nh 的 12 节点展开集合
@@ -515,29 +531,42 @@ impl Dictionary {
             return (Vec::new(), Vec::new());
         }
 
-        // exact 池
-        let mut exact_ids: Vec<usize> = Vec::new();
+        // exact 池。节点内词条已按词频降序（sort_nodes），所以全局前 exact_limit
+        // 名只可能落在「各终点节点自己的前 exact_limit 名 + 与第 exact_limit 名
+        // 同频的条目」之内——若某条在自己节点里排到第 exact_limit 名之后且频率
+        // 更低，同节点至少有 exact_limit 条词频不低于它，全局排序必把它挤出前
+        // exact_limit 名。旧实现把碎片导航命中的**全部**词条收齐再整体排序：
+        // 单声母（j/zh/sh…）一次要过万条，是每个词首字母键 2–7ms 的来源
+        //（issue #122：单键贴住壳侧 30ms 截止后 fail-open 成英文）。截断边界上
+        // 的并列仍由下方同一个完整比较器裁决，结果与全量排序逐条一致。
+        let mut exact: Vec<(u32, usize)> = Vec::new();
         let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for node in &terminals {
-            for &id in &node.exact_words {
+            let words = &node.exact_words;
+            let mut end = words.len().min(exact_limit);
+            if exact_limit > 0 && end < words.len() {
+                let boundary = entries[words[exact_limit - 1]].freq;
+                while end < words.len() && entries[words[end]].freq == boundary {
+                    end += 1;
+                }
+            }
+            for &id in &words[..end] {
                 if seen.insert(id) {
-                    exact_ids.push(id);
+                    exact.push((entries[id].freq, id));
                 }
             }
         }
-        exact_ids.sort_by(|&a, &b| {
-            entries[b]
-                .freq
-                .cmp(&entries[a].freq)
-                .then(entries[a].word.cmp(&entries[b].word))
-                .then(
-                    entries[a]
+        exact.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| entries[a.1].word.cmp(&entries[b.1].word))
+                .then_with(|| {
+                    entries[a.1]
                         .syllables
                         .join("'")
-                        .cmp(&entries[b].syllables.join("'")),
-                )
+                        .cmp(&entries[b.1].syllables.join("'"))
+                })
         });
-        exact_ids.truncate(exact_limit);
+        exact.truncate(exact_limit);
 
         // prefix 池：Go queryTokens 的逐层 BFS。注意 Go 的结构是「ranked 跨起点
         // 节点累积，每处理一个起点就重排一次并截断到 12，随后收集该次快照的节点
@@ -557,12 +586,9 @@ impl Dictionary {
             let mut next_level: Vec<&TrieNode> = Vec::new();
             for node in &level_nodes {
                 for child in node.children.values() {
-                    let top = child
-                        .exact_words
-                        .iter()
-                        .map(|&id| entries[id].freq)
-                        .max()
-                        .unwrap_or(0);
+                    // 节点最高词频读缓存（sort_nodes 复核）：旧实现每次对子节点
+                    // 全部词条求 max，碎片导航下一个声母就要扫上万个词条。
+                    let top = child.max_freq;
                     ranked.push((top, child.subtree_min, child));
                 }
                 ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -601,136 +627,11 @@ impl Dictionary {
         prefix_ids.truncate(prefix_limit);
 
         (
-            exact_ids.iter().map(|&i| &entries[i]).collect(),
+            exact.iter().map(|&(_, i)| &entries[i]).collect(),
             prefix_ids.iter().map(|&i| &entries[i]).collect(),
         )
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// prefix 池必须是 Go queryTokens 的逐层探索语义（≤2 层）：只收「多 1~2
-    /// 个音节」的衍生词，更长的词不得混入（否则 xi'an 会带出 西安交通大学）。
-    #[test]
-    fn test_prefix_bfs_depth_limit() {
-        let mut dict = Dictionary::new();
-        for (word, pinyin, freq) in [
-            ("西安", "xi'an", 70u32),
-            ("西安事变", "xi'an'shi'bian", 40),
-            ("西安交通大学", "xi'an'jiao'tong'da'xue", 50),
-        ] {
-            dict.insert(WordEntry {
-                word: word.to_string(),
-                syllables: pinyin.split('\'').map(|s| s.to_string()).collect(),
-                freq,
-            });
-        }
-        dict.sort_nodes();
-
-        let (exact, prefix) = dict.query_exact_and_prefix(&["xi", "an"], 20, 20);
-        assert_eq!(exact.len(), 1);
-        assert_eq!(exact[0].word, "西安");
-        let words: Vec<&str> = prefix.iter().map(|e| e.word.as_str()).collect();
-        assert!(
-            words.contains(&"西安事变"),
-            "+2 音节内的衍生词应在 prefix 池: {words:?}"
-        );
-        assert!(
-            !words.contains(&"西安交通大学"),
-            "超过 2 层的长词不得进入 prefix 池: {words:?}"
-        );
-    }
-
-    #[test]
-    fn test_dict_exact_and_prefix() {
-        let mut dict = Dictionary::new();
-        dict.insert(WordEntry {
-            word: "你".to_string(),
-            syllables: vec!["ni".to_string()],
-            freq: 1000,
-        });
-        dict.insert(WordEntry {
-            word: "你好".to_string(),
-            syllables: vec!["ni".to_string(), "hao".to_string()],
-            freq: 5000,
-        });
-        dict.insert(WordEntry {
-            word: "你好吗".to_string(),
-            syllables: vec!["ni".to_string(), "hao".to_string(), "ma".to_string()],
-            freq: 800,
-        });
-        dict.sort_nodes();
-
-        let exact = dict.query_exact(&["ni", "hao"], 20);
-        assert_eq!(exact.len(), 1);
-        assert_eq!(exact[0].word, "你好");
-
-        let prefix = dict.query_prefix(&["ni"], 10);
-        assert_eq!(prefix.len(), 3);
-        assert_eq!(prefix[0].word, "你好"); // 词频 5000 居首
-        assert_eq!(prefix[1].word, "你"); // 词频 1000 居次
-        assert_eq!(prefix[2].word, "你好吗"); // 词频 800
-    }
-
-    /// 声母碎片导航：单声母 token（z/x/n…）按「音节以该声母开头」展开，
-    /// 支撑简拼与无候选兜底（zzz → z'z'z 召回自治州/啧啧啧等）。
-    #[test]
-    fn test_fragment_navigation() {
-        let mut dict = Dictionary::new();
-        for (word, sylls, freq) in [
-            ("自治州", vec!["zi", "zhi", "zhou"], 800u32),
-            ("赞", vec!["zan"], 600),
-            ("先", vec!["xian"], 5000),
-        ] {
-            dict.insert(WordEntry {
-                word: word.to_string(),
-                syllables: sylls.iter().map(|s| s.to_string()).collect(),
-                freq,
-            });
-        }
-        dict.sort_nodes();
-
-        // 碎片 z 展开 z* 子树：自治州(z* 前缀)与赞都命中，按词频降序。
-        let z_hits = dict.query_prefix(&["z"], 10);
-        let z_words: Vec<&str> = z_hits.iter().map(|e| e.word.as_str()).collect();
-        assert!(
-            z_words.contains(&"自治州"),
-            "碎片 z 应召回 zi'zhi'zhou: {:?}",
-            z_words
-        );
-        assert!(z_words.contains(&"赞"), "碎片 z 应召回 zan: {:?}", z_words);
-        assert_eq!(z_hits[0].word, "自治州"); // 词频 800 居首、赞 600 居次
-
-        // 碎片 x 只命中 x*：先(xian) 命中，z* 词条不出现。
-        let x_hits = dict.query_prefix(&["x"], 10);
-        assert_eq!(x_hits.len(), 1);
-        assert_eq!(x_hits[0].word, "先");
-
-        // 碎片精确匹配（词级）：query_exact(["xian"]) 只有整音节路径。
-        let exact_xian = dict.query_exact(&["xian"], 20);
-        assert_eq!(exact_xian.len(), 1);
-        assert_eq!(exact_xian[0].word, "先");
-    }
-    /// prefix 池是 Go queryTokens 的逐层 BFS（跨起点累积排名、每层最多 12 节点、
-    /// 逐节点收集）：简拼 nh 的 prefix 池应有 20 条且含 3 音节扩展词——「全局只
-    /// 排一次取 12」会只剩 13 条并漏掉这些词。
-    #[test]
-    fn test_query_exact_and_prefix_fragment_bfs() {
-        let mut dict = Dictionary::new();
-        dict.load_tsv(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../data/dict_common.tsv"
-        ))
-        .unwrap();
-        dict.sort_nodes();
-        let (exact, prefix) = dict.query_exact_and_prefix(&["n", "h"], 120, 20);
-        assert_eq!(exact.len(), 109, "简拼 nh 的精确池条数应与 Go 相同");
-        assert_eq!(prefix.len(), 20, "prefix 池应与 Go 同为 20 条");
-        let words: Vec<&str> = prefix.iter().map(|e| e.word.as_str()).collect();
-        for want in ["女孩子", "您还未", "拿回去", "牛磺酸"] {
-            assert!(words.contains(&want), "prefix 池应含 {want}: {words:?}");
-        }
-    }
-}
+mod tests;

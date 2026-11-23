@@ -99,7 +99,11 @@ public:
     // 宽度必须用本次壳状态，否则刚切全/半角后单按 ';' 会按旧宽度出标点。
     // **必填、无默认值**：daemon 不保存该状态（2026-11-05），壳是唯一真源，
     // 调用方必须显式传宽度，避免漏传时静默退化成全角。
-    Comp input(const std::string& text, bool halfWidth);
+    //
+    // base 非空时（IPC 字段 "base"）：先让 daemon 把引擎输入串**整体重建**为
+    // *base*，再追加 text——壳重连后新连接上的会话是空的，据此恢复组词状态
+    // （issue #122）。为空即普通追加，行为不变。
+    Comp input(const std::string& text, bool halfWidth, const char* base = nullptr);
     Comp backspace();
     // 按音节回退（Alt+Backspace，对齐 macOS ⌥⌫ 与引擎 BackspaceWord，2026-10-31）。
     Comp backspaceWord();

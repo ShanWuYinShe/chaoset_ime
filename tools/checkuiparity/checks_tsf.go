@@ -814,6 +814,11 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
 		{"render", "void ChaosetTIP::render(ITfContext* pic)"},
 		{"handleKey", "bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic)"},
+		// daemon 失步恢复（超时韧性）同样在宿主 UI 线程同步执行：只允许内存操作、
+		// 有截止的引擎请求与非阻塞重连（issue #122）。
+		{"handleKeyDesynced", "bool ChaosetTIP::handleKeyDesynced(WPARAM vk, ITfContext* pic, bool* eaten)"},
+		{"syncDaemonInput", "ChaosetTIP::SyncResult ChaosetTIP::syncDaemonInput()"},
+		{"keepCompositionOnTimeout", "bool ChaosetTIP::keepCompositionOnTimeout(const chaoset::Comp& prev, const std::string& key,"},
 		{"showSettingsWindow", "void ChaosetTIP::showSettingsWindow()"},
 		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
 		{"selectCandidateByIndex", "void ChaosetTIP::selectCandidateByIndex(int index)"},
