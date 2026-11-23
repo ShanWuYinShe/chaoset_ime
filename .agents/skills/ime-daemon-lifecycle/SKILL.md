@@ -191,7 +191,7 @@ cd shims/macos
 提交前本地只需 `gofmt -l $(git ls-files '*.go')`（应无输出；剩余 Go = `cmd/chaoset-dictgen` 与
 `tools/check*`）、`go build ./...` 与 `make vet`（静态契约检查，均秒级）；
 `make build` 是 Go-free 的 Rust 构建（CLI + daemon + dictc），词库生成器另用 `make build-tools`。
-本地跑测试会占用 CPU 影响正常使用电脑。其余由 7 个并行 job 覆盖（单次提交约 3-5 分钟出全部结论；
+本地跑测试会占用 CPU 影响正常使用电脑。其余由 CI 的并行 job 覆盖（单次提交约 3-5 分钟出全部结论；
 本地/CI 分工见项目 AGENTS.md「CI 门禁与本地验证分工」）：
 
 | CI job | 覆盖内容 | 为什么不在本地跑 |
