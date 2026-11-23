@@ -18,6 +18,7 @@
 #include "ui_host.hpp"
 #include "ui_client.hpp"
 #include "settings_launcher.hpp"
+#include "mode_hotkey.hpp"
 #include "config.hpp"
 #include "diagnostics.hpp"
 #include "winutil.hpp"
@@ -30,6 +31,9 @@ static void showTrayMenu(HWND owner);
 // UI 宿主的隐藏消息窗口（定义见文件后部；托盘点击要往里投消息）。
 extern HWND g_uiHostWnd;
 static constexpr UINT kUiToggleModeMsg = WM_APP + 73;
+
+// 无文本输入焦点时的中英切换热键（issue #132）实现在 mode_hotkey.cpp（叶子模块：
+// 只依赖 windows.h + diagnostics，不引用 TIP/候选窗/托盘类型）。
 
 // UI 宿主进程里的 ShellWorker 生命周期原语：由导出入口 ChaosetRunUi 注入
 // （worker 调度属于 shell_worker.cpp，叶子模块不反向引用）。
@@ -650,8 +654,16 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             if (g_uiTray != nullptr) g_uiTray->setMode(english);  // 只在 UI 主线程碰托盘
             return 0;
         }
+        case WM_HOTKEY:
+            // 系统热键（issue #132）：无文本输入焦点时也能切中英。复用托盘左键的
+            // 同一条语义（kUiToggleModeMsg 只在 System 档翻转），不另写一套状态机。
+            if (uiIsToggleModeHotkey(wParam)) {
+                PostMessageW(hwnd, kUiToggleModeMsg, 0, 0);
+                return 0;
+            }
+            break;
         case kUiToggleModeMsg:
-            // 托盘左键 / 管道 "toggle"：翻转权威状态。
+            // 托盘左键 / 管道 "toggle" / Ctrl+Shift+Space 热键：翻转权威状态。
             // 只在 System 档生效：Process 档托盘只是「当前进程实际状态」的指示器，
             // 不能反向改进程状态（进程各自独立由 Shift/各进程自己决定）。
             if (uiLoadModeScope() == ModeScope::System) uiApplyEnglish(!g_uiEnglish);
@@ -717,6 +729,7 @@ static LRESULT CALLBACK uiHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            uiUnregisterToggleModeHotkey(hwnd);  // 热键是全局独占资源，退出必须归还
             KillTimer(hwnd, kUiHideTimerId);
             uiClearOwner();  // 注销 owner 进程退出 wait，避免回调打到已销毁窗口
             g_uiHostWnd = nullptr;
@@ -906,6 +919,9 @@ int runUiHost(LPCWSTR cmdLine) {
     // 收到 active=1（本输入法被系统选中）才 show()，active=0（切到其它输入法）
     // 防抖后 hide()；失焦/停用/owner 退出不隐藏（issue #3）。UI 宿主不写登录
     // Run 项，由 TIP 首次激活时带 --mode 懒启动（见 ensureUiHostStarted）。
+    // 无焦点中英切换热键（issue #132）：窗口就绪即注册；失败只降级不阻塞。
+    uiRegisterToggleModeHotkey(g_uiHostWnd);
+
     g_uiTray = new UiTray();
     // 权威状态初始化：优先 HKCU 记忆（上次托盘显示的状态），否则中文。
     g_uiEnglish = uiLoadSavedEnglish();
@@ -915,6 +931,7 @@ int runUiHost(LPCWSTR cmdLine) {
     HANDLE pipeThread = CreateThread(nullptr, 0, uiPipeThreadProc, nullptr, 0, nullptr);
     if (pipeThread == nullptr) {
         diagPrintf(L"tsf.log", "ui host: create pipe thread FAILED\n");
+        uiUnregisterToggleModeHotkey(g_uiHostWnd);
         delete g_uiTray;
         g_uiTray = nullptr;
         DestroyWindow(g_uiHostWnd);
