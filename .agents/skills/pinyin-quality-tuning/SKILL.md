@@ -357,7 +357,7 @@ cargo fmt --all --manifest-path crates/Cargo.toml --check
 go build ./...
 make vet
 
-# 单元测试 + 数据契约 + 41 场景冻结基线（行为回归会自动红）
+# 单元测试 + 数据契约 + 冻结基线（场景数以 wc -l < crates/chaoset-engine/tests/data/parity_expected.jsonl 现取；行为回归会自动红）
 cargo test --manifest-path crates/Cargo.toml
 
 # Rust 发布构建与本机实测（Go-free：CLI + daemon + dictc）
