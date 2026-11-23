@@ -48,7 +48,49 @@ pub const MAX_SYLLABLE_LEN: usize = 6; // 最长音节如 zhuang / shuang (6)
 
 /// 判断是否是合法音节
 pub fn is_syllable(s: &str) -> bool {
-    SYLLABLE_TABLE.binary_search(&s).is_ok()
+    let slots = syllable_hash_slots();
+    let bytes = s.as_bytes();
+    let mask = slots.len() - 1;
+    let mut idx = syllable_hash(bytes) & mask;
+    loop {
+        let slot = slots[idx];
+        if slot == 0 {
+            return false;
+        }
+        if SYLLABLE_TABLE[(slot - 1) as usize].as_bytes() == bytes {
+            return true;
+        }
+        idx = (idx + 1) & mask;
+    }
+}
+
+fn syllable_hash(bytes: &[u8]) -> usize {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in bytes {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h as usize
+}
+
+fn syllable_hash_slots() -> &'static [u16] {
+    static SLOTS: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let mut size = 1024usize;
+        while size < SYLLABLE_TABLE.len() * 4 {
+            size *= 2;
+        }
+        let mut slots = vec![0u16; size];
+        let mask = size - 1;
+        for (i, s) in SYLLABLE_TABLE.iter().enumerate() {
+            let mut idx = syllable_hash(s.as_bytes()) & mask;
+            while slots[idx] != 0 {
+                idx = (idx + 1) & mask;
+            }
+            slots[idx] = (i + 1) as u16;
+        }
+        slots
+    })
 }
 
 /// 返回所有以 frag 为前缀的音节
@@ -449,24 +491,126 @@ pub fn qwerty_neighbors(c: char) -> &'static [char] {
     }
 }
 
-/// 判断一个字符串能否完整切分为标准音节
+/// 「完整音节切分」DP 用的音节前缀树：把所有能被 `canonical_syllable`
+/// 规范化成合法音节的 1..=6 字母源串建成 26 叉树。
+///
+/// 为什么不直接逐个子串 `is_syllable(canonical_syllable(sub))`：错拼修正要为
+/// 上千个单次编辑候选各做一遍整串 DP，每个位置都要试 1..=6 种子串；哈希查表
+/// 仍要算哈希 + 比较，前缀树只走几个数组下标、失配立即停。30+ 字符的整句里
+/// 这一项是 O(n²) 候选 × O(n) DP 的主要成本（issue #122）。
+struct SyllableTrie {
+    /// 每个节点的 26 个子节点下标；u16::MAX 表示没有该字母的子节点。
+    next: Vec<[u16; 26]>,
+    /// 到该节点为止的串是否能规范化成合法音节。
+    terminal: Vec<bool>,
+}
+
+fn syllable_trie() -> &'static SyllableTrie {
+    static TRIE: std::sync::OnceLock<SyllableTrie> = std::sync::OnceLock::new();
+    TRIE.get_or_init(|| {
+        let mut trie = SyllableTrie {
+            next: vec![[u16::MAX; 26]],
+            terminal: vec![false],
+        };
+        for src in syllable_sources() {
+            let mut node = 0usize;
+            for b in src.bytes() {
+                let slot = (b - b'a') as usize;
+                let child = trie.next[node][slot];
+                node = if child == u16::MAX {
+                    let idx = trie.next.len();
+                    assert!(idx < u16::MAX as usize, "音节表过大，前缀树下标溢出");
+                    trie.next.push([u16::MAX; 26]);
+                    trie.terminal.push(false);
+                    trie.next[node][slot] = idx as u16;
+                    idx
+                } else {
+                    child as usize
+                };
+            }
+            trie.terminal[node] = true;
+        }
+        trie
+    })
+}
+
+/// 前缀树要收录的全部源串：音节表本身 + `canonical_syllable` 的三类别名
+/// 写法（lue/nue/xion/jion/qion、省写韵母 uei/iou/uen、j/q/x/y 的 v 写法）。
+/// 收录条件统一用 `is_syllable(canonical_syllable(src))` 复核，保证与
+/// 「规范化后是合法音节」严格等价。
+fn syllable_sources() -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for s in SYLLABLE_TABLE {
+        out.insert((*s).to_string());
+    }
+    let mut add = |src: String| {
+        if is_syllable(&canonical_syllable(&src)) {
+            out.insert(src);
+        }
+    };
+    // 1) canonical_syllable 的逐字别名
+    for s in ["lue", "nue", "xion", "jion", "qion"] {
+        add(s.to_string());
+    }
+    for s in SYLLABLE_TABLE {
+        // 2) 省写韵母反向：ui→uei / iu→iou / un→uen（源串至少 4 字符）
+        if s.len() >= 4 {
+            for (short, long) in [("ui", "uei"), ("iu", "iou"), ("un", "uen")] {
+                if let Some(head) = s.strip_suffix(short) {
+                    add(format!("{head}{long}"));
+                }
+            }
+        }
+        // 3) ü 的 v 写法：j/q/x/y 开头、把任意非空子集的 u 换成 v
+        if matches!(s.as_bytes()[0], b'j' | b'q' | b'x' | b'y') && s.contains('u') {
+            let u_pos: Vec<usize> = s.match_indices('u').map(|(i, _)| i).collect();
+            for mask in 1u32..(1u32 << u_pos.len()) {
+                let mut bytes = s.as_bytes().to_vec();
+                for (bit, pos) in u_pos.iter().enumerate() {
+                    if mask & (1 << bit) != 0 {
+                        bytes[*pos] = b'v';
+                    }
+                }
+                if let Ok(src) = String::from_utf8(bytes) {
+                    add(src);
+                }
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// 判断一个字符串能否完整切分为标准音节。
+///
+/// 语义与逐个子串 `is_syllable(canonical_syllable(sub))` 完全一致，只是改用
+/// 前缀树走一遍：从每个可达位置出发沿树走，走到音节终点就标记对应位置可达。
 pub fn has_clean_syllable_split(s: &str) -> bool {
-    let len = s.len();
+    let bytes = s.as_bytes();
+    let len = bytes.len();
     if len == 0 {
         return false;
     }
+    let trie = syllable_trie();
     let mut dp = vec![false; len + 1];
     dp[0] = true;
-
-    for i in 1..=len {
-        for l in 1..=MAX_SYLLABLE_LEN.min(i) {
-            if dp[i - l] {
-                let sub = &s[i - l..i];
-                let canon = canonical_syllable(sub);
-                if is_syllable(&canon) {
-                    dp[i] = true;
-                    break;
-                }
+    for i in 0..len {
+        if !dp[i] {
+            continue;
+        }
+        let mut node = 0usize;
+        for (j, &b) in bytes[i..].iter().take(MAX_SYLLABLE_LEN).enumerate() {
+            if !b.is_ascii_lowercase() {
+                break;
+            }
+            let child = trie.next[node][(b - b'a') as usize];
+            if child == u16::MAX {
+                break;
+            }
+            node = child as usize;
+            if trie.terminal[node] {
+                dp[i + j + 1] = true;
             }
         }
     }
@@ -771,6 +915,95 @@ mod tests {
         assert!(has_clean_syllable_split("zhongguo"));
         assert!(has_clean_syllable_split("hundunshurufa"));
         assert!(!has_clean_syllable_split("nihaox"));
+    }
+
+    /// 哈希查表版 `is_syllable` 必须与音节表（二分查找）逐值等价。
+    #[test]
+    fn test_is_syllable_hash_matches_table() {
+        let brute = |s: &str| SYLLABLE_TABLE.binary_search(&s).is_ok();
+        for s in SYLLABLE_TABLE {
+            assert!(is_syllable(s), "{s} 应在音节表里");
+            assert!(brute(s));
+        }
+        for a in b'a'..=b'z' {
+            for b in b'a'..=b'z' {
+                let s = String::from_utf8(vec![a, b]).unwrap();
+                assert_eq!(is_syllable(&s), brute(&s), "两字母 {s}");
+            }
+        }
+        // 三字母空间（26^3 = 17576）全量比对，覆盖大量非音节负例。
+        for a in b'a'..=b'z' {
+            for b in b'a'..=b'z' {
+                for c in b'a'..=b'z' {
+                    let s = String::from_utf8(vec![a, b, c]).unwrap();
+                    assert_eq!(is_syllable(&s), brute(&s), "三字母 {s}");
+                }
+            }
+        }
+        assert!(!is_syllable(""));
+        assert!(!is_syllable("NIHAO"));
+        assert!(!is_syllable("zhonguo"));
+    }
+
+    /// 前缀树版 `has_clean_syllable_split` 必须与旧的逐子串规范判定完全等价。
+    #[test]
+    fn test_has_clean_syllable_split_matches_reference() {
+        fn reference(s: &str) -> bool {
+            let len = s.len();
+            if len == 0 {
+                return false;
+            }
+            let mut dp = vec![false; len + 1];
+            dp[0] = true;
+            for i in 1..=len {
+                for l in 1..=MAX_SYLLABLE_LEN.min(i) {
+                    if dp[i - l] && is_syllable(&canonical_syllable(&s[i - l..i])) {
+                        dp[i] = true;
+                        break;
+                    }
+                }
+            }
+            dp[len]
+        }
+
+        let mut cases: Vec<String> = Vec::new();
+        for s in SYLLABLE_TABLE {
+            cases.push((*s).to_string());
+        }
+        for s in syllable_sources() {
+            cases.push(s);
+        }
+        // 1..=3 字母全量
+        for a in b'a'..=b'z' {
+            cases.push(String::from_utf8(vec![a]).unwrap());
+            for b in b'a'..=b'z' {
+                cases.push(String::from_utf8(vec![a, b]).unwrap());
+                for c in b'a'..=b'z' {
+                    cases.push(String::from_utf8(vec![a, b, c]).unwrap());
+                }
+            }
+        }
+        // 省写韵母的 4..=6 字母源串全量（canonical_syllable 的另一条特判路径）
+        for suffix in ["uei", "iou", "uen"] {
+            for a in b'a'..=b'z' {
+                for b in b'a'..=b'z' {
+                    cases.push(format!("{}{}{}", a as char, b as char, suffix));
+                    for c in b'a'..=b'z' {
+                        cases.push(format!("{}{}{}{}", a as char, b as char, c as char, suffix));
+                    }
+                }
+            }
+        }
+        for s in &cases {
+            assert_eq!(
+                has_clean_syllable_split(s),
+                reference(s),
+                "前缀树判定与基准不一致: {s}"
+            );
+        }
+        assert!(has_clean_syllable_split("shuei"));
+        assert!(has_clean_syllable_split("jvan"));
+        assert!(has_clean_syllable_split("zhuangtaizhuangtai"));
     }
 
     #[test]

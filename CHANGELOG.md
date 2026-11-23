@@ -15,6 +15,8 @@
 
 - **修复(候选窗)：恢复「空白区点击收起候选窗」的鼠标零干扰契约**：2026-10-29 曾把候选栏空白区点击改为收起候选窗（不再静默吞掉），2026-11-06 左键动作统一改 mouseup 时漏回；当前 macOS/Windows 空白区点击被吞掉，用户会感觉「点击鼠标没反应」。现 macOS mouseUp 空白区调用 `onDismiss` 收起、Windows onLButtonUp 空白区 `hide()`，并加 `checkuiparity`「候选点选（mouseup）」断言防再回退。
 
+- **修复(引擎/长输入)：长拼音整句的 compose 延迟降至约 1/10，消除 TSF 30ms 超时导致的 fail-open 英文**：issue #122 中长整句输入被壳超时透传成英文、daemon 反复报 `ipc 响应写出失败: 管道正在被关闭`。根因是 `has_clean_syllable_split` 在长输入上对上千个纠错候选反复做 O(n²) 子串规范化+二分查表；现把音节查询改为哈希表、完整切分 DP 改为 26 叉音节前缀树，单键最大延迟（release，本机 33 字整句）由 19.75ms 降到 2.06ms，给 TSF 30ms 预算留出余量。新增前缀树/哈希与旧实现的全量等价性单测。
+
 ## v0.5.4（2026-11-22）
 
 - **修复(Linux Arch 打包)：不再向 `/usr/local/bin` 写兼容软链**：Arch 二进制包（`shims/linux/arch/package.sh`）与 `PKGBUILD` 此前安装了 `/usr/local/bin/chaoset-engine`、`chaosetd`、`chaosetctl`、`chaoset-cli` 兼容链，违反 FHS（`/usr/local` 属于系统管理员自建内容区域），也与 Debian `postinst`/`install.sh` 的「包只装 `/usr/bin`」口径矛盾。现在两处打包路径都删除兼容链，`package.sh` 增加「打包结果不得含 `/usr/local`」断言（回归即打包失败），Arch `.install` 钩子在安装/升级/卸载时清理旧版本遗留链。
