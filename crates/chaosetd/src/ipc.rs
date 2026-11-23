@@ -75,7 +75,10 @@ pub fn dispatch(
                 .get("half")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let comp = sess.input(text, half)?;
+            // base（可选）：壳重连后重建组词状态——先把引擎输入串整体置为 base，
+            // 再按 input 语义追加 text（Session::input_with_base）。缺省时行为不变。
+            let base = params.get("base").and_then(|v| v.as_str());
+            let comp = sess.input_with_base(text, half, base)?;
             Ok(json!(comp))
         }
 
@@ -377,6 +380,40 @@ mod tests {
         assert_eq!(reloaded.stats().words, 1, "仅删除一条，且删除已落盘");
         assert!(reloaded.score("世界", None).1, "保留的词仍在磁盘上");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// `input` 的 `base` 参数（issue #122）：新会话上一次 `base + text` 的组词
+    /// 结果，必须与逐键敲出整串完全一致——壳重连后据此重建组词状态。
+    #[test]
+    fn input_with_base_rebuilds_fresh_session() {
+        let mut dict = Dictionary::new();
+        dict.load_tsv_str("断口\tduan'kou\t900\n短\tduan\t800\n口\tkou\t700\n");
+        let dict = Arc::new(dict);
+        let make = || Session::new(Arc::clone(&dict), None);
+
+        let mut typed = make();
+        let mut want = None;
+        for key in ["d", "u", "a", "n", "k", "o"] {
+            want = dispatch(&mut typed, &None, &Request {
+                id: 1,
+                method: "input".to_string(),
+                params: Some(json!({ "text": key, "half": false })),
+            })
+            .ok();
+        }
+        let want = want.expect("逐键 input 应成功");
+
+        // 新会话（模拟壳重连）：base = 上次确认的输入串，text = 失步期间追加的键。
+        let mut fresh = make();
+        let got = dispatch(&mut fresh, &None, &Request {
+            id: 2,
+            method: "input".to_string(),
+            params: Some(json!({ "text": "o", "half": false, "base": "duank" })),
+        })
+        .expect("带 base 的 input 应成功");
+        assert_eq!(want, got, "带 base 的重建必须与逐键输入同构");
+        assert_eq!(got["input"], "duanko");
+        assert_eq!(got["candidates"][0]["text"], "断口");
     }
 
     /// 端到端：真实 daemon server（crate::server）+ 真实共享协议客户端

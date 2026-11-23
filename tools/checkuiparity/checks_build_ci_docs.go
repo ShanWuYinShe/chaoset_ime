@@ -77,6 +77,9 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/tip_keys.cpp", 1100},
 	{"shims/windows/src/tip_composition.cpp", 900},
 	{"shims/windows/src/tip_candidates.cpp", 500},
+	// tip_desync.cpp：daemon 失步恢复（组词中引擎请求超时后的本地保留、失步期
+	// 按键分流与重连重建），从按键失败处理路径按职责独立成 TU。
+	{"shims/windows/src/tip_desync.cpp", 300},
 	{"shims/windows/src/candidate_window.cpp", 1200},
 	{"shims/windows/src/candidate_window.hpp", 300},
 	{"shims/windows/src/shell_worker.cpp", 600},

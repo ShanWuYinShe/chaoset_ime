@@ -105,6 +105,8 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 「不存在 UILess 宿主」。
 // 存活 TIP 实例数（定义在 win32.cpp，DllCanUnloadNow 与 ctor/dtor 共用）。
 extern volatile LONG g_liveObjects;
+// 失步期间不依赖引擎的本地回退（issue #122）：实现见 tip_desync.cpp。
+void backspaceLocally(chaoset::Comp& comp, std::string& pending, bool shuangpin, bool bySyllable);
 
 }  // namespace chaoset::win
 
@@ -402,6 +404,23 @@ private:
     // 双拼时 ';' 是引擎的组词/解码键，必须走 input 而不是 punct。
     // 来源见 syncDpScheme（IPC Composition.shuangpin）。
     std::string dpScheme_;
+    // ---- daemon 失步恢复（issue #122，实现见 tip_desync.cpp）----
+    // 组词中的引擎请求**超时**（30ms 截止）后管道已断、daemon 会话消失，本地 comp_
+    // 是用户已输入内容的唯一记录：不拆组词，追加键记入 pendingKeys_，重连后整串重建。
+    bool daemonDesynced_ = false;
+    std::string pendingKeys_;    // 失步期间本地记下、尚未被引擎确认的按键
+    DWORD desyncSinceTick_ = 0;  // 首次超时时刻：daemon 一直连不上时的宽限期起点
+    enum class SyncResult { kSynced, kUnreachable, kStalled };
+    SyncResult syncDaemonInput();
+    void clearDesync() { daemonDesynced_ = false; pendingKeys_.clear(); }
+    // 引擎请求失败后的分流：仅「超时且请求前已有组词」时还原 prev 并进入失步并返回
+    // true（调用方吃掉本键）；其余返回 false，调用方沿用 fail-open 收尾。
+    bool enterDesyncOnTimeout(const chaoset::Comp& prev);
+    // 追加键的失步入口（字母 / 双拼 ';' / 撇号共用）：key 记入待确认串并乐观渲染；
+    // 上下文已不可写时自行 bail out 并返回 false。
+    bool keepCompositionOnTimeout(const chaoset::Comp& prev, const std::string& key, ITfContext* pic);
+    // 失步中的按键分流；返回 false 表示已重建成功、本键按正常流程继续处理。
+    bool handleKeyDesynced(WPARAM vk, ITfContext* pic, bool* eaten);
     bool halfWidth_ = false; // 全/半角标点开关（壳本地持有，随 punct 请求下发）
     // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
     // 上屏词音节查续接词组继续展示，数字键可直接连选。

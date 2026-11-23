@@ -54,11 +54,17 @@ public:
         return true;
     }
 
-    // 熔断：失败后 5s 内 TSF 线程不再尝试（避免每个焦点/按键重复失败 → fail-open）。
+    // 熔断：失败后 5s 内不再走慢连接路径 ensureDaemonConnected（worker 专用）。
+    // TSF 按键路径**不使用**它：那里每键只做一次非阻塞 tryConnectOnce，超时后
+    // 必须能立刻重连重建组词，否则会退化成整段时间只能打英文（issue #122）。
     bool circuitOpen() const {
         if (brokenUntil_ == 0) return false;
         return static_cast<LONG>(GetTickCount() - brokenUntil_) < 0;
     }
+
+    // 上一次 I/O 失败是否为「等到截止仍无应答」（区别于断管/写失败/连不上）。
+    // TSF 按键路径据此决定超时后保留本地组词、下一键重建（issue #122）。
+    bool lastIoWasTimeout() const { return lastIoWasTimeout_; }
 
     bool ensureConnected() {
         if (pipe_ != INVALID_HANDLE_VALUE) return true;
@@ -93,6 +99,8 @@ public:
     }
 
     bool writeAll(const std::uint8_t* data, std::size_t len) override {
+        // 未连接时的直接失败不是超时：先清标记，避免残留上一次超时的值。
+        lastIoWasTimeout_ = false;
         if (pipe_ == INVALID_HANDLE_VALUE) {
             if (!autoConnect_) return false;  // TSF 线程：fail-open，绝不在写路径里建连接
             if (!ensureConnected()) return false;
@@ -101,6 +109,7 @@ public:
     }
 
     bool readAll(std::uint8_t* buf, std::size_t len) override {
+        lastIoWasTimeout_ = false;
         if (pipe_ == INVALID_HANDLE_VALUE) return false;
         return pipeIo(false, buf, len);
     }
@@ -117,6 +126,7 @@ private:
     // 重叠 I/O + 有界等待：单次 I/O 等待上限 deadlineMs_；超时立即 CancelIoEx +
     // 断开连接并返回（绝不 WaitForSingleObject(INFINITE)，审计 T2）。
     bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len) {
+        lastIoWasTimeout_ = false;
         std::size_t off = 0;
         while (off < len) {
             DWORD chunk = static_cast<DWORD>(
@@ -142,6 +152,7 @@ private:
                         // 有界失败：关闭管道会取消未完成 I/O；此处不再等待。
                         ::CancelIoEx(pipe_, &ov);
                         ::CloseHandle(ov.hEvent);
+                        lastIoWasTimeout_ = true;
                         failConn();
                         return false;
                     }
@@ -163,7 +174,7 @@ private:
             pipe_ = INVALID_HANDLE_VALUE;
         }
         lastFail_ = GetTickCount();
-        brokenUntil_ = lastFail_ + 5000;  // 熔断 5s：TSF 线程 fail-open，后台重连
+        brokenUntil_ = lastFail_ + 5000;  // worker 慢连接路径熔断 5s；TSF 按键路径忽略
     }
 
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
@@ -171,6 +182,7 @@ private:
     DWORD brokenUntil_ = 0;
     DWORD deadlineMs_ = 200;
     bool autoConnect_ = true;
+    bool lastIoWasTimeout_ = false;
     std::wstring pipeName_;
 };
 

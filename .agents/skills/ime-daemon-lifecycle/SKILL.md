@@ -163,7 +163,7 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
   - 「开始菜单/搜索框里打不出中文、普通程序里正常」= AppContainer 连不上或写不进。
     查点按顺序：① daemon 在不在（`%LOCALAPPDATA%\Chaoset\chaosetd.log`）；
     ② 管道安全描述符是否含低完整性标签（缺了就是「能连不能写」，见
-    `crates/chaosetd/src/server.rs` 的 SDDL 构造）；③ AppContainer 宿主日志（可能在
+    `crates/chaosetd/src/server/pipe.rs` 的 SDDL 构造）；③ AppContainer 宿主日志（可能在
     `%LOCALAPPDATA%\Packages\<包族>\LocalState\Chaoset\`）。
   - 恢复手段：在任意**普通程序**（记事本、浏览器）里打一次字触发懒启动，
     之后 AppContainer 宿主即可用。

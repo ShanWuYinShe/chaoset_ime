@@ -115,7 +115,7 @@ CLI 契约（供 shim/脚本调用；**冷路径**使用，热路径仍读本机
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
 | `chaoset-engine/src/session.rs` | 组词会话状态机：切分/召回/排序/学习/联想 | ≤3000 |
-| `chaoset-engine/src/dict.rs` | 音节 Trie 词典、TSV 加载、查询/续接/连写 DP | ≤800 |
+| `chaoset-engine/src/dict.rs` | 音节 Trie 词典、TSV 加载、查询/续接/连写 DP（单测在同目录 `dict/tests.rs`：含 `query_exact_and_prefix` 对旧算法参考实现的逐条等价性） | ≤800 |
 | `chaoset-engine/src/userdict.rs` | 用户调频/词组/上下文学习记录与查询、持久化 | ≤1100 |
 | `chaoset-engine/src/shuangpin.rs` | 自然码/微软/小鹤双拼键码管线 | ≤1100 |
 | `chaoset-engine/src/syllable.rs` | 音节表、切分、续接、纠错生成 | ≤950 |
@@ -124,8 +124,9 @@ CLI 契约（供 shim/脚本调用；**冷路径**使用，热路径仍读本机
 | `chaoset-engine/src/{punct,fuzzy,s2t}.rs` / `lib.rs` | 标点映射 / 模糊音 / 简繁 / 导出 | ≤200 / ≤50 |
 | `chaoset-engine/src/bin/{dictc,replay}.rs` | 构建期词库编译 / 41 场景回放 | ≤150 / ≤350 |
 | `chaosetd/src/main.rs` | daemon 参数、词库/用户词典加载、启动编排 | ≤600 |
-| `chaosetd/src/ipc.rs` | IPC 方法分发（19 方法）与会话调用 | ≤500 |
-| `chaosetd/src/server.rs` | Unix socket / 命名管道服务端与 ACL（含 SDDL 构造） | ≤320 |
+| `chaosetd/src/ipc.rs` | IPC 方法分发（19 方法）与会话调用（`input` 的可选 `base`：壳重连后先整串重建再追加） | ≤500 |
+| `chaosetd/src/server.rs` | 连接处理 `handle_connection`、Unix socket 服务端、平台无关的常驻监听池 `run_listener_pool`（Windows 管道服务端的补位/回收/退避骨架） | ≤320 |
+| `chaosetd/src/server/pipe.rs` | Windows 命名管道服务端：常驻监听实例（每实例一线程阻塞在 ConnectNamedPipe，连上即转为该连接的服务线程）与管道 ACL（SDDL 构造） | ≤260 |
 | `chaosetd/src/singleton.rs` | 单实例锁（flock / Windows 互斥体） | ≤150 |
 | `chaosetd/src/ui.rs` | Windows UI 宿主懒启动 | ≤80 |
 | `chaoset-config/src/model.rs` | 设置模型、默认值、JSON 契约 | ≤200 |
@@ -162,6 +163,7 @@ Windows 只有 `chaosetctl.exe`。）
 | `tip_keys.cpp` | ITfKeyEventSink 五入口、Shift 状态机、修饰键/键位映射、wouldHandle/handleKey | tip.hpp | ≤1100 |
 | `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾；UILess 官方协商（BeginUIElement/UpdateUIElement/EndUIElement） | tip.hpp, core | ≤900 |
 | `tip_candidates.cpp` | 候选点选/删除/翻页、showToast、设置窗入口、联想面板与 CandidateWindowHost 转发 | tip.hpp | ≤500 |
+| `tip_desync.cpp` | daemon 失步恢复：组词中引擎请求超时后的本地保留（`enterDesyncOnTimeout`）、失步期按键分流（`handleKeyDesynced`）与重连重建（`syncDaemonInput`，经 `input` 的 `base`） | tip.hpp | ≤300 |
 | `candidate_window.cpp` `.hpp` | 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/齿轮笔/防卸载计数；TIP 侧只经 CandidateWindowHost 抽象接口 | winutil, theme, config, diagnostics, candidate_layout, core | ≤1200 / ≤300（当前 1179；接近上限，后续改动先按职责拆分） |
 | `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | winutil, core, transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
 | `tip_thread.cpp` `.hpp` | kTip* 消息常量、worker→TIP 线程回投、message-only 窗口过程/创建销毁、按线程 TIP 注册表与前台钩子表；对 TIP 只经 TipThreadSink 抽象接口分发（不依赖具体 TIP 类） | winutil | ≤350 / ≤200 |

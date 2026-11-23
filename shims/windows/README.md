@@ -234,7 +234,7 @@ TIP/宿主进程内实现——唯一实现是跨平台 Slint 设置中心 `chao
 - ACL：当前用户 + SYSTEM + ALL APPLICATION PACKAGES 读写；其他本地用户不可连。
 - 强制完整性标签：低完整性可写（`S:(ML;;NW;;;LW)`）。AppContainer 宿主（开始菜单、
   搜索框、UWP）是低完整性进程，缺这个标签时 DACL 放行了也只能连不能写，表现就是
-  「按了键、daemon 也在、没有候选」。见 `crates/chaosetd/src/server.rs` 的 SDDL 构造。
+  「按了键、daemon 也在、没有候选」。见 `crates/chaosetd/src/server/pipe.rs` 的 SDDL 构造。
 - 没有网络端口、没有 TCP 回退：管道连不上就是连不上，壳按约定降级放行按键。
 
 ## 日志与排障

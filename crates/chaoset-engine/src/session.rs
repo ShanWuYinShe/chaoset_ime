@@ -1637,6 +1637,52 @@ impl Session {
         Ok(self.compose())
     }
 
+    /// 壳重连后重建组词状态：把输入串整体置为 `text` 并重新组词，等价于用户
+    /// 逐键敲出这一串。`text` 在全拼下是原始拼音、在双拼下是**已解码的音节串**
+    /// （即上一次 Composition 的 input）。
+    ///
+    /// 用途（issue #122）：壳侧按键请求超时后管道断开，daemon 会话随连接消失，
+    /// 而壳本地仍持有用户已输入的内容。重连后壳把「上次确认的输入串 + 此后
+    /// 按键」一次送回（IPC `input` 的 `base` 参数），不必拆掉组词让用户重打。
+    pub fn restore_input(&mut self, text: &str) -> Composition {
+        let mut cleaned = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c.is_ascii_alphabetic() || c == '\'' {
+                cleaned.push(c);
+            }
+        }
+        self.input_raw = cleaned;
+        self.dp_pending = None;
+        self.dp_lens.clear();
+        self.page = 0;
+        self.punct_state.reset();
+        if self.shuangpin_decoder.is_some() {
+            // 双拼退格按「按键事件」整段回滚：重建后没有按键栈，回滚粒度取
+            // 首选切分的各音节长度（与逐键解码时的 dp_lens 同构）。
+            if let Some(first) = tokenize_pinyin(&self.match_input()).first() {
+                self.dp_lens = first
+                    .iter()
+                    .map(|t| t.text.chars().count())
+                    .collect();
+            }
+        }
+        self.compose()
+    }
+
+    /// `input` 的带基底版本：先把输入串整体重建为 `base`（见 `restore_input`），
+    /// 再按 `input` 的语义追加 `text`。`base` 为 None 时与 `input` 完全等价。
+    pub fn input_with_base(
+        &mut self,
+        text: &str,
+        half_width: bool,
+        base: Option<&str>,
+    ) -> Result<Composition, String> {
+        if let Some(base) = base {
+            self.restore_input(base);
+        }
+        self.input(text, half_width)
+    }
+
     /// 追加音节后的公共状态（Go afterAppend）：截断超长输入、同步双拼退格栈、
     /// 回第一页、打断标点循环。
     fn after_append(&mut self) {
