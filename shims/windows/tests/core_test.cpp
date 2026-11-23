@@ -135,6 +135,30 @@ void testReadTimeoutKeepsConnection() {
     check(second.input == "niha", "会话状态来自本次响应（input=niha）");
     check(!t.closeCalled, "丢弃迟到响应不得断开连接");
 
+    // drain 自己也超时：迟到响应在本次请求发出之后才到（第 1 次读超时后，下一键
+    // 的预清理也没读到它）。此时必须按 stale 计数丢弃旧帧、继续等本次响应，
+    // 不能把旧帧当成本次响应而断连——这是 #134「读超时不断连」的最后一段时序。
+    ScriptedTransport t4;
+    Session s4(t4);
+    t4.steps.push_back({true, ""});
+    (void)s4.input("ni", false);
+    t4.resetSteps({});
+    t4.steps.push_back({true, ""});  // 预清理 drain 读超时
+    t4.steps.push_back({false, frame("{\"id\":1,\"result\":{\"input\":\"ni\",\"preedit\":\"ni\"}}")});
+    t4.steps.push_back({false, frame("{\"id\":2,\"result\":{\"input\":\"niha\",\"preedit\":\"ni'ha\","
+                                       "\"candidates\":[{\"text\":\"你哈\"}]}}")});
+    Comp late = s4.input("ha", false);
+    check(late.ok && late.input == "niha" && !late.candidates.empty(),
+          "预清理超时后迟到的旧响应仍被丢弃，本次请求拿到自己的响应");
+    check(!t4.closeCalled, "预清理超时不得断开连接");
+
+    // 没有待丢计数时的 id 错位是真正的协议错位，必须断连（循环不得吞掉）。
+    ScriptedTransport t5;
+    Session s5(t5);
+    t5.steps.push_back({false, frame("{\"id\":99,\"result\":{}}")});
+    (void)s5.input("x", false);
+    check(t5.closeCalled, "无待丢计数时响应 id 不匹配必须断连");
+
     // 连续超时超过上限（2 次）后必须断连重整，避免无限积累。
     ScriptedTransport t2;
     Session s2(t2);
