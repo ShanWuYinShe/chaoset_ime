@@ -23,9 +23,7 @@ description: chaoset_ime 守护进程（chaosetd）与 macOS 输入源（TIS）/
   `<key>ProcessType</key><string>Interactive</string>`；手工补 key 后
   `launchctl bootout gui/$(id -u) <plist>` + `launchctl bootstrap gui/$(id -u) <plist>`
   让新调度生效。
-- 实测（8 核 `yes` 满载、600 次 IPC 采样）：
-  未声明 ProcessType 时 p50 13ms / p99 452ms / max 775ms / 27 次 >250ms；
-  声明 Interactive 后 p50 4ms / p99 17ms / max 31ms / 零超时；空闲 p99 ~7ms 不变。
+- 实测结论（同机复测，不写死数字）：8 核 `yes` 满载下，未声明 ProcessType 时 p99 可超过壳侧 250ms 超时并出现丢字；声明 `Interactive` 后 p99 显著下降、无超时。换机或负载变化按同一口径（600 次 IPC 采样）重测，超过壳侧超时即复现。
 
 ## 一、「打不出字 / 首字母丢失」的排查顺序
 

@@ -60,7 +60,7 @@ worktree 内提交 → 推送分支 → `gh pr create` → `gh pr checks --watch
                                     # Windows GDI 契约 + 三端 UI 一致性 check-uiparity），改 UI/壳代码前必跑
   ```
 
-- CI 覆盖（`.github/workflows/ci.yml`，7 个并行 job）：`lint`（gofmt / `make vet` / `make build`）、
+- CI 覆盖（`.github/workflows/ci.yml`；job 列表与数量以该文件为准，数量用 `yq '.jobs | keys | length' .github/workflows/ci.yml` 现取）：`lint`（gofmt / `make vet` / `make build`）、
   `test`（`make test`：剩余 Go 工具单测 + `cargo test`）、`race`（`make race`，剩余 Go 单测的 race 检测）、
   `linux-e2e`（真实 ibus 端到端 + 设置入口启动器冒烟 + Linux 安装包自检）、`macos-build`（macOS 壳构建 +
   universal 自检 + ZIP + 等价性/视觉一致性/按键路由 + Rust 设置存储单测）、`windows-build`（MSVC/NSIS 安装包，
