@@ -618,6 +618,27 @@ fn promote_typo_compositions(pool: &mut Pool, typo: &TypoState) {
     }
 }
 
+/// 已有整词级纠错命中时，丢弃错拼修正的**组合候选**。
+///
+/// 组合候选（`phrase_added`）的设计意图是「修正串在词库里没有单条整词、但能切成
+/// 已有词序列」（`changshuru` → 长+输入）。一旦本次输入已经命中整词级纠错
+///（`word_found`，如 `nihaox` → 修正为 `nihao` 命中「你好」），同一串的拼合产物
+/// 就只是把已命中的词拆成两段的噪声：`nihaox` 首页出现「你号/你毫/你薅」、
+/// `womend`（打「我们的」的必经中间态）首页 6 条里 4 条是「我门/握们/我闷/沃们」、
+/// `yiyii` 甚至 6 条全是拼合噪声。固定口径扫描（291 个常用词 × 26 尾字母 = 7566
+/// 形态）里 50.7% 的形态首页含这类噪声——「完整前缀 + 末音音节首字母」是每个多音
+/// 节输入的必经帧，不是罕见手误。整词命中已给出用户真正想打的词，拼合候选只剩
+/// 干扰，故整词命中时整批丢弃（不提升、不保留到回退层）。
+fn drop_typo_compositions_when_word_found(pool: &mut Pool, typo: &TypoState) {
+    if !typo.word_found || typo.phrase_added.is_empty() {
+        return;
+    }
+    pool.retain(|cand, _, _| {
+        let key = pool_key(&cand.text, &cand.syllables);
+        !typo.phrase_added.contains(&key)
+    });
+}
+
 /// 错拼修正的阶段三（Go promoteTypoCorrections）：排序前按词典事实把高置信度
 /// 纠错提升到精确层，并取消「常规路径也能命中」的候选的 typo_fix 标记。
 fn promote_typo_corrections(pool: &mut Pool, typo: &TypoState, shape: &ComposeShape, input: &str) {
@@ -1294,6 +1315,8 @@ impl Session {
             &mut typo,
         );
         promote_typo_compositions(&mut pool, &typo);
+        // 整词级纠错已命中时，同批组合候选是重复噪声（见函数注释）：整批丢弃。
+        drop_typo_compositions_when_word_found(&mut pool, &typo);
 
         // 4.3 常规 token 匹配（Go addTokenMatches）：纯音节 pattern 优先，
         // 全部空手而归才回退含碎片的 pattern（简拼兜底）。上限口径（取值依据
@@ -2574,6 +2597,76 @@ mod tests {
             return;
         }
         panic!("{input}: 纠错「{want}」位置 {idx}（期望第 3 位或全纠错列表）: {cands:?}");
+    }
+
+/// 错拼组合候选的「同批噪声」必须随整词命中一起丢弃（2026-11-24 用户要求：
+    /// 错拼形态在日常输入中高频出现——「完整前缀 + 末音节首字母」是每个多音节输入
+    /// 的必经帧）。
+    ///
+    /// 正向：`word_found`（已有整词级纠错命中）时，同一串的拼合产物（把已命中的词
+    /// 拆成两段：你+号、我+门）不得留在候选里——固定口径扫描 291 常用词 × 26 尾字母
+    /// = 7566 形态，修复前 50.7% 的首页含这类噪声，修复后 0.0%。
+    /// 反向：无整词命中的错拼（chagnshuru → 长输入）必须仍出组合候选；常规拼写与
+    /// 整词纠错候选（一周目）不受影响；错拼固定第 3 位契约不变。
+    #[test]
+    fn test_typo_compositions_dropped_when_word_found() {
+        let dict = common_dict();
+        let comp_of = |input: &str| {
+            let mut sess = Session::new(Arc::clone(&dict), None);
+            sess.input(input, false).unwrap()
+        };
+
+        // 正向：整词命中「你好」后，拼合噪声（你+号/你+毫/你+薅）必须消失。
+        let comp = comp_of("nihaox");
+        assert_eq!(comp.candidates[0].text, "你好", "整词纠错仍须首选: {:?}", comp.candidates);
+        for noise in ["你号", "你毫", "你薅"] {
+            assert!(
+                !comp.candidates.iter().any(|c| c.text == noise),
+                "nihaox: 整词命中后不得出现拼合噪声「{noise}」: {:?}",
+                comp.candidates
+            );
+        }
+
+        // 正向：womend 是打「我们的」的必经中间态——「我门/握们/我闷/沃们」不得占位。
+        let comp = comp_of("womend");
+        assert_eq!(comp.candidates[0].text, "我们");
+        for noise in ["我门", "握们", "我闷", "沃们"] {
+            assert!(
+                !comp.candidates.iter().any(|c| c.text == noise),
+                "womend: 不得出现拼合噪声「{noise}」: {:?}",
+                comp.candidates
+            );
+        }
+
+        // 正向：jintianx 的「进天」（进+天）同样不得出现。
+        let comp = comp_of("jintianx");
+        assert_eq!(comp.candidates[0].text, "今天");
+        assert!(
+            !comp.candidates.iter().any(|c| c.text == "进天"),
+            "jintianx: 不得出现拼合噪声「进天」: {:?}",
+            comp.candidates
+        );
+
+        // 反向：无整词级命中的错拼仍须给组合候选（chagnshuru 没有整词纠错命中，
+        // 「长输入」是把修正串切成已有词的唯一线索，promote_typo_compositions 会提升它）。
+        let comp = comp_of("chagnshuru");
+        assert!(
+            comp.candidates.iter().any(|c| c.text == "长输入" && c.typo_fix),
+            "chagnshuru: 无整词命中时组合候选必须保留: {:?}",
+            comp.candidates
+        );
+
+        // 反向：整词纠错候选（一周目）是正确修复结果，不能被当组合噪声删除。
+        let comp = comp_of("yizhoumui");
+        assert!(
+            comp.candidates.iter().any(|c| c.text == "一周目" && c.typo_fix),
+            "yizhoumui: 整词纠错「一周目」必须保留: {:?}",
+            comp.candidates
+        );
+
+        // 反向：常规拼写与既有首选完全不受影响。
+        assert_eq!(comp_of("nihao").candidates[0].text, "你好");
+        assert_eq!(comp_of("zhongguo").candidates[0].text, "中国");
     }
 
     /// 单次编辑能修正的常见手误（相邻颠倒 / 多敲 / 连击 / 漏敲）。
