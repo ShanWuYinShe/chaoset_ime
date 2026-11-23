@@ -953,3 +953,41 @@ func TestCheckToggleModeHotkey(t *testing.T) {
 		"                PostMessageW(hwnd, kUiToggleModeMsg, 0, 0);",
 		"                uiApplyEnglish(!g_uiEnglish);")
 }
+
+// TestCheckShiftToggleAccountingRejectsHotkeyDoubleToggle 锁住 Ctrl/Alt/Win
+// 按住时的 Shift 不得被当成空按：UI 宿主的 Ctrl+Shift+Space 全局热键会吞掉
+// Space，TIP 若在松 Shift 时再切一次，会双翻转并 flush 当前组词（process 档
+// 还会绕过 UI 宿主的 no-op 改当前进程状态）。
+func TestCheckShiftToggleAccountingRejectsHotkeyDoubleToggle(t *testing.T) {
+	files := map[string]string{
+		winShell:      string(readRepo(t, winShell)),
+		linuxEngine:   string(readRepo(t, linuxEngine)),
+		macController: string(readRepo(t, macController)),
+		uiParityDoc:   string(readRepo(t, uiParityDoc)),
+	}
+	build := func(win string) fstest.MapFS {
+		m := fstest.MapFS{}
+		for p, s := range files {
+			m[p] = &fstest.MapFile{Data: []byte(s)}
+		}
+		m[winShell] = &fstest.MapFile{Data: []byte(win)}
+		return m
+	}
+
+	var problems []string
+	checkShiftToggleAccounting(build(files[winShell]), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实 Shift 记账契约未通过（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	mutated := strings.Replace(files[winShell],
+		"sinceShift_ = otherModifierPhysicallyDown();", "sinceShift_ = false;", 1)
+	if mutated == files[winShell] {
+		t.Fatal("变异未生效：找不到其它修饰键守卫")
+	}
+	problems = nil
+	checkShiftToggleAccounting(build(mutated), &problems)
+	if !strings.Contains(strings.Join(problems, "\n"), groupShiftAccounting) {
+		t.Fatalf("去掉其它修饰键守卫应被捕获，实际：%v", problems)
+	}
+}

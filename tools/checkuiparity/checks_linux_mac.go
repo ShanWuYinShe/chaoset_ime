@@ -113,6 +113,14 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 				group, n))
 		}
 	}
+	// Shift 空按只适用于「单独轻按 Shift」：Ctrl/Alt/Win 已按住时（典型是 UI
+	// 宿主的 Ctrl+Shift+Space 全局热键，系统会吞掉 Space），TIP 若仍把 Shift
+	// 当空按，松 Shift 会再切一次中英（UI 宿主已切过一次）并 flush 组词；
+	// mode_scope=process 时也会绕过 UI 宿主的 no-op 改当前进程状态。
+	checkContains(fsys, problems, group, winShell,
+		"sinceShift_ = otherModifierPhysicallyDown();",
+		"GetAsyncKeyState(VK_CONTROL)", "GetAsyncKeyState(VK_MENU)",
+		"GetAsyncKeyState(VK_LWIN)", "GetAsyncKeyState(VK_RWIN)")
 	// 旧实现的致命写法不得回归：按事件累加的计数器。
 	checkExcludes(fsys, problems, group, winShell,
 		"++shiftDown_", "--shiftDown_")

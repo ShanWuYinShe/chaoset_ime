@@ -2,6 +2,10 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(Windows 中英切换)：`Ctrl+Shift+Space` 在输入框内不再双翻转、不会误 flush 组词**：UI 宿主的全局热键翻转后，TIP 的 Shift 空按状态机还会在松 Shift 时再翻一次——系统吞掉了 Space，TIP 只看到 Ctrl/Shift 的按下与释放，于是把 `Ctrl+Shift+Space` 误判成「单独轻按 Shift」。结果是有焦点时热键看起来不生效（两次翻转抵消）并把当前组词 flush；`mode_scope=process` 下还会绕过 UI 宿主的 no-op 改当前进程状态。现在 `beginShiftHold` 在开始一次 Shift 按住会话时检查 Ctrl/Alt/Win 物理状态：组合键里的 Shift 不再算空按；单独 Shift 轻按、Shift+空格、Shift+字母不受影响。`checkuiparity`「Shift 记账」组新增该守卫断言与变异测试；`docs/ui-parity.md` 同步。
+
 ## v0.6.1（2026-11-24）
 
 > 从 v0.6.0 升级：本次三条都是修复与补充功能，**无行为不兼容变化**；候选排序/学习契约与 v0.6.0 一致。
