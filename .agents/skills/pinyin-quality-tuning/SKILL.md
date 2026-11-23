@@ -180,6 +180,14 @@ git status --short                            # 确认改动回来了
 - 错拼修正路径是唯一例外：只有该输入没有任何整词级纠错命中时，组合候选才提升
   到精确层（最多 8 个）。错误路径的 DP 在 `src/typo.rs::composed_phrase_entries`，
   正常输入的组合在 `session.rs::add_composition_candidates`；
+- **整词级纠错命中时整批丢弃同批组合候选**（`drop_typo_compositions_when_word_found`）：
+  `word_found=true` 说明已给出用户真正想打的整词，同一串的「已有词两段拼合」只是噪声
+  （`nihaox` → 你+号/你+毫；`womend` → 我+门/握+们）。判据要看 `typo.phrase_added`
+  （组合 DP 候选的 key 集合），**不能按「typo_fix 标记」一刀切**——整词级纠错候选
+  （`一周目`、`长输入`）也带 typo_fix，误删会把正确修复结果一起丢掉；
+  `phrase` 噪声必须与「完整前缀 + 末音节首字母」的高频形态联系起来评估（这是每个
+  多音节输入的必经帧，不是罕见手误）：固定口径 = 常用词（2-3 音节、词频≥40）× 26
+  个尾字母，统计首页里「typo_fix 且不是词典真实词条」的候选；修复前 50.7%、修复后 0.0%；
 - **反序双字母分两档**（`syllable.rs` 的 `SOFT_MISTAKE_PAIRS` 等规则表）：
   - 强制归位（gn/hz/hc/hs/ev → ng/zh/ch/sh/ve）：**只在无法完整切分时**才触发
     （`gongneng` 的 gn 跨 gong+neng 边界、纯简拼 `gn` 都合法，不能误判），

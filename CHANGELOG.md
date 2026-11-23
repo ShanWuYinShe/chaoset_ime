@@ -2,8 +2,11 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## v0.6.0（2026-11-24）
+## 未发布
 
+- **改进(候选质量/错拼)：整词级纠错命中时不再保留同批拼合候选，消除高频噪声**：打多音节词时必然经过「完整前缀 + 末音节首字母」的中间帧（`nihaox`、`womend`），此时错拼修正已把整串修正为完整词（`nihao`→「你好」），但同一串的「已有词两段拼合」仍被塞进候选：`nihaox` 首页出现「你号/你毫/你薅」、`womend` 首页 6 条里 4 条是「我门/握们/我闷/沃们」，`typo-nihau` 这类更极端——首页 6 条**全是**「你阿虎/尼阿虎/呢阿虎…」，用户根本看不到「你好」。这是设计遗留：组合候选（`typo.phrase_added`）原本只服务「修正串没有单条整词、但能切成已有词」的场景（`chagnshuru` → 长输入），一旦整词级纠错命中（`typo.word_found`）就只剩重复噪声。现在 `word_found` 时整批丢弃（新增 `drop_typo_compositions_when_word_found`）。固定口径扫描（291 个常用词 × 26 尾字母 = 7566 形态）：含拼合噪声的形态 **50.7% → 0.0%**；41 场景冻结快照 5 处变化全部是噪声移除（`typo-nihau` 从「6 条全噪声」变为「你好/拟好」、`typo-lianxiagn` 的「联吸干/连吸干」换成「连线/联」且「联想」仍在第 3 位、`user-typo-recall` 的 5 条「眯瞪+行/性/形…」换成真词条且学过的「幂等性」保留第 3 位）。反向契约不变：无整词命中的错拼仍出组合候选（`chagnshuru` → 长输入）、整词纠错候选（`一周目`）不受影响、常规首选（你好/中国）不变。
+
+## v0.6.0（2026-11-24）
 > **升级提示（行为不兼容变化）**：候选排序与学习行为按用户反馈调整——词典预制词组在候选列表中最多占 2 页（12 条），其后紧接首段单字；完整消耗输入拼音的候选严格优先于还要补字母的续接；用户自己学过的词组置顶且数目不限。简拼（如 `zg`）的候选数量据此显著减少，需要更多候选时请多打几个字母，或先逐字/逐段拼出一次让引擎学习。详细数据见下方「改进(候选排序/学习)」。
 - **修复(macOS 候选窗)：候选窗在切换到别处后不再残留截走鼠标，焦点离开即关闭并清空候选与输入**：用户反馈候选窗存在时切到别处（Cmd+Tab / Dock / 点击别的应用、切换 Space），候选窗留在新应用上面截走鼠标事件。根因是 macOS 壳的候选窗收起只依赖 IMK 回调（`commitComposition` / `deactivateServer`），而这两个回调只在客户端文本焦点变化时触发——应用切换、Space 切换、联想态（没有 marked text）都不会触发；候选窗又是 `canJoinAllSpaces` 的浮层，于是留在所有 Space 之上。现在 `ChaosetController` 加进程级焦点守卫：监听 `NSWorkspace.didActivateApplicationNotification` 与 `activeSpaceDidChangeNotification`（面板若曾成为 key 窗口，`didResignKeyNotification` 同样触发），交给当前持有候选窗的控制器 `abandonSessionOnFocusLoss`：与 `commitComposition` 共用 `endSession`（已确认段落盘、剩余拼音丢弃、联想退出、面板与提示收起）并清掉客户端 marked 区；客户端取最近一次按键事件带来的 `lastClient`，不向 IMK 重新要。Windows `OnSetFocus(FALSE)` 与 Linux `focus_out` 本来就是这套语义，三端一致。原则写进 AGENTS.md 与 `docs/ui-parity.md`「候选窗没有特权」；`checkuiparity` 新增「候选窗无特权（失焦即收）」组（三端实现 + 文档，4 个变异测试）；`tests/key_routing` 新增 10 条回归（组词态 / 渐进已确认段落盘 / 联想退出 / 幂等 / 自己进程忽略）。
 - **改进(候选排序/学习)：用户词组置顶且不限数、词典词组封顶 2 页、完整消费输入优先、恢复词组自动记忆**：用户反馈四点：① 预制词组太多（`shiji` 46 条 8 页、`zg` 140 条 24 页才到单字），要翻很多页才能逐字/部分选取；② 自己拼过的词组没有自动记忆；③ 用户词组应最高优先且数目不限；④ 输入 `shiji` 应先给正好用完拼音的 `shi'ji`，再给 `shi'jie`/`shi'jian`。根因：**Rust 移植时把 Go 引擎的上屏学习整体丢了**——`learnSelection`/`history`+`learnPhrase`（相邻共现词组进化）/`seqSegs`（渐进选段拼完整句固化）都没有带过来，`select`/`select_prefix` 只对单段 `bump_word`，所以逐段拼出的「你好世界」从不进词库。现在：
