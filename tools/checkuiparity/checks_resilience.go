@@ -209,7 +209,7 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift", "base: current?.input ?? \"\"")
 	checkContains(fsys, problems, group, linuxEngine, "inputWithRebuild")
 	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",
-		"return session_.input(text, halfWidth, base.c_str());")
+		"session_.input(text, halfWidth, base.c_str())")
 
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
