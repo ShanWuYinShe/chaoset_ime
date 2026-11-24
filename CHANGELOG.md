@@ -2,8 +2,9 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.6.3（2026-11-24）
 
+> 从 v0.6.2 升级：本次两条都是 IPC 超时路径的缺陷修复，**无行为不兼容变化**；候选排序/学习契约、配置与数据格式均未变。
 - **修复(三端壳)：读超时后不再把增量输入重放两次（预编辑出现重复字符 / 上屏错字）**：v0.6.1 的「读超时不断连」让连接与会话在超时后保留，但壳侧原有的「失败就重试」逻辑前提是「超时即断连」——旧行为下重试会新建连接（空会话），而不断连后重试会在**同一条连接**上把同一段 `input` 再发一次：daemon 可能已经处理过第一次（只是响应迟到），于是字符被追加两次（打 `a` 变预编辑 `aa`）。现在三端都改成**幂等重放**：把壳侧已知的完整输入串作为 `base` 传给 daemon（daemon 先把引擎输入串整体置为 base 再追加 text，与逐键输入同构）——macOS `EngineClient.input(_:halfWidth:base:)`（`call` 层读超时不再盲目重试，改由 `input` 带 base 重放）、Linux 新增 `Daemon::inputWithRebuild`（失败后带 base 重发）、Windows 沿用失步态 `syncDaemonInput` 的 base 重建。同时修掉 macOS 撇号分支的吞键问题（`engine.input` 失败时直接把 `current` 置空并吞掉按键，现在失败走 passThrough 原样放行）。`checkuiparity`「超时韧性」组新增三端断言与 4 个变异测试。
 - **修复(IPC/三端壳)：读超时时已部分读入的字节不再被静默丢弃（消除字节流错位隐患）**：读超时保留连接的实现里，若本次 `readAll` 已经读进过字节（帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出却被随失败丢弃——**帧边界从此永久错位**，保留连接只会让后续每次读取都解析到垃圾（可能表现为随机的 id 不匹配断连、甚至把垃圾当响应解析）。现在三端用「本次 `readAll` 是否消费过字节」把超时分成两类：**干净超时**（一个字节都没消费，`off == 0`）才保留连接与会话；**部分读取与 EOF 一律断连**（Windows 用 `GetOverlappedResult` 取取消前已传输字节判 `off == 0 && cancelled == 0`，macOS/Linux 判 `off == 0`）。`Session::drainStaleResponse` 的非干净超时分支同样必须 `closeConn`（原来只清计数不断连，会留着错位的连接继续用）。Linux 壳 `UnixTransport` 同步实现 `lastReadTimedOut`（此前遇 `EAGAIN` 直接断连、丢会话），三端行为一致。`core_test::testReadTimeoutKeepsConnection` 增至 12 条断言（新增「部分读取后超时断连」「drain 遇部分读取断连」），`checkuiparity`「超时韧性」组新增三端判据断言与 3 个变异测试。
 
