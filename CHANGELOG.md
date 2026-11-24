@@ -2,7 +2,9 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.6.2（2026-11-24）
+
+> 从 v0.6.1 升级：本次两个修复都针对 v0.6.1 新引入的缺陷，无其它行为变化。
 
 - **修复(IPC/三端壳)：读超时后的迟到响应不再被误当成本次响应**：`drainStaleResponse` 在下一键发起时也可能超时（迟到帧还没到），旧实现随后把迟到的旧帧读成本次响应，id 不匹配即断连——#134 的「读超时保留连接」在这段时序下失效，连接与会话仍会丢。现在 `Session::call`（`shims/common/ipc/core.cpp`）与 macOS `DaemonTransport.callOnce` 在收到 id 不匹配的帧时先按 `staleResponses_`/`staleResponses` 计数丢弃迟到帧，再继续等待本次响应；计数为 0 的真错位仍断连。`core_test::testReadTimeoutKeepsConnection` 新增「预清理也超时」与「无待丢计数仍断连」断言，`docs/ui-parity.md` 同步。
 
