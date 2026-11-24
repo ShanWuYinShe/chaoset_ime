@@ -204,8 +204,15 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		// call 层：读超时不得走「重连重试」（那会把增量 input 重放一次）。
 		"if transport.lastFailureWasReadTimeout { return nil }",
 		// input 层：读超时必须能用 base 做幂等重放（不知道完整串才放弃）。
-		"func input(_ text: String, halfWidth: Bool, base: String? = nil)",
-		"guard let base else { return nil }")
+		"func input(_ text: String, halfWidth: Bool, base: String? = nil,",
+		"rebuild: Bool = false) -> Comp?",
+		"guard let base else { return nil }",
+		// 正常路径不得带 base：带 base 会让 daemon 每键 restore_input，双拼暂存的
+		// 半键（dp_pending）随重建被清空，两键永远无法成对解码。只有显式 rebuild
+		// 或失败重放才带。
+		"if rebuild, let base { params[\"base\"] = base }",
+		// 断连重试同样必须带 base：新连接是空会话，不带 base 会丢掉已有组词。
+		"if let base { params[\"base\"] = base }")
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift", "base: current?.input ?? \"\"")
 	checkContains(fsys, problems, group, linuxEngine, "inputWithRebuild")
 	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",

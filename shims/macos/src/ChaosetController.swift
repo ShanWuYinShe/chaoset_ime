@@ -224,9 +224,10 @@ final class ChaosetController: IMKInputController {
         if raw.isEmpty {
             current = nil
         } else {
-            // base 传空串：reset 也可能因超时未真正生效（daemon 会话还在），
-            // 整串重放必须显式「先置为空再输入 raw」才能幂等。
-            current = engine.input(raw, halfWidth: halfWidth, base: "")
+            // rebuild + base 传空串：reset 也可能因超时未真正生效（daemon 会话还在），
+            // 整串重放必须显式「先置为空再输入 raw」才能幂等。普通按键不走 rebuild，
+            // 否则 daemon 每键重建会清掉双拼暂存键（见 EngineClient.input）。
+            current = engine.input(raw, halfWidth: halfWidth, base: "", rebuild: true)
         }
         refresh(client)
     }

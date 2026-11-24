@@ -863,6 +863,12 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"            guard let base else { return nil }",
 		"            return nil",
 		"guard let base else")
+	// 正常路径恒带 base：daemon 每键 restore_input，双拼暂存的半键被清空，
+	// 两键无法成对解码（PR #142 合并后的真实回归）。
+	expect("macOS 正常路径恒带 base", macEngineClient,
+		"        if rebuild, let base { params[\"base\"] = base }",
+		"        if let base { params[\"base\"] = base }",
+		"if rebuild, let base")
 	expect("Linux 去掉 base 幂等重放", linuxEngineMain,
 		"    comp = session_.input(text, halfWidth, base.c_str());",
 		"    return Comp();",
