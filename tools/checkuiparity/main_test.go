@@ -864,7 +864,7 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"            return nil",
 		"guard let base else")
 	expect("Linux 去掉 base 幂等重放", linuxEngineMain,
-		"    return session_.input(text, halfWidth, base.c_str());",
+		"    comp = session_.input(text, halfWidth, base.c_str());",
 		"    return Comp();",
 		"base.c_str()")
 	expect("Linux 不区分部分读取", linuxEngineMain,
