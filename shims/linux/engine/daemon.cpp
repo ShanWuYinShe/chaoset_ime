@@ -121,10 +121,17 @@ Daemon::Daemon(Options options)
 Daemon::~Daemon() = default;
 
 Comp Daemon::inputWithRebuild(const std::string& text, bool halfWidth, const std::string& base) {
+    // 与其它请求同口径：先确保连接（daemon 懒启动/断线重连全靠这里）。
+    if (!ensureReady()) return Comp();
     Comp comp = session_.input(text, halfWidth);
     if (comp.ok) return comp;
     // 失败（读超时/断连）：用 base 幂等重放，避免 daemon 会话与壳侧预编辑错位。
-    return session_.input(text, halfWidth, base.c_str());
+    comp = session_.input(text, halfWidth, base.c_str());
+    if (!comp.ok) {
+        std::fprintf(stderr, "IPC input 失败（含 base 重放）base=\"%s\" text=\"%s\"\n",
+                     base.c_str(), text.c_str());
+    }
+    return comp;
 }
 
 bool Daemon::connectOnce() { return transport_.connectSocket(); }
