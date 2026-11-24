@@ -362,6 +362,13 @@ final class DaemonTransport {
         return resp["result"] as? [String: Any] ?? [:]
     }
 
+    /// 上一次 callOnce 失败是否只是「等满 SO_RCVTIMEO 仍没有响应」。
+    ///
+    /// 读超时**不代表 daemon 没处理**——请求可能已经执行、只是响应迟到。对 `input`
+    /// 这类增量写会话的方法，超时后原样重发会把同一段输入追加两次（预编辑变成
+    /// "aa"、上屏错字）；调用方必须改成「全量重建」（resetComposition + input(完整串)）。
+    var lastFailureWasReadTimeout: Bool { lastReadTimedOut }
+
     /// 重试前清零连接冷却（EngineClient.call 的网络重试用；语义同旧 lastFailAt = 0）。
     func resetFailureCooldown() {
         lastFailAt = 0

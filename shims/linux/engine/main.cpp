@@ -264,7 +264,7 @@ public:
         }
 
         if (!dpScheme_.empty() && keyval == ';' && (state & IBUS_SHIFT_MASK) == 0) {
-            chaoset::Comp comp = callComp([&] { return daemon_.session().input(";", halfWidth_); });
+            chaoset::Comp comp = daemon_.inputWithRebuild(";", halfWidth_, last_.input);
             if (!comp.committed.empty()) {
                 commit(confirmed_ + comp.committed);
             } else {
@@ -277,7 +277,7 @@ public:
         // 引擎按小写口径处理——用户不必为大写切输入法。
         if ((keyval >= 'a' && keyval <= 'z') || (keyval >= 'A' && keyval <= 'Z')) {
             const std::string text(1, static_cast<char>(keyval));
-            refresh(callComp([&] { return daemon_.session().input(text, halfWidth_); }));
+            refresh(daemon_.inputWithRebuild(text, halfWidth_, last_.input));
             return true;
         }
         if (keyval == kKeysymBackspace || keyval == kKeysymDelete) {
@@ -393,7 +393,7 @@ public:
             return false;
         }
         if (keyval == '\'' && isComposing()) {
-            refresh(callComp([&] { return daemon_.session().input("'", halfWidth_); }));
+            refresh(daemon_.inputWithRebuild("'", halfWidth_, last_.input));
             return true;
         }
         if (isPunctKey(keyval)) {

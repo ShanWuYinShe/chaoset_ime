@@ -63,7 +63,11 @@ final class EngineClient {
             return r
         }
         guard retryOnFailure else { return nil }
-        // 重连后重试一次：上一次失败通常已 disconnect()，这里会重新建立连接。
+        // 读超时不能原样重发：daemon 可能已经处理了这次请求（只是响应迟到），
+        // 重发会让 `input` 把同一段字符追加两次（预编辑 "aa"、上屏错字）。
+        // 连接还在，交给调用方用「resetComposition + input(完整串)」重建（幂等）。
+        if transport.lastFailureWasReadTimeout { return nil }
+        // 连接已断：重连后重试一次。新连接是全新会话，重发 input 不会重复。
         // 清零冷却时间，保证重试不会被 1 秒冷却直接挡掉。
         transport.resetFailureCooldown()
         return transport.callOnce(method: method, params: params)
@@ -100,8 +104,31 @@ final class EngineClient {
     /// 处理输入。halfWidth 是壳本地持有的全/半角标点状态，随每次 input 下发：
     /// 双拼 dpPending==0 的 ';' 会走引擎的 Punct 语义，宽度必须用本次壳状态，
     /// 否则刚切全/半角后单按 ';' 会按旧宽度出标点（1 键瞬态，2026-10-31 修复）。
-    func input(_ text: String, halfWidth: Bool) -> Comp? {
-        parseComp(call(method: "input", params: ["text": text, "half": halfWidth]))
+    /// 追加输入（增量语义）。`base` 是壳侧已知的完整输入串：
+    ///
+    /// - 首次输入传空串/不传，daemon 直接在当前会话上追加；
+    /// - **读超时后重放必须传 base**：daemon 可能已经处理过上一次请求（只是响应迟到），
+    ///   原样重发会把同一段字符追加两次（预编辑 "aa"、上屏错字）。带 base 时 daemon
+    ///   先把引擎输入串整体置为 base 再追加 text，与逐键输入同构，重放幂等。
+    func input(_ text: String, halfWidth: Bool, base: String? = nil) -> Comp? {
+        var params: [String: Any] = ["text": text, "half": halfWidth]
+        if let base { params["base"] = base }
+        if let r = transport.callOnce(method: "input", params: params) { return parseComp(r) }
+        if transport.lastFailureWasReadTimeout {
+            // 读超时：连接与会话都还在（不再断连），盲目重放会重复追加。
+            // 用 base 做幂等重放；调用方没给 base（不知道完整串）时只能放弃本次。
+            guard let base else { return nil }
+            params["base"] = base
+            transport.resetFailureCooldown()
+            if let r = transport.callOnce(method: "input", params: params) {
+                return parseComp(r)
+            }
+            return nil
+        }
+        // 连接已断：重连后重试。新连接是全新会话，重放不会重复追加。
+        transport.resetFailureCooldown()
+        if let r = transport.callOnce(method: "input", params: params) { return parseComp(r) }
+        return nil
     }
 
     func backspace() -> Comp? {

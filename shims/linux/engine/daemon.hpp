@@ -58,6 +58,13 @@ public:
     explicit Daemon(Options options);
     ~Daemon();
     bool ensureReady();
+    /// 追加输入；失败时用 base 做幂等重放（base = 壳侧上次已知的完整输入串）。
+    ///
+    /// 读超时**不代表团没处理**——daemon 可能已经执行、只是响应迟到。此时若直接当成
+    /// 失败（清空预编辑/放行键），daemon 会话里却已多了这段输入，下一次按键的预编辑
+    /// 就比应用里多出字符。用 base 重放：daemon 先把引擎输入串整体置为 base 再追加
+    /// text，与逐键输入同构，重放幂等；连接真断时新连接是空会话，带 base 同样正确。
+    Comp inputWithRebuild(const std::string& text, bool halfWidth, const std::string& base);
     Session& session() { return session_; }
     const LinuxPaths& paths() const { return options_.paths; }
     bool failed() const { return failed_; }

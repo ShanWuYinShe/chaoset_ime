@@ -768,7 +768,8 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
 		rustDaemonServer, rustDaemonPipe, uiParityDoc,
 		winTransport, winCoreTest, macTransport,
-		linuxEngineMain, "shims/linux/engine/daemon.hpp",
+		linuxEngineMain, "shims/linux/engine/daemon.hpp", linuxEngine,
+		macEngineClient, "shims/macos/src/KeyRouter.swift",
 	}
 	orig := map[string]string{}
 	for _, p := range files {
@@ -853,6 +854,19 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"lastReadTimedOut = (off == 0)",
 		"lastReadTimedOut = true",
 		"lastReadTimedOut")
+	// 读超时后原样重放增量 input 的回退（会让同一段字符追加两次）。
+	expect("macOS call 层读超时又重试", macEngineClient,
+		"        if transport.lastFailureWasReadTimeout { return nil }",
+		"        ",
+		"if transport.lastFailureWasReadTimeout")
+	expect("macOS input 层去掉 base 幂等重放", macEngineClient,
+		"            guard let base else { return nil }",
+		"            return nil",
+		"guard let base else")
+	expect("Linux 去掉 base 幂等重放", linuxEngineMain,
+		"    return session_.input(text, halfWidth, base.c_str());",
+		"    return Comp();",
+		"base.c_str()")
 	expect("Linux 不区分部分读取", linuxEngineMain,
 		"lastReadTimedOut_ = (off == 0);",
 		"lastReadTimedOut_ = true;",

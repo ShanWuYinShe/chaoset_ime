@@ -196,6 +196,21 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		"lastReadTimedOut = true", "func drainStaleResponse()",
 		// 结构片段：读超时必须走「保留连接 + 记账待丢」这一支，不能改回无条件 disconnect。
 		"if lastReadTimedOut && staleResponses < 2 {", "staleResponses += 1")
+	// a7) **读超时后不得原样重放增量 `input`**：daemon 可能已经处理过那次请求（只是
+	// 响应迟到），原样重发会把同一段字符追加两次（预编辑 "aa"、上屏错字）。macOS 用
+	// base 做幂等重放（daemon 先把引擎输入串置为 base 再追加）、Linux 用 inputWithRebuild；
+	// Windows 走既有的失步 base 重建。三端都必须把「壳侧已知的完整输入串」传下去。
+	checkContains(fsys, problems, group, macEngineClient,
+		// call 层：读超时不得走「重连重试」（那会把增量 input 重放一次）。
+		"if transport.lastFailureWasReadTimeout { return nil }",
+		// input 层：读超时必须能用 base 做幂等重放（不知道完整串才放弃）。
+		"func input(_ text: String, halfWidth: Bool, base: String? = nil)",
+		"guard let base else { return nil }")
+	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift", "base: current?.input ?? \"\"")
+	checkContains(fsys, problems, group, linuxEngine, "inputWithRebuild")
+	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",
+		"return session_.input(text, halfWidth, base.c_str());")
+
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
 		"testReadTimeoutKeepsConnection", "ScriptedTransport",
