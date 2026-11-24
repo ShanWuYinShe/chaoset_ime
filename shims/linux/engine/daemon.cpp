@@ -126,6 +126,14 @@ Comp Daemon::inputWithRebuild(const std::string& text, bool halfWidth, const std
     Comp comp = session_.input(text, halfWidth);
     if (comp.ok) return comp;
     // 失败（读超时/断连）：用 base 幂等重放，避免 daemon 会话与壳侧预编辑错位。
+    // 读超时连接还在（connected()=true），直接重放；写失败/EOF/部分读取已 closeConn，
+    // 先非阻塞重连——新连接是空会话，带 base 重建才有效。这里不用 ensureReady()：
+    // 它在 daemon 不在时会等懒启动（最长约 5s），不能压在按键热路径上。
+    if (!transport_.connected() && !connectOnce()) {
+        std::fprintf(stderr, "IPC input 失败（重连失败，无法重放）base=\"%s\" text=\"%s\"\n",
+                     base.c_str(), text.c_str());
+        return comp;
+    }
     comp = session_.input(text, halfWidth, base.c_str());
     if (!comp.ok) {
         std::fprintf(stderr, "IPC input 失败（含 base 重放）base=\"%s\" text=\"%s\"\n",

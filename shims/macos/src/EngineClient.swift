@@ -51,13 +51,13 @@ final class EngineClient {
         self.transport = DaemonTransport(socketPath: socketPath)
     }
 
-    // call 发一次请求并返回 result 对象；任何失败返回 nil 并断开重连。
+    // call 发一次请求并返回 result 对象；任何失败返回 nil（读超时保留连接，其它失败断连）。
     //
-    // 读类方法（input/backspace/nextPage 等）在失败且**尚未产生副作用**时重试一次：
-    // daemon 偶发的 GC 停顿或瞬时忙会让单次调用超时，若直接放弃，调用方（壳）
-    // 就会丢掉这一次按键——正是用户报的「首字母丢失」。这类方法重试是安全的，
-    // 因为它们只读会话状态。写类方法（select/associateSelect/punct 会改学习数据）
-    // 不重试，避免同一次上屏被记录两遍。
+    // 只有「连接已断」才重试一次：新连接是全新会话，重放不会重复追加。读超时
+    // 说明 daemon 可能已经处理（只是响应迟到），盲目重试会让 input/backspace
+    // 这类增量操作被应用两次；input 由调用方用 base 做幂等重放（见 input）。
+    // 写类方法（select/associateSelect/punct 会改学习数据）不重试，避免同一次
+    // 上屏被记录两遍。
     private func call(method: String, params: [String: Any], retryOnFailure: Bool = true) -> [String: Any]? {
         if let r = transport.callOnce(method: method, params: params) {
             return r
@@ -65,7 +65,7 @@ final class EngineClient {
         guard retryOnFailure else { return nil }
         // 读超时不能原样重发：daemon 可能已经处理了这次请求（只是响应迟到），
         // 重发会让 `input` 把同一段字符追加两次（预编辑 "aa"、上屏错字）。
-        // 连接还在，交给调用方用「resetComposition + input(完整串)」重建（幂等）。
+        // 连接还在，交给调用方的 input(base:) 做幂等重放（不知道完整串才放弃本次）。
         if transport.lastFailureWasReadTimeout { return nil }
         // 连接已断：重连后重试一次。新连接是全新会话，重发 input 不会重复。
         // 清零冷却时间，保证重试不会被 1 秒冷却直接挡掉。
@@ -106,13 +106,18 @@ final class EngineClient {
     /// 否则刚切全/半角后单按 ';' 会按旧宽度出标点（1 键瞬态，2026-10-31 修复）。
     /// 追加输入（增量语义）。`base` 是壳侧已知的完整输入串：
     ///
-    /// - 首次输入传空串/不传，daemon 直接在当前会话上追加；
+    /// - **正常路径不带 base**：daemon 直接在当前会话上追加。带 base 会让 daemon 每次
+    ///   按键都 `restore_input` 整串重建，双拼暂存的半键（`dp_pending`）随重建被清空，
+    ///   两键成对解码永远无法完成——所以 base 只在下面两种情况下发送；
     /// - **读超时后重放必须传 base**：daemon 可能已经处理过上一次请求（只是响应迟到），
     ///   原样重发会把同一段字符追加两次（预编辑 "aa"、上屏错字）。带 base 时 daemon
-    ///   先把引擎输入串整体置为 base 再追加 text，与逐键输入同构，重放幂等。
-    func input(_ text: String, halfWidth: Bool, base: String? = nil) -> Comp? {
+    ///   先把引擎输入串整体置为 base 再追加 text，与逐键输入同构，重放幂等；
+    /// - `rebuild: true` 时首次请求就带 base：`recompose` 的 `reset` 自身可能超时未
+    ///   生效，必须显式「先置为 base 再输入」，否则会把整串追加两次。普通按键不要用。
+    func input(_ text: String, halfWidth: Bool, base: String? = nil,
+               rebuild: Bool = false) -> Comp? {
         var params: [String: Any] = ["text": text, "half": halfWidth]
-        if let base { params["base"] = base }
+        if rebuild, let base { params["base"] = base }
         if let r = transport.callOnce(method: "input", params: params) { return parseComp(r) }
         if transport.lastFailureWasReadTimeout {
             // 读超时：连接与会话都还在（不再断连），盲目重放会重复追加。
@@ -125,7 +130,8 @@ final class EngineClient {
             }
             return nil
         }
-        // 连接已断：重连后重试。新连接是全新会话，重放不会重复追加。
+        // 连接已断：新连接是空会话，必须带 base 才能恢复已有组词（重放不会重复追加）。
+        if let base { params["base"] = base }
         transport.resetFailureCooldown()
         if let r = transport.callOnce(method: "input", params: params) { return parseComp(r) }
         return nil
