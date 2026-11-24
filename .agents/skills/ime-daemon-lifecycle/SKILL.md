@@ -175,6 +175,47 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 - 设置窗导入词库后重启 daemon 走 detached 启动，不能用等待进程退出的
   `settingsRunProcess`。
 
+## IPC 超时与断连韧性（三端）
+
+契约在 `shims/common/ipc/core.{hpp,cpp}`、`shims/windows/src/transport.hpp`、
+`shims/macos/src/DaemonTransport.swift`：
+
+- **读超时 ≠ 连接坏了**：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
+  记为「迟到待丢」（`staleResponses_`）——daemon 的 `Session` 原地保留，下一键就是
+  正常增量输入。断连会让会话随连接消失、已输入拼音全丢。
+- **写超时 / 对端关闭 / 帧体读到一半才超时 → 必须断连**：请求帧或响应帧已不完整，
+  字节流无法再对齐。
+- **连续读超时超过 2 次 → 断连重整**：daemon 持续跟不上时避免请求无限积累。
+- **迟到响应靠响应循环兜住，不能只靠「发请求前 drain 一次」**：drain 自身也可能超时，
+  迟到帧可能直到本次请求发出后才到。`call` 读响应时若 id 不匹配且 `staleResponses_ > 0`，
+  按计数丢弃该帧并继续读本次响应；计数为 0 的 id 错位才是真协议错位，仍断连。
+- drain 的失败分流：头读**超时保留计数**（下次再试）、真断/EOF **清零**（待丢帧随连接
+  消失，否则新连接会一直等一个永不来的旧帧）、帧体不完整断连。
+- 判断「超时还是断开」的开关必须区分两者：Windows 看 `WaitForSingleObject`/`GetLastError`，
+  macOS 看 `recv` 的 `EAGAIN`/`EWOULDBLOCK` 与 `n == 0`。
+
+### UT 纪律（`core_test.cpp` 的 `ScriptedTransport`，不依赖真实 daemon）
+
+1. **「降级路径自身再失败」是必测时序**：drain 自身也会超时、迟到帧可能直到本次请求
+   发出后才到——只测「drain 成功」会漏掉整条路径，表现就是「按不断连设计，仍然断连」。
+2. **每条断连/保留分支都要有独立断言**：读超时不断连、迟到帧被丢弃后本次请求拿到
+   自己的响应（不上屏错字）、连续超时超限断连、写失败断连、drain 头读超时保留计数、
+   无待丢计数时仍断连。
+3. 脚本化传输换脚本时必须重置消费游标（`resetSteps`）：只 `clear()` 不重置 `next_`
+   会让下一轮从错误的 step 开始读，断言莫名失败。
+
+### 全局热键与 Shift 记账的交互（Windows，改热键必看）
+
+- UI 宿主 `RegisterHotKey` 成立时，系统**吞掉主键**（如 Space），但 Ctrl/Shift 的按下
+  释放仍会投递给 TIP。TIP 的 Shift 空按状态机因此可能把「Ctrl+Shift+Space」误判成
+  「单独轻按 Shift」，松 Shift 时再切一次中英 → **双翻转**（等于没切）并误 flush 当前组词；
+  `mode_scope=process` 下还会绕过 UI 宿主的 no-op 改当前进程状态。
+- 现行守卫：开始一次 Shift 按住会话时用 `GetAsyncKeyState` 查 Ctrl/Alt/Win 物理状态，
+  已按住则 `sinceShift_ = true`（不是空按）；只在会话开始时查一次，正常打字零额外开销。
+  由 `checkuiparity`「Shift 记账」组断言。
+- 注册失败（组合键被占用）只记日志并降级为托盘左键；`MOD_NOREPEAT` 防按住重复切换；
+  窗口销毁前必须 `UnregisterHotKey`（全局独占资源）。
+
 ## 四、验证命令（改完这一块必跑）
 
 ```bash
