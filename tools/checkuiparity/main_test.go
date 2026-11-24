@@ -768,6 +768,7 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
 		rustDaemonServer, rustDaemonPipe, uiParityDoc,
 		winTransport, winCoreTest, macTransport,
+		linuxEngineMain, "shims/linux/engine/daemon.hpp",
 	}
 	orig := map[string]string{}
 	for _, p := range files {
@@ -835,13 +836,33 @@ func TestCheckTimeoutResilience(t *testing.T) {
 	// 读超时又改回断连（用户明确要求「不要因为超时就断开连接」）：
 	// Windows 的读超时分支不再直接返回、macOS 的不再保留连接，都必须被捕获。
 	expect("Windows 读超时又断连", winTransport,
-		"                        if (!isWrite) {",
+		"                        if (!isWrite && nothingConsumed) {",
 		"                        if (false) {",
-		"读/写超时的区分")
+		"未消费字节才保留")
 	expect("macOS 读超时又断连", macTransport,
 		"            if lastReadTimedOut && staleResponses < 2 {",
 		"            if false {",
 		"lastReadTimedOut")
+	// 部分读取分支的回退：Windows 又变回「所有读超时都保留连接」、macOS 不再区分
+	// off、drain 遇部分读取只清计数不断连，都必须被捕获。
+	expect("Windows 不区分部分读取", winTransport,
+		"const bool nothingConsumed = off == 0 && cancelled == 0;",
+		"const bool nothingConsumed = true;",
+		"是否已消费字节")
+	expect("macOS 不区分部分读取", macTransport,
+		"lastReadTimedOut = (off == 0)",
+		"lastReadTimedOut = true",
+		"lastReadTimedOut")
+	expect("Linux 不区分部分读取", linuxEngineMain,
+		"lastReadTimedOut_ = (off == 0);",
+		"lastReadTimedOut_ = true;",
+		"lastReadTimedOut")
+	// 精确命中 drainStaleResponse 的「非干净超时」分支（紧跟 size 计算前那段），
+	// 不能只删任意一处 closeConn——drain 里还有两处照抄的三行。
+	expect("drain 遇部分读取不断连", winCoreCpp,
+		"        t_.closeConn();\n        staleResponses_ = 0;\n        return false;\n    }\n    const std::uint32_t size",
+		"        staleResponses_ = 0;\n        return false;\n    }\n    const std::uint32_t size",
+		"drainStaleResponse")
 }
 
 // TestCheckCandidateNoPrivilege 锁住「候选窗无特权：焦点离开即收」的三端契约：

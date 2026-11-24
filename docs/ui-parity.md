@@ -310,6 +310,11 @@ TSF 只在**有文本输入焦点**时把按键投递给输入法：桌面、资
   不改全局状态）。销毁窗口前 `UnregisterHotKey` 归还这个全局独占资源。
 - **注册失败只降级**：组合键被其它程序占用时只写 `tsf.log` 并保持托盘左键可用，
   绝不影响输入；`MOD_NOREPEAT` 保证按住不放不会来回快速切换。
+- **有输入焦点时的行为**：系统吞掉主键（Space）但把 Ctrl/Shift 的按下释放继续投递给
+  TIP。TIP 的 Shift 空按状态机因此必须先用 `GetAsyncKeyState` 查 Ctrl/Alt/Win 物理状态，
+  已按住就把这次 Shift 记成「非空按」（`sinceShift_ = true`）——否则松 Shift 时会再切一次，
+  与 UI 宿主的翻转相互抵消并误 flush 当前组词。守卫到位后净效果是**切一次**：UI 宿主
+  翻转（`system` 档），TIP 不再重复翻转。
 - **已知代价（设计取舍）**：`RegisterHotKey` 是**全局独占**——有输入焦点时这个组合也
   会被输入法抢走，占用它的应用（部分 IDE 的「参数提示」等）收不到。选 `Ctrl+Shift+Space`
   是因为它在「没有输入框」这个真正需要它的场景里几乎不冲突。`mode_scope=process` 时
@@ -437,8 +442,15 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   排在前面的旧帧，再继续等本次响应——计数为 0 的 id 错位才是真错位，仍断连：
   Windows `PipeTransport::lastReadTimedOut`
   + `pipeIo` 读分支直接返回、共用 `Session::call`/`drainStaleResponse`（`shims/common/ipc`）、
-  macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF。写超时、对端
+  macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF、Linux
+  `UnixTransport::lastReadTimedOut` 同口径（三端 `off == 0` 判据）。写超时、对端
   关闭、帧体读到一半才超时仍必须断连（帧无法再对齐）；连续读超时超 2 次也断连重整。
+- **只有「一个字节都没消费」的超时才能保留连接**：读超时若本次 `readAll` 已经读进过
+  字节（帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出，随
+  失败丢弃会让**帧边界永久错位**——保留连接只会让后续每次读取都解析到垃圾。三端用
+  「本次 `readAll` 是否消费过字节」把这个分支分开（Windows `nothingConsumed = off == 0
+  && cancelled == 0`，macOS/Linux `off == 0`），部分读取与 EOF 都必须断连；
+  `drainStaleResponse` 遇到非干净超时同样必须 `closeConn`（不能只清计数）。
   由 `core_test::testReadTimeoutKeepsConnection`（10 条）与 `checkuiparity`「超时韧性」组的
   变异测试断言。
 - **fail-open（daemon 不在）**：连不上/管道断开时 `ensureDaemonFast` 单次非阻塞

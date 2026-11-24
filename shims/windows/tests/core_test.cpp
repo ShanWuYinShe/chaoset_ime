@@ -41,6 +41,9 @@ public:
     struct Step {
         bool timeout;   // true = 本次 readAll 报「等到截止无数据」
         std::string bytes;  // 否则把这段字节追加到待读缓冲
+        // true = 读到一部分后超时（字节已从传输取出却被丢弃）——字节流从此错位，
+        // 上层必须按「连接已坏」断连，不得当成可保留的干净超时。
+        bool partialTimeout = false;
     };
     std::vector<Step> steps;
     bool failWrite = false;
@@ -63,6 +66,13 @@ public:
                 return false;
             }
             const Step& s = steps[next_++];
+            if (s.partialTimeout) {
+                // 模拟真实传输：已到达的字节被消费后随失败丢弃，传输层报告
+                // 「不是干净超时」（lastReadTimedOut() == false）。
+                pending_.clear();
+                timedOut_ = false;
+                return false;
+            }
             if (s.timeout) {
                 timedOut_ = true;
                 return false;
@@ -167,6 +177,25 @@ void testReadTimeoutKeepsConnection() {
         (void)s2.input("a", false);
     }
     check(t2.closeCalled, "连续读超时超过上限必须断连重整（防止无限积累）");
+
+    // **部分读取后超时**：已到达的字节被消费却随失败丢弃，帧边界永久错位——
+    // 这时必须断连，不能当成「可保留的干净超时」（两者在传输层用 lastReadTimedOut
+    // 区分；实现里靠「本次 readAll 是否消费过字节」判定）。
+    ScriptedTransport t6;
+    Session s6(t6);
+    t6.steps.push_back({false, "", true});  // partialTimeout
+    (void)s6.input("a", false);
+    check(t6.closeCalled, "部分读取后超时（字节流已错位）必须断连");
+
+    // drain 自身遇到部分读取：同样已错位，必须断连并清计数。
+    ScriptedTransport t7;
+    Session s7(t7);
+    t7.steps.push_back({true, ""});  // 第 1 次：干净超时 → 记一笔待丢
+    (void)s7.input("a", false);
+    check(!t7.closeCalled, "（前置）干净读超时保留连接");
+    t7.resetSteps({{false, "", true}});  // 第 2 次：drain 遇部分读取
+    (void)s7.input("b", false);
+    check(t7.closeCalled, "drainStaleResponse 遇到部分读取必须断连");
 
     // 写失败（含写超时）必须断连：请求帧可能只写了一半，字节流无法再对齐。
     ScriptedTransport t3;

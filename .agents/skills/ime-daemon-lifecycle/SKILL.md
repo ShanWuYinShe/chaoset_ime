@@ -183,6 +183,12 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 - **读超时 ≠ 连接坏了**：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
   记为「迟到待丢」（`staleResponses_`）——daemon 的 `Session` 原地保留，下一键就是
   正常增量输入。断连会让会话随连接消失、已输入拼音全丢。
+- **只有「一个字节都没消费」的超时才保留连接**：读超时若本次 `readAll` 已读进过字节
+  （帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出，随失败
+  丢弃会让**帧边界永久错位**——保留连接只会让后续每次读取都解析到垃圾。三端判据：
+  Windows `nothingConsumed = off == 0 && cancelled == 0`（`GetOverlappedResult` 取取消前
+  已传输字节）、macOS/Linux `off == 0`；部分读取与 EOF 都必须断连，
+  `drainStaleResponse` 遇到非干净超时也必须 `closeConn`（不能只清计数）。
 - **写超时 / 对端关闭 / 帧体读到一半才超时 → 必须断连**：请求帧或响应帧已不完整，
   字节流无法再对齐。
 - **连续读超时超过 2 次 → 断连重整**：daemon 持续跟不上时避免请求无限积累。
@@ -192,7 +198,8 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 - drain 的失败分流：头读**超时保留计数**（下次再试）、真断/EOF **清零**（待丢帧随连接
   消失，否则新连接会一直等一个永不来的旧帧）、帧体不完整断连。
 - 判断「超时还是断开」的开关必须区分两者：Windows 看 `WaitForSingleObject`/`GetLastError`，
-  macOS 看 `recv` 的 `EAGAIN`/`EWOULDBLOCK` 与 `n == 0`。
+  macOS/Linux 看 `recv` 的 `EAGAIN`/`EWOULDBLOCK` 与 `n == 0`。三端都要实现
+  `Transport::lastReadTimedOut()`（Linux 在 `UnixTransport`，声明在 `daemon.hpp`）。
 
 ### UT 纪律（`core_test.cpp` 的 `ScriptedTransport`，不依赖真实 daemon）
 
@@ -200,7 +207,7 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
    发出后才到——只测「drain 成功」会漏掉整条路径，表现就是「按不断连设计，仍然断连」。
 2. **每条断连/保留分支都要有独立断言**：读超时不断连、迟到帧被丢弃后本次请求拿到
    自己的响应（不上屏错字）、连续超时超限断连、写失败断连、drain 头读超时保留计数、
-   无待丢计数时仍断连。
+   无待丢计数时仍断连、**部分读取后超时断连**、**drain 遇部分读取断连**。
 3. 脚本化传输换脚本时必须重置消费游标（`resetSteps`）：只 `clear()` 不重置 `next_`
    会让下一轮从错误的 step 开始读，断言莫名失败。
 

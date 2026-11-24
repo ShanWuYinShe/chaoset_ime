@@ -30,10 +30,14 @@ public:
     bool readAll(std::uint8_t* buf, std::size_t len) override;
     void closeConn() override;
     bool connected() const { return fd_ >= 0; }
+    /// 上一次 readAll 失败是否只是「等到 SO_RCVTIMEO 仍无数据」（一个字节都没消费）。
+    /// 只有这种干净超时才能保留连接与会话；部分读取或 EOF 必须断连（见 core.hpp 契约）。
+    bool lastReadTimedOut() const override { return lastReadTimedOut_; }
 
 private:
     std::string path_;
     int fd_ = -1;
+    bool lastReadTimedOut_ = false;
 };
 
 /// daemon 会话：首次调用前尝试连接；socket 不存在时拉起已安装的 chaosetd。
