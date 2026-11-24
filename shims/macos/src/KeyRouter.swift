@@ -405,8 +405,11 @@ extension ChaosetController {
         // 语义把「组词中首选词 + 分号」放进 Committed。Shift+';' 产生 ':'，
         // 不在此列（仍走下方标点分支，与 Windows/Linux 字符级判定一致）。
         if !engine.doublePinyinScheme.isEmpty, chars == ";" {
-            guard let comp = engine.input(chars, halfWidth: halfWidth) else {
-                return passThrough(client) // daemon 不可达：绝不吞键
+            // base = 壳侧已知的完整输入串：读超时后 daemon 用它做幂等重放，
+            // 避免把同一段字符追加两次（见 EngineClient.input）。
+            guard let comp = engine.input(chars, halfWidth: halfWidth,
+                                          base: current?.input ?? "") else {
+                return passThrough(client) // daemon 超时/不可达：绝不吞键
             }
             current = comp
             if !comp.committedText.isEmpty {
@@ -430,7 +433,12 @@ extension ChaosetController {
                 exitAssociate()
             }
             if scalar == "'", current?.input.isEmpty == false {
-                current = engine.input(chars, halfWidth: halfWidth)
+                // 失败时不能直接赋值（会把组词态清空并吞掉这个键）。
+                guard let comp = engine.input(chars, halfWidth: halfWidth,
+                                              base: current?.input ?? "") else {
+                    return passThrough(client)
+                }
+                current = comp
                 refresh(client)
                 return true
             }
@@ -458,7 +466,8 @@ extension ChaosetController {
         // 放行这个字母，让用户至少还能用英文继续输入，而不是静默吞掉。
         // （EngineClient 内部有 1 秒失败冷却，daemon 恢复后下一次按键会自动重连。）
         if isCompositionChar(chars) {
-            guard let comp = engine.input(chars, halfWidth: halfWidth) else {
+            guard let comp = engine.input(chars, halfWidth: halfWidth,
+                                          base: current?.input ?? "") else {
                 return passThrough(client)
             }
             current = comp

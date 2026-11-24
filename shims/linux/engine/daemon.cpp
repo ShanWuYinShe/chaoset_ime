@@ -120,6 +120,13 @@ Daemon::Daemon(Options options)
 
 Daemon::~Daemon() = default;
 
+Comp Daemon::inputWithRebuild(const std::string& text, bool halfWidth, const std::string& base) {
+    Comp comp = session_.input(text, halfWidth);
+    if (comp.ok) return comp;
+    // 失败（读超时/断连）：用 base 幂等重放，避免 daemon 会话与壳侧预编辑错位。
+    return session_.input(text, halfWidth, base.c_str());
+}
+
 bool Daemon::connectOnce() { return transport_.connectSocket(); }
 
 bool Daemon::ensureReady() {

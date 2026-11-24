@@ -183,6 +183,13 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 - **读超时 ≠ 连接坏了**：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
   记为「迟到待丢」（`staleResponses_`）——daemon 的 `Session` 原地保留，下一键就是
   正常增量输入。断连会让会话随连接消失、已输入拼音全丢。
+- **读超时后不得原样重放增量 `input`**：daemon 可能已经执行、只是响应迟到，原样重发
+  会把同一段字符追加两次（预编辑 `aa`、上屏错字）。三端都必须把「壳侧已知的完整
+  输入串」作为 `base` 传下去做**幂等重放**（daemon 先把引擎输入串整体置为 base 再追加
+  text，与逐键输入同构）：macOS `EngineClient.input(_:halfWidth:base:)`（`call` 层读超时
+  直接返回、由 `input` 用 base 重放）、Linux `Daemon::inputWithRebuild`（失败后带 base
+  重发）、Windows 失步态 `syncDaemonInput` 的 base 重建。新增读/写方法时先判断它是否
+  幂等：非幂等方法（`input`/`backspace`）读超时后只能重建，不能盲目重试。
 - **只有「一个字节都没消费」的超时才保留连接**：读超时若本次 `readAll` 已读进过字节
   （帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出，随失败
   丢弃会让**帧边界永久错位**——保留连接只会让后续每次读取都解析到垃圾。三端判据：

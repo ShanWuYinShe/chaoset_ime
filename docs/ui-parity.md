@@ -445,6 +445,13 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF、Linux
   `UnixTransport::lastReadTimedOut` 同口径（三端 `off == 0` 判据）。写超时、对端
   关闭、帧体读到一半才超时仍必须断连（帧无法再对齐）；连续读超时超 2 次也断连重整。
+- **读超时后不得原样重放增量 `input`**：daemon 可能已经处理过那次请求（只是响应迟到），
+  原样重发会把同一段字符追加两次（预编辑 `aa`、上屏错字）。三端都用 `base` 做幂等重放
+  ——daemon 先把引擎输入串整体置为 `base` 再追加 `text`，与逐键输入同构：macOS
+  `EngineClient.input(_:halfWidth:base:)`（`call` 层读超时直接返回、由 `input` 带 base 重放）、
+  Linux `Daemon::inputWithRebuild`（失败后带 base 重发）、Windows 失步态 `syncDaemonInput`
+  的 base 重建。非幂等方法（`input`/`backspace`）读超时后只能重建，不能盲目重试；
+  幂等读方法（`nextPage` 等）才允许重试。
 - **只有「一个字节都没消费」的超时才能保留连接**：读超时若本次 `readAll` 已经读进过
   字节（帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出，随
   失败丢弃会让**帧边界永久错位**——保留连接只会让后续每次读取都解析到垃圾。三端用

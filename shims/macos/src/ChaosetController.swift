@@ -224,7 +224,9 @@ final class ChaosetController: IMKInputController {
         if raw.isEmpty {
             current = nil
         } else {
-            current = engine.input(raw, halfWidth: halfWidth)
+            // base 传空串：reset 也可能因超时未真正生效（daemon 会话还在），
+            // 整串重放必须显式「先置为空再输入 raw」才能幂等。
+            current = engine.input(raw, halfWidth: halfWidth, base: "")
         }
         refresh(client)
     }
