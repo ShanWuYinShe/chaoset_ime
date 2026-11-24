@@ -158,13 +158,23 @@ private:
                     if (wait == WAIT_OBJECT_0) {
                         ok = ::GetOverlappedResult(pipe_, &ov, &done, FALSE);
                     } else {
-                        // 有界失败（不等待）：先取消本次重叠 I/O，释放事件。
+                        // 有界失败（不等待）：先取消本次重叠 I/O，再取回取消前已实际
+                        // 读进缓冲的字节数——这决定这次超时能不能保留连接。
                         ::CancelIoEx(pipe_, &ov);
+                        DWORD cancelled = 0;
+                        // 取消后 GetOverlappedResult 返回 FALSE，但出参给出已传输字节数；
+                        // 忽略返回值，只取字节数。
+                        (void)::GetOverlappedResult(pipe_, &ov, &cancelled, TRUE);
                         ::CloseHandle(ov.hEvent);
                         lastIoWasTimeout_ = true;
-                        lastReadTimedOut_ = !isWrite;
-                        if (!isWrite) {
-                            // 读超时：保留连接（见函数头注释）。daemon 的响应会迟到，
+                        // **只有「一个字节都没消费」的读超时才能保留连接**：如果这次
+                        // readAll 已经消费了字节（前面的 chunk 或本次部分传输），这些字节
+                        // 已从管道取出却被丢弃，帧边界就永久错位了——保留连接只会让后续
+                        // 每次读取都解析到垃圾。所以部分消费必须按「连接已坏」处理。
+                        const bool nothingConsumed = off == 0 && cancelled == 0;
+                        lastReadTimedOut_ = !isWrite && nothingConsumed;
+                        if (!isWrite && nothingConsumed) {
+                            // 干净读超时：保留连接（见函数头注释）。daemon 的响应会迟到，
                             // 由上层记为「待丢弃」并在下次请求前 drain。
                             return false;
                         }

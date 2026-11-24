@@ -144,9 +144,10 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		"读超时：保留连接")
 	if body, line, ok := cppFunctionBody(stripCppComments(mustRead(fsys, winTransport)),
 		"bool pipeIo(bool isWrite, const std::uint8_t* data, std::size_t len)"); ok {
-		// 读超时分支必须直接返回（不断连），写超时分支必须 failConn。
-		if !strings.Contains(body, "if (!isWrite) {") {
-			fail("%s 的 pipeIo（约第 %d 行）缺少读/写超时的区分——读超时不得断连", winTransport, line)
+		// 读超时分支必须「未消费字节才保留连接」（nothingConsumed 守卫），
+		// 写超时与「已消费字节」都必须 failConn。
+		if !strings.Contains(body, "if (!isWrite && nothingConsumed) {") {
+			fail("%s 的 pipeIo（约第 %d 行）缺少读/写超时区分或没守住「未消费字节才保留」——读超时不得无条件保留连接", winTransport, line)
 		}
 	} else {
 		fail("%s 找不到 pipeIo 定义", winTransport)
@@ -155,6 +156,41 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		"virtual bool lastReadTimedOut() const", "staleResponses_")
 	checkContains(fsys, problems, group, winCoreCpp,
 		"bool Session::drainStaleResponse()", "++staleResponses_")
+	// a6) **只有「一个字节都没消费」的读超时才能保留连接**。读超时若已部分读入，
+	// 这些字节已从管道/socket 取出却被丢弃，帧边界永久错位——保留连接只会让后续每次
+	// 读取都解析到垃圾。三端必须用「本次 readAll 是否消费过字节」把这个分支分开，
+	// 且 drain 遇到部分读取要断连（不能只清计数）。
+	// 断言判据本身（off == 0 表示本次 readAll 没消费过字节；cancelled 是取消前
+	// 已传输字节数），不能只断言变量名——把判据改成恒 true 也必须被抓住。
+	for _, needle := range []string{"off == 0 && cancelled == 0", "nothingConsumed"} {
+		if !strings.Contains(stripCppComments(mustRead(fsys, winTransport)), needle) {
+			fail("%s 的读超时分支没有用 %q 判「是否已消费字节」——部分读取必须按连接已坏处理", winTransport, needle)
+		}
+	}
+	checkContains(fsys, problems, group, macTransport, "lastReadTimedOut = (off == 0)")
+	// Linux 壳同一契约（三端一致，语义见 core.hpp）：声明在 daemon.hpp、实现在 daemon.cpp。
+	checkContains(fsys, problems, group, "shims/linux/engine/daemon.hpp",
+		"lastReadTimedOut() const override")
+	checkContains(fsys, problems, group, linuxEngineMain, "lastReadTimedOut_ = (off == 0)")
+	if body, _, ok := cppFunctionBody(stripCppComments(mustRead(fsys, winCoreCpp)), "bool Session::drainStaleResponse()"); ok {
+		// 非干净超时分支必须 closeConn（EOF/真错/部分读取都会让字节流不可用）。
+		// 必须精确取「lastReadTimedOut 判断之后、帧长解析之前」这段——drain 里另外
+		// 两处不合帧长的分支也照抄了 closeConn，全文搜索会漏掉这一处回退。
+		seg := ""
+		if i := strings.Index(body, "if (t_.lastReadTimedOut()) {"); i >= 0 {
+			rest := body[i:]
+			if end := strings.Index(rest, "const std::uint32_t size"); end > 0 {
+				seg = rest[:end]
+			}
+		}
+		if seg == "" {
+			fail("%s 的 drainStaleResponse 结构变了：找不到「干净超时判断 → 帧长解析」这一段", winCoreCpp)
+		} else if !strings.Contains(seg, "t_.closeConn();") {
+			fail("%s 的 drainStaleResponse 在非干净超时分支没有断连——部分读取会让字节流错位", winCoreCpp)
+		}
+	} else {
+		fail("%s 找不到 drainStaleResponse 定义", winCoreCpp)
+	}
 	// macOS 侧同一契约（Swift 独立实现，必须一起保持）。
 	checkContains(fsys, problems, group, macTransport,
 		"lastReadTimedOut = true", "func drainStaleResponse()",
@@ -163,7 +199,8 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
 		"testReadTimeoutKeepsConnection", "ScriptedTransport",
-		"读超时不得断开连接", "迟到响应被丢弃", "写失败必须断连")
+		"读超时不得断开连接", "迟到响应被丢弃", "写失败必须断连",
+		"部分读取后超时（字节流已错位）必须断连", "drainStaleResponse 遇到部分读取必须断连")
 
 	// b) 协议三处都认 input 的 base。
 	checkContains(fsys, problems, group, winShell, "daemonDesynced_", "pendingKeys_", "lastIoWasTimeout(")

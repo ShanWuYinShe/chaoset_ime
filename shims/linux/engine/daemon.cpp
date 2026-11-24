@@ -90,11 +90,19 @@ bool UnixTransport::writeAll(const std::uint8_t* data, std::size_t len) {
 }
 
 bool UnixTransport::readAll(std::uint8_t* buf, std::size_t len) {
+    lastReadTimedOut_ = false;
     if (fd_ < 0) return false;
     std::size_t off = 0;
     while (off < len) {
         const ssize_t n = ::recv(fd_, buf + off, len - off, 0);
         if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // 读超时（SO_RCVTIMEO 300ms）：**只有本次一个字节都没消费**才能保留连接；
+            // 已读到的字节若随失败丢弃，帧边界永久错位，只能按连接已坏处理。
+            // 与 Windows pipeIo / macOS recv 的分支同口径（core.hpp 契约）。
+            lastReadTimedOut_ = (off == 0);
+            return false;  // 干净超时不 closeConn：会话与连接都保留
+        }
         if (n <= 0) { closeConn(); return false; }
         off += static_cast<std::size_t>(n);
     }

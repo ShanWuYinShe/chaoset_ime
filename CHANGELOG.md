@@ -2,6 +2,10 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(IPC/三端壳)：读超时时已部分读入的字节不再被静默丢弃（消除字节流错位隐患）**：读超时保留连接的实现里，若本次 `readAll` 已经读进过字节（帧头部分到达、或跨 chunk 的前一段已完成），这些字节已从管道/socket 取出却被随失败丢弃——**帧边界从此永久错位**，保留连接只会让后续每次读取都解析到垃圾（可能表现为随机的 id 不匹配断连、甚至把垃圾当响应解析）。现在三端用「本次 `readAll` 是否消费过字节」把超时分成两类：**干净超时**（一个字节都没消费，`off == 0`）才保留连接与会话；**部分读取与 EOF 一律断连**（Windows 用 `GetOverlappedResult` 取取消前已传输字节判 `off == 0 && cancelled == 0`，macOS/Linux 判 `off == 0`）。`Session::drainStaleResponse` 的非干净超时分支同样必须 `closeConn`（原来只清计数不断连，会留着错位的连接继续用）。Linux 壳 `UnixTransport` 同步实现 `lastReadTimedOut`（此前遇 `EAGAIN` 直接断连、丢会话），三端行为一致。`core_test::testReadTimeoutKeepsConnection` 增至 12 条断言（新增「部分读取后超时断连」「drain 遇部分读取断连」），`checkuiparity`「超时韧性」组新增三端判据断言与 3 个变异测试。
+
 ## v0.6.2（2026-11-24）
 
 > 从 v0.6.1 升级：本次两个修复都针对 v0.6.1 新引入的缺陷，无其它行为变化。

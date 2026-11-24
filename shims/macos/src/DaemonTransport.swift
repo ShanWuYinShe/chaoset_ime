@@ -245,9 +245,15 @@ final class DaemonTransport {
                 Darwin.recv(fd, buf.baseAddress! + off, count - off, 0)
             }
             if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 超时（SO_RCVTIMEO，250ms）：连接保留，见函数头注释。
-                lastReadTimedOut = true
-                logFailure("IPC recv 超时（保留连接）method-pending fd=\(fd)")
+                // **只有「一个字节都没读到」的超时才能保留连接**：已经 recv 到的字节
+                // 若随本次失败被丢弃，帧边界就永久错位（后续每次读取都解析到垃圾）。
+                // off > 0 说明本次 readAll 已消费过字节，只能按「连接已坏」处理。
+                lastReadTimedOut = (off == 0)
+                if off == 0 {
+                    logFailure("IPC recv 超时（干净，保留连接）fd=\(fd)")
+                } else {
+                    logFailure("IPC recv 超时且已部分读取 \(off) 字节（字节流已错位，断开）fd=\(fd)")
+                }
                 return nil
             }
             guard n > 0 else {

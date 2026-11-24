@@ -287,10 +287,16 @@ bool Session::drainStaleResponse() {
     if (staleResponses_ <= 0) return true;
     std::uint8_t head[4];
     if (!t_.readAll(head, 4)) {
-        // 读超时：迟到帧还没到，保持计数、下次再试（本次请求的响应循环会兜住
-        // 「发出后才到」的时序）；真断/EOF：待丢帧随连接消失，计数必须清零，
-        // 否则下一次干净连接会一直等一个永远不会来的旧帧。
-        if (!t_.lastReadTimedOut()) staleResponses_ = 0;
+        if (t_.lastReadTimedOut()) {
+            // 干净读超时（一个字节都没消费）：迟到帧还没到，保持计数、下次再试
+            //（本次请求的响应循环会兜住「发出后才到」的时序）。
+            return false;
+        }
+        // EOF / 真错 / **部分读取**：待丢帧不可达，且部分读取已让字节流错位——
+        // 必须断连并清计数，否则下一次干净连接会一直等一个永远不会来的旧帧，
+        // 或把错位的字节当成帧头。
+        t_.closeConn();
+        staleResponses_ = 0;
         return false;
     }
     const std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) |
