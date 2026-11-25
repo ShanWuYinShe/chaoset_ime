@@ -242,6 +242,19 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		fail("%s 找不到 handleBackspace 收尾函数", linuxEngine)
 	}
 
+	// a9) **选词失败的上屏文本必须是候选中文，不是拼音串**：daemon 不可达时 macOS 壳会
+	// 退化为「整句上屏」保证不丢输入；用 cur.input（如 "nihao"）上屏是错误结果，应当用
+	// 壳侧上一次成功响应里的候选文本（本机可靠数据）。Linux 侧选词失败必须消费按键并
+	// 保留组词——放行（return false）会把空格/数字真的打进文档。
+	checkContains(fsys, problems, group, macController,
+		"let fallback = cur.candidates[index].text",
+		"(engine.select(index) ?? fallback)")
+	if strings.Contains(stripCppComments(mustRead(fsys, macController)), "engine.select(index) ?? cur.input") {
+		fail("%s 的选词失败 fallback 又用拼音串 cur.input——daemon 挂了会上屏英文拼音", macController)
+	}
+	checkContains(fsys, problems, group, linuxEngine,
+		"if (!daemon_.session().selectPrefix(idx, &rest)) return true;")
+
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
 		"testReadTimeoutKeepsConnection", "ScriptedTransport",

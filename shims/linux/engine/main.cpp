@@ -671,7 +671,8 @@ private:
         if (idx < 0 || idx >= static_cast<int>(last_.candidates.size())) return false;
         const auto pick = last_.candidates[idx];
         chaoset::Comp rest;
-        if (!daemon_.session().selectPrefix(idx, &rest)) return false;
+        // 失败：消费按键并保留组词（return false 会把选词键放行成文档里的空格/数字）。
+        if (!daemon_.session().selectPrefix(idx, &rest)) return true;
         confirmed_ += rest.committed;
         const auto pickedSylls = splitSyllables(pick.syllables);
         selectedSylls_.insert(selectedSylls_.end(), pickedSylls.begin(), pickedSylls.end());
