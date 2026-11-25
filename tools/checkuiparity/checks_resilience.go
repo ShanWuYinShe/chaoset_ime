@@ -254,6 +254,11 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	}
 	checkContains(fsys, problems, group, linuxEngine,
 		"if (!daemon_.session().selectPrefix(idx, &rest)) return true;")
+	// 联想选词（空格确认与数字确认两条路径）失败同样要退化上屏候选文本，不能静默无动作。
+	if n := strings.Count(mustRead(fsys, "shims/macos/src/KeyRouter.swift"),
+		"client?.insertText(list[pick].text, replacementRange:"); n < 2 {
+		fail("%s 的联想选词失败退化分支只有 %d 处（空格与数字两条路径各需一处）", "shims/macos/src/KeyRouter.swift", n)
+	}
 
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
