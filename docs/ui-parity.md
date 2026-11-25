@@ -430,10 +430,19 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
 - **异步日志**：`diagPrintf` 对 `tsf.log` 只做 `enqueueLogLine`（有界 ring，
   worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘
   （`candidate shown` 整条删除），前台风暴日志限流 5s。
-- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（TSF 路径 30ms、
-  worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断（`circuitOpen`）只用于 worker 的
-  慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不熔断**——每键只做一次非阻塞
-  `tryConnectOnce`，超时后的下一键才能立刻重连。
+- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（TSF 正常按键 150ms、
+  失步重建 30ms、worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断（`circuitOpen`）
+  只用于 worker 的慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不熔断**——每键
+  只做一次非阻塞 `tryConnectOnce`，超时后的下一键才能立刻重连。
+- **按键截止时间取值（issue #149）**：截止是上限而非固定等待——正常请求 1–5ms 就
+  返回，只有落在 30–150ms 的长尾会真的多等，而它们正是旧 30ms 会误杀成失步的那批。
+  正常按键 150ms 覆盖引擎与整链路的实测长尾（本仓 macOS 壳 8 核满载实测 p99
+  17–20ms、最大 31–57ms，见 CHANGELOG v0.3.9；引擎自身 16.5 万样本的 p99.9 为
+  13ms，见 v0.5.5）；旧 30ms 预算低于该长尾，正常输入会被误判成失步（失步期的
+  选词/翻页键只刷新候选、不执行本次选词）。
+  Windows TIP 在**宿主 UI 线程内**同步执行，最坏阻塞必须远小于 macOS/Linux 独立进程
+  壳的 250/300ms，所以不对齐它们。失步重建单独用 30ms：用户此时已在本地组词，重建
+  只为尽快回到同步态，daemon 繁忙/挂起时不会把宿主 UI 线程按在长截止上。
 - **读超时不断连（三端）**：I/O 超时的处置按方向区分——读超时只说明 daemon 这次算得
   慢，**连接没坏**，断连会让 daemon 会话随连接消失、用户已输入拼音全丢（失步恢复 +
   `base` 重建只是补救）。现在读超时保留连接，把该响应记为「迟到待丢」，下次请求前
@@ -471,13 +480,15 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
 - **fail-open（daemon 不在）**：连不上/管道断开时 `ensureDaemonFast` 单次非阻塞
   探测，失败即原样放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键
   恢复候选。首 1–2 个内容键可能按英文直入（已确认可接受）。
-- **超时不拆组词（失步恢复，`tip_desync.cpp`）**：30ms 截止在桌面系统上会被偶发
-  调度停顿击穿，所以「超时」与「daemon 不在」分开处理。组词中任一引擎请求超时
+- **超时不拆组词（失步恢复，`tip_desync.cpp`）**：桌面系统上的偶发调度停顿与引擎
+  长尾仍可能击穿按键预算（正常 150ms），所以「超时」与「daemon 不在」分开处理。
+  组词中任一引擎请求超时
   （`lastIoWasTimeout`）都经 `enterDesyncOnTimeout` 保留本地组词并置
   `daemonDesynced_`：追加键记入 `pendingKeys_` 并乐观显示在预编辑里；失步中的按键
   由 `handleKeyDesynced` 分流（退格 / Esc / 回车本地处理；选词、翻页、鼠标点选先
   重建、只刷新候选不动作；标点重建后照常处理）；重连后 `syncDaemonInput` 用
-  `input` 的 `base` 参数把整串重建到新会话（daemon 侧 `Session::restore_input`）。
+  `input` 的 `base` 参数把整串重建到新会话（daemon 侧 `Session::restore_input`，
+  重建请求用 30ms 短截止）。
   daemon 在 2s 宽限期内一直连不上才放弃：本地内容按原始串落盘（一个键都不丢）。
   首键（尚无组词）仍 fail-open。由 `tools/checkuiparity` 的「超时韧性」组机器断言
   （含变异测试）。

@@ -762,12 +762,13 @@ func TestCheckMacTisRegisterIdempotent(t *testing.T) {
 //  3. 按键路径重新套上 5s 熔断——超时后的下一键重连不了；
 //  4. 失步处理器改走 flushOrCancel 拆组词；
 //  5. daemon 主循环里阻塞等连接（旧的单监听实例模型）；
-//  6. daemon 不再认 input 的 base。
+//  6. daemon 不再认 input 的 base；
+//  7. 按键截止时间两档（正常 150ms / 失步重建 30ms）被改回单档或切换顺序错乱。
 func TestCheckTimeoutResilience(t *testing.T) {
 	files := []string{
 		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
 		rustDaemonServer, rustDaemonPipe, uiParityDoc,
-		winTransport, winCoreTest, macTransport,
+		winTransport, winTipCore, winTipDesync, winCoreTest, macTransport,
 		linuxEngineMain, "shims/linux/engine/daemon.hpp", linuxEngine,
 		macEngineClient, "shims/macos/src/KeyRouter.swift", macController,
 	}
@@ -888,6 +889,21 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"        if (!comp.ok) return true;",
 		"        if (false) return true;",
 		"handleBackspace")
+	// issue #149：按键截止时间两档（正常按键 150ms / 失步重建 30ms）被改回单档、
+	// 重建不再用短截止、或没把正常截止还回去，都必须被捕获。
+	expect("正常按键截止被压回 30ms", winTransport,
+		"constexpr DWORD kKeyRequestDeadlineMs = 150;",
+		"constexpr DWORD kKeyRequestDeadlineMs = 30;",
+		"kKeyRequestDeadlineMs")
+	expect("失步重建不用短截止", winTipDesync,
+		"transport_.setDeadlineMs(kDesyncRebuildDeadlineMs);", "",
+		"kDesyncRebuildDeadlineMs")
+	expect("失步重建后不还回正常截止", winTipDesync,
+		"transport_.setDeadlineMs(kKeyRequestDeadlineMs);", "",
+		"setDeadlineMs(kKeyRequestDeadlineMs)")
+	expect("文档没写两档截止", uiParityDoc,
+		"TSF 正常按键 150ms、", "TSF 按键 30ms、",
+		"TSF 正常按键 150ms")
 
 	// 读超时后原样重放增量 input 的回退（会让同一段字符追加两次）。
 	expect("macOS call 层读超时又重试", macEngineClient,
