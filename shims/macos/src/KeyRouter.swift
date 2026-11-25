@@ -136,8 +136,16 @@ extension ChaosetController {
 
             // B. 按音节部分删除（整词/音节回退）：Option+Delete (⌥⌫)
             if mods.contains(.option) {
-                current = engine.backspaceWord()
-                if current?.input.isEmpty == true {
+                guard let comp = engine.backspaceWord() else {
+                    // daemon 超时/不可达：**保留组词与按键**。退格绝不能穿透到宿主
+                    // 误删文档内容，也不能像旧实现那样把 current 置空 + flushConfirmed
+                    // （那会在失败时把已确认段强行上屏）。下一次 input 会带 base 重建，
+                    // daemon 侧状态随之修正。
+                    refresh(client)
+                    return true
+                }
+                current = comp
+                if comp.input.isEmpty {
                     current = nil
                     flushConfirmed(client) // 同普通退格：剩余删空即落盘收尾
                 }
@@ -146,8 +154,14 @@ extension ChaosetController {
             }
 
             // C. 慢慢部分删除（逐字符退格）：普通退格键单按，每按一次退一个拼音字母
-            current = engine.backspace()
-            if current?.input.isEmpty == true {
+            guard let comp = engine.backspace() else {
+                // 同 Option+Delete：失败时保留组词与按键，绝不误删宿主文档、
+                // 也绝不在失败路径上 flushConfirmed（把已确认段强行上屏）。
+                refresh(client)
+                return true
+            }
+            current = comp
+            if comp.input.isEmpty {
                 current = nil
                 // 剩余拼音删空：已确认段立即落盘收尾——它们不能继续挂在
                 // 预编辑里变成「无组词的孤标记区」
@@ -394,7 +408,12 @@ extension ChaosetController {
         let isPageUp = chars == "-" || chars == "[" || event.keyCode == 116 || chars == "\u{F72C}"
         let isPageDown = chars == "=" || chars == "]" || event.keyCode == 121 || chars == "\u{F72D}"
         if (isPageUp || isPageDown) && hasCandidates {
-            current = isPageUp ? engine.prevPage() : engine.nextPage()
+            guard let comp = isPageUp ? engine.prevPage() : engine.nextPage() else {
+                // 翻页失败（daemon 超时/不可达）：翻页键在宿主里无破坏性，
+                // 按输入法铁律原样放行，绝不吞键。
+                return passThrough(client)
+            }
+            current = comp
             refresh(client)
             return true
         }
@@ -498,13 +517,18 @@ extension ChaosetController {
     /// 组词态翻页：翻页后页内预选归零；边界页保持不动（仍消费按键）。
     private func flipCompositionPage(next: Bool, client: (any IMKTextInput)?) {
         guard let cur = current, !cur.candidates.isEmpty else { return }
+        // 翻页请求失败（daemon 超时/不可达）时保持不动：方向键已在组词态被消费，
+        // 不放行给宿主（否则光标会跑），也不清空组词。
+        let flipped: Comp?
         if next {
             guard cur.page + 1 < cur.pageCount else { return }  // 末页：保持不动
-            current = engine.nextPage()
+            flipped = engine.nextPage()
         } else {
             guard cur.page > 0 else { return }  // 首页：保持不动
-            current = engine.prevPage()
+            flipped = engine.prevPage()
         }
+        guard let flipped else { return }  // 失败：状态与预编辑都不动
+        current = flipped
         refresh(client)
         CandidatePanelController.setSelectedIndex(0)
     }

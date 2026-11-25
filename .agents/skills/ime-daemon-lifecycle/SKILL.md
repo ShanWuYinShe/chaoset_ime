@@ -183,6 +183,15 @@ Application Support），别急着当成 bug。真正的双实例是单实例锁
 - **读超时 ≠ 连接坏了**：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
   记为「迟到待丢」（`staleResponses_`）——daemon 的 `Session` 原地保留，下一键就是
   正常增量输入。断连会让会话随连接消失、已输入拼音全丢。
+- **退格/翻页失败时的处置（输入法铁律：不丢键、不误删、失败路径不长副作用）**：
+  - 退格类（`backspace`/`backspaceWord`）失败要**保留组词与按键**：放行给宿主会误删文档内容，
+    而把 `current` 置空 + `flushConfirmed` 则会在失败路径上把已确认段强行上屏；两者都是错的。
+    macOS `KeyRouter` 用 `guard let comp = engine.backspace…else { refresh(client); return true }`，
+    Linux `handleBackspace` 在 `!comp.ok` 时直接 `return true`。下一次 `input` 带 base 重放会
+    把 daemon 侧状态修正回来。
+  - 翻页失败**原样放行**（`passThrough`）：翻页键在宿主里无破坏性，绝不吞键；方向键翻页在
+    组词态已消费时失败则保持不动（不放行，否则光标会跑）。
+  - Windows 走失步态：读超时 `enterDesyncOnTimeout` → `backspaceLocally` 本地回退并保留组词。
 - **读超时后不得原样重放增量 `input`**：daemon 可能已经执行、只是响应迟到，原样重发
   会把同一段字符追加两次（预编辑 `aa`、上屏错字）。三端都必须把「壳侧已知的完整
   输入串」作为 `base` 传下去做**幂等重放**（daemon 先把引擎输入串整体置为 base 再追加

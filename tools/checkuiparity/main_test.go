@@ -854,6 +854,17 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"lastReadTimedOut = (off == 0)",
 		"lastReadTimedOut = true",
 		"lastReadTimedOut")
+	// 退格失败路径的回退：macOS 改回「无 guard 直接赋值」（失败即清组词/强上屏），
+	// Linux 去掉失败保留分支，都必须被捕获。
+	expect("macOS 退格失败不 guard", "shims/macos/src/KeyRouter.swift",
+		"            guard let comp = engine.backspace() else {",
+		"            current = engine.backspace()",
+		"退格调用必须 guard")
+	expect("Linux 退格失败不强上屏", linuxEngine,
+		"        if (!comp.ok) return true;",
+		"        if (false) return true;",
+		"handleBackspace")
+
 	// 读超时后原样重放增量 input 的回退（会让同一段字符追加两次）。
 	expect("macOS call 层读超时又重试", macEngineClient,
 		"        if transport.lastFailureWasReadTimeout { return nil }",
