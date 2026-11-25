@@ -17,9 +17,10 @@ using namespace chaoset::win;
 
 ChaosetTIP::ChaosetTIP() {
     InterlockedIncrement(&g_liveObjects);
-    // TSF 线程上的传输：只允许单次非阻塞连接 + 30ms 有界请求（fail-open）。
+    // TSF 线程上的传输：只允许单次非阻塞连接 + kKeyRequestDeadlineMs 有界请求
+    // （失败 fail-open；超时进入失步恢复，截止取值理由见 transport.hpp）。
     transport_.setAutoConnect(false);
-    transport_.setDeadlineMs(30);
+    transport_.setDeadlineMs(kKeyRequestDeadlineMs);
 }
 
 ChaosetTIP::~ChaosetTIP() {

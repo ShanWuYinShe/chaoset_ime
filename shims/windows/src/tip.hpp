@@ -405,8 +405,8 @@ private:
     // 来源见 syncDpScheme（IPC Composition.shuangpin）。
     std::string dpScheme_;
     // ---- daemon 失步恢复（issue #122，实现见 tip_desync.cpp）----
-    // 组词中的引擎请求**超时**（30ms 截止）后管道已断、daemon 会话消失，本地 comp_
-    // 是用户已输入内容的唯一记录：不拆组词，追加键记入 pendingKeys_，重连后整串重建。
+    // 组词中的引擎请求**超时**（kKeyRequestDeadlineMs）后本次响应已放弃、壳侧不再信任
+    // daemon 会话状态：本地 comp_ 是唯一记录，追加键记入 pendingKeys_ 并在重连后整串重建。
     bool daemonDesynced_ = false;
     std::string pendingKeys_;    // 失步期间本地记下、尚未被引擎确认的按键
     DWORD desyncSinceTick_ = 0;  // 首次超时时刻：daemon 一直连不上时的宽限期起点

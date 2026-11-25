@@ -1,10 +1,10 @@
 // ChaosetTIP daemon 失步恢复：组词中引擎请求超时后的本地保留、失步期按键分流
 // 与重连重建（Windows 壳拆分 TU）。
 //
-// 背景（issue #122）：壳侧按键请求有 30ms 截止，而桌面系统上几十毫秒的调度
-// 停顿无法杜绝（引擎再快也一样）。旧实现在任一请求超时后立刻拆掉组词——预
-// 编辑拼音被擦掉、候选窗关闭、当前键放行成英文——再叠加 5s 熔断，用户看到
-// 的就是「候选窗突然关闭，之后只能打英文」。
+// 背景（issue #122）：壳侧按键请求有有界截止（issue #149 后正常按键 150ms、
+// 失步重建 30ms），而桌面系统上更长的调度停顿仍无法杜绝（引擎再快也一样）。
+// 旧实现在任一请求超时后立刻拆掉组词——预编辑拼音被擦掉、候选窗关闭、当前键
+// 放行成英文——再叠加 5s 熔断，用户看到的就是「候选窗突然关闭，之后只能打英文」。
 //
 // 现行语义：
 //   * 只有「超时」才进入失步（断管/连不上说明 daemon 确实不在，沿用 fail-open；
@@ -106,10 +106,16 @@ bool ChaosetTIP::keepCompositionOnTimeout(const chaoset::Comp& prev, const std::
 // 失步后的状态重建：非阻塞重连，再把本地输入串整串送到新会话上。
 ChaosetTIP::SyncResult ChaosetTIP::syncDaemonInput() {
     if (!daemonDesynced_) return SyncResult::kSynced;
-    // 超时后管道已断；新连接上的 daemon 会话是空的，base + 追加键一次重建。
+    // 超时后管道可能已断；新连接上的 daemon 会话是空的，base + 追加键一次重建。
     if (!ensureDaemonFast(transport_)) return SyncResult::kUnreachable;
     const std::string base = comp_.input;
+    // 失步期重建用短截止（kDesyncRebuildDeadlineMs）：用户已在本地组词，重建只为
+    // 尽快回到同步态；daemon 繁忙/挂起时不能把宿主 UI 线程按在正常按键的截止上。
+    // 失败仍留在失步态（kStalled），下一键再试；成功/失败都要把正常截止还回去，
+    // 否则后续按键路径会一直按 30ms 预算等待。
+    transport_.setDeadlineMs(kDesyncRebuildDeadlineMs);
     chaoset::Comp got = session_.input(pendingKeys_, halfWidth_, base.c_str());
+    transport_.setDeadlineMs(kKeyRequestDeadlineMs);
     if (!got.ok) return SyncResult::kStalled;  // 连上了却没在截止内应答：仍在失步
     daemonDesynced_ = false;
     pendingKeys_.clear();

@@ -1,9 +1,10 @@
 // checks_resilience.go：超时韧性——「引擎请求超时不拆组词」的端到端契约。
 //
-// issue #122：壳侧按键请求有 30ms 截止，而桌面系统上几十毫秒的调度停顿无法
-// 杜绝（引擎再快也一样）。旧实现在任一引擎请求超时后立刻拆组词——预编辑拼音
-// 被擦掉、候选窗关闭、当前键放行成英文——并叠加 5s 熔断，用户看到「候选窗
-// 突然关闭，之后只能打英文」。现行契约分三段，任何一段回退症状都会复现：
+// issue #122：壳侧按键请求有有界截止（issue #149 后正常按键 150ms、失步重建
+// 30ms），而桌面系统上更长的调度停顿仍无法杜绝（引擎再快也一样）。旧实现在任一
+// 引擎请求超时后立刻拆组词——预编辑拼音被擦掉、候选窗关闭、当前键放行成英文——
+// 并叠加 5s 熔断，用户看到「候选窗突然关闭，之后只能打英文」。现行契约分三段，
+// 任何一段回退症状都会复现：
 //
 //	a) 壳：同步态每个引擎请求失败点都先经超时分流（enterDesyncOnTimeout /
 //	   keepCompositionOnTimeout），在 fail-open 收尾之前不得跳过它；失步中的
@@ -277,6 +278,40 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		"读超时不得断开连接", "迟到响应被丢弃", "写失败必须断连",
 		"部分读取后超时（字节流已错位）必须断连", "drainStaleResponse 遇到部分读取必须断连")
 
+	// a10) **TSF 按键路径的截止时间两档**（issue #149）：正常按键 150ms、失步重建 30ms。
+	// 旧实现全路径 30ms，低于整链路长尾（本仓 macOS 壳 8 核满载实测 p99 17–20ms、
+	// 最大 31–57ms），
+	// 正常输入会被误判成失步——失步期的选词/翻页键只刷新候选、不执行本次选词。两档
+	// 的分工：150ms 覆盖长尾、仍远小于 macOS/Linux 独立进程壳的 250/300ms（Windows
+	// TIP 在宿主 UI 线程内同步执行，最坏阻塞必须更小）；失步重建只做「尽快回到同步
+	// 态」，用 30ms 短截止，避免 daemon 繁忙/挂起时把宿主 UI 线程按在长截止上。
+	checkContains(fsys, problems, group, winTransport,
+		"constexpr DWORD kKeyRequestDeadlineMs = 150;",
+		"constexpr DWORD kDesyncRebuildDeadlineMs = 30;")
+	checkContains(fsys, problems, group, winTipCore,
+		"transport_.setAutoConnect(false);",
+		"transport_.setDeadlineMs(kKeyRequestDeadlineMs);")
+	checkContains(fsys, problems, group, winTipDesync,
+		"transport_.setDeadlineMs(kDesyncRebuildDeadlineMs);",
+		"transport_.setDeadlineMs(kKeyRequestDeadlineMs);")
+	// 截止切换必须按「切短 → 发重建请求 → 还回正常截止」的顺序：顺序错要么让重建
+	// 仍按长截止阻塞宿主 UI 线程，要么把后续所有按键都压在 30ms 预算上。
+	if body, line, ok := cppFunctionBody(stripCppComments(mustRead(fsys, winTipDesync)),
+		"ChaosetTIP::SyncResult ChaosetTIP::syncDaemonInput()"); ok {
+		iShort := strings.Index(body, "setDeadlineMs(kDesyncRebuildDeadlineMs)")
+		iInput := strings.Index(body, "session_.input(")
+		iRestore := strings.Index(body, "setDeadlineMs(kKeyRequestDeadlineMs)")
+		if iShort < 0 || iInput < 0 || iRestore < 0 || !(iShort < iInput && iInput < iRestore) {
+			fail("%s 的 syncDaemonInput（约第 %d 行）截止时间切换顺序不对：应先切短截止 → 发重建请求 → 还回正常截止",
+				winTipDesync, line)
+		}
+	} else {
+		fail("%s 找不到 syncDaemonInput 定义", winTipDesync)
+	}
+	// 截止只能走命名常量：散落的字面量会让两档语义在后续修改中静默漂移。
+	checkExcludes(fsys, problems, group, winTipCore, "setDeadlineMs(30)", "setDeadlineMs(150)")
+	checkExcludes(fsys, problems, group, winTipDesync, "setDeadlineMs(30)", "setDeadlineMs(150)")
+
 	// b) 协议三处都认 input 的 base。
 	checkContains(fsys, problems, group, winShell, "daemonDesynced_", "pendingKeys_", "lastIoWasTimeout(")
 	checkContains(fsys, problems, group, winCoreHpp, "const char* base = nullptr")
@@ -300,5 +335,6 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	}
 
 	// 文档必须记录契约（防止实现与 docs/ui-parity.md 脱节）。
-	checkContains(fsys, problems, group, uiParityDoc, "失步", "daemonDesynced_", "enterDesyncOnTimeout")
+	checkContains(fsys, problems, group, uiParityDoc, "失步", "daemonDesynced_",
+		"enterDesyncOnTimeout", "TSF 正常按键 150ms、", "失步重建 30ms")
 }

@@ -1,9 +1,10 @@
 //! 壳重连后的组词状态重建（issue #122）。
 //!
-//! Windows 壳的按键请求有 30ms 截止；超时后管道断开，daemon 会话随连接消失，
-//! 而壳本地仍持有用户已输入的内容。壳重连后用 `input` 的 `base` 参数把
-//! 「上次确认的输入串 + 此后按键」一次送回（`Session::input_with_base`），
-//! 不必拆掉组词让用户重打。这里断言重建与逐键输入**逐条等价**。
+//! Windows 壳的按键请求有有界截止（正常按键 150ms、失步重建 30ms）；超时后连接
+//! 可能保留（干净读超时）也可能断开，而壳本地仍持有用户已输入的内容。壳重连/重放
+//! 后用 `input` 的 `base` 参数把「上次确认的输入串 + 此后按键」一次送回
+//! （`Session::input_with_base`），不必拆掉组词让用户重打。这里断言重建与逐键输入
+//! **逐条等价**。
 
 use chaoset_engine::{Composition, Dictionary, Session, ShuangpinScheme};
 use std::path::PathBuf;

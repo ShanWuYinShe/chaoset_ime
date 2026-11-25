@@ -63,6 +63,8 @@ const (
 	winCoreHpp      = "shims/common/ipc/core.hpp"
 	winCoreCpp      = "shims/common/ipc/core.cpp"
 	winTransport    = "shims/windows/src/transport.hpp"
+	winTipCore      = "shims/windows/src/tip_core.cpp"
+	winTipDesync    = "shims/windows/src/tip_desync.cpp"
 	winCoreTest     = "shims/windows/tests/core_test.cpp"
 	macTransport    = "shims/macos/src/DaemonTransport.swift"
 	linuxEngine     = "shims/linux/engine/main.cpp"

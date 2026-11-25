@@ -14,6 +14,8 @@
 
 - **修复(Windows/macOS 壳)：`selectPrefix` / 选词失败路径幂等与候选兜底收敛（issue #147）**：macOS `EngineClient.selectPrefix` 禁用自动重试（避免前缀消费写操作在读超时/重连下二次触发），且 `ChaosetController.commit(index:)` 在 `selectPrefix` 因读超时返回 `nil` 时不再补发 `engine.select(index)`（防止误上屏第二段候选），改为直接上屏本机已缓存候选文本并 `resetComposition()`；Windows 数字/空格选词及候选点选/联想点选失败路径补全对本机候选文本的退化上屏，防止服务端短暂不可达时静默吞键或丢字；`checkuiparity`「超时韧性」组新增对应断言与变异测试。
 
+- **改进(Windows 壳)：TSF 按键请求的 IPC 截止时间 30ms → 150ms，失步重建单独用 30ms，正常输入不再被长尾延迟误判成失步（issue #149）**：TSF 回调在**宿主 UI 线程**上同步执行，壳侧给每个引擎请求 30ms 截止；该值低于整链路实测长尾（8 核满载 p99 17–20ms、最大 31–57ms，见 v0.3.9 实测），长输入与系统繁忙时会误判超时并进入失步态——而失步期的选词/翻页键按契约只重建并刷新候选、不执行本次选词，用户体感是「按数字/空格没上屏」。现在正常按键截止放宽到 **150ms**（约 2.6 倍实测最坏整链路往返），覆盖长尾且远小于 macOS/Linux 独立进程壳的 250/300ms；**失步期的重建请求单独用 30ms 短截止**——此时用户已在本地组词，重建只为尽快回到同步态，daemon 繁忙/挂起时不会把宿主 UI 线程按在长截止上（150ms 只用于健康路径的长尾，不用于已降级的路径）。两档都走命名常量（`kKeyRequestDeadlineMs` / `kDesyncRebuildDeadlineMs`，`shims/windows/src/transport.hpp`），`checkuiparity`「超时韧性」组新增常量值/两处使用/切换顺序/禁止字面量断言与 4 个变异测试，`docs/ui-parity.md` 与 AGENTS.md 的零阻塞契约同步写入取值理由。
+
 ## v0.6.4（2026-11-25）
 
 > 从 v0.6.3 升级：本次三条都是壳侧失败路径/双拼的缺陷修复，**无行为不兼容变化**；候选排序/学习契约、配置与数据格式均未变。
