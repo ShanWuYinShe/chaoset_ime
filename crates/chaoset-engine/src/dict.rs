@@ -537,7 +537,7 @@ impl Dictionary {
         // 更低，同节点至少有 exact_limit 条词频不低于它，全局排序必把它挤出前
         // exact_limit 名。旧实现把碎片导航命中的**全部**词条收齐再整体排序：
         // 单声母（j/zh/sh…）一次要过万条，是每个词首字母键 2–7ms 的来源
-        //（issue #122：单键延迟过高会贴住壳侧按键截止后 fail-open 成英文）。截断边界上
+        //（issue #122：单键延迟过高会让候选明显滞后；Windows 壳已改为异步管线）。截断边界上
         // 的并列仍由下方同一个完整比较器裁决，结果与全量排序逐条一致。
         let mut exact: Vec<(u32, usize)> = Vec::new();
         let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();

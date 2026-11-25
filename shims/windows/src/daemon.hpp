@@ -1,8 +1,8 @@
 // daemon 懒启动/连接/熔断原语（只有 worker 线程调用）。
 //
 // 叶子模块（docs/architecture.md §3.1）：不得 include/引用 TIP TU（tip.hpp /
-// tip_*.cpp）的类型。TSF 线程的零等待版本 ensureDaemonFast 在
-// shell_worker.cpp（只入队后台任务，不阻塞）。实现见 daemon.cpp。
+// tip_*.cpp）的类型。TSF 线程不直连 daemon：引擎 I/O 在每 TIP 的 EnginePump
+// 线程（issue #149），按键路径零等待。实现见 daemon.cpp。
 
 #ifndef CHAOSET_WIN_DAEMON_HPP_
 #define CHAOSET_WIN_DAEMON_HPP_

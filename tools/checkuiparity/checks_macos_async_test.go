@@ -51,7 +51,7 @@ func TestCheckMacOSAsyncPipeline(t *testing.T) {
 		if !strings.Contains(orig[path], old) {
 			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
 		}
-		mut := map[string]string{path: strings.Replace(orig[path], old, new, 1)}
+		mut := map[string]string{path: strings.ReplaceAll(orig[path], old, new)}
 		var problems []string
 		checkMacOSAsyncPipeline(build(mut), &problems)
 		joined := strings.Join(problems, "\n")
@@ -98,5 +98,5 @@ func TestCheckMacOSAsyncPipeline(t *testing.T) {
 		"        case .backspaceWord:\n                break",
 		"backspaceLocally")
 	expect("文档删掉异步契约", uiParityDoc,
-		"不关闭候选窗", "关闭候选窗", "不关闭候选窗")
+		"EnginePipeline", "EngineWorker", "EnginePipeline")
 }

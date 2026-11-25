@@ -22,6 +22,8 @@ namespace chaoset::win {
 constexpr UINT kTipForegroundMsg    = WM_APP + 101;  // 前台变化（钩子回调 → TIP 线程）
 constexpr UINT kTipModeAuthorityMsg = WM_APP + 103;  // 后台查到的权威中英状态
 constexpr UINT kTipShowToastMsg     = WM_APP + 104;  // 后台失败提示（wParam=文案 id）
+// 引擎线程 → TIP 线程：异步结果已就绪（wParam/lParam 不用，TIP 自己从 EnginePump 取）。
+constexpr UINT kTipEngineResultMsg  = WM_APP + 105;
 // worker 线程 → TIP 线程回投（按线程 id 找该线程的 message-only 窗口）。
 void postTipThread(DWORD tid, UINT msg, WPARAM wp, LPARAM lp);
 // 广播到所有存活的 TIP 线程窗口（权威中英状态变化等）。
@@ -39,6 +41,8 @@ public:
     virtual void onWorkerForeground(HWND fg) = 0;
     virtual void onWorkerModeAuthority() = 0;
     virtual void onWorkerShowToast(int id) = 0;
+    // 每 TIP 的引擎线程把结果回投到本线程：取走并应用（绝不在这里做 I/O）。
+    virtual void onWorkerEngineResult() = 0;
 };
 
 // 按线程的 TIP 注册表与消息窗口（Thread_local；窗口过程见 tip_thread.cpp）。

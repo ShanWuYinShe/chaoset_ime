@@ -27,21 +27,6 @@
 
 namespace chaoset::win {
 
-// TSF 线程零等待版：已连接→true；否则一次非阻塞探测 + 入队后台连接，返回 false。
-// 调用方必须 fail-open（本键原样进文档），绝不 Sleep/建进程（审计 T4）。
-//
-// **不套 5s 熔断**（issue #122）：请求超时/管道断开后，旧实现让整个进程在
-// brokenUntil_ 期间直接 fail-open，用户连续打字会看到长达 5 秒的「只能打英文」。
-// tryConnectOnce 只是一次非阻塞 CreateFileW，失败立即返回、不阻塞 TSF 线程；
-// 每键探测一次，超时后的下一键才能立刻重连并重建组词（见 tip_desync.cpp）。
-// daemon 确实不在时每键只多一次立即失败的探测，代价可以忽略。
-bool ensureDaemonFast(PipeTransport& transport) {
-    if (transport.isConnected()) return true;
-    if (transport.tryConnectOnce()) return true;
-    postDaemonConnect();
-    return false;
-}
-
 
 
 

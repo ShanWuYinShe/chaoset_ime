@@ -132,6 +132,12 @@ static LRESULT CALLBACK tipMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 if (tip != nullptr) tip->onWorkerShowToast(static_cast<int>(wParam));
             }
             return 0;
+        case kTipEngineResultMsg:
+            // 每个 TIP 取各自的引擎结果并按序应用；这里只做内存/TSF 编辑。
+            for (TipThreadSink* tip : g_tlFgTips) {
+                if (tip != nullptr) tip->onWorkerEngineResult();
+            }
+            return 0;
         default:
             break;
     }

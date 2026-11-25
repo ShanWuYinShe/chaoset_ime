@@ -21,19 +21,6 @@
 
 namespace chaoset::win {
 
-// 按键路径的请求截止时间（毫秒，issue #149）。TSF 回调在宿主 UI 线程上同步执行，
-// 所以截止值同时是「长尾容忍」与「宿主最坏阻塞」的折中；截止是上限而非固定等待：
-// 正常请求 1–5ms 就返回，只有落在 30–150ms 的长尾会真的多等——而它们正是旧 30ms
-// 会误杀成失步的那批。
-//   * 正常按键 150ms：旧 30ms 低于整链路长尾（本仓 macOS 壳 8 核满载实测 p99
-//     17–20ms、最大 31–57ms），正常输入会被误判成失步（失步期的选词/翻页键只刷新
-//     候选、不执行本次选词）；150ms 给长尾留约 2.6 倍余量，同时把宿主 UI 线程的最坏
-//     阻塞限制在 150ms——远小于 macOS/Linux 独立进程壳的 250/300ms，不对齐它们。
-//   * 失步重建 30ms：失步期用户已在本地组词，重建只为尽快回到同步态，短截止保证
-//     daemon 繁忙/挂起时不会把宿主 UI 线程按在长截止上（见 tip_desync.cpp）。
-constexpr DWORD kKeyRequestDeadlineMs = 150;
-constexpr DWORD kDesyncRebuildDeadlineMs = 30;
-
 // 当前用户命名管道名：\\.\pipe\chaoset-<SID>，与 Go daemon 的
 // ipc.DefaultPipeName() 同规则（SID 而非用户名，多用户/非 ASCII 安全）。
 std::wstring daemonPipeName();
@@ -50,7 +37,7 @@ public:
 
     // TSF 线程上的 TIP 用 setAutoConnect(false)：writeAll 绝不自行发起需要等待的连接。
     void setAutoConnect(bool on) { autoConnect_ = on; }
-    // 单次 I/O 等待上限（TSF 正常按键 150ms、失步重建 30ms；worker 200ms）。
+    // 单次 I/O 等待上限（引擎线程 200ms；worker 200ms）。
     void setDeadlineMs(DWORD ms) { deadlineMs_ = (ms == 0) ? 200 : ms; }
 
     // 单次非阻塞连接：成功即返回；失败（含管道忙）立即返回 false，不做任何等待。

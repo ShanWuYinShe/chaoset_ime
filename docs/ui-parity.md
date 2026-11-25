@@ -407,12 +407,17 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   是允许且期望的强调色）。
 
 
-## 零阻塞契约（Windows，2026-11-06）
+## 零阻塞契约（三端；Windows 细节，2026-11-06）
 
-用户要求：「输入法在任何情况下都不应阻塞任何进程或 app」。TSF 把 TIP 加载进每个
-宿主进程，**所有 TSF 回调都在宿主 UI 线程上同步执行**，因此回调体内禁止任何跨进程
-等待/建进程/同步写盘。该契约由 `tools/checkuiparity` 的「TSF 回调零跨进程等待」组
-逐函数机器断言（含变异测试），禁止回退。
+用户要求：「输入法在任何情况下都不应阻塞任何进程或 app」，且**三端统一**：按键路径
+异步、慢/失败期间不关闭候选窗（只有取消/失焦/上屏结束/模式切换等既有语义路径才关）。
+TSF 把 TIP 加载进每个宿主进程，**所有 TSF 回调都在宿主 UI 线程上同步执行**，因此回调
+体内禁止任何跨进程等待/建进程/同步写盘。该契约由 `tools/checkuiparity` 的「TSF 回调
+零跨进程等待」组逐函数机器断言（含变异测试），禁止回退。
+
+macOS/Linux 的异步管线实现与不变量见下方「macOS 异步引擎管线」「Linux 异步引擎管线」
+两节；三端共同不变量相同（按键路径不等待、失败不弹乐观项、纪元作废、2s 宽限、
+显式选词兜底、候选窗只在既有语义路径关闭）。
 
 - **禁止项（TSF 回调体内）**：`Sleep(`、`WaitNamedPipeW`、
   `WaitForSingleObject`、`CreateProcessW`、`CreateFileW`、`WriteFile(`、
@@ -421,28 +426,20 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   OnSetThreadFocus / OnKillThreadFocus / OnActivated / OnTestKeyDown / OnKeyDown /
   OnTestKeyUp / OnKeyUp / render / handleKey / showSettingsWindow /
   onForegroundChanged / selectCandidateByIndex / deleteCandidateByIndex /
-  flipPage / CandidateWindow::show，以及失步恢复的 handleKeyDesynced /
-  syncDaemonInput / keepCompositionOnTimeout。
+  flipPage / CandidateWindow::show，以及异步管线的 applyEngineResults /
+  applyEngineResult（结果应用同样在宿主 UI 线程执行，只做内存与 TSF 编辑）。
 - **副作用统一入口**：每进程一个 `ShellWorker` 后台线程（`ShellTask` 任务队列）
   + message-only 窗口（`HWND_MESSAGE`，`kTipForegroundMsg`/`kTipModeAuthorityMsg`/
   `kTipShowToastMsg` 回投结果）；建进程、管道重试、
-  派发 UI、daemon 代拉起全部在 worker 执行。
+  派发 UI、daemon 代拉起全部在 worker 执行。每 TIP 另有一个 `EnginePump` 引擎线程
+  （独占连接、FIFO、结果经 `kTipEngineResultMsg` 回投），详见下面「异步引擎管线」条。
 - **异步日志**：`diagPrintf` 对 `tsf.log` 只做 `enqueueLogLine`（有界 ring，
   worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘
   （`candidate shown` 整条删除），前台风暴日志限流 5s。
-- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（TSF 正常按键 150ms、
-  失步重建 30ms、worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断（`circuitOpen`）
-  只用于 worker 的慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不熔断**——每键
-  只做一次非阻塞 `tryConnectOnce`，超时后的下一键才能立刻重连。
-- **按键截止时间取值（issue #149）**：截止是上限而非固定等待——正常请求 1–5ms 就
-  返回，只有落在 30–150ms 的长尾会真的多等，而它们正是旧 30ms 会误杀成失步的那批。
-  正常按键 150ms 覆盖引擎与整链路的实测长尾（本仓 macOS 壳 8 核满载实测 p99
-  17–20ms、最大 31–57ms，见 CHANGELOG v0.3.9；引擎自身 16.5 万样本的 p99.9 为
-  13ms，见 v0.5.5）；旧 30ms 预算低于该长尾，正常输入会被误判成失步（失步期的
-  选词/翻页键只刷新候选、不执行本次选词）。
-  Windows TIP 在**宿主 UI 线程内**同步执行，最坏阻塞必须远小于 macOS/Linux 独立进程
-  壳的 250/300ms，所以不对齐它们。失步重建单独用 30ms：用户此时已在本地组词，重建
-  只为尽快回到同步态，daemon 繁忙/挂起时不会把宿主 UI 线程按在长截止上。
+- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（引擎线程
+  `kEngineRequestDeadlineMs`=200ms、worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断
+  （`circuitOpen`）只用于 worker 的慢连接路径 `ensureDaemonConnected`；**TSF 按键
+  路径不做任何 I/O、也不熔断**——按键只入队，连接与重试全部在引擎线程。
 - **读超时不断连（三端）**：I/O 超时的处置按方向区分——读超时只说明 daemon 这次算得
   慢，**连接没坏**，断连会让 daemon 会话随连接消失、用户已输入拼音全丢（失步恢复 +
   `base` 重建只是补救）。现在读超时保留连接，把该响应记为「迟到待丢」，下次请求前
@@ -454,18 +451,23 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF、Linux
   `UnixTransport::lastReadTimedOut` 同口径（三端 `off == 0` 判据）。写超时、对端
   关闭、帧体读到一半才超时仍必须断连（帧无法再对齐）；连续读超时超 2 次也断连重整。
+  Windows 的异步引擎线程是例外：请求失败（含干净读超时）一律**主动断连**，由壳侧用
+  整串重建（`kRebuild`）恢复——壳侧乐观组词才是权威，重建是确定性的；传输层
+  「干净读超时才保留连接」的判据仍由 `PipeTransport`/`Session` 保持（macOS/Linux 壳
+  与 `core_test` 继续使用）。
 - **退格/翻页失败时不得丢键、不得误删、不得在失败路径上强上屏**：退格类请求失败要保留
   组词与按键（放行给宿主会误删文档；把 `current` 置空 + `flushConfirmed` 会在失败时把
   已确认段写了出去），下一次 `input` 带 base 重放修正 daemon 状态——macOS `KeyRouter` 的
   `guard let comp = engine.backspace…else`、Linux `handleBackspace` 的 `!comp.ok` 分支；
-  翻页失败原样放行（`passThrough`），方向键翻页在组词态失败则保持不动。Windows 走失步态
-  `backspaceLocally`。由 `checkuiparity`「超时韧性」组断言。
+  翻页失败原样放行（`passThrough`），方向键翻页在组词态失败则保持不动。Windows 的异步
+  管线里退格/翻页先在本地乐观执行，失败结果**不**弹出乐观项（见下条），按键与组词都
+  不会丢。由 `checkuiparity`「异步引擎管线」组断言（macOS/Linux 同步壳的守卫仍在该组内）。
 - **读超时后不得原样重放增量 `input`**：daemon 可能已经处理过那次请求（只是响应迟到），
   原样重发会把同一段字符追加两次（预编辑 `aa`、上屏错字）。三端都用 `base` 做幂等重放
   ——daemon 先把引擎输入串整体置为 `base` 再追加 `text`，与逐键输入同构：macOS
   `EngineClient.input(_:halfWidth:base:)`（`call` 层读超时直接返回、由 `input` 带 base 重放）、
-  Linux `Daemon::inputWithRebuild`（失败后带 base 重发）、Windows 失步态 `syncDaemonInput`
-  的 base 重建。**正常按键不带 base**——只有读超时/断连重放与 macOS `recompose` 的显式
+  Linux `Daemon::inputWithRebuild`（失败后带 base 重发）、Windows 异步引擎线程的
+  `kRebuild`（`base=""` + 壳侧完整输入串重放）。**正常按键不带 base**——只有读超时/断连重放与 macOS `recompose` 的显式
   `rebuild` 才带，否则 daemon 每键 `restore_input` 会清空双拼暂存的半键（`dp_pending`），
   两键无法成对解码。非幂等方法（`input`/`backspace`/`selectPrefix`）读超时后只能重建或用壳侧本机候选收口，不能盲目重试（`selectPrefix` 超时后再发 `select` 会误上屏第二段候选）；
   幂等读方法（`nextPage` 等）才允许重试。
@@ -475,23 +477,26 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   「本次 `readAll` 是否消费过字节」把这个分支分开（Windows `nothingConsumed = off == 0
   && cancelled == 0`，macOS/Linux `off == 0`），部分读取与 EOF 都必须断连；
   `drainStaleResponse` 遇到非干净超时同样必须 `closeConn`（不能只清计数）。
-  由 `core_test::testReadTimeoutKeepsConnection`（10 条）与 `checkuiparity`「超时韧性」组的
+  由 `core_test::testReadTimeoutKeepsConnection` 与 `checkuiparity`「异步引擎管线」组的
   变异测试断言。
-- **fail-open（daemon 不在）**：连不上/管道断开时 `ensureDaemonFast` 单次非阻塞
-  探测，失败即原样放行并后台连接（`postDaemonConnect`）；按键不丢、不阻塞，下一键
-  恢复候选。首 1–2 个内容键可能按英文直入（已确认可接受）。
-- **超时不拆组词（失步恢复，`tip_desync.cpp`）**：桌面系统上的偶发调度停顿与引擎
-  长尾仍可能击穿按键预算（正常 150ms），所以「超时」与「daemon 不在」分开处理。
-  组词中任一引擎请求超时
-  （`lastIoWasTimeout`）都经 `enterDesyncOnTimeout` 保留本地组词并置
-  `daemonDesynced_`：追加键记入 `pendingKeys_` 并乐观显示在预编辑里；失步中的按键
-  由 `handleKeyDesynced` 分流（退格 / Esc / 回车本地处理；选词、翻页、鼠标点选先
-  重建、只刷新候选不动作；标点重建后照常处理）；重连后 `syncDaemonInput` 用
-  `input` 的 `base` 参数把整串重建到新会话（daemon 侧 `Session::restore_input`，
-  重建请求用 30ms 短截止）。
-  daemon 在 2s 宽限期内一直连不上才放弃：本地内容按原始串落盘（一个键都不丢）。
-  首键（尚无组词）仍 fail-open。由 `tools/checkuiparity` 的「超时韧性」组机器断言
-  （含变异测试）。
+- **fail-open（daemon 不在）**：连接状态是引擎线程维护的原子快照。不可用且当前没有
+  本地组词时，内容键原样放行（fail-open）并按节流投一个探测请求（`kProbe`），daemon
+  恢复后下一键即可正常组词；按键不丢、不阻塞。首 1–2 个内容键可能按英文直入
+  （已确认可接受）。
+- **异步引擎管线（`EnginePump` + `tip_async.cpp`，issue #149）**：TSF 回调的
+  **按键路径不等待** daemon——每个 TIP 一个引擎线程，独占自己的 daemon 连接（组词会话按连接
+  隔离，同进程多个 TIP 不能共用）。按键只做三件事：把操作压入 `pendingOps_`、用
+  `optimisticComp()`（最后一个已应用组词态 + 未应用输入/退格回放）立即渲染**乐观预编辑**、
+  再把操作投递给引擎线程。结果按 seq 回投到 TIP 线程的 message-only 窗口
+  （`kTipEngineResultMsg` → `onWorkerEngineResult`）后**顺序应用**：成功结果先丢弃
+  seq ≤ 本结果的乐观项，再更新组词/候选/上屏；**失败结果不弹出乐观项**（本地显示保留到
+  整串重建覆盖）；纪元（`engineEpoch_`）不匹配的结果直接丢弃（失焦、取消、合成被宿主
+  终止都走 `resetEnginePipeline`：纪元递增 + 清空乐观项 + 丢弃引擎线程积压 + 引擎复位）。
+  失败进入失联宽限：保留本地组词，按节流用 `kRebuild`（`base=""` + 壳侧完整输入串）
+  整串重建；2s 宽限后按原始串落盘（一个键都不丢）。显式选词/联想/标点在失败时用壳侧
+  已显示文本兜底上屏，绝不静默丢键。候选窗始终显示最后一次已应用组词态的候选、结果
+  回来按序刷新（**不关闭、不清空**）。由 `tools/checkuiparity` 的「异步引擎管线」组
+  机器断言（含 11 个变异测试）。
 - **配置缓存**：ModeScope / Associate / 深色主题 / 全屏抑制 / UILess 激活开关
   均带 TTL 缓存，候选窗每键不再做注册表/Shell 查询。
 - **前台钩子**：每线程最多一个系统级钩子，回调体内只 `PostMessage`（不 hide、
@@ -499,7 +504,9 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   Activate 时按需自愈重挂。
 - **生命周期安全**：worker 线程与 message-only 窗口计入 `DllCanUnloadNow`
   （`shellWorkerAlive()`、`g_liveTipMsgWindows`），未退干净时返回 `S_FALSE`；
-  `DllMain(DETACH)` 只置停止标志不 join。
+  `DllMain(DETACH)` 只置停止标志不 join。每 TIP 的 `EnginePump` 线程随 TIP 对象存活：
+  析构时 `stop()` 有界 join，未能退出时故意不销毁对象（线程仍引用它），绝不让线程
+  跑进已卸载的 DLL。
 
 ## 按键与交互
 

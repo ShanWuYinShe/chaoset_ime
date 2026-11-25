@@ -56,9 +56,7 @@ void postDaemonConnect();
 void postOpenSettings(DWORD notifyThread);
 void postEnsureUiHostByDaemon(bool settings);
 
-// ---- TSF 线程零等待的 daemon/设置入口（TIP 调用）----
-// 已连接→true；否则一次非阻塞探测 + 入队后台连接，返回 false（调用方 fail-open）。
-bool ensureDaemonFast(PipeTransport& transport);
+// ---- TSF 线程零等待的 UI 入口（TIP 调用）----
 // 打开设置中心：只做前台授权 + 入队，恒返回 true（零等待）。
 bool openSettingsViaUi();
 // 把当前中英模式上报给 UI 宿主（只入队；前台校验在 worker 里做）。
