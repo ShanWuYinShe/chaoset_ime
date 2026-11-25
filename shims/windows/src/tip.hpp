@@ -281,7 +281,7 @@ private:
     static const char* keyPunctChar(WPARAM vk, bool shift);
     static bool isDpSemicolonKey(WPARAM vk, bool shift);
     static int digitIndex(WPARAM vk);
-    static bool shiftActive();
+    static bool shiftDown();
     static bool isModifierKey(WPARAM vk);
     // 方向键预选（issue#2）：预选序号由候选窗持有（CandidateWindow 的
     // selectedIndex_/moveSelection），TIP 只负责「组词/联想态消费方向键、

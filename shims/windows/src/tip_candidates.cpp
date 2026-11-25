@@ -28,7 +28,9 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
             const std::string sylls = pick.syllables;
             if (commit(ctx.get(), committed)) enterAssociate(sylls);
         } else {
-            clearAssociate();
+            // daemon 不可达：退化为上屏壳侧已持有的候选文本，不静默丢掉用户点击（与键盘分支一致）。
+            if (commit(ctx.get(), pick.text)) clearAssociate();
+            else clearAssociate();
         }
         return;
     }
@@ -50,6 +52,7 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
         }
         return;
     }
+    const std::string pickedText = comp_.candidates[index].text;
     const std::string pickedSyllables = comp_.candidates[index].syllables;
     chaoset::Comp rest;
     if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
@@ -71,11 +74,12 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
     }
     if (enterDesyncOnTimeout(comp_)) return;  // 超时：保留组词（issue #122）
     std::string committed;
-    if (session_.select(index, &committed)) {
-        const std::string all = confirmedPreedit_ + committed;
-        confirmedPreedit_.clear();
-        commit(ctx.get(), all);
+    if (!session_.select(index, &committed)) {
+        committed = pickedText;
     }
+    const std::string all = confirmedPreedit_ + committed;
+    confirmedPreedit_.clear();
+    commit(ctx.get(), all);
 }
 
 

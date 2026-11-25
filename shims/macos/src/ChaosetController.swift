@@ -180,7 +180,12 @@ final class ChaosetController: IMKInputController {
         // 上一次成功响应，是本机可靠数据。只有候选异常缺失才退回拼音串。
         // 已确认段随本次落盘一起收尾（缓冲必须清空，避免串进下一轮组词）。
         let fallback = cur.candidates[index].text
-        let committed = confirmedText + (engine.select(index) ?? fallback)
+        // 若 selectPrefix 因读超时返回 nil，daemon 可能已消费首段并切到剩余拼音；
+        // 再发 select(index) 会误上屏第二段候选，直接用本机候选文本并清空组词。
+        let hadReadTimeout = engine.lastFailureWasReadTimeout
+        let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)
+        let committed = confirmedText + picked
+        if hadReadTimeout { _ = engine.resetComposition() }
         confirmedText = ""
         current = nil
         client?.insertText(

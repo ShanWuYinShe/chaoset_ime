@@ -47,6 +47,9 @@ final class EngineClient {
     /// 会被错误路由到 input。
     private(set) var doublePinyinScheme: String = ""
 
+    /// 上一次失败是否为读超时（调用方用于区分「daemon 可能已处理」与「未送达」）。
+    var lastFailureWasReadTimeout: Bool { transport.lastFailureWasReadTimeout }
+
     init(socketPath: String = EngineClient.defaultSocketPath) {
         self.transport = DaemonTransport(socketPath: socketPath)
     }
@@ -251,11 +254,12 @@ final class EngineClient {
     // associateSelect 联想候选直接上屏：学习路径与 select 一致。
     /// 联想候选上屏。**不重试**：与 select 一样会写学习数据。
     /// 渐进上屏：选中候选后只消耗其音节对应的拼音前缀，剩余拼音回灌继续
-    /// 组词。返回剩余组词态（Committed=已上屏前缀段文本，Preedit=剩余拼音，
-    /// Candidates=剩余候选）。
+    /// 组词。**不重试**：会消耗前缀并写学习数据，断连后重连到空会话重试无效，
+    /// 若只是响应慢重放更会二次消费。返回剩余组词态（Committed=已上屏前缀段文本）。
     func selectPrefix(index: Int) -> Comp? {
         guard let result = call(method: "selectPrefix",
-                                params: ["index": index]) else { return nil }
+                                params: ["index": index],
+                                retryOnFailure: false) else { return nil }
         let committed = result["committed"] as? String ?? ""
         let shuangpin = result["shuangpin"] as? String ?? ""
         doublePinyinScheme = shuangpin
