@@ -769,7 +769,7 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		rustDaemonServer, rustDaemonPipe, uiParityDoc,
 		winTransport, winCoreTest, macTransport,
 		linuxEngineMain, "shims/linux/engine/daemon.hpp", linuxEngine,
-		macEngineClient, "shims/macos/src/KeyRouter.swift",
+		macEngineClient, "shims/macos/src/KeyRouter.swift", macController,
 	}
 	orig := map[string]string{}
 	for _, p := range files {
@@ -860,6 +860,14 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"            guard let comp = engine.backspace() else {",
 		"            current = engine.backspace()",
 		"退格调用必须 guard")
+	expect("macOS 选词失败又上屏拼音串", macController,
+		"        let fallback = cur.candidates[index].text",
+		"        let fallback = cur.input",
+		"let fallback = cur.candidates[index].text")
+	expect("Linux 选词失败又放行按键", linuxEngine,
+		"        if (!daemon_.session().selectPrefix(idx, &rest)) return true;",
+		"        if (!daemon_.session().selectPrefix(idx, &rest)) return false;",
+		"selectPrefix")
 	expect("Linux 退格失败不强上屏", linuxEngine,
 		"        if (!comp.ok) return true;",
 		"        if (false) return true;",

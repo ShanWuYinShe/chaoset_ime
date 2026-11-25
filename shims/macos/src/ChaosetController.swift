@@ -175,8 +175,12 @@ final class ChaosetController: IMKInputController {
         }
         // daemon 不可达（selectPrefix 返回 nil）：绝不能静默失败（键被消费、
         // 文字没进文档 = 丢字）。退化为整句上屏，保证用户输入不丢失。
+        // **退化文本优先用壳侧已有的候选中文**（本次点击选中的那个词），而不是
+        // cur.input 拼音串——daemon 挂了还上屏 "nihao" 是错误结果；候选列表来自
+        // 上一次成功响应，是本机可靠数据。只有候选异常缺失才退回拼音串。
         // 已确认段随本次落盘一起收尾（缓冲必须清空，避免串进下一轮组词）。
-        let committed = confirmedText + (engine.select(index) ?? cur.input)
+        let fallback = cur.candidates[index].text
+        let committed = confirmedText + (engine.select(index) ?? fallback)
         confirmedText = ""
         current = nil
         client?.insertText(
