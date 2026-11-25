@@ -10,6 +10,7 @@
   - `place_typo_fixed_position` 此前把 `RANK_BACKOFF` 的单字/回退候选项误当成普通精确候选占位，导致如 `zhezhogn`（本应首选 `这种`）被低 rank 单字 `这`/`者` 顶退到第 3 位、`lianxiagn` 等也被 `连线`/`联` 抢位；现严格按「普通精确 → 高置信度纠错（`< RANK_BACKOFF`）→ 其余低 rank/回退候选项」排布，并使 `compose()` 在首选为 `typo_fix` 时保留原始 `input_raw` 作为预编辑（如 `zhezhogn`/`lianxiagn` 不再拆成 `zhe'zh'o'g'n` 等碎片）。
   - 统一由 `Pool::new(traditional)` 将显示文本转换后写入键值，`TypoState` 与 `Pool::map` 对齐同一转换口径，修复繁体模式下 `zhezhogn` 等错拼晋升/去噪失效（此前出「這中」而非「這種」）与用户词库繁体词重复入池问题。
   - 全拼 `Session::input` 追加后调用 `after_append()`（清翻页/标点状态），`backspace` 重置 `page` 与 `punct_state`，`backspace_word` 对齐精确前缀消耗，各类复位路径一并清理双拼/分段状态；重生成 `parity_expected.jsonl` 并跑通 5 形态拼音质量扫描（1131 词 / 5655 输入：总命中 78.7%、首页 69.5%、首选 38.4%，与基线零回退）。
+  - 预编辑不再做别名归一：`preedit_with_case` 旧实现遇到同长度异字符（`lue→lve`、`nue→nve`）会用规范拼写替换用户字符，大写 `LUE`/`NUE` 显示成 `LvE`/`NvE`，`niou` 则被改写成 `niu`；现在长度一致时只插入音节分隔符、字符一律取原始输入，长度不一致时原样返回输入。补 `huashetianzu`/`xiaoxiexiaoxi`（含大写与手工分词）可选中、渐进选词剩余大小写保留的原始样例回归，冻结 41 场景快照不变。
 
 - **修复(Windows/macOS 壳)：`selectPrefix` / 选词失败路径幂等与候选兜底收敛（issue #147）**：macOS `EngineClient.selectPrefix` 禁用自动重试（避免前缀消费写操作在读超时/重连下二次触发），且 `ChaosetController.commit(index:)` 在 `selectPrefix` 因读超时返回 `nil` 时不再补发 `engine.select(index)`（防止误上屏第二段候选），改为直接上屏本机已缓存候选文本并 `resetComposition()`；Windows 数字/空格选词及候选点选/联想点选失败路径补全对本机候选文本的退化上屏，防止服务端短暂不可达时静默吞键或丢字；`checkuiparity`「超时韧性」组新增对应断言与变异测试。
 
