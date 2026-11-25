@@ -216,7 +216,9 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		"if let base { params[\"base\"] = base }",
 		// selectPrefix 会消费前缀并写学习数据，必须禁重试，避免读超时后二次消费。
 		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index],\n                                retryOnFailure: false) else { return nil }")
-	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift", "base: current?.input ?? \"\"")
+	// macOS 壳已改异步引擎管线（issue #149）：引擎调用不再出现在 IMK 回调里，
+	// base 幂等重放留在 EngineClient（上面的断言），按键侧由「macOS 异步引擎管线」
+	// 组覆盖（结果按序应用 + 失联整串重建）。Linux 仍是同步壳。
 	checkContains(fsys, problems, group, linuxEngine, "inputWithRebuild")
 	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",
 		"session_.input(text, halfWidth, base.c_str())")
@@ -225,16 +227,8 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	// 就直接放行给宿主，会误删文档内容；而旧实现反过来「吞键 + flushConfirmed 强上屏」，
 	// 失败时把已确认段写了出去。现行契约：退格失败保留组词与按键（下一次 input 带 base
 	// 重放修正状态）、翻页失败原样放行（翻页键在宿主里无破坏性）。
-	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
-		"guard let comp = engine.backspaceWord() else {",
-		"guard let comp = engine.backspace() else {",
-		"guard let comp = isPageUp ? engine.prevPage() : engine.nextPage() else {")
-	// 失败分支必须只 refresh/放行，不能 flushConfirmed、不能把 current 置空。
-	for _, bad := range []string{"current = engine.backspace()", "current = engine.backspaceWord()"} {
-		if strings.Contains(stripCppComments(mustRead(fsys, "shims/macos/src/KeyRouter.swift")), bad) {
-			fail("%s 出现 %q——退格调用必须 guard 失败分支（失败时保留组词与按键）", "shims/macos/src/KeyRouter.swift", bad)
-		}
-	}
+	// macOS 退格在异步管线下只入队（submitBackspace/submitBackspaceWord），
+	// 失败结果不弹出乐观项 → 组词与按键天然保留；由「macOS 异步引擎管线」组断言。
 	// Linux：同一个收尾辅助函数里，失败必须直接返回（保留组词与按键）。
 	linuxMain := stripCppComments(mustRead(fsys, linuxEngine))
 	if i := strings.Index(linuxMain, "bool handleBackspace(chaoset::Comp comp) {"); i >= 0 {
@@ -249,28 +243,21 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	// 退化为「整句上屏」保证不丢输入；用 cur.input（如 "nihao"）上屏是错误结果，应当用
 	// 壳侧上一次成功响应里的候选文本（本机可靠数据）。Linux 侧选词失败必须消费按键并
 	// 保留组词——放行（return false）会把空格/数字真的打进文档。
-	checkContains(fsys, problems, group, macController,
-		"let fallback = cur.candidates[index].text",
-		"let hadReadTimeout = engine.lastFailureWasReadTimeout",
-		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)",
-		"(engine.select(index) ?? fallback)",
-		"if hadReadTimeout { _ = engine.resetComposition() }")
+	// macOS 选词失败兜底已迁到异步管线（ChaosetControllerAsync 的失败分支用
+	// 壳侧已显示文本上屏），由「macOS 异步引擎管线」组断言；这里保留 Linux/Windows。
 	if strings.Count(code, "committed = pickedText;") < 3 {
 		fail("%s 的 selectPrefix 失败退化分支不足 3 处（数字/空格/点选各需退化上屏候选中文）", winShell)
 	}
 	if !strings.Contains(code, "commit(ctx.get(), pick.text)") {
 		fail("%s 的联想点选失败缺少退化上屏 pick.text", winShell)
 	}
-	if strings.Contains(stripCppComments(mustRead(fsys, macController)), "engine.select(index) ?? cur.input") {
-		fail("%s 的选词失败 fallback 又用拼音串 cur.input——daemon 挂了会上屏英文拼音", macController)
-	}
+	// macOS 的选词/联想失败兜底在异步管线的失败分支里（壳侧已显示文本上屏），
+	// 由「macOS 异步引擎管线」组断言；这里不再检查同步调用点。
 	checkContains(fsys, problems, group, linuxEngine,
 		"if (!daemon_.session().selectPrefix(idx, &rest)) return true;")
 	// 联想选词（空格确认与数字确认两条路径）失败同样要退化上屏候选文本，不能静默无动作。
-	if n := strings.Count(mustRead(fsys, "shims/macos/src/KeyRouter.swift"),
-		"client?.insertText(list[pick].text, replacementRange:"); n < 2 {
-		fail("%s 的联想选词失败退化分支只有 %d 处（空格与数字两条路径各需一处）", "shims/macos/src/KeyRouter.swift", n)
-	}
+	// 联想选词失败兜底：macOS 异步管线在 handleEngineFailure 的 associateSelect
+	// 分支统一上屏壳侧文本（见「macOS 异步引擎管线」组）。
 
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,

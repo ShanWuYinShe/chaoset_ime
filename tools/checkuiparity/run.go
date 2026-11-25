@@ -86,6 +86,8 @@ var checkGroups = []checkGroup{
 	{groupTsfZeroBlock, onLogical(checkTsfZeroBlockContract)},
 	// 超时韧性：引擎请求超时不拆组词（壳/协议/daemon 管道服务端三段契约）。
 	{groupTimeoutResilience, onLogical(checkTimeoutResilience)},
+	// macOS 异步引擎管线（issue #149）：IMK 回调零等待、结果按序应用、慢/失败不关候选窗。
+	{groupMacOSAsync, onLogical(checkMacOSAsyncPipeline)},
 	// daemon 单实例（安装器/LaunchAgent/TIP 三方）。
 	{groupDaemonSingleton, onLogical(checkDaemonSingleton)},
 	// 打包安装的产物存在段：同组第二段注册，保持既有失败输出顺序。

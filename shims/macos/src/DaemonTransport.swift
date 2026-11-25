@@ -48,6 +48,13 @@ final class DaemonTransport {
         disconnect()
     }
 
+    /// 连接快照（引擎线程查询；fd >= 0 即有连接）。
+    var isConnected: Bool { fd >= 0 }
+
+    /// 预热连接：复用 connectIfNeeded（必要时懒启动 daemon）。
+    /// 只在引擎线程调用；不做任何组词请求。
+    func warmUp() -> Bool { connectIfNeeded() }
+
     private func disconnect() {
         if fd >= 0 {
             Darwin.close(fd)

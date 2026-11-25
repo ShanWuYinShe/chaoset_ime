@@ -15,7 +15,20 @@ final class ChaosetController: IMKInputController {
     // main.swift 装配 IMKServer 后挂到这里，候选窗构造需要它
     static weak var sharedServer: IMKServer?
 
-    let engine = EngineClient()
+    // ---- 异步引擎管线（issue #149，实现见 EnginePipeline.swift / ChaosetControllerAsync.swift）----
+    /// 每个控制器一个引擎线程/连接（daemon 组词会话按连接隔离）。
+    let pipeline = EnginePipeline()
+    /// 已入队、结果未应用的乐观操作（按 seq 递增）。
+    var pendingOps: [EngineOp] = []
+    var engineSeq: UInt64 = 0
+    /// 失焦/取消递增：旧时代的结果一律丢弃，绝不写进新会话。
+    var engineEpoch: UInt64 = 0
+    var engineLost = false
+    var engineLostAt: TimeInterval = 0
+    var lastRebuildAt: TimeInterval = 0
+    var lastProbeAt: TimeInterval = 0
+    /// 双拼方案名（最近一次引擎响应；空 = 全拼）：决定 ';' 是否走组词/解码。
+    var shuangpinScheme = ""
     var current: Comp?
     // 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改）。
     //
@@ -139,62 +152,21 @@ final class ChaosetController: IMKInputController {
     // MARK: - 候选上屏与联想协调
 
     func commit(index: Int, client: (any IMKTextInput)?) {
-        // 越界直接返回（调用方应已按候选数判定；这里是最后一道防线）。
-        guard let cur = current, index >= 0, index < cur.candidates.count else { return }
-        // 渐进上屏（2026-10-29）：SelectPrefix 只消耗候选音节对应的拼音
-        // 前缀——打 jintian'wo'chi… 选「今天」后剩余 wo'chi… 继续组词
-        // （2026-10-28 用户反馈「选一个候选就清空整个拼音」不合适，
-        // 渐进拼句才是吸纳用户习惯的主途径）。
-        if let comp = engine.selectPrefix(index: index), !comp.committedText.isEmpty {
-            let assocSylls = cur.candidates[index].syllables
-                .split(separator: "'").map(String.init)
-            // 已确认段并入预编辑，**不立即写文档**（见 confirmedText 注释）：
-            //   还剩拼音 → 与逐键输入同一原语，单步 setMarkedText 刷新；
-            //   整串耗尽 → 整条组词一次 insertText 落盘（与整句上屏同一收尾，
-            //   同为「替换 marked 区」这一全 App 兼容操作）。
-            confirmedText += comp.committedText
-            if comp.input.isEmpty {
-                current = nil
-                client?.insertText(
-                    confirmedText,
-                    replacementRange: NSRange(location: NSNotFound, length: 0)
-                )
-                confirmedText = ""
-                refresh(client)
-                // 剩余拼音耗尽 = 上屏收尾，与整句上屏同一收尾语义：进入联想。
-                // 2026-10-29 三端一致性审查：Windows/Linux 壳均在剩余耗尽后
-                // 进入联想。还剩拼音时继续组词，不进入联想。
-                enterAssociate(sylls: assocSylls, client: client)
-            } else {
-                current = Comp(input: comp.input, preedit: comp.preedit,
-                               candidates: comp.candidates,
-                               page: comp.page, pageCount: comp.pageCount)
-                refresh(client)
-            }
+        // 异步管线（issue #149）：选词只入队，结果回来时按渐进上屏语义应用；
+        // 失败用壳侧已显示候选文本兜底（见 ChaosetControllerAsync.handleEngineFailure）。
+        let count = current?.candidates.count ?? 0
+        if index >= 0, index < count, let cur = current {
+            let pick = cur.candidates[index]
+            submitSelectPrefix(index: index, text: pick.text,
+                               syllables: pick.syllables.split(separator: "'").map(String.init))
+        } else if index >= 0, !pendingOps.isEmpty {
+            // 候选列表尚未追上按键（乐观窗口）：按下标入队，由引擎按完整输入解析；
+            // 绝不让数字/空格漏进文档。
+            submitSelectPrefix(index: index, text: "", syllables: [])
+        } else {
             return
         }
-        // daemon 不可达（selectPrefix 返回 nil）：绝不能静默失败（键被消费、
-        // 文字没进文档 = 丢字）。退化为整句上屏，保证用户输入不丢失。
-        // **退化文本优先用壳侧已有的候选中文**（本次点击选中的那个词），而不是
-        // cur.input 拼音串——daemon 挂了还上屏 "nihao" 是错误结果；候选列表来自
-        // 上一次成功响应，是本机可靠数据。只有候选异常缺失才退回拼音串。
-        // 已确认段随本次落盘一起收尾（缓冲必须清空，避免串进下一轮组词）。
-        let fallback = cur.candidates[index].text
-        // 若 selectPrefix 因读超时返回 nil，daemon 可能已消费首段并切到剩余拼音；
-        // 再发 select(index) 会误上屏第二段候选，直接用本机候选文本并清空组词。
-        let hadReadTimeout = engine.lastFailureWasReadTimeout
-        let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)
-        let committed = confirmedText + picked
-        if hadReadTimeout { _ = engine.resetComposition() }
-        confirmedText = ""
-        current = nil
-        client?.insertText(
-            committed,
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
         refresh(client)
-        // 联想：选词上屏后候选窗继续展示续接词组（用户可直接数字键连选）
-        enterAssociate(sylls: cur.candidates[index].syllables.split(separator: "'").map(String.init), client: client)
     }
 
     // MARK: - 候选窗右键删除学习记录
@@ -208,35 +180,23 @@ final class ChaosetController: IMKInputController {
     ///   - 删除成功后用当前剩余拼音重新组词刷新候选（daemon 不缓存候选列表）。
     private func deleteCandidate(index: Int, client: (any IMKTextInput)?) {
         guard let cur = current, index >= 0, index < cur.candidates.count else { return }
-        let pick = cur.candidates[index]
-        let sylls = pick.syllables.split(separator: "'").map(String.init)
-        guard let deleted = engine.userDelete(word: pick.text, syllables: sylls) else {
-            showToast("删除失败：daemon 不可达", client: client)
-            return
-        }
-        guard deleted else {
-            showToast("未找到该词的学习记录", client: client)
-            return
-        }
-        recompose(client)
+        // 异步管线（issue #149）：删除只入队；成功后按剩余拼音重建刷新候选
+        // （见 ChaosetControllerAsync 的 userDelete 应用分支）。
+        submitUserDelete(cur.candidates[index], associate: false, aux: "")
     }
 
     /// 删除学习记录后重新组词：daemon 不缓存候选列表，reset 后重放当前剩余
     /// 拼音即可拿到最新候选。已确认段 confirmedText 是壳侧状态，刷新不影响它。
-    private func recompose(_ client: (any IMKTextInput)?) {
-        guard let cur = current else {
-            refresh(client)
-            return
-        }
-        let raw = cur.input
-        _ = engine.resetComposition()
+    func recompose(_ client: (any IMKTextInput)?) {
+        let raw = optimisticInput()
         if raw.isEmpty {
             current = nil
+            resetEnginePipeline(keepLearning: true)
         } else {
-            // rebuild + base 传空串：reset 也可能因超时未真正生效（daemon 会话还在），
-            // 整串重放必须显式「先置为空再输入 raw」才能幂等。普通按键不走 rebuild，
-            // 否则 daemon 每键重建会清掉双拼暂存键（见 EngineClient.input）。
-            current = engine.input(raw, halfWidth: halfWidth, base: "", rebuild: true)
+            // 整串重建（base 空）：reset 也可能因超时未真正生效，必须显式先置空
+            // 再输入 raw 才能幂等。普通按键不走 rebuild（会清掉双拼暂存键）。
+            resetEnginePipeline(keepLearning: true)
+            submitRebuild(raw)
         }
         refresh(client)
     }
@@ -244,22 +204,9 @@ final class ChaosetController: IMKInputController {
     /// 联想态右键删除：删除学习记录后按当前联想来源音节重新查询续接词组；
     /// 删空则收起联想面板（不把别的词硬塞给用户）。
     private func deleteAssociateCandidate(_ pick: Candidate, client: (any IMKTextInput)?) {
-        let sylls = pick.syllables.split(separator: "'").map(String.init)
-        guard let deleted = engine.userDelete(word: pick.text, syllables: sylls) else {
-            showToast("删除失败：daemon 不可达", client: client)
-            return
-        }
-        guard deleted else {
-            showToast("未找到该词的学习记录", client: client)
-            return
-        }
-        let source = associateSylls
-        associateCandidates = nil
-        associatePage = 0
-        if !source.isEmpty, let comp = engine.associate(sylls: source), !comp.candidates.isEmpty {
-            associateCandidates = comp.candidates
-        }
-        refresh(client)
+        // 异步管线：删除只入队；成功后按同一联想来源音节重查续接词组
+        // （见 ChaosetControllerAsync 的 userDelete 应用分支）。
+        submitUserDelete(pick, associate: true, aux: associateSylls.joined(separator: "'"))
     }
 
     // MARK: - 联想模式
@@ -269,12 +216,9 @@ final class ChaosetController: IMKInputController {
 
     /// 进入联想模式：按上屏词音节查续接词组并展示（无候选则不进入）。
     func enterAssociate(sylls: [String], client: (any IMKTextInput)?) {
-        guard AssociateSetting.enabled else { return }
-        guard let comp = engine.associate(sylls: sylls), !comp.candidates.isEmpty else { return }
-        associateCandidates = comp.candidates
-        associateSylls = sylls
-        associatePage = 0
-        refresh(client)
+        guard AssociateSetting.enabled, !sylls.isEmpty else { return }
+        // 异步管线：联想词只入队；结果回来时再展示（失败保留原面板，不误关）。
+        submitAssociate(sylls: sylls)
     }
 
     func exitAssociate() {
@@ -309,14 +253,9 @@ final class ChaosetController: IMKInputController {
             // index 是**当前页切片**内的序号（视图按页渲染），查全局列表
             // 会错选其它页的同位词
             guard let self, index < slice.count, let client = self.client() else { return }
-            let pick = slice[index]
-            if let committed = self.engine.associateSelect(word: pick.text, sylls: pick.syllables.split(separator: "'").map(String.init)) {
-                client.insertText(
-                    committed,
-                    replacementRange: NSRange(location: NSNotFound, length: 0)
-                )
-                self.enterAssociate(sylls: pick.syllables.split(separator: "'").map(String.init), client: client)
-            }
+            // 异步管线：联想选词只入队，结果回来时上屏并继续联想。
+            self.submitAssociateSelect(slice[index])
+            self.refresh(client)
         }
         // 折叠区点击翻页（与翻页键同一逻辑）
         CandidatePanelController.onPageDown = { [weak self] in
@@ -380,7 +319,9 @@ final class ChaosetController: IMKInputController {
         // marked 区，整条组词结束才落盘。壳对文档只做两类操作——
         // setMarkedText 更新（与逐键输入同原语）与 insertText 终态落盘
         // （与整句上屏同原语），不存在「组词中写正文」这一易碎操作。
-        let marked = confirmedText + (current?.preedit ?? "")
+        // 预编辑 = 已确认段 + 乐观组词态（最后一次已应用 Comp + 未应用输入/退格）：
+        // 按键必须立即显示，不能等引擎结果回来。
+        let marked = confirmedText + (optimisticComp()?.preedit ?? "")
         if marked.isEmpty {
             // 组词结束：收掉客户端里的标记区（in-place 预编辑）。
             clearMarkedText(client)
@@ -393,10 +334,14 @@ final class ChaosetController: IMKInputController {
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
         }
+        // 候选来自最后一次已应用结果；结果未回来（pending）时保持面板原样
+        // ——慢/失败绝不关闭候选窗（issue #149 用户要求）。
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
         if !hasCandidates {
-            exitAssociate()
-            candidateWindow?.hide()
+            if pendingOps.isEmpty {
+                exitAssociate()
+                candidateWindow?.hide()
+            }
             return
         }
         // 原生候选窗优先（壳内 AppKit 自绘）；失败回退 IMKCandidates
@@ -443,13 +388,14 @@ final class ChaosetController: IMKInputController {
         // 点击折叠区 → 翻下一页（与 = / ] 键等效；daemon 对边界页钳制）
         CandidatePanelController.onPageDown = { [weak self] in
             guard let self, let client = self.client() else { return }
-            self.current = self.engine.nextPage()
+            // 异步管线：翻页只入队（daemon 对边界页钳制），失败保持当前页不动。
+            self.submitPage(next: true)
             self.refresh(client)
         }
         // 末页折叠区箭头变 ⌃：点击翻上一页（与 - / [ 键等效）
         CandidatePanelController.onPageUp = { [weak self] in
             guard let self, let client = self.client() else { return }
-            self.current = self.engine.prevPage()
+            self.submitPage(next: false)
             self.refresh(client)
         }
         // 候选栏齿轮 → Slint 统一设置中心（微信输入法交互参考）
@@ -570,6 +516,9 @@ final class ChaosetController: IMKInputController {
         // 这里不调 daemon（reset 只请求 daemon 重置会话，代价一次 IPC）；
         // 直接丢弃本地状态即可——daemon 侧会话按连接维护，新连接本就是空的。
         // 已确认段缓冲同样不得带入：此时写入会插进**新的**输入上下文。
+        // 异步管线的连接是长驻的（不再每次新建连接）：上一上下文残留的组词
+        // 会话必须显式复位，否则新上下文首键会带着旧 preedit 去组词。
+        resetEnginePipeline(keepLearning: false)
         current = nil
         confirmedText = ""
         exitAssociate()
@@ -627,7 +576,7 @@ final class ChaosetController: IMKInputController {
     /// 联想退出、面板与提示收起）；没有待收尾的状态时什么都不做。客户端取最近一次
     /// 按键事件带来的（焦点通知不是 IMK 回调，不向 IMK 重新要 client）。
     func abandonSessionOnFocusLoss() {
-        // engine.reset() 返回的是空 Comp 而非 nil，按「有无待收尾内容」判，不看 nil。
+        // 组词态与联想态都可能是收尾对象：按本地状态判，不看引擎返回值。
         guard current?.input.isEmpty == false || associateCandidates != nil || !confirmedText.isEmpty else { return }
         endSession(client: lastClient)
         // 候选与输入一并清掉：客户端里的 marked 区也要收掉（走 clearMarkedText 的
@@ -638,11 +587,9 @@ final class ChaosetController: IMKInputController {
     /// 会话结束的公共收尾（commitComposition / 焦点离开共用）。
     private func endSession(client: (any IMKTextInput)?) {
         flushConfirmed(client)
-        if current?.input.isEmpty == false {
-            current = engine.reset()
-        } else {
-            current = nil
-        }
+        // 异步管线：作废在飞结果（纪元递增）并让引擎重置会话；不等待。
+        resetEnginePipeline(keepLearning: false)
+        current = nil
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()
@@ -652,14 +599,11 @@ final class ChaosetController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         // 切换输入法或失去焦点时：已确认段先落盘（同一上下文内允许最后一次
         // 插入；旧实现里这些段早已在文档，净效果一致），剩余拼音丢弃。
-        // 若无未决组词，坚决不发生任何阻塞性 IPC，保证 WindowServer 与系统
+        // 异步管线：只入队 reset，绝不等待 daemon —— 保证 WindowServer 与系统
         // 输入法切换 HUD 丝滑无卡顿。
         flushConfirmed(self.client())
-        if current?.input.isEmpty == false {
-            current = engine.reset()
-        } else {
-            current = nil
-        }
+        resetEnginePipeline(keepLearning: false)
+        current = nil
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()
