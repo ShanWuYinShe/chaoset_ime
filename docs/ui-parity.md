@@ -445,6 +445,12 @@ Windows 安装目录、Linux `/usr/bin/`；缺少设置中心的打包会直接�
   macOS `DaemonTransport` 用 `recv` 的 `EAGAIN/EWOULDBLOCK` 区分超时与 EOF、Linux
   `UnixTransport::lastReadTimedOut` 同口径（三端 `off == 0` 判据）。写超时、对端
   关闭、帧体读到一半才超时仍必须断连（帧无法再对齐）；连续读超时超 2 次也断连重整。
+- **退格/翻页失败时不得丢键、不得误删、不得在失败路径上强上屏**：退格类请求失败要保留
+  组词与按键（放行给宿主会误删文档；把 `current` 置空 + `flushConfirmed` 会在失败时把
+  已确认段写了出去），下一次 `input` 带 base 重放修正 daemon 状态——macOS `KeyRouter` 的
+  `guard let comp = engine.backspace…else`、Linux `handleBackspace` 的 `!comp.ok` 分支；
+  翻页失败原样放行（`passThrough`），方向键翻页在组词态失败则保持不动。Windows 走失步态
+  `backspaceLocally`。由 `checkuiparity`「超时韧性」组断言。
 - **读超时后不得原样重放增量 `input`**：daemon 可能已经处理过那次请求（只是响应迟到），
   原样重发会把同一段字符追加两次（预编辑 `aa`、上屏错字）。三端都用 `base` 做幂等重放
   ——daemon 先把引擎输入串整体置为 `base` 再追加 `text`，与逐键输入同构：macOS

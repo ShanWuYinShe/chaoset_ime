@@ -205,14 +205,7 @@ public:
                     hideLookupTable();
                     return true;
                 }
-                chaoset::Comp comp = callComp([&] { return daemon_.session().backspaceWord(); });
-                if (comp.input.empty() && !confirmed_.empty()) {
-                    commit(confirmed_);
-                    sessionResetComposition();
-                    return true;
-                }
-                refresh(std::move(comp));
-                return true;
+                return handleBackspace(callComp([&] { return daemon_.session().backspaceWord(); }));
             }
             if ((state & IBUS_CONTROL_MASK) != 0 && isComposing() && keyval == 'u') {
                 confirmed_.clear();
@@ -289,14 +282,7 @@ public:
                 hideLookupTable();
                 return true;
             }
-            chaoset::Comp comp = callComp([&] { return daemon_.session().backspace(); });
-            if (comp.input.empty() && !confirmed_.empty()) {
-                commit(confirmed_);
-                sessionResetComposition();
-                return true;
-            }
-            refresh(std::move(comp));
-            return true;
+            return handleBackspace(callComp([&] { return daemon_.session().backspace(); }));
         }
         if (keyval == kKeysymEscape) {
             if (isComposing() || !confirmed_.empty()) {
@@ -463,6 +449,20 @@ private:
             }
             return false;
         }
+        return true;
+    }
+
+    /// 组词中的退格类操作收尾。daemon 失败（超时/不可达）时**保留组词与按键**：
+    /// 退格绝不能穿透到宿主误删文档，也绝不在失败路径上把已确认段强行上屏；
+    /// 下一次 input 带 base 重放会修正 daemon 侧状态。成功则按「删空落盘」语义收尾。
+    bool handleBackspace(chaoset::Comp comp) {
+        if (!comp.ok) return true;
+        if (comp.input.empty() && !confirmed_.empty()) {
+            commit(confirmed_);
+            sessionResetComposition();
+            return true;
+        }
+        refresh(std::move(comp));
         return true;
     }
 

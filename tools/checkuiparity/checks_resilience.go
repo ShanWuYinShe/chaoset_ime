@@ -218,6 +218,30 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",
 		"session_.input(text, halfWidth, base.c_str())")
 
+	// a8) **退格/翻页失败不得吞键、不得在失败路径上强上屏**。退格键若在组词中失败
+	// 就直接放行给宿主，会误删文档内容；而旧实现反过来「吞键 + flushConfirmed 强上屏」，
+	// 失败时把已确认段写了出去。现行契约：退格失败保留组词与按键（下一次 input 带 base
+	// 重放修正状态）、翻页失败原样放行（翻页键在宿主里无破坏性）。
+	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift",
+		"guard let comp = engine.backspaceWord() else {",
+		"guard let comp = engine.backspace() else {",
+		"guard let comp = isPageUp ? engine.prevPage() : engine.nextPage() else {")
+	// 失败分支必须只 refresh/放行，不能 flushConfirmed、不能把 current 置空。
+	for _, bad := range []string{"current = engine.backspace()", "current = engine.backspaceWord()"} {
+		if strings.Contains(stripCppComments(mustRead(fsys, "shims/macos/src/KeyRouter.swift")), bad) {
+			fail("%s 出现 %q——退格调用必须 guard 失败分支（失败时保留组词与按键）", "shims/macos/src/KeyRouter.swift", bad)
+		}
+	}
+	// Linux：同一个收尾辅助函数里，失败必须直接返回（保留组词与按键）。
+	linuxMain := stripCppComments(mustRead(fsys, linuxEngine))
+	if i := strings.Index(linuxMain, "bool handleBackspace(chaoset::Comp comp) {"); i >= 0 {
+		if !strings.Contains(linuxMain[i:i+200], "if (!comp.ok) return true;") {
+			fail("%s 的 handleBackspace 失败分支没有保留组词/按键——退格不得穿透误删、也不得强上屏", linuxEngine)
+		}
+	} else {
+		fail("%s 找不到 handleBackspace 收尾函数", linuxEngine)
+	}
+
 	// UT 把关：脚本化传输模拟「读超时 → 迟到响应」，六条断言必须存在。
 	checkContains(fsys, problems, group, winCoreTest,
 		"testReadTimeoutKeepsConnection", "ScriptedTransport",
