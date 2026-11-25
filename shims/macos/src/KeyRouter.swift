@@ -256,6 +256,11 @@ extension ChaosetController {
                             enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
                             return true
                         }
+                        // daemon 不可达：退化为直接上屏候选文本（壳侧上一次响应的可靠数据），
+                        // 不丢掉用户这次选择；学习记录由下一次正常选词补记。
+                        client?.insertText(list[pick].text, replacementRange: NSRange(location: NSNotFound, length: 0))
+                        enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
+                        return true
                     }
                 }
                 exitAssociate()
@@ -285,6 +290,10 @@ extension ChaosetController {
                         enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
                         return true
                     }
+                    // 同空格分支：daemon 不可达时退化为上屏候选文本，不丢用户选择。
+                    client?.insertText(list[pick].text, replacementRange: NSRange(location: NSNotFound, length: 0))
+                    exitAssociate()
+                    return true
                 }
                 // 越界序号或上屏失败：收起联想，数字落到正常流程进文档。
                 // 此前越界序号不匹配任何分支，落到 passThrough 只清组词不清

@@ -864,6 +864,10 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"        let fallback = cur.candidates[index].text",
 		"        let fallback = cur.input",
 		"let fallback = cur.candidates[index].text")
+	expect("macOS 联想选词失败静默", "shims/macos/src/KeyRouter.swift",
+		"                    client?.insertText(list[pick].text, replacementRange:",
+		"                    // 退化上屏（临时删）",
+		"联想选词失败退化分支")
 	expect("Linux 选词失败又放行按键", linuxEngine,
 		"        if (!daemon_.session().selectPrefix(idx, &rest)) return true;",
 		"        if (!daemon_.session().selectPrefix(idx, &rest)) return false;",
