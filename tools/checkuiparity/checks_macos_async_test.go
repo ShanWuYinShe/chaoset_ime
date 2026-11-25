@@ -93,6 +93,10 @@ func TestCheckMacOSAsyncPipeline(t *testing.T) {
 		"            if pendingOps.isEmpty {\n                exitAssociate()",
 		"            if true {\n                exitAssociate()",
 		"关闭候选窗限制")
+	expect("⌥⌫ 不再本地回放", macAsyncController,
+		"        case .backspaceWord:\n                backspaceLocally(&disp, &pending, shuangpin: shuangpin, bySyllable: true)",
+		"        case .backspaceWord:\n                break",
+		"backspaceLocally")
 	expect("文档删掉异步契约", uiParityDoc,
 		"不关闭候选窗", "关闭候选窗", "不关闭候选窗")
 }

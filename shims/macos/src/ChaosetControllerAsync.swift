@@ -12,27 +12,64 @@ extension ChaosetController {
     // MARK: - 乐观组词态
 
     /// 最后一次已应用组词态 + 未应用输入/退格的回放。
-    /// 只回放会改变预编辑的操作：翻页/选词/标点在结果回来前不改变预编辑；
-    /// 按音节退格的边界只有引擎知道，乐观窗口保持不动（等结果）。
+    /// 只回放会改变预编辑的操作：翻页/选词/标点在结果回来前不改变预编辑。
+    /// 按音节退格同样本地回放（与 Windows/Linux 一致，见 backspaceLocally）。
     func optimisticComp() -> Comp? {
         guard !pendingOps.isEmpty else { return current }
         var disp = current ?? Comp(input: "", preedit: "", candidates: [], page: 0, pageCount: 1)
-        var text = disp.input
+        var pending = ""
+        let shuangpin = !shuangpinScheme.isEmpty
         for op in pendingOps {
             switch op.kind {
             case .input:
-                text += op.text
+                pending += op.text
             case .backspace:
-                if !text.isEmpty { text.removeLast() }
+                backspaceLocally(&disp, &pending, shuangpin: shuangpin, bySyllable: false)
             case .backspaceWord:
-                break
+                backspaceLocally(&disp, &pending, shuangpin: shuangpin, bySyllable: true)
             default:
                 break
             }
         }
-        disp.input = text
-        disp.preedit = text
+        // 引擎可能不产生与原始输入逐字符一致的 preedit（会插音节分隔符）；
+        // 未应用按键直接拼在已应用 preedit 末尾，仅用于乐观显示。
+        disp.preedit += pending
         return disp
+    }
+
+    /// 本地回退一格（不依赖引擎，乐观预编辑回放用）。与 Windows
+    /// tip_desync.cpp / Linux async_pipeline.cpp 的 backspaceLocally 同语义：
+    /// pending 非空时退最近一键；否则退 comp.input 末尾——全拼逐字符
+    ///（bySyllable 时按预编辑末段整段），双拼恒按末段（已解码音节）。
+    /// comp.preedit 同步裁掉对应部分，仅用于乐观显示；结果回来仍以引擎为准。
+    private func backspaceLocally(_ comp: inout Comp, _ pending: inout String,
+                                  shuangpin: Bool, bySyllable: Bool) {
+        if !pending.isEmpty {
+            pending.removeLast()
+            return
+        }
+        if comp.input.isEmpty { return }
+        if !shuangpin && !bySyllable {
+            let removedSeparator = comp.input.hasSuffix("'")
+            comp.input.removeLast()
+            if comp.preedit.isEmpty { return }
+            comp.preedit.removeLast()
+            if comp.input.isEmpty {
+                comp.preedit = ""
+                return
+            }
+            // 末段被删空：连同引擎补的分隔符一起去掉（用户自己敲的分隔符保留）。
+            if !removedSeparator, comp.preedit.count >= 2, comp.preedit.hasSuffix("'"),
+               !comp.input.hasSuffix("'") {
+                comp.preedit.removeLast()
+            }
+            return
+        }
+        let sep = comp.preedit.lastIndex(of: "'")
+        let seg = sep == nil ? comp.preedit : String(comp.preedit[comp.preedit.index(after: sep!)...])
+        if seg.isEmpty { return }
+        if comp.input.count >= seg.count { comp.input.removeLast(seg.count) }
+        comp.preedit = sep == nil ? "" : String(comp.preedit[..<sep!])
     }
 
     func optimisticInput() -> String { optimisticComp()?.input ?? "" }

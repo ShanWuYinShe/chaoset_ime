@@ -84,9 +84,16 @@ func checkMacOSAsyncPipeline(fsys fs.FS, problems *[]string) {
 
 	// c) 按键只入队 + 乐观预编辑；结果按 seq 顺序应用，且**失败先判、不弹出乐观项**。
 	checkContains(fsys, problems, group, macAsyncController,
-		"func optimisticComp()", "case .input:", "case .backspace:", "text += op.text",
+		"func optimisticComp()", "case .input:", "case .backspace:",
+		"pending += op.text",
 		"while let first = pendingOps.first, first.seq <= r.op.seq",
 		"if !r.ok {", "handleEngineFailure(r)")
+	// 按音节退格（⌥⌫）必须与 Windows/Linux 一样本地回放（预编辑立即变化），
+	// 否则三端在结果回来前的显示行为不一致。
+	checkContains(fsys, problems, group, macAsyncController,
+		"func backspaceLocally(",
+		"case .backspaceWord:",
+		"backspaceLocally(&disp, &pending, shuangpin: shuangpin, bySyllable: true)")
 	ctrl := stripCppComments(read(macAsyncController))
 	iFail := strings.Index(ctrl, "if !r.ok {")
 	iPop := strings.Index(ctrl, "while let first = pendingOps.first, first.seq <= r.op.seq")
@@ -135,7 +142,9 @@ func checkMacOSAsyncPipeline(fsys fs.FS, problems *[]string) {
 		"settleEngineForTests()", "failureInjectionForTests",
 		"异步：结果未回投时按键立即出现在乐观预编辑里",
 		"异步：快打后空格按完整输入选词（不是原始拼音）",
-		"daemon 失败：候选窗不关闭")
+		"daemon 失败：候选窗不关闭",
+		"⌥⌫ 乐观回放：结果未回投时预编辑立即退掉末音节",
+		"⌥⌫ 乐观回放：用户自己敲的分隔符保留在输入串里")
 	checkContains(fsys, problems, group, macKeyRunScript, "src/*.swift")
 
 	// h) 文档记录异步契约。
