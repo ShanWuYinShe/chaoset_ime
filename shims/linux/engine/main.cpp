@@ -1,20 +1,14 @@
-
-// Linux 原生 ibus 引擎（C++/libibus）：只做 IBus/按键/预编辑/候选表 UI，
-// 拼音与联想算法全部通过 Unix socket 调用 Go chaosetd。与 macOS/Windows 壳同构。
+// Linux 原生 ibus 引擎入口：选项解析、ibus 胶水、按键分发与生命周期。
+// 状态机声明见 engine_state.hpp；按键实现见 engine_state.cpp；异步管线见 async_pipeline.cpp。
 #include <ibus.h>
 #include <glib.h>
 
-#include <algorithm>
-#include <cstdio>
-#include <cstring>
 #include <string>
-#include <utility>
-#include <vector>
 
-#include "core.hpp"
-#include "daemon.hpp"
+#include "engine_state.hpp"
 
-namespace {
+namespace ibus_shell {
+EngineOptions gOptions;
 
 constexpr guint kPageSize = 6;
 constexpr guint kKeysymShiftLeft = 0xFFE1;
@@ -25,10 +19,10 @@ constexpr guint kKeysymReturn = 0xFF0D;
 constexpr guint kKeysymEscape = 0xFF1B;
 constexpr guint kKeysymPageUp = 0xFF55;
 constexpr guint kKeysymPageDown = 0xFF56;
-// 方向键（issue#2）：候选 lookup 显示时移动页内预选，空格确认 cursor 候选。
 constexpr guint kKeysymLeft = 0xFF51, kKeysymUp = 0xFF52, kKeysymRight = 0xFF53, kKeysymDown = 0xFF54;
 constexpr guint kKeysymKP1 = 0xFFB1;
 constexpr guint kKeysymKP9 = 0xFFB9;
+
 
 void logLine(const std::string& text) {
     std::fprintf(stderr, "chaoset-engine: %s\n", text.c_str());
@@ -53,13 +47,7 @@ bool isPunctKey(guint keyval) {
     }
 }
 
-struct ShiftTracker {
-    int shiftDown = 0;
-    bool sinceShift = false;
-
-    void reset() { shiftDown = 0; sinceShift = false; }
-
-    bool feed(guint keyval, guint state) {
+bool ShiftTracker::feed(guint keyval, guint state) {
         if (isShiftKeyval(keyval)) {
             if ((state & IBUS_RELEASE_MASK) != 0) {
                 if (shiftDown == 0) return false;
@@ -75,31 +63,6 @@ struct ShiftTracker {
         sinceShift = true;
         return false;
     }
-};
-
-struct EngineOptions {
-    std::vector<std::string> dicts;
-    std::string importedDict;
-    std::string userdict;
-    std::string socket;
-    std::string config;
-    std::string daemonPath;
-    std::string log;
-    bool fuzzy = false;
-    bool traditional = false;
-    std::string shuangpin;
-    bool associate = true;
-    bool associateFlagSet = false;
-};
-
-EngineOptions gOptions;
-
-struct UserConfig {
-    bool fuzzy = false;
-    bool traditional = false;
-    std::string shuangpin;
-    bool associate = true;
-};
 
 bool readUserConfig(const std::string& path, UserConfig* out) {
     if (path.empty()) return true;
@@ -151,32 +114,58 @@ std::vector<std::string> splitSyllables(const std::string& s) {
     return out;
 }
 
-class IbusEngineState {
-public:
-    explicit IbusEngineState(EngineOptions options, IBusEngine* engine)
+IbusEngineState::IbusEngineState(EngineOptions options, IBusEngine* engine)
         : engine_(engine),
-          daemon_(makeDaemonOptions(std::move(options))),
-          configPath_(daemon_.paths().config),
+          options_(std::move(options)),
+          configPath_(options_.config),
+          wake_(std::make_shared<ResultWake>()),
           assocOn_(gOptions.associate),
           assocFlagSet_(gOptions.associateFlagSet),
           dpScheme_(knownDpScheme(gOptions.shuangpin) ? gOptions.shuangpin : std::string()) {
+        wake_->state.store(this);
         UserConfig cfg;
         if (readUserConfig(configPath_, &cfg)) {
             if (!assocFlagSet_) assocOn_ = cfg.associate;
         }
     }
 
-    ~IbusEngineState() {
-        if (toastId_ != 0) { g_source_remove(toastId_); toastId_ = 0; }
+IbusEngineState::~IbusEngineState() {
+        if (toastId_ != 0) {
+            g_source_remove(toastId_);
+            toastId_ = 0;
+        }
+        wake_->state.store(nullptr);
+        if (pump_ != nullptr) {
+            pump_->stop();
+            if (pump_->joinOk()) {
+                pump_.reset();
+            } else {
+                pump_.release();  // 线程未能退出：故意泄漏，绝不让线程引用已销毁对象
+            }
+        }
     }
 
-    bool processKeyEvent(guint keyval, guint keycode, guint state) {
+void IbusEngineState::drainResults() {
+        if (pump_ == nullptr) return;
+        EngineResult result;
+        while (pump_->popResult(&result)) {
+            if (result.op.epoch != epoch_) continue;  // 过期（失焦/取消后的结果）
+            if (result.op.kind == EngineOpKind::kProbe) {
+                if (result.ok && engineLost_) scheduleRebuild();
+                continue;
+            }
+            applyResult(result);
+        }
+    }
+
+bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) {
         (void)keycode;
         if (shift_.feed(keyval, state)) {
             enMode_ = !enMode_;
             if (!confirmed_.empty()) commit(confirmed_);
             exitAssociate();
-            sessionResetComposition();
+            resetPipeline(false);
+            last_ = chaoset::Comp();
             hidePreedit();
             hideLookupTable();
             showToast(enMode_ ? "英文模式" : "中文模式");
@@ -188,7 +177,8 @@ public:
         if ((state & IBUS_MOD4_MASK) != 0) {
             if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 confirmed_.clear();
-                sessionResetComposition();
+                resetPipeline(false);
+                last_ = chaoset::Comp();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -200,16 +190,19 @@ public:
             if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 if ((state & (IBUS_CONTROL_MASK | IBUS_SHIFT_MASK)) != 0) {
                     confirmed_.clear();
-                    sessionResetComposition();
+                    resetPipeline(false);
+                    last_ = chaoset::Comp();
                     hidePreedit();
                     hideLookupTable();
                     return true;
                 }
-                return handleBackspace(callComp([&] { return daemon_.session().backspaceWord(); }));
+                backspaceWord();
+                return true;
             }
             if ((state & IBUS_CONTROL_MASK) != 0 && isComposing() && keyval == 'u') {
                 confirmed_.clear();
-                sessionResetComposition();
+                resetPipeline(false);
+                last_ = chaoset::Comp();
                 hidePreedit();
                 hideLookupTable();
                 return true;
@@ -256,40 +249,53 @@ public:
             exitAssociate();
         }
 
+        // 双拼 ';' 是引擎的组词/解码键：入队后立即乐观显示。
         if (!dpScheme_.empty() && keyval == ';' && (state & IBUS_SHIFT_MASK) == 0) {
-            chaoset::Comp comp = daemon_.inputWithRebuild(";", halfWidth_, last_.input);
-            if (!comp.committed.empty()) {
-                commit(confirmed_ + comp.committed);
-            } else {
-                refresh(std::move(comp));
+            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+                probeIfDown();
+                return false;
             }
+            submitInput(";");
+            renderOptimistic();
             return true;
         }
 
-        // 大小写字母都进组词：大写按原样保存（回车原样上屏），拼音匹配由
-        // 引擎按小写口径处理——用户不必为大写切输入法。
+        // 大小写字母都进组词：大写按原样保存（回车原样上屏），拼音匹配由引擎按
+        // 小写口径处理。按键只入队 + 乐观渲染，绝不等待 daemon。
         if ((keyval >= 'a' && keyval <= 'z') || (keyval >= 'A' && keyval <= 'Z')) {
-            const std::string text(1, static_cast<char>(keyval));
-            refresh(daemon_.inputWithRebuild(text, halfWidth_, last_.input));
+            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+                probeIfDown();
+                return false;  // daemon 不在且无本地组词：原样放行（fail-open）
+            }
+            submitInput(std::string(1, static_cast<char>(keyval)));
+            renderOptimistic();
             return true;
         }
         if (keyval == kKeysymBackspace || keyval == kKeysymDelete) {
             if (!isComposing()) return false;
             if ((state & IBUS_SHIFT_MASK) != 0) {
                 confirmed_.clear();
-                sessionResetComposition();
+                resetPipeline(false);
+                last_ = chaoset::Comp();
                 hidePreedit();
                 hideLookupTable();
                 return true;
             }
-            return handleBackspace(callComp([&] { return daemon_.session().backspace(); }));
+            EngineOp op;
+            op.kind = EngineOpKind::kBackspace;
+            op.halfWidth = halfWidth_;
+            submit(std::move(op));
+            renderOptimistic();
+            return true;
         }
         if (keyval == kKeysymEscape) {
             if (isComposing() || !confirmed_.empty()) {
                 confirmed_.clear();
-                sessionResetComposition();
+                selectedSylls_.clear();
+                resetPipeline(false);
                 hidePreedit();
                 hideLookupTable();
+                last_ = chaoset::Comp();
                 return true;
             }
             return false;
@@ -301,9 +307,9 @@ public:
         }
         if (keyval == kKeysymReturn) {
             if (isComposing() || !confirmed_.empty()) {
-                const std::string raw = confirmed_ + last_.input;
+                const std::string raw = confirmed_ + optimisticInput();
                 confirmed_.clear();
-                sessionResetComposition();
+                resetPipeline(false);
                 hidePreedit();
                 hideLookupTable();
                 commit(raw);
@@ -319,24 +325,22 @@ public:
                 return true;
             }
             if (!isComposing()) return false;
-            if (!last_.candidates.empty()) {
-                if (selectCandidate(lookupIndex_)) return true;
-                const std::string raw = last_.input;
-                const std::string conf = confirmed_;
-                confirmed_.clear();
-                sessionResetComposition();
-                hidePreedit();
-                hideLookupTable();
-                commit(conf + raw);
+            if (!last_.candidates.empty() && selectCandidate(lookupIndex_)) return true;
+            if (!pendingOps_.empty()) {
+                // 结果尚未应用（乐观窗口）：按页内第 0 项入队，由引擎对完整输入解析；
+                // 绝不把拼音当原始串顶屏。失败则保持组词并整串重建。
+                EngineOp op;
+                op.kind = EngineOpKind::kSelectPrefix;
+                op.index = 0;
+                submit(std::move(op));
                 return true;
             }
-            const std::string raw = last_.input;
-            const std::string conf = confirmed_;
+            const std::string raw = confirmed_ + optimisticInput();
             confirmed_.clear();
-            sessionResetComposition();
+            resetPipeline(false);
             hidePreedit();
             hideLookupTable();
-            commit(conf + raw);
+            commit(raw);
             return true;
         }
         if (isArrowKey(keyval) && isComposing() && !last_.candidates.empty()) {
@@ -349,60 +353,60 @@ public:
         }
         if (keyval == kKeysymPageUp || keyval == kKeysymPageDown) {
             if (!isComposing()) return false;
-            if (last_.candidates.empty()) {
+            if (last_.candidates.empty() && pendingOps_.empty()) {
                 flushConfirmedAndReset();
                 return false;
             }
-            chaoset::Comp comp = callComp([&] {
-                return keyval == kKeysymPageUp ? daemon_.session().prevPage()
-                                                : daemon_.session().nextPage();
-            });
-            refresh(std::move(comp));
+            submitPage(keyval == kKeysymPageDown);
             return true;
         }
         if (keyval == '-' || keyval == '=' || keyval == '[' || keyval == ']') {
-            if (isComposing() && !last_.candidates.empty()) {
-                chaoset::Comp comp = callComp([&] {
-                    return (keyval == '-' || keyval == '[') ? daemon_.session().prevPage()
-                                                            : daemon_.session().nextPage();
-                });
-                refresh(std::move(comp));
+            if (isComposing() && (!last_.candidates.empty() || !pendingOps_.empty())) {
+                submitPage(keyval == '=' || keyval == ']');
                 return true;
             }
             if (isPunctKey(keyval)) {
-                std::string text;
-                if (!daemon_.session().punct(std::string(1, static_cast<char>(keyval)), halfWidth_, &text)) return false;
-                commit(confirmed_ + text);
+                if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+                    probeIfDown();
+                    return false;
+                }
+                submitPunct(std::string(1, static_cast<char>(keyval)));
                 return true;
             }
             flushConfirmedAndReset();
             return false;
         }
         if (keyval == '\'' && isComposing()) {
-            refresh(daemon_.inputWithRebuild("'", halfWidth_, last_.input));
+            submitInput("'");
+            renderOptimistic();
             return true;
         }
         if (isPunctKey(keyval)) {
-            std::string text;
-            if (!daemon_.session().punct(std::string(1, static_cast<char>(keyval)), halfWidth_, &text)) return false;
-            commit(confirmed_ + text);
+            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+                probeIfDown();
+                return false;
+            }
+            submitPunct(std::string(1, static_cast<char>(keyval)));
             return true;
         }
         if (isComposing() || !confirmed_.empty()) flushConfirmedAndReset();
         return false;
     }
 
-    void focusIn() { shift_.reset(); }
-    void focusOut() {
+void IbusEngineState::focusIn() { shift_.reset(); }
+
+void IbusEngineState::focusOut() {
+        selectedSylls_.clear();
         if (!confirmed_.empty()) commit(confirmed_);
-        sessionReset();
+        sessionReset();  // 异步：作废在飞结果 + 入队 reset；主循环不等待 daemon
         shift_.reset();
         exitAssociate();
         hidePreedit();
         hideLookupTable();
         last_ = chaoset::Comp();
     }
-    void reset() {
+void IbusEngineState::reset() {
+        selectedSylls_.clear();
         if (!confirmed_.empty()) commit(confirmed_);
         sessionReset();
         exitAssociate();
@@ -410,20 +414,24 @@ public:
         hideLookupTable();
         last_ = chaoset::Comp();
     }
-    void pageUp() {
+
+void IbusEngineState::pageUp() {
         if (!assoc_.empty()) { flipAssociate(false); return; }
-        refresh(callComp([&] { return daemon_.session().prevPage(); }));
+        if (!isComposing()) return;
+        submitPage(false);
     }
-    void pageDown() {
+
+void IbusEngineState::pageDown() {
         if (!assoc_.empty()) { flipAssociate(true); return; }
-        refresh(callComp([&] { return daemon_.session().nextPage(); }));
+        if (!isComposing()) return;
+        submitPage(true);
     }
-    void candidateClicked(guint index) {
+
+void IbusEngineState::candidateClicked(guint index) {
         if (!selectCandidate(static_cast<int>(index)) && !assoc_.empty()) exitAssociate();
     }
 
-private:
-    static chaoset::Daemon::Options makeDaemonOptions(EngineOptions options) {
+chaoset::Daemon::Options makeDaemonOptions(EngineOptions options) {
         chaoset::Daemon::Options dopts;
         dopts.paths = chaoset::defaultLinuxPaths();
         if (!options.socket.empty()) dopts.paths.socket = options.socket;
@@ -441,67 +449,74 @@ private:
         return dopts;
     }
 
-    bool ensure() {
-        if (!daemon_.ensureReady()) {
-            if (!warnedIpc_) {
-                warnedIpc_ = true;
-                logLine("daemon 未就绪，按键先按英文透传；下次按键会重试");
-            }
-            return false;
-        }
-        return true;
+void IbusEngineState::ensurePump() {
+        if (pump_ != nullptr) return;
+        std::weak_ptr<ResultWake> weak = wake_;
+        pump_.reset(new EnginePump(makeDaemonOptions(options_), [weak] {
+            if (auto wake = weak.lock()) scheduleResultsIdle(wake);
+        }));
+        // 启动线程前在主循环线程做一次单次非阻塞探测：首个内容键通常已连接。
+        pump_->warmConnect();
+        pump_->start();
     }
 
-    /// 组词中的退格类操作收尾。daemon 失败（超时/不可达）时**保留组词与按键**：
-    /// 退格绝不能穿透到宿主误删文档，也绝不在失败路径上把已确认段强行上屏；
-    /// 下一次 input 带 base 重放会修正 daemon 侧状态。成功则按「删空落盘」语义收尾。
-    bool handleBackspace(chaoset::Comp comp) {
-        if (!comp.ok) return true;
-        if (comp.input.empty() && !confirmed_.empty()) {
-            commit(confirmed_);
-            sessionResetComposition();
-            return true;
-        }
-        refresh(std::move(comp));
-        return true;
+bool IbusEngineState::engineAvailable() {
+        ensurePump();
+        return pump_ != nullptr && pump_->connected();
     }
 
-    template <typename Fn>
-    chaoset::Comp callComp(Fn fn) {
-        if (!ensure()) return chaoset::Comp();
-        chaoset::Comp comp = fn();
-        if (!comp.ok) {
-            logLine("IPC 请求失败，已断开 daemon 连接");
-            return chaoset::Comp();
-        }
-        return comp;
+void IbusEngineState::sessionReset() { resetPipeline(true); }
+
+void IbusEngineState::resetComposition() { resetPipeline(false); }
+
+void IbusEngineState::sessionResetComposition() { resetComposition(); }
+
+void IbusEngineState::backspaceWord() {
+        EngineOp op;
+        op.kind = EngineOpKind::kBackspaceWord;
+        op.halfWidth = halfWidth_;
+        submit(std::move(op));
+        renderOptimistic();
     }
 
-    bool isComposing() const { return !last_.input.empty(); }
 
-    void sessionReset() {
-        if (ensure()) (void)daemon_.session().reset();
-        last_ = chaoset::Comp();
-    }
 
-    // 只丢弃当前组词、保留学习上下文（prev/history）。
-    // 「用户还会继续打字」的场景走这个（切中英、退格删空、Esc、全部删除、
-    // 顶屏、候选越界等）；reset 只留给会话真正结束（focusOut）的场景。
-    // 用 reset 会让引擎忘记刚上屏的字，后续候选失去 bigram 加成（2026-11-05）。
-    void sessionResetComposition() {
-        if (ensure()) (void)daemon_.session().resetComposition();
-        last_ = chaoset::Comp();
-    }
-    // cursor：页内预选序号（默认 0 = 新输入/翻页/选词后回到第一项）。
-    void refresh(chaoset::Comp comp, int cursor = 0) {
-        last_ = std::move(comp);
-        lookupIndex_ = cursor;
-        const std::string preedit = confirmed_ + last_.preedit;
-        updatePreedit(preedit, !preedit.empty());
-        updateLookupTable(last_);
-    }
 
-    void updatePreedit(const std::string& text, bool visible) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+bool IbusEngineState::isComposing() const { return !optimisticComp().input.empty(); }
+
+
+void IbusEngineState::updatePreedit(const std::string& text, bool visible) {
         if (engine_ == nullptr) return;
         if (!visible) { hidePreedit(); return; }
         IBusText* t = ibus_text_new_from_string(text.c_str());
@@ -512,23 +527,21 @@ private:
         // text 是 floating，update_preedit_text 会接管引用；不能再 unref。
     }
 
-    void hidePreedit() {
+void IbusEngineState::hidePreedit() {
         if (engine_ != nullptr) ibus_engine_hide_preedit_text(engine_);
     }
 
-    void updateLookupTable(const chaoset::Comp& comp) {
+void IbusEngineState::updateLookupTable(const chaoset::Comp& comp) {
         showLookup(comp.candidates, comp.page, comp.pageCount, lookupIndex_);
     }
 
-    void showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount, int cursor) {
+void IbusEngineState::showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount, int cursor) {
         if (engine_ == nullptr) return;
         if (cands.empty()) { hideLookupTable(); return; }
         if (cursor < 0) cursor = 0;
         if (cursor >= static_cast<int>(cands.size())) cursor = static_cast<int>(cands.size()) - 1;
         IBusLookupTable* table = ibus_lookup_table_new(kPageSize, cursor, TRUE, FALSE);
         for (std::size_t i = 0; i < cands.size(); ++i) {
-            // IBusText 是 floating；append 取得/沉没引用后不能再 unref，否则
-            // 表里留下悬垂指针，序列化时触发 IBUS_IS_SERIALIZABLE critical。
             IBusText* c = ibus_text_new_from_string(cands[i].text.c_str());
             ibus_lookup_table_append_candidate(table, c);
             char label[32];
@@ -541,14 +554,13 @@ private:
         (void)page;
         (void)pageCount;
         ibus_engine_update_lookup_table(engine_, table, TRUE);
-        // table 是 floating，_update_lookup_table 会接管引用。
     }
 
-    void hideLookupTable() {
+void IbusEngineState::hideLookupTable() {
         if (engine_ != nullptr) ibus_engine_hide_lookup_table(engine_);
     }
 
-    void commit(const std::string& text) {
+void IbusEngineState::commit(const std::string& text) {
         if (!text.empty() && engine_ != nullptr) {
             IBusText* t = ibus_text_new_from_string(text.c_str());
             if (t != nullptr) {
@@ -559,18 +571,20 @@ private:
         hidePreedit();
         hideLookupTable();
         confirmed_.clear();
+        selectedSylls_.clear();
         last_ = chaoset::Comp();
     }
 
-    void flushConfirmedAndReset() {
+void IbusEngineState::flushConfirmedAndReset() {
         if (!isComposing() && confirmed_.empty() && assoc_.empty()) return;
         if (!confirmed_.empty()) commit(confirmed_);
         else { hidePreedit(); hideLookupTable(); }
-        sessionResetComposition();
+        resetPipeline(false);
+        last_ = chaoset::Comp();
         exitAssociate();
     }
 
-    bool associateEnabled() {
+bool IbusEngineState::associateEnabled() {
         if (assocFlagSet_ || configPath_.empty()) return assocOn_;
         UserConfig cfg;
         if (!readUserConfig(configPath_, &cfg)) {
@@ -585,23 +599,20 @@ private:
         return assocOn_;
     }
 
-    void enterAssociate(const std::vector<std::string>& sylls) {
+void IbusEngineState::enterAssociate(const std::vector<std::string>& sylls) {
         if (!associateEnabled() || sylls.empty()) return;
-        chaoset::Comp comp;
-        if (!ensure() || !daemon_.session().associate(sylls, &comp)) return;
-        if (comp.candidates.empty()) return;
-        assoc_ = std::move(comp.candidates);
-        assocPage_ = 0;
-        lookupIndex_ = 0;
-        showAssociateTable();
+        EngineOp op;
+        op.kind = EngineOpKind::kAssociate;
+        op.sylls = sylls;
+        submit(std::move(op));
     }
 
-    void enterAssociateForPrev(const std::string& syllsOrWord) {
+void IbusEngineState::enterAssociateForPrev(const std::string& syllsOrWord) {
         if (syllsOrWord.empty() || !associateEnabled()) return;
         enterAssociate(splitSyllables(syllsOrWord));
     }
 
-    void showAssociateTable() {
+void IbusEngineState::showAssociateTable() {
         const int total = static_cast<int>(assoc_.size());
         if (total == 0) { hideLookupTable(); return; }
         int pageCount = (total + kPageSize - 1) / kPageSize;
@@ -613,7 +624,7 @@ private:
         showLookup(page, assocPage_, pageCount, lookupIndex_);
     }
 
-    bool flipAssociate(bool next) {
+bool IbusEngineState::flipAssociate(bool next) {
         const int per = static_cast<int>(kPageSize);
         const int pageCount = (static_cast<int>(assoc_.size()) + per - 1) / per;
         if (next && assocPage_ + 1 < pageCount) ++assocPage_;
@@ -623,12 +634,15 @@ private:
         return true;
     }
 
-    // 方向键（用户反馈）：上/下翻页、左/右页内预选移动；页边界保持不动（仍消费）。
-    void moveLookup(int delta) {
+void IbusEngineState::moveLookup(int delta) {
         if (!assoc_.empty()) {
             const int total = static_cast<int>(assoc_.size());
-            const int count = std::min(static_cast<int>(kPageSize), total - assocPage_ * static_cast<int>(kPageSize));
-            if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < count) { lookupIndex_ += delta; showAssociateTable(); }
+            const int count = std::min(static_cast<int>(kPageSize),
+                                       total - assocPage_ * static_cast<int>(kPageSize));
+            if (lookupIndex_ + delta >= 0 && lookupIndex_ + delta < count) {
+                lookupIndex_ += delta;
+                showAssociateTable();
+            }
             return;
         }
         if (last_.candidates.empty()) return;
@@ -638,15 +652,15 @@ private:
         }
     }
 
-    // 组词态翻页：上=上一页、下=下一页；边界页保持不动（仍消费按键）。
-    void flipPage(bool next) {
-        if (last_.candidates.empty()) return;
-        if (next ? (last_.page + 1 >= last_.pageCount) : (last_.page <= 0)) return;
-        chaoset::Comp comp = callComp([&] { return next ? daemon_.session().nextPage() : daemon_.session().prevPage(); });
-        refresh(std::move(comp));
+void IbusEngineState::flipPage(bool next) {
+        if (last_.candidates.empty() && pendingOps_.empty()) return;
+        if (!last_.candidates.empty()) {
+            if (next ? (last_.page + 1 >= last_.pageCount) : (last_.page <= 0)) return;
+        }
+        submitPage(next);
     }
 
-    void exitAssociate() {
+void IbusEngineState::exitAssociate() {
         if (assoc_.empty() && lookupIndex_ == 0) return;
         assoc_.clear();
         assocPage_ = 0;
@@ -654,52 +668,47 @@ private:
         hideLookupTable();
     }
 
-    bool selectCandidate(int idx) {
-        if (!ensure()) return false;
+bool IbusEngineState::selectCandidate(int idx) {
+        if (idx < 0) return false;
         if (!assoc_.empty()) {
             const int global = assocPage_ * static_cast<int>(kPageSize) + idx;
-            if (idx < 0 || global >= static_cast<int>(assoc_.size())) return false;
+            if (global >= static_cast<int>(assoc_.size())) return false;
             const auto pick = assoc_[global];
-            const auto sylls = splitSyllables(pick.syllables);
-            std::string word;
-            if (!daemon_.session().associateSelect(pick.text, sylls, &word)) return false;
-            commit(word);
-            exitAssociate();
-            enterAssociate(sylls);
+            EngineOp op;
+            op.kind = EngineOpKind::kAssociateSelect;
+            op.text = pick.text;
+            op.sylls = splitSyllables(pick.syllables);
+            submit(std::move(op));
             return true;
         }
-        if (idx < 0 || idx >= static_cast<int>(last_.candidates.size())) return false;
-        const auto pick = last_.candidates[idx];
-        chaoset::Comp rest;
-        // 失败：消费按键并保留组词（return false 会把选词键放行成文档里的空格/数字）。
-        if (!daemon_.session().selectPrefix(idx, &rest)) return true;
-        confirmed_ += rest.committed;
-        const auto pickedSylls = splitSyllables(pick.syllables);
-        selectedSylls_.insert(selectedSylls_.end(), pickedSylls.begin(), pickedSylls.end());
-        if (!rest.input.empty()) {
-            refresh(std::move(rest));
+        if (idx < static_cast<int>(last_.candidates.size())) {
+            const auto pick = last_.candidates[idx];
+            EngineOp op;
+            op.kind = EngineOpKind::kSelectPrefix;
+            op.index = idx;
+            op.text = pick.text;                    // 失败兜底上屏文本
+            op.sylls = splitSyllables(pick.syllables);
+            submit(std::move(op));
             return true;
         }
-        const std::string text = confirmed_;
-        confirmed_.clear();
-        commit(text);
-        std::string prev;
-        for (std::size_t i = 0; i < selectedSylls_.size(); ++i) {
-            if (i != 0) prev += "'";
-            prev += selectedSylls_[i];
+        if (!pendingOps_.empty()) {
+            // 列表滞后（结果未应用）：仍按下标入队，引擎按完整输入解析；本次必须
+            // 消费选词键，绝不能让它漏进文档。
+            EngineOp op;
+            op.kind = EngineOpKind::kSelectPrefix;
+            op.index = idx;
+            submit(std::move(op));
+            return true;
         }
-        selectedSylls_.clear();
-        if (!prev.empty()) enterAssociateForPrev(prev);
-        return true;
+        return false;
     }
 
-    void showToast(const std::string& text) {
+void IbusEngineState::showToast(const std::string& text) {
         if (engine_ == nullptr) return;
         if (toastId_ != 0) { g_source_remove(toastId_); toastId_ = 0; }
         IBusText* t = ibus_text_new_from_string(text.c_str());
         if (t != nullptr) {
             ibus_engine_update_auxiliary_text(engine_, t, TRUE);
-            // auxiliary text 同样接管 floating 引用。
         }
         toastSeq_++;
         struct ToastCtx { IbusEngineState* self; guint64 seq; };
@@ -714,29 +723,10 @@ private:
                 return G_SOURCE_REMOVE;
             }, ctx, [](gpointer data) { delete static_cast<ToastCtx*>(data); });
     }
+}  // namespace ibus_shell
 
-    IBusEngine* engine_ = nullptr;
-    chaoset::Daemon daemon_;
-    std::string configPath_;
-    bool enMode_ = false;
-    bool halfWidth_ = false;
-    bool assocOn_ = true;
-    bool assocFlagSet_ = false;
-    std::string assocConfigErr_;
-    ShiftTracker shift_;
-    std::string dpScheme_;
-    std::vector<chaoset::Candidate> assoc_;
-    int assocPage_ = 0;
-    int lookupIndex_ = 0;  // 页内预选序号（lookup cursor，0 起）
-    std::string confirmed_;
-    std::vector<std::string> selectedSylls_;
-    chaoset::Comp last_;
-    bool warnedIpc_ = false;
-    guint toastId_ = 0;
-    guint64 toastSeq_ = 0;
-};
+using namespace ibus_shell;
 
-}  // namespace
 
 // ---- GObject/IBus 薄胶水 ----
 typedef struct _ChaosetIbusEngine {

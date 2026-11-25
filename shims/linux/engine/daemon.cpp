@@ -62,7 +62,8 @@ bool UnixTransport::connectSocket() {
     if (fd < 0) return false;
     struct timeval tv {};
     tv.tv_sec = 0;
-    tv.tv_usec = 300000;  // 300ms：与 mac EngineClient 同量级，GC 尖峰不误杀；
+    tv.tv_usec = deadlineMs_ * 1000;  // 默认 300ms（与 mac EngineClient 同量级；
+                                      // 异步引擎线程设 200ms，见 engine_pump.hpp）
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     struct sockaddr_un addr {};

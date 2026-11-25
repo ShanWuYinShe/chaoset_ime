@@ -149,8 +149,10 @@ func checkShiftToggleAccounting(fsys fs.FS, problems *[]string) {
 	}
 	// Linux：焦点进出必须复位 Shift 跟踪状态。
 	checkContains(fsys, problems, group, linuxEngine,
-		"void reset() { shiftDown = 0; sinceShift = false; }",
-		"void focusIn() { shift_.reset(); }")
+		"void IbusEngineState::focusIn() { shift_.reset(); }")
+	// Shift 计数器已随状态机声明移到 engine_state.hpp（异步管线共用）。
+	checkContains(fsys, problems, group, "shims/linux/engine/engine_state.hpp",
+		"void reset() { shiftDown = 0; sinceShift = false; }")
 	// macOS：出现其它按键必须清 shiftArmed（否则 Shift+字母会误切换）。
 	checkContains(fsys, problems, group, "shims/macos/src/ChaosetController.swift",
 		"shiftArmed = false", "shiftArmed = true")
@@ -180,7 +182,7 @@ func checkResetSemantics(fsys fs.FS, problems *[]string) {
 		"resetEnginePipeline(keepLearning: true)")
 	// Linux：同样两个入口。
 	checkContains(fsys, problems, group, linuxEngine,
-		"void sessionReset()", "void sessionResetComposition()",
+		"void IbusEngineState::sessionReset()", "void IbusEngineState::sessionResetComposition()",
 		"resetComposition()")
 	// 文档必须记录这个区别，否则后来者会误用。
 	checkContains(fsys, problems, group, readmeDoc, "resetComposition")

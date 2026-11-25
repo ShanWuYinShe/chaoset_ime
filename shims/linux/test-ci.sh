@@ -169,6 +169,23 @@ handled() {
     | grep -c "boolean true"
 }
 
+# ---- 预热 daemon：异步首键只入队 + 引擎线程懒启动 chaosetd（首键本身可能 fail-open）----
+press "$P1" 97 0   # 'a'：触发懒启动；若 daemon 已在则直接组词，清掉即可
+_ready=0
+for _ in $(seq 1 100); do
+  if [ -S "$WORK/chaoset.sock" ]; then _ready=1; break; fi
+  sleep 0.2
+done
+if [ "$_ready" != "1" ]; then
+  echo "FAIL: 首次按键未拉起 chaosetd（$WORK/chaoset.sock 不存在）" >&2
+  exit 1
+fi
+sleep 0.5
+press "$P1" 65307 0  # Esc：清掉预热组词（未被消费则无副作用）
+press "$P1" 65307 0
+sleep 0.2
+echo "PASS: 首键懒启动 chaosetd 就绪"
+
 # ---- 组词与隔离：P1 打 ni、P2 打 hao，互不影响 ----
 for kv in 110 105; do press "$P1" "$kv" 0; done   # n i
 for kv in 104 97 111; do press "$P2" "$kv" 0; done # h a o

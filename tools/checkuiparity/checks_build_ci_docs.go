@@ -137,6 +137,12 @@ var shimModuleBudgets = []shimModuleBudget{
 	// Linux 原生引擎（shims/linux/engine/）：此前不在模块地图与预算内，是
 	// 「大文件回潮」的盲区；docs/architecture.md §3.4 同步登记。
 	{"shims/linux/engine/main.cpp", 900},
+	// Linux 异步引擎管线（issue #149 三端统一）：按键只入队 + 乐观渲染，
+	// 引擎 I/O 在每实例线程；声明/管线与 daemon 传输分文件（职责见模块地图）。
+	{"shims/linux/engine/engine_state.hpp", 300},
+	{"shims/linux/engine/async_pipeline.cpp", 500},
+	{"shims/linux/engine/engine_pump.cpp", 400},
+	{"shims/linux/engine/engine_pump.hpp", 250},
 	{"shims/linux/engine/daemon.cpp", 300},
 	{"shims/common/ipc/core.cpp", 700},
 	{"shims/common/ipc/core.hpp", 300},
