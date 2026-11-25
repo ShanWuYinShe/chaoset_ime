@@ -394,25 +394,19 @@ void ChaosetTIP::moveCompositionSelection(int delta) {
 
 
 // 组词态翻页：上=上一页、下=下一页；翻页后页内预选归零。
-// 边界页保持不动（仍消费该键）；daemon 故障时先落盘已确认段，不吞键。
-void ChaosetTIP::flipCompositionPage(bool next, ITfContext* pic) {
+// 边界页保持不动（仍消费该键）。异步管线（issue #149）：只入队，结果回来
+// 由 tip_async.cpp 应用并刷新候选——本函数绝不等待 daemon。
+void ChaosetTIP::flipCompositionPage(bool next, ITfContext* /*pic*/) {
     if (!hasCandidates()) return;
     if (next) {
         if (comp_.page + 1 >= comp_.pageCount) return;  // 末页：保持不动
     } else {
         if (comp_.page <= 0) return;  // 首页：保持不动
     }
-    const chaoset::Comp prev = comp_;
-    comp_ = next ? session_.nextPage() : session_.prevPage();
-    if (!comp_.ok) {
-        // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
-        if (enterDesyncOnTimeout(prev)) return;
-        diagDaemonRequestFailure(transport_, "page(dir)");
-        flushOrCancel(pic);  // daemon 故障：已确认段先落盘，不吞键
-        return;
-    }
-    syncDpScheme(comp_);
-    render(pic);
+    chaoset::win::EngineOp op;
+    op.kind = next ? chaoset::win::EngineOpKind::kNextPage
+                   : chaoset::win::EngineOpKind::kPrevPage;
+    submitEngineOp(op);
     candidateWnd_.setSelectedIndex(0);
 }
 
@@ -450,7 +444,7 @@ bool ChaosetTIP::isModifierKey(WPARAM vk) {
 // 是否会吃掉该键：修饰键组合（Ctrl/Alt/Win 快捷键）一律放行给宿主系统与应用，
 // 仅在组词中支持 Ctrl+Backspace 快速清空拼音；字母与标点键正常输入；
 // 组词中再吃数字/空格/回车/退格/Esc/翻页。
-bool ChaosetTIP::wouldHandle(WPARAM vk) const {
+bool ChaosetTIP::wouldHandle(WPARAM vk) {
     if (isModifierKey(vk)) return false;
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -505,9 +499,12 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
         const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter) ||
                               keyPunctChar(vk, shiftDown()) != nullptr;
         if (!relevant) return false;
-        // 零阻塞（审计 T4）：只在已连接时介入；未连接则入队后台连接并
-        // fail-open——本键原样进文档，下一次按键即可正常组词，绝不 Sleep/建进程。
-        if (!ensureDaemonFast(const_cast<PipeTransport&>(transport_))) return false;
+        // 异步管线（issue #149）：连接状态只是原子快照；未连接则本键 fail-open
+        // （原样进文档）并按节流发探测请求，daemon 恢复后下一键即可正常组词。
+        if (!engineAvailable()) {
+            probeEngineIfDown();
+            return false;
+        }
     }
 
     // 大小写字母一律进组词（与 handleKey 一致，保留原样、匹配按小写）。
@@ -535,7 +532,7 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
            (isArrowKey(vk) && hasCandidates() && candidateWnd_.itemCount() > 0) ||
            (digit >= 0 && (vk >= kVkNumpad1 || !shiftDown()) &&
-            digit < static_cast<int>(comp_.candidates.size()));
+            (digit < static_cast<int>(comp_.candidates.size()) || !pendingOps_.empty()));
 }
 
 
@@ -556,58 +553,40 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return false;  // 放行给宿主
     }
 
-    // daemon 失步中（issue #122，见 tip_desync.cpp）：本键先按失步规则分流；只有
-    // 重建成功且语义明确的键才落回下方的正常流程。
-    if (daemonDesynced_) {
-        bool eaten = true;
-        if (handleKeyDesynced(vk, pic, &eaten)) return eaten;
+    // 异步引擎管线（issue #149，见 tip_async.cpp）：先确保本 TIP 的引擎线程
+    // 存在；连接不可用且当前没有本地组词时 fail-open（原样放行），并按节流发
+    // 一个探测请求，daemon 恢复后下一键即可正常组词。有本地组词时必须消费按键
+    // （绝不能把拼音字母漏进文档），继续乐观处理，由 2s 宽限期决定何时按原始串
+    // 落盘。整条路径零等待：daemon 的慢/死都不会阻塞宿主 UI 线程。
+    ensureEnginePump();
+    if (!engineAvailable()) {
+        probeEngineIfDown();
+        if (!isComposing() && confirmedPreedit_.empty()) return false;
     }
+    setEngineContext(pic);
 
-    // 零阻塞（审计 T4）：Key-only 宿主（Chrome/conhost/Terminal 不投递 Test
-    // 阶段）在这里补一次非阻塞连接探测；失败时各分支 fail-open（不阻塞、
-    // 按键原样进文档）。Test 阶段已连接时这里只是一次分支预测。
-    if (!transport_.isConnected()) ensureDaemonFast(transport_);
-
-    // 词组联想分支（对齐 macOS 壳，2026-10-27 接入 Windows）：
-    //   数字（有对应项）→ 联想词直接上屏并继续联想；
-    //   空格 → 结束联想，空格透传；回车 → 结束联想并消费；
-    //   Esc → 收起联想；- / = → 单页无翻页语义，收起放行；
-    //   其余按键 → 退出联想走正常流程（字母进组词 / 标点出中文标点 /
-    //   Ctrl 等修饰键照旧放行）。
+    // 词组联想分支（对齐 macOS 壳）：数字/空格/方向键/回车/Esc/退格消费；
+    // 选词只入队（结果回来时上屏并继续联想），绝不等待 daemon。
     if (!assoc_.candidates.empty()) {
         const bool shift = shiftDown();
         if (vk == kVkEscape || vk == kVkReturn) {
             clearAssociate();
             return true;
         }
-        // 空格：确认**联想页内预选项**（默认第 0 项；方向键可移动预选，
-        // 渐进组句闭环，与 macOS 端一致），不再是透传
         if (vk == kVkSpace) {
-            if (!assoc_.candidates.empty()) {
-                const int start = assocPage_ * kPageSize;
-                int count = static_cast<int>(assoc_.candidates.size()) - start;
-                if (count > kPageSize) count = kPageSize;
-                int sel = candidateWnd_.selectedIndex();
-                if (sel < 0 || sel >= count) sel = 0;
-                const chaoset::Candidate pick = assoc_.candidates[start + sel];
-                std::string committed;
-                if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
-                    const std::string sylls = pick.syllables;
-                    // 上屏确实写进了文档才继续联想：否则联想窗悬在
-                    // 「词没上屏却推下一批」的假状态（2026-10-29 审查）。
-                    if (commit(pic, committed)) enterAssociate(sylls);
-                    return true;
-                }
-                // daemon 不可达：退化为上屏壳侧持有的候选文本，不静默丢掉用户选择（与 macOS 对齐）。
-                if (commit(pic, pick.text)) clearAssociate();
-                else clearAssociate();
-                return true;
-            }
-            clearAssociate();
+            const int start = assocPage_ * kPageSize;
+            int count = static_cast<int>(assoc_.candidates.size()) - start;
+            if (count > kPageSize) count = kPageSize;
+            int sel = candidateWnd_.selectedIndex();
+            if (sel < 0 || sel >= count) sel = 0;
+            const chaoset::Candidate pick = assoc_.candidates[start + sel];
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kAssociateSelect;
+            op.text = pick.text;
+            op.syllables = pick.syllables;
+            submitEngineOp(op);
             return true;
         }
-        // 方向键：上/下翻页、左/右页内预选移动。联想面板可见时方向键
-        // 属于输入法，不再「退出联想并透传」。
         if (isArrowKey(vk) && candidateWnd_.itemCount() > 0) {
             if (vk == kVkUp || vk == kVkDown) {
                 flipAssociatePage(vk == kVkDown);
@@ -616,65 +595,46 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             }
             return true;
         }
-        // - / =：联想翻页（边界页保持当前页）
-        // Backspace：收起联想并消费——透传会误删刚上屏的文字
         if (vk == kVkBackspace) {
             clearAssociate();
             return true;
         }
-        // 联想翻页键：- / =、[ / ]、PageUp / PageDown——与组词态翻页
-        // 键集合一致（2026-10-29 三端一致性审查）。此前只认 - / =，
-        // 其余键落到「其余按键退出联想」：面板收起而按键透传给宿主
-        // （文档跟着滚动），与 macOS/Linux 行为各不相同。
         const bool assocPageKey =
             vk == kVkPrior || vk == kVkNext ||
             (!shift && (vk == kVkOemMinus || vk == kVkOemPlus ||
                         vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
         if (assocPageKey) {
-            const bool next = vk == kVkOemPlus || vk == kVkOemCloseBrackets ||
-                              vk == kVkNext;
+            const bool next = vk == kVkOemPlus || vk == kVkOemCloseBrackets || vk == kVkNext;
             flipAssociate(next);
             return true;
         }
         const int assocDigit = digitIndex(vk);
         if (assocDigit >= 0 && (vk >= kVkNumpad1 || !shift)) {
-            // 全局序号 = 当前页 × 每页条数 + 页内序号（候选窗展示的是切片）
             const int index = assocPage_ * kPageSize + assocDigit;
             if (index < static_cast<int>(assoc_.candidates.size())) {
                 const chaoset::Candidate pick = assoc_.candidates[index];
-                std::string committed;
-                if (session_.associateSelect(pick.text, splitSyllables(pick.syllables), &committed)) {
-                    const std::string sylls = pick.syllables;
-                    // 上屏确实写进了文档才继续联想：否则联想窗悬在
-                    // 「词没上屏却推下一批」的假状态（2026-10-29 审查）。
-                    if (commit(pic, committed)) enterAssociate(sylls);
-                } else {
-                    if (commit(pic, pick.text)) clearAssociate();
-                    else clearAssociate();
-                }
+                chaoset::win::EngineOp op;
+                op.kind = chaoset::win::EngineOpKind::kAssociateSelect;
+                op.text = pick.text;
+                op.syllables = pick.syllables;
+                submitEngineOp(op);
                 return true;
             }
-            clearAssociate(); // 越界序号：收起联想放行数字
+            clearAssociate();  // 越界序号：收起联想放行数字
             return false;
         }
-        clearAssociate(); // 其余按键退出联想，落到下方正常流程
+        clearAssociate();  // 其余按键退出联想，落到下方正常流程
     }
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool alt  = (GetKeyState(VK_MENU) & 0x8000) != 0;
     const bool win  = ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
 
-    // 组词中 Backspace/Delete：修饰键映射（2026-10-31 用户要求：
-    // Control↔Ctrl、Option↔Alt、Command↔Win）。优先级与 macOS 实现一致：
-    // Command/Ctrl/Shift → 全部删除（含未落盘确认段，与 Esc 同语义）；
-    // Alt → 按音节回退（engine.backspaceWord）；无修饰 → 下方逐字符回退。
-    // 非组词态一律放行给宿主。
-    //
-    // 注意：Win/Super 组合可能先被系统外壳拦截（TSF 未必收得到），
-    // 输入法只在收到按键时按 Command 语义处理——真机以实际到达为准。
+    // 组词中 Backspace/Delete：修饰键映射（Control↔Ctrl、Option↔Alt、Command↔Win）。
+    // Command/Ctrl/Shift → 全部删除（本地立即生效 + 丢弃在飞结果）；Alt → 按音节回退。
     if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) {
-        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        if (win || ctrl || shift) {
+        const bool shiftKey = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        if (win || ctrl || shiftKey) {
             resetComposition();
             comp_ = chaoset::Comp();
             confirmedPreedit_.clear();
@@ -682,39 +642,17 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             return true;
         }
         if (alt) {
-            const chaoset::Comp prev = comp_;
-            comp_ = session_.backspaceWord();
-            if (!comp_.ok) {
-                // 超时：本地按音节回退并保留组词（issue #122，见 tip_desync.cpp）
-                if (!enterDesyncOnTimeout(prev)) {
-                    diagDaemonRequestFailure(transport_, "backspaceWord");
-                    flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-                    return true;
-                }
-                backspaceLocally(comp_, pendingKeys_, !dpScheme_.empty(), true);
-            }
-            syncDpScheme(comp_);
-            if (comp_.input.empty()) {
-                if (!confirmedPreedit_.empty()) {
-                    // 剩余拼音删空：已确认段立即落盘收尾（与普通 Backspace 同路径）
-                    comp_ = chaoset::Comp();
-                    const std::string all = confirmedPreedit_;
-                    confirmedPreedit_.clear();
-                    commit(pic, all);
-                } else {
-                    endComposition();
-                }
-            } else {
-                render(pic);
-            }
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kBackspaceWord;
+            op.halfWidth = halfWidth_;
+            submitEngineOp(op);
+            render(pic);
             return true;
         }
     }
 
     // Alt 或 Win 快捷键：先收尾未决组词，然后放行原键给宿主。
-    // 收尾走 flushOrCancel 而不是 endComposition：用户已确认的段不能
-    // 随快捷键透传消失（与 macOS passThrough → flushConfirmed 同语义，
-    // 2026-10-30 审计 P1-3）。
+    // 收尾走 flushOrCancel 而不是 endComposition：用户已确认的段不能随快捷键透传消失。
     if (alt || win) {
         if (isComposing() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
@@ -724,87 +662,58 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
 
     // Ctrl 组合键：
     if (ctrl) {
-        // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）；
-        // Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），不在此列。
+        // Ctrl+U：类终端整行清空（组词中消费并全部删除）；Ctrl+Shift+U 放行宿主。
         if (vk == 'U' && isComposing() && !shiftDown()) {
             resetComposition();
             endComposition();
             comp_ = chaoset::Comp();
             return true;
         }
-        // 其余 Ctrl 组合键（如 Ctrl+A/C/V/Z）：若处于组词中，先收尾再放行
-        // 原键给宿主——已确认段随透传落盘（用户确认过的字不能丢）
+        // 其余 Ctrl 组合键：若处于组词中，先收尾再放行原键给宿主。
         if (isComposing() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
         }
         return false;
     }
 
-    // 字母：追加组词。大小写都进组词——大写按**原样**保存（回车原样上屏，
-    // 用户不必为大写切输入法），拼音匹配由引擎按小写口径处理（mac/Linux 壳
-    // 同口径）。Shift+A 因此是组词里的 A，不再被放行成英文。
+    // 字母：追加组词。大小写都进组词（Shift+A 是组词里的 A，不再被放行成英文；
+    // 实际大小写 = Shift ⊕ CapsLock）。乐观渲染后立即入队，绝不等待 daemon。
     if (vk >= kVkFirstLetter && vk <= kVkLastLetter) {
-        // 实际大小写 = Shift ⊕ CapsLock（两者同按回到小写，与系统字母行为一致）。
         const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         const bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         const char base = (shiftDown != capsOn) ? 'A' : 'a';
         std::string ch(1, static_cast<char>(base + (vk - kVkFirstLetter)));
-        const chaoset::Comp prev = comp_;
-        comp_ = session_.input(ch, halfWidth_);
-        if (!comp_.ok) {
-            // 超时（而非断管/连不上）：保留本地组词进入失步，下一键重建
-            // （issue #122，见 tip_desync.cpp）；其余情况照旧收尾放行
-            if (keepCompositionOnTimeout(prev, ch, pic)) return true;
-            // daemon 确实不可达：收尾（已确认段落盘，不因 daemon 故障丢字）
-            // 并放行原键，保证宿主应用不卡死
-            diagDaemonRequestFailure(transport_, "input");
-            flushOrCancel(pic);
-            return false;
-        }
-        syncDpScheme(comp_);  // 双拼方案名（';' 路由依据，见 syncDpScheme）
-        render(pic);
-        // 渲染后仍没有合成对象：当前上下文不接受 TSF 合成（Windows 11
-        // 开始菜单搜索框等）。此时必须撤掉本地未决状态并放行原键，
-        // 否则就是「键被吃掉、字也没出来」——2026-10-29 实机反馈。
-        // OnKeyDown 返回 false 是两阶段按键模型的最终裁决，TSF 会把
-        // 原键交还宿主（OnTestKeyDown 的 eaten 只是预告）。
-        //
-        // 兜底条件必须同时覆盖两类拒绝：合成根本没建出来
-        // （composition_ == nullptr），以及 StartComposition「成功」但
-        // 预编辑 SetText 被拒（只读上下文在编辑会话里仍会拒绝写入，
-        // 此时有合成对象却没有合成文本——TS_ES_READONLY）。两者都
-        // 意味着键进不了文档，必须放行。
+        chaoset::win::EngineOp op;
+        op.kind = chaoset::win::EngineOpKind::kInput;
+        op.text = ch;
+        op.halfWidth = halfWidth_;
+        const std::uint64_t seq = queuePendingOp(op);
+        render(pic);  // 预编辑立即出现（optimisticComp 回放未应用操作），不等 daemon
+        // 渲染后仍没有合成对象：当前上下文不接受 TSF 合成（Windows 11 开始菜单
+        // 搜索框等）。撤掉乐观项并放行原键，否则就是「键被吃掉、字也没出来」。
         if (isComposing() && (composition_ == nullptr || !preeditWritten_)) {
+            dropPendingOp(seq);
             return bailOutNoComposition();
         }
+        dispatchPendingOp(seq);
         return true;
     }
 
-    // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费；
-    // 空组词放行原键/出标点）。- / = / [ / ] 的 Shift 变体是字符不翻页；
-    // PageUp/PageDown 无论 Shift 都翻页（对齐 mac/Linux）。
+    // 候选翻页：- / =、[ / ]、PageUp / PageDown（组词中且有候选时消费）
     const bool isPageKey =
         (vk == kVkPrior || vk == kVkNext) ||
         (!shiftDown() && (vk == kVkOemMinus || vk == kVkOemPlus ||
                             vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
     if (isPageKey && isComposing() && hasCandidates()) {
-        bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
-        const chaoset::Comp prev = comp_;
-        comp_ = isPrev ? session_.prevPage() : session_.nextPage();
-        if (!comp_.ok) {
-            // 超时：保留组词，下一键重建（issue #122，见 tip_desync.cpp）
-            if (enterDesyncOnTimeout(prev)) return true;
-            diagDaemonRequestFailure(transport_, "page");
-            flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-            return true;
-        }
-        syncDpScheme(comp_);
-        render(pic);
+        const bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
+        chaoset::win::EngineOp op;
+        op.kind = isPrev ? chaoset::win::EngineOpKind::kPrevPage
+                         : chaoset::win::EngineOpKind::kNextPage;
+        submitEngineOp(op);
         return true;
     }
 
-    // 方向键（用户反馈）：上/下 = 翻页，左/右 = 页内预选移动；空格随后
-    // 确认预选项。无候选/无组词时 wouldHandle 已放行，不会走到这里。
+    // 方向键：上/下 = 翻页，左/右 = 页内预选移动；空格随后确认预选项。
     if (isArrowKey(vk) && isComposing() && hasCandidates() &&
         candidateWnd_.itemCount() > 0) {
         if (vk == kVkUp || vk == kVkDown) {
@@ -815,84 +724,41 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return true;
     }
 
-    // 双拼模式的 ';'（配合引擎契约）：双拼时 ';' 不是标点键，而是引擎的
-    // 组词/解码键——dpPending 非 0 时与字母一样组成 pair 解码，为 0 时
-    // 按 punct(";") 语义（组词中先上屏首选+标点）。必须路由到 input 而
-    // 不是 punct，引擎才能在双拼键位状态机里看到它。Shift+; 产生的
-    // ':' 不在此列（仍走下方标点分支），与 mac 的字符级判定一致。
+    // 双拼模式的 ';'：路由到 input（引擎的组词/解码键），不是标点。
     if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftDown())) {
-        const chaoset::Comp prev = comp_;
-        comp_ = session_.input(";", halfWidth_);
-        if (!comp_.ok) {
-            if (keepCompositionOnTimeout(prev, ";", pic)) return true;  // 超时：保留组词（issue #122）
-            diagDaemonRequestFailure(transport_, "input;");
-            flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-            return false;       // 绝不吞键：daemon 不可达时让 ; 原样进文档
-        }
-        syncDpScheme(comp_);
-        if (!comp_.committed.empty()) {
-            // 引擎已把「上屏文本」（组词中首选 + 分号 / 空组词的分号）
-            // 放进 committed：壳侧已确认段必须先拼接再一次性落盘——
-            // 用户确认过的字不能丢（与 mac 的 confirmedText + committed
-            // 同语义，2026-10-30 三端接口契约）。
-            const std::string all = confirmedPreedit_ + comp_.committed;
-            confirmedPreedit_.clear();
-            commit(pic, all);
-            return true;
-        }
+        chaoset::win::EngineOp op;
+        op.kind = chaoset::win::EngineOpKind::kInput;
+        op.text = ";";
+        op.halfWidth = halfWidth_;
+        submitEngineOp(op);
         render(pic);
         return true;
     }
 
-    // 标点键（US 布局字符级映射，含 Shift 变体）：组词中先上屏首选再出
-    // 中文标点，空组词直接出中文标点；映射规则在 daemon 侧统一完成。
+    // 标点键（US 布局字符级映射，含 Shift 变体）：组词中先上屏首选再出中文标点，
+    // 空组词直接出中文标点。结果回来时上屏；daemon 不可达则按原 ASCII 字符兜底。
     if (const char* key = keyPunctChar(vk, shiftDown())) {
         if (vk == kVkOemQuotes && isComposing()) {
             // 组词中的撇号是音节分隔符，走组词流程
-            const chaoset::Comp prev = comp_;
-            comp_ = session_.input("'", halfWidth_);
-            if (!comp_.ok) {
-                if (keepCompositionOnTimeout(prev, "'", pic)) return true;  // 超时：保留组词（issue #122）
-                diagDaemonRequestFailure(transport_, "input'");
-                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-                return false;
-            }
-            syncDpScheme(comp_);
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kInput;
+            op.text = "'";
+            op.halfWidth = halfWidth_;
+            submitEngineOp(op);
             render(pic);
             return true;
         }
-        const bool composing = isComposing();
-        std::string committed;
-        if (session_.punct(key, halfWidth_, &committed)) {
-            // 标点收尾：已确认段 + 首选候选 + 标点一次落盘
-            //（上屏失败（上下文不可插入文本）且没有未决拼音时放行原键，
-            // 避免中文标点凭空消失；有未决拼音时仍需消费，保持组词状态机完整）
-            const std::string all = confirmedPreedit_ + committed;
-            confirmedPreedit_.clear();
-            if (commit(pic, all) || composing) return true;
-            return false;
-        }
-        // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
-        if (composing && enterDesyncOnTimeout(comp_)) return true;
-        // daemon 不可达：收尾（已确认段落盘）后放行原键，不卡宿主应用
-        if (composing || !confirmedPreedit_.empty()) {
-            flushOrCancel(pic);
-        }
-        return false;
+        chaoset::win::EngineOp op;
+        op.kind = chaoset::win::EngineOpKind::kPunct;
+        op.text = key;
+        op.halfWidth = halfWidth_;
+        submitEngineOp(op);
+        return true;
     }
 
-    // Shift+空格：切换全角/半角标点模式。放在 isComposing 守卫**之前**：
-    // 用户常在开始打字前先切模式，此前放在守卫之后导致空组词时永远
-    // 切不动（mac 壳在组词判断之前处理，此处对齐；wouldHandle 已对
-    // Shift+空格无条件返回 TRUE，两条路径此前互相矛盾）。
-    // 联想态到不了这里：上方联想分支已把空格当「选第一个联想词」消费
-    //（三端实测一致，2026-10-30 文档修正），因此本分支实际只处理组词态。
+    // Shift+空格：切换全角/半角标点模式（壳本地持有，不往返 daemon）。
     if (vk == kVkSpace && (GetKeyState(VK_SHIFT) & 0x8000)) {
-        // 无组词/无联想时放行给宿主：输入法没有理由拦截应用自己的
-        // Shift+Space（2026-10-29 输入事件审计 F1）。
         if (!isComposing() && assoc_.candidates.empty()) return false;
-        // 全/半角开关归壳本地持有（2026-10-29 起）：快捷键切换不再与
-        // daemon 往返，状态随 punct 请求下发（daemon 只按状态产出文本）
         halfWidth_ = !halfWidth_;
         showToast(halfWidth_ ? L"\u534a\u89d2\u6807\u70b9" : L"\u5168\u89d2\u6807\u70b9");
         return true;
@@ -900,42 +766,20 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
 
     if (!isComposing()) return false;
 
-    // 普通 Backspace / ForwardDelete（无修饰）：逐字符回退。
-    // Delete 与 Backspace 同语义（对齐 macOS 组词中两者都删拼音）；
-    // 带修饰的组合已在上面按映射处理。
+    // 普通 Backspace / ForwardDelete（无修饰）：逐字符回退。乐观预编辑立即变化，
+    // 结果回来用引擎态覆盖。
     if (vk == kVkBackspace || vk == kVkDelete) {
-        const chaoset::Comp prev = comp_;
-        comp_ = session_.backspace();
-        if (!comp_.ok) {
-            // 超时：本地回退一格并保留组词（issue #122，见 tip_desync.cpp）
-            if (!enterDesyncOnTimeout(prev)) {
-                diagDaemonRequestFailure(transport_, "backspace");
-                flushOrCancel(pic); // daemon 故障：已确认段落盘收尾
-                return true;
-            }
-            backspaceLocally(comp_, pendingKeys_, !dpScheme_.empty(), false);
-        }
-        syncDpScheme(comp_);
-        if (comp_.input.empty()) {
-            if (!confirmedPreedit_.empty()) {
-                // 剩余拼音删空：已确认段立即落盘收尾——不能继续挂在
-                // 合成里变成「无拼音的孤合成」（对齐 macOS 壳）
-                comp_ = chaoset::Comp();
-                const std::string all = confirmedPreedit_;
-                confirmedPreedit_.clear();
-                commit(pic, all);
-            } else {
-                endComposition();
-            }
-        }
-        else render(pic);
+        chaoset::win::EngineOp op;
+        op.kind = chaoset::win::EngineOpKind::kBackspace;
+        op.halfWidth = halfWidth_;
+        submitEngineOp(op);
+        render(pic);
         return true;
     }
 
+    // Esc：直接全部删除（清空全部拼音，含未落盘的已确认段）——本地立即生效，
+    // 纪元递增丢弃一切在飞结果，引擎侧只丢组词（保留学习上下文）。
     if (vk == kVkEscape) {
-        // Esc：直接全部删除（清空全部拼音）。含未落盘的已确认段一并取消
-        //——与 macOS 壳/系统拼音语义一致：合成内已转换但未上屏的内容
-        // 随整条组词一起丢弃。
         resetComposition();
         comp_ = chaoset::Comp();
         confirmedPreedit_.clear();
@@ -943,120 +787,74 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return true;
     }
 
-    // 数字选词：只认不带 Shift 的 1-9，且按**本页实际候选数**判定——
-    // 页面容量是 6，越界数字不消费、落到末尾兜底（清组词后放行原键）。
-    // 此前 select 失败仍 return true：数字凭空消失，既不选词也不进文档
-    // （mac 壳 2026-10-26 已修，此处对齐）。带 Shift 的数字（!@# 等字符）
-    // 不属于选词，同样落到末尾放行。
+    // 数字选词：只认不带 Shift 的 1-9，且按**本页实际候选数**判定。
+    // 选词只入队：结果回来时按渐进上屏语义上屏；失败用壳侧候选文本兜底。
     const int composeDigit = digitIndex(vk);
     if (composeDigit >= 0 && (vk >= kVkNumpad1 || !shiftDown())) {
-        int index = composeDigit;
+        const int index = composeDigit;
         if (index < static_cast<int>(comp_.candidates.size())) {
-            // 上屏候选的音节串/文本必须在 selectPrefix 之前取：成功后
-            // comp_ 会被替换成剩余组词态（或清空），候选表丢了。
-            const std::string pickedText = comp_.candidates[index].text;
-            const std::string pickedSyllables = comp_.candidates[index].syllables;
-            // 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
-            //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）。
-            // 单合成模型（见 confirmedPreedit_ 注释）：确认段并入当前
-            // 合成，不再中途结束/重建合成——部分 App 对合成重建的选区
-            // 记账有缺陷，会把刚上屏的段覆盖丢（用户实测选「今」丢字）。
-            chaoset::Comp rest;
-            if (session_.selectPrefix(index, &rest) && !rest.committed.empty()) {
-                syncDpScheme(rest);
-                confirmedPreedit_ += rest.committed;
-                comp_ = rest;
-                if (!comp_.input.empty()) {
-                    render(pic);
-                } else {
-                    // 剩余耗尽：整串一次落盘，与整句上屏同收尾（进入联想）。
-                    // 音节基准传候选自身的撇号音节串（2026-10-29 修复：
-                    // 不能把上屏词文本当音节传，单字词会切错位）。
-                    comp_ = chaoset::Comp();
-                    const std::string all = confirmedPreedit_;
-                    confirmedPreedit_.clear();
-                    commit(pic, all);
-                    enterAssociate(pickedSyllables);
-                }
-            } else if (enterDesyncOnTimeout(comp_)) {
-                return true;  // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
-            } else {
-                // daemon 不可达/越界：先试整句上屏，仍失败退化上屏候选中文，绝不静默吞键
-                std::string committed;
-                if (!session_.select(index, &committed)) {
-                    committed = pickedText;
-                }
-                const std::string all = confirmedPreedit_ + committed;
-                confirmedPreedit_.clear();
-                commit(pic, all);
-            }
+            const chaoset::Candidate pick = comp_.candidates[index];
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kSelectPrefix;
+            op.index = index;
+            op.text = pick.text;            // 失败兜底上屏文本
+            op.syllables = pick.syllables;  // 上屏后联想来源音节
+            submitEngineOp(op);
+            return true;
+        }
+        if (!pendingOps_.empty()) {
+            // 列表滞后（结果未应用）：仍按下标入队，引擎按完整输入解析；本次
+            // 必须消费数字，绝不能让它漏进文档。
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kSelectPrefix;
+            op.index = index;
+            submitEngineOp(op);
             return true;
         }
     }
 
+    // 回车：已确认段按确认文本、剩余拼音按原始串（含未应用按键）一起上屏。
     if (vk == kVkReturn && isComposing()) {
-        // 回车语义：已确认段按确认文本、剩余拼音按原始串一起上屏
-        //（与 macOS 壳一致：已转换部分保留转换结果）
-        std::string raw = confirmedPreedit_ + comp_.input;
+        std::string raw = confirmedPreedit_ + optimisticInput();
         confirmedPreedit_.clear();
         resetComposition();
         commit(pic, raw);
         return true;
     }
 
-    // 空格：组词中一律消费（用户意图永远是「结束组词」，不应有裸空格
-    // 漏进文档）——有候选选首选；残缺组词顶屏原始拼音，与回车等效
-    // （此前要求 hasCandidates，无候选时空格透传进文档，mac 2026-10-25
-    // 实机反馈的同族问题）。Shift+空格已在前面的全半角分支处理。
+    // 空格：组词中一律消费（用户意图永远是「结束组词」，不应有裸空格漏进文档）
+    // ——有候选选页内预选项；残缺组词顶屏原始拼音，与回车等效。
     if (vk == kVkSpace) {
         if (hasCandidates()) {
-            // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
             int sel = candidateWnd_.selectedIndex();
             if (sel < 0 || sel >= static_cast<int>(comp_.candidates.size())) sel = 0;
-            // 同数字选词：文本与音节必须在 selectPrefix 之前取（见上）
-            const std::string pickedText = comp_.candidates[sel].text;
-            const std::string pickedSyllables = comp_.candidates[sel].syllables;
-            chaoset::Comp rest;
-            if (session_.selectPrefix(sel, &rest) && !rest.committed.empty()) {
-                syncDpScheme(rest);
-                // 单合成渐进（见 confirmedPreedit_ 注释，与数字选词一致）
-                confirmedPreedit_ += rest.committed;
-                comp_ = rest;
-                if (!comp_.input.empty()) {
-                    render(pic);
-                } else {
-                    comp_ = chaoset::Comp();
-                    const std::string all = confirmedPreedit_;
-                    confirmedPreedit_.clear();
-                    commit(pic, all);
-                    enterAssociate(pickedSyllables);
-                }
-                return true;
-            }
-            // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
-            if (enterDesyncOnTimeout(comp_)) return true;
-            std::string committed;
-            if (!session_.select(sel, &committed)) {
-                committed = pickedText;
-            }
-            const std::string all = confirmedPreedit_ + committed;
-            confirmedPreedit_.clear();
-            commit(pic, all);
+            const chaoset::Candidate pick = comp_.candidates[sel];
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kSelectPrefix;
+            op.index = sel;
+            op.text = pick.text;
+            op.syllables = pick.syllables;
+            submitEngineOp(op);
             return true;
         }
-        // 残缺组词顶屏：已确认段按确认文本、剩余拼音按原始串一起上屏
-        //（与上方回车分支一致：用户确认过的字不能丢，2026-10-30
-        // 审计 P1-3）。先取出拼接再清缓冲，顺序与 flush 型收尾一致。
-        std::string raw = confirmedPreedit_ + comp_.input;
+        if (!pendingOps_.empty()) {
+            // 结果尚未应用（首个按键的乐观窗口）：此时没有候选可展示，但用户
+            // 按空格的意图是「选首选 / 结束组词」。绝不能把拼音当原始串顶屏，
+            // 按页内第 0 项入队，由引擎对完整输入解析（失败则保持组词并重建）。
+            chaoset::win::EngineOp op;
+            op.kind = chaoset::win::EngineOpKind::kSelectPrefix;
+            op.index = 0;
+            submitEngineOp(op);
+            return true;
+        }
+        std::string raw = confirmedPreedit_ + optimisticInput();
         confirmedPreedit_.clear();
         resetComposition();
         commit(pic, raw);
         return true;
     }
 
-    // 不可处理的按键（F 键 / 数字 0 / Shift+数字的 @# 等字符）：
-    // 组词中先收尾再放行，避免预编辑与实文脱节（对齐 macOS 壳 passThrough；
-    // 已确认段随透传落盘，用户确认过的字不能丢）
+    // 不可处理的按键（F 键 / 数字 0 / Shift+数字的 @# 等字符）：组词中先收尾再放行。
     if (isComposing() || !confirmedPreedit_.empty()) {
         flushOrCancel(pic);
     }

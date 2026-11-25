@@ -16,6 +16,10 @@ src/tip_core.cpp            TIP 生命周期/激活状态机/中英模式/前台
 src/tip_keys.cpp            ITfKeyEventSink 五入口、Shift 状态机、键位映射/按键路由。
 src/tip_composition.cpp     EditSession、预编辑渲染、光标/提交/结束合成、双拼会话收尾。
 src/tip_candidates.cpp      候选点选/删除/翻页、showToast、设置中心入口、联想面板。
+src/tip_profiles.cpp        TSF 焦点/输入法/激活档案信号 sink（托盘可见性权威事件）。
+src/tip_async.cpp           异步引擎管线：入队/乐观预编辑回放/结果按序应用/失联宽限。
+src/tip_desync.cpp          与引擎无关的本地编辑原语 backspaceLocally（乐观回放复用）。
+src/engine_pump.cpp|hpp     每 TIP 一个引擎线程：独占 daemon 连接、FIFO、结果回投。
 src/candidate_window.cpp|hpp 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA/齿轮绘制；
                              TIP 侧只经 CandidateWindowHost 抽象接口。
 src/shell_worker.cpp|hpp    每进程后台 worker：daemon 懒启动、UI 宿主命令、tsf.log 异步落盘。

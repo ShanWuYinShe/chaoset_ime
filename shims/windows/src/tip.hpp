@@ -26,11 +26,15 @@
 #include <windows.h>
 #include <msctf.h>
 
+#include <cstdint>
+#include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "candidate_window.hpp"
 #include "config.hpp"
+#include "engine_pump.hpp"
 #include "core.hpp"
 #include "daemon.hpp"
 #include "diagnostics.hpp"
@@ -105,7 +109,7 @@ constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'�
 // 「不存在 UILess 宿主」。
 // 存活 TIP 实例数（定义在 win32.cpp，DllCanUnloadNow 与 ctor/dtor 共用）。
 extern volatile LONG g_liveObjects;
-// 失步期间不依赖引擎的本地回退（issue #122）：实现见 tip_desync.cpp。
+// 与引擎无关的本地编辑原语（异步管线的乐观预编辑回放复用）：实现见 tip_desync.cpp。
 void backspaceLocally(chaoset::Comp& comp, std::string& pending, bool shuangpin, bool bySyllable);
 
 }  // namespace chaoset::win
@@ -292,7 +296,7 @@ private:
     void flipCompositionPage(bool next, ITfContext* pic);
     void moveAssociateSelection(int delta);
     void flipAssociatePage(bool next);
-    bool wouldHandle(WPARAM vk) const;
+    bool wouldHandle(WPARAM vk);
     bool handleKey(WPARAM vk, ITfContext* pic);
     ITfContext* focusContext();
 
@@ -372,55 +376,51 @@ private:
     int caretLineHeight_ = 20;
     // 本次渲染是否拿到了**真实** GDI 光标矩形（caretPos_ 可信）。
     bool caretFound_ = false;
-    // caretPos_ 是否来自鼠标兜底（宿主没有真实光标时）。提示条据此拒绝
-    // 在鼠标位置显示，避免「提示跟着鼠标跑」（2026-11-05 用户反馈）。
+    // caretPos_ 是否来自鼠标兜底（提示条据此拒绝跟着鼠标跑，2026-11-05）。
     bool caretFromMouse_ = false;
-    // UILess 宿主锚点/GetTextExt 原始值的诊断记录开关：每条组词只记一次
-    // （真机排障用，不参与定位；在 releaseCompositionContext 重置）。
+    // UILess 锚点诊断记录开关（每条组词一次；releaseCompositionContext 重置）。
     bool gameAnchorLogged_ = false;
     bool gameTextExtLogged_ = false;
 
-    chaoset::win::PipeTransport transport_;
-    chaoset::Session session_{transport_};
     chaoset::Comp comp_;
-    // 渐进上屏的「已确认段」缓冲（2026-10-30 兼容性整改，与 macOS 壳
-    // confirmedText 同语义）：SelectPrefix 返回的已确认文本**不再立即
-    // 结束合成写盘**，而是并入当前合成一起展示（applyPreedit 写
-    // confirmedPreedit_ + comp_.preedit），直到整条组词结束才一次落盘。
-    //
-    // 为什么（用户实测：长串组词中选 1（今），部分 App 里「今」丢失、
-    // 剩余拼音卡死）：旧实现每次渐进选择都「EndComposition + 立刻
-    // StartComposition」——对正确跟踪选区的 App 没问题，但对合成结束/
-    // 重建时选区记账有缺陷的 App（部分 Chromium/Java/旧 Win32 宿主），
-    // 新合成的锚点可能落回旧文本处，随后的 SetText 直接覆盖掉刚上屏的
-    // 「今」，只剩剩余拼音。改单合成模型后，渐进上屏与逐键输入使用完全
-    // 相同的原语（同一条合成内 SetText），不再中途结束/重建合成；落盘只剩
-    // 「整条组词结束」一个时机，与微软拼音「合成内已转换段」的行为一致。
-    // 清空时机：commit（落盘）、endComposition（取消）、OnCompositionTerminated
-    // （宿主终止，文本已随合成留在文档）、activateServer 之外的一切
-    // 会话结束路径——绝不能串进下一轮组词。
+    // 渐进上屏的「已确认段」缓冲（与 macOS confirmedText 同语义）：并入当前
+    // 合成一起展示（applyPreedit 写 confirmedPreedit_ + 预编辑），直到整条组词
+    // 结束才一次落盘。单合成模型与清空时机的完整理由见 tip_composition.cpp。
     std::string confirmedPreedit_;
-    // 引擎双拼方案名（zrm/mspy/flypy；空 = 未启用）。只用于按键路由：
-    // 双拼时 ';' 是引擎的组词/解码键，必须走 input 而不是 punct。
-    // 来源见 syncDpScheme（IPC Composition.shuangpin）。
+    // 引擎双拼方案名（zrm/mspy/flypy；空 = 未启用）：双拼 ';' 走 input 而非 punct。
     std::string dpScheme_;
-    // ---- daemon 失步恢复（issue #122，实现见 tip_desync.cpp）----
-    // 组词中的引擎请求**超时**（kKeyRequestDeadlineMs）后本次响应已放弃、壳侧不再信任
-    // daemon 会话状态：本地 comp_ 是唯一记录，追加键记入 pendingKeys_ 并在重连后整串重建。
-    bool daemonDesynced_ = false;
-    std::string pendingKeys_;    // 失步期间本地记下、尚未被引擎确认的按键
-    DWORD desyncSinceTick_ = 0;  // 首次超时时刻：daemon 一直连不上时的宽限期起点
-    enum class SyncResult { kSynced, kUnreachable, kStalled };
-    SyncResult syncDaemonInput();
-    void clearDesync() { daemonDesynced_ = false; pendingKeys_.clear(); }
-    // 引擎请求失败后的分流：仅「超时且请求前已有组词」时还原 prev 并进入失步并返回
-    // true（调用方吃掉本键）；其余返回 false，调用方沿用 fail-open 收尾。
-    bool enterDesyncOnTimeout(const chaoset::Comp& prev);
-    // 追加键的失步入口（字母 / 双拼 ';' / 撇号共用）：key 记入待确认串并乐观渲染；
-    // 上下文已不可写时自行 bail out 并返回 false。
-    bool keepCompositionOnTimeout(const chaoset::Comp& prev, const std::string& key, ITfContext* pic);
-    // 失步中的按键分流；返回 false 表示已重建成功、本键按正常流程继续处理。
-    bool handleKeyDesynced(WPARAM vk, ITfContext* pic, bool* eaten);
+    // ---- 异步引擎管线（issue #149，实现见 tip_async.cpp / engine_pump.*）----
+    // TSF 回调只入队 + 乐观渲染；引擎线程按 seq 回投结果，宿主 UI 线程零等待。
+    std::unique_ptr<chaoset::win::EnginePump> pump_;
+    std::deque<chaoset::win::EngineOp> pendingOps_;  // 已入队、结果未应用
+    std::uint64_t engineSeq_ = 0;
+    std::uint32_t engineEpoch_ = 0;  // 失焦/取消：递增即丢弃一切过期结果
+    bool engineLost_ = false;        // 最近请求失败：引擎状态未知，等整串重建
+    DWORD engineLostTick_ = 0;       // 首次失败时刻（宽限期起点）
+    DWORD lastRebuildTick_ = 0;      // 重建请求节流
+    DWORD lastProbeTick_ = 0;        // 失联探测节流
+    ITfContext* engineCtx_ = nullptr;  // 异步应用结果用的上下文（AddRef）
+    void ensureEnginePump();
+    bool engineAvailable();
+    void probeEngineIfDown();
+    void setEngineContext(ITfContext* pic);
+    std::uint64_t queuePendingOp(chaoset::win::EngineOp op);  // 只压 pendingOps_
+    void dispatchPendingOp(std::uint64_t seq);                // 投递给引擎线程
+    void dropPendingOp(std::uint64_t seq);                    // 撤销未投递的乐观项
+    std::uint64_t submitEngineOp(chaoset::win::EngineOp op);  // 入队并立即投递
+    chaoset::Comp optimisticComp() const;  // comp_ + 未应用输入/退格回放
+    std::string optimisticInput() const;
+    void onWorkerEngineResult() override;
+    void applyEngineResults();
+    void applyEngineResult(const chaoset::win::EngineResult& r);
+    void markEngineLost(const chaoset::win::EngineResult& r);
+    void scheduleRebuild();
+    void giveUpEngineState();
+    void resetEnginePipeline(bool newSession);  // 纪元++ / 清 pending / 引擎复位
+    bool applyCommitted(const std::string& text);
+    void renderAfterCommit(ITfContext* ctx);  // 上屏后若仍有在飞按键，立即起新合成
+    void restartEngineFromLocalState();      // 本地兜底上屏后：引擎状态不可信，整串重建剩余输入
+    void enterAssociateAsync(const std::string& syllables);
     bool halfWidth_ = false; // 全/半角标点开关（壳本地持有，随 punct 请求下发）
     // 词组联想（对齐 macOS 壳）：candidates 非空即联想中。选词上屏后按
     // 上屏词音节查续接词组继续展示，数字键可直接连选。

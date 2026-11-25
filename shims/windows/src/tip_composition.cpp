@@ -198,7 +198,7 @@ void ChaosetTIP::render(ITfContext* pic) {
     // 预编辑没写进文档（编辑会话失败/上下文只读/合成被拒）：绝不能显示候选窗，
     // 否则出现「候选窗有候选、文档无预编辑」的不一致状态。收口交给调用方按各自
     // 语义处理（字母键/删除刷新路径会走 bailOutNoComposition）。
-    if (!comp_.input.empty() && (composition_ == nullptr || !preeditWritten_)) {
+    if (!optimisticComp().input.empty() && (composition_ == nullptr || !preeditWritten_)) {
         candidateWnd_.hide();
         if (diagBudget()) {
             diagPrintf(L"tsf.log", "render: preedit not written composition=%d, hide candidate wnd\n",
@@ -478,14 +478,23 @@ bool ChaosetTIP::updateGameCaretAnchor(ITfContext* ctx) {
 }
 
 
+// 单合成模型（2026-10-30 兼容性整改）：渐进上屏的已确认文本不立即结束/重建
+// 合成，而是与剩余拼音一起写在同一条合成里（confirmedPreedit_ + 预编辑）。
+// 原因（用户实测：长串组词中选 1（今），部分 App 里「今」丢失、剩余拼音卡死）：
+// 旧实现每次渐进选择都「EndComposition + 立刻 StartComposition」，对合成结束/
+// 重建时选区记账有缺陷的 App（部分 Chromium/Java/旧 Win32 宿主），新合成的锚点
+// 可能落回旧文本处，随后的 SetText 直接覆盖掉刚上屏的字。改用同一合成内 SetText
+// 后，落盘只剩「整条组词结束」一个时机，与微软拼音「合成内已转换段」行为一致。
 void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
     g_lastOp = kOpPreedit;
     // 预编辑 = 已确认段（渐进上屏的已选字）+ 剩余拼音：二者同属**同一条
     // 合成**，整条组词结束才落盘（见 confirmedPreedit_ 注释）。壳对文档
     // 只做两类操作——同一合成内 SetText 更新（与逐键输入同原语）与
     // 落盘提交（见 applyCommit），不存在「中途结束再重建合成」的易碎操作。
-    // 失步期间（issue #122，见 tip_desync.cpp）本地记下的按键先乐观接在后面。
-    const std::string combinedPreedit = confirmedPreedit_ + comp_.preedit + pendingKeys_;
+    // 异步管线（issue #149）：结果未回来的按键由 optimisticComp 回放成预编辑——
+    // 预编辑**立即**出现，不等 daemon；候选窗始终显示 comp_ 的候选，结果回来再刷新。
+    const chaoset::Comp display = optimisticComp();
+    const std::string combinedPreedit = confirmedPreedit_ + display.preedit;
     // 「预编辑是否真的写进了文档」：字符串为空视作已写（无需合成）；
     // SetText 失败时保持 false，字母分支据此判定该上下文不可用并放行。
     preeditWritten_ = combinedPreedit.empty();
@@ -603,7 +612,6 @@ bool ChaosetTIP::commit(ITfContext* pic, const std::string& text) {
     // 提交即整条组词结束：确认段缓冲必须清空（调用方已先行取出拼接，
     // 这里幂等兜底，防止异常路径把旧段串进下一轮组词的预编辑）。
     confirmedPreedit_.clear();
-    clearDesync();
     return SUCCEEDED(hr) && commitWritten_;
 }
 
@@ -669,8 +677,9 @@ void ChaosetTIP::syncDpScheme(const chaoset::Comp& comp) {
 // 结束组词并重置引擎会话。reset 响应同样是 Composition（也带 shuangpin），
 // 这里统一缓存方案名——所有调用点替换 session_.reset() 以免漏掉。
 void ChaosetTIP::resetSession() {
-    clearDesync();  // 引擎侧组词被丢弃：失步状态一并作废，绝不串进下一轮（issue #122）
-    syncDpScheme(session_.reset());
+    // 会话真的结束（失焦/停用/合成被宿主终止）：丢弃在飞结果并让引擎清空
+    // 组词与学习上下文（reset）。纪元递增保证旧结果绝不写进新会话。
+    resetEnginePipeline(true);
 }
 
 
@@ -686,8 +695,8 @@ void ChaosetTIP::resetSession() {
 // reset 只保留给**会话真的结束**的场景：失焦（OnSetFocus(FALSE)）、
 // TIP 停用（Deactivate）、合成被宿主终止（OnCompositionTerminated）。
 void ChaosetTIP::resetComposition() {
-    clearDesync();  // 同 resetSession：组词丢弃即失步作废（issue #122）
-    syncDpScheme(session_.resetComposition());
+    // 只丢组词、保留学习上下文：同样先丢弃在飞结果，再让引擎 resetComposition。
+    resetEnginePipeline(false);
 }
 
 

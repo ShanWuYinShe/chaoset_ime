@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
+	"strings"
 )
 
 // checks_input_case.go：三端「字母入组词保留大小写」契约。
@@ -62,12 +64,15 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 		"!shift && (vk >= kVkFirstLetter",
 		"!shiftDown() && vk >= kVkFirstLetter",
 	)
-	checkContains(fsys, problems, group, "shims/windows/src/tip_desync.cpp",
-		"const bool shift = shiftDown();",
-	)
-	checkExcludes(fsys, problems, group, "shims/windows/src/tip_desync.cpp",
-		"shiftActive(",
-	)
+	// 异步引擎管线（issue #149）后，字母大小写只在 handleKey 的字母分支计算一次；
+	// 旧失步态里那份平行实现已随同步超时状态机删除。断言全壳只有这一处，且
+	// tip_desync 不再承载大小写逻辑——任何「第二个实现」都会漂移。
+	if n := strings.Count(stripCppComments(mustRead(fsys, winTipKeys)),
+		"const char base = (shiftDown != capsOn) ? 'A' : 'a';"); n != 1 {
+		*problems = append(*problems, fmt.Sprintf(
+			"%s：Windows 壳字母大小写计算出现 %d 处（应恰好 1 处：Shift⊕CapsLock）", group, n))
+	}
+	checkExcludes(fsys, problems, group, winTipDesync, "capsOn", "shiftActive(")
 
 	// Linux 壳：a-z 与 A-Z 都转发。
 	checkContains(fsys, problems, group, "shims/linux/engine/main.cpp",

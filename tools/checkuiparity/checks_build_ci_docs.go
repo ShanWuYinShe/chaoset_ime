@@ -77,9 +77,14 @@ var shimModuleBudgets = []shimModuleBudget{
 	{"shims/windows/src/tip_keys.cpp", 1100},
 	{"shims/windows/src/tip_composition.cpp", 900},
 	{"shims/windows/src/tip_candidates.cpp", 500},
-	// tip_desync.cpp：daemon 失步恢复（组词中引擎请求超时后的本地保留、失步期
-	// 按键分流与重连重建），从按键失败处理路径按职责独立成 TU。
+	// tip_desync.cpp：与引擎无关的本地编辑原语（backspaceLocally）；旧的同步
+	// 超时失步状态机已随 issue #149 删除。
 	{"shims/windows/src/tip_desync.cpp", 300},
+	// tip_async.cpp：issue #149 异步引擎管线（入队/乐观回放/结果应用/失联宽限）。
+	{"shims/windows/src/tip_async.cpp", 600},
+	// engine_pump.cpp/.hpp：每 TIP 一个引擎线程（独占连接、FIFO、结果回投）。
+	{"shims/windows/src/engine_pump.cpp", 500},
+	{"shims/windows/src/engine_pump.hpp", 300},
 	{"shims/windows/src/candidate_window.cpp", 1200},
 	{"shims/windows/src/candidate_window.hpp", 300},
 	{"shims/windows/src/shell_worker.cpp", 600},

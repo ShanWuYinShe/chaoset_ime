@@ -755,22 +755,27 @@ func TestCheckMacTisRegisterIdempotent(t *testing.T) {
 	}
 }
 
-// TestCheckTimeoutResilience 锁住「超时韧性」契约：真实仓库必须通过；以下回退
-// 都必须被捕获（任何一条都会让 issue #122 的症状复现）：
-//  1. 字母追加失败点去掉超时保留——超时又直接 fail-open 擦掉拼音；
-//  2. 翻页失败点去掉超时分流；
-//  3. 按键路径重新套上 5s 熔断——超时后的下一键重连不了；
-//  4. 失步处理器改走 flushOrCancel 拆组词；
-//  5. daemon 主循环里阻塞等连接（旧的单监听实例模型）；
-//  6. daemon 不再认 input 的 base；
-//  7. 按键截止时间两档（正常 150ms / 失步重建 30ms）被改回单档或切换顺序错乱。
-func TestCheckTimeoutResilience(t *testing.T) {
+// TestCheckAsyncEnginePipeline 锁住「异步引擎管线」契约：真实仓库必须通过；以下
+// 回退都必须被捕获（任何一条都会让按键重新阻塞宿主 UI 线程或丢键）：
+//  1. 按键不再把操作投递给引擎线程（按键静默丢失）；
+//  2. 按键不再先入队/先渲染（乐观预编辑滞后）；
+//  3. 结果应用丢掉过期纪元检查（失焦后的迟到结果写进新会话）；
+//  4. 失败结果也弹出乐观项（用户刚输入的拼音被抹掉）；
+//  5. 失焦不作废在飞结果；
+//  6. 宽限放弃不再按原始串落盘（丢键）；
+//  7. 乐观预编辑改回只读 comp_（首个按键后被放行成英文）；
+//  8. 引擎线程不再回投结果 / 不再 FIFO；
+//  9. 析构不停引擎线程（DLL 卸载后线程引用已释放对象）。
+func TestCheckAsyncEnginePipeline(t *testing.T) {
 	files := []string{
-		winShell, winCoreHpp, winCoreCpp, ipcServer, rustSession,
-		rustDaemonServer, rustDaemonPipe, uiParityDoc,
-		winTransport, winTipCore, winTipDesync, winCoreTest, macTransport,
-		linuxEngineMain, "shims/linux/engine/daemon.hpp", linuxEngine,
-		macEngineClient, "shims/macos/src/KeyRouter.swift", macController,
+		winShell, winTransport, winCoreHpp, winCoreCpp, winCoreTest,
+		winTipHpp, winTipCore, winTipKeys, winTipCands, winTipComp, winTipDesync,
+		winTipAsync, winEnginePumpHpp, winEnginePumpCpp,
+		"shims/windows/src/tip_thread.hpp", "shims/windows/src/tip_thread.cpp",
+		uiParityDoc, macTransport, macEngineClient, macController,
+		"shims/macos/src/KeyRouter.swift", linuxEngine, linuxEngineMain,
+		"shims/linux/engine/daemon.hpp", ipcServer, rustSession,
+		rustDaemonPipe, rustDaemonServer,
 	}
 	orig := map[string]string{}
 	for _, p := range files {
@@ -789,9 +794,9 @@ func TestCheckTimeoutResilience(t *testing.T) {
 	}
 
 	var problems []string
-	checkTimeoutResilience(build(nil), &problems)
+	checkAsyncEnginePipeline(build(nil), &problems)
 	if len(problems) != 0 {
-		t.Fatalf("真实实现未通过超时韧性契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+		t.Fatalf("真实实现未通过异步引擎管线契约（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
 	}
 
 	expect := func(name, path, old, new string, want ...string) {
@@ -799,11 +804,11 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		if !strings.Contains(orig[path], old) {
 			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
 		}
-		mut := map[string]string{path: strings.Replace(orig[path], old, new, 1)}
+		mut := map[string]string{path: strings.ReplaceAll(orig[path], old, new)}
 		var problems []string
-		checkTimeoutResilience(build(mut), &problems)
+		checkAsyncEnginePipeline(build(mut), &problems)
 		joined := strings.Join(problems, "\n")
-		if !strings.Contains(joined, groupTimeoutResilience) {
+		if !strings.Contains(joined, groupAsyncEngine) {
 			t.Fatalf("%s 应被捕获，实际：%v", name, problems)
 		}
 		for _, w := range want {
@@ -813,105 +818,36 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		}
 	}
 
-	expect("字母追加去掉超时保留", winShell,
-		"if (keepCompositionOnTimeout(prev, ch, pic)) return true;", "",
-		"字母追加")
-	expect("翻页失败点去掉超时分流", winShell,
-		"if (enterDesyncOnTimeout(prev)) return true;", "",
-		"翻页键")
-	expect("按键路径重新套熔断", winShell,
-		"    if (transport.isConnected()) return true;\n    if (transport.tryConnectOnce()) return true;\n",
-		"    if (transport.isConnected()) return true;\n    if (transport.circuitOpen()) return false;\n    if (transport.tryConnectOnce()) return true;\n",
-		"circuitOpen")
-	expect("失步处理器拆组词", winShell,
-		"        resetComposition();\n        commit(pic, raw);\n        *eaten = false;",
-		"        flushOrCancel(pic);\n        *eaten = false;",
-		"flushOrCancel(")
-	expect("daemon 主循环阻塞等连接", rustDaemonPipe,
-		"    let pipe_name = pipe_name.to_string();\n    run_listener_pool(",
-		"    let pipe_name = pipe_name.to_string();\n    let _ = ConnectNamedPipe(std::ptr::null_mut(), std::ptr::null_mut());\n    run_listener_pool(",
-		"ConnectNamedPipe")
-	expect("daemon 不认 base", ipcServer,
-		`let base = params.get("base").and_then(|v| v.as_str());`,
-		"let base: Option<&str> = None;",
-		`params.get(`)
-	// 读超时又改回断连（用户明确要求「不要因为超时就断开连接」）：
-	// Windows 的读超时分支不再直接返回、macOS 的不再保留连接，都必须被捕获。
-	expect("Windows 读超时又断连", winTransport,
-		"                        if (!isWrite && nothingConsumed) {",
-		"                        if (false) {",
-		"未消费字节才保留")
-	expect("macOS 读超时又断连", macTransport,
-		"            if lastReadTimedOut && staleResponses < 2 {",
-		"            if false {",
-		"lastReadTimedOut")
-	// 部分读取分支的回退：Windows 又变回「所有读超时都保留连接」、macOS 不再区分
-	// off、drain 遇部分读取只清计数不断连，都必须被捕获。
-	expect("Windows 不区分部分读取", winTransport,
-		"const bool nothingConsumed = off == 0 && cancelled == 0;",
-		"const bool nothingConsumed = true;",
-		"是否已消费字节")
-	expect("macOS 不区分部分读取", macTransport,
-		"lastReadTimedOut = (off == 0)",
-		"lastReadTimedOut = true",
-		"lastReadTimedOut")
-	// 退格失败路径的回退：macOS 改回「无 guard 直接赋值」（失败即清组词/强上屏），
-	// Linux 去掉失败保留分支，都必须被捕获。
-	expect("macOS selectPrefix 允许重试", macEngineClient,
-		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index],\n                                retryOnFailure: false) else { return nil }",
-		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index]) else { return nil }",
-		"retryOnFailure: false")
-	expect("Windows selectPrefix 失败不再退化上屏候选中文", winShell,
-		"committed = pickedText;",
-		"/* drop fallback */",
-		"不足 3 处")
-	// Linux 壳已改异步（issue #149）：同步调用形状与其变异用例随之删除，
-	// 异步契约由 checks_linux_async_test.go 覆盖；macOS 同理见 checks_macos_async_test.go。
-	// issue #149：按键截止时间两档（正常按键 150ms / 失步重建 30ms）被改回单档、
-	// 重建不再用短截止、或没把正常截止还回去，都必须被捕获。
-	expect("正常按键截止被压回 30ms", winTransport,
-		"constexpr DWORD kKeyRequestDeadlineMs = 150;",
-		"constexpr DWORD kKeyRequestDeadlineMs = 30;",
-		"kKeyRequestDeadlineMs")
-	expect("失步重建不用短截止", winTipDesync,
-		"transport_.setDeadlineMs(kDesyncRebuildDeadlineMs);", "",
-		"kDesyncRebuildDeadlineMs")
-	expect("失步重建后不还回正常截止", winTipDesync,
-		"transport_.setDeadlineMs(kKeyRequestDeadlineMs);", "",
-		"setDeadlineMs(kKeyRequestDeadlineMs)")
-	expect("文档没写两档截止", uiParityDoc,
-		"TSF 正常按键 150ms、", "TSF 按键 30ms、",
-		"TSF 正常按键 150ms")
-
-	// 读超时后原样重放增量 input 的回退（会让同一段字符追加两次）。
-	expect("macOS call 层读超时又重试", macEngineClient,
-		"        if transport.lastFailureWasReadTimeout { return nil }",
-		"        ",
-		"if transport.lastFailureWasReadTimeout")
-	expect("macOS input 层去掉 base 幂等重放", macEngineClient,
-		"            guard let base else { return nil }",
-		"            return nil",
-		"guard let base else")
-	// 正常路径恒带 base：daemon 每键 restore_input，双拼暂存的半键被清空，
-	// 两键无法成对解码（PR #142 合并后的真实回归）。
-	expect("macOS 正常路径恒带 base", macEngineClient,
-		"        if rebuild, let base { params[\"base\"] = base }",
-		"        if let base { params[\"base\"] = base }",
-		"if rebuild, let base")
-	expect("Linux 去掉 base 幂等重放", linuxEngineMain,
-		"    comp = session_.input(text, halfWidth, base.c_str());",
-		"    return Comp();",
-		"base.c_str()")
-	expect("Linux 不区分部分读取", linuxEngineMain,
-		"lastReadTimedOut_ = (off == 0);",
-		"lastReadTimedOut_ = true;",
-		"lastReadTimedOut")
-	// 精确命中 drainStaleResponse 的「非干净超时」分支（紧跟 size 计算前那段），
-	// 不能只删任意一处 closeConn——drain 里还有两处照抄的三行。
-	expect("drain 遇部分读取不断连", winCoreCpp,
-		"        t_.closeConn();\n        staleResponses_ = 0;\n        return false;\n    }\n    const std::uint32_t size",
-		"        staleResponses_ = 0;\n        return false;\n    }\n    const std::uint32_t size",
-		"drainStaleResponse")
+	expect("按键不再投递引擎", winTipKeys, "dispatchPendingOp(seq);", "", "dispatchPendingOp(")
+	expect("按键不再乐观入队", winTipKeys,
+		"        const std::uint64_t seq = queuePendingOp(op);\n", "", "queuePendingOp(")
+	expect("结果应用丢掉过期纪元检查", winTipAsync,
+		"        if (r.op.epoch != engineEpoch_) continue;  // 过期（失焦/取消后的结果）",
+		"", "epoch")
+	expect("失败结果也弹出乐观项", winTipAsync,
+		"    if (!r.ok) {\n        // 失败结果**不**弹出乐观项",
+		"    if (!r.ok) {\n        while (!pendingOps_.empty() && pendingOps_.front().seq <= r.op.seq) pendingOps_.pop_front();\n        // 失败结果**不**弹出乐观项",
+		"失败结果上弹出了乐观项")
+	expect("失焦不作废在飞结果", winTipCore,
+		"        resetEnginePipeline(true);\n        if (engineCtx_ != nullptr) {",
+		"        if (engineCtx_ != nullptr) {",
+		"只有 1 处 resetEnginePipeline(true)")
+	expect("宽限放弃不再按原始串落盘", winTipAsync,
+		"    if (!commit(ctx, raw)) endComposition();", "    endComposition();", "commit(")
+	expect("乐观预编辑改回只读 comp_", winTipComp,
+		"    const chaoset::Comp display = optimisticComp();",
+		"    const chaoset::Comp display = comp_;",
+		"optimisticComp()")
+	expect("引擎线程不再回投结果", winEnginePumpCpp,
+		"        if (tid_ != 0) postTipThread(tid_, kTipEngineResultMsg, 0, 0);", "",
+		"kTipEngineResultMsg")
+	expect("引擎线程不再 FIFO", winEnginePumpCpp,
+		"            queue_.pop_front();", "            op = queue_.back(); queue_.pop_back();",
+		"queue_.pop_front()")
+	expect("析构不停引擎线程", winTipCore,
+		"        pump_->stop();", "", "pump_->stop()")
+	expect("文档不再写异步契约", uiParityDoc,
+		"kTipEngineResultMsg", "kTipResultMsg", "kTipEngineResultMsg")
 }
 
 // TestCheckCandidateNoPrivilege 锁住「候选窗无特权：焦点离开即收」的三端契约：
@@ -1115,9 +1051,9 @@ func TestCheckLetterCaseComposition(t *testing.T) {
 	expect("Windows shiftDown 重新混入 VK_CAPITAL", winKeys,
 		"bool ChaosetTIP::shiftDown() {\n    return (GetKeyState(VK_SHIFT) & 0x8000) != 0;\n}",
 		"bool ChaosetTIP::shiftDown() {\n    return ((GetKeyState(VK_SHIFT) & 0x8000) != 0) || ((GetKeyState(VK_CAPITAL) & 0x0001) != 0);\n}")
-	expect("Windows 失步处理器用 shiftActive 混入 CapsLock", winDesync,
-		"const bool shift = shiftDown();",
-		"const bool shift = shiftActive();")
+	expect("Windows 字母大小写忽略 CapsLock", winKeys,
+		"const char base = (shiftDown != capsOn) ? 'A' : 'a';",
+		"const char base = shiftDown ? 'A' : 'a';")
 	expect("macOS 回退 charactersIgnoringModifiers", macRouter,
 		"guard let chars = event.characters,",
 		"guard let chars = event.charactersIgnoringModifiers,")

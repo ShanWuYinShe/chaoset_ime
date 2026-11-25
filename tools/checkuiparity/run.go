@@ -84,8 +84,9 @@ var checkGroups = []checkGroup{
 	{groupToggleModeHotkey, onLogical(checkToggleModeHotkey)},
 	{groupTrayPalette, onLogical(checkTrayPalette)},
 	{groupTsfZeroBlock, onLogical(checkTsfZeroBlockContract)},
+	// 异步引擎管线：按键零等待、结果按序回投、失败宽限与显式选词兜底。
+	{groupAsyncEngine, onLogical(checkAsyncEnginePipeline)},
 	// 超时韧性：引擎请求超时不拆组词（壳/协议/daemon 管道服务端三段契约）。
-	{groupTimeoutResilience, onLogical(checkTimeoutResilience)},
 	// macOS 异步引擎管线（issue #149）：IMK 回调零等待、结果按序应用、慢/失败不关候选窗。
 	{groupMacOSAsync, onLogical(checkMacOSAsyncPipeline)},
 	// Linux ibus 壳：按键只入队 + 乐观渲染，引擎 I/O 在每实例线程（issue #149 三端统一）。

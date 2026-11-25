@@ -37,7 +37,7 @@ static std::wstring daemonQuote(const std::wstring& s) { return L"\"" + s + L"\"
 // 启动失败只记诊断日志并按英文透传降级，绝不阻塞/关闭宿主程序。
 //
 // 2026-11-06 零阻塞：本函数只允许在 ShellWorker 后台线程调用；
-// TSF 线程用 ensureDaemonFast（单次非阻塞探测 + fail-open）。
+// TSF 线程绝不调用（引擎 I/O 在每 TIP 的 EnginePump 线程，issue #149）。
 
 
 // 返回 true 表示本次确实发起了 daemon 进程（CreateProcess 成功）。
@@ -107,7 +107,7 @@ bool ensureDaemonStarted() {
 }
 
 // worker 线程专用：建立/等待 daemon 连接（有界，总共约 <=1s）。
-// TSF 线程绝不调用——那里走 ensureDaemonFast（零等待 + fail-open）。
+// TSF 线程绝不调用——引擎 I/O 在每 TIP 的 EnginePump 线程，按键路径零等待。
 bool ensureDaemonConnected(PipeTransport& transport) {
     if (transport.isConnected()) return true;
     if (transport.circuitOpen()) return false;

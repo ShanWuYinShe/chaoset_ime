@@ -780,7 +780,7 @@ func checkTrayLazyLifecycle(fsys fs.FS, problems *[]string) {
 //	   tsf.log 只走 AsyncLog（diagPrintf → enqueueLogLine，不回退同步写）。
 //	b) 零阻塞基础设施存在：ShellWorker/ShellTask/AsyncLog/message-only 窗口/
 //	   overlapped 管道/熔断。
-//	c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 调用点用 ensureDaemonFast。
+//	c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 线程不直连引擎（异步引擎管线）。
 //	d) 前台钩子回调只 PostMessage；TIP 线程处理前台变化时日志必须限流。
 //	e) DllCanUnloadNow 计入 worker 线程与 message-only 窗口。
 func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
@@ -814,11 +814,10 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 		{"OnKeyUp", "HRESULT STDMETHODCALLTYPE ChaosetTIP::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM"},
 		{"render", "void ChaosetTIP::render(ITfContext* pic)"},
 		{"handleKey", "bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic)"},
-		// daemon 失步恢复（超时韧性）同样在宿主 UI 线程同步执行：只允许内存操作、
-		// 有截止的引擎请求与非阻塞重连（issue #122）。
-		{"handleKeyDesynced", "bool ChaosetTIP::handleKeyDesynced(WPARAM vk, ITfContext* pic, bool* eaten)"},
-		{"syncDaemonInput", "ChaosetTIP::SyncResult ChaosetTIP::syncDaemonInput()"},
-		{"keepCompositionOnTimeout", "bool ChaosetTIP::keepCompositionOnTimeout(const chaoset::Comp& prev, const std::string& key,"},
+		// 异步引擎管线（issue #149）的结果应用同样在宿主 UI 线程执行：只允许内存
+		// 操作与 TSF 编辑会话，绝不再发 IPC/等待。
+		{"applyEngineResults", "void ChaosetTIP::applyEngineResults()"},
+		{"applyEngineResult", "void ChaosetTIP::applyEngineResult(const EngineResult& r)"},
 		{"showSettingsWindow", "void ChaosetTIP::showSettingsWindow()"},
 		{"onForegroundChanged", "void ChaosetTIP::onForegroundChanged(HWND fg)"},
 		{"selectCandidateByIndex", "void ChaosetTIP::selectCandidateByIndex(int index)"},
@@ -875,18 +874,11 @@ func checkTsfZeroBlockContract(fsys fs.FS, problems *[]string) {
 		"HWND_MESSAGE", "FILE_FLAG_OVERLAPPED", "circuitOpen", "setDeadlineMs",
 	)
 
-	// c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 调用点用 ensureDaemonFast
-	// （单次非阻塞探测 + fail-open）。
-	checkContains(fsys, problems, group, winShell, "ensureDaemonFast(")
-	if body, line, ok := cppFunctionBody(src, "bool ensureDaemonFast(PipeTransport& transport)"); ok {
-		if strings.Contains(stripCppComments(body), "ensureDaemonConnected(") {
-			*problems = append(*problems, fmt.Sprintf(
-				"%s：%s 的 ensureDaemonFast（约第 %d 行）又回退到 ensureDaemonConnected（会阻塞）",
-				group, winShell, line))
-		}
-	} else {
-		*problems = append(*problems, fmt.Sprintf("%s：%s 找不到 ensureDaemonFast 定义", group, winShell))
-	}
+	// c) 慢连接 ensureDaemonConnected 只允许 worker；TSF 线程不直连引擎——按键只入队、
+	// 由每 TIP 的 EnginePump 线程执行（issue #149）。直连/慢连接的拦截由上面的禁止
+	// API 列表逐回调覆盖，这里锁住异步管线入口存在，防止按键路径整体回退到同步。
+	checkContains(fsys, problems, group, winShell,
+		"submitEngineOp(", "optimisticComp(", "class EnginePump", "kTipEngineResultMsg")
 
 	// d) 前台钩子：系统级回调体内只 PostMessage（不 hide、不写盘、不等待）；
 	// TIP 线程处理前台变化时日志必须限流（前台风暴不能每事件刷盘）。

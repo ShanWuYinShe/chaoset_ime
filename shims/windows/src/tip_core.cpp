@@ -17,10 +17,9 @@ using namespace chaoset::win;
 
 ChaosetTIP::ChaosetTIP() {
     InterlockedIncrement(&g_liveObjects);
-    // TSF 线程上的传输：只允许单次非阻塞连接 + kKeyRequestDeadlineMs 有界请求
-    // （失败 fail-open；超时进入失步恢复，截止取值理由见 transport.hpp）。
-    transport_.setAutoConnect(false);
-    transport_.setDeadlineMs(kKeyRequestDeadlineMs);
+    // 引擎 I/O 在每 TIP 的 EnginePump 线程上（issue #149）：本实例不持有
+    // 传输/会话，构造时零线程、零窗口（非激活零副作用）；首次按键/激活时
+    // ensureEnginePump() 才创建线程并连 daemon。
 }
 
 ChaosetTIP::~ChaosetTIP() {
@@ -38,6 +37,20 @@ ChaosetTIP::~ChaosetTIP() {
     // 限制：注册表是 thread_local，只在 TSF 常规路径（同线程 Release）有效；
     // 跨线程 Release 时这里看到的是其它线程的空表（原 Deactivate 路径同样
     // 无法清理），彻底修复需要全局 (tip, 线程 id) 注册表，本轮不做。
+    // 引擎线程先停：它只在本对象存活期间调用本类状态的回调（经 message-only
+    // 窗口），停在线程退出前能保证之后不再有结果投递进来。
+    if (pump_) {
+        pump_->stop();
+        if (pump_->joinOk()) {
+            pump_.reset();
+        } else {
+            pump_.release();  // 线程未能退出：故意泄漏，绝不让线程引用已销毁对象
+        }
+    }
+    if (engineCtx_ != nullptr) {
+        engineCtx_->Release();
+        engineCtx_ = nullptr;
+    }
     unregisterTipFromThread(this);
     if (fgHook_ != nullptr) unhookForeground();
     // UILess 候选元素：交还 TIP 持有的那份引用（Deactivate 已 endCandidates
@@ -308,6 +321,10 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::Deactivate() {
     }
     endComposition();
     resetSession();
+    if (engineCtx_ != nullptr) {
+        engineCtx_->Release();
+        engineCtx_ = nullptr;
+    }
     comp_ = chaoset::Comp();
     resetShiftTracking();
     dpScheme_.clear();
@@ -344,6 +361,13 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
         // 输入焦点无关——切到没有输入焦点的进程（桌面/任务栏/无文本框窗口）时
         // 托盘必须继续显示。隐藏只由输入法切换通知 OnActivated(FALSE) 触发。
         updateInputActive(false);
+        // 失焦即作废一切在飞引擎结果（纪元递增）并让引擎只丢组词：焦点回来后
+        // 迟到的结果绝不能在新文档的上下文里重建预编辑。
+        resetEnginePipeline(true);
+        if (engineCtx_ != nullptr) {
+            engineCtx_->Release();
+            engineCtx_ = nullptr;
+        }
         if (isComposing() || !confirmedPreedit_.empty()) {
             resetSession();
             comp_ = chaoset::Comp();
@@ -391,7 +415,9 @@ ITfComposition* pComposition) {
     // 绝不强改。自己 EndComposition 的路径 composition_ 已置空（或 endTarget_ 非空）
     // 会自然跳过。
     if (composition_ != nullptr && pComposition == composition_ && endTarget_ == nullptr) {
-        const std::string expected = confirmedPreedit_ + comp_.preedit;
+        // 与文档比对的内容必须是**实际显示**的预编辑（含尚未被引擎应用的
+        // 乐观按键），否则异步结果回来时看不懂自己写的文本。
+        const std::string expected = confirmedPreedit_ + optimisticComp().preedit;
         if (!expected.empty() && expected.size() <= 4096) {
             ITfRange* range = nullptr;
             if (SUCCEEDED(pComposition->GetRange(&range)) && range != nullptr) {
@@ -436,8 +462,10 @@ ITfComposition* pComposition) {
         composition_ = nullptr;
     }
     releaseCompositionContext();
+    // 外部终止：作废一切在飞结果（纪元递增）并让引擎清空组词；窗口过程/
+    // 候选菜单跟踪期间也不允许迟到结果重建预编辑。
+    resetEnginePipeline(true);
     if (!contextMenuTracking_) {
-        resetSession();
         comp_ = chaoset::Comp();
         // 合成被宿主终止时 TSF 会把合成内文本（含已确认段）留在文档里，
         // 缓冲使命已结束，必须清空——绝不能串进下一轮组词的预编辑。
@@ -451,7 +479,10 @@ ITfKeyEventSink* ChaosetTIP::keySink() { return static_cast<ITfKeyEventSink*>(th
 ITfCompositionSink* ChaosetTIP::compositionSink() { return static_cast<ITfCompositionSink*>(this); }
 
 
-bool ChaosetTIP::isComposing() const { return !comp_.input.empty(); }
+// 组词中 = 引擎已确认的输入串**或**已入队但尚未应用的按键（乐观预编辑）。
+// 异步管线下首个按键的结果回来前 comp_.input 还是空的，若只看 comp_ 会把
+// 紧随其后的按键放行成宿主英文。
+bool ChaosetTIP::isComposing() const { return !optimisticComp().input.empty(); }
 
 bool ChaosetTIP::hasCandidates() const { return !comp_.candidates.empty(); }
 
@@ -749,7 +780,10 @@ void ChaosetTIP::updateInputActive(bool fromFocusEvent) {
         if (cachedModeScope() == ModeScope::Process) reportModeToUi(mode, true);
         candidateWnd_.setActiveGate(true);
         ensureForegroundHook();
-        if (!transport_.isConnected()) warmDaemonInBackgroundOnce();
+        // 异步管线：激活时预起引擎线程并让 worker 懒启动 daemon（零等待），
+        // 首个内容键到来前连接通常已就绪。
+        ensureEnginePump();
+        warmDaemonInBackgroundOnce();
         static volatile LONG loggedOn = 0;
         if (InterlockedCompareExchange(&loggedOn, 1, 0) == 0 && diagBudget()) {
             diagPrintf(L"tsf.log", "input active=1 pid=%lu fgpid=%lu\n",
@@ -992,6 +1026,10 @@ void ChaosetTIP::onWorkerModeAuthority() {
 void ChaosetTIP::onWorkerShowToast(int id) {
     if (id == 1) showToast(L"设置窗口打不开：chaoset-ui.exe 未运行", true);
 }
+
+// 每 TIP 的引擎线程把结果回投到本线程：取走并按序应用（tip_async.cpp）。
+// 这里只做内存/TSF 编辑，绝不再发 IPC。
+void ChaosetTIP::onWorkerEngineResult() { applyEngineResults(); }
 
 // UiElementHost：UILess 宿主经 ITfUIElement::Show 通知显示/隐藏。
 // shown=FALSE（宿主要求隐藏候选 UI）时收起自绘浮窗——宿主接管渲染场景

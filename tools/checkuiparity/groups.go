@@ -40,7 +40,7 @@ const (
 	groupToggleModeHotkey   = "无焦点中英切换热键"
 	groupTrayPalette        = "托盘配色"
 	groupTsfZeroBlock       = "TSF 回调零跨进程等待"
-	groupTimeoutResilience  = "超时韧性"
+	groupAsyncEngine        = "异步引擎管线"
 	groupWindowsInstall     = "Windows 安装安全"
 	groupWindowsVersionInfo = "Windows 版本信息"
 

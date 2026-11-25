@@ -158,13 +158,15 @@ Windows 只有 `chaosetctl.exe`。）
 | 文件 | 职责 | 依赖 | 预算 |
 | :--- | :--- | :--- | :--- |
 | `win32.cpp` | DLL 生命周期编排：ChaosetFactory、ChaosetRunUi 导出、DllMain/DllGetClassObject/DllCanUnloadNow、g_liveObjects 存活计数 | 全部 Windows 壳模块（含 tip.hpp） | ≤1200（当前 129；≤2000 目标已达成） |
-| `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink/UiElementHost）、kVk*/kPageSize 常量、UILess 协商成员 | candidate_window, mode_toast, tip_thread, tip_ids, shell_worker, winutil, config, transport, daemon, diagnostics, core | ≤500 |
+| `tip.hpp` | TIP 主体 class ChaosetTIP 完整声明（成员/嵌套 ContextRef/继承接口与 TipThreadSink/UiElementHost）、kVk*/kPageSize 常量、UILess 协商成员、异步管线成员 | candidate_window, mode_toast, engine_pump, tip_thread, tip_ids, shell_worker, winutil, config, transport, daemon, diagnostics, core | ≤500 |
 | `tip_core.cpp` | TIP 生命周期/激活状态机/中英模式/前台钩子/worker 回投入口 | tip.hpp | ≤1100（当前 ~955） |
 | `tip_profiles.cpp` | TSF 信号 sink：ITfThreadFocusSink/ITfActiveLanguageProfileNotifySink/ITfInputProcessorProfileActivationSink（键盘布局切换只有它通知，托盘隐藏权威事件）的挂载与回调、isActiveTip 激活档案查询 | tip.hpp | ≤300 |
 | `tip_keys.cpp` | ITfKeyEventSink 五入口、Shift 状态机、修饰键/键位映射、wouldHandle/handleKey | tip.hpp | ≤1100 |
 | `tip_composition.cpp` | EditSession + focusContext/can*/render/光标/预编辑/提交/结束合成/双拼方案与会话收尾；UILess 官方协商（BeginUIElement/UpdateUIElement/EndUIElement） | tip.hpp, core | ≤900 |
 | `tip_candidates.cpp` | 候选点选/删除/翻页、showToast、设置窗入口、联想面板与 CandidateWindowHost 转发 | tip.hpp | ≤500 |
-| `tip_desync.cpp` | daemon 失步恢复：组词中引擎请求超时后的本地保留（`enterDesyncOnTimeout`）、失步期按键分流（`handleKeyDesynced`）与重连重建（`syncDaemonInput`，经 `input` 的 `base`） | tip.hpp | ≤300 |
+| `tip_desync.cpp` | 与引擎无关的本地编辑原语（`backspaceLocally`）：异步管线的乐观预编辑回放复用（旧的同步超时失步状态机已随 issue #149 删除） | tip.hpp | ≤300 |
+| `tip_async.cpp` | 异步引擎管线（issue #149）：操作入队/乐观预编辑回放（`optimisticComp`）、结果按 seq 应用（失败不弹出乐观项、纪元不匹配丢弃）、失联宽限与整串重建、显式选词兜底 | tip.hpp, shell_worker | ≤600 |
+| `engine_pump.cpp` `.hpp` | 每 TIP 一个引擎线程：独占 daemon 连接（组词会话按连接隔离）、FIFO 执行、200ms 请求截止、连接冷却与探测、结果经 `kTipEngineResultMsg` 回投 TIP 线程；叶子模块，不 include tip.hpp | core, transport, tip_thread | ≤500 / ≤300 |
 | `candidate_window.cpp` `.hpp` | 候选窗 GDI 渲染/DPI/鼠标与右键菜单/UIA 宿主 provider/齿轮笔/防卸载计数；TIP 侧只经 CandidateWindowHost 抽象接口 | winutil, theme, config, diagnostics, candidate_layout, core | ≤1200 / ≤300（当前 1179；接近上限，后续改动先按职责拆分） |
 | `shell_worker.cpp` `.hpp` | 每进程后台 worker 任务队列、post* 投递、daemon 懒启动/连接、设置窗拉起、tsf.log 异步落盘 | winutil, core, transport, daemon, ui_client, diagnostics, tip_thread | ≤600 / ≤250 |
 | `tip_thread.cpp` `.hpp` | kTip* 消息常量、worker→TIP 线程回投、message-only 窗口过程/创建销毁、按线程 TIP 注册表与前台钩子表；对 TIP 只经 TipThreadSink 抽象接口分发（不依赖具体 TIP 类） | winutil | ≤350 / ≤200 |
