@@ -39,8 +39,8 @@ func checkCandidateNoPrivilege(fsys fs.FS, problems *[]string) {
 	}
 	// Linux：focus_out 回调必须绑定，且 focusOut() 函数体本身要重置会话并收 lookup table
 	// （文件里别处也有 hideLookupTable()，按函数体判，不能整文件找）。
-	checkContains(fsys, problems, group, linuxEngine, "focus_out = on_focus_out", "void focusOut()")
-	if body, line, ok := cppFunctionBody(stripCppComments(mustRead(fsys, linuxEngine)), "void focusOut()"); ok {
+	checkContains(fsys, problems, group, linuxEngine, "focus_out = on_focus_out", "void IbusEngineState::focusOut()")
+	if body, line, ok := cppFunctionBody(stripCppComments(mustRead(fsys, linuxEngine)), "void IbusEngineState::focusOut()"); ok {
 		for _, needle := range []string{"sessionReset()", "hideLookupTable()"} {
 			if !strings.Contains(body, needle) {
 				fail("%s 的 focusOut（约第 %d 行）缺少 %s——失焦必须结束会话并收候选表", linuxEngine, line, needle)

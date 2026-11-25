@@ -865,14 +865,8 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"committed = pickedText;",
 		"/* drop fallback */",
 		"不足 3 处")
-	expect("Linux 选词失败又放行按键", linuxEngine,
-		"        if (!daemon_.session().selectPrefix(idx, &rest)) return true;",
-		"        if (!daemon_.session().selectPrefix(idx, &rest)) return false;",
-		"selectPrefix")
-	expect("Linux 退格失败不强上屏", linuxEngine,
-		"        if (!comp.ok) return true;",
-		"        if (false) return true;",
-		"handleBackspace")
+	// Linux 壳已改异步（issue #149）：同步调用形状与其变异用例随之删除，
+	// 异步契约由 checks_linux_async_test.go 覆盖；macOS 同理见 checks_macos_async_test.go。
 	// issue #149：按键截止时间两档（正常按键 150ms / 失步重建 30ms）被改回单档、
 	// 重建不再用短截止、或没把正常截止还回去，都必须被捕获。
 	expect("正常按键截止被压回 30ms", winTransport,
@@ -970,8 +964,8 @@ func TestCheckCandidateNoPrivilege(t *testing.T) {
 	expect("macOS 焦点收尾不清 marked 区", macController, "        refresh(lastClient)\n", "")
 	expect("Windows 失焦不重置会话", winShell, "        if (isComposing() || !confirmedPreedit_.empty()) {\n            resetSession();", "        if (isComposing() || !confirmedPreedit_.empty()) {")
 	expect("Linux focus_out 不收 lookup table", linuxEngine,
-		"        exitAssociate();\n        hidePreedit();\n        hideLookupTable();\n        last_ = chaoset::Comp();\n    }\n    void reset() {",
-		"        exitAssociate();\n        hidePreedit();\n        last_ = chaoset::Comp();\n    }\n    void reset() {")
+		"        exitAssociate();\n        hidePreedit();\n        hideLookupTable();\n        last_ = chaoset::Comp();\n    }\nvoid IbusEngineState::reset() {",
+		"        exitAssociate();\n        hidePreedit();\n        last_ = chaoset::Comp();\n    }\nvoid IbusEngineState::reset() {")
 }
 
 // TestCheckToggleModeHotkey 锁住 issue #132「无文本输入焦点时的中英切换热键」契约：
@@ -1036,10 +1030,11 @@ func TestCheckToggleModeHotkey(t *testing.T) {
 // 还会绕过 UI 宿主的 no-op 改当前进程状态）。
 func TestCheckShiftToggleAccountingRejectsHotkeyDoubleToggle(t *testing.T) {
 	files := map[string]string{
-		winShell:      string(readRepo(t, winShell)),
-		linuxEngine:   string(readRepo(t, linuxEngine)),
-		macController: string(readRepo(t, macController)),
-		uiParityDoc:   string(readRepo(t, uiParityDoc)),
+		winShell:                              string(readRepo(t, winShell)),
+		linuxEngine:                           string(readRepo(t, linuxEngine)),
+		"shims/linux/engine/engine_state.hpp": string(readRepo(t, "shims/linux/engine/engine_state.hpp")),
+		macController:                         string(readRepo(t, macController)),
+		uiParityDoc:                           string(readRepo(t, uiParityDoc)),
 	}
 	build := func(win string) fstest.MapFS {
 		m := fstest.MapFS{}

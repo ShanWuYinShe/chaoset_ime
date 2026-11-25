@@ -26,6 +26,8 @@ public:
     explicit UnixTransport(std::string path);
     ~UnixTransport() override;
     bool connectSocket();
+    // 单次 I/O 等待上限（毫秒）。异步引擎线程用 200ms；默认 300ms 与 mac 壳同量级。
+    void setDeadlineMs(int ms) { deadlineMs_ = ms > 0 ? ms : 300; }
     bool writeAll(const std::uint8_t* data, std::size_t len) override;
     bool readAll(std::uint8_t* buf, std::size_t len) override;
     void closeConn() override;
@@ -37,6 +39,7 @@ public:
 private:
     std::string path_;
     int fd_ = -1;
+    int deadlineMs_ = 300;
     bool lastReadTimedOut_ = false;
 };
 
@@ -58,6 +61,10 @@ public:
     explicit Daemon(Options options);
     ~Daemon();
     bool ensureReady();
+    // 单次非阻塞连接探测：不等待、不拉起 daemon（主循环线程可用）。
+    bool tryConnectOnce() { return connectOnce(); }
+    bool connected() const { return transport_.connected(); }
+    void setDeadlineMs(int ms) { transport_.setDeadlineMs(ms); }
     /// 追加输入；失败时用 base 做幂等重放（base = 壳侧上次已知的完整输入串）。
     ///
     /// 读超时**不代表团没处理**——daemon 可能已经执行、只是响应迟到。此时若直接当成

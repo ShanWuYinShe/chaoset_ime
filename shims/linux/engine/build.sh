@@ -15,7 +15,7 @@ CXX=${CXX:-g++}
 $CXX -std=c++17 -O2 -Wall -Wextra \
     -I. -I../../common/ipc \
     $(pkg-config --cflags ibus-1.0) \
-    main.cpp daemon.cpp ../../common/ipc/core.cpp \
+    main.cpp async_pipeline.cpp engine_pump.cpp daemon.cpp ../../common/ipc/core.cpp \
     -o "$OUT" \
     $(pkg-config --libs ibus-1.0)
 

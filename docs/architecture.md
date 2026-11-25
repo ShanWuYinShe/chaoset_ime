@@ -216,8 +216,11 @@ Windows 只有 `chaosetctl.exe`。）
 
 | 文件 | 职责 | 预算 |
 | :--- | :--- | :--- |
-| `main.cpp` | ibus engine 入口/按键处理/daemon IPC/懒启动 | ≤900 |
-| `daemon.cpp` | daemon 连接与 XDG 路径解析 | ≤300 |
+| `main.cpp` | ibus engine 入口/按键分发/生命周期/预编辑与候选呈现/联想面板 | ≤900 |
+| `engine_state.hpp` | 引擎状态机声明、选项/配置/Shift 跟踪等共享类型（供 main.cpp 与异步管线共用） | ≤300 |
+| `async_pipeline.cpp` | 异步管线：乐观组词态、操作入队、结果按 seq 应用、失联宽限与整串重建、显式选词兜底 | ≤500 |
+| `engine_pump.cpp` `.hpp` | 每 engine 实例的引擎线程：独占 daemon 连接、FIFO、200ms 截止、结果回投（不碰 ibus） | ≤400 / ≤250 |
+| `daemon.cpp` | daemon 连接与 XDG 路径解析（含可配 I/O 截止/单次探测） | ≤300 |
 
 ### 3.6 共用
 

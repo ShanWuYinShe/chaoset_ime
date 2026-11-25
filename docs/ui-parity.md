@@ -618,3 +618,26 @@ Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部�
   三条断言；`EnginePipeline.failureInjectionForTests` 只用于测试注入失败。
 - **检查**：`tools/checkuiparity` 的「macOS 异步引擎管线」组（含变异测试）静态锁住
   以上不变量；`make vet` 必须绿。
+
+## Linux 异步引擎管线（issue #149，三端统一）
+
+Linux ibus 壳（`shims/linux/engine/`）与 Windows/macOS 同构：**按键路径不等待
+daemon**。daemon 慢或挂起只影响候选刷新，不会按住 ibus 主循环，也不会因此关闭候选窗。
+
+- **每 engine 实例一个 `EnginePump` 线程**（`engine_pump.*`）：独占自己的 daemon
+  连接（组词会话按连接隔离，同进程多个 engine 不能共用）、FIFO 执行、200ms 请求
+  截止、连不上时 1s 内不重复懒启动。主循环只入队，工作线程绝不触碰 ibus API。
+- **乐观预编辑**：按键只做三件事——操作压入 `pendingOps_`、用 `optimisticComp()`
+  （最后已应用组词态 + 未应用输入/退格回放）立即渲染、投递引擎线程。候选表保持
+  最后一次已应用组词态的候选，结果回来按 seq 刷新；**只有既有语义路径**（focus_out、
+  Esc/取消、上屏结束、模式切换）才隐藏/清空候选窗与预编辑。
+- **结果回投**：引擎线程用 `g_idle_add_full` 唤醒主循环，`drainResults` 按 seq 应用；
+  纪元（`epoch_`）不匹配的过期结果直接丢弃（focus_out / 取消 / reset 时递增纪元并
+  清空管线）。
+- **失败语义（与 Windows `tip_async` 一致）**：失败结果不弹出乐观项；显式选词/
+  联想/标点失败用壳侧已显示文本兜底上屏；daemon 不可用保留本地组词，按节流用
+  `kRebuild`（`base=""` 先清空引擎输入，再重放壳侧完整输入串）整串重建，2s 宽限后
+  按原始串落盘（一个键都不丢）；没有本地组词时内容键 fail-open 并节流探测。
+- **构建与验证**：`shims/linux/engine/build.sh` 编译 `engine_pump.cpp`；本契约由
+  `checkuiparity` 的「Linux 异步引擎管线」组静态断言（含变异测试），运行时验证交给
+  CI 的 `linux-e2e` 与真机走查。

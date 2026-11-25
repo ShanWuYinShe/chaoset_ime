@@ -88,6 +88,8 @@ var checkGroups = []checkGroup{
 	{groupTimeoutResilience, onLogical(checkTimeoutResilience)},
 	// macOS 异步引擎管线（issue #149）：IMK 回调零等待、结果按序应用、慢/失败不关候选窗。
 	{groupMacOSAsync, onLogical(checkMacOSAsyncPipeline)},
+	// Linux ibus 壳：按键只入队 + 乐观渲染，引擎 I/O 在每实例线程（issue #149 三端统一）。
+	{groupLinuxAsync, onLogical(checkLinuxAsyncPipeline)},
 	// daemon 单实例（安装器/LaunchAgent/TIP 三方）。
 	{groupDaemonSingleton, onLogical(checkDaemonSingleton)},
 	// 打包安装的产物存在段：同组第二段注册，保持既有失败输出顺序。
