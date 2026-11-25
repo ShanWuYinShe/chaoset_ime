@@ -173,31 +173,50 @@ fn pool_key(word: &str, syllables: &str) -> String {
 struct Pool {
     map: std::collections::HashMap<String, (Candidate, i32, i32)>,
     order: Vec<String>,
+    traditional: bool,
 }
 
 impl Pool {
-    fn new() -> Self {
-        Self::default()
+    fn new(traditional: bool) -> Self {
+        Self {
+            traditional,
+            ..Default::default()
+        }
     }
 
     fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
+    fn display_text(&self, word: &str) -> String {
+        if self.traditional {
+            to_traditional(word)
+        } else {
+            word.to_string()
+        }
+    }
+
+    /// 统一用**最终展示文本 + 音节**作为池 key：繁简转换后同形的词条（含用户词库在
+    /// 繁体模式下学到的繁体词与主词典转繁后的简体词）合并去重；也保证
+    /// `pool.snapshot()` 里用 `cand.text` 回查 `pool.map` / `TypoState` 恒一致。
+    fn key_for(&self, word: &str, syllables: &str) -> (String, String) {
+        let display = self.display_text(word);
+        let key = pool_key(&display, syllables);
+        (display, key)
+    }
+
     /// 插入或合并候选（Go composeState.add 的合并规则）：更高分覆盖 Score/
-    /// FromUser；FromUser 只升不降；rank 只降不升；typo_fix 只升不降。
-    #[allow(clippy::too_many_arguments)]
+    /// FromUser；FromUser 只升不降；rank 只降不升；typo_fix 只升不降。返回池 key。
     fn add(
         &mut self,
         word: &str,
-        display_text: String,
         syllables: String,
         score: i32,
         from_user: bool,
         rank: i32,
         typo_fix: bool,
-    ) {
-        let key = pool_key(word, &syllables);
+    ) -> String {
+        let (display_text, key) = self.key_for(word, &syllables);
         if let Some(slot) = self.map.get_mut(&key) {
             if score > slot.1 {
                 slot.1 = score;
@@ -211,11 +230,11 @@ impl Pool {
             if typo_fix {
                 slot.0.typo_fix = true;
             }
-            return;
+            return key;
         }
         self.order.push(key.clone());
         self.map.insert(
-            key,
+            key.clone(),
             (
                 Candidate {
                     text: display_text,
@@ -228,6 +247,7 @@ impl Pool {
                 rank,
             ),
         );
+        key
     }
 
     /// 按插入序取出（排序前的稳定基准）。
@@ -326,7 +346,6 @@ fn add_typo_corrections(
     input: &str,
     shape: &ComposeShape,
     prev: Option<&str>,
-    traditional: bool,
     pool: &mut Pool,
     typo: &mut TypoState,
 ) {
@@ -393,7 +412,7 @@ fn add_typo_corrections(
                 .collect();
             for (word, syllables_vec, freq) in exacts {
                 let syllables = syllables_vec.join("'");
-                let key = pool_key(&word, &syllables);
+                let (_, key) = pool.key_for(&word, &syllables);
                 if typo.added.contains(&key) {
                     continue;
                 }
@@ -411,14 +430,8 @@ fn add_typo_corrections(
                 if score < 1 {
                     score = 1;
                 }
-                let display_text = if traditional {
-                    crate::s2t::to_traditional(&word)
-                } else {
-                    word.clone()
-                };
                 pool.add(
                     &word,
-                    display_text,
                     syllables,
                     score,
                     boost > 0,
@@ -440,7 +453,7 @@ fn add_typo_corrections(
                     let (u_exacts, _) = user.query_tokens(&qp_pairs, 4);
                     for hit in u_exacts {
                         let syllables = hit.syllables.join("'");
-                        let key = pool_key(&hit.word, &syllables);
+                        let (_, key) = pool.key_for(&hit.word, &syllables);
                         if typo.added.contains(&key) {
                             continue;
                         }
@@ -451,14 +464,8 @@ fn add_typo_corrections(
                         if score < 1 {
                             score = 1;
                         }
-                        let display_text = if traditional {
-                            crate::s2t::to_traditional(&hit.word)
-                        } else {
-                            hit.word.clone()
-                        };
                         pool.add(
-                            &hit.word.clone(),
-                            display_text,
+                            &hit.word,
                             syllables,
                             score,
                             true,
@@ -484,7 +491,7 @@ fn add_typo_corrections(
                     typo.phrase_queries += 1;
                     for e in crate::typo::composed_phrase_entries(dict, qp, 6) {
                         let syllables = e.syllables.join("'");
-                        let key = pool_key(&e.word, &syllables);
+                        let (_, key) = pool.key_for(&e.word, &syllables);
                         if typo.added.contains(&key) {
                             continue;
                         }
@@ -496,14 +503,8 @@ fn add_typo_corrections(
                         if score < 1 {
                             score = 1;
                         }
-                        let display_text = if traditional {
-                            crate::s2t::to_traditional(&e.word)
-                        } else {
-                            e.word.clone()
-                        };
                         pool.add(
                             &e.word,
-                            display_text,
                             syllables,
                             score,
                             false,
@@ -534,21 +535,15 @@ fn add_typo_corrections(
                 .collect();
             for (word, syllables_vec, freq) in singles {
                 let syllables = syllables_vec.join("'");
-                let key = pool_key(&word, &syllables);
+                let (_, key) = pool.key_for(&word, &syllables);
                 if typo.added.contains(&key) {
                     continue;
                 }
                 typo.added.insert(key.clone());
                 typo.is_near.insert(key.clone(), true);
                 typo.lens.insert(key.clone(), input.len());
-                let display_text = if traditional {
-                    crate::s2t::to_traditional(&word)
-                } else {
-                    word.clone()
-                };
                 pool.add(
                     &word,
-                    display_text,
                     syllables,
                     freq as i32,
                     false,
@@ -740,7 +735,12 @@ fn promote_typo_corrections(pool: &mut Pool, typo: &TypoState, shape: &ComposeSh
 }
 
 /// 错拼修正候选固定展示位（Go placeTypoFixedPosition，第 3 位起）。
-/// 只搬 rank < rankBackoff 的高置信度纠错——低置信度纠错仍留在列表末尾。
+///
+/// 只有**非错拼的常规候选**（`!it.0.typo_fix`）排在前面固定位之前；低置信度
+/// 错拼及反序归位补出的首音节单字兜底（`it.0.typo_fix && it.2 >= RANK_BACKOFF`）
+/// 必须留在已提升的精确纠错之后——否则 `zhezhogn` 会把兜底单字「这 / 者」
+/// （`dign` 的「点 / 电」、`niihao` 的「内耗 / 您好」）塞进前两位，把高置信度纠错
+/// 「这种 / 定 / 你好」挤到第 3 位。
 fn place_typo_fixed_position(items: Vec<(Candidate, i32, i32)>) -> Vec<(Candidate, i32, i32)> {
     const TYPO_CANDIDATE_FIXED_POSITION: usize = 3;
     if items.is_empty() {
@@ -748,21 +748,30 @@ fn place_typo_fixed_position(items: Vec<(Candidate, i32, i32)>) -> Vec<(Candidat
     }
     let mut normal: Vec<(Candidate, i32, i32)> = Vec::new();
     let mut fixed: Vec<(Candidate, i32, i32)> = Vec::new();
+    let mut low_typo: Vec<(Candidate, i32, i32)> = Vec::new();
     for it in items {
-        if it.0.typo_fix && it.2 < RANK_BACKOFF {
-            fixed.push(it);
+        if it.0.typo_fix {
+            if it.2 < RANK_BACKOFF {
+                fixed.push(it);
+            } else {
+                low_typo.push(it);
+            }
         } else {
             normal.push(it);
         }
     }
     if fixed.is_empty() {
-        return normal;
+        let mut out = Vec::with_capacity(normal.len() + low_typo.len());
+        out.extend(normal);
+        out.extend(low_typo);
+        return out;
     }
     let insert_at = (TYPO_CANDIDATE_FIXED_POSITION - 1).min(normal.len());
-    let mut out = Vec::with_capacity(normal.len() + fixed.len());
+    let mut out = Vec::with_capacity(normal.len() + fixed.len() + low_typo.len());
     out.extend(normal.drain(..insert_at));
     out.extend(fixed);
     out.extend(normal);
+    out.extend(low_typo);
     out
 }
 
@@ -777,7 +786,6 @@ fn add_composition_candidates(
     shape: &ComposeShape,
     patterns: &[Vec<Token>],
     prev: Option<&str>,
-    traditional: bool,
     pool: &mut Pool,
 ) {
     if shape.typo_suspicious || shape.mid_suspicious || shape.tail_suspicious || patterns.is_empty()
@@ -795,14 +803,8 @@ fn add_composition_candidates(
         } else {
             (0, false)
         };
-        let display_text = if traditional {
-            to_traditional(&e.word)
-        } else {
-            e.word.clone()
-        };
         pool.add(
             &e.word,
-            display_text,
             e.syllables.join("'"),
             e.freq + boost,
             from_user,
@@ -949,6 +951,8 @@ pub struct Session {
     input_raw: String,
     tokens: Vec<Token>,
     all_candidates: Vec<(Candidate, u32)>, // (Candidate, Score)
+    /// 最近一次 compose() 的 preedit，供 next_page / prev_page 直接复用缓存分页。
+    last_preedit: String,
     page: usize,
     page_size: usize,
 
@@ -1071,6 +1075,7 @@ impl Session {
             input_raw: String::new(),
             tokens: Vec::new(),
             all_candidates: Vec::new(),
+            last_preedit: String::new(),
             page: 0,
             page_size: PAGE_SIZE,
             last_committed: None,
@@ -1106,6 +1111,7 @@ impl Session {
         if self.input_raw.is_empty() {
             self.tokens.clear();
             self.all_candidates.clear();
+            self.last_preedit.clear();
             self.page = 0;
             return Composition {
                 shuangpin: self
@@ -1136,7 +1142,7 @@ impl Session {
         let match_input = self.match_input();
         let shape = analyze_shape(&match_input, &patterns);
         let mut typo = TypoState::default();
-        let mut pool = Pool::new();
+        let mut pool = Pool::new(self.traditional);
 
         // 两条续接路径共用层级：存在干净解析时落在 RANK_CONTINUATION——严格排在
         // 「完整消费输入」的精确匹配之后（用户要求：输入 shiji 先给 shi'ji 的词，
@@ -1148,7 +1154,6 @@ impl Session {
         } else {
             RANK_CONTINUATION_LEAD
         };
-        let traditional = self.traditional;
         let prev = self.last_committed.as_deref();
 
         // 4.1 末段残缺续接（Go addContinuations）：
@@ -1198,14 +1203,8 @@ impl Session {
                 };
                 // 补全越长越不确定（gu→guo 远强于 gu→guang），按字符数折价
                 let score = freq as i32 + boost - CONTINUATION_PENALTY * remain.len() as i32;
-                let display_text = if traditional {
-                    to_traditional(&word)
-                } else {
-                    word.clone()
-                };
                 pool.add(
                     &word,
-                    display_text,
                     syllables_vec.join("'"),
                     score,
                     from_user,
@@ -1239,14 +1238,8 @@ impl Session {
                     (0, false)
                 };
                 let score = freq as i32 + boost - CONTINUATION_PENALTY * remain.len() as i32;
-                let display_text = if traditional {
-                    to_traditional(&word)
-                } else {
-                    word.clone()
-                };
                 pool.add(
                     &word,
-                    display_text,
                     syllables_vec.join("'"),
                     score,
                     from_user,
@@ -1268,14 +1261,8 @@ impl Session {
                 } else {
                     (0, false)
                 };
-                let display_text = if traditional {
-                    to_traditional(&e.word)
-                } else {
-                    e.word.clone()
-                };
                 pool.add(
-                    &e.word.clone(),
-                    display_text,
+                    &e.word,
                     e.syllables.join("'"),
                     e.freq as i32 + boost,
                     from_user,
@@ -1285,14 +1272,8 @@ impl Session {
             }
             if let Some(ref u) = self.user_dict {
                 for h in u.query_joined_pinyin(&match_input, USER_PHRASES_UNLIMITED) {
-                    let display_text = if traditional {
-                        to_traditional(&h.word)
-                    } else {
-                        h.word.clone()
-                    };
                     pool.add(
                         &h.word,
-                        display_text,
                         h.syllables.join("'"),
                         h.freq,
                         true,
@@ -1310,7 +1291,6 @@ impl Session {
             &match_input,
             &shape,
             prev,
-            traditional,
             &mut pool,
             &mut typo,
         );
@@ -1430,14 +1410,8 @@ impl Session {
                                 (0, false)
                             };
                             let rank = if is_full { rank_exact } else { effective_rank };
-                            let display_text = if traditional {
-                                to_traditional(&e.word)
-                            } else {
-                                e.word.clone()
-                            };
                             pool.add(
-                                &e.word.clone(),
-                                display_text,
+                                &e.word,
                                 e.syllables.join("'"),
                                 e.freq as i32 + boost,
                                 from_user,
@@ -1456,14 +1430,8 @@ impl Session {
                             } else {
                                 (0, false)
                             };
-                            let display_text = if traditional {
-                                to_traditional(&e.word)
-                            } else {
-                                e.word.clone()
-                            };
                             pool.add(
-                                &e.word.clone(),
-                                display_text,
+                                &e.word,
                                 e.syllables.join("'"),
                                 e.freq as i32 + boost,
                                 from_user,
@@ -1484,14 +1452,8 @@ impl Session {
                                 let (u_exacts, u_prefixes) =
                                     u.query_tokens(&qp_pairs, USER_PHRASES_UNLIMITED);
                                 for hit in u_exacts {
-                                    let display_text = if traditional {
-                                        to_traditional(&hit.word)
-                                    } else {
-                                        hit.word.clone()
-                                    };
                                     pool.add(
-                                        &hit.word.clone(),
-                                        display_text,
+                                        &hit.word,
                                         hit.syllables.join("'"),
                                         hit.freq,
                                         true,
@@ -1504,14 +1466,8 @@ impl Session {
                                     {
                                         continue;
                                     }
-                                    let display_text = if traditional {
-                                        to_traditional(&hit.word)
-                                    } else {
-                                        hit.word.clone()
-                                    };
                                     pool.add(
-                                        &hit.word.clone(),
-                                        display_text,
+                                        &hit.word,
                                         hit.syllables.join("'"),
                                         hit.freq,
                                         true,
@@ -1525,14 +1481,8 @@ impl Session {
                                     .map(|t| (t.text.as_str(), t.is_exact))
                                     .collect();
                                 for hit in u.query_tokens_exact(&sub_tokens, 5) {
-                                    let display_text = if traditional {
-                                        to_traditional(&hit.word)
-                                    } else {
-                                        hit.word.clone()
-                                    };
                                     pool.add(
-                                        &hit.word.clone(),
-                                        display_text,
+                                        &hit.word,
                                         hit.syllables.join("'"),
                                         hit.freq,
                                         true,
@@ -1564,14 +1514,8 @@ impl Session {
                         .map(|e| (e.word.clone(), e.syllables.clone(), e.freq))
                         .collect();
                     for (word, syllables_vec, freq) in singles {
-                        let display_text = if traditional {
-                            to_traditional(&word)
-                        } else {
-                            word.clone()
-                        };
                         pool.add(
                             &word,
-                            display_text,
                             syllables_vec.join("'"),
                             freq as i32,
                             false,
@@ -1586,14 +1530,8 @@ impl Session {
                             if hit.word.chars().count() != 1 {
                                 continue;
                             }
-                            let display_text = if traditional {
-                                to_traditional(&hit.word)
-                            } else {
-                                hit.word.clone()
-                            };
                             pool.add(
-                                &hit.word.clone(),
-                                display_text,
+                                &hit.word,
                                 hit.syllables.join("'"),
                                 hit.freq,
                                 true,
@@ -1613,7 +1551,6 @@ impl Session {
             &shape,
             &patterns,
             prev,
-            traditional,
             &mut pool,
         );
 
@@ -1691,19 +1628,34 @@ impl Session {
         // 纠错固定第 3 位（Go placeTypoFixedPosition）；之后再做词典词组封顶——
         // 固定位在索引 2，必在前 2 页之内，不会被封顶截掉。
         let sorted = place_typo_fixed_position(sorted);
-        let sorted = cap_dict_phrases(sorted);        self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
+        let sorted = cap_dict_phrases(sorted);
+        self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
 
-        // 预编辑（Go buildComposition 口径）：默认原样输入；有候选且有首选切分时
-        // 按切分边界重建并保留大小写（如 NI'HAO）——无候选（打错字/无切分）时
-        // 保持原串，用户能看到「回车会原样上屏什么」。
-        let preedit =
-            if !self.all_candidates.is_empty() && !patterns.is_empty() && !patterns[0].is_empty() {
-                preedit_with_case(&self.input_raw, &patterns[0])
-            } else {
-                self.input_raw.clone()
-            };
+        // 预编辑（Go buildComposition 口径）：默认原样输入；有候选、有首选切分且
+        // 首选本身不是错拼纠错时按切分边界重建并保留大小写（如 NI'HAO）。当首选
+        // 为错拼纠错（zhezhogn → 这种）或无切分时保留原始输入，避免产生像
+        // `zhe'zh'o'g'n` 这样的碎片伪分词。
+        let top_is_typo = self
+            .all_candidates
+            .first()
+            .map(|(c, _)| c.typo_fix)
+            .unwrap_or(false);
+        self.last_preedit = if !self.all_candidates.is_empty()
+            && !patterns.is_empty()
+            && !patterns[0].is_empty()
+            && !top_is_typo
+        {
+            preedit_with_case(&self.input_raw, &patterns[0])
+        } else {
+            self.input_raw.clone()
+        };
 
-        // 6. 构造分页 Composition
+        self.paginate()
+    }
+
+    /// 仅按当前 `self.page` 从 `all_candidates` 切出 Composition（供 `compose()`
+    /// 与 `next_page()` / `prev_page()` 复用，翻页无需重跑整条匹配管线）。
+    fn paginate(&mut self) -> Composition {
         let total = self.all_candidates.len();
         let page_count = if total == 0 {
             0
@@ -1732,7 +1684,7 @@ impl Session {
 
         Composition {
             input: self.input_raw.clone(),
-            preedit,
+            preedit: self.last_preedit.clone(),
             candidates: page_cands,
             page: self.page,
             page_count,
@@ -1810,6 +1762,7 @@ impl Session {
             }
             if c.is_ascii_alphabetic() || c == '\'' {
                 self.input_raw.push(c);
+                self.after_append();
             }
         }
 
@@ -1908,6 +1861,8 @@ impl Session {
             return self.compose();
         }
         self.input_raw.pop();
+        self.page = 0;
+        self.punct_state.reset();
         self.compose()
     }
 
@@ -1917,14 +1872,34 @@ impl Session {
         if self.shuangpin_decoder.is_some() {
             return self.backspace();
         }
-        if let Some(last_tok) = self.tokens.pop() {
-            let remove_len = last_tok.text.len();
-            for _ in 0..remove_len {
+        if self.tokens.len() <= 1 {
+            if self.tokens.is_empty() {
                 self.input_raw.pop();
+            } else {
+                self.input_raw.clear();
             }
         } else {
-            self.input_raw.pop();
+            // 按前 k-1 个音节从头消费 input_raw，兼容显式分隔符（'）与省写别名（niou）。
+            let prefix_sylls: Vec<String> = self.tokens[..self.tokens.len() - 1]
+                .iter()
+                .map(|t| t.text.clone())
+                .collect();
+            let (rest, matched) =
+                consume_input_prefix(&self.match_input(), &prefix_sylls, self.fuzzy);
+            if matched == prefix_sylls.len() && rest.len() <= self.input_raw.len() {
+                let keep = self.input_raw.len() - rest.len();
+                self.input_raw.truncate(keep);
+                while self.input_raw.ends_with('\'') {
+                    self.input_raw.pop();
+                }
+            } else if let Some(last_tok) = self.tokens.pop() {
+                for _ in 0..last_tok.text.len() {
+                    self.input_raw.pop();
+                }
+            }
         }
+        self.page = 0;
+        self.punct_state.reset();
         self.compose()
     }
 
@@ -2028,7 +2003,7 @@ impl Session {
         if page_count > 0 && self.page + 1 < page_count {
             self.page += 1;
         }
-        self.compose()
+        self.paginate()
     }
 
     /// 上一页
@@ -2036,12 +2011,14 @@ impl Session {
         if self.page > 0 {
             self.page -= 1;
         }
-        self.compose()
+        self.paginate()
     }
 
     /// 重置清空当前输入会话与上下文
     pub fn reset(&mut self) -> Composition {
         self.input_raw.clear();
+        self.dp_pending = None;
+        self.dp_lens.clear();
         self.last_committed = None;
         self.prev_sylls.clear();
         self.history.clear();
@@ -2055,6 +2032,7 @@ impl Session {
         self.input_raw.clear();
         self.dp_pending = None;
         self.dp_lens.clear();
+        self.seq_segs.clear();
         self.compose()
     }
 
@@ -2062,6 +2040,11 @@ impl Session {
     pub fn commit_raw(&mut self) -> Result<String, String> {
         let text = self.input_raw.clone();
         self.input_raw.clear();
+        self.dp_pending = None;
+        self.dp_lens.clear();
+        self.seq_segs.clear();
+        self.page = 0;
+        self.punct_state.reset();
         self.compose();
         Ok(text)
     }
@@ -2583,20 +2566,17 @@ mod tests {
         Arc::new(dict)
     }
 
-    /// Go assertTypoCorrectionPosition 镜像：纠错结果必须在候选里；位置恰为
-    /// 第 3 位（下标 2）或每个候选都是纠错候选（全部 typoFix）时算通过。
+    /// 纠错结果位置断言：前面最多允许 2 个常规（`!typo_fix`）候选，高置信度
+    /// 纠错紧随其后（无常规候选即第 1 位，有 1 个常规候选即第 2 位，≥2 个即第 3 位）。
     fn assert_typo_position(cands: &[Candidate], input: &str, want: &str) {
         let idx = cands.iter().position(|c| c.text == want);
         let Some(idx) = idx else {
             panic!("{input}: 候选里没有纠错结果「{want}」: {cands:?}");
         };
-        if idx == 2 {
-            return; // 固定第 3 位
-        }
-        if !cands.is_empty() && cands.iter().all(|c| c.typo_fix) {
+        if idx <= 2 && cands[..idx].iter().all(|c| !c.typo_fix) {
             return;
         }
-        panic!("{input}: 纠错「{want}」位置 {idx}（期望第 3 位或全纠错列表）: {cands:?}");
+        panic!("{input}: 纠错「{want}」位置 {idx}（期望 ≤2 且前面全为常规候选）: {cands:?}");
     }
 
 /// 错拼组合候选的「同批噪声」必须随整词命中一起丢弃（2026-11-24 用户要求：
@@ -2766,15 +2746,73 @@ mod tests {
             let mut sess = Session::new(Arc::clone(&dict), None);
             let comp = sess.input(input, false).unwrap();
             assert!(
-                comp.candidates.iter().any(|c| c.text == want),
-                "{input}: 纠错后应能出「{want}」，实际前 8 条 {:?}",
+                comp.candidates.iter().take(2).any(|c| c.text == want),
+                "{input}: 纠错后应进入前 2 候选「{want}」，实际 {:?}",
                 comp.candidates
                     .iter()
-                    .take(8)
+                    .take(6)
                     .map(|c| &c.text)
                     .collect::<Vec<_>>()
             );
         }
+        // issue #147：zhezhogn 的第一候选必须是「这种」（单字兜底「这」不得反超），
+        // 且预编辑不再拆成碎片 `zhe'zh'o'g'n`；大小写原样保留。
+        for (input, want_preedit) in [("zhezhogn", "zhezhogn"), ("ZheZhogn", "ZheZhogn")] {
+            let mut sess = Session::new(Arc::clone(&dict), None);
+            let comp = sess.input(input, false).unwrap();
+            assert_eq!(comp.candidates[0].text, "这种", "{input}: {comp:?}");
+            assert_eq!(comp.preedit, want_preedit, "{input}: {comp:?}");
+            assert_eq!(sess.commit_raw().unwrap(), input);
+        }
+    }
+
+    /// 繁体模式下错拼提升/拼合噪声丢弃与用户词库去重（issue #147 举一反三）。
+    #[test]
+    fn test_traditional_typo_and_userdict_dedup() {
+        let dict = common_dict();
+        let user = Arc::new(UserDict::new::<&str>(None));
+        user.bump_word("畫蛇添足", Some("hua'she'tian'zu"), None);
+        let mut sess = Session::new(Arc::clone(&dict), Some(user));
+        sess.set_traditional(true);
+
+        let comp = sess.input("zhezhogn", false).unwrap();
+        assert_eq!(comp.candidates[0].text, "這種", "繁体 zhezhogn 应首选「這種」: {comp:?}");
+
+        sess.reset();
+        let comp = sess.input("hua'she'tian'zu", false).unwrap();
+        let count = comp
+            .candidates
+            .iter()
+            .filter(|c| c.text == "畫蛇添足")
+            .count();
+        assert_eq!(count, 1, "用户词与转繁词条不得重复展示: {:?}", comp.candidates);
+        assert!(comp.candidates[0].from_user);
+    }
+
+    /// 全拼输入翻页归零、64 字符上限、含撇号/省写按词退格与逐段选择等价性。
+    #[test]
+    fn test_quanpin_append_reset_and_backspace_word() {
+        let dict = common_dict();
+        let mut sess = Session::new(Arc::clone(&dict), None);
+        // 第 2 页再追加字母必须回到第 1 页（此前全拼漏调 after_append 导致停在旧页码）
+        sess.input("huashetian", false).unwrap();
+        let p2 = sess.next_page();
+        assert_eq!(p2.page, 1);
+        let appended = sess.input("zu", false).unwrap();
+        assert_eq!(appended.page, 0);
+        assert_eq!(appended.candidates[0].text, "画蛇添足");
+        assert_eq!(sess.select_prefix(0).unwrap().committed, "画蛇添足");
+
+        // 含分隔符与省写别名按词退格
+        let mut s = create_test_session();
+        s.input("NI'hao", false).unwrap();
+        let after = s.backspace_word();
+        assert_eq!(after.input, "NI");
+
+        let mut alias = Session::new(Arc::clone(&dict), None);
+        alias.input("niouhao", false).unwrap();
+        let after_alias = alias.backspace_word();
+        assert_eq!(after_alias.input, "niou");
     }
 
     /// 软纠错（韵母级反序 ao/ua/ue/ve）：hoa→好、hau→化、xeu→学、lev→略；

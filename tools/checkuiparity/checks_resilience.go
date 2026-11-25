@@ -212,7 +212,9 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 		// 或失败重放才带。
 		"if rebuild, let base { params[\"base\"] = base }",
 		// 断连重试同样必须带 base：新连接是空会话，不带 base 会丢掉已有组词。
-		"if let base { params[\"base\"] = base }")
+		"if let base { params[\"base\"] = base }",
+		// selectPrefix 会消费前缀并写学习数据，必须禁重试，避免读超时后二次消费。
+		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index],\n                                retryOnFailure: false) else { return nil }")
 	checkContains(fsys, problems, group, "shims/macos/src/KeyRouter.swift", "base: current?.input ?? \"\"")
 	checkContains(fsys, problems, group, linuxEngine, "inputWithRebuild")
 	checkContains(fsys, problems, group, linuxEngineMain, "Comp Daemon::inputWithRebuild(",
@@ -248,7 +250,16 @@ func checkTimeoutResilience(fsys fs.FS, problems *[]string) {
 	// 保留组词——放行（return false）会把空格/数字真的打进文档。
 	checkContains(fsys, problems, group, macController,
 		"let fallback = cur.candidates[index].text",
-		"(engine.select(index) ?? fallback)")
+		"let hadReadTimeout = engine.lastFailureWasReadTimeout",
+		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)",
+		"(engine.select(index) ?? fallback)",
+		"if hadReadTimeout { _ = engine.resetComposition() }")
+	if strings.Count(code, "committed = pickedText;") < 3 {
+		fail("%s 的 selectPrefix 失败退化分支不足 3 处（数字/空格/点选各需退化上屏候选中文）", winShell)
+	}
+	if !strings.Contains(code, "commit(ctx.get(), pick.text)") {
+		fail("%s 的联想点选失败缺少退化上屏 pick.text", winShell)
+	}
 	if strings.Contains(stripCppComments(mustRead(fsys, macController)), "engine.select(index) ?? cur.input") {
 		fail("%s 的选词失败 fallback 又用拼音串 cur.input——daemon 挂了会上屏英文拼音", macController)
 	}

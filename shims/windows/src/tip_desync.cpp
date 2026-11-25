@@ -122,7 +122,8 @@ ChaosetTIP::SyncResult ChaosetTIP::syncDaemonInput() {
 // 正常流程；返回 true = 本键已处理完，结果见 *eaten。
 bool ChaosetTIP::handleKeyDesynced(WPARAM vk, ITfContext* pic, bool* eaten) {
     *eaten = true;
-    const bool shift = shiftActive();
+    // 只读物理 Shift，不混入 CapsLock（CapsLock 只在下方字母大小写 shift != capsOn 参与）。
+    const bool shift = shiftDown();
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
     const bool win =

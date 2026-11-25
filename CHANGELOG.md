@@ -2,6 +2,17 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
+## 未发布
+
+- **修复(Windows 壳)：Shift/CapsLock 大写字母不再漏进宿主并修复 CapsLock 对 Shift 语义的干扰（issue #147）**：Windows `OnTestKeyDown` 与 `wouldHandle` 此前对字母加了 `!shiftActive()` 守卫，导致 Shift/CapsLock 下在组词态继续输入大写字母会结束当前组词并直接放行成宿主文本；同时 `shiftActive()` 把 `VK_CAPITAL` 混入 `VK_SHIFT`，既让失步恢复（`tip_desync.cpp`）里的 `shift != capsOn` 互相抵消而丢掉 CapsLock 大写，也在开启 CapsLock 时破坏数字选词 1-9、`-`/`=`/`[`/`]` 翻页、标点键位与 `Ctrl+U`。现将该方法收口为只读物理 `VK_SHIFT` 的 `shiftDown()`，三端均统一把 `A-Z` 保留在组词中并按原始大小写供回车原样上屏；`checkuiparity`「字母入组词大小写」组新增三端静态与变异回归。
+
+- **修复(引擎/错拼纠错)：单字/回退兜底不再顶走高置信度整词纠错、繁体模式下错拼与用户词组不再错位或重复，并补齐全拼分页/复位清理（issue #147）**：
+  - `place_typo_fixed_position` 此前把 `RANK_BACKOFF` 的单字/回退候选项误当成普通精确候选占位，导致如 `zhezhogn`（本应首选 `这种`）被低 rank 单字 `这`/`者` 顶退到第 3 位、`lianxiagn` 等也被 `连线`/`联` 抢位；现严格按「普通精确 → 高置信度纠错（`< RANK_BACKOFF`）→ 其余低 rank/回退候选项」排布，并使 `compose()` 在首选为 `typo_fix` 时保留原始 `input_raw` 作为预编辑（如 `zhezhogn`/`lianxiagn` 不再拆成 `zhe'zh'o'g'n` 等碎片）。
+  - 统一由 `Pool::new(traditional)` 将显示文本转换后写入键值，`TypoState` 与 `Pool::map` 对齐同一转换口径，修复繁体模式下 `zhezhogn` 等错拼晋升/去噪失效（此前出「這中」而非「這種」）与用户词库繁体词重复入池问题。
+  - 全拼 `Session::input` 追加后调用 `after_append()`（清翻页/标点状态），`backspace` 重置 `page` 与 `punct_state`，`backspace_word` 对齐精确前缀消耗，各类复位路径一并清理双拼/分段状态；重生成 `parity_expected.jsonl` 并跑通 5 形态拼音质量扫描（1131 词 / 5655 输入：总命中 78.7%、首页 69.5%、首选 38.4%，与基线零回退）。
+
+- **修复(Windows/macOS 壳)：`selectPrefix` / 选词失败路径幂等与候选兜底收敛（issue #147）**：macOS `EngineClient.selectPrefix` 禁用自动重试（避免前缀消费写操作在读超时/重连下二次触发），且 `ChaosetController.commit(index:)` 在 `selectPrefix` 因读超时返回 `nil` 时不再补发 `engine.select(index)`（防止误上屏第二段候选），改为直接上屏本机已缓存候选文本并 `resetComposition()`；Windows 数字/空格选词及候选点选/联想点选失败路径补全对本机候选文本的退化上屏，防止服务端短暂不可达时静默吞键或丢字；`checkuiparity`「超时韧性」组新增对应断言与变异测试。
+
 ## v0.6.4（2026-11-25）
 
 > 从 v0.6.3 升级：本次三条都是壳侧失败路径/双拼的缺陷修复，**无行为不兼容变化**；候选排序/学习契约、配置与数据格式均未变。

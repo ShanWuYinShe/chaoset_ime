@@ -47,12 +47,26 @@ func checkLetterCaseComposition(fsys fs.FS, problems *[]string) {
 		"charactersIgnoringModifiers: chars.lowercased()",
 	)
 
-	// Windows 壳：按 Shift 状态转发大写字母，不再「大写英文不进组词」。
+	// Windows 壳：Shift/CapsLock 下的大写字母同样进组词（OnTestKeyDown / wouldHandle / handleKey
+	// 均按 a-z/A-Z 放行入组词）；shiftDown() 只看物理 VK_SHIFT，不得混入 VK_CAPITAL
+	//（否则 CapsLock 会反转失步态大小写并破坏数字/翻页/标点/Ctrl+U）。
 	checkContains(fsys, problems, group, "shims/windows/src/tip_keys.cpp",
+		"const bool letter = wParam >= kVkFirstLetter && wParam <= kVkLastLetter;",
+		"if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;",
+		"bool ChaosetTIP::shiftDown() {\n    return (GetKeyState(VK_SHIFT) & 0x8000) != 0;\n}",
 		"const char base = (shiftDown != capsOn) ? 'A' : 'a';",
 	)
 	checkExcludes(fsys, problems, group, "shims/windows/src/tip_keys.cpp",
 		"大写英文不进组词", // 旧行为注释：回退即红
+		"shiftActive(",
+		"!shift && (vk >= kVkFirstLetter",
+		"!shiftDown() && vk >= kVkFirstLetter",
+	)
+	checkContains(fsys, problems, group, "shims/windows/src/tip_desync.cpp",
+		"const bool shift = shiftDown();",
+	)
+	checkExcludes(fsys, problems, group, "shims/windows/src/tip_desync.cpp",
+		"shiftActive(",
 	)
 
 	// Linux 壳：a-z 与 A-Z 都转发。

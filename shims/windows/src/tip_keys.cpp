@@ -3,7 +3,7 @@
 //
 // 从 win32.cpp 的类内 inline 定义逐字拆出：OnTestKeyDown/OnKeyDown/OnTestKeyUp/
 // OnKeyUp/OnPreservedKey、Shift 空按记账（位掩码 + 物理状态自愈）、修饰键/键位
-// 映射（keyPunctChar/digitIndex/shiftActive/isModifierKey）、wouldHandle/handleKey。
+// 映射（keyPunctChar/digitIndex/shiftDown/isModifierKey）、wouldHandle/handleKey。
 //
 // 模块边界：只依赖 tip.hpp；按键语义断言（checkuiparity「非激活零副作用」/
 // 「Shift 空按记账」）仍按 winShell 聚合文本断言，因此本 TU 的文案与调用顺序
@@ -55,8 +55,8 @@ BOOL* pfEaten) {
     // handleKey 里还有一道「渲染后仍无合成则放行」的兜底（OnKeyDown 的
     // pfEaten 才是最终裁决，见 ITfKeyEventSink 两阶段设计）。
     if (composition_ == nullptr) {
-        const bool shift = shiftActive();
-        const bool letter = !shift && wParam >= kVkFirstLetter && wParam <= kVkLastLetter;
+        const bool shift = shiftDown();
+        const bool letter = wParam >= kVkFirstLetter && wParam <= kVkLastLetter;
         const bool punct = keyPunctChar(wParam, shift) != nullptr;
         if (letter || punct) {
             ITfContext* ctx = pic;
@@ -373,9 +373,10 @@ int ChaosetTIP::digitIndex(WPARAM vk) {
 }
 
 
-// Shift/CapsLock 有效：字母按大写、数字/OEM 键按 Shift 变体处理
-bool ChaosetTIP::shiftActive() {
-    return (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+// 物理 Shift 按下：数字/OEM 变体、Shift+Space、Ctrl+U 等修饰语义只看它
+// （CapsLock 只影响字母大小写 `shiftDown != capsOn`，不把 1/'/-/[ 变成 Shift 变体）。
+bool ChaosetTIP::shiftDown() {
+    return (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 }
 
 
@@ -463,7 +464,7 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) return true;
     // Ctrl+U 整行清空；Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），
     // 所以这里必须要求不带 Shift。
-    if (ctrl) return isComposing() && vk == 'U' && !shiftActive();
+    if (ctrl) return isComposing() && vk == 'U' && !shiftDown();
     if (alt || win) return false;
 
     // 联想模式：数字（有对应项）/空格（选预选项）/方向键（移动页内预选）/
@@ -477,9 +478,9 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
         // 联想翻页键：PageUp/PageDown 不判 Shift（与 mac/Linux 一致：
         // 联想态 Shift+PageUp/PageDown 同样翻联想页，2026-10-30 审计 A7）。
         if (vk == kVkPrior || vk == kVkNext) return true;
-        if (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus)) return true;
+        if (!shiftDown() && (vk == kVkOemMinus || vk == kVkOemPlus)) return true;
         const int digit = digitIndex(vk);
-        if (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive())) {
+        if (digit >= 0 && (vk >= kVkNumpad1 || !shiftDown())) {
             return assocPage_ * kPageSize + digit <
                    static_cast<int>(assoc_.candidates.size());
         }
@@ -497,33 +498,33 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     }
 
     // 只在需要打字时介入（2026-10-29 用户要求）：未组词状态下，先判
-    // 该键是否与组词相关——字母（不带 Shift）或标点才有「开始组词/出
-    // 中文标点」的可能，其余键（数字/导航/F键/空格等）立即放行，且绝不
-    // 触碰连接状态；内容键才允许尝试 daemon 连接（服务不可达仍放行）。
+    // 该键是否与组词相关——大小写字母或标点才有「开始组词/出中文标点」
+    // 的可能，其余键（数字/导航/F键/空格等）立即放行，且绝不触碰连接状态；
+    // 内容键才允许尝试 daemon 连接（服务不可达仍放行）。
     if (!isComposing()) {
-        const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter && !shiftActive()) ||
-                              keyPunctChar(vk, shiftActive()) != nullptr;
+        const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter) ||
+                              keyPunctChar(vk, shiftDown()) != nullptr;
         if (!relevant) return false;
         // 零阻塞（审计 T4）：只在已连接时介入；未连接则入队后台连接并
         // fail-open——本键原样进文档，下一次按键即可正常组词，绝不 Sleep/建进程。
         if (!ensureDaemonFast(const_cast<PipeTransport&>(transport_))) return false;
     }
 
-    // Shift+字母（大写英文，含 CapsLock）：放行给宿主，不进组词
-    if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return !shiftActive();
+    // 大小写字母一律进组词（与 handleKey 一致，保留原样、匹配按小写）。
+    if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;
     // 翻页键：- / = / [ / ] 不带 Shift（Shift 变体 _ + { } 是字符，
     // 与 mac 字符级判定一致放行）；PageUp/PageDown 无论 Shift 都翻页
     //（mac keyCode/Linux keysym 都不看 Shift，2026-10-31 三端对齐）。
     const bool isPageKey =
         (vk == kVkPrior || vk == kVkNext) ||
-        (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus ||
+        (!shiftDown() && (vk == kVkOemMinus || vk == kVkOemPlus ||
                             vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
     if (isPageKey && isComposing()) return hasCandidates();
     // 双拼模式下 ';' 是引擎的组词/解码键（见 handleKey 的 DP 路由），
     // 同样要在这里预告吞键——TSF 两阶段模型里 OnTestKeyDown 预告 FALSE
     // 时 OnKeyDown 可能根本收不到该键（参照上方字母/标点判定）。
-    if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftActive())) return true;
-    if (keyPunctChar(vk, shiftActive()) != nullptr) return true;
+    if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftDown())) return true;
+    if (keyPunctChar(vk, shiftDown()) != nullptr) return true;
     if (!isComposing()) return false;
     // 数字选词只在不带 Shift 且本页确有该序号候选时；Shift+数字产生的
     // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）。
@@ -533,7 +534,7 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) const {
     // 与「输入法没有理由拦截应用自己的方向键」一致。
     return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
            (isArrowKey(vk) && hasCandidates() && candidateWnd_.itemCount() > 0) ||
-           (digit >= 0 && (vk >= kVkNumpad1 || !shiftActive()) &&
+           (digit >= 0 && (vk >= kVkNumpad1 || !shiftDown()) &&
             digit < static_cast<int>(comp_.candidates.size()));
 }
 
@@ -574,7 +575,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     //   其余按键 → 退出联想走正常流程（字母进组词 / 标点出中文标点 /
     //   Ctrl 等修饰键照旧放行）。
     if (!assoc_.candidates.empty()) {
-        const bool shift = shiftActive();
+        const bool shift = shiftDown();
         if (vk == kVkEscape || vk == kVkReturn) {
             clearAssociate();
             return true;
@@ -597,6 +598,10 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                     if (commit(pic, committed)) enterAssociate(sylls);
                     return true;
                 }
+                // daemon 不可达：退化为上屏壳侧持有的候选文本，不静默丢掉用户选择（与 macOS 对齐）。
+                if (commit(pic, pick.text)) clearAssociate();
+                else clearAssociate();
+                return true;
             }
             clearAssociate();
             return true;
@@ -644,7 +649,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                     // 「词没上屏却推下一批」的假状态（2026-10-29 审查）。
                     if (commit(pic, committed)) enterAssociate(sylls);
                 } else {
-                    clearAssociate();
+                    if (commit(pic, pick.text)) clearAssociate();
+                    else clearAssociate();
                 }
                 return true;
             }
@@ -720,7 +726,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     if (ctrl) {
         // Ctrl+U：类终端整行清空（对齐 macOS 壳，组词中消费并全部删除）；
         // Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），不在此列。
-        if (vk == 'U' && isComposing() && !shiftActive()) {
+        if (vk == 'U' && isComposing() && !shiftDown()) {
             resetComposition();
             endComposition();
             comp_ = chaoset::Comp();
@@ -779,7 +785,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // PageUp/PageDown 无论 Shift 都翻页（对齐 mac/Linux）。
     const bool isPageKey =
         (vk == kVkPrior || vk == kVkNext) ||
-        (!shiftActive() && (vk == kVkOemMinus || vk == kVkOemPlus ||
+        (!shiftDown() && (vk == kVkOemMinus || vk == kVkOemPlus ||
                             vk == kVkOemOpenBrackets || vk == kVkOemCloseBrackets));
     if (isPageKey && isComposing() && hasCandidates()) {
         bool isPrev = (vk == kVkOemMinus || vk == kVkOemOpenBrackets || vk == kVkPrior);
@@ -814,7 +820,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // 按 punct(";") 语义（组词中先上屏首选+标点）。必须路由到 input 而
     // 不是 punct，引擎才能在双拼键位状态机里看到它。Shift+; 产生的
     // ':' 不在此列（仍走下方标点分支），与 mac 的字符级判定一致。
-    if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftActive())) {
+    if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftDown())) {
         const chaoset::Comp prev = comp_;
         comp_ = session_.input(";", halfWidth_);
         if (!comp_.ok) {
@@ -840,7 +846,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
 
     // 标点键（US 布局字符级映射，含 Shift 变体）：组词中先上屏首选再出
     // 中文标点，空组词直接出中文标点；映射规则在 daemon 侧统一完成。
-    if (const char* key = keyPunctChar(vk, shiftActive())) {
+    if (const char* key = keyPunctChar(vk, shiftDown())) {
         if (vk == kVkOemQuotes && isComposing()) {
             // 组词中的撇号是音节分隔符，走组词流程
             const chaoset::Comp prev = comp_;
@@ -943,11 +949,12 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // （mac 壳 2026-10-26 已修，此处对齐）。带 Shift 的数字（!@# 等字符）
     // 不属于选词，同样落到末尾放行。
     const int composeDigit = digitIndex(vk);
-    if (composeDigit >= 0 && (vk >= kVkNumpad1 || !shiftActive())) {
+    if (composeDigit >= 0 && (vk >= kVkNumpad1 || !shiftDown())) {
         int index = composeDigit;
         if (index < static_cast<int>(comp_.candidates.size())) {
-            // 上屏候选的音节串必须在 selectPrefix 之前取：成功后
+            // 上屏候选的音节串/文本必须在 selectPrefix 之前取：成功后
             // comp_ 会被替换成剩余组词态（或清空），候选表丢了。
+            const std::string pickedText = comp_.candidates[index].text;
             const std::string pickedSyllables = comp_.candidates[index].syllables;
             // 渐进上屏：只消耗候选音节对应的拼音前缀，剩余回灌继续组词
             //（2026-10-29 用户反馈「选一个候选清空整个拼音」不合适）。
@@ -974,13 +981,14 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             } else if (enterDesyncOnTimeout(comp_)) {
                 return true;  // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
             } else {
-                // daemon 不可达/越界：回退整句上屏（现状语义）
+                // daemon 不可达/越界：先试整句上屏，仍失败退化上屏候选中文，绝不静默吞键
                 std::string committed;
-                if (session_.select(index, &committed)) {
-                    const std::string all = confirmedPreedit_ + committed;
-                    confirmedPreedit_.clear();
-                    commit(pic, all);
+                if (!session_.select(index, &committed)) {
+                    committed = pickedText;
                 }
+                const std::string all = confirmedPreedit_ + committed;
+                confirmedPreedit_.clear();
+                commit(pic, all);
             }
             return true;
         }
@@ -1005,7 +1013,8 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
             int sel = candidateWnd_.selectedIndex();
             if (sel < 0 || sel >= static_cast<int>(comp_.candidates.size())) sel = 0;
-            // 同数字选词：音节奏必须在 selectPrefix 之前取（见上）
+            // 同数字选词：文本与音节必须在 selectPrefix 之前取（见上）
+            const std::string pickedText = comp_.candidates[sel].text;
             const std::string pickedSyllables = comp_.candidates[sel].syllables;
             chaoset::Comp rest;
             if (session_.selectPrefix(sel, &rest) && !rest.committed.empty()) {
@@ -1027,11 +1036,12 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             // 超时：保留组词，本键不动作（issue #122，见 tip_desync.cpp）
             if (enterDesyncOnTimeout(comp_)) return true;
             std::string committed;
-            if (session_.select(sel, &committed)) {
-                const std::string all = confirmedPreedit_ + committed;
-                confirmedPreedit_.clear();
-                commit(pic, all);
+            if (!session_.select(sel, &committed)) {
+                committed = pickedText;
             }
+            const std::string all = confirmedPreedit_ + committed;
+            confirmedPreedit_.clear();
+            commit(pic, all);
             return true;
         }
         // 残缺组词顶屏：已确认段按确认文本、剩余拼音按原始串一起上屏

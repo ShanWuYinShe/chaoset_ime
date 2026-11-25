@@ -864,6 +864,18 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"        let fallback = cur.candidates[index].text",
 		"        let fallback = cur.input",
 		"let fallback = cur.candidates[index].text")
+	expect("macOS selectPrefix 允许重试", macEngineClient,
+		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index],\n                                retryOnFailure: false) else { return nil }",
+		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index]) else { return nil }",
+		"retryOnFailure: false")
+	expect("macOS selectPrefix 超时后仍调 select", macController,
+		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)",
+		"let picked = (engine.select(index) ?? fallback)",
+		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)")
+	expect("Windows selectPrefix 失败不再退化上屏候选中文", winShell,
+		"committed = pickedText;",
+		"/* drop fallback */",
+		"不足 3 处")
 	expect("macOS 联想选词失败静默", "shims/macos/src/KeyRouter.swift",
 		"                    client?.insertText(list[pick].text, replacementRange:",
 		"                    // 退化上屏（临时删）",
@@ -1054,4 +1066,64 @@ func TestCheckShiftToggleAccountingRejectsHotkeyDoubleToggle(t *testing.T) {
 	if !strings.Contains(strings.Join(problems, "\n"), groupShiftAccounting) {
 		t.Fatalf("去掉其它修饰键守卫应被捕获，实际：%v", problems)
 	}
+}
+
+// TestCheckLetterCaseComposition 锁住「字母入组词保留大小写」契约（含 CapsLock 与物理 Shift 分离）。
+func TestCheckLetterCaseComposition(t *testing.T) {
+	const (
+		winKeys   = "shims/windows/src/tip_keys.cpp"
+		winDesync = "shims/windows/src/tip_desync.cpp"
+		macRouter = "shims/macos/src/KeyRouter.swift"
+		macTests  = "shims/macos/tests/key_routing/main.swift"
+	)
+	files := []string{rustSession, macRouter, macTests, winKeys, winDesync, linuxEngine}
+	orig := map[string]string{}
+	for _, p := range files {
+		orig[p] = string(readRepo(t, p))
+	}
+	build := func(mut map[string]string) fstest.MapFS {
+		m := fstest.MapFS{}
+		for _, p := range files {
+			s := orig[p]
+			if v, ok := mut[p]; ok {
+				s = v
+			}
+			m[p] = &fstest.MapFile{Data: []byte(s)}
+		}
+		return m
+	}
+
+	var problems []string
+	checkLetterCaseComposition(build(nil), &problems)
+	if len(problems) != 0 {
+		t.Fatalf("真实大小写入组词契约未通过（%d 项）：\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+
+	expect := func(name, path, old, new string) {
+		t.Helper()
+		if !strings.Contains(orig[path], old) {
+			t.Fatalf("%s 未生效：%s 里找不到 %q", name, path, old)
+		}
+		var problems []string
+		checkLetterCaseComposition(build(map[string]string{path: strings.Replace(orig[path], old, new, 1)}), &problems)
+		if !strings.Contains(strings.Join(problems, "\n"), groupLetterCaseComposition) {
+			t.Fatalf("%s 应被捕获，实际：%v", name, problems)
+		}
+	}
+
+	expect("Windows OnTestKeyDown 拦截 Shift 字母", winKeys,
+		"const bool letter = wParam >= kVkFirstLetter && wParam <= kVkLastLetter;",
+		"const bool letter = !shift && (wParam >= kVkFirstLetter && wParam <= kVkLastLetter);")
+	expect("Windows wouldHandle 拦截 Shift 字母", winKeys,
+		"if (vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;",
+		"if (!shiftDown() && vk >= kVkFirstLetter && vk <= kVkLastLetter) return true;")
+	expect("Windows shiftDown 重新混入 VK_CAPITAL", winKeys,
+		"bool ChaosetTIP::shiftDown() {\n    return (GetKeyState(VK_SHIFT) & 0x8000) != 0;\n}",
+		"bool ChaosetTIP::shiftDown() {\n    return ((GetKeyState(VK_SHIFT) & 0x8000) != 0) || ((GetKeyState(VK_CAPITAL) & 0x0001) != 0);\n}")
+	expect("Windows 失步处理器用 shiftActive 混入 CapsLock", winDesync,
+		"const bool shift = shiftDown();",
+		"const bool shift = shiftActive();")
+	expect("macOS 回退 charactersIgnoringModifiers", macRouter,
+		"guard let chars = event.characters,",
+		"guard let chars = event.charactersIgnoringModifiers,")
 }
