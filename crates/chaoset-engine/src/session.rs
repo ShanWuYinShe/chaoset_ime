@@ -28,20 +28,18 @@ const RANK_BACKOFF: i32 = 5; // 逐级回退前缀（nihaox → 你好）
 const RANK_CONTINUATION_LEAD: i32 = 6; // 无法干净切分时的续接领跑（quanmia → 全面）
 const RANK_TYPO_FIX: i32 = 7; // 错拼修正候选初始层级（最低，仅保证列表末尾可见）
 
-/// 按切分边界重建预编辑，并**保留用户输入的大小写**（对齐 Go preeditWithCase）。
+/// 按切分边界重建预编辑，并**原样保留用户输入**（对齐 Go preeditWithCase）。
 ///
-/// 预编辑是「按回车会原样上屏的内容」的预览：用户敲 NIHAO 时看到 NI'HAO。
-/// 做法是把输入去掉显式分隔符后与音节文本逐个字符对齐——长度不匹配（别名
-/// 归一 lue→lve、双拼解码等）或字符不同（同上）时退回音节文本本身。
+/// 预编辑是「按回车会原样上屏的内容」的预览：用户敲 NIHAO 时看到 NI'HAO，
+/// 敲 LUE 时看到 LUE（不能归一成 LvE），敲 `ni'hao` 时看到 `ni'hao`。
+/// 做法是把输入去掉显式分隔符后与音节切分逐个字符对齐：长度一致只插入
+/// 音节分隔符，字符一律取用户原始字符；长度不一致（别名归一 `niou→niu`、
+/// 双拼解码等）连分隔符也不猜，原样返回输入，绝不改写用户敲下的字母。
 fn preedit_with_case(input: &str, tokens: &[Token]) -> String {
     let src: Vec<char> = input.chars().filter(|c| *c != '\'').collect();
-    let canon: Vec<char> = tokens.iter().flat_map(|t| t.text.chars()).collect();
-    if src.len() != canon.len() {
-        return tokens
-            .iter()
-            .map(|t| t.text.as_str())
-            .collect::<Vec<_>>()
-            .join("'");
+    let canon_len: usize = tokens.iter().map(|t| t.text.chars().count()).sum();
+    if src.len() != canon_len {
+        return input.to_string();
     }
     let mut out = String::new();
     let mut idx = 0;
@@ -49,13 +47,8 @@ fn preedit_with_case(input: &str, tokens: &[Token]) -> String {
         if i > 0 {
             out.push('\'');
         }
-        for c in tok.text.chars() {
-            // 音节文本是规范化小写；原字符只可能在大小写上不同。
-            if src[idx].to_ascii_lowercase() == c {
-                out.push(src[idx]);
-            } else {
-                out.push(c);
-            }
+        for _ in tok.text.chars() {
+            out.push(src[idx]);
             idx += 1;
         }
     }
@@ -1632,8 +1625,9 @@ impl Session {
         self.all_candidates = sorted.into_iter().map(|(c, s, _)| (c, s as u32)).collect();
 
         // 预编辑（Go buildComposition 口径）：默认原样输入；有候选、有首选切分且
-        // 首选本身不是错拼纠错时按切分边界重建并保留大小写（如 NI'HAO）。当首选
-        // 为错拼纠错（zhezhogn → 这种）或无切分时保留原始输入，避免产生像
+        // 首选本身不是错拼纠错时只按切分边界插入分隔符，字符保留原始输入
+        // （如 NI'HAO、LUE；别名 lue→lve 也不改写）。当首选为错拼纠错
+        // （zhezhogn → 这种）或无切分时保留原始输入，避免产生像
         // `zhe'zh'o'g'n` 这样的碎片伪分词。
         let top_is_typo = self
             .all_candidates
@@ -2321,6 +2315,32 @@ mod tests {
         assert_eq!(sess.commit_raw().unwrap(), "HelloWorld");
     }
 
+    /// 预编辑必须是原始输入的预览：别名归一（lue→lve）也不得把用户敲下的
+    /// 字符改写成规范拼写（issue #147「不要更改我的原始输入」；大写别名
+    /// 旧实现会显示成 LvE/NvE）。长度不一致时（niou→niu）连分隔符也不猜。
+    #[test]
+    fn test_preedit_never_rewrites_raw_input() {
+        let dict = common_dict();
+        for (input, want) in [
+            ("LUE", "LUE"),
+            ("lue", "lue"),
+            ("NUE", "NUE"),
+            ("NI'LUE", "NI'LUE"),
+            ("NIHAO", "NI'HAO"),
+            ("ni'hao", "ni'hao"),
+            ("niou", "niou"),
+        ] {
+            let mut sess = Session::new(Arc::clone(&dict), None);
+            let comp = sess.input(input, false).unwrap();
+            assert_eq!(comp.input, input, "{input}");
+            assert_eq!(
+                comp.preedit, want,
+                "{input}: 预编辑不得改写原始输入: {comp:?}"
+            );
+            assert_eq!(sess.commit_raw().unwrap(), input, "{input}: 回车必须原样上屏");
+        }
+    }
+
     /// 纯音节切分优先于声母碎片：xian 是合法音节，不得混入 xia'n
     /// 这类碎片切分展开的候选（对齐 Go：碎片只在整段无音节解时兜底）。
     #[test]
@@ -2787,6 +2807,38 @@ mod tests {
             .count();
         assert_eq!(count, 1, "用户词与转繁词条不得重复展示: {:?}", comp.candidates);
         assert!(comp.candidates[0].from_user);
+    }
+
+    /// issue #147 原始样例：连写/大写输入与手工分词都必须是可选取的候选，
+    /// 渐进选词后剩余输入保留用户原始大小写与分隔符（此前无法选中即回退）。
+    #[test]
+    fn test_issue_147_reported_inputs_selectable() {
+        let dict = common_dict();
+
+        for input in ["huashetianzu", "HuaSheTianZu", "HUA'SHE'TIAN'ZU"] {
+            let mut sess = Session::new(Arc::clone(&dict), None);
+            let comp = sess.input(input, false).unwrap();
+            assert_eq!(comp.candidates[0].text, "画蛇添足", "{input}: {comp:?}");
+            let comp = sess.select_prefix(0).unwrap();
+            assert_eq!(comp.committed, "画蛇添足", "{input}");
+            assert!(comp.input.is_empty(), "{input}: {comp:?}");
+        }
+
+        for (input, rest) in [
+            ("xiaoxiexiaoxi", "xiaoxi"),
+            ("xiao'xie'xiao'xi", "xiao'xi"),
+            ("XiaoXieXiaoXi", "XiaoXi"),
+        ] {
+            let mut sess = Session::new(Arc::clone(&dict), None);
+            let comp = sess.input(input, false).unwrap();
+            assert_eq!(comp.candidates[0].text, "小写", "{input}: {comp:?}");
+            let comp = sess.select_prefix(0).unwrap();
+            assert_eq!(comp.committed, "小写", "{input}");
+            assert_eq!(comp.input, rest, "{input}: 剩余输入必须保留原始形态");
+            let comp = sess.select_prefix(0).unwrap();
+            assert_eq!(comp.committed, "消息", "{input}");
+            assert!(comp.input.is_empty(), "{input}: {comp:?}");
+        }
     }
 
     /// 全拼输入翻页归零、64 字符上限、含撇号/省写按词退格与逐段选择等价性。
