@@ -457,10 +457,39 @@ check("daemon 失败：候选窗不关闭", CandidatePanelController.itemCount >
 EnginePipeline.failureInjectionForTests = false
 _ = c.handle(ev("", 53), client: m)
 c.settleEngineForTests()
+// 4) ⌥⌫ 乐观回放：与 Windows/Linux 一致，结果未回投前预编辑立即退掉末音节。
+_ = c.handle(ev("", 53), client: m) // Esc
+c.settleEngineForTests()
+for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31)] {
+    _ = k(ev(ch, UInt16(code)), client: m)
+}
+check("⌥⌫ 前置：已应用预编辑为 ni'hao", m.marked == "ni'hao", "marked=\(m.marked)")
+_ = c.handle(ev("", 51, [.option]), client: m)  // 不 settle：结果还在飞
+check("⌥⌫ 乐观回放：结果未回投时预编辑立即退掉末音节",
+      m.marked == "ni", "marked=\(m.marked)")
+check("⌥⌫ 乐观回放：末尾不保留引擎补的分隔符",
+      !m.marked.hasSuffix("'"), "marked=\(m.marked)")
+c.settleEngineForTests()
+
+// 5) 用户自己敲的分隔符：xi'an → ⌥⌫ 本地回放为 xi'（分隔符是用户输入的一部分）。
+_ = c.handle(ev("", 53), client: m)
+c.settleEngineForTests()
+for (ch, code) in [("x", 7), ("i", 34), ("'", 39), ("a", 0), ("n", 45)] {
+    _ = k(ev(ch, UInt16(code)), client: m)
+}
+check("⌥⌫ 前置：xi'an 预编辑", m.marked == "xi'an", "marked=\(m.marked)")
+_ = c.handle(ev("", 51, [.option]), client: m)
+// 与 Windows/Linux 同一近似：预编辑去掉末段后不保留「悬空分隔符」（xi，而不是
+// xi'），但用户自己敲的分隔符仍留在输入串里（xi'），不会被回放吞掉。
+check("⌥⌫ 乐观回放：预编辑去掉末段且不留悬空分隔符",
+      m.marked == "xi", "marked=\(m.marked)")
+check("⌥⌫ 乐观回放：用户自己敲的分隔符保留在输入串里",
+      c.optimisticInput() == "xi'", "input=\(c.optimisticInput())")
+c.settleEngineForTests()
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-// 70 = 原有 64 + 「异步引擎管线」6 条（乐观预编辑/有序选词/失败不关窗）。
-let expectedChecks = 70
+// 76 = 原有 64 + 「异步引擎管线」6 条 + 「⌥⌫ 乐观回放」6 条。
+let expectedChecks = 76
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")
