@@ -1029,7 +1029,7 @@ void ChaosetTIP::onWorkerShowToast(int id) {
 
 // 每 TIP 的引擎线程把结果回投到本线程：取走并按序应用（tip_async.cpp）。
 // 这里只做内存/TSF 编辑，绝不再发 IPC。
-void ChaosetTIP::onWorkerEngineResult() { applyEngineResults(); }
+
 
 // UiElementHost：UILess 宿主经 ITfUIElement::Show 通知显示/隐藏。
 // shown=FALSE（宿主要求隐藏候选 UI）时收起自绘浮窗——宿主接管渲染场景

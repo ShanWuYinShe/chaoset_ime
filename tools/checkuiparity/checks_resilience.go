@@ -172,7 +172,7 @@ func checkAsyncEnginePipeline(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winTipHpp, "std::unique_ptr<chaoset::win::EnginePump> pump_;")
 	checkContains(fsys, problems, group, winTipThreadHpp, "kTipEngineResultMsg")
 	checkContains(fsys, problems, group, winTipThreadCpp, "onWorkerEngineResult()")
-	checkContains(fsys, problems, group, winTipCore, "void ChaosetTIP::onWorkerEngineResult()")
+	checkContains(fsys, problems, group, winTipAsync, "void ChaosetTIP::onWorkerEngineResult()")
 
 	// h) 卸载安全：析构必须先停引擎线程；线程未能退出时绝不销毁仍被引用的对象。
 	if body, _, ok := bodyOf(winTipCore, "ChaosetTIP::~ChaosetTIP()"); ok {
