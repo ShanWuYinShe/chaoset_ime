@@ -857,30 +857,14 @@ func TestCheckTimeoutResilience(t *testing.T) {
 		"lastReadTimedOut")
 	// 退格失败路径的回退：macOS 改回「无 guard 直接赋值」（失败即清组词/强上屏），
 	// Linux 去掉失败保留分支，都必须被捕获。
-	expect("macOS 退格失败不 guard", "shims/macos/src/KeyRouter.swift",
-		"            guard let comp = engine.backspace() else {",
-		"            current = engine.backspace()",
-		"退格调用必须 guard")
-	expect("macOS 选词失败又上屏拼音串", macController,
-		"        let fallback = cur.candidates[index].text",
-		"        let fallback = cur.input",
-		"let fallback = cur.candidates[index].text")
 	expect("macOS selectPrefix 允许重试", macEngineClient,
 		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index],\n                                retryOnFailure: false) else { return nil }",
 		"func selectPrefix(index: Int) -> Comp? {\n        guard let result = call(method: \"selectPrefix\",\n                                params: [\"index\": index]) else { return nil }",
 		"retryOnFailure: false")
-	expect("macOS selectPrefix 超时后仍调 select", macController,
-		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)",
-		"let picked = (engine.select(index) ?? fallback)",
-		"let picked = hadReadTimeout ? fallback : (engine.select(index) ?? fallback)")
 	expect("Windows selectPrefix 失败不再退化上屏候选中文", winShell,
 		"committed = pickedText;",
 		"/* drop fallback */",
 		"不足 3 处")
-	expect("macOS 联想选词失败静默", "shims/macos/src/KeyRouter.swift",
-		"                    client?.insertText(list[pick].text, replacementRange:",
-		"                    // 退化上屏（临时删）",
-		"联想选词失败退化分支")
 	expect("Linux 选词失败又放行按键", linuxEngine,
 		"        if (!daemon_.session().selectPrefix(idx, &rest)) return true;",
 		"        if (!daemon_.session().selectPrefix(idx, &rest)) return false;",

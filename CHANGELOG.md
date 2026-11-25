@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- **改进(macOS 壳)：IMK 按键路径改为异步引擎管线，daemon 慢/挂起/失败不再阻塞宿主 App、也不关闭候选窗（issue #149，与 Windows PR #153 同一设计）**：每个 `ChaosetController` 一个 `EnginePipeline` 引擎线程独占自己的 daemon 连接（组词会话按连接隔离）；IMK 回调只入队 + 用乐观组词态（最后已应用 Comp + 未应用输入/退格回放）立即刷新预编辑，结果按 seq 回主队列顺序应用。失败结果不弹出乐观项、不关候选窗；失焦/取消递增纪元作废在飞结果；daemon 不可用按节流整串重建（base 空 + 完整输入串），2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点用壳侧已显示文本兜底上屏。`checkuiparity` 新增「macOS 异步引擎管线」组（含变异测试），旧「超时韧性」组只保留 Linux/Windows 同步壳断言；`docs/ui-parity.md` 同步契约。
+
 - **修复(Windows 壳)：Shift/CapsLock 大写字母不再漏进宿主并修复 CapsLock 对 Shift 语义的干扰（issue #147）**：Windows `OnTestKeyDown` 与 `wouldHandle` 此前对字母加了 `!shiftActive()` 守卫，导致 Shift/CapsLock 下在组词态继续输入大写字母会结束当前组词并直接放行成宿主文本；同时 `shiftActive()` 把 `VK_CAPITAL` 混入 `VK_SHIFT`，既让失步恢复（`tip_desync.cpp`）里的 `shift != capsOn` 互相抵消而丢掉 CapsLock 大写，也在开启 CapsLock 时破坏数字选词 1-9、`-`/`=`/`[`/`]` 翻页、标点键位与 `Ctrl+U`。现将该方法收口为只读物理 `VK_SHIFT` 的 `shiftDown()`，三端均统一把 `A-Z` 保留在组词中并按原始大小写供回车原样上屏；`checkuiparity`「字母入组词大小写」组新增三端静态与变异回归。
 
 - **修复(引擎/错拼纠错)：单字/回退兜底不再顶走高置信度整词纠错、繁体模式下错拼与用户词组不再错位或重复，并补齐全拼分页/复位清理（issue #147）**：

@@ -174,8 +174,10 @@ func checkResetSemantics(fsys fs.FS, problems *[]string) {
 	// macOS：EngineClient 暴露两个方法，控制器在继续打字路径用轻量版。
 	checkContains(fsys, problems, group, "shims/macos/src/EngineClient.swift",
 		"func reset()", "func resetComposition()", "\"resetComposition\"")
+	// macOS 异步管线（issue #149）：「继续打字」路径经 resetEnginePipeline 入队
+	// resetComposition（演练 args: keepLearning=true），不再同步调用 engine。
 	checkContains(fsys, problems, group, "shims/macos/src/ChaosetController.swift",
-		"engine.resetComposition()")
+		"resetEnginePipeline(keepLearning: true)")
 	// Linux：同样两个入口。
 	checkContains(fsys, problems, group, linuxEngine,
 		"void sessionReset()", "void sessionResetComposition()",

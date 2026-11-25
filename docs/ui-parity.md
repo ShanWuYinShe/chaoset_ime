@@ -591,3 +591,28 @@ Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部�
 切换输入法时已确认段先落盘（用户确认过的字不丢）。引擎侧不变：
 `SelectPrefix` 依旧只消耗候选音节对应的前缀、剩余回灌、即时学习（纯算法，
 与平台无关）。
+## macOS 异步引擎管线（2026-11-25，issue #149）
+
+用户要求：**所有平台**的输入法壳都走异步引擎管线——按键路径不等待 daemon，daemon
+慢/挂起/失败都不关闭候选窗；只有既有语义路径（失焦、Esc/取消、上屏结束、模式切换）
+才关闭。Windows 壳见「零阻塞契约」下的「异步引擎管线」条；这里是 macOS IMK 壳。
+
+- **线程模型**：`EnginePipeline`（`shims/macos/src/EnginePipeline.swift`）为每个
+  `ChaosetController` 建一条串行队列和自己的 `EngineClient` 连接（daemon 组词会话按
+  连接隔离，多个控制器不能共用）。IMK 的 `handle`/`commitComposition`/`activateServer`
+  等回调都在宿主 App 主线程同步执行，**按键路径绝不直接调用引擎**：只把操作压入
+  `pendingOps`、用乐观组词态立即 `setMarkedText`，再把操作投给引擎线程。
+- **乐观预编辑**：`optimisticComp()` = 最后一次已应用 `Comp` + 未应用的输入/退格回放；
+  翻页/选词/标点在结果回来前不改变预编辑；按音节退格的边界只有引擎知道，乐观窗口保持
+  不动等结果。结果按 seq 回投主队列后顺序应用（成功先丢弃已覆盖的乐观项）。
+- **失败语义**：失败结果**不弹出**乐观项（本地预编辑与组词保留）；失焦/取消/会话结束
+  递增纪元（`engineEpoch`）作废在飞结果；daemon 不可用按节流用 `rebuild`（`base` 空 +
+  完整输入串）整串重建，2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点
+  失败用壳侧已显示文本兜底上屏。失败处理不调用面板隐藏。
+- **候选窗**：慢/失败期间保持最后一次已应用候选（`refresh` 只在 `pendingOps` 为空时
+  才收起）；失焦、Esc/取消、上屏结束、模式切换等既有路径照旧关闭。
+- **测试**：`shims/macos/tests/key_routing` 用 `settleEngineForTests()` 把「入队 →
+  引擎线程 → 主队列应用」跑完再断言；新增乐观预编辑、快打后有序选词、失败不关候选窗
+  三条断言；`EnginePipeline.failureInjectionForTests` 只用于测试注入失败。
+- **检查**：`tools/checkuiparity` 的「macOS 异步引擎管线」组（含变异测试）静态锁住
+  以上不变量；`make vet` 必须绿。

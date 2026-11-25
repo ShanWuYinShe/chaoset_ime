@@ -49,11 +49,11 @@ extension ChaosetController {
                 if enMode {
                     exitAssociate()
                 }
-                if current?.input.isEmpty == false {
-                    current = engine.resetComposition()
-                } else {
-                    current = nil
+                // 异步管线：本地立即丢弃组词并让引擎复位（不等待）。
+                if isComposingOptimistic() || !pendingOps.isEmpty {
+                    resetEnginePipeline(keepLearning: true)
                 }
+                current = nil
                 // 已确认段随模式切换落盘：用户确认过的字不能丢（旧实现里这些
                 // 段早已写入文档，此处保持净效果一致）
                 flushConfirmed(client)
@@ -84,7 +84,9 @@ extension ChaosetController {
             return passThrough(client)
         }
 
-        let isComposing = !(current?.input.isEmpty ?? true)
+        // 组词中 = 已应用组词态或仍在飞的按键（乐观）：结果回来前也必须拦截，
+        // 否则紧随其后的按键会漏进宿主成英文。
+        let isComposing = isComposingOptimistic()
 
         // Esc 键（keyCode 53）：联想模式先关闭联想窗；组词中直接全部删除
         // （清空当前组词并关闭候选窗）
@@ -98,7 +100,8 @@ extension ChaosetController {
                 // 一致：合成内已转换但未上屏的内容一并丢弃（2026-10-30 起
                 // 已确认段住在预编辑里，必须显式丢弃而不是留在文档里）
                 confirmedText = ""
-                current = engine.resetComposition()
+                resetEnginePipeline(keepLearning: true)
+                current = nil
                 refresh(client)
                 return true
             }
@@ -129,44 +132,25 @@ extension ChaosetController {
             // A. 直接全部删除（清空全部拼音）：Cmd+Delete / Ctrl+Delete / Shift+Delete
             if mods.contains(.command) || mods.contains(.control) || mods.contains(.shift) {
                 confirmedText = "" // 全部删除：未落盘的已确认段一并取消（与 Esc 一致）
-                current = engine.resetComposition()
+                resetEnginePipeline(keepLearning: true)
+                current = nil
                 refresh(client)
                 return true // 必须消费，绝不让快捷删除穿透到宿主应用误删文档内容
             }
 
             // B. 按音节部分删除（整词/音节回退）：Option+Delete (⌥⌫)
             if mods.contains(.option) {
-                guard let comp = engine.backspaceWord() else {
-                    // daemon 超时/不可达：**保留组词与按键**。退格绝不能穿透到宿主
-                    // 误删文档内容，也不能像旧实现那样把 current 置空 + flushConfirmed
-                    // （那会在失败时把已确认段强行上屏）。下一次 input 会带 base 重建，
-                    // daemon 侧状态随之修正。
-                    refresh(client)
-                    return true
-                }
-                current = comp
-                if comp.input.isEmpty {
-                    current = nil
-                    flushConfirmed(client) // 同普通退格：剩余删空即落盘收尾
-                }
+                // 异步管线：只入队。音节边界只有引擎知道，乐观窗口预编辑保持不动；
+                // 失败结果**不**弹出乐观项、保留组词（/见 ChaosetControllerAsync）。
+                submitBackspaceWord()
                 refresh(client)
                 return true
             }
 
             // C. 慢慢部分删除（逐字符退格）：普通退格键单按，每按一次退一个拼音字母
-            guard let comp = engine.backspace() else {
-                // 同 Option+Delete：失败时保留组词与按键，绝不误删宿主文档、
-                // 也绝不在失败路径上 flushConfirmed（把已确认段强行上屏）。
-                refresh(client)
-                return true
-            }
-            current = comp
-            if comp.input.isEmpty {
-                current = nil
-                // 剩余拼音删空：已确认段立即落盘收尾——它们不能继续挂在
-                // 预编辑里变成「无组词的孤标记区」
-                flushConfirmed(client)
-            }
+            // 异步管线：乐观预编辑立即少一个字符；结果回来用引擎态覆盖。
+            // 失败不弹出乐观项、保留组词与按键，绝不误删宿主文档。
+            submitBackspace()
             refresh(client)
             return true
         }
@@ -174,7 +158,8 @@ extension ChaosetController {
         // Ctrl+U：类终端整行清空，组词中直接全部删除
         if isComposing, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
-            current = engine.resetComposition()
+            resetEnginePipeline(keepLearning: true)
+            current = nil
             refresh(client)
             return true
         }
@@ -185,7 +170,8 @@ extension ChaosetController {
         if isComposing, mods.contains(.control),
            event.keyCode == 51 || event.keyCode == 117 {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
-            current = engine.resetComposition()
+            resetEnginePipeline(keepLearning: true)
+            current = nil
             refresh(client)
             return true
         }
@@ -248,18 +234,9 @@ extension ChaosetController {
                     let sel = min(max(CandidatePanelController.selectedIndex, 0), max(count - 1, 0))
                     let pick = start + sel
                     if pick < list.count {
-                        if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
-                            client?.insertText(
-                                committed,
-                                replacementRange: NSRange(location: NSNotFound, length: 0)
-                            )
-                            enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
-                            return true
-                        }
-                        // daemon 不可达：退化为直接上屏候选文本（壳侧上一次响应的可靠数据），
-                        // 不丢掉用户这次选择；学习记录由下一次正常选词补记。
-                        client?.insertText(list[pick].text, replacementRange: NSRange(location: NSNotFound, length: 0))
-                        enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
+                        // 异步管线：只入队；结果回来时上屏并继续联想，失败用壳侧
+                        // 已显示文本兜底（绝不丢选择）。
+                        submitAssociateSelect(list[pick])
                         return true
                     }
                 }
@@ -282,17 +259,8 @@ extension ChaosetController {
                 // 数字选当前页内的联想词（联想已翻页化，见 associateFlip）
                 let pick = associatePage * Self.associatePageSize + Int(firstScalar) - 49
                 if pick < list.count {
-                    if let committed = engine.associateSelect(word: list[pick].text, sylls: list[pick].syllables.split(separator: "'").map(String.init)) {
-                        client?.insertText(
-                            committed,
-                            replacementRange: NSRange(location: NSNotFound, length: 0)
-                        )
-                        enterAssociate(sylls: list[pick].syllables.split(separator: "'").map(String.init), client: client)
-                        return true
-                    }
-                    // 同空格分支：daemon 不可达时退化为上屏候选文本，不丢用户选择。
-                    client?.insertText(list[pick].text, replacementRange: NSRange(location: NSNotFound, length: 0))
-                    exitAssociate()
+                    // 异步管线：只入队（结果回来时上屏并继续联想）。
+                    submitAssociateSelect(list[pick])
                     return true
                 }
                 // 越界序号或上屏失败：收起联想，数字落到正常流程进文档。
@@ -343,7 +311,7 @@ extension ChaosetController {
            event.modifierFlags.contains(.command) == false,
            event.modifierFlags.contains(.control) == false,
            event.modifierFlags.contains(.option) == false {
-            let composing = !(current?.input.isEmpty ?? true)
+            let composing = isComposingOptimistic()
             let associating = !(associateCandidates?.isEmpty ?? true)
             if composing || associating {
                 halfWidth.toggle()
@@ -352,14 +320,20 @@ extension ChaosetController {
             }
             return passThrough(client)
         }
-        if event.keyCode == 49, let cur = current, !cur.input.isEmpty {
-            if hasCandidates {
+        if event.keyCode == 49, isComposingOptimistic() {
+            if hasCandidates, let cur = current {
                 // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
                 let sel = min(max(CandidatePanelController.selectedIndex, 0),
                               max(cur.candidates.count - 1, 0))
                 commit(index: sel, client: client)
+            } else if !pendingOps.isEmpty {
+                // 结果尚未应用（乐观窗口）：按页内第 0 项入队，由引擎按完整输入
+                // 解析；绝不能把拼音当原始串顶屏。
+                submitSelectPrefix(index: 0, text: "", syllables: [])
             } else {
-                let raw = engine.commitRaw() ?? cur.input
+                // 残缺组词（引擎确认无候选）：顶屏原始拼音（与回车等效）。
+                let raw = optimisticInput()
+                resetEnginePipeline(keepLearning: true)
                 current = nil
                 client?.insertText(
                     confirmedText + raw,
@@ -387,23 +361,30 @@ extension ChaosetController {
         // 组词中按 7/8/9 会走到 commit() 里因越界直接 return，而这里无条件
         // return true → 键被吞掉，既不选词也不进文档（2026-10-26 审查发现）。
         // 越界时落到后面的 passThrough/标点分支，让数字正常进入文档。
-        if hasCandidates, chars.count == 1,
+        if chars.count == 1,
            let scalar = chars.unicodeScalars.first,
-           scalar.value >= 49, scalar.value <= 57 {
+           scalar.value >= 49, scalar.value <= 57,
+           isComposing {
             let idx = Int(scalar.value - 49)
-            if idx < (current?.candidates.count ?? 0) {
+            if hasCandidates, idx < (current?.candidates.count ?? 0) {
                 commit(index: idx, client: client)
                 return true
             }
-            // 超出本页候选数：不吞键，继续走后续分支（数字按原样处理）
+            if !pendingOps.isEmpty {
+                // 候选列表尚未追上按键（乐观窗口）：按下标入队，绝不把数字
+                // 漏进文档；列表已是最新时越界数字照旧落到下面按原样处理。
+                submitSelectPrefix(index: idx, text: "", syllables: [])
+                return true
+            }
         }
 
         // 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
-        if (chars == "\r" || chars == "\n"), let cur = current, !cur.input.isEmpty {
-            let raw = engine.commitRaw() ?? cur.input
+        if (chars == "\r" || chars == "\n"), isComposing {
+            // 回车语义：已确认段按确认文本、剩余拼音（含未应用按键）按原始串
+            // 一起上屏——本地立即生效，不再等引擎（commitRaw 只是回显输入串）。
+            let raw = optimisticInput()
+            resetEnginePipeline(keepLearning: true)
             current = nil
-            // 回车语义：已确认段按确认文本上屏，剩余拼音按原始串上屏
-            //（与系统拼音回车一致：已转换部分保留转换结果）
             client?.insertText(
                 confirmedText + raw,
                 replacementRange: NSRange(location: NSNotFound, length: 0)
@@ -417,12 +398,8 @@ extension ChaosetController {
         let isPageUp = chars == "-" || chars == "[" || event.keyCode == 116 || chars == "\u{F72C}"
         let isPageDown = chars == "=" || chars == "]" || event.keyCode == 121 || chars == "\u{F72D}"
         if (isPageUp || isPageDown) && hasCandidates {
-            guard let comp = isPageUp ? engine.prevPage() : engine.nextPage() else {
-                // 翻页失败（daemon 超时/不可达）：翻页键在宿主里无破坏性，
-                // 按输入法铁律原样放行，绝不吞键。
-                return passThrough(client)
-            }
-            current = comp
+            // 异步管线：翻页只入队；失败保持当前页不动（不关候选窗、不清组词）。
+            submitPage(next: isPageDown)
             refresh(client)
             return true
         }
@@ -432,23 +409,10 @@ extension ChaosetController {
         // 引擎契约：input(";") 在 dpPending!=0 时参与两两解码，为 0 时按 punct
         // 语义把「组词中首选词 + 分号」放进 Committed。Shift+';' 产生 ':'，
         // 不在此列（仍走下方标点分支，与 Windows/Linux 字符级判定一致）。
-        if !engine.doublePinyinScheme.isEmpty, chars == ";" {
-            // base = 壳侧已知的完整输入串：读超时后 daemon 用它做幂等重放，
-            // 避免把同一段字符追加两次（见 EngineClient.input）。
-            guard let comp = engine.input(chars, halfWidth: halfWidth,
-                                          base: current?.input ?? "") else {
-                return passThrough(client) // daemon 超时/不可达：绝不吞键
-            }
-            current = comp
-            if !comp.committedText.isEmpty {
-                // 已确认段 + 本次上屏文本一次落盘（与 selectPrefix 收尾同原语）
-                client?.insertText(
-                    confirmedText + comp.committedText,
-                    replacementRange: NSRange(location: NSNotFound, length: 0)
-                )
-                confirmedText = ""
-                current = nil
-            }
+        if !shuangpinScheme.isEmpty, chars == ";" {
+            // 异步管线：'；' 作为组词/解码键入队；committed（首选+分号）由结果
+            // 应用分支一次落盘。绝不等 daemon。
+            submitInput(chars)
             refresh(client)
             return true
         }
@@ -460,33 +424,22 @@ extension ChaosetController {
             if associateCandidates != nil {
                 exitAssociate()
             }
-            if scalar == "'", current?.input.isEmpty == false {
-                // 失败时不能直接赋值（会把组词态清空并吞掉这个键）。
-                guard let comp = engine.input(chars, halfWidth: halfWidth,
-                                              base: current?.input ?? "") else {
-                    return passThrough(client)
-                }
-                current = comp
+            if scalar == "'", isComposing {
+                // 组词中的撇号是音节分隔符：入队即可（失败不弹出乐观项）。
+                submitInput(chars)
                 refresh(client)
                 return true
             }
-            guard let committed = engine.punct(chars, halfWidth: halfWidth) else {
-                return passThrough(client) // daemon 不可达/未知标点：原键放行
-            }
-            current = nil
-            // 标点收尾：已确认段 + 首选候选 + 标点一次落盘
-            client?.insertText(
-                confirmedText + committed,
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
-            confirmedText = ""
+            // 异步管线：标点只入队；成功时「已确认段 + 首选 + 标点」一次落盘，
+            // 失败用原 ASCII 字符兜底（绝不吞键）。
+            submitPunct(chars)
             refresh(client)
             return true
         }
 
         // 字母与撇号：进组词流程。
         //
-        // engine.input 返回 nil 只有一种可能：daemon 不可达（IPC 失败）。
+        // 异步管线：引擎结果由 ChaosetControllerAsync 按 seq 应用。
         // 此时**绝不能消费按键**——2026-10-26 用户实测「切换到本输入法后
         // 首字母丢失」的根因就在这里：旧代码把 current 置空后 return true，
         // 按键被吞掉，而宿主应用什么都没收到，字母就凭空消失了。
@@ -494,11 +447,14 @@ extension ChaosetController {
         // 放行这个字母，让用户至少还能用英文继续输入，而不是静默吞掉。
         // （EngineClient 内部有 1 秒失败冷却，daemon 恢复后下一次按键会自动重连。）
         if isCompositionChar(chars) {
-            guard let comp = engine.input(chars, halfWidth: halfWidth,
-                                          base: current?.input ?? "") else {
-                return passThrough(client)
+            // 连接不可用且当前没有本地组词：fail-open（字母原样进文档），
+            // 并节流发一个探测请求；daemon 恢复后下一键即可正常组词。
+            if !engineAvailable() {
+                probeEngineIfDown()
+                if !isComposing && confirmedText.isEmpty { return passThrough(client) }
             }
-            current = comp
+            // 异步管线：入队 + 乐观预编辑立即显示，绝不等待 daemon。
+            submitInput(chars)
             refresh(client)
             return true
         }
@@ -526,18 +482,14 @@ extension ChaosetController {
     /// 组词态翻页：翻页后页内预选归零；边界页保持不动（仍消费按键）。
     private func flipCompositionPage(next: Bool, client: (any IMKTextInput)?) {
         guard let cur = current, !cur.candidates.isEmpty else { return }
-        // 翻页请求失败（daemon 超时/不可达）时保持不动：方向键已在组词态被消费，
-        // 不放行给宿主（否则光标会跑），也不清空组词。
-        let flipped: Comp?
+        // 边界页保持不动（方向键已在组词态被消费，不放行给宿主）。
         if next {
-            guard cur.page + 1 < cur.pageCount else { return }  // 末页：保持不动
-            flipped = engine.nextPage()
+            guard cur.page + 1 < cur.pageCount else { return }
         } else {
-            guard cur.page > 0 else { return }  // 首页：保持不动
-            flipped = engine.prevPage()
+            guard cur.page > 0 else { return }
         }
-        guard let flipped else { return }  // 失败：状态与预编辑都不动
-        current = flipped
+        // 异步管线：翻页只入队；失败保持当前页不动、候选窗不关。
+        submitPage(next: next)
         refresh(client)
         CandidatePanelController.setSelectedIndex(0)
     }
@@ -560,8 +512,10 @@ extension ChaosetController {
     // 已确认段先落盘——用户确认过的字不能随透传消失（旧实现里这些段
     // 早已写入文档，此处保持净效果一致）。
     private func passThrough(_ client: (any IMKTextInput)?) -> Bool {
-        if current?.input.isEmpty == false || !confirmedText.isEmpty {
-            current = engine.resetComposition()
+        if isComposingOptimistic() || !confirmedText.isEmpty {
+            // 异步管线：本地立即清组词、作废在飞结果并让引擎复位（不等待）。
+            resetEnginePipeline(keepLearning: true)
+            current = nil
             flushConfirmed(client)
             refresh(client)
         }

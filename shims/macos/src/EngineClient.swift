@@ -15,11 +15,12 @@ struct Candidate {
 }
 
 struct Comp {
-    let input: String
-    let preedit: String
-    let candidates: [Candidate]
-    let page: Int       // 0 起页码
-    let pageCount: Int  // 总页数（page_count）
+    // var：异步管线的乐观预编辑要在壳侧副本上回放未应用按键（issue #149）。
+    var input: String
+    var preedit: String
+    var candidates: [Candidate]
+    var page: Int       // 0 起页码
+    var pageCount: Int  // 总页数（page_count）
     // 本次调用额外上屏、需要壳写入文档的文本（空 = 无）：
     // ① selectPrefix 渐进上屏的前缀段；② 双拼模式下按下的 ';' 标点键
     //（引擎把「组词中首选词 + 分号」放进 committed，壳不能自己把 ';' 当标点）。
@@ -49,6 +50,13 @@ final class EngineClient {
 
     /// 上一次失败是否为读超时（调用方用于区分「daemon 可能已处理」与「未送达」）。
     var lastFailureWasReadTimeout: Bool { transport.lastFailureWasReadTimeout }
+
+    /// 当前连接是否可用（引擎线程维护的快照，只在引擎线程读取）。
+    var isConnected: Bool { transport.isConnected }
+
+    /// 预热连接（可在引擎线程调用；必要时懒启动 daemon）。
+    /// 返回是否已连接；不发起任何组词请求，不改变会话状态。
+    func warmUp() -> Bool { transport.warmUp() }
 
     init(socketPath: String = EngineClient.defaultSocketPath) {
         self.transport = DaemonTransport(socketPath: socketPath)
