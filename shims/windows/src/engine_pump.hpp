@@ -36,7 +36,7 @@ namespace chaoset::win {
 // checkuiparity 的断言（未知种类在 applyEngineResult 里会被丢弃）。
 enum class EngineOpKind {
     kInput,       // 追加按键（字母 / 双拼 ';' / 撇号）
-    kRebuild,     // 整串重建：input(text, base="")，连接重建后恢复组词
+    kRebuild,     // 整串重建：input(text, base=op.base)，连接重建后恢复组词
     kBackspace,   // 逐字符回退
     kBackspaceWord,  // 按音节回退
     kNextPage,    // 翻页
@@ -55,7 +55,8 @@ struct EngineOp {
     EngineOpKind kind = EngineOpKind::kInput;
     std::uint64_t seq = 0;    // EnginePump::post 分配
     std::uint32_t epoch = 0;  // TIP 管线纪元：结果纪元不匹配即丢弃
-    std::string text;         // input/rebuild 的按键串、punct 的键、联想/删除的词
+    std::string text;         // input/rebuild 的未解码按键、punct 的键、联想/删除的词
+    std::string base;         // rebuild 基底（已应用/已解码输入串）
     std::string syllables;    // 撇号分隔音节（联想查询 / 词条分段）
     std::string aux;          // 辅助载荷（联想删除后的重查来源音节）
     bool associate = false;   // userDelete 来自联想面板（成功后按 aux 重查联想）
@@ -127,7 +128,14 @@ private:
     // 传输与会话独占：只有引擎线程碰它们。
     PipeTransport transport_;
     chaoset::Session session_{transport_};
+    // 防止断连重连后在全新空会话上直接执行增量/退格/选词（必须先 kRebuild）。
+    bool sessionDesynced_ = false;
+    bool hadCompositionOps_ = false;
+    std::uint64_t syncedConnGen_ = 0;
 };
+
+// 存活中的引擎线程数（DllCanUnloadNow 防卸载竞态检查）。
+extern volatile LONG g_liveEnginePumps;
 
 }  // namespace chaoset::win
 

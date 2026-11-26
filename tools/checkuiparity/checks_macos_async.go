@@ -138,6 +138,11 @@ func checkMacOSAsyncPipeline(fsys fs.FS, problems *[]string) {
 		`submitSelectPrefix(index: 0, text: "", syllables: [])`)
 
 	// g) 测试覆盖：乐观预编辑 / 有序选词 / 失败不关窗，且 run.sh 用通配收集新文件。
+	checkContains(fsys, problems, group, macAsyncPipeline,
+		"sessionDesynced", "syncedConnGen", "lastFailureWasTransportError")
+	checkContains(fsys, problems, group, macAsyncController,
+		"submitNonComposingOp(", "hasDpPending()", "consumePrefixFallback(",
+		"startEngineLostTimer()", "splitForPunctFallback(", "remainderAfterSelectPrefix(")
 	checkContains(fsys, problems, group, macTestMain,
 		"settleEngineForTests()", "failureInjectionForTests",
 		"异步：结果未回投时按键立即出现在乐观预编辑里",

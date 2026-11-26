@@ -429,12 +429,13 @@ check("异步：结果回投后仍保持 n", m.marked.contains("n"), "marked=\(m
 //    所有输入之后，引擎按完整输入解析，不会只按已应用的 "n" 选。
 _ = c.handle(ev("", 53), client: m)
 c.settleEngineForTests()
+let pickedBefore = m.inserted.count
 for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31)] {
     _ = c.handle(ev(ch, UInt16(code)), client: m)
 }
 _ = c.handle(ev(" ", 49), client: m)
 c.settleEngineForTests()
-let orderedPick = m.inserted.last(where: { !$0.isEmpty }) ?? ""
+let orderedPick = m.inserted[pickedBefore...].last(where: { !$0.isEmpty }) ?? ""
 check("异步：快打后空格按完整输入选词（不是原始拼音）",
       !orderedPick.isEmpty && orderedPick != "nihao"
       && orderedPick.unicodeScalars.contains(where: { $0.value >= 0x4E00 && $0.value <= 0x9FFF }),
@@ -486,10 +487,60 @@ check("⌥⌫ 乐观回放：预编辑去掉末段且不留悬空分隔符",
 check("⌥⌫ 乐观回放：用户自己敲的分隔符保留在输入串里",
       c.optimisticInput() == "xi'", "input=\(c.optimisticInput())")
 c.settleEngineForTests()
+// 6) 本地前缀消费与失联兜底/焦点守卫/非组词队列回归：
+check("前缀兜底消费：nihaoshijie 消费 ni'hao 剩 shijie",
+      ChaosetController.consumePrefixFallback(input: "nihaoshijie", syllables: ["ni", "hao"]) == "shijie")
+check("前缀兜底消费：省写 iu 匹配 iou",
+      ChaosetController.consumePrefixFallback(input: "niounai", syllables: ["niu"]) == "nai")
+check("前缀兜底消费：v/u 归一化与分隔符",
+      ChaosetController.consumePrefixFallback(input: "nv'hao", syllables: ["nu"]) == "hao")
+
+// 标点失败兜底：保留当前首位候选，不丢候选只落标点；后续按键仍保留组词。
+_ = k(ev("", 53), client: m)
+for (ch, code) in [("n", 45), ("i", 34)] {
+    _ = k(ev(ch, UInt16(code)), client: m)
+}
+let topBeforePunct = c.current?.candidates.first?.text ?? ""
+let punctInsertedBefore = m.inserted.count
+EnginePipeline.failureInjectionForTests = true
+_ = k(ev(",", 43), client: m)
+let punctCommitted = m.inserted[punctInsertedBefore...].last(where: { !$0.isEmpty }) ?? ""
+check("标点失败兜底保留组词首选",
+      !topBeforePunct.isEmpty && punctCommitted == topBeforePunct + ",",
+      "top=\(topBeforePunct) got=\(punctCommitted)")
+EnginePipeline.failureInjectionForTests = false
+_ = k(ev("", 53), client: m)
+
+// 渐进上屏前缀失败：保留 confirmedText + 所选文本，并用剩余未消费拼音重建，不把已选部分重打一遍。
+for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31),
+                    ("s", 1), ("h", 4), ("i", 34), ("j", 38), ("i", 34), ("e", 14)] {
+    _ = k(ev(ch, UInt16(code)), client: m)
+}
+_ = k(ev("1", 18), client: m)  // 先确认前半（e.g. 你好 → confirmedText）
+let remInputBeforeFail = c.current?.input ?? ""
+let remPickText = c.current?.candidates.first?.text ?? ""
+let selFailInsertedBefore = m.inserted.count
+EnginePipeline.failureInjectionForTests = true
+_ = k(ev("1", 18), client: m)  // 在剩余组词上再次选词并失败兜底
+let selFailCommitted = m.inserted[selFailInsertedBefore...].last(where: { !$0.isEmpty }) ?? ""
+check("渐进上屏选词失败兜底保留已确认段",
+      !remPickText.isEmpty && selFailCommitted == "你好" + remPickText && c.confirmedText.isEmpty,
+      "remIn=\(remInputBeforeFail) got=\(selFailCommitted)")
+EnginePipeline.failureInjectionForTests = false
+_ = k(ev("", 53), client: m)
+
+// 在飞首键期间失焦（current 尚未返回）：handleFocusLossSignal 仍须清空在飞与标记区。
+_ = c.handle(ev("n", 45), client: m)
+ChaosetController.handleFocusLossSignal(pid: 99999)
+check("在飞首键期间失焦：清空标记区与乐观输入",
+      !c.isComposingOptimistic() && m.marked.isEmpty,
+      "opt=\(c.optimisticInput()) marked=\(m.marked)")
+c.settleEngineForTests()
+
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-// 76 = 原有 64 + 「异步引擎管线」6 条 + 「⌥⌫ 乐观回放」6 条。
-let expectedChecks = 76
+// 82 = 76 + 前缀消费 3 条 + 标点兜底 1 条 + 渐进选词兜底 1 条 + 在飞首键失焦 1 条。
+let expectedChecks = 82
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

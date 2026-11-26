@@ -35,6 +35,9 @@ struct Comp {
     // Compose 都会回填，壳据此把 ';' 路由给 input（引擎当组词键处理）而不是
     // punct——双拼引擎把 ';' 当键码参与两两成对解码。
     std::string shuangpin;
+    // 双拼暂存首键（未配对解码的半键）：壳重连重建时必须与未应用按键一起放进 text，
+    // 而不是丢弃或放进已解码的 base。
+    std::string dpPending;
 };
 
 // 传输抽象：平台壳各自提供实现——Windows 是命名管道，Linux 测试台是
@@ -85,6 +88,10 @@ std::string buildRequest(std::uint64_t id, const std::string& method,
                          const std::string& paramsJson);  // paramsJson 为完整 JSON 值文本，空串则省略
 Comp parseComposition(const JsonValue& result);
 std::string parseCommitted(const JsonValue& result);
+// 本地选词兜底消耗匹配前缀：按 sylls 从 input 开头消费对应音节（含省写/分隔符），
+// 返回剩余输入串；匹配不上则视作整串已消费返回空串。
+std::string consumePrefixFallback(const std::string& input,
+                                  const std::vector<std::string>& sylls);
 
 // 用户学习数据统计（与 Go 侧 engine.UserStats 的 JSON 字段一致）。
 struct UserStats {
@@ -157,6 +164,8 @@ public:
     // 壳因此不需要在 TIP 线程上轮询等管道就绪。
     // 返回 true 表示 daemon 已成功发起；非 Windows 平台恒 false（无壳调用）。
     bool ensureUiHost(bool settings = false);
+    // 上一次 call 失败是否因传输/超时/协议错位（区别于 daemon 业务 error）。
+    bool lastCallWasTransportError() const { return lastTransportErr_; }
 
 private:
     JsonValue call(const std::string& method, const std::string& params, bool* ok);
@@ -169,6 +178,7 @@ private:
     /// 已放弃但响应可能迟到、尚留在传输缓冲里的响应个数（一次一问一答，
     /// 正常只有 0 或 1）。超过上限说明 daemon 持续跟不上，那时才断连重来。
     int staleResponses_ = 0;
+    bool lastTransportErr_ = false;
 };
 
 }  // namespace chaoset

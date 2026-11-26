@@ -148,3 +148,66 @@ fn restore_input_filters_non_pinyin_chars() {
     let got = composition_snapshot(&mut b, comp);
     assert_eq!(want, got, "非拼音字符必须被过滤");
 }
+
+/// Composition.dp_pending 仅在双拼未配对半键时非空并随 JSON 序列化；
+/// 全拼和配对完成态为空串且 skip_serializing_if 省略。
+#[test]
+fn composition_reports_dp_pending_for_partial_shuangpin_pair() {
+    let dict = common_dict();
+    let mut full = Session::new(Arc::clone(&dict), None);
+    let c_full = full.input("n", false).unwrap();
+    assert!(c_full.dp_pending.is_empty());
+    let json_full = serde_json::to_string(&c_full).unwrap();
+    assert!(
+        !json_full.contains("\"dp_pending\""),
+        "全拼不应序列化 dp_pending: {json_full}"
+    );
+
+    let mut sp = Session::new(dict, None);
+    sp.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    let c1 = sp.input("n", false).unwrap();
+    assert_eq!(c1.input, "");
+    assert_eq!(c1.dp_pending, "n");
+    let json_pending = serde_json::to_string(&c1).unwrap();
+    assert!(
+        json_pending.contains("\"dp_pending\":\"n\""),
+        "双拼首键应序列化 dp_pending: {json_pending}"
+    );
+
+    let c2 = sp.input("i", false).unwrap();
+    assert_eq!(c2.input, "ni");
+    assert!(c2.dp_pending.is_empty());
+
+    let c3 = sp.input("h", false).unwrap();
+    assert_eq!(c3.input, "ni");
+    assert_eq!(c3.dp_pending, "h");
+}
+
+/// 双拼断连重建：已解码前缀走 base（不二次解码），未配对半键与后续按键走 text，
+/// 净效果必须与逐键输入完全一致。
+#[test]
+fn input_with_base_shuangpin_base_and_pending_pair() {
+    let dict = common_dict();
+    let mut typed = Session::new(Arc::clone(&dict), None);
+    typed.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    for key in ["n", "i", "h", "k"] {
+        typed.input(key, false).unwrap();
+    }
+    let want = snapshot_input(&mut typed, "");
+
+    let mut split = Session::new(Arc::clone(&dict), None);
+    split.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    let c_half = split.input_with_base("h", false, Some("ni")).unwrap();
+    assert_eq!(c_half.input, "ni");
+    assert_eq!(c_half.dp_pending, "h");
+    let c_done = split.input("k", false).unwrap();
+    assert!(c_done.dp_pending.is_empty());
+    let got_split = composition_snapshot(&mut split, c_done);
+    assert_eq!(want, got_split);
+
+    let mut rebuild = Session::new(dict, None);
+    rebuild.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    let comp = rebuild.input_with_base("hk", false, Some("ni")).unwrap();
+    let got_rebuild = composition_snapshot(&mut rebuild, comp);
+    assert_eq!(want, got_rebuild);
+}

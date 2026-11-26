@@ -577,6 +577,66 @@ int main(int argc, char** argv) {
         check(plain.ok && plain.preedit == "ni'hao", "不带 base 的 input 行为不变");
     }
 
+    // 2026-11-26 回归保护：consumePrefixFallback / dp_pending 解析 / lastCallWasTransportError 区分。
+    {
+        check(consumePrefixFallback("nihaoshijie", {"ni", "hao"}) == "shijie",
+              "consumePrefixFallback: nihaoshijie 消费 ni+hao 剩 shijie");
+        check(consumePrefixFallback("ni'hao'shijie", {"ni", "hao"}) == "shijie",
+              "consumePrefixFallback: 自动跳过撇号分隔符");
+        check(consumePrefixFallback("nvhao", {"nu"}) == "hao",
+              "consumePrefixFallback: v/u 归一化");
+        check(consumePrefixFallback("niounai", {"niu"}) == "nai",
+              "consumePrefixFallback: 省写 iu 匹配 iou");
+        check(consumePrefixFallback("gueihua", {"gui"}) == "hua",
+              "consumePrefixFallback: 省写 ui 匹配 uei");
+        check(consumePrefixFallback("duenhuang", {"dun"}) == "huang",
+              "consumePrefixFallback: 省写 un 匹配 uen");
+        check(consumePrefixFallback("duankou", {"ni"}) == "",
+              "consumePrefixFallback: 前缀不匹配时视作整串消费返回空");
+
+        bool jOk = false;
+        JsonValue jPending = jsonParse(
+            "{\"input\":\"\",\"preedit\":\"k\",\"dp_pending\":\"k\",\"candidates\":[]}", &jOk);
+        Comp cPending = parseComposition(jPending);
+        check(jOk && cPending.ok && cPending.dpPending == "k",
+              "parseComposition 解析 dp_pending");
+
+        JsonValue jPlain = jsonParse("{\"input\":\"ni\",\"preedit\":\"ni\"}", &jOk);
+        Comp cPlain = parseComposition(jPlain);
+        check(jOk && cPlain.ok && cPlain.dpPending.empty(),
+              "parseComposition 缺失 dp_pending 时为空");
+
+        ScriptedTransport st;
+        Session ss(st);
+        // 1) daemon 返回 JSON 业务 error：lastCallWasTransportError 必须为 false（不误断连）
+        st.steps.push_back({false, frame("{\"id\":1,\"error\":\"invalid index\"}")});
+        Comp selOut;
+        bool selOk = ss.selectPrefix(99, &selOut);
+        check(!selOk && !ss.lastCallWasTransportError() && !st.closeCalled,
+              "业务 JSON error 后 lastCallWasTransportError=false 且不断连");
+
+        // 2) 干净读超时：lastCallWasTransportError=true 且不断连
+        st.resetSteps({{true, ""}});
+        Comp to = ss.input("a", false);
+        check(!to.ok && ss.lastCallWasTransportError() && !st.closeCalled,
+              "干净读超时后 lastCallWasTransportError=true 且不断连");
+
+        // 3) 下一次成功响应：清掉 lastCallWasTransportError（带迟到 id=2 帧先被丢弃）
+        st.resetSteps({
+            {false, frame("{\"id\":2,\"result\":{\"input\":\"a\",\"preedit\":\"a\"}}")},
+            {false, frame("{\"id\":3,\"result\":{\"input\":\"ab\",\"preedit\":\"ab\"}}")},
+        });
+        Comp okAfter = ss.input("b", false);
+        check(okAfter.ok && okAfter.input == "ab" && !ss.lastCallWasTransportError(),
+              "恢复成功后 lastCallWasTransportError 清零并正确丢弃迟到帧");
+
+        // 4) 写失败（传输故障）：lastCallWasTransportError=true 且断连
+        st.failWrite = true;
+        Comp wf = ss.input("c", false);
+        check(!wf.ok && ss.lastCallWasTransportError() && st.closeCalled,
+              "写失败时 lastCallWasTransportError=true 并断开连接");
+    }
+
     if (failures == 0) {
         std::printf("PASS: core 全部检查通过\n");
         return 0;

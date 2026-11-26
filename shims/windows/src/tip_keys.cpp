@@ -112,7 +112,7 @@ BOOL* pfEaten) {
     sinceShift_ = true;  // 幂等兜底（正常已在 OnTestKeyDown 置位）
     if (currentEnglish()) {
         clearAssociate();
-        if (isComposing() || !confirmedPreedit_.empty()) {
+        if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
         }
         *pfEaten = FALSE;  // 英文模式全放行
@@ -120,7 +120,7 @@ BOOL* pfEaten) {
     }
     if (!wouldHandle(wParam)) {
         clearAssociate();
-        if (isComposing() || !confirmedPreedit_.empty()) {
+        if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
         }
         *pfEaten = FALSE;  // 非组词按键一律放行给宿主
@@ -455,10 +455,10 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) {
     // Control↔Ctrl、Option↔Alt、Command↔Win）。两者都消费，具体行为在
     // handleKey 里按「Command/Ctrl/Shift → 全部删除；Alt → 按音节回退；
     // 无修饰 → 逐字符回退」处理。非组词态一律放行给宿主。
-    if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) return true;
+    if ((isComposing() || hasDpPending()) && (vk == kVkBackspace || vk == kVkDelete)) return true;
     // Ctrl+U 整行清空；Ctrl+Shift+U 是宿主快捷键（mac/Linux 都放行），
     // 所以这里必须要求不带 Shift。
-    if (ctrl) return isComposing() && vk == 'U' && !shiftDown();
+    if (ctrl) return (isComposing() || hasDpPending()) && vk == 'U' && !shiftDown();
     if (alt || win) return false;
 
     // 联想模式：数字（有对应项）/空格（选预选项）/方向键（移动页内预选）/
@@ -497,7 +497,8 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) {
     // 内容键才允许尝试 daemon 连接（服务不可达仍放行）。
     if (!isComposing()) {
         const bool relevant = (vk >= kVkFirstLetter && vk <= kVkLastLetter) ||
-                              keyPunctChar(vk, shiftDown()) != nullptr;
+                              keyPunctChar(vk, shiftDown()) != nullptr ||
+                              (hasDpPending() && vk == kVkEscape);
         if (!relevant) return false;
         // 异步管线（issue #149）：连接状态只是原子快照；未连接则本键 fail-open
         // （原样进文档）并按节流发探测请求，daemon 恢复后下一键即可正常组词。
@@ -522,7 +523,7 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) {
     // 时 OnKeyDown 可能根本收不到该键（参照上方字母/标点判定）。
     if (!dpScheme_.empty() && isDpSemicolonKey(vk, shiftDown())) return true;
     if (keyPunctChar(vk, shiftDown()) != nullptr) return true;
-    if (!isComposing()) return false;
+    if (!isComposing()) return hasDpPending() && vk == kVkEscape;
     // 数字选词只在不带 Shift 且本页确有该序号候选时；Shift+数字产生的
     // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）。
     // 小键盘 1-9（VK_NUMPAD1-9）同样可选词，且不受 Shift 影响。
@@ -547,7 +548,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // candidate shown（2026-11-05）。
     if (currentEnglish()) {
         clearAssociate();
-        if (isComposing() || !confirmedPreedit_.empty()) {
+        if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);  // 切换瞬间没收干净的残留，这里兜底清理
         }
         return false;  // 放行给宿主
@@ -561,7 +562,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     ensureEnginePump();
     if (!engineAvailable()) {
         probeEngineIfDown();
-        if (!isComposing() && confirmedPreedit_.empty()) return false;
+        if (!isComposing() && !hasDpPending() && confirmedPreedit_.empty()) return false;
     }
     setEngineContext(pic);
 
@@ -584,7 +585,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             op.kind = chaoset::win::EngineOpKind::kAssociateSelect;
             op.text = pick.text;
             op.syllables = pick.syllables;
-            submitEngineOp(op);
+            submitNonComposingOp(op);
             return true;
         }
         if (isArrowKey(vk) && candidateWnd_.itemCount() > 0) {
@@ -617,7 +618,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
                 op.kind = chaoset::win::EngineOpKind::kAssociateSelect;
                 op.text = pick.text;
                 op.syllables = pick.syllables;
-                submitEngineOp(op);
+                submitNonComposingOp(op);
                 return true;
             }
             clearAssociate();  // 越界序号：收起联想放行数字
@@ -632,7 +633,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
 
     // 组词中 Backspace/Delete：修饰键映射（Control↔Ctrl、Option↔Alt、Command↔Win）。
     // Command/Ctrl/Shift → 全部删除（本地立即生效 + 丢弃在飞结果）；Alt → 按音节回退。
-    if (isComposing() && (vk == kVkBackspace || vk == kVkDelete)) {
+    if ((isComposing() || hasDpPending()) && (vk == kVkBackspace || vk == kVkDelete)) {
         const bool shiftKey = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         if (win || ctrl || shiftKey) {
             resetComposition();
@@ -654,7 +655,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // Alt 或 Win 快捷键：先收尾未决组词，然后放行原键给宿主。
     // 收尾走 flushOrCancel 而不是 endComposition：用户已确认的段不能随快捷键透传消失。
     if (alt || win) {
-        if (isComposing() || !confirmedPreedit_.empty()) {
+        if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
         }
         return false;
@@ -663,14 +664,14 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // Ctrl 组合键：
     if (ctrl) {
         // Ctrl+U：类终端整行清空（组词中消费并全部删除）；Ctrl+Shift+U 放行宿主。
-        if (vk == 'U' && isComposing() && !shiftDown()) {
+        if (vk == 'U' && (isComposing() || hasDpPending()) && !shiftDown()) {
             resetComposition();
             endComposition();
             comp_ = chaoset::Comp();
             return true;
         }
         // 其余 Ctrl 组合键：若处于组词中，先收尾再放行原键给宿主。
-        if (isComposing() || !confirmedPreedit_.empty()) {
+        if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
             flushOrCancel(pic);
         }
         return false;
@@ -764,7 +765,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         return true;
     }
 
-    if (!isComposing()) return false;
+    if (!isComposing() && !hasDpPending()) return false;
 
     // 普通 Backspace / ForwardDelete（无修饰）：逐字符回退。乐观预编辑立即变化，
     // 结果回来用引擎态覆盖。
@@ -785,6 +786,11 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
         confirmedPreedit_.clear();
         endComposition();
         return true;
+    }
+
+    if (!isComposing()) {
+        if (hasDpPending() || !confirmedPreedit_.empty()) flushOrCancel(pic);
+        return false;
     }
 
     // 数字选词：只认不带 Shift 的 1-9，且按**本页实际候选数**判定。
@@ -815,7 +821,9 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
 
     // 回车：已确认段按确认文本、剩余拼音按原始串（含未应用按键）一起上屏。
     if (vk == kVkReturn && isComposing()) {
-        std::string raw = confirmedPreedit_ + optimisticInput();
+        std::string base, text;
+        computeOptimistic(nullptr, &base, &text);
+        std::string raw = confirmedPreedit_ + (base + text);
         confirmedPreedit_.clear();
         resetComposition();
         commit(pic, raw);
@@ -847,7 +855,9 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
             submitEngineOp(op);
             return true;
         }
-        std::string raw = confirmedPreedit_ + optimisticInput();
+        std::string base, text;
+        computeOptimistic(nullptr, &base, &text);
+        std::string raw = confirmedPreedit_ + (base + text);
         confirmedPreedit_.clear();
         resetComposition();
         commit(pic, raw);
@@ -855,7 +865,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     }
 
     // 不可处理的按键（F 键 / 数字 0 / Shift+数字的 @# 等字符）：组词中先收尾再放行。
-    if (isComposing() || !confirmedPreedit_.empty()) {
+    if (isComposing() || hasDpPending() || !confirmedPreedit_.empty()) {
         flushOrCancel(pic);
     }
     return false;

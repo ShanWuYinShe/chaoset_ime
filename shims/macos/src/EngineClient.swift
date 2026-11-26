@@ -28,6 +28,9 @@ struct Comp {
     // 双拼方案名（IPC "shuangpin"，空 = 全拼）。壳据此把 ';' 路由到 input：
     // mspy 的 ing 韵母键是 ';'，若一律当标点，明/听/星/京整类音节打不出。
     var shuangpin: String = ""
+    // 双拼暂存未配对首键（IPC "dp_pending"）：首键进引擎后 comp.input 仍空，
+    // 但组词已开始（重建按 base+text 发送、按键闸门放行/拦截须知情）。
+    var dpPending: String = ""
 }
 
 final class EngineClient {
@@ -51,8 +54,17 @@ final class EngineClient {
     /// 上一次失败是否为读超时（调用方用于区分「daemon 可能已处理」与「未送达」）。
     var lastFailureWasReadTimeout: Bool { transport.lastFailureWasReadTimeout }
 
+    /// 上一次失败是否属于传输/超时层故障。
+    var lastFailureWasTransportError: Bool { transport.lastFailureWasTransportError }
+
+    /// 连接代数（每次 connect 成功递增），用于识别重连换掉的空会话。
+    var connGeneration: UInt64 { transport.connGeneration }
+
     /// 当前连接是否可用（引擎线程维护的快照，只在引擎线程读取）。
     var isConnected: Bool { transport.isConnected }
+
+    /// 显式断开底层连接（复位失败清理用）。
+    func disconnect() { transport.disconnect() }
 
     /// 预热连接（可在引擎线程调用；必要时懒启动 daemon）。
     /// 返回是否已连接；不发起任何组词请求，不改变会话状态。
@@ -107,9 +119,11 @@ final class EngineClient {
         // shuangpin：每次响应都带（全拼为空），壳据此路由 ';'。
         let committed = result["committed"] as? String ?? ""
         let shuangpin = result["shuangpin"] as? String ?? ""
+        let dpPending = result["dp_pending"] as? String ?? ""
         doublePinyinScheme = shuangpin
         return Comp(input: input, preedit: preedit, candidates: list, page: page,
-                    pageCount: pageCount, committedText: committed, shuangpin: shuangpin)
+                    pageCount: pageCount, committedText: committed, shuangpin: shuangpin,
+                    dpPending: dpPending)
     }
 
     /// 处理输入。halfWidth 是壳本地持有的全/半角标点状态，随每次 input 下发：
@@ -141,7 +155,9 @@ final class EngineClient {
             }
             return nil
         }
-        // 连接已断：新连接是空会话，必须带 base 才能恢复已有组词（重放不会重复追加）。
+        // 连接已断：新连接是空会话，必须带 base 才能恢复已有组词（重放不会重复追加）；
+        // 未提供 base 时绝不在新空会话上盲目重放增量碎片。
+        guard base != nil else { return nil }
         if let base { params["base"] = base }
         transport.resetFailureCooldown()
         if let r = transport.callOnce(method: "input", params: params) { return parseComp(r) }
@@ -149,15 +165,15 @@ final class EngineClient {
     }
 
     func backspace() -> Comp? {
-        parseComp(call(method: "backspace", params: [:]))
+        parseComp(call(method: "backspace", params: [:], retryOnFailure: false))
     }
 
     func backspaceWord() -> Comp? {
-        parseComp(call(method: "backspaceWord", params: [:]))
+        parseComp(call(method: "backspaceWord", params: [:], retryOnFailure: false))
     }
 
     func reset() -> Comp? {
-        parseComp(call(method: "reset", params: [:]))
+        parseComp(call(method: "reset", params: [:], retryOnFailure: false))
     }
 
     /// 只丢弃当前组词、保留学习上下文（prev/history）。
@@ -167,7 +183,7 @@ final class EngineClient {
     /// 候选失去 bigram 上下文加成（2026-11-05）。
     /// reset 只留给会话真正结束的场景（activateServer/deactivateServer）。
     func resetComposition() -> Comp? {
-        parseComp(call(method: "resetComposition", params: [:]))
+        parseComp(call(method: "resetComposition", params: [:], retryOnFailure: false))
     }
 
     func commitRaw() -> String? {
@@ -235,11 +251,11 @@ final class EngineClient {
 
     // nextPage / prevPage 翻动候选页，返回当前页组成状态（边界由 daemon 钳制）。
     func nextPage() -> Comp? {
-        parseComp(call(method: "nextPage", params: [:]))
+        parseComp(call(method: "nextPage", params: [:], retryOnFailure: false))
     }
 
     func prevPage() -> Comp? {
-        parseComp(call(method: "prevPage", params: [:]))
+        parseComp(call(method: "prevPage", params: [:], retryOnFailure: false))
     }
 
     /// 标点键提交。**不重试**：组词中会先上屏首选（写学习数据），重试会重复记录。
@@ -256,7 +272,7 @@ final class EngineClient {
     // associate 取联想候选：上屏词后拼音区已清空，候选窗继续展示的续接词组。
     // sylls 为上屏词的音节序列（' 连接）。返回 nil 表示 daemon 不可达。
     func associate(sylls: [String]) -> Comp? {
-        parseComp(call(method: "associate", params: ["sylls": sylls]))
+        parseComp(call(method: "associate", params: ["sylls": sylls], retryOnFailure: false))
     }
 
     // associateSelect 联想候选直接上屏：学习路径与 select 一致。
@@ -270,6 +286,7 @@ final class EngineClient {
                                 retryOnFailure: false) else { return nil }
         let committed = result["committed"] as? String ?? ""
         let shuangpin = result["shuangpin"] as? String ?? ""
+        let dpPending = result["dp_pending"] as? String ?? ""
         doublePinyinScheme = shuangpin
         let input = result["input"] as? String ?? ""
         let preedit = result["preedit"] as? String ?? ""
@@ -287,7 +304,7 @@ final class EngineClient {
         }
         return Comp(input: input, preedit: preedit, candidates: list,
                     page: page, pageCount: pageCount, committedText: committed,
-                    shuangpin: shuangpin)
+                    shuangpin: shuangpin, dpPending: dpPending)
     }
 
     func associateSelect(word: String, sylls: [String]) -> String? {

@@ -149,9 +149,14 @@ func checkLinuxAsyncPipeline(fsys fs.FS, problems *[]string) {
 		"void IbusEngineState::renderOptimistic()", "void IbusEngineState::display(")
 	need(linuxMain, "生命周期", mainCode, "void IbusEngineState::focusOut()", "hideLookupTable();")
 
-	// f) daemon 层提供单次非阻塞探测与可配截止（供引擎线程使用）。
+	// f) daemon 层提供单次非阻塞探测与可配截止（供引擎线程使用），三端对齐断连守卫。
 	checkContains(fsys, problems, group, linuxDaemonHpp,
 		"bool tryConnectOnce()", "void setDeadlineMs(int ms)", "int deadlineMs_ = 300")
+	checkContains(fsys, problems, group, linuxPumpCpp,
+		"tryConnectOrSpawn(", "sessionDesynced_", "syncedConnGen_")
+	checkContains(fsys, problems, group, linuxAsync,
+		"submitNonComposingOp(", "hasDpPending()", "startLostTimer(",
+		"commitPunctFallback(", "handleSelectPrefixFallback(")
 	// 构建脚本必须同时包含共享 IPC 核心与被拆出的两个 TU（漏 core.cpp 会链接失败）。
 	checkContains(fsys, problems, group, linuxBuild,
 		"engine_pump.cpp", "async_pipeline.cpp", "../../common/ipc/core.cpp", "daemon.cpp")

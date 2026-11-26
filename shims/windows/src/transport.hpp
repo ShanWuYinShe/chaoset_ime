@@ -34,6 +34,7 @@ public:
     ~PipeTransport() override { closeConn(); }
 
     bool isConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
+    std::uint64_t connGen() const { return connGen_; }
 
     // TSF 线程上的 TIP 用 setAutoConnect(false)：writeAll 绝不自行发起需要等待的连接。
     void setAutoConnect(bool on) { autoConnect_ = on; }
@@ -49,6 +50,7 @@ public:
                                  OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
         if (h == INVALID_HANDLE_VALUE) return false;
         pipe_ = h;
+        ++connGen_;
         lastFail_ = 0;
         brokenUntil_ = 0;
         return true;
@@ -96,6 +98,7 @@ public:
             return false;
         }
         pipe_ = h;
+        ++connGen_;
         return true;
     }
 
@@ -203,6 +206,7 @@ private:
     }
 
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
+    std::uint64_t connGen_ = 0;
     DWORD lastFail_ = 0;
     DWORD brokenUntil_ = 0;
     DWORD deadlineMs_ = 200;

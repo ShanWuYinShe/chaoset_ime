@@ -27,6 +27,7 @@ final class ChaosetController: IMKInputController {
     var engineLostAt: TimeInterval = 0
     var lastRebuildAt: TimeInterval = 0
     var lastProbeAt: TimeInterval = 0
+    var engineLostTimer: Timer?
     /// 双拼方案名（最近一次引擎响应；空 = 全拼）：决定 ';' 是否走组词/解码。
     var shuangpinScheme = ""
     var current: Comp?
@@ -188,15 +189,15 @@ final class ChaosetController: IMKInputController {
     /// 删除学习记录后重新组词：daemon 不缓存候选列表，reset 后重放当前剩余
     /// 拼音即可拿到最新候选。已确认段 confirmedText 是壳侧状态，刷新不影响它。
     func recompose(_ client: (any IMKTextInput)?) {
-        let raw = optimisticInput()
-        if raw.isEmpty {
+        let (_, base, text) = computeOptimistic()
+        if base.isEmpty && text.isEmpty {
             current = nil
             resetEnginePipeline(keepLearning: true)
         } else {
-            // 整串重建（base 空）：reset 也可能因超时未真正生效，必须显式先置空
-            // 再输入 raw 才能幂等。普通按键不走 rebuild（会清掉双拼暂存键）。
+            // 整串重建（base+text）：reset 也可能因超时未真正生效，必须显式先置为 base
+            // 再追加未解码 text（双拼不二次解码）。
             resetEnginePipeline(keepLearning: true)
-            submitRebuild(raw)
+            submitRebuild(text, base: base)
         }
         refresh(client)
     }
@@ -305,8 +306,8 @@ final class ChaosetController: IMKInputController {
     func refresh(_ client: (any IMKTextInput)?) {
         // 候选窗/联想一旦出现，本实例就是进程级焦点守卫要收尾的对象。
         Self.noteActive(self)
-        // 组词开始即退出联想（新输入优先于联想展示）
-        if current?.input.isEmpty == false {
+        // 组词开始即退出联想（新输入或双拼暂存优先级高于迟到的联想展示）
+        if isComposingOptimistic() || hasDpPending() {
             associateCandidates = nil
         }
         // 联想模式：候选窗展示续接词组
@@ -576,8 +577,8 @@ final class ChaosetController: IMKInputController {
     /// 联想退出、面板与提示收起）；没有待收尾的状态时什么都不做。客户端取最近一次
     /// 按键事件带来的（焦点通知不是 IMK 回调，不向 IMK 重新要 client）。
     func abandonSessionOnFocusLoss() {
-        // 组词态与联想态都可能是收尾对象：按本地状态判，不看引擎返回值。
-        guard current?.input.isEmpty == false || associateCandidates != nil || !confirmedText.isEmpty else { return }
+        // 组词态（含乐观首键/双拼暂存键）与联想态都可能是收尾对象：按本地状态判，不看引擎返回值。
+        guard isComposingOptimistic() || hasDpPending() || associateCandidates != nil || !confirmedText.isEmpty else { return }
         endSession(client: lastClient)
         // 候选与输入一并清掉：客户端里的 marked 区也要收掉（走 clearMarkedText 的
         // 忽略空插入兜底），否则下划线拼音会留在文档里。
@@ -612,7 +613,8 @@ final class ChaosetController: IMKInputController {
 
     deinit {
         // deinit 拿不到 client，无法补写已确认段；正常路径 deactivateServer /
-        // commitComposition 已先行落盘，这里只兜底清理 UI。
+        // commitComposition 已先行落盘，这里只兜底清理 UI 与定时器。
+        stopEngineLostTimer()
         exitAssociate()
         Self.hideCandidatePanel()
         ModeToastController.hide()

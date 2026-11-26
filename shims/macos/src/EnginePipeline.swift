@@ -36,6 +36,7 @@ struct EngineOp {
     var kind: EngineOpKind
     var seq: UInt64 = 0
     var epoch: UInt64 = 0
+    var base: String = ""
     var text: String = ""
     var syllables: [String] = []
     var halfWidth: Bool = false
@@ -47,6 +48,7 @@ struct EngineOp {
 struct EngineResult {
     var op: EngineOp
     var ok: Bool = false
+    var connectionLost: Bool = false
     var deleted: Bool = false
     var committed: String = ""
     var comp: Comp?
@@ -69,6 +71,10 @@ final class EnginePipeline {
     private let lock = NSLock()
     private var connectedStorage = false
     private var inFlightStorage = 0
+    // 仅在 serial queue 上读写：拦截「失联未重建 / 暗中重连空会话」上的有状态组词请求。
+    private var sessionDesynced = false
+    private var hadCompositionOps = false
+    private var syncedConnGen: UInt64 = 0
 
     /// 连接状态是引擎线程维护的原子快照：IMK 线程只读，绝不等待。
     var connected: Bool {
@@ -116,50 +122,135 @@ final class EnginePipeline {
         lock.lock(); connectedStorage = ok; lock.unlock()
     }
 
+    private func isSessionSynced() -> Bool {
+        !sessionDesynced && (!hadCompositionOps || client.connGeneration == syncedConnGen)
+    }
+
     private func run(_ op: EngineOp) -> EngineResult {
         var res = EngineResult(op: op, comp: nil)
         switch op.kind {
-        case .input:
-            if let comp = client.input(op.text, halfWidth: op.halfWidth) {
-                res.ok = true; res.committed = comp.committedText; res.comp = comp
+        case .reset, .resetComposition:
+            sessionDesynced = false
+            hadCompositionOps = false
+            let comp = op.kind == .reset ? client.reset() : client.resetComposition()
+            if let comp {
+                syncedConnGen = client.connGeneration
+                res.ok = true
+                res.comp = comp
+            } else {
+                client.disconnect()
+                res.connectionLost = client.lastFailureWasTransportError
             }
+            return res
+        case .probe:
+            res.ok = client.isConnected || client.warmUp()
+            return res
         case .rebuild:
-            // base 空 + 整串重放：reset 自身可能超时未生效，必须显式先置空再输入。
-            if let comp = client.input(op.text, halfWidth: op.halfWidth, base: "", rebuild: true) {
+            // base=已解码前缀, text=未解码新按键；reset 自身可能超时未生效，显式置为 base 再输入。
+            sessionDesynced = false
+            if let comp = client.input(op.text, halfWidth: op.halfWidth, base: op.base, rebuild: true) {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = comp.committedText.isEmpty && (!comp.input.isEmpty || !comp.dpPending.isEmpty)
                 res.ok = true; res.committed = comp.committedText; res.comp = comp
+            } else {
+                sessionDesynced = true
+                hadCompositionOps = true
+                res.connectionLost = client.lastFailureWasTransportError
             }
-        case .backspace:
-            if let comp = client.backspace() { res.ok = true; res.comp = comp }
-        case .backspaceWord:
-            if let comp = client.backspaceWord() { res.ok = true; res.comp = comp }
-        case .nextPage:
-            if let comp = client.nextPage() { res.ok = true; res.comp = comp }
-        case .prevPage:
-            if let comp = client.prevPage() { res.ok = true; res.comp = comp }
-        case .selectPrefix:
-            if let comp = client.selectPrefix(index: op.index) {
-                res.ok = true; res.committed = comp.committedText; res.comp = comp
+            return res
+        case .associate:
+            if let comp = client.associate(sylls: op.syllables) {
+                res.ok = true; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
             }
-        case .punct:
-            if let committed = client.punct(op.text, halfWidth: op.halfWidth) {
-                res.ok = true; res.committed = committed
-            }
+            return res
         case .associateSelect:
             if let committed = client.associateSelect(word: op.text, sylls: op.syllables) {
                 res.ok = true; res.committed = committed
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
             }
-        case .associate:
-            if let comp = client.associate(sylls: op.syllables) { res.ok = true; res.comp = comp }
+            return res
         case .userDelete:
             if let deleted = client.userDelete(word: op.text, syllables: op.syllables) {
                 res.ok = true; res.deleted = deleted
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
             }
-        case .reset:
-            if let comp = client.reset() { res.ok = true; res.comp = comp }
-        case .resetComposition:
-            if let comp = client.resetComposition() { res.ok = true; res.comp = comp }
-        case .probe:
-            res.ok = client.isConnected || client.warmUp()
+            return res
+        case .input, .backspace, .backspaceWord, .nextPage, .prevPage, .selectPrefix, .punct:
+            break
+        }
+
+        if !isSessionSynced() {
+            sessionDesynced = true
+            res.connectionLost = true
+            return res
+        }
+
+        switch op.kind {
+        case .input:
+            if let comp = client.input(op.text, halfWidth: op.halfWidth) {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = comp.committedText.isEmpty && (!comp.input.isEmpty || !comp.dpPending.isEmpty)
+                res.ok = true; res.committed = comp.committedText; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .backspace:
+            if let comp = client.backspace() {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = !comp.input.isEmpty || !comp.dpPending.isEmpty
+                res.ok = true; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .backspaceWord:
+            if let comp = client.backspaceWord() {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = !comp.input.isEmpty || !comp.dpPending.isEmpty
+                res.ok = true; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .nextPage:
+            if let comp = client.nextPage() {
+                res.ok = true; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .prevPage:
+            if let comp = client.prevPage() {
+                res.ok = true; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .selectPrefix:
+            if let comp = client.selectPrefix(index: op.index) {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = comp.committedText.isEmpty || !comp.input.isEmpty || !comp.dpPending.isEmpty
+                res.ok = true; res.committed = comp.committedText; res.comp = comp
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .punct:
+            if let committed = client.punct(op.text, halfWidth: op.halfWidth) {
+                syncedConnGen = client.connGeneration
+                hadCompositionOps = false
+                res.ok = true; res.committed = committed
+            } else {
+                res.connectionLost = client.lastFailureWasTransportError
+                sessionDesynced = true
+            }
+        case .rebuild, .associateSelect, .associate, .userDelete, .reset, .resetComposition, .probe:
+            break
         }
         return res
     }

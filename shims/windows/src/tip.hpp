@@ -87,7 +87,6 @@ constexpr DWORD kVkOemMinus = 0xBD;          // '-'
 constexpr DWORD kVkOem2 = 0xBF;              // '/'（US 布局；shift 为 '?'）
 constexpr DWORD kVkOem3 = 0xC0;              // '`'（US 布局；shift 为 '~'）
 
-
 // mingw-w64 的 msctf.h 只声明了 ITfTextInputProcessor，没有微软 SDK 里的
 // ITfTextInputProcessorEx（UILess 模式所需）。这里按 Windows SDK 10 的
 // msctf.idl 原样补声明，IID 与虚表顺序都取自 SDK：
@@ -321,13 +320,11 @@ private:
     // commit / endComposition 清空。此后对合成的一切清理都必须对它做，
     // 不能再用 focusContext() 现查——焦点可能已经切到别的文档。
     ITfContext* compCtx_ = nullptr;
-
     // composition_ 所属上下文的清理 cookie：同步编辑会话成功后写入
     // （RequestEditSession 返回前 DoEditSession 已执行完）。endComposition
     // 在会话外被调用时无法拿 cookie，TF_ES_SYNC 失败（TS_E_SYNCHRONOUS）
     // 时保留上一次成功值比用 0 强——0 一定失败，旧值多半仍有效。
     TfEditCookie compEditCookie_ = 0;
-
     // canStartComposition 按上下文缓存：同一上下文反复按键时避免每键
     // GetStatus + 双 QueryInterface（不可合成宿主此前每键三次 COM 调用）。
     // 持有引用保证指针不悬垂；合成建立/上下文切换由指针比较自然失效。
@@ -408,11 +405,17 @@ private:
     void dispatchPendingOp(std::uint64_t seq);                // 投递给引擎线程
     void dropPendingOp(std::uint64_t seq);                    // 撤销未投递的乐观项
     std::uint64_t submitEngineOp(chaoset::win::EngineOp op);  // 入队并立即投递
+    std::uint64_t submitNonComposingOp(chaoset::win::EngineOp op);
+    void computeOptimistic(chaoset::Comp* dispOut, std::string* baseOut, std::string* textOut) const;
+    bool hasDpPending() const;
     chaoset::Comp optimisticComp() const;  // comp_ + 未应用输入/退格回放
     std::string optimisticInput() const;
     void onWorkerEngineResult() override;
+    bool onWorkerEngineTimer() override;
     void applyEngineResults();
     void applyEngineResult(const chaoset::win::EngineResult& r);
+    void commitPunctFallback(const chaoset::win::EngineOp& op);
+    void handleSelectPrefixFallback(const chaoset::win::EngineResult& r);
     void markEngineLost(const chaoset::win::EngineResult& r);
     void scheduleRebuild();
     void giveUpEngineState();
@@ -466,26 +469,21 @@ public:
     void onWorkerForeground(HWND fg) override;
     void onWorkerModeAuthority() override;
     void onWorkerShowToast(int id) override;
-
     // UiElementHost：UILess 宿主经 ITfUIElement::Show 通知显示/隐藏。
     // 隐藏时收起自绘浮窗（宿主接管渲染场景本壳浮窗本就未显示，幂等）。
     void onUiElementShow(BOOL shown) override;
-
     // 统一设置中心入口（唯一设置 UI 是跨平台 Slint 设置中心；TIP 只经命名
     // 管道请单例 UI 宿主启动 chaoset-settings.exe，绝不在 TIP 进程内起进程；
     // 定义见 tip_candidates.cpp）。
     void showSettingsWindow() override;
     bool isAssociatePanel() const override;
-
     // 右键菜单 owner（候选窗右键删除用，issue #1）：返回本进程的宿主窗口，
     // 让菜单以「本来就是前台的宿主窗口」为 owner，避免激活候选窗自身导致宿主
     // 文档失去 TSF 焦点（实现见 tip_candidates.cpp）。
     HWND menuOwnerWindow() override;
     void setContextMenuTracking(bool active) override;
-
     // 联想翻页入口（供候选窗箭头调用；实现见 tip_candidates.cpp 的 flipAssociate）。
     void flipAssociateFromPanel(bool next) override;
-
     // 设置中心关闭联想后立即收起（候选窗收到跨进程广播后转发；macOS 同语义）。
     void clearAssociateFromSettings() override;
 

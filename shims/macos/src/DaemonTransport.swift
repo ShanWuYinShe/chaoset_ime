@@ -11,6 +11,9 @@ import os
 final class DaemonTransport {
     private var fd: Int32 = -1
     private var nextID: UInt64 = 0
+    private(set) var connGeneration: UInt64 = 0
+    /// 上一次 callOnce 失败是否属于传输/协议层故障（区别于 daemon 正常返回的 JSON 业务错误）。
+    private(set) var lastFailureWasTransportError = false
     /// 已放弃但响应可能迟到、尚留在 socket 缓冲里的响应个数（一次一问一答，
     /// 正常只有 0 或 1）。读超时**不断连**时用它记账，下次请求前按帧长丢弃。
     private var staleResponses = 0
@@ -55,14 +58,15 @@ final class DaemonTransport {
     /// 只在引擎线程调用；不做任何组词请求。
     func warmUp() -> Bool { connectIfNeeded() }
 
-    private func disconnect() {
+    func disconnect() {
         if fd >= 0 {
             Darwin.close(fd)
             fd = -1
         }
         // 连接断开后待丢的迟到帧已不可达；不清零会让下一次干净连接误把正常响应
-        // 当成 stale 丢掉。
+        // 当成 stale 丢掉，同时清掉读超时标记避免残留到下次连接。
         staleResponses = 0
+        lastReadTimedOut = false
     }
 
     private func connectIfNeeded() -> Bool {
@@ -166,6 +170,7 @@ final class DaemonTransport {
         // 连上后恢复常规模式（受上面设置的 SO_RCVTIMEO/SO_SNDTIMEO 250ms 保护）
         _ = fcntl(sock, F_SETFL, flags)
         fd = sock
+        connGeneration &+= 1
         if lastFailureLogAt != 0 {
             logger.info("daemon 连接已恢复")
             lastFailureLogAt = 0
@@ -293,7 +298,11 @@ final class DaemonTransport {
     }
 
     func callOnce(method: String, params: [String: Any]) -> [String: Any]? {
-        guard connectIfNeeded() else { return nil }
+        lastFailureWasTransportError = false
+        guard connectIfNeeded() else {
+            lastFailureWasTransportError = true
+            return nil
+        }
         // 上一次读超时留下的迟到响应：先按帧长丢弃，避免被当成本次响应。
         drainStaleResponse()
         nextID += 1
@@ -302,6 +311,7 @@ final class DaemonTransport {
         if !params.isEmpty { req["params"] = params }
         guard let payload = try? JSONSerialization.data(withJSONObject: req) else {
             logFailure("IPC 请求序列化失败 method=\(method)")
+            lastFailureWasTransportError = true
             return nil
         }
 
@@ -314,6 +324,7 @@ final class DaemonTransport {
             // 写失败（含写超时）：请求帧可能只写了一半，字节流无法再对齐 → 断连。
             logFailure("IPC 帧头写入失败 method=\(method)")
             disconnect()
+            lastFailureWasTransportError = true
             return nil
         }
         // 读响应。正常情况下第一帧就是本次响应；但上一次读超时留下的迟到响应可能
@@ -329,10 +340,12 @@ final class DaemonTransport {
                     // 待丢；本次返回 nil 由调用方按「超时」处理（不是 fail-open）。
                     staleResponses += 1
                     logFailure("IPC 响应超时，保留连接待下次丢弃 method=\(method)")
+                    lastFailureWasTransportError = true
                     return nil
                 }
                 logFailure("IPC 帧头读取失败 method=\(method)")
                 disconnect()
+                lastFailureWasTransportError = true
                 return nil
             }
             let size = Int(headBytes[0]) << 24 | Int(headBytes[1]) << 16 | Int(headBytes[2]) << 8 | Int(headBytes[3])
@@ -340,6 +353,7 @@ final class DaemonTransport {
                   let resp = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
                 logFailure("IPC 响应帧无效 method=\(method) size=\(size)")
                 disconnect()
+                lastFailureWasTransportError = true
                 return nil
             }
             // 响应 id 必须与本次请求一致。
@@ -356,6 +370,7 @@ final class DaemonTransport {
                 }
                 logFailure("IPC 响应 id 不匹配 method=\(method) req=\(reqID)")
                 disconnect()
+                lastFailureWasTransportError = true
                 return nil
             }
             response = resp
@@ -364,6 +379,7 @@ final class DaemonTransport {
         guard let resp = response else { return nil }
         if let error = resp["error"] as? String {
             logFailure("daemon 业务错误 method=\(method): \(error)")
+            lastFailureWasTransportError = false
             return nil
         }
         return resp["result"] as? [String: Any] ?? [:]

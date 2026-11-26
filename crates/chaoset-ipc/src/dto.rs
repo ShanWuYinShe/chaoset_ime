@@ -17,6 +17,7 @@ pub struct Composition {
     #[serde(default)] pub page_count: u32,
     #[serde(default)] pub committed: String,
     #[serde(default)] pub shuangpin: String,
+    #[serde(default)] pub dp_pending: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

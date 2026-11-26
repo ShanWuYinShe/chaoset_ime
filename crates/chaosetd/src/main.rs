@@ -347,7 +347,29 @@ fn main() {
         dict_paths = seed_dict_files(seed, &dict_paths);
     }
 
-    // 单实例与端点判断
+    // 单实例与端点判断（Unix 与 Windows 均先加单实例锁再加载词库，避免并发懒启动重复 load_dict_lenient）
+    #[cfg(unix)]
+    let (socket_path, _unix_lock) = {
+        let socket_path = if let Some(ref s) = args.socket {
+            PathBuf::from(s)
+        } else {
+            match chaoset_config::paths::socket_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("获取 socket 路径失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        };
+        let lock = match LockHandle::acquire(&socket_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        };
+        (socket_path, lock)
+    };
     #[cfg(target_os = "windows")]
     let _win_lock = {
         let lock = match LockHandle::acquire("chaosetd") {
@@ -433,26 +455,6 @@ fn main() {
 
     #[cfg(unix)]
     {
-        let socket_path = if let Some(ref s) = args.socket {
-            PathBuf::from(s)
-        } else {
-            match chaoset_config::paths::socket_path() {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("获取 socket 路径失败: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        };
-
-        let _lock = match LockHandle::acquire(&socket_path) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-        };
-
         if socket_path.exists() {
             let _ = fs::remove_file(&socket_path);
         }

@@ -35,7 +35,7 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
         op.kind = chaoset::win::EngineOpKind::kAssociateSelect;
         op.text = pick.text;
         op.syllables = pick.syllables;
-        submitEngineOp(op);
+        submitNonComposingOp(op);
         return;
     }
     if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) {
@@ -87,7 +87,7 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         op.syllables = pick.syllables;
         op.associate = true;
         op.aux = assocSylls_;
-        submitEngineOp(op);
+        submitNonComposingOp(op);
         return;
     }
     if (!hasCandidates()) return;
@@ -97,7 +97,7 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
     op.kind = chaoset::win::EngineOpKind::kUserDelete;
     op.text = pick.text;
     op.syllables = pick.syllables;
-    submitEngineOp(op);
+    submitNonComposingOp(op);
 }
 
 HWND ChaosetTIP::menuOwnerWindow() {
@@ -172,7 +172,7 @@ void ChaosetTIP::enterAssociate(const std::string& syllables) {
     chaoset::win::EngineOp op;
     op.kind = chaoset::win::EngineOpKind::kAssociate;
     op.syllables = syllables;
-    submitEngineOp(op);
+    submitNonComposingOp(op);
 }
 
 void ChaosetTIP::showAssociatePage() {

@@ -32,6 +32,7 @@ public:
     bool readAll(std::uint8_t* buf, std::size_t len) override;
     void closeConn() override;
     bool connected() const { return fd_ >= 0; }
+    std::uint64_t connGen() const { return connGen_; }
     /// 上一次 readAll 失败是否只是「等到 SO_RCVTIMEO 仍无数据」（一个字节都没消费）。
     /// 只有这种干净超时才能保留连接与会话；部分读取或 EOF 必须断连（见 core.hpp 契约）。
     bool lastReadTimedOut() const override { return lastReadTimedOut_; }
@@ -39,6 +40,7 @@ public:
 private:
     std::string path_;
     int fd_ = -1;
+    std::uint64_t connGen_ = 0;
     int deadlineMs_ = 300;
     bool lastReadTimedOut_ = false;
 };
@@ -61,9 +63,13 @@ public:
     explicit Daemon(Options options);
     ~Daemon();
     bool ensureReady();
+    // 引擎线程专用：单次非阻塞探测并在首次/冷却期外异步拉起 daemon，绝不休眠等待。
+    bool tryConnectOrSpawn();
     // 单次非阻塞连接探测：不等待、不拉起 daemon（主循环线程可用）。
     bool tryConnectOnce() { return connectOnce(); }
     bool connected() const { return transport_.connected(); }
+    void closeConn() { transport_.closeConn(); }
+    std::uint64_t connGen() const { return transport_.connGen(); }
     void setDeadlineMs(int ms) { transport_.setDeadlineMs(ms); }
     /// 追加输入；失败时用 base 做幂等重放（base = 壳侧上次已知的完整输入串）。
     ///
@@ -85,6 +91,7 @@ private:
     Session session_;
     bool spawned_ = false;
     bool failed_ = false;
+    std::int64_t lastSpawnMs_ = 0;
 };
 
 }  // namespace chaoset
