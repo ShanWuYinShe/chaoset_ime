@@ -252,7 +252,7 @@ mod tests {
     impl Fake {
         fn new() -> Self {
             Self {
-                comp: Composition { input: "ni'hao".into(), preedit: "ni'hao".into(), candidates: vec![Candidate { text: "你好".into(), syllables: "ni'hao".into(), score: 1, from_user: true }], page: 0, page_count: 1, committed: String::new(), shuangpin: String::new() },
+                comp: Composition { input: "ni'hao".into(), preedit: "ni'hao".into(), candidates: vec![Candidate { text: "你好".into(), syllables: "ni'hao".into(), score: 1, from_user: true }], page: 0, page_count: 1, committed: String::new(), shuangpin: String::new(), dp_pending: String::new() },
                 fail: false,
                 calls: Vec::new(),
             }

@@ -198,7 +198,8 @@ void ChaosetTIP::render(ITfContext* pic) {
     // 预编辑没写进文档（编辑会话失败/上下文只读/合成被拒）：绝不能显示候选窗，
     // 否则出现「候选窗有候选、文档无预编辑」的不一致状态。收口交给调用方按各自
     // 语义处理（字母键/删除刷新路径会走 bailOutNoComposition）。
-    if (!optimisticComp().input.empty() && (composition_ == nullptr || !preeditWritten_)) {
+    if ((!optimisticComp().input.empty() || hasDpPending()) &&
+        (composition_ == nullptr || !preeditWritten_)) {
         candidateWnd_.hide();
         if (diagBudget()) {
             diagPrintf(L"tsf.log", "render: preedit not written composition=%d, hide candidate wnd\n",

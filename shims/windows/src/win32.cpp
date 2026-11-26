@@ -24,6 +24,7 @@
 
 #include "candidate_window.hpp"
 #include "diagnostics.hpp"
+#include "engine_pump.hpp"
 #include "mode_toast.hpp"
 #include "shell_worker.hpp"
 #include "tip.hpp"
@@ -117,6 +118,7 @@ STDAPI DllCanUnloadNow() {
     //   * ShellWorker 线程同样执行本 DLL 代码，线程存活期间绝不能卸载。
     // 没有 TIP/窗口后才停 worker；线程尚未退干净前继续返回 S_FALSE。
     if (g_liveObjects != 0) return S_FALSE;
+    if (g_liveEnginePumps != 0) return S_FALSE;
     if (g_liveCandidateWindows != 0) return S_FALSE;
     if (g_liveToastWindows != 0) return S_FALSE;
     if (g_liveTrayWindows != 0) return S_FALSE;

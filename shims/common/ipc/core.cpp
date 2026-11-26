@@ -1,5 +1,6 @@
 #include "core.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
@@ -239,6 +240,7 @@ Comp parseComposition(const JsonValue& result) {
     // 双拼方案名：daemon 双拼启用时每次 Compose 都带；未启用时字段缺省为空
     //（Go 侧 omitempty），壳按空值保持旧行为（';' 仍走 punct）。
     result.isString("shuangpin", &c.shuangpin);
+    result.isString("dp_pending", &c.dpPending);
     if (const JsonValue* p = result.find("page"); p != nullptr && p->type == JsonValue::Type::Num) {
         c.page = static_cast<int>(p->number);
     }
@@ -271,6 +273,41 @@ std::string parseCommitted(const JsonValue& result) {
     std::string out;
     result.isString("committed", &out);
     return out;
+}
+
+std::string consumePrefixFallback(const std::string& input,
+                                  const std::vector<std::string>& sylls) {
+    if (input.empty() || sylls.empty()) return "";
+    auto eqChar = [](char a, char b) -> bool {
+        char la = static_cast<char>(std::tolower(static_cast<unsigned char>(a)));
+        char lb = static_cast<char>(std::tolower(static_cast<unsigned char>(b)));
+        if (la == 'v') la = 'u';
+        if (lb == 'v') lb = 'u';
+        return la == lb;
+    };
+    std::size_t pos = 0;
+    for (const std::string& syl : sylls) {
+        while (pos < input.size() && input[pos] == '\'') ++pos;
+        if (pos >= input.size() || syl.empty() || !eqChar(input[pos], syl[0])) return "";
+        std::size_t j = 0;
+        while (pos < input.size() && j < syl.size()) {
+            if (eqChar(input[pos], syl[j])) {
+                ++pos;
+                ++j;
+            } else if (j > 0 && eqChar(input[pos], 'o') &&
+                       eqChar(syl[j - 1], 'i') && eqChar(syl[j], 'u')) {
+                ++pos;
+            } else if (j > 0 && eqChar(input[pos], 'e') &&
+                       eqChar(syl[j - 1], 'u') &&
+                       (eqChar(syl[j], 'i') || eqChar(syl[j], 'n'))) {
+                ++pos;
+            } else {
+                break;
+            }
+        }
+    }
+    while (pos < input.size() && input[pos] == '\'') ++pos;
+    return input.substr(pos);
 }
 
 /// 读超时后保留连接的实现（见 core.hpp「超时不断连」契约）。
@@ -322,6 +359,7 @@ bool Session::drainStaleResponse() {
 
 JsonValue Session::call(const std::string& method, const std::string& params, bool* ok) {
     JsonValue none;
+    lastTransportErr_ = false;
     if (ok != nullptr) *ok = false;
     // 上一次读超时留下的迟到响应：先尽量丢弃，避免被当成本次响应。drain 不动
     // 连接，读不到（自己也超时）就保持计数、本次正常发送——迟到帧会在下面的
@@ -340,6 +378,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     packet.push_back(static_cast<char>(len & 0xFF));
     packet.append(req);
     if (!t_.writeAll(reinterpret_cast<const std::uint8_t*>(packet.data()), packet.size())) {
+        lastTransportErr_ = true;
         t_.closeConn();
         staleResponses_ = 0;  // 连接已断，待丢的迟到帧不可达
         return none;
@@ -352,6 +391,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
     for (;;) {
         std::uint8_t head[4];
         if (!t_.readAll(head, 4)) {
+            lastTransportErr_ = true;
             if (t_.lastReadTimedOut() && staleResponses_ < 2) {
                 // 读超时：请求已完整发出，daemon 只是慢。保留连接与会话，把这次响应
                 // 记为「迟到待丢」，下次 call 前 drain；本次返回失败由调用方决定
@@ -366,6 +406,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
         std::uint32_t size = (static_cast<std::uint32_t>(head[0]) << 24) | (static_cast<std::uint32_t>(head[1]) << 16) |
                              (static_cast<std::uint32_t>(head[2]) << 8) | static_cast<std::uint32_t>(head[3]);
         if (size == 0 || size > kMaxMessageSize) {
+            lastTransportErr_ = true;
             t_.closeConn();
             staleResponses_ = 0;
             return none;
@@ -374,6 +415,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
         if (!t_.readAll(reinterpret_cast<std::uint8_t*>(&body[0]), size)) {
             // 帧头已收到、帧体超时：半个帧留在连接里，无法再对齐，只能断连。
             //（帧头都还没到的超时在上面按「迟到响应」处理，那里可以保留连接。）
+            lastTransportErr_ = true;
             t_.closeConn();
             staleResponses_ = 0;
             return none;
@@ -381,6 +423,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
         bool parsed = false;
         resp = jsonParse(body, &parsed);
         if (!parsed || resp.type != JsonValue::Type::Obj) {
+            lastTransportErr_ = true;
             t_.closeConn();
             staleResponses_ = 0;
             return none;
@@ -399,6 +442,7 @@ JsonValue Session::call(const std::string& method, const std::string& params, bo
                 --staleResponses_;  // 预清理时还没到、现在才到的旧响应
                 continue;
             }
+            lastTransportErr_ = true;
             t_.closeConn();
             return none;
         }

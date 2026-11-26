@@ -64,6 +64,14 @@ std::uint64_t IbusEngineState::submit(EngineOp op) {
         return seq_;
     }
 
+std::uint64_t IbusEngineState::submitNonComposingOp(EngineOp op) {
+        ensurePump();
+        op.epoch = epoch_;
+        op.seq = ++seq_;
+        if (pump_ != nullptr) pump_->post(std::move(op));
+        return seq_;
+    }
+
 void IbusEngineState::submitInput(const std::string& text) {
         EngineOp op;
         op.kind = EngineOpKind::kInput;
@@ -86,10 +94,22 @@ void IbusEngineState::submitPage(bool next) {
         submit(std::move(op));
     }
 
+void IbusEngineState::submitRebuild(const std::string& base, const std::string& text) {
+        if (base.empty() && text.empty()) return;
+        EngineOp op;
+        op.kind = EngineOpKind::kRebuild;
+        op.base = base;
+        op.text = text;
+        op.halfWidth = halfWidth_;
+        submit(std::move(op));
+    }
+
 void IbusEngineState::resetPipeline(bool newSession) {
         ++epoch_;
         pendingOps_.clear();
+        last_.dpPending.clear();
         engineLost_ = false;
+        stopLostTimer();
         if (pump_ == nullptr) return;
         pump_->clearPending();
         EngineOp op;
@@ -99,26 +119,46 @@ void IbusEngineState::resetPipeline(bool newSession) {
         pump_->post(std::move(op));
     }
 
-chaoset::Comp IbusEngineState::optimisticComp() const {
+bool applyPendingOp(const EngineOp& op, chaoset::Comp& comp, std::string& pending,
+                    bool shuangpin, std::string* unapplied = nullptr) {
+        if (op.kind == EngineOpKind::kInput) {
+            pending += op.text;
+            if (unapplied != nullptr) *unapplied += op.text;
+            return true;
+        }
+        if (op.kind == EngineOpKind::kBackspace || op.kind == EngineOpKind::kBackspaceWord) {
+            backspaceLocally(comp, pending, shuangpin, op.kind == EngineOpKind::kBackspaceWord);
+            if (unapplied != nullptr && !unapplied->empty()) unapplied->pop_back();
+            return true;
+        }
+        return false;
+    }
+
+void IbusEngineState::computeOptimistic(chaoset::Comp* dispOut, std::string* baseOut,
+                                        std::string* textOut) const {
         chaoset::Comp disp = last_;
-        std::string pending;
+        std::string pending = last_.dpPending;
+        std::string unappliedPreedit;
         const bool shuangpin = !dpScheme_.empty();
         for (const EngineOp& op : pendingOps_) {
-            switch (op.kind) {
-                case EngineOpKind::kInput:
-                    pending += op.text;
-                    break;
-                case EngineOpKind::kBackspace:
-                    backspaceLocally(disp, pending, shuangpin, false);
-                    break;
-                case EngineOpKind::kBackspaceWord:
-                    backspaceLocally(disp, pending, shuangpin, true);
-                    break;
-                default:
-                    break;
-            }
+            applyPendingOp(op, disp, pending, shuangpin, &unappliedPreedit);
         }
-        disp.preedit += pending;
+        if (baseOut != nullptr) *baseOut = disp.input;
+        if (textOut != nullptr) *textOut = pending;
+        disp.input += unappliedPreedit;
+        disp.preedit += unappliedPreedit;
+        if (dispOut != nullptr) *dispOut = std::move(disp);
+    }
+
+bool IbusEngineState::hasDpPending() const {
+        std::string text;
+        computeOptimistic(nullptr, nullptr, &text);
+        return !text.empty() && optimisticComp().input.empty();
+    }
+
+chaoset::Comp IbusEngineState::optimisticComp() const {
+        chaoset::Comp disp;
+        computeOptimistic(&disp, nullptr, nullptr);
         return disp;
     }
 
@@ -136,54 +176,139 @@ void IbusEngineState::renderPendingAfterCommit() {
         if (!pendingOps_.empty()) display(optimisticComp());
     }
 
-void IbusEngineState::markEngineLost() {
+void IbusEngineState::stopLostTimer() {
+        if (lostTimerId_ != 0) { g_source_remove(lostTimerId_); lostTimerId_ = 0; }
+    }
+
+void IbusEngineState::startLostTimer() {
+        if (lostTimerId_ != 0) return;
+        auto* holder = new std::shared_ptr<ResultWake>(wake_);
+        lostTimerId_ = g_timeout_add_full(G_PRIORITY_DEFAULT, 100,
+            [](gpointer data) -> gboolean {
+                auto* held = static_cast<std::shared_ptr<ResultWake>*>(data);
+                IbusEngineState* self = (*held)->state.load();
+                return (self != nullptr && self->onLostTimer()) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+            },
+            holder, [](gpointer data) { delete static_cast<std::shared_ptr<ResultWake>*>(data); });
+    }
+
+bool IbusEngineState::onLostTimer() {
+        if (!engineLost_) { lostTimerId_ = 0; return false; }
         const std::int64_t now = monotonicMs();
-        if (!engineLost_) {
-            engineLost_ = true;
-            engineLostMs_ = now;
-        }
         if (now - engineLostMs_ >= kEngineGraceMs) {
             giveUpEngineState();
-            return;
+            lostTimerId_ = 0;
+            return false;
         }
+        scheduleRebuild();
+        return engineLost_;
+    }
+
+void IbusEngineState::markEngineLost() {
+        const std::int64_t now = monotonicMs();
+        if (!engineLost_) { engineLost_ = true; engineLostMs_ = now; }
+        startLostTimer();
+        if (now - engineLostMs_ >= kEngineGraceMs) { giveUpEngineState(); return; }
         scheduleRebuild();
     }
 
 void IbusEngineState::scheduleRebuild() {
         if (!engineLost_ || pump_ == nullptr) return;
+        std::string base, text;
+        computeOptimistic(nullptr, &base, &text);
+        if (base.empty() && text.empty()) return;
         const std::int64_t now = monotonicMs();
         if (now - lastRebuildMs_ < kRebuildIntervalMs) return;
         lastRebuildMs_ = now;
-        EngineOp op;
-        op.kind = EngineOpKind::kRebuild;
-        op.text = optimisticInput();
-        op.halfWidth = halfWidth_;
-        submit(std::move(op));
+        submitRebuild(base, text);
     }
 
 void IbusEngineState::giveUpEngineState() {
         const chaoset::Comp disp = optimisticComp();
-        const std::string raw = confirmed_ + disp.input;
+        std::string base, text;
+        computeOptimistic(nullptr, &base, &text);
+        const std::string raw = confirmed_ + (!text.empty() ? (base + text) : disp.input);
         resetPipeline(true);
-        if (raw.empty()) {
-            hidePreedit();
-            hideLookupTable();
-            last_ = chaoset::Comp();
-            return;
-        }
+        last_ = chaoset::Comp();
+        hidePreedit();
+        hideLookupTable();
+        if (raw.empty()) return;
         confirmed_.clear();
         commit(raw);
     }
 
 void IbusEngineState::restartFromLocalState() {
-        const std::string rest = optimisticInput();
+        std::string base, text;
+        computeOptimistic(nullptr, &base, &text);
+        last_ = chaoset::Comp();
+        confirmed_.clear();
         resetPipeline(false);
-        if (rest.empty()) return;
-        EngineOp op;
-        op.kind = EngineOpKind::kRebuild;
-        op.text = rest;
-        op.halfWidth = halfWidth_;
-        submit(std::move(op));
+        submitRebuild(base, text);
+    }
+
+void IbusEngineState::commitPunctFallback(const EngineOp& op) {
+        chaoset::Comp dispBefore = last_;
+        std::string pendingBefore = last_.dpPending, restPending;
+        bool modifiedBefore = false;
+        chaoset::Comp restComp;
+        const bool shuangpin = !dpScheme_.empty();
+        for (const EngineOp& pending : pendingOps_) {
+            if (pending.seq < op.seq && applyPendingOp(pending, dispBefore, pendingBefore, shuangpin)) {
+                modifiedBefore = true;
+            } else if (pending.seq > op.seq) {
+                applyPendingOp(pending, restComp, restPending, shuangpin);
+            }
+        }
+        const std::string head = (!modifiedBefore && !dispBefore.candidates.empty())
+            ? (dispBefore.candidates[0].text + pendingBefore) : (dispBefore.input + pendingBefore);
+        const std::string all = confirmed_ + head + op.text;
+        confirmed_.clear();
+        last_ = chaoset::Comp();
+        resetPipeline(false);
+        if (!all.empty()) commit(all);
+        if (!restPending.empty()) { submitRebuild("", restPending); renderOptimistic(); }
+    }
+
+void IbusEngineState::handleSelectPrefixFallback(const EngineResult& r, bool alreadyCommitted) {
+        const std::string text = r.committed.empty() ? r.op.text : r.committed;
+        if (!alreadyCommitted && text.empty()) {
+            for (auto it = pendingOps_.begin(); it != pendingOps_.end(); ++it) {
+                if (it->seq == r.op.seq) { pendingOps_.erase(it); break; }
+            }
+            if (!r.ok) { markEngineLost(); return; }
+            if (optimisticInput().empty() && !hasDpPending()) {
+                if (!confirmed_.empty()) {
+                    const std::string all = confirmed_;
+                    confirmed_.clear();
+                    commit(all);
+                } else {
+                    hidePreedit(); hideLookupTable(); last_ = chaoset::Comp();
+                }
+            } else renderOptimistic();
+            return;
+        }
+        chaoset::Comp restComp;
+        std::string restPending;
+        const bool shuangpin = !dpScheme_.empty();
+        if (!r.op.sylls.empty()) {
+            const std::string rem = chaoset::consumePrefixFallback(last_.input, r.op.sylls);
+            if (!rem.empty()) {
+                restComp.input = rem;
+                restComp.preedit = rem;
+                restPending = last_.dpPending;
+            }
+        }
+        for (const EngineOp& pending : pendingOps_) {
+            if (pending.seq != r.op.seq) applyPendingOp(pending, restComp, restPending, shuangpin);
+        }
+        const std::string all = confirmed_ + text;
+        last_ = chaoset::Comp();
+        resetPipeline(false);
+        if (!alreadyCommitted) { confirmed_.clear(); commit(all); }
+        if (!restComp.input.empty() || !restPending.empty()) {
+            submitRebuild(restComp.input, restPending);
+            renderOptimistic();
+        }
     }
 
 void IbusEngineState::applyResult(const EngineResult& r) {
@@ -192,9 +317,9 @@ void IbusEngineState::applyResult(const EngineResult& r) {
         if (r.op.kind == EngineOpKind::kSelectPrefix) {
             const std::string text = r.committed.empty() ? r.op.text : r.committed;
             const std::string all = confirmed_ + text;
-            confirmed_.clear();
+            if (!text.empty()) confirmed_.clear();
             if (!text.empty()) commit(all);
-            restartFromLocalState();
+            handleSelectPrefixFallback(r, !text.empty());
             return;
         }
         if (r.op.kind == EngineOpKind::kAssociateSelect) {
@@ -204,10 +329,7 @@ void IbusEngineState::applyResult(const EngineResult& r) {
             return;
         }
         if (r.op.kind == EngineOpKind::kPunct) {
-            const std::string all = confirmed_ + r.op.text;
-            confirmed_.clear();
-            if (!r.op.text.empty()) commit(all);
-            restartFromLocalState();
+            commitPunctFallback(r.op);
             return;
         }
         if (r.op.kind == EngineOpKind::kUserDelete) {
@@ -224,6 +346,7 @@ void IbusEngineState::applyResult(const EngineResult& r) {
     // 成功结果按 seq 顺序到达：seq <= 本结果的乐观项都已被引擎覆盖。
     while (!pendingOps_.empty() && pendingOps_.front().seq <= r.op.seq) pendingOps_.pop_front();
     engineLost_ = false;
+    stopLostTimer();
     switch (r.op.kind) {
         case EngineOpKind::kInput:
         case EngineOpKind::kRebuild:
@@ -237,7 +360,7 @@ void IbusEngineState::applyResult(const EngineResult& r) {
                 return;
             }
             refresh(r.comp);
-            if (optimisticInput().empty()) {
+            if (optimisticInput().empty() && !hasDpPending()) {
                 if (!confirmed_.empty()) {
                     const std::string all = confirmed_;
                     confirmed_.clear();
@@ -257,16 +380,13 @@ void IbusEngineState::applyResult(const EngineResult& r) {
         case EngineOpKind::kSelectPrefix: {
             if (r.comp.committed.empty()) {
                 // 语义失败（越界等）：用壳侧已显示候选文本兜底上屏，绝不静默丢键。
-                const std::string all = confirmed_ + r.op.text;
-                confirmed_.clear();
-                if (!r.op.text.empty()) commit(all);
-                restartFromLocalState();
+                handleSelectPrefixFallback(r, false);
                 return;
             }
             confirmed_ += r.comp.committed;
             selectedSylls_.insert(selectedSylls_.end(), r.op.sylls.begin(), r.op.sylls.end());
             refresh(r.comp);
-            if (!last_.input.empty()) return;
+            if (!last_.input.empty() || !last_.dpPending.empty()) return;
             std::string prev;
             for (std::size_t i = 0; i < selectedSylls_.size(); ++i) {
                 if (i != 0) prev += "'";
@@ -277,6 +397,7 @@ void IbusEngineState::applyResult(const EngineResult& r) {
             confirmed_.clear();
             commit(text);
             if (!prev.empty()) enterAssociateForPrev(prev);
+            renderPendingAfterCommit();
             return;
         }
         case EngineOpKind::kPunct: {
@@ -291,9 +412,11 @@ void IbusEngineState::applyResult(const EngineResult& r) {
             if (!text.empty()) commit(text);
             exitAssociate();
             if (!r.op.sylls.empty()) enterAssociate(r.op.sylls);
+            renderPendingAfterCommit();
             return;
         }
         case EngineOpKind::kAssociate: {
+            if (isComposing() || hasDpPending()) return;
             if (r.comp.candidates.empty()) {
                 exitAssociate();
                 return;
@@ -316,14 +439,9 @@ void IbusEngineState::applyResult(const EngineResult& r) {
                 if (!r.op.aux.empty()) enterAssociateForPrev(r.op.aux);
                 return;
             }
-            const std::string rest = optimisticInput();
-            if (!rest.empty()) {
-                EngineOp op;
-                op.kind = EngineOpKind::kRebuild;
-                op.text = rest;
-                op.halfWidth = halfWidth_;
-                submit(std::move(op));
-            }
+            std::string base, text;
+            computeOptimistic(nullptr, &base, &text);
+            submitRebuild(base, text);
             return;
         }
         case EngineOpKind::kReset:
@@ -359,11 +477,6 @@ void scheduleResultsIdle(const std::shared_ptr<ResultWake>& wake) {
         },
         holder, [](gpointer data) { delete static_cast<std::shared_ptr<ResultWake>*>(data); });
 }
-
-;
-
-// 主循环侧的唤醒：把结果队列交给 drainResults（只在主循环线程执行）。
-
 
 // applyResult 需要访问私有 UI helper；单独实现，保持与 Windows tip_async.cpp 同语义。
 

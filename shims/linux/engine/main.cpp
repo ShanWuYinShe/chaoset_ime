@@ -130,6 +130,7 @@ IbusEngineState::IbusEngineState(EngineOptions options, IBusEngine* engine)
     }
 
 IbusEngineState::~IbusEngineState() {
+        stopLostTimer();
         if (toastId_ != 0) {
             g_source_remove(toastId_);
             toastId_ = 0;
@@ -175,7 +176,8 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
         if ((state & IBUS_RELEASE_MASK) != 0) return false;
 
         if ((state & IBUS_MOD4_MASK) != 0) {
-            if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
+            if ((isComposing() || hasDpPending()) &&
+                (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 confirmed_.clear();
                 resetPipeline(false);
                 last_ = chaoset::Comp();
@@ -187,7 +189,8 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return false;
         }
         if ((state & (IBUS_CONTROL_MASK | IBUS_MOD1_MASK)) != 0) {
-            if (isComposing() && (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
+            if ((isComposing() || hasDpPending()) &&
+                (keyval == kKeysymBackspace || keyval == kKeysymDelete)) {
                 if ((state & (IBUS_CONTROL_MASK | IBUS_SHIFT_MASK)) != 0) {
                     confirmed_.clear();
                     resetPipeline(false);
@@ -199,7 +202,8 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
                 backspaceWord();
                 return true;
             }
-            if ((state & IBUS_CONTROL_MASK) != 0 && isComposing() && keyval == 'u') {
+            if ((state & IBUS_CONTROL_MASK) != 0 && (isComposing() || hasDpPending()) &&
+                keyval == 'u') {
                 confirmed_.clear();
                 resetPipeline(false);
                 last_ = chaoset::Comp();
@@ -251,7 +255,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
 
         // 双拼 ';' 是引擎的组词/解码键：入队后立即乐观显示。
         if (!dpScheme_.empty() && keyval == ';' && (state & IBUS_SHIFT_MASK) == 0) {
-            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+            if (!engineAvailable() && !isComposing() && !hasDpPending() && confirmed_.empty()) {
                 probeIfDown();
                 return false;
             }
@@ -263,7 +267,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
         // 大小写字母都进组词：大写按原样保存（回车原样上屏），拼音匹配由引擎按
         // 小写口径处理。按键只入队 + 乐观渲染，绝不等待 daemon。
         if ((keyval >= 'a' && keyval <= 'z') || (keyval >= 'A' && keyval <= 'Z')) {
-            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+            if (!engineAvailable() && !isComposing() && !hasDpPending() && confirmed_.empty()) {
                 probeIfDown();
                 return false;  // daemon 不在且无本地组词：原样放行（fail-open）
             }
@@ -272,7 +276,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return true;
         }
         if (keyval == kKeysymBackspace || keyval == kKeysymDelete) {
-            if (!isComposing()) return false;
+            if (!isComposing() && !hasDpPending()) return false;
             if ((state & IBUS_SHIFT_MASK) != 0) {
                 confirmed_.clear();
                 resetPipeline(false);
@@ -289,7 +293,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return true;
         }
         if (keyval == kKeysymEscape) {
-            if (isComposing() || !confirmed_.empty()) {
+            if (isComposing() || hasDpPending() || !confirmed_.empty()) {
                 confirmed_.clear();
                 selectedSylls_.clear();
                 resetPipeline(false);
@@ -306,8 +310,11 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return selectCandidate(idx);
         }
         if (keyval == kKeysymReturn) {
-            if (isComposing() || !confirmed_.empty()) {
-                const std::string raw = confirmed_ + optimisticInput();
+            if (isComposing() || hasDpPending() || !confirmed_.empty()) {
+                std::string base, text;
+                computeOptimistic(nullptr, &base, &text);
+                const std::string raw =
+                    confirmed_ + (!text.empty() ? (base + text) : optimisticInput());
                 confirmed_.clear();
                 resetPipeline(false);
                 hidePreedit();
@@ -319,12 +326,12 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
         }
         if (keyval == ' ') {
             if ((state & IBUS_SHIFT_MASK) != 0) {
-                if (!isComposing() && assoc_.empty()) return false;
+                if (!isComposing() && !hasDpPending() && assoc_.empty()) return false;
                 halfWidth_ = !halfWidth_;
                 showToast(halfWidth_ ? "半角标点" : "全角标点");
                 return true;
             }
-            if (!isComposing()) return false;
+            if (!isComposing() && !hasDpPending()) return false;
             if (!last_.candidates.empty() && selectCandidate(lookupIndex_)) return true;
             if (!pendingOps_.empty()) {
                 // 结果尚未应用（乐观窗口）：按页内第 0 项入队，由引擎对完整输入解析；
@@ -335,7 +342,9 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
                 submit(std::move(op));
                 return true;
             }
-            const std::string raw = confirmed_ + optimisticInput();
+            std::string base, text;
+            computeOptimistic(nullptr, &base, &text);
+            const std::string raw = confirmed_ + (base + text);
             confirmed_.clear();
             resetPipeline(false);
             hidePreedit();
@@ -366,7 +375,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
                 return true;
             }
             if (isPunctKey(keyval)) {
-                if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+                if (!engineAvailable() && !isComposing() && !hasDpPending() && confirmed_.empty()) {
                     probeIfDown();
                     return false;
                 }
@@ -382,14 +391,14 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return true;
         }
         if (isPunctKey(keyval)) {
-            if (!engineAvailable() && !isComposing() && confirmed_.empty()) {
+            if (!engineAvailable() && !isComposing() && !hasDpPending() && confirmed_.empty()) {
                 probeIfDown();
                 return false;
             }
             submitPunct(std::string(1, static_cast<char>(keyval)));
             return true;
         }
-        if (isComposing() || !confirmed_.empty()) flushConfirmedAndReset();
+        if (isComposing() || hasDpPending() || !confirmed_.empty()) flushConfirmedAndReset();
         return false;
     }
 
@@ -479,40 +488,6 @@ void IbusEngineState::backspaceWord() {
         renderOptimistic();
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 bool IbusEngineState::isComposing() const { return !optimisticComp().input.empty(); }
 
 
@@ -576,7 +551,7 @@ void IbusEngineState::commit(const std::string& text) {
     }
 
 void IbusEngineState::flushConfirmedAndReset() {
-        if (!isComposing() && confirmed_.empty() && assoc_.empty()) return;
+        if (!isComposing() && !hasDpPending() && confirmed_.empty() && assoc_.empty()) return;
         if (!confirmed_.empty()) commit(confirmed_);
         else { hidePreedit(); hideLookupTable(); }
         resetPipeline(false);
@@ -604,7 +579,7 @@ void IbusEngineState::enterAssociate(const std::vector<std::string>& sylls) {
         EngineOp op;
         op.kind = EngineOpKind::kAssociate;
         op.sylls = sylls;
-        submit(std::move(op));
+        submitNonComposingOp(std::move(op));
     }
 
 void IbusEngineState::enterAssociateForPrev(const std::string& syllsOrWord) {
@@ -678,7 +653,7 @@ bool IbusEngineState::selectCandidate(int idx) {
             op.kind = EngineOpKind::kAssociateSelect;
             op.text = pick.text;
             op.sylls = splitSyllables(pick.syllables);
-            submit(std::move(op));
+            submitNonComposingOp(std::move(op));
             return true;
         }
         if (idx < static_cast<int>(last_.candidates.size())) {

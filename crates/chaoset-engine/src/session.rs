@@ -926,6 +926,8 @@ pub struct Composition {
     pub committed: String,
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub shuangpin: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub dp_pending: String,
 }
 
 pub struct Session {
@@ -1110,6 +1112,10 @@ impl Session {
                 shuangpin: self
                     .shuangpin
                     .map(|s| s.name().to_string())
+                    .unwrap_or_default(),
+                dp_pending: self
+                    .dp_pending
+                    .map(|c| c.to_string())
                     .unwrap_or_default(),
                 ..Default::default()
             };
@@ -1686,6 +1692,10 @@ impl Session {
             shuangpin: self
                 .shuangpin
                 .map(|s| s.name().to_string())
+                .unwrap_or_default(),
+            dp_pending: self
+                .dp_pending
+                .map(|c| c.to_string())
                 .unwrap_or_default(),
         }
     }

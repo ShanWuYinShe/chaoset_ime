@@ -53,6 +53,7 @@ void EnginePump::stop() {
     {
         std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
+        queue_.clear();
     }
     cv_.notify_all();
     {
@@ -96,8 +97,8 @@ bool EnginePump::ensureConn(bool bypassCooldown) {
     }
     const std::int64_t now = nowMs();
     if (!bypassCooldown && now < connectRetryAfterMs_) return false;
-    // ensureReady 会懒启动 daemon（最长约 5s）。只允许在引擎线程上发生。
-    if (daemon_.ensureReady()) {
+    // 只做单次非阻塞连接与冷却内异步懒启动，绝不休眠等待 4.8s 卡死管线与宽限。
+    if (daemon_.tryConnectOrSpawn()) {
         connected_.store(true);
         return true;
     }
@@ -109,11 +110,42 @@ bool EnginePump::ensureConn(bool bypassCooldown) {
 EngineResult EnginePump::exec(const EngineOp& op) {
     EngineResult result;
     result.op = op;
-    if (op.kind == EngineOpKind::kProbe) {
-        result.ok = ensureConn(false);
+    const bool isStatefulComposition =
+        op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kBackspace ||
+        op.kind == EngineOpKind::kBackspaceWord || op.kind == EngineOpKind::kNextPage ||
+        op.kind == EngineOpKind::kPrevPage || op.kind == EngineOpKind::kSelectPrefix ||
+        op.kind == EngineOpKind::kPunct;
+    if (isStatefulComposition && sessionDesynced_) {
+        result.ok = false;
+        result.connectionLost = true;
+        connected_.store(daemon_.connected());
         return result;
     }
-    if (!ensureConn(false)) return result;  // 连不上：失败结果，主循环走失联宽限
+    const bool bypass = (op.kind == EngineOpKind::kRebuild || op.kind == EngineOpKind::kProbe ||
+                         op.kind == EngineOpKind::kReset ||
+                         op.kind == EngineOpKind::kResetComposition);
+    if (op.kind == EngineOpKind::kProbe) {
+        result.ok = ensureConn(true);
+        return result;
+    }
+    if (!ensureConn(bypass)) {  // 连不上：失败结果，主循环走失联宽限
+        if (isStatefulComposition && (hadCompositionOps_ || op.kind == EngineOpKind::kInput)) {
+            sessionDesynced_ = true;
+        }
+        result.connectionLost = true;
+        return result;
+    }
+    const std::uint64_t gen = daemon_.connGen();
+    if (isStatefulComposition) {
+        if (!hadCompositionOps_) {
+            syncedConnGen_ = gen;
+        } else if (gen != syncedConnGen_) {
+            sessionDesynced_ = true;
+            result.ok = false;
+            result.connectionLost = true;
+            return result;
+        }
+    }
 
     Session& session = daemon_.session();
     switch (op.kind) {
@@ -122,8 +154,8 @@ EngineResult EnginePump::exec(const EngineOp& op) {
             result.ok = result.comp.ok;
             break;
         case EngineOpKind::kRebuild:
-            // base 传空串（非 nullptr）：先把引擎输入整串重建为空，再重放壳侧完整输入。
-            result.comp = session.input(op.text, op.halfWidth, "");
+            // base=op.base（已解码/已确认前缀），text=op.text（未解码按键）。
+            result.comp = session.input(op.text, op.halfWidth, op.base.c_str());
             result.ok = result.comp.ok;
             break;
         case EngineOpKind::kBackspace:
@@ -171,10 +203,48 @@ EngineResult EnginePump::exec(const EngineOp& op) {
     }
     if (result.ok) {
         connected_.store(true);
-    } else if (!daemon_.connected()) {
-        // 传输层已断（写失败/EOF/部分读取）：快照置为不可用，下一键 fail-open/探测。
-        connected_.store(false);
-        connectRetryAfterMs_ = 0;
+        if (op.kind == EngineOpKind::kReset || op.kind == EngineOpKind::kResetComposition) {
+            syncedConnGen_ = daemon_.connGen();
+            sessionDesynced_ = false;
+            hadCompositionOps_ = false;
+        } else if (op.kind == EngineOpKind::kRebuild) {
+            syncedConnGen_ = daemon_.connGen();
+            sessionDesynced_ = false;
+            hadCompositionOps_ =
+                (!result.comp.input.empty() || !result.comp.dpPending.empty()) &&
+                result.comp.committed.empty();
+        } else if (op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kBackspace ||
+                   op.kind == EngineOpKind::kBackspaceWord ||
+                   op.kind == EngineOpKind::kSelectPrefix) {
+            hadCompositionOps_ =
+                (!result.comp.input.empty() || !result.comp.dpPending.empty()) &&
+                result.comp.committed.empty();
+        } else if (op.kind == EngineOpKind::kPunct) {
+            hadCompositionOps_ = false;
+        }
+    } else {
+        const bool ioFailure = !daemon_.connected() || session.lastCallWasTransportError();
+        if (op.kind == EngineOpKind::kReset || op.kind == EngineOpKind::kResetComposition) {
+            daemon_.closeConn();
+            connected_.store(false);
+            connectRetryAfterMs_ = nowMs() + kEngineReconnectCooldownMs;
+            sessionDesynced_ = false;
+            hadCompositionOps_ = false;
+            result.connectionLost = true;
+        } else {
+            if (!daemon_.connected()) {
+                connected_.store(false);
+                connectRetryAfterMs_ = nowMs() + kEngineReconnectCooldownMs;
+            }
+            if (ioFailure) {
+                result.connectionLost = true;
+                if (isStatefulComposition &&
+                    (hadCompositionOps_ || op.kind == EngineOpKind::kInput)) {
+                    sessionDesynced_ = true;
+                }
+                if (op.kind == EngineOpKind::kRebuild) sessionDesynced_ = true;
+            }
+        }
     }
     return result;
 }
@@ -196,7 +266,7 @@ void EnginePump::run() {
         {
             std::unique_lock<std::mutex> lk(mu_);
             cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
-            if (stop_ && queue_.empty()) break;
+            if (stop_) break;
             op = std::move(queue_.front());
             queue_.pop_front();
         }

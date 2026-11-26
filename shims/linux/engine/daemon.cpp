@@ -75,6 +75,7 @@ bool UnixTransport::connectSocket() {
         return false;
     }
     fd_ = fd;
+    ++connGen_;
     return true;
 }
 
@@ -161,6 +162,27 @@ bool Daemon::ensureReady() {
     // 这次没连上（daemon 启动失败或被设置窗杀掉）：允许下一次按键重新拉起。
     spawned_ = false;
     failed_ = true;
+    return false;
+}
+
+bool Daemon::tryConnectOrSpawn() {
+    if (transport_.connected()) {
+        failed_ = false;
+        return true;
+    }
+    if (connectOnce()) {
+        failed_ = false;
+        return true;
+    }
+    const std::int64_t now = g_get_monotonic_time() / 1000;
+    if (!spawned_ || now - lastSpawnMs_ >= 5000) {
+        spawned_ = true;
+        lastSpawnMs_ = now;
+        if (!spawnDaemon()) {
+            failed_ = true;
+            return false;
+        }
+    }
     return false;
 }
 

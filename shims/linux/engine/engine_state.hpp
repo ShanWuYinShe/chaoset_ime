@@ -94,9 +94,11 @@ private:
     // 失联时按节流投一个探测请求（无会话副作用）；恢复后下一键即可正常组词。
     void probeIfDown();
     std::uint64_t submit(EngineOp op);
+    std::uint64_t submitNonComposingOp(EngineOp op);
     void submitInput(const std::string& text);
     void submitPunct(const std::string& key);
     void submitPage(bool next);
+    void submitRebuild(const std::string& base, const std::string& text);
     // 纪元递增：一切在飞结果作废；清空乐观项与引擎线程积压，再投一次复位。
     void resetPipeline(bool newSession);
     // 会话收尾入口（异步：纪元递增 + 清空壳侧乐观项 + 引擎复位）。名字与旧同步
@@ -107,6 +109,8 @@ private:
     void sessionResetComposition();
     // 按音节回退（Ctrl+Backspace）：入队 + 乐观渲染，绝不等待 daemon。
     void backspaceWord();
+    void computeOptimistic(chaoset::Comp* dispOut, std::string* baseOut, std::string* textOut) const;
+    bool hasDpPending() const;
     chaoset::Comp optimisticComp() const;
     std::string optimisticInput() const;
     // 只更新显示，不改 last_（last_ 是已应用状态，候选表保持最后一次已应用候选）。
@@ -116,6 +120,11 @@ private:
     // 上屏后若用户已经继续输入，立即用乐观预编辑重建新合成。
     void renderPendingAfterCommit();
     void applyResult(const EngineResult& r);
+    void commitPunctFallback(const EngineOp& op);
+    void handleSelectPrefixFallback(const EngineResult& r, bool alreadyCommitted);
+    void startLostTimer();
+    void stopLostTimer();
+    bool onLostTimer();
     void markEngineLost();
     void scheduleRebuild();
     // 宽限期到（daemon 一直不可用）：本地内容按原始串落盘，一个键都不丢。
@@ -170,6 +179,7 @@ private:
     chaoset::Comp last_;
     guint toastId_ = 0;
     guint64 toastSeq_ = 0;
+    guint lostTimerId_ = 0;
 };
 
 // 工作线程只置 scheduled 并投一个 idle 源；主循环取结果。state 在析构时置空，

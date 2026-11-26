@@ -50,7 +50,7 @@ extension ChaosetController {
                     exitAssociate()
                 }
                 // 异步管线：本地立即丢弃组词并让引擎复位（不等待）。
-                if isComposingOptimistic() || !pendingOps.isEmpty {
+                if isComposingOptimistic() || hasDpPending() || !pendingOps.isEmpty {
                     resetEnginePipeline(keepLearning: true)
                 }
                 current = nil
@@ -87,6 +87,7 @@ extension ChaosetController {
         // 组词中 = 已应用组词态或仍在飞的按键（乐观）：结果回来前也必须拦截，
         // 否则紧随其后的按键会漏进宿主成英文。
         let isComposing = isComposingOptimistic()
+        let dpPending = hasDpPending()
 
         // Esc 键（keyCode 53）：联想模式先关闭联想窗；组词中直接全部删除
         // （清空当前组词并关闭候选窗）
@@ -95,7 +96,7 @@ extension ChaosetController {
                 exitAssociate()
                 return true
             }
-            if isComposing || !confirmedText.isEmpty {
+            if isComposing || dpPending || !confirmedText.isEmpty {
                 // 取消整条组词，**含未落盘的已确认段**——与系统拼音的 Esc 语义
                 // 一致：合成内已转换但未上屏的内容一并丢弃（2026-10-30 起
                 // 已确认段住在预编辑里，必须显式丢弃而不是留在文档里）
@@ -114,7 +115,7 @@ extension ChaosetController {
         let isDeleteKey = event.keyCode == 51 || event.keyCode == 117 || isDeleteChar
 
         if isDeleteKey {
-            if !isComposing {
+            if !isComposing && !dpPending {
                 // 联想态：与 Windows/Linux 对齐——Backspace 收起联想并消费
                 //（透传会误删刚上屏的文字）；ForwardDelete 收起联想后透传。
                 if associateCandidates != nil {
@@ -156,7 +157,7 @@ extension ChaosetController {
         }
 
         // Ctrl+U：类终端整行清空，组词中直接全部删除
-        if isComposing, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
+        if isComposing || dpPending, mods.contains(.control), (rawChars == "u" || rawChars == "\u{15}") {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
             resetEnginePipeline(keepLearning: true)
             current = nil
@@ -167,7 +168,7 @@ extension ChaosetController {
         // Ctrl+Backspace：类终端「删到行首」，组词中直接全部删除。
         // Windows/Linux 壳都有这一项（清空全部拼音并消费按键），macOS 此前
         // 缺失——同一个快捷键在三端行为不同（2026-10-29 三端一致性审查）。
-        if isComposing, mods.contains(.control),
+        if isComposing || dpPending, mods.contains(.control),
            event.keyCode == 51 || event.keyCode == 117 {
             confirmedText = "" // 同「全部删除」：未落盘的已确认段一并取消
             resetEnginePipeline(keepLearning: true)
@@ -311,7 +312,7 @@ extension ChaosetController {
            event.modifierFlags.contains(.command) == false,
            event.modifierFlags.contains(.control) == false,
            event.modifierFlags.contains(.option) == false {
-            let composing = isComposingOptimistic()
+            let composing = isComposingOptimistic() || dpPending
             let associating = !(associateCandidates?.isEmpty ?? true)
             if composing || associating {
                 halfWidth.toggle()
@@ -320,7 +321,7 @@ extension ChaosetController {
             }
             return passThrough(client)
         }
-        if event.keyCode == 49, isComposingOptimistic() {
+        if event.keyCode == 49, isComposing || dpPending {
             if hasCandidates, let cur = current {
                 // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
                 let sel = min(max(CandidatePanelController.selectedIndex, 0),
@@ -332,7 +333,8 @@ extension ChaosetController {
                 submitSelectPrefix(index: 0, text: "", syllables: [])
             } else {
                 // 残缺组词（引擎确认无候选）：顶屏原始拼音（与回车等效）。
-                let raw = optimisticInput()
+                let (_, base, text) = computeOptimistic()
+                let raw = base + text
                 resetEnginePipeline(keepLearning: true)
                 current = nil
                 client?.insertText(
@@ -379,10 +381,11 @@ extension ChaosetController {
         }
 
         // 回车：组词中不论有无候选，按回车直接将输入的原始拼音上屏，清空组词并消费回车键
-        if (chars == "\r" || chars == "\n"), isComposing {
+        if (chars == "\r" || chars == "\n"), (isComposing || dpPending || !confirmedText.isEmpty) {
             // 回车语义：已确认段按确认文本、剩余拼音（含未应用按键）按原始串
             // 一起上屏——本地立即生效，不再等引擎（commitRaw 只是回显输入串）。
-            let raw = optimisticInput()
+            let (_, base, text) = computeOptimistic()
+            let raw = base + text
             resetEnginePipeline(keepLearning: true)
             current = nil
             client?.insertText(
@@ -410,6 +413,10 @@ extension ChaosetController {
         // 语义把「组词中首选词 + 分号」放进 Committed。Shift+';' 产生 ':'，
         // 不在此列（仍走下方标点分支，与 Windows/Linux 字符级判定一致）。
         if !shuangpinScheme.isEmpty, chars == ";" {
+            if !engineAvailable() {
+                probeEngineIfDown()
+                if !isComposing && !dpPending && confirmedText.isEmpty { return passThrough(client) }
+            }
             // 异步管线：'；' 作为组词/解码键入队；committed（首选+分号）由结果
             // 应用分支一次落盘。绝不等 daemon。
             submitInput(chars)
@@ -451,7 +458,7 @@ extension ChaosetController {
             // 并节流发一个探测请求；daemon 恢复后下一键即可正常组词。
             if !engineAvailable() {
                 probeEngineIfDown()
-                if !isComposing && confirmedText.isEmpty { return passThrough(client) }
+                if !isComposing && !dpPending && confirmedText.isEmpty { return passThrough(client) }
             }
             // 异步管线：入队 + 乐观预编辑立即显示，绝不等待 daemon。
             submitInput(chars)
@@ -512,7 +519,7 @@ extension ChaosetController {
     // 已确认段先落盘——用户确认过的字不能随透传消失（旧实现里这些段
     // 早已写入文档，此处保持净效果一致）。
     private func passThrough(_ client: (any IMKTextInput)?) -> Bool {
-        if isComposingOptimistic() || !confirmedText.isEmpty {
+        if isComposingOptimistic() || hasDpPending() || !confirmedText.isEmpty {
             // 异步管线：本地立即清组词、作废在飞结果并让引擎复位（不等待）。
             resetEnginePipeline(keepLearning: true)
             current = nil

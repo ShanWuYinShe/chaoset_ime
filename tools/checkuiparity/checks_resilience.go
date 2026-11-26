@@ -281,5 +281,19 @@ func checkAsyncEnginePipeline(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, winCoreTest,
 		"testReadTimeoutKeepsConnection", "ScriptedTransport",
 		"读超时不得断开连接", "迟到响应被丢弃", "写失败必须断连",
-		"部分读取后超时（字节流已错位）必须断连", "drainStaleResponse 遇到部分读取必须断连")
+		"部分读取后超时（字节流已错位）必须断连", "drainStaleResponse 遇到部分读取必须断连",
+		"consumePrefixFallback", "dp_pending", "lastCallWasTransportError")
+
+	// o) 三端超时/断连恢复与双拼暂存键（dp_pending）一致契约：
+	checkContains(fsys, problems, group, rustSession, "pub dp_pending: String")
+	checkContains(fsys, problems, group, winCoreHpp,
+		"std::string dpPending;", "consumePrefixFallback(", "lastCallWasTransportError()")
+	checkContains(fsys, problems, group, winTransport, "connGen()")
+	checkContains(fsys, problems, group, winEnginePumpCpp, "sessionDesynced_", "syncedConnGen_")
+	checkContains(fsys, problems, group, winTipAsync,
+		"submitNonComposingOp(", "hasDpPending()", "commitPunctFallback(", "handleSelectPrefixFallback(")
+	checkContains(fsys, problems, group, macTransport,
+		"connGeneration", "lastFailureWasTransportError")
+	checkContains(fsys, problems, group, macEngineClient,
+		"var dpPending: String", "lastFailureWasTransportError", "connGeneration")
 }

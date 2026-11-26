@@ -10,6 +10,10 @@
 
 using namespace chaoset::win;
 
+namespace chaoset::win {
+volatile LONG g_liveEnginePumps = 0;
+}  // namespace chaoset::win
+
 namespace {
 
 void parseSyllables(const std::string& joined, std::vector<std::string>* out) {
@@ -57,8 +61,10 @@ void EnginePump::start(DWORD tid) {
         stop_ = false;
         alive_.store(true);
     }
+    InterlockedIncrement(&g_liveEnginePumps);
     thread_ = ::CreateThread(nullptr, 0, &EnginePump::threadProc, this, 0, nullptr);
     if (thread_ == nullptr) {
+        InterlockedDecrement(&g_liveEnginePumps);
         alive_.store(false);
         return;
     }
@@ -75,6 +81,7 @@ void EnginePump::stop() {
             return;
         }
         stop_ = true;
+        queue_.clear();
         cv_.notify_all();
         th = thread_;
         thread_ = nullptr;
@@ -115,6 +122,7 @@ void EnginePump::clearPending() {
 
 DWORD WINAPI EnginePump::threadProc(LPVOID self) {
     static_cast<EnginePump*>(self)->run();
+    InterlockedDecrement(&g_liveEnginePumps);
     return 0;
 }
 
@@ -127,7 +135,7 @@ void EnginePump::run() {
         {
             std::unique_lock<std::mutex> lk(mu_);
             cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
-            if (stop_ && queue_.empty()) break;
+            if (stop_) break;
             if (queue_.empty()) continue;
             op = std::move(queue_.front());
             queue_.pop_front();
@@ -162,15 +170,44 @@ bool EnginePump::ensureConn(bool bypassCooldown) {
 EngineResult EnginePump::exec(const EngineOp& op) {
     EngineResult r;
     r.op = op;
+    const bool isStatefulComposition =
+        op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kBackspace ||
+        op.kind == EngineOpKind::kBackspaceWord || op.kind == EngineOpKind::kNextPage ||
+        op.kind == EngineOpKind::kPrevPage || op.kind == EngineOpKind::kSelectPrefix ||
+        op.kind == EngineOpKind::kPunct;
+    // 会话已失同步（曾断连或请求超时）：禁止在空会话/未知会话上跑增量操作，
+    // 必须等 kRebuild 用 base+text 重建或 kReset/kResetComposition 复位。
+    if (isStatefulComposition && sessionDesynced_) {
+        r.ok = false;
+        r.connectionLost = true;
+        connected_.store(transport_.isConnected());
+        return r;
+    }
     // kRebuild/kProbe 负责探测恢复：不受冷却限制；其余请求在冷却期内快速失败。
     const bool bypass = (op.kind == EngineOpKind::kRebuild || op.kind == EngineOpKind::kProbe ||
                          op.kind == EngineOpKind::kReset ||
                          op.kind == EngineOpKind::kResetComposition);
     if (!ensureConn(bypass)) {
+        if (isStatefulComposition && (hadCompositionOps_ || op.kind == EngineOpKind::kInput)) {
+            sessionDesynced_ = true;
+        }
         r.ok = false;
         r.connectionLost = true;
         connected_.store(false);
         return r;
+    }
+    const std::uint64_t gen = transport_.connGen();
+    if (isStatefulComposition) {
+        if (!hadCompositionOps_) {
+            syncedConnGen_ = gen;
+        } else if (gen != syncedConnGen_) {
+            // 连接已换代（kProbe/kUserDelete 等重连到全新空会话）：拒绝跑增量操作。
+            sessionDesynced_ = true;
+            r.ok = false;
+            r.connectionLost = true;
+            connected_.store(true);
+            return r;
+        }
     }
     bool ok = false;
     std::vector<std::string> sylls;
@@ -182,9 +219,8 @@ EngineResult EnginePump::exec(const EngineOp& op) {
             break;
         }
         case EngineOpKind::kRebuild: {
-            // base="" 让 daemon 先把引擎输入串整体清空，再把壳侧已知的整串按键
-            // 逐键重放——与逐键输入逐条等价（双拼暂存半键也能重建）。
-            chaoset::Comp c = session_.input(op.text, op.halfWidth, "");
+            // op.base 是已确认/已解码前缀（双拼不二次解码），op.text 是未解码按键。
+            chaoset::Comp c = session_.input(op.text, op.halfWidth, op.base.c_str());
             ok = c.ok;
             r.comp = c;
             break;
@@ -269,15 +305,46 @@ EngineResult EnginePump::exec(const EngineOp& op) {
     if (!ok) {
         // 区分「连接/超时」与「语义失败（候选越界等）」：前者必须断连并让壳
         // 整串重建（daemon 会话已不可信）；后者连接仍好，结果按各 op 语义处理。
-        const bool ioFailure = !transport_.isConnected() || transport_.lastIoWasTimeout();
-        if (ioFailure) {
+        const bool ioFailure = !transport_.isConnected() || transport_.lastIoWasTimeout() ||
+                               session_.lastCallWasTransportError();
+        if (op.kind == EngineOpKind::kReset || op.kind == EngineOpKind::kResetComposition) {
+            // reset 失败若不断连，下轮会带着上一会话残留输入继续组词；直接关闭连接
+            // 保证下次是全新空会话。
+            transport_.closeConn();
+            connected_.store(false);
+            connectRetryAfter_ = ::GetTickCount() + kEngineReconnectCooldownMs;
+            sessionDesynced_ = false;
+            hadCompositionOps_ = false;
+            r.connectionLost = true;
+        } else if (ioFailure) {
             r.connectionLost = true;
             transport_.closeConn();
             connected_.store(false);
             connectRetryAfter_ = ::GetTickCount() + kEngineReconnectCooldownMs;
+            if (isStatefulComposition && (hadCompositionOps_ || op.kind == EngineOpKind::kInput)) {
+                sessionDesynced_ = true;
+            }
+            if (op.kind == EngineOpKind::kRebuild) sessionDesynced_ = true;
         }
     } else {
         connected_.store(true);
+        if (op.kind == EngineOpKind::kReset || op.kind == EngineOpKind::kResetComposition) {
+            syncedConnGen_ = transport_.connGen();
+            sessionDesynced_ = false;
+            hadCompositionOps_ = false;
+        } else if (op.kind == EngineOpKind::kRebuild) {
+            syncedConnGen_ = transport_.connGen();
+            sessionDesynced_ = false;
+            hadCompositionOps_ = (!r.comp.input.empty() || !r.comp.dpPending.empty()) &&
+                                 r.comp.committed.empty();
+        } else if (op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kBackspace ||
+                   op.kind == EngineOpKind::kBackspaceWord ||
+                   op.kind == EngineOpKind::kSelectPrefix) {
+            hadCompositionOps_ = (!r.comp.input.empty() || !r.comp.dpPending.empty()) &&
+                                 r.comp.committed.empty();
+        } else if (op.kind == EngineOpKind::kPunct) {
+            hadCompositionOps_ = false;
+        }
     }
     r.ok = ok;
     return r;

@@ -27,7 +27,7 @@ namespace chaoset {
 
 enum class EngineOpKind {
     kInput,           // 追加输入（不带 base）
-    kRebuild,         // base="" 清空引擎输入后重放壳侧完整输入串
+    kRebuild,         // base=op.base 重建引擎输入后重放 op.text 未解码按键
     kBackspace,
     kBackspaceWord,
     kNextPage,
@@ -46,7 +46,8 @@ struct EngineOp {
     EngineOpKind kind = EngineOpKind::kInput;
     std::uint64_t seq = 0;
     std::uint32_t epoch = 0;
-    std::string text;                    // 输入字符 / 标点键 / 联想词
+    std::string text;                    // 输入字符 / 标点键 / 联想词 / rebuild 未解码按键
+    std::string base;                    // rebuild 基底（已应用/已解码输入串）
     std::vector<std::string> sylls;      // 联想查询/联想上屏的音节序列
     std::string aux;                     // 联想删除后重查的来源音节串
     bool associate = false;              // userDelete：来源是联想面板
@@ -57,6 +58,7 @@ struct EngineOp {
 struct EngineResult {
     EngineOp op;
     bool ok = false;
+    bool connectionLost = false;
     bool deleted = false;   // userDelete：daemon 侧是否真的删到记录
     std::string committed;  // punct / associateSelect / selectPrefix 的上屏文本
     Comp comp;
@@ -64,8 +66,8 @@ struct EngineResult {
 
 // 引擎线程单次请求的等待上限。只约束工作线程，主循环从不等它。
 constexpr int kEngineRequestDeadlineMs = 200;
-// 连不上时同一窗口内不再反复走懒启动（否则积压的每个操作都会各等一次启动）。
-constexpr int kEngineReconnectCooldownMs = 1000;
+// 连不上时同一窗口内不再反复探测（kRebuild/kProbe/kReset 除外）。
+constexpr int kEngineReconnectCooldownMs = 250;
 
 class EnginePump {
 public:
@@ -109,6 +111,9 @@ private:
     bool done_ = false;
     bool joinOk_ = false;
     std::int64_t connectRetryAfterMs_ = 0;
+    bool sessionDesynced_ = false;
+    bool hadCompositionOps_ = false;
+    std::uint64_t syncedConnGen_ = 0;
 };
 
 }  // namespace chaoset

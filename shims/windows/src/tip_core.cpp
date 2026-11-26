@@ -363,6 +363,7 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
         updateInputActive(false);
         // 失焦即作废一切在飞引擎结果（纪元递增）并让引擎只丢组词：焦点回来后
         // 迟到的结果绝不能在新文档的上下文里重建预编辑。
+        const bool hadPendingCompose = isComposing() || hasDpPending();
         resetEnginePipeline(true);
         if (engineCtx_ != nullptr) {
             engineCtx_->Release();
@@ -378,6 +379,9 @@ HRESULT STDMETHODCALLTYPE ChaosetTIP::OnSetFocus(BOOL fForeground) {
             } else {
                 endComposition();
             }
+        } else if (hadPendingCompose || composition_ != nullptr) {
+            comp_ = chaoset::Comp();
+            endComposition();
         }
         return S_OK;
     }
@@ -650,8 +654,11 @@ void ChaosetTIP::onForegroundChanged(HWND fg) {
     }
     candidateWnd_.hide();
     toast_.hide();
-    if (isComposing() || !confirmedPreedit_.empty() || !assoc_.candidates.empty()) {
+    if (isComposing() || hasDpPending() || !confirmedPreedit_.empty() ||
+        !assoc_.candidates.empty() || !pendingOps_.empty()) {
         pendingStaleReset_ = true;
+        // 作废在飞异步结果（不立刻清 confirmedPreedit_，由下次按键 applyPendingStaleReset 落盘）。
+        resetSession();
         // 限流诊断（异步写盘）：前台风暴时不再每个事件写一行（审计 T5）。
         static DWORD lastLog = 0;
         const DWORD now = GetTickCount();

@@ -89,36 +89,75 @@ std::uint64_t ChaosetTIP::submitEngineOp(EngineOp op) {
     return seq;
 }
 
+std::uint64_t ChaosetTIP::submitNonComposingOp(EngineOp op) {
+    ensureEnginePump();
+    op.epoch = engineEpoch_;
+    op.seq = ++engineSeq_;
+    if (pump_) pump_->post(op);
+    return op.seq;
+}
+
 // 乐观显示：最后一个已应用组词态 + 未应用输入/退格操作的回放。
 // 只回放会改变预编辑的操作（字母/撇号/双拼 ';' 与退格），翻页/选词/标点
 // 在结果回来前不改变预编辑。候选窗始终显示 comp_ 的候选（不关闭、不清空），
 // 结果回来后按序刷新。
-chaoset::Comp ChaosetTIP::optimisticComp() const {
+void ChaosetTIP::computeOptimistic(chaoset::Comp* dispOut, std::string* baseOut,
+                                   std::string* textOut) const {
     chaoset::Comp disp = comp_;
-    std::string pending;
+    std::string pending = comp_.dpPending;
+    std::string unappliedPreedit;
     const bool shuangpin = !dpScheme_.empty();
     for (const EngineOp& op : pendingOps_) {
         switch (op.kind) {
             case EngineOpKind::kInput:
                 pending += op.text;
+                unappliedPreedit += op.text;
                 break;
             case EngineOpKind::kBackspace:
                 backspaceLocally(disp, pending, shuangpin, false);
+                if (!unappliedPreedit.empty()) unappliedPreedit.pop_back();
                 break;
             case EngineOpKind::kBackspaceWord:
                 backspaceLocally(disp, pending, shuangpin, true);
+                if (!unappliedPreedit.empty()) unappliedPreedit.pop_back();
                 break;
             default:
                 break;
         }
     }
-    disp.preedit += pending;
+    if (baseOut != nullptr) *baseOut = disp.input;
+    if (textOut != nullptr) *textOut = pending;
+    disp.input += unappliedPreedit;
+    disp.preedit += unappliedPreedit;
+    if (dispOut != nullptr) *dispOut = std::move(disp);
+}
+
+bool ChaosetTIP::hasDpPending() const {
+    std::string text;
+    computeOptimistic(nullptr, nullptr, &text);
+    return !text.empty() && optimisticComp().input.empty();
+}
+
+chaoset::Comp ChaosetTIP::optimisticComp() const {
+    chaoset::Comp disp;
+    computeOptimistic(&disp, nullptr, nullptr);
     return disp;
 }
 
 std::string ChaosetTIP::optimisticInput() const { return optimisticComp().input; }
 
 void ChaosetTIP::onWorkerEngineResult() { applyEngineResults(); }
+
+bool ChaosetTIP::onWorkerEngineTimer() {
+    if (!inputActive_ || !engineLost_) return false;
+    const DWORD now = ::GetTickCount();
+    if (static_cast<LONG>(now - engineLostTick_) >= static_cast<LONG>(kEngineGraceMs)) {
+        giveUpEngineState();
+        return false;
+    }
+    scheduleRebuild();
+    return engineLost_;
+}
 
 // 上屏（commit 结束合成）后，若用户已经在后续按键里继续输入，立即用乐观
 // 预编辑重建新合成：不能让这些键等自己的引擎结果回来才显示。
@@ -159,14 +198,154 @@ bool ChaosetTIP::applyCommitted(const std::string& text) {
 // 内容），保证下一键从干净状态开始。必须在 commit 之后调用（comp_ 已清空、
 // pendingOps_ 里只剩后续按键）。
 void ChaosetTIP::restartEngineFromLocalState() {
-    const std::string rest = optimisticInput();
+    std::string base, text;
+    computeOptimistic(nullptr, &base, &text);
+    comp_ = chaoset::Comp();
+    confirmedPreedit_.clear();
     resetEnginePipeline(false);
-    if (rest.empty()) return;
+    if (base.empty() && text.empty()) return;
     EngineOp op;
     op.kind = EngineOpKind::kRebuild;
-    op.text = rest;
+    op.base = base;
+    op.text = text;
     op.halfWidth = halfWidth_;
     submitEngineOp(op);
+}
+
+void ChaosetTIP::commitPunctFallback(const EngineOp& op) {
+    chaoset::Comp dispBefore = comp_;
+    std::string pendingBefore = comp_.dpPending;
+    bool modifiedBefore = false;
+    chaoset::Comp restComp;
+    std::string restPending;
+    const bool shuangpin = !dpScheme_.empty();
+    for (const EngineOp& pending : pendingOps_) {
+        if (pending.seq < op.seq) {
+            switch (pending.kind) {
+                case EngineOpKind::kInput:
+                    pendingBefore += pending.text;
+                    modifiedBefore = true;
+                    break;
+                case EngineOpKind::kBackspace:
+                    backspaceLocally(dispBefore, pendingBefore, shuangpin, false);
+                    modifiedBefore = true;
+                    break;
+                case EngineOpKind::kBackspaceWord:
+                    backspaceLocally(dispBefore, pendingBefore, shuangpin, true);
+                    modifiedBefore = true;
+                    break;
+                default:
+                    break;
+            }
+        } else if (pending.seq > op.seq) {
+            switch (pending.kind) {
+                case EngineOpKind::kInput:
+                    restPending += pending.text;
+                    break;
+                case EngineOpKind::kBackspace:
+                    backspaceLocally(restComp, restPending, shuangpin, false);
+                    break;
+                case EngineOpKind::kBackspaceWord:
+                    backspaceLocally(restComp, restPending, shuangpin, true);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    const std::string head =
+        (!modifiedBefore && !dispBefore.candidates.empty())
+            ? (dispBefore.candidates[0].text + pendingBefore)
+            : (dispBefore.input + pendingBefore);
+    const std::string all = confirmedPreedit_ + head + op.text;
+    confirmedPreedit_.clear();
+    comp_ = chaoset::Comp();
+    resetEnginePipeline(false);
+    if (!all.empty()) applyCommitted(all);
+    if (!restPending.empty()) {
+        EngineOp rebuild;
+        rebuild.kind = EngineOpKind::kRebuild;
+        rebuild.text = restPending;
+        rebuild.halfWidth = halfWidth_;
+        submitEngineOp(rebuild);
+        render(engineCtx_);
+    }
+}
+
+void ChaosetTIP::handleSelectPrefixFallback(const EngineResult& r) {
+    const std::string text = r.committed.empty() ? r.op.text : r.committed;
+    if (text.empty()) {
+        for (auto it = pendingOps_.begin(); it != pendingOps_.end(); ++it) {
+            if (it->seq == r.op.seq) {
+                pendingOps_.erase(it);
+                break;
+            }
+        }
+        if (!r.ok) {
+            markEngineLost(r);
+        } else if (optimisticComp().input.empty() && !hasDpPending()) {
+            if (!confirmedPreedit_.empty()) {
+                const std::string all = confirmedPreedit_;
+                confirmedPreedit_.clear();
+                comp_ = chaoset::Comp();
+                commit(engineCtx_, all);
+            } else {
+                endComposition();
+            }
+        } else {
+            render(engineCtx_);
+        }
+        return;
+    }
+    chaoset::Comp restComp;
+    std::string restPending;
+    const bool shuangpin = !dpScheme_.empty();
+    if (!r.op.syllables.empty()) {
+        const std::string rem =
+            chaoset::consumePrefixFallback(comp_.input, splitSyllables(r.op.syllables));
+        if (!rem.empty()) {
+            restComp.input = rem;
+            restComp.preedit = rem;
+            restPending = comp_.dpPending;
+        }
+    }
+    for (const EngineOp& pending : pendingOps_) {
+        if (pending.seq == r.op.seq) continue;
+        switch (pending.kind) {
+            case EngineOpKind::kInput:
+                restPending += pending.text;
+                break;
+            case EngineOpKind::kBackspace:
+                backspaceLocally(restComp, restPending, shuangpin, false);
+                break;
+            case EngineOpKind::kBackspaceWord:
+                backspaceLocally(restComp, restPending, shuangpin, true);
+                break;
+            default:
+                break;
+        }
+    }
+    const std::string all = confirmedPreedit_ + text;
+    confirmedPreedit_.clear();
+    comp_ = chaoset::Comp();
+    resetEnginePipeline(false);
+    if (!r.ok) {
+        applyCommitted(all);
+    } else {
+        ITfContext* ctx = (compCtx_ != nullptr) ? compCtx_ : engineCtx_;
+        commit(ctx, all);
+    }
+    if (!restComp.input.empty() || !restPending.empty()) {
+        EngineOp rebuild;
+        rebuild.kind = EngineOpKind::kRebuild;
+        rebuild.base = restComp.input;
+        rebuild.text = restPending;
+        rebuild.halfWidth = halfWidth_;
+        submitEngineOp(rebuild);
+        render(engineCtx_);
+    } else if (r.ok) {
+        renderAfterCommit(engineCtx_);
+    }
 }
 
 void ChaosetTIP::applyEngineResult(const EngineResult& r) {
@@ -175,11 +354,7 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
         // 重建结果（seq 更大）再一并覆盖，绝不能凭空抹掉用户刚输入的拼音。
         // 显式选词/标点/联想失败：用壳侧已显示的文本兜底上屏，绝不静默丢键。
         if (r.op.kind == EngineOpKind::kSelectPrefix) {
-            const std::string text = r.committed.empty() ? r.op.text : r.committed;
-            const std::string all = confirmedPreedit_ + text;
-            confirmedPreedit_.clear();
-            if (!text.empty()) applyCommitted(all);
-            restartEngineFromLocalState();
+            handleSelectPrefixFallback(r);
             return;
         }
         if (r.op.kind == EngineOpKind::kAssociateSelect) {
@@ -189,10 +364,7 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
             return;
         }
         if (r.op.kind == EngineOpKind::kPunct) {
-            const std::string all = confirmedPreedit_ + r.op.text;
-            confirmedPreedit_.clear();
-            if (!r.op.text.empty()) applyCommitted(all);
-            restartEngineFromLocalState();
+            commitPunctFallback(r.op);
             return;
         }
         if (r.op.kind == EngineOpKind::kUserDelete) {
@@ -228,7 +400,7 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
             }
             // 用**乐观输入**判定是否还有组词：结果回来前用户可能已经继续输入，
             // 只按 comp_.input 结束合成会让后续按键的预编辑闪断/丢失。
-            if (optimisticComp().input.empty()) {
+            if (optimisticComp().input.empty() && !hasDpPending()) {
                 if (!confirmedPreedit_.empty()) {
                     const std::string all = confirmedPreedit_;
                     confirmedPreedit_.clear();
@@ -251,17 +423,13 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
         case EngineOpKind::kSelectPrefix: {
             if (r.comp.committed.empty()) {
                 // 语义失败（越界等）：用壳侧已显示候选文本兜底上屏，绝不静默丢键。
-                const std::string all = confirmedPreedit_ + r.op.text;
-                confirmedPreedit_.clear();
-                if (!r.op.text.empty()) commit(ctx, all);
-                renderAfterCommit(ctx);
-                restartEngineFromLocalState();
+                handleSelectPrefixFallback(r);
                 return;
             }
             syncDpScheme(r.comp);
             confirmedPreedit_ += r.comp.committed;
             comp_ = r.comp;
-            if (!comp_.input.empty()) {
+            if (!comp_.input.empty() || !comp_.dpPending.empty()) {
                 render(ctx);
                 return;
             }
@@ -283,12 +451,14 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
         case EngineOpKind::kAssociateSelect: {
             const std::string text = r.committed.empty() ? r.op.text : r.committed;
             if (!text.empty() && applyCommitted(text)) {
+                clearAssociate();
                 if (!r.op.syllables.empty()) enterAssociate(r.op.syllables);
                 renderAfterCommit(ctx);
             }
             return;
         }
         case EngineOpKind::kAssociate: {
+            if (isComposing() || hasDpPending()) return;
             if (r.comp.candidates.empty()) {
                 clearAssociate();
                 return;
@@ -314,15 +484,18 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
                     EngineOp op;
                     op.kind = EngineOpKind::kAssociate;
                     op.syllables = r.op.aux;
-                    submitEngineOp(op);
+                    submitNonComposingOp(op);
                 }
                 return;
             }
             // 组词态：整串重建刷新候选（不再同步重放 input）
-            if (!optimisticInput().empty()) {
+            std::string base, text;
+            computeOptimistic(nullptr, &base, &text);
+            if (!base.empty() || !text.empty()) {
                 EngineOp op;
                 op.kind = EngineOpKind::kRebuild;
-                op.text = optimisticInput();
+                op.base = base;
+                op.text = text;
                 op.halfWidth = halfWidth_;
                 submitEngineOp(op);
             }
@@ -344,6 +517,7 @@ void ChaosetTIP::markEngineLost(const EngineResult& /*r*/) {
         if (diagBudget()) diagPrintf(L"tsf.log", "engine lost (async)\n");
     }
     postDaemonConnect();  // 零等待：worker 负责拉起 daemon（AC 宿主自行跳过）
+    startEngineLostTimer();
     const DWORD now = ::GetTickCount();
     if (static_cast<LONG>(now - engineLostTick_) >= static_cast<LONG>(kEngineGraceMs)) {
         giveUpEngineState();
@@ -354,12 +528,16 @@ void ChaosetTIP::markEngineLost(const EngineResult& /*r*/) {
 
 void ChaosetTIP::scheduleRebuild() {
     if (!engineLost_ || !pump_) return;
+    std::string base, text;
+    computeOptimistic(nullptr, &base, &text);
+    if (base.empty() && text.empty()) return;
     const DWORD now = ::GetTickCount();
     if (static_cast<LONG>(now - lastRebuildTick_) < static_cast<LONG>(kRebuildIntervalMs)) return;
     lastRebuildTick_ = now;
     EngineOp op;
     op.kind = EngineOpKind::kRebuild;
-    op.text = optimisticInput();  // 壳侧已知整串：重建后逐键等价
+    op.base = base;
+    op.text = text;  // base=已解码前缀，text=未解码按键（双拼不二次解码）
     op.halfWidth = halfWidth_;
     submitEngineOp(op);
 }
@@ -368,7 +546,9 @@ void ChaosetTIP::scheduleRebuild() {
 // 清空管线（纪元++ 丢弃在飞结果，取消积压并断开连接）。
 void ChaosetTIP::giveUpEngineState() {
     const chaoset::Comp disp = optimisticComp();
-    const std::string raw = confirmedPreedit_ + disp.input;
+    std::string base, text;
+    computeOptimistic(nullptr, &base, &text);
+    const std::string raw = confirmedPreedit_ + (!text.empty() ? (base + text) : disp.input);
     ITfContext* ctx = (compCtx_ != nullptr) ? compCtx_ : engineCtx_;
     resetEnginePipeline(true);
     if (raw.empty()) {
@@ -387,6 +567,7 @@ void ChaosetTIP::giveUpEngineState() {
 void ChaosetTIP::resetEnginePipeline(bool newSession) {
     ++engineEpoch_;
     pendingOps_.clear();
+    comp_.dpPending.clear();
     engineLost_ = false;
     engineLostTick_ = 0;
     lastRebuildTick_ = 0;

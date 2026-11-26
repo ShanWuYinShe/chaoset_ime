@@ -43,6 +43,8 @@ public:
     virtual void onWorkerShowToast(int id) = 0;
     // 每 TIP 的引擎线程把结果回投到本线程：取走并应用（绝不在这里做 I/O）。
     virtual void onWorkerEngineResult() = 0;
+    // 失联重建/宽限定时器触发：返回 true 表示仍需保持定时器。
+    virtual bool onWorkerEngineTimer() = 0;
 };
 
 // 按线程的 TIP 注册表与消息窗口（Thread_local；窗口过程见 tip_thread.cpp）。
@@ -55,6 +57,7 @@ extern thread_local HWND g_tlTipMsgWnd;                        // 本线程 mess
 extern volatile LONG g_liveTipMsgWindows;
 
 HWND ensureTipMsgWnd();
+void startEngineLostTimer();
 void registerTipOnThread(TipThreadSink* tip);
 void unregisterTipFromThread(TipThreadSink* tip);
 void addTipToThreadHookList(TipThreadSink* tip);

@@ -86,6 +86,8 @@ thread_local HWINEVENTHOOK g_tlFgHook = nullptr;
 thread_local std::vector<TipThreadSink*> g_tlFgTips;  // 本线程全部 TIP（消息派发）
 thread_local std::vector<TipThreadSink*> g_tlHookTips;  // 已挂前台钩子的 TIP
 thread_local HWND g_tlTipMsgWnd = nullptr;  // 本线程 message-only 窗口
+thread_local bool g_tlEngineTimerArmed = false;
+constexpr UINT_PTR kEngineLostTimerId = 1;
 
 void addTipToThreadHookList(TipThreadSink* tip) {
     for (TipThreadSink* p : g_tlHookTips) {
@@ -110,10 +112,27 @@ void removeTipFromThreadHookList(TipThreadSink* tip) {
 static LRESULT CALLBACK tipMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_NCDESTROY:
-            if (g_tlTipMsgWnd == hwnd) g_tlTipMsgWnd = nullptr;
+            if (g_tlTipMsgWnd == hwnd) {
+                g_tlTipMsgWnd = nullptr;
+                g_tlEngineTimerArmed = false;
+            }
             unregTipWnd(hwnd);
             InterlockedDecrement(&g_liveTipMsgWindows);
             return 0;
+        case WM_TIMER:
+            if (wParam == kEngineLostTimerId) {
+                bool keep = false;
+                std::vector<TipThreadSink*> tips = g_tlFgTips;
+                for (TipThreadSink* tip : tips) {
+                    if (tip != nullptr && tip->onWorkerEngineTimer()) keep = true;
+                }
+                if (!keep) {
+                    KillTimer(hwnd, kEngineLostTimerId);
+                    g_tlEngineTimerArmed = false;
+                }
+                return 0;
+            }
+            break;
         case kTipForegroundMsg: {
             HWND fg = reinterpret_cast<HWND>(wParam);
             for (TipThreadSink* tip : g_tlFgTips) {
@@ -160,6 +179,14 @@ HWND ensureTipMsgWnd() {
     InterlockedIncrement(&g_liveTipMsgWindows);
     regTipWnd(GetCurrentThreadId(), wnd);
     return wnd;
+}
+
+void startEngineLostTimer() {
+    HWND wnd = ensureTipMsgWnd();
+    if (wnd == nullptr || g_tlEngineTimerArmed) return;
+    if (SetTimer(wnd, kEngineLostTimerId, 100, nullptr) != 0) {
+        g_tlEngineTimerArmed = true;
+    }
 }
 
 void registerTipOnThread(TipThreadSink* tip) {
