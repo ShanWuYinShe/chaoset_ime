@@ -516,7 +516,8 @@ for (ch, code) in [("n", 45), ("i", 34), ("h", 4), ("a", 0), ("o", 31),
                     ("s", 1), ("h", 4), ("i", 34), ("j", 38), ("i", 34), ("e", 14)] {
     _ = k(ev(ch, UInt16(code)), client: m)
 }
-_ = k(ev("1", 18), client: m)  // 先确认前半（e.g. 你好 → confirmedText）
+_ = k(ev("1", 18), client: m)  // 先确认前半（confirmedText）
+let firstConfirmed = c.confirmedText
 let remInputBeforeFail = c.current?.input ?? ""
 let remPickText = c.current?.candidates.first?.text ?? ""
 let selFailInsertedBefore = m.inserted.count
@@ -524,8 +525,9 @@ EnginePipeline.failureInjectionForTests = true
 _ = k(ev("1", 18), client: m)  // 在剩余组词上再次选词并失败兜底
 let selFailCommitted = m.inserted[selFailInsertedBefore...].last(where: { !$0.isEmpty }) ?? ""
 check("渐进上屏选词失败兜底保留已确认段",
-      !remPickText.isEmpty && selFailCommitted == "你好" + remPickText && c.confirmedText.isEmpty,
-      "remIn=\(remInputBeforeFail) got=\(selFailCommitted)")
+      !firstConfirmed.isEmpty && !remPickText.isEmpty && selFailCommitted == firstConfirmed + remPickText
+      && c.confirmedText.isEmpty && c.optimisticInput().isEmpty,
+      "first=\(firstConfirmed) remIn=\(remInputBeforeFail) remPick=\(remPickText) got=\(selFailCommitted) opt=\(c.optimisticInput())")
 EnginePipeline.failureInjectionForTests = false
 _ = k(ev("", 53), client: m)
 

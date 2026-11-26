@@ -415,7 +415,7 @@ extension ChaosetController {
             }
             exitAssociate()
             if !r.op.syllables.isEmpty { enterAssociate(sylls: r.op.syllables, client: client) }
-            refresh(client)
+            if !(optimisticComp()?.preedit.isEmpty ?? true) { refresh(client) }
         case .associate:
             if isComposingOptimistic() || hasDpPending() {
                 refresh(client)
