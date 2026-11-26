@@ -2,7 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.7.0（2026-11-26）
+
+> 从 v0.6.4 升级：本版本将三端输入管线统一升级为异步无阻塞架构，并对齐超时重连、双拼半键重建与失败兜底语义；**无行为不兼容变化**，配置、用户词典与 IPC 协议（可选字段 `dp_pending` 向后兼容）均兼容旧版。
+
+- **修复(三端/IPC/守护进程)：对齐超时重连、双拼重建与异步管线失败兜底行为（PR #157，issue #149）**：
+  - Rust 引擎与 IPC：`Composition` 新增可选字段 `dp_pending`（仅双拼未配对半键时序列化），支持壳侧把「已解码前缀 `base`」与「未配对半键+后续按键 `text`」分开重建；`chaosetd` Unix 端将单实例锁提前至加载词库前（与 Windows 对齐），避免并发懒启动期间重复加载词库。
+  - 共享 IPC（`shims/common/ipc`）：`parseComposition` 解析 `dp_pending`；新增 `consumePrefixFallback`（支持撇号与省写规则 `iu/iou`、`ui/uei`、`un/uen` 及 `v/u` 归一）供前缀选词失败兜底保留未消费后缀；新增 `Session::lastCallWasTransportError()` 区分传输/超时故障与 daemon JSON 业务错误。
+  - 三端异步管线与生命周期统一对齐：Windows（`engine_pump` / `tip_async` / `tip_thread`）、Linux（`EnginePump` / `async_pipeline` / `daemon`）与 macOS（`EnginePipeline` / `DaemonTransport` / `EngineClient` / `ChaosetControllerAsync`）统一加入连接代数（`connGen` / `connGeneration`）与 `sessionDesynced` 守卫拦截重连空会话误发有状态请求、有状态调用禁用无条件重试、`disconnect()` 清零读超时标志、100ms 失联重建与 2s 宽限落盘定时器、`submitNonComposingOp` 分流联想/删词不污染组词队列、标点失败保留未改动候选首选、前缀选词失败仅重建剩余后缀、以及延迟 `kAssociate` 结果不抢占新一轮组词；Linux `EnginePump` 改用非阻塞节流连接避免阻塞主循环，Windows `g_liveEnginePumps` 纳入 `DllCanUnloadNow()` 并修复三端工作线程退出队列清理。补齐 Rust / C++ `core_test` / macOS `key_routing` 回归及 `checkuiparity` 三端契约锁定。
 
 - **改进(Windows 壳)：TSF 按键路径改为异步引擎管线，daemon 慢/挂起不再阻塞宿主 UI 线程（issue #149）**：旧实现每次按键都在**宿主 UI 线程**上同步等 daemon（30ms 截止），超时进失步状态机、选词键只刷新候选——把截止调大只是用更久的阻塞换更少的误判，弱性能机器上不成立。现在每个 TIP 一个引擎线程（`engine_pump`，独占自己的 daemon 连接——组词会话按连接隔离，同进程多个 TIP 不能共用），按键只做三件事：操作压入 `pendingOps_`、用 `optimisticComp()`（最后已应用组词态 + 未应用输入/退格回放）立即渲染**乐观预编辑**、再投递；结果按 seq 回投到 message-only 窗口（`kTipEngineResultMsg`）后顺序应用。**按键路径不再有任何 IPC 等待，也没有按键截止阈值**。失败语义：成功结果先丢弃已覆盖的乐观项再更新组词/候选/上屏；失败结果**不弹出乐观项**（本地显示保留到整串重建覆盖）；失焦/取消/合成被宿主终止一律 `resetEnginePipeline` 递增纪元、清空管线并丢弃引擎积压；daemon 不可用按节流用 `kRebuild`（`base` 空 + 壳侧完整输入串）整串重建，2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点在失败时用壳侧已显示文本兜底上屏。候选窗始终显示最后一次已应用组词态的候选、结果回来按序刷新（不关闭、不清空）。`tip_desync.cpp` 只剩与引擎无关的本地编辑原语；`checkuiparity`「超时韧性」组重写为「异步引擎管线」组（零等待/顺序应用/失败不弹乐观项/纪元作废/宽限落盘/线程隔离/卸载 join 等 11 个变异测试），`docs/ui-parity.md`、`docs/architecture.md` 与 AGENTS.md 零阻塞契约同步。
 
