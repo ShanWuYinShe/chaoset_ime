@@ -2,15 +2,14 @@
 
 本文件记录各阶段的功能、修复与验收结论；README 只保留当前架构、安装与使用文档。
 
-## 未发布
+## v0.7.0（2026-11-26）
 
+> 从 v0.6.4 升级：本次核心是三端壳的按键路径统一改为**异步引擎管线**（issue #149）——daemon 慢/挂起不再阻塞宿主 UI 主线程、不再因长尾延迟误拆组词，失败时保留本地输入；同时修复 issue #147 的字母大小写、错拼纠错位次与选词失败兜底。候选排序与学习契约、配置与数据格式均未变，除错拼纠错位次外无行为变化。
 - **改进(Windows 壳)：TSF 按键路径改为异步引擎管线，daemon 慢/挂起不再阻塞宿主 UI 线程（issue #149）**：旧实现每次按键都在**宿主 UI 线程**上同步等 daemon（30ms 截止），超时进失步状态机、选词键只刷新候选——把截止调大只是用更久的阻塞换更少的误判，弱性能机器上不成立。现在每个 TIP 一个引擎线程（`engine_pump`，独占自己的 daemon 连接——组词会话按连接隔离，同进程多个 TIP 不能共用），按键只做三件事：操作压入 `pendingOps_`、用 `optimisticComp()`（最后已应用组词态 + 未应用输入/退格回放）立即渲染**乐观预编辑**、再投递；结果按 seq 回投到 message-only 窗口（`kTipEngineResultMsg`）后顺序应用。**按键路径不再有任何 IPC 等待，也没有按键截止阈值**。失败语义：成功结果先丢弃已覆盖的乐观项再更新组词/候选/上屏；失败结果**不弹出乐观项**（本地显示保留到整串重建覆盖）；失焦/取消/合成被宿主终止一律 `resetEnginePipeline` 递增纪元、清空管线并丢弃引擎积压；daemon 不可用按节流用 `kRebuild`（`base` 空 + 壳侧完整输入串）整串重建，2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点在失败时用壳侧已显示文本兜底上屏。候选窗始终显示最后一次已应用组词态的候选、结果回来按序刷新（不关闭、不清空）。`tip_desync.cpp` 只剩与引擎无关的本地编辑原语；`checkuiparity`「超时韧性」组重写为「异步引擎管线」组（零等待/顺序应用/失败不弹乐观项/纪元作废/宽限落盘/线程隔离/卸载 join 等 11 个变异测试），`docs/ui-parity.md`、`docs/architecture.md` 与 AGENTS.md 零阻塞契约同步。
 
 - **改进(Linux ibus 壳)：按键路径改为异步引擎管线，daemon 慢/挂起不再阻塞输入法主循环（issue #149 三端统一）**：旧实现 `processKeyEvent` 在 ibus 主循环线程同步调用 daemon（`SO_RCVTIMEO` 300ms、懒启动最长约 5s），daemon 一慢整个输入法连同候选窗一起停摆。现在每个 engine 实例一个 `EnginePump` 线程独占 daemon 连接、FIFO 执行（200ms 截止），按键只入队 + 用 `optimisticComp()` 立即渲染乐观预编辑；结果经 `g_idle_add_full` 回投主循环、按 seq 应用（纪元不匹配的过期结果丢弃）。失败结果不弹出乐观项；显式选词/联想/标点失败用壳侧已显示文本兜底上屏；daemon 不可用保留本地组词，`kRebuild` 整串重建，2s 宽限后按原始串落盘。候选表/预编辑只在既有语义路径（focus_out、Esc/取消、上屏、模式切换）关闭。`checkuiparity` 新增「Linux 异步引擎管线」组与变异测试；`build.sh` 纳入新 TU。
 
 - **改进(macOS 壳)：IMK 按键路径改为异步引擎管线，daemon 慢/挂起/失败不再阻塞宿主 App、也不关闭候选窗（issue #149，与 Windows PR #153 同一设计）**：每个 `ChaosetController` 一个 `EnginePipeline` 引擎线程独占自己的 daemon 连接（组词会话按连接隔离）；IMK 回调只入队 + 用乐观组词态（最后已应用 Comp + 未应用输入/退格回放）立即刷新预编辑，结果按 seq 回主队列顺序应用。失败结果不弹出乐观项、不关候选窗；失焦/取消递增纪元作废在飞结果；daemon 不可用按节流整串重建（base 空 + 完整输入串），2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点用壳侧已显示文本兜底上屏；按音节退格（⌥⌫）同样在乐观窗口本地回放（末段整段删除、用户自己敲的分隔符保留在输入串），与 Windows/Linux 在结果回来前的显示行为一致。`checkuiparity` 新增「macOS 异步引擎管线」组（含变异测试），旧「超时韧性」组只保留 Linux/Windows 同步壳断言；`docs/ui-parity.md` 同步契约。
-
-- **改进(Windows 壳)：TSF 按键请求的 IPC 截止时间 30ms → 150ms，失步重建单独用 30ms，正常输入不再被长尾延迟误判成失步（issue #149）**：TSF 回调在**宿主 UI 线程**上同步执行，壳侧给每个引擎请求 30ms 截止；该值低于整链路实测长尾（8 核满载 p99 17–20ms、最大 31–57ms，见 v0.3.9 实测），长输入与系统繁忙时会误判超时并进入失步态——而失步期的选词/翻页键按契约只重建并刷新候选、不执行本次选词，用户体感是「按数字/空格没上屏」。现在正常按键截止放宽到 **150ms**（约 2.6 倍实测最坏整链路往返），覆盖长尾且远小于 macOS/Linux 独立进程壳的 250/300ms；**失步期的重建请求单独用 30ms 短截止**——此时用户已在本地组词，重建只为尽快回到同步态，daemon 繁忙/挂起时不会把宿主 UI 线程按在长截止上（150ms 只用于健康路径的长尾，不用于已降级的路径）。两档都走命名常量（`kKeyRequestDeadlineMs` / `kDesyncRebuildDeadlineMs`，`shims/windows/src/transport.hpp`），`checkuiparity`「超时韧性」组新增常量值/两处使用/切换顺序/禁止字面量断言与 4 个变异测试，`docs/ui-parity.md` 与 AGENTS.md 的零阻塞契约同步写入取值理由。 **该阈值方案随后被异步引擎管线取代（见上一条：两档常量与同步等待路径已删除）。**
 
 - **修复(Windows 壳)：Shift/CapsLock 大写字母不再漏进宿主并修复 CapsLock 对 Shift 语义的干扰（issue #147）**：Windows `OnTestKeyDown` 与 `wouldHandle` 此前对字母加了 `!shiftActive()` 守卫，导致 Shift/CapsLock 下在组词态继续输入大写字母会结束当前组词并直接放行成宿主文本；同时 `shiftActive()` 把 `VK_CAPITAL` 混入 `VK_SHIFT`，既让失步恢复（`tip_desync.cpp`）里的 `shift != capsOn` 互相抵消而丢掉 CapsLock 大写，也在开启 CapsLock 时破坏数字选词 1-9、`-`/`=`/`[`/`]` 翻页、标点键位与 `Ctrl+U`。现将该方法收口为只读物理 `VK_SHIFT` 的 `shiftDown()`，三端均统一把 `A-Z` 保留在组词中并按原始大小写供回车原样上屏；`checkuiparity`「字母入组词大小写」组新增三端静态与变异回归。
 
@@ -21,7 +20,6 @@
   - 预编辑不再做别名归一：`preedit_with_case` 旧实现遇到同长度异字符（`lue→lve`、`nue→nve`）会用规范拼写替换用户字符，大写 `LUE`/`NUE` 显示成 `LvE`/`NvE`，`niou` 则被改写成 `niu`；现在长度一致时只插入音节分隔符、字符一律取原始输入，长度不一致时原样返回输入。补 `huashetianzu`/`xiaoxiexiaoxi`（含大写与手工分词）可选中、渐进选词剩余大小写保留的原始样例回归，冻结 41 场景快照不变。
 
 - **修复(Windows/macOS 壳)：`selectPrefix` / 选词失败路径幂等与候选兜底收敛（issue #147）**：macOS `EngineClient.selectPrefix` 禁用自动重试（避免前缀消费写操作在读超时/重连下二次触发），且 `ChaosetController.commit(index:)` 在 `selectPrefix` 因读超时返回 `nil` 时不再补发 `engine.select(index)`（防止误上屏第二段候选），改为直接上屏本机已缓存候选文本并 `resetComposition()`；Windows 数字/空格选词及候选点选/联想点选失败路径补全对本机候选文本的退化上屏，防止服务端短暂不可达时静默吞键或丢字；`checkuiparity`「超时韧性」组新增对应断言与变异测试。
-
 
 ## v0.6.4（2026-11-25）
 
