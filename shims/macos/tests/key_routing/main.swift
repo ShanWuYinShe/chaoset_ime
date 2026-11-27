@@ -457,7 +457,10 @@ check("在飞加载占位：候选窗保持可见且无候选",
 c.settleEngineForTests()
 EnginePipeline.failureInjectionForTests = true
 _ = k(ev("h", 4), client: m)
-check("daemon 失败：乐观预编辑保留", m.marked.contains("nioh"), "marked=\(m.marked)")
+// 乐观预编辑 = 已应用 preedit（引擎对 nio 插了音节分隔符 → "ni'o"）+ 未应用按键
+// 原样拼接（三端 computeOptimistic 契约）；daemon 恢复后引擎对 nioh 的组词串同为
+// "ni'oh"，乐观显示与最终显示一致。
+check("daemon 失败：乐观预编辑保留", m.marked.contains("ni'oh"), "marked=\(m.marked)")
 check("daemon 失败：候选窗不关闭", CandidatePanelController.isVisible,
       "visible=\(CandidatePanelController.isVisible) items=\(CandidatePanelController.itemCount)")
 EnginePipeline.failureInjectionForTests = false
