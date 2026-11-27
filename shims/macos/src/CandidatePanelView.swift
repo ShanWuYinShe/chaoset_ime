@@ -370,7 +370,11 @@ final class CandidatePanelView: NSView {
         let blockTop = (bounds.height - blockH) / 2
         let hasNext = page + 1 < pageCount
         let hasPrev = page > 0
-        if pageCount <= 1 {
+        if pageCount == 0 {
+            // loading 占位（layoutLoading 的 pageCount=0）：不画箭头，与 Windows
+            // loading 分支清空 chevronUpRect_/chevronDownRect_ 同语义——否则单页
+            // 置灰双箭头在 pageH=0 时上下叠成菱形（2026-11-28 截图走查发现）。
+        } else if pageCount == 1 {
             // 单页：没有上一页/下一页，两枚箭头置灰（不可点，保留控制区形态）。
             let dimColor = theme.chevron.withAlphaComponent(theme.chevron.alphaComponent / 3)
             drawChevron(x: chevX, y: blockTop + arrowH / 2, arm: 3, color: dimColor, dirDown: false)
