@@ -143,53 +143,76 @@ void CandidateWindow::setOwner(HWND owner) {
 // 无效」：TOPMOST 窗口没及时隐藏就会吃掉点击。
 void CandidateWindow::setActiveGate(bool active) { activeGate_ = active; if (!active) hide(); }
 
-
-void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, CandidateWindowHost* host) {
-    if (!activeGate_) {
-        // 非激活：一律不显示（也不建窗），避免任何意义上抢屏幕/挡点击。
-        hide();
-        return;
-    }
-    if (comp.candidates.empty()) {
-        hide();
-        return;
-    }
-    // 全屏免打扰：D3D 全屏游戏/演示模式下不显示候选窗（注册表可关）。
-    // 配置查询带 TTL 缓存：不再每个按键两次注册表/Shell 查询（审计 T10）。
+bool CandidateWindow::beginShow(HINSTANCE hinst, POINT pt, int lineH,
+                                CandidateWindowHost* host, bool dark) {
     if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
         hide();
         if (diagBudget()) {
             diagPrintf(L"tsf.log", "candidate suppressed (fullscreen) anchor=%ld,%ld\n",
                        static_cast<long>(pt.x), static_cast<long>(pt.y));
         }
-        return;
+        return false;
     }
-    // 候选集合/页码/输入串变化 = 新输入、翻页、选词或删除刷新：页内预选
-    // 归零（方向键预选的生命周期契约）。仅移动预选不会重新 show（TIP 直接
-    // 调 moveSelection 重绘），因此这里不会把用户的选择重置掉。
-    const bool keepSelection = sameCandidateSet(comp_, comp);
-    comp_ = comp;
-    if (!keepSelection) selectedIndex_ = 0;
     tip_ = host;
     targetPos_ = pt;
     targetLineHeight_ = lineH;
+    lastDark_ = dark;
     ensureWindow(hinst);
     if (hwnd_ == nullptr) {
-        // 创建失败此前完全静默：开始菜单「看不到候选窗」时无法区分
-        // 「没建出来」与「建了但被盖住/跑到屏幕外」（2026-10-30 排障）。
         if (diagBudget()) {
             diagPrintf(L"tsf.log", "candidate window create FAILED err=%lu anchor=%ld,%ld\n",
                        static_cast<unsigned long>(GetLastError()),
                        static_cast<long>(pt.x), static_cast<long>(pt.y));
         }
-        return;
+        return false;
     }
-
-    layoutAndPosition();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    return true;
 }
 
+void CandidateWindow::show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp, CandidateWindowHost* host) {
+    if (!activeGate_ || comp.candidates.empty()) {
+        hide();
+        return;
+    }
+    // 候选集合/页码/输入串变化时页内预选归零；移动预选走 moveSelection，不触发 show。
+    const bool keepSelection = sameCandidateSet(comp_, comp);
+    const bool dark = cachedDarkTheme();
+    if (!loading_ && keepSelection && hwnd_ != nullptr && IsWindow(hwnd_) &&
+        IsWindowVisible(hwnd_) && tip_ == host && targetPos_.x == pt.x &&
+        targetPos_.y == pt.y && targetLineHeight_ == lineH && lastDark_ == dark &&
+        !items_.empty()) {
+        return;  // 候选/锚点/主题/可见态全部一致：跳过 GDI 重排与整窗重绘
+    }
+    loading_ = false;
+    comp_ = comp;
+    if (!keepSelection) selectedIndex_ = 0;
+    if (!beginShow(hinst, pt, lineH, host, dark)) return;
+
+    layoutAndPosition();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!IsWindowVisible(hwnd_)) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+}
+
+void CandidateWindow::showLoading(HINSTANCE hinst, POINT pt, int lineH, CandidateWindowHost* host) {
+    if (!activeGate_) {
+        hide();
+        return;
+    }
+    const bool dark = cachedDarkTheme();
+    if (loading_ && hwnd_ != nullptr && IsWindow(hwnd_) && IsWindowVisible(hwnd_) &&
+        tip_ == host && targetPos_.x == pt.x && targetPos_.y == pt.y &&
+        targetLineHeight_ == lineH && lastDark_ == dark) {
+        return;
+    }
+    loading_ = true;
+    comp_ = chaoset::Comp();
+    selectedIndex_ = 0;
+    if (!beginShow(hinst, pt, lineH, host, dark)) return;
+
+    layoutAndPosition();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!IsWindowVisible(hwnd_)) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+}
 
 void CandidateWindow::hide() {
     if (contextMenuTracking_) return;  // 菜单模态跟踪期间阻止误杀候选窗
@@ -198,6 +221,10 @@ void CandidateWindow::hide() {
     chevronPressed_ = 0;
     // 收起即丢弃页内预选与布局缓存：下次 show 重新布局后从第一项开始。
     selectedIndex_ = 0;
+    loading_ = false;
+    lastRealWinW_ = 0;
+    loadingDotRect_ = {};
+    lastWindowRect_ = {};
     items_.clear();
     if (hwnd_ != nullptr && IsWindow(hwnd_)) {
         ShowWindow(hwnd_, SW_HIDE);
@@ -225,7 +252,7 @@ bool CandidateWindow::moveSelection(int delta) {
     const int next = selectedIndex_ + delta;
     if (next < 0 || next >= static_cast<int>(items_.size())) return false;
     selectedIndex_ = next;
-    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, TRUE);
+    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }
 
@@ -241,7 +268,7 @@ void CandidateWindow::setSelectedIndex(int index) {
     if (clamped > last) clamped = last;
     if (clamped == selectedIndex_) return;
     selectedIndex_ = clamped;
-    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, TRUE);
+    if (hwnd_ != nullptr && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 
@@ -547,186 +574,146 @@ void CandidateWindow::layoutAndPosition() {
     //（与 mac 一致：数字键仍可能选中不可见项，文档记录为已知边角）。
     items_.clear();
 
-    // 面板最大内容宽度：与 macOS CandidatePanel.layoutRows 的公式逐项对齐
-    // （2026-10-30 审计 A11）：窗宽上限 720pt，扣内边距*2、翻页区 36pt、
-    // 齿轮区 26pt、首选胶囊外扩 pillMargin*2、2pt 安全余量，得 638pt。
+    // 面板最大内容宽度：与 macOS 638pt 口径对齐。
     constexpr int kMaxWidthPt = 720;
     constexpr int kMaxContentPt = kMaxWidthPt - 7 * 2 - 36 - 26 - 2 * 2 - 2;  // 638pt
     constexpr int kMaxRows = 3;  // mac Layout.maxRows
     const int maxContent = pt(kMaxContentPt, dpi);
     const int lineSpacing = pt(4, dpi);  // mac Layout.lineSpacing
-    const wchar_t* kEllipsis = L"…";
+    const int minW = pad * 2 + chevronBoxW + gearBoxW + pt(8, dpi);
+    int winW = minW;
+    int winH = (std::max)(pad * 2 + contentH, pt(20, dpi));
 
-    std::vector<chaoset::layout::Box> boxes;
-    std::vector<ItemPos> measured;
-    boxes.reserve(comp_.candidates.size());
-    measured.reserve(comp_.candidates.size());
-    for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
-        ItemPos item;
-        item.index = static_cast<int>(i);
-        item.isFirst = (i == 0);
-        item.fromUser = comp_.candidates[i].fromUser;
-        item.indexStr = std::to_wstring(i + 1);
-        item.textStr = toWide(comp_.candidates[i].text);
-
-        int padX = item.isFirst ? firstPadLeft : itemPadX;
-
-        SelectObject(memDC, fontIndex);
-        SIZE szIdx{};
-        GetTextExtentPoint32W(memDC, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()), &szIdx);
-
+    if (loading_) {
+        selectedIndex_ = 0;
+        chevronUpRect_ = {};
+        chevronDownRect_ = {};
+        flipPageH_ = 0;
         SelectObject(memDC, fontNormal);
-        SIZE szTxt{};
-        GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+        SIZE szDots{};
+        GetTextExtentPoint32W(memDC, L"...", 3, &szDots);
+        const int totalW = pad * 2 + firstPadLeft * 2 + szDots.cx + chevronBoxW + gearBoxW;
+        winW = (std::max)(totalW, minW);
+        if (IsWindowVisible(hwnd_) && lastRealWinW_ > 0) winW = (std::max)(winW, lastRealWinW_);
+        const int dotsTop = pad + (contentH - tmText.tmHeight) / 2;
+        loadingDotRect_ = RECT{pad + firstPadLeft, dotsTop,
+                               pad + firstPadLeft + szDots.cx, dotsTop + tmText.tmHeight};
+        settingsRect_ = RECT{winW - chevronBoxW - gearBoxW, 0, winW - chevronBoxW, winH};
+        dividerX_ = settingsRect_.left + pt(2, dpi);
+    } else {
+        const wchar_t* kEllipsis = L"…";
+        std::vector<chaoset::layout::Box> boxes;
+        std::vector<ItemPos> measured;
+        boxes.reserve(comp_.candidates.size());
+        measured.reserve(comp_.candidates.size());
+        for (std::size_t i = 0; i < comp_.candidates.size(); ++i) {
+            ItemPos item;
+            item.index = static_cast<int>(i);
+            item.isFirst = (i == 0);
+            item.fromUser = comp_.candidates[i].fromUser;
+            item.indexStr = std::to_wstring(i + 1);
+            item.textStr = toWide(comp_.candidates[i].text);
+            int padX = item.isFirst ? firstPadLeft : itemPadX;
 
-        // 学习标记宽度：与 mac 同口径——"*"（正文字体）宽度 + 2pt
-        //（CandidatePanel.layoutRows 的 markW = ceil("*"宽度)+2；
-        // draw 时在文本后 +1pt 起画，advance 加上该 markW）。
-        int markW = 0;
-        if (item.fromUser) {
-            SIZE szMark{};
-            GetTextExtentPoint32W(memDC, L"*", 1, &szMark);
-            markW = szMark.cx + pt(2, dpi);
+            SelectObject(memDC, fontIndex);
+            SIZE szIdx{};
+            GetTextExtentPoint32W(memDC, item.indexStr.c_str(), static_cast<int>(item.indexStr.size()), &szIdx);
+            SelectObject(memDC, fontNormal);
+            SIZE szTxt{};
+            GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+
+            int markW = 0;
+            if (item.fromUser) {
+                SIZE szMark{};
+                GetTextExtentPoint32W(memDC, L"*", 1, &szMark);
+                markW = szMark.cx + pt(2, dpi);
+            }
+            int chipW = szIdx.cx + chipPadX * 2;
+            int chipTextGap = (std::max)(pt(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
+            const int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
+            if (itemW > maxContent) {
+                const int avail = (std::max)(
+                    maxContent - padX * 2 - chipW - chipTextGap - markW, pt(20, dpi));
+                if (szTxt.cx > avail) {
+                    SIZE szEll{};
+                    SelectObject(memDC, fontNormal);
+                    GetTextExtentPoint32W(memDC, kEllipsis, 1, &szEll);
+                    while (item.textStr.size() > 1) {
+                        item.textStr.resize(item.textStr.size() - 1);
+                        GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+                        if (szTxt.cx + szEll.cx <= avail) break;
+                    }
+                    item.textStr += kEllipsis;
+                    GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+                }
+            }
+            chaoset::layout::Box box{padX, chipW, chipTextGap, szTxt.cx, markW};
+            boxes.push_back(box);
+            measured.push_back(std::move(item));
         }
 
-        int chipW = szIdx.cx + chipPadX * 2;
-        int chipTextGap = (std::max)(pt(3, dpi), static_cast<int>(szIdx.cx * 45 / 100));
+        const auto rowsLayout = chaoset::layout::wrapRows(boxes, maxContent, gap, contentH, kMaxRows);
+        int rowCount = static_cast<int>(rowsLayout.rows.size());
+        if (rowCount == 0) rowCount = 1;
+        const int rowH = contentH + lineSpacing;
+        int contentW = 0;
+        for (const auto& row : rowsLayout.rows) contentW = (std::max)(contentW, row.width);
+        winH = (std::max)(pad * 2 + rowCount * rowH - lineSpacing, pt(20, dpi));
 
-        // 任意单条候选自身超宽都要截断（不只首项）：折行只解决「多项组合
-        // 超宽」，单条 > maxContent 时换行也放不下，必须逐字截断加…。
-        // 与 mac layoutRows 的「rowFrames.isEmpty && boxW > maxContent」
-        // 等价——能超过 maxContent 的项必然独占一行。
-        const int itemW = padX * 2 + chipW + chipTextGap + szTxt.cx + markW;
-        if (itemW > maxContent) {
-            const int avail = (std::max)(
-                maxContent - padX * 2 - chipW - chipTextGap - markW, pt(20, dpi));
-            if (szTxt.cx > avail) {
-                SIZE szEll{};
-                SelectObject(memDC, fontNormal);
-                GetTextExtentPoint32W(memDC, kEllipsis, 1, &szEll);
-                while (item.textStr.size() > 1) {
-                    item.textStr.resize(item.textStr.size() - 1);
-                    GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
-                    if (szTxt.cx + szEll.cx <= avail) break;
-                }
-                item.textStr += kEllipsis;
-                GetTextExtentPoint32W(memDC, item.textStr.c_str(), static_cast<int>(item.textStr.size()), &szTxt);
+        std::size_t flat = 0;
+        for (int r = 0; r < static_cast<int>(rowsLayout.rows.size()); ++r) {
+            const auto& row = rowsLayout.rows[static_cast<std::size_t>(r)];
+            const int rowTop = pad + r * rowH;
+            for (const auto& boxRect : row.items) {
+                if (flat >= measured.size() || flat >= boxes.size()) break;
+                ItemPos item = std::move(measured[flat]);
+                const chaoset::layout::Box& box = boxes[flat];
+                const int x = pad + boxRect.x;
+                ++flat;
+                item.itemRect = RECT{x, rowTop, x + boxRect.w, rowTop + contentH};
+                item.pillRect = RECT{x - pillMargin, rowTop - pillMargin,
+                                     x + boxRect.w + pillMargin, rowTop + contentH + pillMargin};
+                const int chipLeft = x + box.padX;
+                const int chipTop = rowTop + (contentH - chipH) / 2;
+                item.chipRect = RECT{chipLeft, chipTop, chipLeft + box.chipW, chipTop + chipH};
+                const int textLeft = item.chipRect.right + box.chipTextGap;
+                const int textTop = rowTop + (contentH - tmText.tmHeight) / 2;
+                item.textRect = RECT{textLeft, textTop, textLeft + box.textW, textTop + tmText.tmHeight};
+                item.markW = box.markW;
+                items_.push_back(std::move(item));
             }
         }
+        winW = (std::max)(pad * 2 + contentW + chevronBoxW + gearBoxW, minW);
+        lastRealWinW_ = winW;
+        settingsRect_ = RECT{winW - chevronBoxW - gearBoxW, 0, winW - chevronBoxW, winH};
+        dividerX_ = settingsRect_.left + pt(2, dpi);
 
-        chaoset::layout::Box box;
-        box.padX = padX;
-        box.chipW = chipW;
-        box.chipTextGap = chipTextGap;
-        box.textW = szTxt.cx;
-        box.markW = markW;
-        boxes.push_back(box);
-        measured.push_back(std::move(item));
-    }
-
-    const auto rowsLayout = chaoset::layout::wrapRows(boxes, maxContent, gap, contentH, kMaxRows);
-    int rowCount = static_cast<int>(rowsLayout.rows.size());
-    if (rowCount == 0) rowCount = 1;  // 无候选时保留一行高度（同 mac minHeight）
-    const int rowH = contentH + lineSpacing;
-    int contentW = 0;
-    for (const auto& row : rowsLayout.rows) contentW = (std::max)(contentW, row.width);
-    int winH = pad * 2 + rowCount * rowH - lineSpacing;
-    winH = (std::max)(winH, pt(20, dpi));
-
-    std::size_t flat = 0;
-    for (int r = 0; r < static_cast<int>(rowsLayout.rows.size()); ++r) {
-        const auto& row = rowsLayout.rows[static_cast<std::size_t>(r)];
-        const int rowTop = pad + r * rowH;
-        for (const auto& boxRect : row.items) {
-            if (flat >= measured.size() || flat >= boxes.size()) break;
-            ItemPos item = std::move(measured[flat]);
-            const chaoset::layout::Box& box = boxes[flat];
-            const int x = pad + boxRect.x;
-            ++flat;
-
-            item.itemRect.left = x;
-            item.itemRect.top = rowTop;
-            item.itemRect.right = x + boxRect.w;
-            item.itemRect.bottom = rowTop + contentH;
-
-            // 高亮胶囊几何对每一项都算：pill 跟随页内预选项（不再固定第一项）。
-            item.pillRect.left = x - pillMargin;
-            item.pillRect.top = rowTop - pillMargin;
-            item.pillRect.right = x + boxRect.w + pillMargin;
-            item.pillRect.bottom = rowTop + contentH + pillMargin;
-
-            const int chipLeft = x + box.padX;
-            const int chipTop = rowTop + (contentH - chipH) / 2;
-            item.chipRect.left = chipLeft;
-            item.chipRect.top = chipTop;
-            item.chipRect.right = chipLeft + box.chipW;
-            item.chipRect.bottom = chipTop + chipH;
-
-            const int textLeft = item.chipRect.right + box.chipTextGap;
-            const int textTop = rowTop + (contentH - tmText.tmHeight) / 2;
-            item.textRect.left = textLeft;
-            item.textRect.top = textTop;
-            item.textRect.right = textLeft + box.textW;
-            item.textRect.bottom = textTop + tmText.tmHeight;
-
-            item.markW = box.markW;  // onPaint 画学习标记用（0 = 未加权）
-            items_.push_back(std::move(item));
+        int pageH = 0;
+        if (comp_.pageCount > 1) {
+            const std::wstring pageStr =
+                std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
+            SelectObject(memDC, fontIndex);
+            SIZE szPage{};
+            GetTextExtentPoint32W(memDC, pageStr.c_str(), static_cast<int>(pageStr.size()), &szPage);
+            pageH = szPage.cy;
         }
-    }
-
-    // 设置齿轮区（参考微信输入法候选栏右侧的设置入口）：折叠区左侧齿轮，
-    // 点击打开统一设置中心（词组联想开关）。宽度与 mac SettingsGear.boxW=26pt 一致。
-    int totalW = pad * 2 + contentW + chevronBoxW + gearBoxW;
-    // 最小窗宽与 mac contentSize 的 minW 同公式：
-    // padding*2 + chevronBoxW + gearBoxW + 8pt（2026-10-30 审计 R10：此前
-    // Windows 用 120px@96=90pt，比 mac 的 84pt 宽，不一致）。
-    int minW = pad * 2 + chevronBoxW + gearBoxW + pt(8, dpi);
-    int winW = (std::max)(totalW, minW);
-
-    settingsRect_.left = winW - chevronBoxW - gearBoxW;
-    settingsRect_.top = 0;
-    settingsRect_.right = winW - chevronBoxW;
-    settingsRect_.bottom = winH;
-
-    dividerX_ = settingsRect_.left + pt(2, dpi);
-
-    // 折叠区翻页块：上/下两枚箭头分列页码上下（单页不翻页，blockH=0）。
-    // 命中区按**可用性**分别记录：首页只有下箭头、末页只有上箭头、中间页
-    // 两枚都有；不可用方向不注册命中区（点击无效），与 mac 面板同语义。
-    int pageH = 0;
-    if (comp_.pageCount > 1) {
-        const std::wstring pageStr =
-            std::to_wstring(comp_.page + 1) + L"/" + std::to_wstring(comp_.pageCount);
-        SelectObject(memDC, fontIndex);
-        SIZE szPage{};
-        GetTextExtentPoint32W(memDC, pageStr.c_str(), static_cast<int>(pageStr.size()), &szPage);
-        pageH = szPage.cy;
-    }
-    flipPageH_ = pageH;
-    int blockTop = 0, blockH = 0, upCy = 0, downCy = 0, pageTop = 0;
-    flipBlockMetrics(dpi, winH, &blockTop, &blockH, &upCy, &downCy, &pageTop);
-    (void)upCy;
-    (void)downCy;
-    (void)pageTop;
-    chevronUpRect_ = {};
-    chevronDownRect_ = {};
-    const int flipZoneX = dividerX_ + gearBoxW;
-    if (comp_.pageCount > 1) {
-        const int halfH = blockH / 2;
-        if (comp_.page > 0) {
-            chevronUpRect_ = RECT{flipZoneX, blockTop, winW, blockTop + halfH};
+        flipPageH_ = pageH;
+        int blockTop = 0, blockH = 0, upCy = 0, downCy = 0, pageTop = 0;
+        flipBlockMetrics(dpi, winH, &blockTop, &blockH, &upCy, &downCy, &pageTop);
+        chevronUpRect_ = {};
+        chevronDownRect_ = {};
+        const int flipZoneX = dividerX_ + gearBoxW;
+        if (comp_.pageCount > 1) {
+            const int halfH = blockH / 2;
+            if (comp_.page > 0) chevronUpRect_ = RECT{flipZoneX, blockTop, winW, blockTop + halfH};
+            if (comp_.page + 1 < comp_.pageCount) {
+                chevronDownRect_ = RECT{flipZoneX, blockTop + halfH, winW, blockTop + blockH};
+            }
         }
-        if (comp_.page + 1 < comp_.pageCount) {
-            chevronDownRect_ = RECT{flipZoneX, blockTop + halfH, winW, blockTop + blockH};
+        if (items_.empty()) selectedIndex_ = 0;
+        else if (selectedIndex_ >= static_cast<int>(items_.size())) {
+            selectedIndex_ = static_cast<int>(items_.size()) - 1;
         }
-    }
-
-    // 预选序号钳制到本次实际布局出来的可见候选数（候选变少或被 3 行上限
-    // 截断时不能越界；新一页的归零由 show() 的候选集合比较负责）。
-    if (items_.empty()) {
-        selectedIndex_ = 0;
-    } else if (selectedIndex_ >= static_cast<int>(items_.size())) {
-        selectedIndex_ = static_cast<int>(items_.size()) - 1;
     }
 
     SelectObject(memDC, oldFont);
@@ -770,14 +757,19 @@ void CandidateWindow::layoutAndPosition() {
         }
     }
 
-    // DWM 圆角已生效时不再套 region：region 轮廓无抗锯齿（锯齿边），且会把
-    // 自绘描边的四角弧段裁出锯齿缺口。绘制半径 pt(8) ≥ DWM 系统圆角半径，
-    // 裁剪区 ⊆ 绘制区，不会出现透明缺口（docs/ui-parity.md 面板质感）。
-    if (!dwmRounded_) {
+    const RECT nextRc{winX, winY, winX + winW, winY + winH};
+    const bool wasVisible = IsWindowVisible(hwnd_) != FALSE;
+    const bool sizeChanged = (nextRc.right - nextRc.left) != (lastWindowRect_.right - lastWindowRect_.left) ||
+                             (nextRc.bottom - nextRc.top) != (lastWindowRect_.bottom - lastWindowRect_.top);
+    const bool posChanged = !wasVisible || nextRc.left != lastWindowRect_.left ||
+                            nextRc.top != lastWindowRect_.top || sizeChanged;
+    if (!dwmRounded_ && (!wasVisible || sizeChanged)) {
         SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, winW + 1, winH + 1, pt(16, dpi), pt(16, dpi)), TRUE);
     }
-    SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (posChanged) {
+        SetWindowPos(hwnd_, HWND_TOPMOST, winX, winY, winW, winH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    lastWindowRect_ = nextRc;
 }
 
 
@@ -820,90 +812,50 @@ void CandidateWindow::onPaint(HWND hwnd) {
                                   CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
     HGDIOBJ oldFont = SelectObject(memDC, fontNormal);
 
-    // 页内预选高亮：蓝胶囊跟随**预选项**（此前固定画在第一项）。先统一画
-    // 胶囊、再逐项画内容，避免后画的胶囊盖住相邻项文本边缘。
-    // GDI 对象必须先摘出 DC 再 DeleteObject：仍被 DC 持有期间 DeleteObject
-    // 会失败并泄漏句柄，候选窗每次重绘都漏一个。
-    for (const auto& item : items_) {
-        if (item.index != selectedIndex_) continue;
-        HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
-        HGDIOBJ prevBrush = SelectObject(memDC, pillBrush);
-        HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
-        RoundRect(memDC, item.pillRect.left, item.pillRect.top,
-                  item.pillRect.right, item.pillRect.bottom,
-                  pt(12, dpi), pt(12, dpi));
-        SelectObject(memDC, prevBrush);
-        SelectObject(memDC, prevPen);
-        DeleteObject(pillBrush);
-    }
-
-    // 绘制候选列表：预选项用蓝胶囊 + 半透白键帽 + 白字，其余用普通键帽。
-    for (const auto& item : items_) {
-        if (item.index == selectedIndex_) {
-            // 蓝胶囊内键帽：半透白单层填充，无边框
-            HBRUSH chipBrush = CreateSolidBrush(theme.highlightChipBg);
-            HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
+    if (loading_) {
+        SetTextColor(memDC, theme.pageColor);
+        SelectObject(memDC, fontNormal);
+        DrawTextW(memDC, L"...", 3, const_cast<RECT*>(&loadingDotRect_),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    } else {
+        // 先画页内预选蓝胶囊，再统一画每项键帽/文本/学习标记（避免重复代码块）。
+        for (const auto& item : items_) {
+            if (item.index != selectedIndex_) continue;
+            HBRUSH pillBrush = CreateSolidBrush(theme.highlightBg);
+            HGDIOBJ prevBrush = SelectObject(memDC, pillBrush);
             HGDIOBJ prevPen = SelectObject(memDC, GetStockObject(NULL_PEN));
+            RoundRect(memDC, item.pillRect.left, item.pillRect.top,
+                      item.pillRect.right, item.pillRect.bottom, pt(12, dpi), pt(12, dpi));
+            SelectObject(memDC, prevBrush);
+            SelectObject(memDC, prevPen);
+            DeleteObject(pillBrush);
+        }
+        for (const auto& item : items_) {
+            const bool sel = (item.index == selectedIndex_);
+            HBRUSH chipBrush = CreateSolidBrush(sel ? theme.highlightChipBg : theme.chipBg);
+            HPEN chipPen = sel ? nullptr : CreatePen(PS_SOLID, strokePx(dpi), theme.chipBorder);
+            HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
+            HGDIOBJ prevPen = SelectObject(memDC, chipPen != nullptr ? static_cast<HGDIOBJ>(chipPen)
+                                                                     : GetStockObject(NULL_PEN));
             RoundRect(memDC, item.chipRect.left, item.chipRect.top,
-                      item.chipRect.right, item.chipRect.bottom,
-                      pt(6, dpi), pt(6, dpi));
+                      item.chipRect.right, item.chipRect.bottom, pt(6, dpi), pt(6, dpi));
             SelectObject(memDC, prevBrush);
             SelectObject(memDC, prevPen);
             DeleteObject(chipBrush);
-
-            // 数字：白色
-            SetTextColor(memDC, theme.highlightText);
-            SelectObject(memDC, fontIndex);
-            DrawTextW(memDC, item.indexStr.c_str(), -1, const_cast<RECT*>(&item.chipRect),
-                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // 预选项文本：白色
-            SetTextColor(memDC, theme.highlightText);
-            SelectObject(memDC, fontNormal);
-            DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // 学习标记 *：用户数据加权候选（与 mac theme.userMark 同色，
-            // 画在文本后 +1pt、宽 markW，与 CandidatePanel.draw 同口径）
-            if (item.fromUser) {
-                SetTextColor(memDC, theme.userMark);
-                RECT markRc = item.textRect;
-                markRc.left = item.textRect.right + pt(1, dpi);
-                markRc.right = markRc.left + item.markW;
-                DrawTextW(memDC, L"*", 1, &markRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            }
-        } else {
-            // 非预选项键帽：外边框 + 内部底色
-            HBRUSH chipBrush = CreateSolidBrush(theme.chipBg);
-            HPEN chipPen = CreatePen(PS_SOLID, strokePx(dpi), theme.chipBorder);
-            HGDIOBJ prevBrush = SelectObject(memDC, chipBrush);
-            HGDIOBJ prevPen = chipPen != nullptr ? SelectObject(memDC, chipPen) : nullptr;
-            RoundRect(memDC, item.chipRect.left, item.chipRect.top,
-                      item.chipRect.right, item.chipRect.bottom,
-                      pt(6, dpi), pt(6, dpi));
-            SelectObject(memDC, prevBrush);
-            if (prevPen != nullptr) SelectObject(memDC, prevPen);
-            DeleteObject(chipBrush);
             if (chipPen != nullptr) DeleteObject(chipPen);
 
-            // 数字：深色 (深色模式下为白色)
-            SetTextColor(memDC, theme.chipDigit);
+            SetTextColor(memDC, sel ? theme.highlightText : theme.chipDigit);
             SelectObject(memDC, fontIndex);
             DrawTextW(memDC, item.indexStr.c_str(), -1, const_cast<RECT*>(&item.chipRect),
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // 候选文本：深色 (深色模式下为白色)
-            SetTextColor(memDC, theme.text);
+            SetTextColor(memDC, sel ? theme.highlightText : theme.text);
             SelectObject(memDC, fontNormal);
             DrawTextW(memDC, item.textStr.c_str(), -1, const_cast<RECT*>(&item.textRect),
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // 学习标记 *（见预选分支注释）
             if (item.fromUser) {
                 SetTextColor(memDC, theme.userMark);
-                RECT markRc = item.textRect;
-                markRc.left = item.textRect.right + pt(1, dpi);
-                markRc.right = markRc.left + item.markW;
+                RECT markRc{item.textRect.right + pt(1, dpi), item.textRect.top,
+                            item.textRect.right + pt(1, dpi) + item.markW, item.textRect.bottom};
                 DrawTextW(memDC, L"*", 1, &markRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             }
         }
@@ -1100,6 +1052,7 @@ void CandidateWindow::onLButtonUp(int x, int y) {
         if (PtInRect(&settingsRect_, pt)) tip_->showSettingsWindow();
         return;
     }
+    if (loading_) return;
     if (wasItem >= 0) {
         for (const auto& it : items_) {
             if (it.index == wasItem && PtInRect(&it.itemRect, pt)) {

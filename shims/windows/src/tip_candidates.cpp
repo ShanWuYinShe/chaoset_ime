@@ -38,7 +38,7 @@ void ChaosetTIP::selectCandidateByIndex(int index) {
         submitNonComposingOp(op);
         return;
     }
-    if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) {
+    if (isLoadingCandidates() || index < 0 || index >= static_cast<int>(comp_.candidates.size())) {
         // 异步乐观窗口（issue #149）：壳侧候选列表还没追上按键时，不能把选词
         // 意图丢掉——按同一下标入队，由引擎对**完整输入**解析；失败分支无文本
         // 可兜底，保持组词并整串重建，键不会丢。列表已是最新时越界下标照旧忽略。
@@ -90,7 +90,7 @@ void ChaosetTIP::deleteCandidateByIndex(int index) {
         submitNonComposingOp(op);
         return;
     }
-    if (!hasCandidates()) return;
+    if (isLoadingCandidates() || !hasCandidates()) return;
     if (index < 0 || index >= static_cast<int>(comp_.candidates.size())) return;
     const chaoset::Candidate pick = comp_.candidates[index];
     chaoset::win::EngineOp op;

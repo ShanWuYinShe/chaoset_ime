@@ -21,6 +21,7 @@ import (
 func TestCheckMacOSAsyncPipeline(t *testing.T) {
 	files := []string{
 		macAsyncPipeline, macAsyncController, macKeyRouterFile, macController,
+		macTransport, "shims/macos/src/CandidatePanel.swift",
 		macTestMain, macKeyRunScript, uiParityDoc,
 	}
 	orig := map[string]string{}
@@ -97,6 +98,14 @@ func TestCheckMacOSAsyncPipeline(t *testing.T) {
 		"        case .backspaceWord:\n                backspaceLocally(&disp, &pending, shuangpin: shuangpin, bySyllable: true)",
 		"        case .backspaceWord:\n                break",
 		"backspaceLocally")
+	expect("异步等待退回硬超时", macAsyncPipeline,
+		"client = EngineClient(socketPath: socketPath, unboundedRead: true)",
+		"client = EngineClient(socketPath: socketPath)",
+		"unboundedRead: true")
+	expect("loading 占位退化", macController,
+		"showNativeLoadingPanel(client: client)",
+		"false",
+		"showNativeLoadingPanel(client: client)")
 	expect("文档删掉异步契约", uiParityDoc,
 		"EnginePipeline", "EngineWorker", "EnginePipeline")
 }

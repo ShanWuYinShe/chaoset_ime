@@ -136,10 +136,9 @@ impl Write for NamedPipeStream {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
-        unsafe {
-            FlushFileBuffers(self.handle);
-        }
+        // Windows 命名管道 WriteFile 同步返回时数据已交由内核管道缓冲；
+        // FlushFileBuffers 会阻塞到客户端把字节读空（超时/断连时会把服务线程
+        // 卡在同步等待上，客户端 crates/chaoset-ipc 已明文禁止调用它）。
         Ok(())
     }
 }

@@ -66,12 +66,15 @@ final class EngineClient {
     /// 显式断开底层连接（复位失败清理用）。
     func disconnect() { transport.disconnect() }
 
+    /// 唤醒正在等待响应的阻塞读取（EnginePipeline 停机时调用）。
+    func abort() { transport.abort() }
+
     /// 预热连接（可在引擎线程调用；必要时懒启动 daemon）。
     /// 返回是否已连接；不发起任何组词请求，不改变会话状态。
     func warmUp() -> Bool { transport.warmUp() }
 
-    init(socketPath: String = EngineClient.defaultSocketPath) {
-        self.transport = DaemonTransport(socketPath: socketPath)
+    init(socketPath: String = EngineClient.defaultSocketPath, unboundedRead: Bool = false) {
+        self.transport = DaemonTransport(socketPath: socketPath, unboundedRead: unboundedRead)
     }
 
     // call 发一次请求并返回 result 对象；任何失败返回 nil（读超时保留连接，其它失败断连）。

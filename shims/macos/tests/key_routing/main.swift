@@ -441,7 +441,7 @@ check("异步：快打后空格按完整输入选词（不是原始拼音）",
       && orderedPick.unicodeScalars.contains(where: { $0.value >= 0x4E00 && $0.value <= 0x9FFF }),
       "picked=\(orderedPick)")
 
-// 3) daemon 失败：乐观预编辑与候选窗都保留（不弹出、不关闭）。
+// 3) 异步加载占位与 daemon 失败：乐观预编辑、候选窗保持可见（在飞显示单条 "..." 占位）。
 _ = c.handle(ev("", 53), client: m)
 c.settleEngineForTests()
 for (ch, code) in [("n", 45), ("i", 34)] {
@@ -450,11 +450,16 @@ for (ch, code) in [("n", 45), ("i", 34)] {
 check("失败注入前：组词与候选窗可见",
       (c.current?.input ?? "") == "ni" && CandidatePanelController.itemCount > 0,
       "input=\(c.current?.input ?? "nil") items=\(CandidatePanelController.itemCount)")
+_ = c.handle(ev("o", 31), client: m) // 不 settle：立即切为 "..." 加载占位
+check("在飞加载占位：候选窗保持可见且无候选",
+      CandidatePanelController.isVisible && CandidatePanelController.itemCount == 0,
+      "visible=\(CandidatePanelController.isVisible) items=\(CandidatePanelController.itemCount)")
+c.settleEngineForTests()
 EnginePipeline.failureInjectionForTests = true
 _ = k(ev("h", 4), client: m)
-check("daemon 失败：乐观预编辑保留", m.marked.contains("nih"), "marked=\(m.marked)")
-check("daemon 失败：候选窗不关闭", CandidatePanelController.itemCount > 0,
-      "items=\(CandidatePanelController.itemCount)")
+check("daemon 失败：乐观预编辑保留", m.marked.contains("nioh"), "marked=\(m.marked)")
+check("daemon 失败：候选窗不关闭", CandidatePanelController.isVisible,
+      "visible=\(CandidatePanelController.isVisible) items=\(CandidatePanelController.itemCount)")
 EnginePipeline.failureInjectionForTests = false
 _ = c.handle(ev("", 53), client: m)
 c.settleEngineForTests()
@@ -541,8 +546,8 @@ c.settleEngineForTests()
 
 // 断言用例数未减少：删掉一条断言会让回归测试静默变弱（2026-10-31）。
 // 新增/删除断言时同步更新 expectedChecks。
-// 82 = 76 + 前缀消费 3 条 + 标点兜底 1 条 + 渐进选词兜底 1 条 + 在飞首键失焦 1 条。
-let expectedChecks = 82
+// 83 = 82 + 在飞 "..." 加载占位检查 1 条。
+let expectedChecks = 83
 if pass != expectedChecks {
     fail += 1
     print("FAIL 用例数量 \(pass) != \(expectedChecks)（删/加断言需同步更新）")

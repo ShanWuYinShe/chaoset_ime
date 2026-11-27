@@ -2,6 +2,7 @@
 // 只做平台/进程生命周期与路径解析；拼音/联想算法全部在 Go daemon。
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -26,8 +27,9 @@ public:
     explicit UnixTransport(std::string path);
     ~UnixTransport() override;
     bool connectSocket();
-    // 单次 I/O 等待上限（毫秒）。异步引擎线程用 200ms；默认 300ms 与 mac 壳同量级。
-    void setDeadlineMs(int ms) { deadlineMs_ = ms > 0 ? ms : 300; }
+    // 单次 I/O 等待上限（毫秒）。<= 0 表示无硬等待上限（poll 等待数据或 abort 唤醒）；默认 300ms。
+    void setDeadlineMs(int ms) { deadlineMs_ = ms; }
+    void abort();
     bool writeAll(const std::uint8_t* data, std::size_t len) override;
     bool readAll(std::uint8_t* buf, std::size_t len) override;
     void closeConn() override;
@@ -40,6 +42,8 @@ public:
 private:
     std::string path_;
     int fd_ = -1;
+    int wakeFds_[2] = {-1, -1};
+    std::atomic<bool> aborted_{false};
     std::uint64_t connGen_ = 0;
     int deadlineMs_ = 300;
     bool lastReadTimedOut_ = false;
@@ -71,6 +75,7 @@ public:
     void closeConn() { transport_.closeConn(); }
     std::uint64_t connGen() const { return transport_.connGen(); }
     void setDeadlineMs(int ms) { transport_.setDeadlineMs(ms); }
+    void abort() { transport_.abort(); }
     /// 追加输入；失败时用 base 做幂等重放（base = 壳侧上次已知的完整输入串）。
     ///
     /// 读超时**不代表团没处理**——daemon 可能已经执行、只是响应迟到。此时若直接当成

@@ -33,13 +33,21 @@ void parseSyllables(const std::string& joined, std::vector<std::string>* out) {
 }  // namespace
 
 EnginePump::EnginePump() {
-    // 引擎线程允许「连接 + 重试」，但每次请求仍有明确截止（200ms）：截止只在
-    // 本线程生效，宿主 UI 线程永不等待。
+    // 引擎线程不做硬读超时：依赖事件驱动等待 daemon 真正回包、断管自动识别，
+    // 并在停机/卸载时由 stopEvent_ 0ms 取消重叠 I/O 退出。
+    stopEvent_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
     transport_.setAutoConnect(true);
-    transport_.setDeadlineMs(kEngineRequestDeadlineMs);
+    transport_.setDeadlineMs(INFINITE);
+    if (stopEvent_ != nullptr) transport_.setAbortEvent(stopEvent_);
 }
 
-EnginePump::~EnginePump() { stop(); }
+EnginePump::~EnginePump() {
+    stop();
+    if (joinOk_ && stopEvent_ != nullptr) {
+        ::CloseHandle(stopEvent_);
+        stopEvent_ = nullptr;
+    }
+}
 
 void EnginePump::warmConnect() {
     // 调用线程（TIP 线程）上只做一次非阻塞探测：不等待、不重试。
@@ -59,6 +67,7 @@ void EnginePump::start(DWORD tid) {
         }
         tid_ = tid;
         stop_ = false;
+        if (stopEvent_ != nullptr) ::ResetEvent(stopEvent_);
         alive_.store(true);
     }
     InterlockedIncrement(&g_liveEnginePumps);
@@ -82,13 +91,14 @@ void EnginePump::stop() {
         }
         stop_ = true;
         queue_.clear();
+        if (stopEvent_ != nullptr) ::SetEvent(stopEvent_);
         cv_.notify_all();
         th = thread_;
         thread_ = nullptr;
     }
     if (th != nullptr) {
-        // 有界等待：当前请求最长 kEngineRequestDeadlineMs，正常远小于该上限。
-        const DWORD w = ::WaitForSingleObject(th, 4 * kEngineRequestDeadlineMs);
+        // stopEvent_ 已唤醒/取消阻塞读取，正常会在 1ms 内退出。
+        const DWORD w = ::WaitForSingleObject(th, kEngineStopWaitMs);
         ::CloseHandle(th);
         joinOk_ = (w == WAIT_OBJECT_0);
         if (!joinOk_) return;  // 线程仍引用本对象：调用方必须故意不销毁
@@ -139,6 +149,20 @@ void EnginePump::run() {
             if (queue_.empty()) continue;
             op = std::move(queue_.front());
             queue_.pop_front();
+            // 全拼下合并积压的连续 kInput（一次 IPC 替代 N 次，避免长拼音慢查询触发队列雪崩）；
+            // 双拼不合并（';' 与键对解码会改变状态/触发上屏）。
+            if (op.kind == EngineOpKind::kInput && shuangpinMode_.load() == 0) {
+                while (!queue_.empty()) {
+                    const EngineOp& next = queue_.front();
+                    if (next.kind != EngineOpKind::kInput || next.epoch != op.epoch ||
+                        next.halfWidth != op.halfWidth) {
+                        break;
+                    }
+                    op.text += next.text;
+                    op.seq = next.seq;
+                    queue_.pop_front();
+                }
+            }
         }
         EngineResult r = exec(op);
         {
@@ -332,16 +356,22 @@ EngineResult EnginePump::exec(const EngineOp& op) {
             syncedConnGen_ = transport_.connGen();
             sessionDesynced_ = false;
             hadCompositionOps_ = false;
+            shuangpinMode_.store(r.comp.shuangpin.empty() ? 0 : 1);
         } else if (op.kind == EngineOpKind::kRebuild) {
             syncedConnGen_ = transport_.connGen();
             sessionDesynced_ = false;
             hadCompositionOps_ = (!r.comp.input.empty() || !r.comp.dpPending.empty()) &&
                                  r.comp.committed.empty();
+            shuangpinMode_.store(r.comp.shuangpin.empty() ? 0 : 1);
         } else if (op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kBackspace ||
                    op.kind == EngineOpKind::kBackspaceWord ||
-                   op.kind == EngineOpKind::kSelectPrefix) {
-            hadCompositionOps_ = (!r.comp.input.empty() || !r.comp.dpPending.empty()) &&
-                                 r.comp.committed.empty();
+                   op.kind == EngineOpKind::kSelectPrefix ||
+                   op.kind == EngineOpKind::kNextPage || op.kind == EngineOpKind::kPrevPage) {
+            shuangpinMode_.store(r.comp.shuangpin.empty() ? 0 : 1);
+            if (op.kind != EngineOpKind::kNextPage && op.kind != EngineOpKind::kPrevPage) {
+                hadCompositionOps_ = (!r.comp.input.empty() || !r.comp.dpPending.empty()) &&
+                                     r.comp.committed.empty();
+            }
         } else if (op.kind == EngineOpKind::kPunct) {
             hadCompositionOps_ = false;
         }

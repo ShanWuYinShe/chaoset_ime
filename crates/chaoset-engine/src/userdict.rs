@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+mod index;
 
 const USER_BOOST_PER_COUNT: f64 = 500.0;
 const BIGRAM_BONUS_PER_COUNT: f64 = 250.0;
@@ -327,9 +329,112 @@ impl WordPrefixHit {
     }
 }
 
+struct UserState {
+    file: UserFile,
+    index: index::UserIndex,
+}
+
+pub(crate) struct UserQueryCtx<'a> {
+    guard: RwLockReadGuard<'a, UserState>,
+    now: i64,
+}
+
+impl<'a> UserQueryCtx<'a> {
+    pub(crate) fn score_with_buf(
+        &self,
+        word: &str,
+        prev_word: Option<&str>,
+        bigram_buf: &mut String,
+    ) -> (u32, bool) {
+        let data = &self.guard.file;
+        let now = self.now;
+        let mut total_bonus = 0.0;
+        let mut from_user = false;
+
+        // 1. 静态词调频 / 用户词
+        if let Some(rec) = data.words.get(word) {
+            let factor = decay(rec.last_used, now);
+            total_bonus += (rec.count as f64) * USER_BOOST_PER_COUNT * factor;
+            from_user = true;
+        }
+
+        // 3. 上下文 Bigram 共现加分
+        if !data.bigrams.is_empty() {
+            if let Some(prev) = prev_word {
+                bigram_buf.clear();
+                bigram_buf.push_str(prev);
+                bigram_buf.push_str("->");
+                bigram_buf.push_str(word);
+                if let Some(rec) = data.bigrams.get(bigram_buf.as_str()) {
+                    let factor = decay(rec.last_used, now);
+                    let capped_count = rec.count.min(BIGRAM_MAX_COUNT);
+                    total_bonus += (capped_count as f64) * BIGRAM_BONUS_PER_COUNT * factor;
+                    from_user = true;
+                }
+            }
+        }
+
+        (total_bonus.round() as u32, from_user)
+    }
+
+    pub(crate) fn query_joined_pinyin(&self, input: &str, max_results: usize) -> Vec<WordPrefixHit> {
+        index::query_joined_pinyin(
+            &self.guard.index,
+            &self.guard.file,
+            input,
+            max_results,
+            self.now,
+        )
+    }
+
+    pub(crate) fn query_tokens_exact(
+        &self,
+        tokens: &[(&str, bool)],
+        max_results: usize,
+    ) -> Vec<TokenHit> {
+        index::query_tokens_exact(
+            &self.guard.index,
+            &self.guard.file,
+            tokens,
+            max_results,
+            self.now,
+        )
+    }
+
+    pub(crate) fn query_tokens(
+        &self,
+        tokens: &[(&str, bool)],
+        max_results: usize,
+    ) -> (Vec<TokenHit>, Vec<TokenHit>) {
+        index::query_tokens(
+            &self.guard.index,
+            &self.guard.file,
+            tokens,
+            max_results,
+            self.now,
+        )
+    }
+
+    pub(crate) fn query_continuation(
+        &self,
+        tokens: &[(&str, bool)],
+        frag: &str,
+        max_results: usize,
+    ) -> Vec<(TokenHit, String)> {
+        index::query_continuation(
+            &self.guard.index,
+            &self.guard.file,
+            tokens,
+            frag,
+            max_results,
+            self.now,
+        )
+    }
+}
+
 pub struct UserDict {
     path: Option<PathBuf>,
-    data: RwLock<UserFile>,
+    data: RwLock<UserState>,
     dirty: RwLock<bool>,
 }
 
@@ -389,10 +494,14 @@ impl UserDict {
                 }
             }
         }
+        let index = index::UserIndex::rebuild(&file_data);
         Ok((
             Self {
                 path,
-                data: RwLock::new(file_data),
+                data: RwLock::new(UserState {
+                    file: file_data,
+                    index,
+                }),
                 dirty: RwLock::new(dirty),
             },
             warnings,
@@ -420,8 +529,19 @@ impl UserDict {
     fn in_memory() -> Self {
         Self {
             path: None,
-            data: RwLock::new(UserFile::default()),
+            data: RwLock::new(UserState {
+                file: UserFile::default(),
+                index: index::UserIndex::default(),
+            }),
             dirty: RwLock::new(false),
+        }
+    }
+
+    /// 在单次只读查询会话中复用同一把读锁与时间戳，供 Session::compose 批量查询。
+    pub(crate) fn query_ctx(&self) -> UserQueryCtx<'_> {
+        UserQueryCtx {
+            guard: self.data.read().unwrap(),
+            now: current_timestamp(),
         }
     }
 
@@ -432,76 +552,20 @@ impl UserDict {
 
     /// 计算候选词在当前上下文下的附加用户加分 (分值, 是否来自用户学习)
     pub fn score(&self, word: &str, prev_word: Option<&str>) -> (u32, bool) {
-        let data = self.data.read().unwrap();
-        let now = current_timestamp();
-        let mut total_bonus = 0.0;
-        let mut from_user = false;
-
-        // 1. 静态词调频 / 用户词
-        if let Some(rec) = data.words.get(word) {
-            let factor = decay(rec.last_used, now);
-            total_bonus += (rec.count as f64) * USER_BOOST_PER_COUNT * factor;
-            from_user = true;
-        }
-
-        // 3. 上下文 Bigram 共现加分
-        if let Some(prev) = prev_word {
-            let bigram_key = format!("{}->{}", prev, word);
-            if let Some(rec) = data.bigrams.get(&bigram_key) {
-                let factor = decay(rec.last_used, now);
-                let capped_count = rec.count.min(BIGRAM_MAX_COUNT);
-                total_bonus += (capped_count as f64) * BIGRAM_BONUS_PER_COUNT * factor;
-                from_user = true;
-            }
-        }
-
-        (total_bonus.round() as u32, from_user)
+        let mut buf = String::new();
+        self.query_ctx().score_with_buf(word, prev_word, &mut buf)
     }
 
     /// 按「拼音连写 == 输入」匹配用户学习记录（Go UserDict.QueryJoinedPinyin）：
     /// Words 调频词与 Phrases 词组进化两张表都查，同一词去重后按调频分降序。
     pub fn query_joined_pinyin(&self, input: &str, max_results: usize) -> Vec<WordPrefixHit> {
-        if input.is_empty() {
-            return Vec::new();
-        }
-        let limit = if max_results == 0 { 20 } else { max_results };
-        let data = self.data.read().unwrap();
-        let now = current_timestamp();
-        let mut out: Vec<WordPrefixHit> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut add = |word: &str, sylls: Vec<String>, freq: i32, segs: Vec<String>| {
-            if sylls.is_empty() || sylls.join("") != input {
-                return;
-            }
-            let key = format!("{}|{}", word, sylls.join(" "));
-            if !seen.insert(key) {
-                return;
-            }
-            out.push(WordPrefixHit {
-                word: word.to_string(),
-                syllables: sylls,
-                freq,
-                segs,
-            });
-        };
-        for (word, rec) in data.words.iter() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            add(word, split_sylls(&rec.sylls), freq, rec.segs.clone());
-        }
-        for rec in data.phrases.values() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            add(&rec.word, split_sylls(&rec.sylls), freq, rec.segs.clone());
-        }
-        WordPrefixHit::sort(&mut out);
-        out.truncate(limit);
-        out
+        self.query_ctx().query_joined_pinyin(input, max_results)
     }
 
     /// 按**词字面**前缀查词组进化记录（Go QueryPhrasesByWordPrefix）。
     pub fn query_phrases_by_word_prefix(&self, prefix: &str) -> Vec<WordPrefixHit> {
-        let data = self.data.read().unwrap();
+        let state = self.data.read().unwrap();
+        let data = &state.file;
         if prefix.is_empty() {
             return Vec::new();
         }
@@ -527,7 +591,8 @@ impl UserDict {
     /// 上屏/选词的记录都在 Words 表，是「之前输入过的词」的主体——联想续接
     /// 按上屏词的字走时必须查它，否则用户打过的词不会出现在联想候选。
     pub fn query_words_by_word_prefix(&self, prefix: &str) -> Vec<WordPrefixHit> {
-        let data = self.data.read().unwrap();
+        let state = self.data.read().unwrap();
+        let data = &state.file;
         if prefix.is_empty() {
             return Vec::new();
         }
@@ -552,7 +617,8 @@ impl UserDict {
     /// 联想上下文加成（Go UserDict.Score）：只含 Words 调频 + Bigram 共现，
     /// **不含** Phrases——与组词打分用的 score() 口径不同，不要混用。
     pub fn score_full(&self, word: &str, prev: Option<&str>) -> i32 {
-        let data = self.data.read().unwrap();
+        let state = self.data.read().unwrap();
+        let data = &state.file;
         let now = current_timestamp();
         let mut score = 0i32;
         if let Some(rec) = data.words.get(word) {
@@ -570,16 +636,30 @@ impl UserDict {
 
     /// 用户选择词上屏，累加调频与上下文共现
     pub fn bump_word(&self, word: &str, sylls: Option<&str>, segs: Option<Vec<String>>) {
-        let mut data = self.data.write().unwrap();
+        let mut state = self.data.write().unwrap();
         let now = current_timestamp();
-        let entry = data.words.entry(word.to_string()).or_default();
+        let is_new = !state.file.words.contains_key(word);
+        let entry = state.file.words.entry(word.to_string()).or_default();
         entry.count += 1;
         entry.last_used = now;
+        let mut sylls_changed = is_new;
         if let Some(s) = sylls {
-            entry.sylls = s.to_string();
+            if entry.sylls != s {
+                entry.sylls = s.to_string();
+                sylls_changed = true;
+            }
         }
         if let Some(s) = segs {
             entry.segs = s;
+        }
+        if sylls_changed {
+            let updated_sylls = entry.sylls.clone();
+            state.index.upsert(
+                index::EntryTable::Word,
+                word.to_string(),
+                word.chars().count(),
+                &updated_sylls,
+            );
         }
         *self.dirty.write().unwrap() = true;
     }
@@ -589,6 +669,7 @@ impl UserDict {
         self.data
             .read()
             .unwrap()
+            .file
             .bigrams
             .get(&format!("{}->{}", prev_word, word))
             .map(|r| r.count)
@@ -600,6 +681,7 @@ impl UserDict {
         self.data
             .read()
             .unwrap()
+            .file
             .words
             .get(word)
             .map(|r| r.segs.clone())
@@ -607,25 +689,35 @@ impl UserDict {
     }
 
     pub fn bump_bigram(&self, prev_word: &str, word: &str) {
-        let mut data = self.data.write().unwrap();
+        let mut state = self.data.write().unwrap();
         let now = current_timestamp();
         let key = format!("{}->{}", prev_word, word);
-        let entry = data.bigrams.entry(key).or_default();
+        let entry = state.file.bigrams.entry(key).or_default();
         entry.count += 1;
         entry.last_used = now;
         *self.dirty.write().unwrap() = true;
     }
 
     pub fn bump_phrase(&self, word: &str, sylls: &str, segs: Option<Vec<String>>) {
-        let mut data = self.data.write().unwrap();
+        let mut state = self.data.write().unwrap();
         let now = current_timestamp();
-        let entry = data.phrases.entry(word.to_string()).or_default();
+        let is_new = !state.file.phrases.contains_key(word);
+        let entry = state.file.phrases.entry(word.to_string()).or_default();
         entry.word = word.to_string();
+        let sylls_changed = is_new || entry.sylls != sylls;
         entry.sylls = sylls.to_string();
         entry.count += 1;
         entry.last_used = now;
         if let Some(s) = segs {
             entry.segs = s;
+        }
+        if sylls_changed {
+            state.index.upsert(
+                index::EntryTable::Phrase,
+                word.to_string(),
+                word.chars().count(),
+                sylls,
+            );
         }
         *self.dirty.write().unwrap() = true;
     }
@@ -645,29 +737,33 @@ impl UserDict {
         if word.is_empty() {
             return false;
         }
-        let mut data = self.data.write().unwrap();
+        let mut state = self.data.write().unwrap();
         let mut deleted = false;
 
         if !syllables.is_empty() {
-            if let Some(rec) = data.words.get(word) {
+            if let Some(rec) = state.file.words.get(word) {
                 if split_sylls(&rec.sylls).as_slice() == syllables {
-                    data.words.remove(word);
+                    state.file.words.remove(word);
+                    state.index.remove(index::EntryTable::Word, word);
                     deleted = true;
                 }
             }
-            if let Some(rec) = data.phrases.get(word) {
+            if let Some(rec) = state.file.phrases.get(word) {
                 if split_sylls(&rec.sylls).as_slice() == syllables {
-                    data.phrases.remove(word);
+                    state.file.phrases.remove(word);
+                    state.index.remove(index::EntryTable::Phrase, word);
                     deleted = true;
                 }
             }
         }
 
         if !deleted {
-            if data.words.remove(word).is_some() {
+            if state.file.words.remove(word).is_some() {
+                state.index.remove(index::EntryTable::Word, word);
                 deleted = true;
             }
-            if data.phrases.remove(word).is_some() {
+            if state.file.phrases.remove(word).is_some() {
+                state.index.remove(index::EntryTable::Phrase, word);
                 deleted = true;
             }
         }
@@ -680,19 +776,20 @@ impl UserDict {
     }
 
     pub fn stats(&self) -> UserStats {
-        let data = self.data.read().unwrap();
+        let state = self.data.read().unwrap();
         UserStats {
-            words: data.words.len(),
-            phrases: data.phrases.len(),
-            bigrams: data.bigrams.len(),
+            words: state.file.words.len(),
+            phrases: state.file.phrases.len(),
+            bigrams: state.file.bigrams.len(),
         }
     }
 
     pub fn clear(&self) {
-        let mut data = self.data.write().unwrap();
-        data.words.clear();
-        data.phrases.clear();
-        data.bigrams.clear();
+        let mut state = self.data.write().unwrap();
+        state.file.words.clear();
+        state.file.phrases.clear();
+        state.file.bigrams.clear();
+        state.index.clear();
         *self.dirty.write().unwrap() = true;
     }
 
@@ -713,7 +810,8 @@ impl UserDict {
     /// 用户词组，且为无段头的「词\t拼音\t次数」三列，可直接作为
     /// chaoset-import 的输入词库。
     pub fn export_tsv(&self, phrases_only: bool) -> String {
-        let data = self.data.read().unwrap();
+        let state = self.data.read().unwrap();
+        let data = &state.file;
         let mut out = String::new();
 
         if !phrases_only && !data.words.is_empty() {
@@ -792,8 +890,8 @@ impl UserDict {
         }
 
         let snapshot = {
-            let data = self.data.read().unwrap();
-            data.clone()
+            let state = self.data.read().unwrap();
+            state.file.clone()
         };
 
         if let Some(parent) = path.parent() {
@@ -847,6 +945,54 @@ mod tests {
         assert_eq!(after_del_score, 0);
         assert!(!from_user_after);
     }
+
+    #[test]
+    fn test_userdict_index_consistency_and_dedup() {
+        let udict = UserDict::new::<&str>(None);
+        // 插入词与词组（含 z/c/s 简拼、续接、音节更新与跨表去重）
+        udict.bump_word("郑州", Some("zheng'zhou"), None);
+        udict.bump_word("正常", Some("zheng'chang"), None);
+        udict.bump_word("同形", Some("ce'shi"), Some(vec!["同".into(), "形".into()]));
+        udict.bump_phrase("同形", "ce'shi", Some(vec!["同形".into()]));
+        udict.bump_phrase("同形", "ce'shi", None); // phrases count=2 > words count=1
+        udict.bump_phrase("人工智能", "ren'gong'zhi'neng", None);
+
+        // 连写查询：同 (word, sylls) 时 Words 先于 Phrases（保留 count=1，freq=500）
+        let joined = udict.query_joined_pinyin("ceshi", 10);
+        let same_shape = joined.iter().find(|h| h.word == "同形").unwrap();
+        assert_eq!(same_shape.freq, 500);
+        assert_eq!(same_shape.segs, vec!["同", "形"]);
+
+        // token 精确/前缀查询：同 (word, sylls) 时 Phrases 先于 Words（count=2，freq=1000）
+        let exact = udict.query_tokens_exact(&[("ce", true), ("shi", true)], 10);
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].freq, 1000);
+
+        // z 碎片兼容 zh
+        let (frag_exacts, frag_prefixes) = udict.query_tokens(&[("z", false)], 10);
+        assert!(frag_exacts.is_empty());
+        assert_eq!(frag_prefixes.len(), 2);
+
+        // 续接查询（不含 z/c/s 转换，仅字面 starts_with）
+        let cont = udict.query_continuation(&[("zheng", true)], "zh", 10);
+        assert_eq!(cont.len(), 1);
+        assert_eq!(cont[0].0.word, "郑州");
+        assert_eq!(cont[0].1, "ou");
+
+        // 更新已有词的 sylls 必须摘除旧索引并挂载新索引
+        udict.bump_word("郑州", Some("zheng'zhong"), None);
+        assert!(udict.query_joined_pinyin("zhengzhou", 10).is_empty());
+        assert_eq!(udict.query_joined_pinyin("zhengzhong", 10).len(), 1);
+
+        // 删除与清空同步清理索引
+        assert!(udict.delete_word("同形", &["ce".into(), "shi".into()]));
+        assert!(udict.query_tokens_exact(&[("ce", true), ("shi", true)], 10).is_empty());
+        assert!(udict.query_joined_pinyin("ceshi", 10).is_empty());
+
+        udict.clear();
+        assert!(udict.query_tokens(&[("ren", true)], 10).1.is_empty());
+        assert!(udict.query_joined_pinyin("zhengzhong", 10).is_empty());
+    }
 }
 
 /// 用户词库 token 查询命中（Go userdict *Entry 的 Rust 版）：带分段供整句
@@ -861,7 +1007,7 @@ pub struct TokenHit {
 
 /// 单个音节与 token 的匹配（Go matchSyllable）：完整音节等值；碎片 token
 /// 前缀匹配，且 z/c/s 兼容 zh/ch/sh。
-fn token_matches(syl: &str, tok: &str, exact: bool) -> bool {
+pub(super) fn token_matches(syl: &str, tok: &str, exact: bool) -> bool {
     if exact {
         return syl == tok;
     }
@@ -874,81 +1020,11 @@ fn token_matches(syl: &str, tok: &str, exact: bool) -> bool {
         || (tok == "s" && syl.starts_with("sh"))
 }
 
-/// 用户词库查询结果的统一排序（Go Query* 的 sortSlice）：词频降序 → 词长
-/// 升序 → 词字典序 → 音节串；随后按词去重（保留排序后第一条）并截断。
-fn sort_and_dedupe_hits(hits: &mut Vec<TokenHit>, limit: usize) {
-    hits.sort_by(|a, b| {
-        b.freq
-            .cmp(&a.freq)
-            .then(a.word.chars().count().cmp(&b.word.chars().count()))
-            .then(a.word.cmp(&b.word))
-            .then(a.syllables.join("'").cmp(&b.syllables.join("'")))
-    });
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    hits.retain(|h| seen.insert(h.word.clone()));
-    hits.truncate(limit);
-}
-
 impl UserDict {
     /// 用户词库 token 精确查询（Go QueryTokensExact）：音节数恰好等于 tokens
     /// 且逐音节匹配；词组进化（Phrases）与调频词（Words）两张表都查。
     pub fn query_tokens_exact(&self, tokens: &[(&str, bool)], max_results: usize) -> Vec<TokenHit> {
-        let limit = if max_results == 0 { 20 } else { max_results };
-        let data = self.data.read().unwrap();
-        let now = current_timestamp();
-        let mut out: Vec<TokenHit> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let consider = |word: &str,
-                        sylls: Vec<String>,
-                        freq: i32,
-                        segs: Vec<String>,
-                        out: &mut Vec<TokenHit>,
-                        seen: &mut std::collections::HashSet<String>| {
-            if sylls.len() != tokens.len() {
-                return;
-            }
-            for (i, (tok, exact)) in tokens.iter().enumerate() {
-                if !token_matches(&sylls[i], tok, *exact) {
-                    return;
-                }
-            }
-            let key = format!("{}\u{0}{}", word, sylls.join(" "));
-            if !seen.insert(key) {
-                return;
-            }
-            out.push(TokenHit {
-                word: word.to_string(),
-                syllables: sylls,
-                freq,
-                segs,
-            });
-        };
-        for rec in data.phrases.values() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(
-                &rec.word,
-                split_sylls(&rec.sylls),
-                freq,
-                rec.segs.clone(),
-                &mut out,
-                &mut seen,
-            );
-        }
-        for (word, rec) in data.words.iter() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(
-                word,
-                split_sylls(&rec.sylls),
-                freq,
-                rec.segs.clone(),
-                &mut out,
-                &mut seen,
-            );
-        }
-        sort_and_dedupe_hits(&mut out, limit);
-        out
+        self.query_ctx().query_tokens_exact(tokens, max_results)
     }
 
     /// 用户词库 token 查询（Go QueryTokens）：exact（音节数相等）与 prefix
@@ -958,50 +1034,7 @@ impl UserDict {
         tokens: &[(&str, bool)],
         max_results: usize,
     ) -> (Vec<TokenHit>, Vec<TokenHit>) {
-        let limit = if max_results == 0 { 20 } else { max_results };
-        let data = self.data.read().unwrap();
-        let now = current_timestamp();
-        let mut exacts: Vec<TokenHit> = Vec::new();
-        let mut prefixes: Vec<TokenHit> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut consider = |word: &str, sylls: Vec<String>, freq: i32, segs: Vec<String>| {
-            if sylls.len() < tokens.len() {
-                return;
-            }
-            for (i, (tok, exact)) in tokens.iter().enumerate() {
-                if !token_matches(&sylls[i], tok, *exact) {
-                    return;
-                }
-            }
-            let key = format!("{}\u{0}{}", word, sylls.join(" "));
-            if !seen.insert(key) {
-                return;
-            }
-            let hit = TokenHit {
-                word: word.to_string(),
-                syllables: sylls.clone(),
-                freq,
-                segs,
-            };
-            if sylls.len() == tokens.len() {
-                exacts.push(hit);
-            } else {
-                prefixes.push(hit);
-            }
-        };
-        for rec in data.phrases.values() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(&rec.word, split_sylls(&rec.sylls), freq, rec.segs.clone());
-        }
-        for (word, rec) in data.words.iter() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(word, split_sylls(&rec.sylls), freq, rec.segs.clone());
-        }
-        sort_and_dedupe_hits(&mut exacts, limit);
-        sort_and_dedupe_hits(&mut prefixes, limit);
-        (exacts, prefixes)
+        self.query_ctx().query_tokens(tokens, max_results)
     }
 
     /// 用户词库末音节续接（Go QueryContinuation）：tokens 是前面已完整的音节
@@ -1013,59 +1046,7 @@ impl UserDict {
         frag: &str,
         max_results: usize,
     ) -> Vec<(TokenHit, String)> {
-        if frag.is_empty() || tokens.is_empty() {
-            return Vec::new();
-        }
-        let limit = if max_results == 0 { 8 } else { max_results };
-        let data = self.data.read().unwrap();
-        let now = current_timestamp();
-        let mut out: Vec<(TokenHit, String)> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut consider = |word: &str, sylls: Vec<String>, segs: Vec<String>, score: i32| {
-            if sylls.len() < tokens.len() + 1 {
-                return;
-            }
-            for (i, (tok, exact)) in tokens.iter().enumerate() {
-                if !token_matches(&sylls[i], tok, *exact) {
-                    return;
-                }
-            }
-            let next = &sylls[tokens.len()];
-            let Some(remain) = next.strip_prefix(frag) else {
-                return;
-            };
-            let key = format!("{}\u{0}{}", word, sylls.join(" "));
-            if !seen.insert(key) {
-                return;
-            }
-            out.push((
-                TokenHit {
-                    word: word.to_string(),
-                    syllables: sylls.clone(),
-                    freq: score,
-                    segs,
-                },
-                remain.to_string(),
-            ));
-        };
-        for rec in data.phrases.values() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(&rec.word, split_sylls(&rec.sylls), rec.segs.clone(), freq);
-        }
-        for (word, rec) in data.words.iter() {
-            let freq =
-                ((rec.count as f64 * USER_BOOST_PER_COUNT) * decay(rec.last_used, now)) as i32;
-            consider(word, split_sylls(&rec.sylls), rec.segs.clone(), freq);
-        }
-        out.sort_by(|a, b| {
-            a.1.len()
-                .cmp(&b.1.len())
-                .then(b.0.freq.cmp(&a.0.freq))
-                .then(a.0.word.cmp(&b.0.word))
-                .then(a.0.syllables.join("'").cmp(&b.0.syllables.join("'")))
-        });
-        out.truncate(limit);
-        out
+        self.query_ctx()
+            .query_continuation(tokens, frag, max_results)
     }
 }

@@ -64,8 +64,8 @@ struct EngineResult {
     Comp comp;
 };
 
-// 引擎线程单次请求的等待上限。只约束工作线程，主循环从不等它。
-constexpr int kEngineRequestDeadlineMs = 200;
+// 停机等待线程退出的上限（stop 时先 abort 唤醒阻塞读取，正常瞬时退出）。
+constexpr int kEngineStopWaitMs = 1000;
 // 连不上时同一窗口内不再反复探测（kRebuild/kProbe/kReset 除外）。
 constexpr int kEngineReconnectCooldownMs = 250;
 
@@ -91,6 +91,7 @@ public:
     void clearPending();
     bool popResult(EngineResult* out);
     bool connected() const { return connected_.load(); }
+    void setShuangpinEnabled(bool v) { shuangpinEnabled_.store(v); }
 
 private:
     void run();
@@ -107,6 +108,7 @@ private:
     std::deque<EngineOp> queue_;
     std::deque<EngineResult> results_;
     std::atomic<bool> connected_{false};
+    std::atomic<bool> shuangpinEnabled_{false};
     bool stop_ = false;
     bool done_ = false;
     bool joinOk_ = false;

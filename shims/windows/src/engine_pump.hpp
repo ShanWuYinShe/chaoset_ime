@@ -73,9 +73,8 @@ struct EngineResult {
     chaoset::Comp comp;       // input/backspace/page/associate 的组词态
 };
 
-// 单请求截止：只在引擎线程上阻塞，宿主 UI 线程永不感知。取值只需覆盖
-// 「daemon 算得慢」，比按键路径的旧预算宽得多也不会影响交互。
-constexpr DWORD kEngineRequestDeadlineMs = 200;
+// 停机 join 的安全上限（stopEvent_ 会立即 CancelIoEx 唤醒，正常毫秒内退出）。
+constexpr DWORD kEngineStopWaitMs = 1000;
 // 连接失败后的重试冷却（仅普通排队请求；kRebuild 不受限，负责探测恢复）。
 constexpr DWORD kEngineReconnectCooldownMs = 250;
 
@@ -123,6 +122,7 @@ private:
     std::uint64_t nextSeq_ = 0;
     DWORD tid_ = 0;
     HANDLE thread_ = nullptr;
+    HANDLE stopEvent_ = nullptr;
     DWORD connectRetryAfter_ = 0;
 
     // 传输与会话独占：只有引擎线程碰它们。
@@ -132,6 +132,8 @@ private:
     bool sessionDesynced_ = false;
     bool hadCompositionOps_ = false;
     std::uint64_t syncedConnGen_ = 0;
+    // 双拼模式状态（-1 未知 / 0 全拼 / 1 双拼）：仅全拼已知时合并积压 kInput。
+    std::atomic<int> shuangpinMode_{-1};
 };
 
 // 存活中的引擎线程数（DllCanUnloadNow 防卸载竞态检查）。

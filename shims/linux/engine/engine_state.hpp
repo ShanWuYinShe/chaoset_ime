@@ -127,14 +127,14 @@ private:
     bool onLostTimer();
     void markEngineLost();
     void scheduleRebuild();
-    // 宽限期到（daemon 一直不可用）：本地内容按原始串落盘，一个键都不丢。
-    void giveUpEngineState();
     // 显式上屏/标点失败时已在本地写盘，引擎状态不可信：按本地剩余输入整串重建。
     void restartFromLocalState();
+    bool isLoadingCandidates() const;
     void updatePreedit(const std::string& text, bool visible);
     void hidePreedit();
     void updateLookupTable(const chaoset::Comp& comp);
     void showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount, int cursor);
+    void showLoadingLookup();
     void hideLookupTable();
     void commit(const std::string& text);
     void flushConfirmedAndReset();
@@ -161,7 +161,7 @@ private:
     std::uint64_t seq_ = 0;
     std::uint32_t epoch_ = 0;
     bool engineLost_ = false;
-    std::int64_t engineLostMs_ = 0;
+    bool showingLoading_ = false;
     std::int64_t lastRebuildMs_ = 0;
     std::int64_t lastProbeMs_ = 0;
     bool enMode_ = false;

@@ -60,8 +60,27 @@ fn get_data() -> &'static S2tData {
 
 /// 将简体中文转换为繁体中文
 pub fn to_traditional(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
     let data = get_data();
-    let chars: Vec<char> = text.chars().collect();
+    let mut it = text.chars();
+    let first = it.next().unwrap();
+    if it.next().is_none() {
+        return match data.chars.get(&first) {
+            Some(&tc) => String::from(tc),
+            None => String::from(first),
+        };
+    }
+
+    let mut starts: Vec<usize> = Vec::with_capacity(text.len().min(64) + 1);
+    let mut chars: Vec<char> = Vec::with_capacity(text.len().min(64));
+    for (byte_idx, c) in text.char_indices() {
+        starts.push(byte_idx);
+        chars.push(c);
+    }
+    starts.push(text.len());
+
     let mut result = String::with_capacity(text.len());
     let mut i = 0;
 
@@ -69,10 +88,10 @@ pub fn to_traditional(text: &str) -> String {
         let mut matched = false;
         let max_len = data.max_phrase_len.min(chars.len() - i);
 
-        // 优先最长词组匹配
+        // 优先最长词组匹配（零分配切片查表）
         for l in (2..=max_len).rev() {
-            let sub: String = chars[i..i + l].iter().collect();
-            if let Some(trad) = data.phrases.get(&sub) {
+            let sub = &text[starts[i]..starts[i + l]];
+            if let Some(trad) = data.phrases.get(sub) {
                 result.push_str(trad);
                 i += l;
                 matched = true;

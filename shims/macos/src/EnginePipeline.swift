@@ -55,8 +55,6 @@ struct EngineResult {
 }
 
 final class EnginePipeline {
-    /// daemon 一直不可用的宽限期：到点按壳侧原始串落盘（一个键都不丢）。
-    static let graceSeconds: TimeInterval = 2.0
     /// 失联重建节流。
     static let rebuildInterval: TimeInterval = 0.2
     /// 失联探测节流。
@@ -89,13 +87,17 @@ final class EnginePipeline {
     }
 
     init(socketPath: String = EngineClient.defaultSocketPath) {
-        client = EngineClient(socketPath: socketPath)
+        client = EngineClient(socketPath: socketPath, unboundedRead: true)
         // 启动即预热一次连接（在引擎线程上）：首个内容键通常已处于已连接状态。
         queue.async { [weak self] in
             guard let self else { return }
             let ok = self.client.warmUp()
             self.setConnected(ok)
         }
+    }
+
+    deinit {
+        client.abort()
     }
 
     /// 提交一个操作；completion 保证在主队列、按提交顺序回调。

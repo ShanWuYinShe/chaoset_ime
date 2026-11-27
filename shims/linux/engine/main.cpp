@@ -332,7 +332,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
                 return true;
             }
             if (!isComposing() && !hasDpPending()) return false;
-            if (!last_.candidates.empty() && selectCandidate(lookupIndex_)) return true;
+            if (!isLoadingCandidates() && !last_.candidates.empty() && selectCandidate(lookupIndex_)) return true;
             if (!pendingOps_.empty()) {
                 // 结果尚未应用（乐观窗口）：按页内第 0 项入队，由引擎对完整输入解析；
                 // 绝不把拼音当原始串顶屏。失败则保持组词并整串重建。
@@ -352,7 +352,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             commit(raw);
             return true;
         }
-        if (isArrowKey(keyval) && isComposing() && !last_.candidates.empty()) {
+        if (isArrowKey(keyval) && isComposing() && !isLoadingCandidates() && !last_.candidates.empty()) {
             if (keyval == kKeysymUp || keyval == kKeysymDown) {
                 flipPage(keyval == kKeysymDown);
             } else {
@@ -361,7 +361,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return true;
         }
         if (keyval == kKeysymPageUp || keyval == kKeysymPageDown) {
-            if (!isComposing()) return false;
+            if (!isComposing() || isLoadingCandidates()) return false;
             if (last_.candidates.empty() && pendingOps_.empty()) {
                 flushConfirmedAndReset();
                 return false;
@@ -370,7 +370,7 @@ bool IbusEngineState::processKeyEvent(guint keyval, guint keycode, guint state) 
             return true;
         }
         if (keyval == '-' || keyval == '=' || keyval == '[' || keyval == ']') {
-            if (isComposing() && (!last_.candidates.empty() || !pendingOps_.empty())) {
+            if (isComposing() && !isLoadingCandidates() && !last_.candidates.empty()) {
                 submitPage(keyval == '=' || keyval == ']');
                 return true;
             }
@@ -426,17 +426,18 @@ void IbusEngineState::reset() {
 
 void IbusEngineState::pageUp() {
         if (!assoc_.empty()) { flipAssociate(false); return; }
-        if (!isComposing()) return;
+        if (!isComposing() || showingLoading_ || isLoadingCandidates()) return;
         submitPage(false);
     }
 
 void IbusEngineState::pageDown() {
         if (!assoc_.empty()) { flipAssociate(true); return; }
-        if (!isComposing()) return;
+        if (!isComposing() || showingLoading_ || isLoadingCandidates()) return;
         submitPage(true);
     }
 
 void IbusEngineState::candidateClicked(guint index) {
+        if (assoc_.empty() && (showingLoading_ || isLoadingCandidates())) return;
         if (!selectCandidate(static_cast<int>(index)) && !assoc_.empty()) exitAssociate();
     }
 
@@ -464,6 +465,7 @@ void IbusEngineState::ensurePump() {
         pump_.reset(new EnginePump(makeDaemonOptions(options_), [weak] {
             if (auto wake = weak.lock()) scheduleResultsIdle(wake);
         }));
+        pump_->setShuangpinEnabled(!dpScheme_.empty());
         // 启动线程前在主循环线程做一次单次非阻塞探测：首个内容键通常已连接。
         pump_->warmConnect();
         pump_->start();
@@ -512,6 +514,7 @@ void IbusEngineState::updateLookupTable(const chaoset::Comp& comp) {
 
 void IbusEngineState::showLookup(const std::vector<chaoset::Candidate>& cands, int page, int pageCount, int cursor) {
         if (engine_ == nullptr) return;
+        showingLoading_ = false;
         if (cands.empty()) { hideLookupTable(); return; }
         if (cursor < 0) cursor = 0;
         if (cursor >= static_cast<int>(cands.size())) cursor = static_cast<int>(cands.size()) - 1;
@@ -531,7 +534,17 @@ void IbusEngineState::showLookup(const std::vector<chaoset::Candidate>& cands, i
         ibus_engine_update_lookup_table(engine_, table, TRUE);
     }
 
+void IbusEngineState::showLoadingLookup() {
+        if (engine_ == nullptr || showingLoading_) return;
+        showingLoading_ = true;
+        IBusLookupTable* table = ibus_lookup_table_new(kPageSize, 0, FALSE, FALSE);
+        ibus_lookup_table_append_candidate(table, ibus_text_new_from_string("..."));
+        ibus_lookup_table_append_label(table, ibus_text_new_from_string(""));
+        ibus_engine_update_lookup_table(engine_, table, TRUE);
+    }
+
 void IbusEngineState::hideLookupTable() {
+        showingLoading_ = false;
         if (engine_ != nullptr) ibus_engine_hide_lookup_table(engine_);
     }
 
@@ -628,6 +641,7 @@ void IbusEngineState::moveLookup(int delta) {
     }
 
 void IbusEngineState::flipPage(bool next) {
+        if (isLoadingCandidates()) return;
         if (last_.candidates.empty() && pendingOps_.empty()) return;
         if (!last_.candidates.empty()) {
             if (next ? (last_.page + 1 >= last_.pageCount) : (last_.page <= 0)) return;
@@ -656,7 +670,7 @@ bool IbusEngineState::selectCandidate(int idx) {
             submitNonComposingOp(std::move(op));
             return true;
         }
-        if (idx < static_cast<int>(last_.candidates.size())) {
+        if (!isLoadingCandidates() && idx < static_cast<int>(last_.candidates.size())) {
             const auto pick = last_.candidates[idx];
             EngineOp op;
             op.kind = EngineOpKind::kSelectPrefix;

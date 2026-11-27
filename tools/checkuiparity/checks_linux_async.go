@@ -4,8 +4,8 @@
 // selectPrefix/punct/associate…，daemon 慢或挂起（SO_RCVTIMEO 300ms 起步、懒启动
 // 最长约 5s）会把整个输入法主循环按住，候选窗与预编辑一起停摆。
 //
-// 现实现：每个 engine 实例一个 EnginePump 线程（独占连接、FIFO、200ms 截止），
-// 主循环只「入队 + 用乐观组词态渲染」，结果经 g_idle 回投后按 seq 应用。
+// 现实现：每个 engine 实例一个 EnginePump 线程（独占连接、FIFO、无硬读取超时 poll + abort 唤醒），
+// 主循环只「入队 + 用乐观组词态渲染」，结果经 g_idle 回投后按 seq 应用；等待响应期间在 lookup 显示 "..."。
 // 本组锁住以下不变量，任何一条回退都会让按键重新阻塞主循环：
 //
 //	a) 主循环 TU 不得直连 daemon/等待；
@@ -101,12 +101,15 @@ func checkLinuxAsyncPipeline(fsys fs.FS, problems *[]string) {
 		fail("%s 找不到 processKeyEvent 定义（签名变了？需同步更新本检查）", linuxMain)
 	}
 
-	// c) 引擎线程：每 engine 一个、FIFO、有截止、结果只经通知回调唤醒主循环。
+	// c) 引擎线程：每 engine 一个、FIFO、无硬超时等待（setDeadlineMs(0) + abort 唤醒），结果经通知回调唤醒主循环。
 	checkContains(fsys, problems, group, linuxPumpHpp,
 		"class EnginePump", "std::thread", "std::deque<EngineOp> queue_",
-		"kEngineRequestDeadlineMs", "kEngineReconnectCooldownMs", "joinOk()")
+		"kEngineStopWaitMs", "kEngineReconnectCooldownMs", "joinOk()")
 	checkContains(fsys, problems, group, linuxPumpCpp,
+		"daemon_.setDeadlineMs(0);", "daemon_.abort();",
 		"cv_.wait(", "queue_.pop_front();", "notify_()", "joinOk_ = false")
+	checkContains(fsys, problems, group, "shims/linux/engine/daemon.cpp",
+		"::poll(pfds", "void UnixTransport::abort()")
 	pumpCode := stripCppComments(mustRead(fsys, linuxPumpCpp))
 	for _, bad := range []string{"ibus_", "IBus"} {
 		if strings.Contains(pumpCode, bad) {
@@ -117,7 +120,7 @@ func checkLinuxAsyncPipeline(fsys fs.FS, problems *[]string) {
 	checkContains(fsys, problems, group, linuxMain, "void IbusEngineState::drainResults()", "state.store(nullptr)")
 	checkContains(fsys, problems, group, linuxStateHpp, "struct ResultWake")
 
-	// d) 失败语义：失败不弹乐观项、纪元作废、失联整串重建、宽限落盘。
+	// d) 失败语义：失败不弹乐观项、纪元作废、失联整串重建、等待返回显示 "..." 占位（不做 2s 强制落盘）。
 	if body, line, ok := cppFunctionBody(asyncCode,
 		"void IbusEngineState::applyResult(const EngineResult& r)"); ok {
 		need(linuxMain, "applyResult", body,
@@ -135,14 +138,9 @@ func checkLinuxAsyncPipeline(fsys fs.FS, problems *[]string) {
 		fail("%s 找不到 applyResult 定义", linuxMain)
 	}
 	need(linuxMain, "异步核心", asyncCode,
-		"kEngineGraceMs", "scheduleRebuild(", "giveUpEngineState(",
+		"scheduleRebuild(", "isLoadingCandidates(", "showLoadingLookup();",
 		"EngineOpKind::kRebuild", "++epoch_", "pendingOps_.clear()")
-	// 宽限放弃必须按壳侧完整输入串落盘（commit(raw)），一个键都不丢。
-	if body, _, ok := cppFunctionBody(asyncCode, "void IbusEngineState::giveUpEngineState()"); ok {
-		need(linuxMain, "giveUpEngineState", body, "optimisticComp()", "resetPipeline(true)", "commit(raw)")
-	} else {
-		fail("%s 找不到 giveUpEngineState 定义", linuxMain)
-	}
+	checkContains(fsys, problems, group, linuxMain, "void IbusEngineState::showLoadingLookup()")
 
 	// e) 乐观渲染用「已应用组词态 + 未应用操作」；候选表只在既有语义路径关闭。
 	need(linuxAsync, "渲染路径", asyncCode,

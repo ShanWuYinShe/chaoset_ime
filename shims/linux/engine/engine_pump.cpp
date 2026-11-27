@@ -25,7 +25,8 @@ constexpr std::size_t kMaxQueuedResults = 256;
 
 EnginePump::EnginePump(Daemon::Options options, Notify notify)
     : daemon_(std::move(options)), notify_(std::move(notify)) {
-    daemon_.setDeadlineMs(kEngineRequestDeadlineMs);
+    // 无界异步读取：poll 等待响应或 abort 唤醒，不再使用 200ms 硬等待超时。
+    daemon_.setDeadlineMs(0);
 }
 
 EnginePump::~EnginePump() {
@@ -50,6 +51,7 @@ void EnginePump::stop() {
         joinOk_ = true;
         return;
     }
+    daemon_.abort();
     {
         std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
@@ -58,8 +60,7 @@ void EnginePump::stop() {
     cv_.notify_all();
     {
         std::unique_lock<std::mutex> lk(mu_);
-        // 有界等待：单个请求最长 kEngineRequestDeadlineMs，正常远小于该上限。
-        if (!doneCv_.wait_for(lk, std::chrono::seconds(5), [this] { return done_; })) {
+        if (!doneCv_.wait_for(lk, std::chrono::milliseconds(kEngineStopWaitMs), [this] { return done_; })) {
             joinOk_ = false;
             return;  // 线程仍引用 this：调用方必须故意泄漏，绝不能销毁
         }
@@ -269,6 +270,15 @@ void EnginePump::run() {
             if (stop_) break;
             op = std::move(queue_.front());
             queue_.pop_front();
+            if (!shuangpinEnabled_.load() && op.kind == EngineOpKind::kInput) {
+                while (!queue_.empty() && queue_.front().kind == EngineOpKind::kInput &&
+                       queue_.front().epoch == op.epoch &&
+                       queue_.front().halfWidth == op.halfWidth) {
+                    op.text += queue_.front().text;
+                    op.seq = queue_.front().seq;
+                    queue_.pop_front();
+                }
+            }
         }
         EngineResult result = exec(op);
         pushResult(std::move(result));

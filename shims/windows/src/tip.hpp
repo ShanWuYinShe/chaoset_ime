@@ -392,8 +392,7 @@ private:
     std::deque<chaoset::win::EngineOp> pendingOps_;  // 已入队、结果未应用
     std::uint64_t engineSeq_ = 0;
     std::uint32_t engineEpoch_ = 0;  // 失焦/取消：递增即丢弃一切过期结果
-    bool engineLost_ = false;        // 最近请求失败：引擎状态未知，等整串重建
-    DWORD engineLostTick_ = 0;       // 首次失败时刻（宽限期起点）
+    bool engineLost_ = false;        // 最近连接故障：等待重启后整串重建
     DWORD lastRebuildTick_ = 0;      // 重建请求节流
     DWORD lastProbeTick_ = 0;        // 失联探测节流
     ITfContext* engineCtx_ = nullptr;  // 异步应用结果用的上下文（AddRef）
@@ -410,6 +409,7 @@ private:
     bool hasDpPending() const;
     chaoset::Comp optimisticComp() const;  // comp_ + 未应用输入/退格回放
     std::string optimisticInput() const;
+    bool isLoadingCandidates() const;
     void onWorkerEngineResult() override;
     bool onWorkerEngineTimer() override;
     void applyEngineResults();
@@ -418,7 +418,6 @@ private:
     void handleSelectPrefixFallback(const chaoset::win::EngineResult& r);
     void markEngineLost(const chaoset::win::EngineResult& r);
     void scheduleRebuild();
-    void giveUpEngineState();
     void resetEnginePipeline(bool newSession);  // 纪元++ / 清 pending / 引擎复位
     bool applyCommitted(const std::string& text);
     void renderAfterCommit(ITfContext* ctx);  // 上屏后若仍有在飞按键，立即起新合成
@@ -457,6 +456,8 @@ private:
     std::string committed_;
     bool commitWritten_ = false;
     bool preeditWritten_ = false;  // 预编辑确实写进了文档（渲染兜底判定用）
+    std::string lastPreedit_;
+    bool lastPreeditValid_ = false;
     void releaseCompositionContext();
     static std::vector<std::string> splitSyllables(const std::string& syllables);
 

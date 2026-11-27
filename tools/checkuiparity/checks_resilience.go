@@ -11,8 +11,8 @@
 //	b) 按键入口只入队 + 乐观 render，随后才投递，绝不等待；
 //	c) 结果按 seq 顺序应用、失败不弹出乐观项、过期（纪元不同）结果丢弃；
 //	d) 失焦/取消递增纪元并清空管线，绝不把迟到结果写进新会话；
-//	e) daemon 失败保留本地组词，2s 宽限后按原始串落盘；显式选词用已显示文本兜底；
-//	f) 引擎线程每 TIP 一个、独占连接、FIFO、有截止、结果回投 message-only 窗口。
+//	e) daemon 失败保留本地组词并持续节流重建（不硬超时强制落盘），显式选词用已显示文本兜底，loading 期间展示单条 "..."；
+//	f) 引擎线程每 TIP 一个、独占连接、FIFO、无硬读取超时（INFINITE + abortEvent）、结果回投 message-only 窗口。
 package main
 
 import (
@@ -135,19 +135,15 @@ func checkAsyncEnginePipeline(fsys fs.FS, problems *[]string) {
 		fail("%s 只有 %d 处 resetEnginePipeline(true)——失焦（OnSetFocus(FALSE)）与合成被外部终止（OnCompositionTerminated）都必须作废在飞结果", winTipCore, n)
 	}
 
-	// e) daemon 失败：保留本地组词、2s 宽限后按原始串落盘；显式选词/联想/标点
-	// 用壳侧已显示文本兜底上屏，绝不静默丢键。
+	// e) daemon 失败：保留本地组词并持续节流整串重建（不做 2s 强制落盘）；显式选词/
+	// 联想/标点用壳侧已显示文本兜底上屏；等待返回期间展示单个 "..." 加载占位。
 	async := stripCppComments(mustRead(fsys, winTipAsync))
-	for _, n := range []string{"kEngineGraceMs", "markEngineLost(", "scheduleRebuild(", "giveUpEngineState(", "postDaemonConnect("} {
+	for _, n := range []string{"isLoadingCandidates(", "markEngineLost(", "scheduleRebuild(", "postDaemonConnect("} {
 		if !strings.Contains(async, n) {
-			fail("%s 缺少 %q——daemon 不可用时必须保留本地组词并在宽限后落盘", winTipAsync, n)
+			fail("%s 缺少 %q——daemon 不可用或等待响应时必须保留本地组词、持续重建并指示 loading 状态", winTipAsync, n)
 		}
 	}
-	if body, _, ok := bodyOf(winTipAsync, "void ChaosetTIP::giveUpEngineState()"); ok {
-		need(winTipAsync, "giveUpEngineState", body, "optimisticComp()", "commit(")
-	} else {
-		fail("%s 找不到 giveUpEngineState 定义", winTipAsync)
-	}
+	checkContains(fsys, problems, group, winTipComp, "isLoadingCandidates()", "candidateWnd_.showLoading(")
 
 	// f) 乐观预编辑：渲染用的预编辑必须来自 optimisticComp（comp_ + 未应用操作），
 	// 组词判定同理——否则首个按键的结果回来前会把后续按键放行成宿主英文。
@@ -160,15 +156,20 @@ func checkAsyncEnginePipeline(fsys fs.FS, problems *[]string) {
 		"bool ChaosetTIP::isComposing() const { return !optimisticComp().input.empty(); }")
 
 	// g) 引擎线程：每 TIP 一个、独占连接（daemon 组词会话按连接隔离）、FIFO、
-	// 有截止、结果回投 message-only 窗口。
+	// 无硬读取超时（INFINITE + abortEvent_ + WaitForMultipleObjects + CancelIoEx）、
+	// 结果回投 message-only 窗口。
 	checkContains(fsys, problems, group, winEnginePumpHpp,
 		"class EnginePump", "std::deque<EngineOp> queue_", "chaoset::Session session_",
-		"kEngineRequestDeadlineMs", "kEngineReconnectCooldownMs")
+		"kEngineStopWaitMs", "kEngineReconnectCooldownMs", "stopEvent_")
 	checkContains(fsys, problems, group, winEnginePumpCpp,
+		"transport_.setDeadlineMs(INFINITE)",
+		"transport_.setAbortEvent(stopEvent_)",
 		"cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });",
 		"queue_.pop_front();",
 		"postTipThread(tid_, kTipEngineResultMsg, 0, 0);",
 		"connected_.store(true)")
+	checkContains(fsys, problems, group, winTransport,
+		"setAbortEvent(", "WaitForMultipleObjects(", "CancelIoEx(")
 	checkContains(fsys, problems, group, winTipHpp, "std::unique_ptr<chaoset::win::EnginePump> pump_;")
 	checkContains(fsys, problems, group, winTipThreadHpp, "kTipEngineResultMsg")
 	checkContains(fsys, problems, group, winTipThreadCpp, "onWorkerEngineResult()")

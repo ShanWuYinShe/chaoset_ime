@@ -211,3 +211,22 @@ fn input_with_base_shuangpin_base_and_pending_pair() {
     let got_rebuild = composition_snapshot(&mut rebuild, comp);
     assert_eq!(want, got_rebuild);
 }
+
+/// 双拼下 `input_with_base(";", ..., Some(base))` 无 pending 时必须先把 base 组出候选，
+/// 再按标点语义提交首选 + 中文分号。
+#[test]
+fn input_with_base_shuangpin_semicolon_punct() {
+    let dict = common_dict();
+    let mut typed = Session::new(Arc::clone(&dict), None);
+    typed.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    for key in ["n", "i"] {
+        typed.input(key, false).unwrap();
+    }
+    let want = typed.input(";", false).unwrap();
+    assert!(!want.committed.is_empty());
+
+    let mut rebuild = Session::new(dict, None);
+    rebuild.set_shuangpin(Some(ShuangpinScheme::Zrm));
+    let got = rebuild.input_with_base(";", false, Some("ni")).unwrap();
+    assert_eq!(want.committed, got.committed);
+}
