@@ -622,7 +622,10 @@ func checkCandidatePageArrows(fsys fs.FS, problems *[]string) {
 	checkExcludes(fsys, problems, group, macPanel, "let dirDown = hasNext || !hasPrev")
 	// 单页必须显式处理（两端都要有分支，不允许「单页也画可点箭头」）。
 	checkContains(fsys, problems, group, winShell, "pageCount <= 1")
-	checkContains(fsys, problems, group, macPanel, "pageCount <= 1")
+	// macOS：单页置灰双箭头显式分支 + loading 占位（pageCount==0）不画箭头
+	//（与 Windows loading 分支清空 chevron rect 同语义；pageH=0 时置灰双箭头
+	// 会上下叠成菱形，2026-11-28 截图走查发现）。
+	checkContains(fsys, problems, group, macPanel, "pageCount == 1", "pageCount == 0")
 	// Linux 用 ibus 原生面板，不自绘箭头：README 必须记录「双箭头可用性不可控」
 	// 与方向键语义，禁止假装三端自绘一致。
 	checkContains(fsys, problems, group, linuxReadme,
