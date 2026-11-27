@@ -7,7 +7,7 @@
 #   本身就是一次性 VM，再套一层 docker 纯属浪费（还要镜像拉取 1-3 分钟）。
 #   本脚本直接在 runner 上跑同样的 DBus 断言。
 #
-# 覆盖内容与 test.sh 一致：
+# 覆盖内容（CI 版为准；test.sh 是本地容器调试子集，不含后两条）：
 #   - 引擎能被拉起并连上 session bus
 #   - CreateEngine 两次得到两个独立实例（组词状态按实例隔离）
 #   - 两实例交错打字，各自空格上屏正确
@@ -17,6 +17,10 @@
 #     （2026-10-31 三端统一后的真实 ibus 路由回归）
 #   - 设置启动器（chaoset-setup）只 exec 统一设置中心 chaoset-settings、
 #     原样转交参数，且不链接 GTK（设置界面唯一实现是 Slint 设置中心）
+#   - 异步加载占位（SIGSTOP 挂起 daemon → 在飞 "..." 占位；SIGCONT 恢复 →
+#     真实候选返回。锁定「无硬等待超时」契约：旧 200ms 读超时实现回到本
+#     场景会在挂起期断连丢组词，必然 FAIL）
+#   - 鼠标点选候选（CandidateClicked → CommitText）与第 2 页页内序号点选
 #
 # 用法（Ubuntu，已装 ibus/dbus）：
 #   ./shims/linux/test-ci.sh
@@ -406,6 +410,62 @@ else
   exit 1
 fi
 press "$P1" 65307 0  # Esc 保险
+
+# ---- 异步加载占位（daemon 挂起 → "..." 占位 → 恢复 → 真实候选）----
+# 锁定异步引擎管线的「无硬等待超时」契约（与 macOS key_routing 的失败注入、
+# Windows INFINITE 等待三端同语义）：
+#   1. SIGSTOP 冻结真实 chaosetd = 最真实的 daemon 挂起；
+#   2. 冻结窗口内按键：主循环不被阻塞（press 的 D-Bus 往返能返回就是证明——
+#      旧同步实现会卡死在这里直到超时）、乐观预编辑照常渲染、候选表立即切换为
+#      单条平静 "..." 占位（UpdateLookupTable 出现 "..." 且冻结期绝无真实候选）；
+#   3. SIGCONT 解冻：积压请求被处理，真实候选（"ni" → 你）照常返回且晚于占位。
+# 旧 200ms 硬读超时实现回到本场景：挂起期超时断连丢组词/2s 强制上屏原始串，
+# 两处断言必然 FAIL。
+MON4="$WORK/loading-monitor.log"
+dbus-monitor --session "type='signal',interface='org.freedesktop.IBus.Engine'" > "$MON4" 2>&1 &
+MON4_PID=$!
+sleep 0.7  # 同上：等 monitor 就绪再按键（flake 教训）
+DPID=$(pgrep -x chaosetd | head -1)
+if [ -z "$DPID" ]; then
+  echo "FAIL: 未找到 chaosetd 进程，无法执行挂起场景" >&2
+  exit 1
+fi
+kill -STOP "$DPID"
+for kv in 110 105; do press "$P1" "$kv" 0; done  # n i（乐观渲染 + "..." 占位）
+sleep 0.8
+if grep -qF '"..."' "$MON4"; then
+  echo "PASS: daemon 挂起期间候选表显示 \"...\" 加载占位"
+else
+  echo "FAIL: daemon 挂起期间未出现 \"...\" 占位（monitor 日志：）" >&2
+  cat "$MON4" >&2
+  kill -CONT "$DPID" 2>/dev/null || true
+  exit 1
+fi
+if grep -q '你' "$MON4"; then
+  echo "FAIL: daemon 挂起期（冻结窗口）不该出现真实候选" >&2
+  kill -CONT "$DPID" 2>/dev/null || true
+  exit 1
+fi
+kill -CONT "$DPID"
+sleep 2.5  # 解冻后 daemon 处理积压请求，引擎按序应用并刷新真实候选
+kill "$MON4_PID" 2>/dev/null || true
+wait "$MON4_PID" 2>/dev/null || true
+if grep -q '你' "$MON4"; then
+  echo "PASS: daemon 恢复后真实候选返回（你）"
+else
+  echo "FAIL: daemon 恢复后未返回真实候选（monitor 日志：）" >&2
+  cat "$MON4" >&2
+  exit 1
+fi
+DOT_LINE=$(grep -nF '"..."' "$MON4" | head -1 | cut -d: -f1)
+NI_LINE=$(grep -n '你' "$MON4" | head -1 | cut -d: -f1)
+if [ -n "$DOT_LINE" ] && [ -n "$NI_LINE" ] && [ "$DOT_LINE" -lt "$NI_LINE" ]; then
+  echo "PASS: 占位先于真实候选出现（顺序正确）"
+else
+  echo "FAIL: 占位/真实候选顺序异常（dot=${DOT_LINE} ni=${NI_LINE}）" >&2
+  exit 1
+fi
+press "$P1" 65307 0  # Esc 清空
 
 # ---- daemon 单实例（引擎首键拉起；不应因多次 auto-spawn 留下两个进程）----
 DAEMON_COUNT=$(pgrep -x chaosetd | wc -l | tr -d ' ')
