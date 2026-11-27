@@ -24,7 +24,6 @@ final class ChaosetController: IMKInputController {
     /// 失焦/取消递增：旧时代的结果一律丢弃，绝不写进新会话。
     var engineEpoch: UInt64 = 0
     var engineLost = false
-    var engineLostAt: TimeInterval = 0
     var lastRebuildAt: TimeInterval = 0
     var lastProbeAt: TimeInterval = 0
     var engineLostTimer: Timer?
@@ -335,8 +334,16 @@ final class ChaosetController: IMKInputController {
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
         }
-        // 候选来自最后一次已应用结果；结果未回来（pending）时保持面板原样
-        // ——慢/失败绝不关闭候选窗（issue #149 用户要求）。
+        // 候选区显示策略：只要有更新候选的在飞请求（input/rebuild/退格/翻页），立即
+        // 展示单条平静「...」占位（保留已有宽度）；结果到达后只展示真实候选（绝不补空位）。
+        let composingNow = isComposingOptimistic() || hasDpPending()
+        if isLoadingCandidates, composingNow {
+            if showNativeLoadingPanel(client: client) {
+                candidateWindow?.hide()
+                return
+            }
+        }
+        // 候选来自最后一次已应用结果；无候选时仅在管线空闲后隐藏（防止慢响应前闪烁关闭）。
         let hasCandidates = !(current?.candidates.isEmpty ?? true)
         if !hasCandidates {
             if pendingOps.isEmpty {
@@ -369,6 +376,21 @@ final class ChaosetController: IMKInputController {
 
     private static func hideCandidatePanel() {
         CandidatePanelController.hide()
+    }
+
+    /// 在飞等待期间显示单个平静 `"..."` 占位；保留面板先前的宽度。
+    private func showNativeLoadingPanel(client: (any IMKTextInput)?) -> Bool {
+        let screen = Self.screenForCursor(client) ?? NSScreen.main
+        CandidatePanelController.onSelect = nil
+        CandidatePanelController.onPageDown = nil
+        CandidatePanelController.onPageUp = nil
+        CandidatePanelController.onSettings = { [weak self] in
+            self?.showSettingsMenu()
+        }
+        CandidatePanelController.onDelete = nil
+        return CandidatePanelController.showLoading { size in
+            Self.candidateOrigin(size: size, client: client, screen: screen)
+        }
     }
 
     /// 显示壳内原生候选窗；返回 false 表示不可用（回退 IMKCandidates）。

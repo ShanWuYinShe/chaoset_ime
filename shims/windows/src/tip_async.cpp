@@ -16,7 +16,6 @@
 using namespace chaoset::win;
 
 namespace {
-constexpr DWORD kEngineGraceMs = 2000;      // daemon 不可用宽限（到点按原始串落盘）
 constexpr DWORD kRebuildIntervalMs = 200;   // 失联重建请求节流
 constexpr DWORD kProbeIntervalMs = 500;     // 失联探测节流
 }  // namespace
@@ -146,15 +145,21 @@ chaoset::Comp ChaosetTIP::optimisticComp() const {
 
 std::string ChaosetTIP::optimisticInput() const { return optimisticComp().input; }
 
+bool ChaosetTIP::isLoadingCandidates() const {
+    for (const EngineOp& op : pendingOps_) {
+        if (op.kind == EngineOpKind::kInput || op.kind == EngineOpKind::kRebuild ||
+            op.kind == EngineOpKind::kBackspace || op.kind == EngineOpKind::kBackspaceWord ||
+            op.kind == EngineOpKind::kNextPage || op.kind == EngineOpKind::kPrevPage) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ChaosetTIP::onWorkerEngineResult() { applyEngineResults(); }
 
 bool ChaosetTIP::onWorkerEngineTimer() {
     if (!inputActive_ || !engineLost_) return false;
-    const DWORD now = ::GetTickCount();
-    if (static_cast<LONG>(now - engineLostTick_) >= static_cast<LONG>(kEngineGraceMs)) {
-        giveUpEngineState();
-        return false;
-    }
     scheduleRebuild();
     return engineLost_;
 }
@@ -513,16 +518,10 @@ void ChaosetTIP::applyEngineResult(const EngineResult& r) {
 void ChaosetTIP::markEngineLost(const EngineResult& /*r*/) {
     if (!engineLost_) {
         engineLost_ = true;
-        engineLostTick_ = ::GetTickCount();
         if (diagBudget()) diagPrintf(L"tsf.log", "engine lost (async)\n");
     }
     postDaemonConnect();  // 零等待：worker 负责拉起 daemon（AC 宿主自行跳过）
     startEngineLostTimer();
-    const DWORD now = ::GetTickCount();
-    if (static_cast<LONG>(now - engineLostTick_) >= static_cast<LONG>(kEngineGraceMs)) {
-        giveUpEngineState();
-        return;
-    }
     scheduleRebuild();
 }
 
@@ -542,24 +541,6 @@ void ChaosetTIP::scheduleRebuild() {
     submitEngineOp(op);
 }
 
-// 宽限期到（daemon 一直不可用）：本地内容按原始串落盘，一个键都不丢，然后
-// 清空管线（纪元++ 丢弃在飞结果，取消积压并断开连接）。
-void ChaosetTIP::giveUpEngineState() {
-    const chaoset::Comp disp = optimisticComp();
-    std::string base, text;
-    computeOptimistic(nullptr, &base, &text);
-    const std::string raw = confirmedPreedit_ + (!text.empty() ? (base + text) : disp.input);
-    ITfContext* ctx = (compCtx_ != nullptr) ? compCtx_ : engineCtx_;
-    resetEnginePipeline(true);
-    if (raw.empty()) {
-        endComposition();
-        return;
-    }
-    confirmedPreedit_.clear();
-    comp_ = chaoset::Comp();
-    if (!commit(ctx, raw)) endComposition();
-}
-
 // 管线重置：纪元递增（在飞结果全部作废）+ 清空壳侧待应用项 + 丢弃引擎线程
 // 尚未开始执行的积压，最后投一个引擎复位请求。
 //   newSession=true  → kReset：组词与学习上下文一起清（失焦/停用/合成被宿主终止）
@@ -569,7 +550,6 @@ void ChaosetTIP::resetEnginePipeline(bool newSession) {
     pendingOps_.clear();
     comp_.dpPending.clear();
     engineLost_ = false;
-    engineLostTick_ = 0;
     lastRebuildTick_ = 0;
     if (!pump_) return;
     pump_->clearPending();

@@ -8,7 +8,6 @@
 
 namespace ibus_shell {
 
-constexpr std::int64_t kEngineGraceMs = 2000;
 constexpr std::int64_t kRebuildIntervalMs = 200;
 constexpr std::int64_t kProbeIntervalMs = 500;
 
@@ -164,9 +163,30 @@ chaoset::Comp IbusEngineState::optimisticComp() const {
 
 std::string IbusEngineState::optimisticInput() const { return optimisticComp().input; }
 
+bool IbusEngineState::isLoadingCandidates() const {
+        for (const auto& op : pendingOps_) {
+            switch (op.kind) {
+                case EngineOpKind::kInput:
+                case EngineOpKind::kRebuild:
+                case EngineOpKind::kBackspace:
+                case EngineOpKind::kBackspaceWord:
+                case EngineOpKind::kNextPage:
+                case EngineOpKind::kPrevPage:
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return false;
+    }
+
 void IbusEngineState::display(const chaoset::Comp& disp) {
         const std::string preedit = confirmed_ + disp.preedit;
         updatePreedit(preedit, !preedit.empty());
+        if (isLoadingCandidates() && (!disp.input.empty() || !disp.dpPending.empty())) {
+            showLoadingLookup();
+            return;
+        }
         updateLookupTable(disp);
     }
 
@@ -194,21 +214,14 @@ void IbusEngineState::startLostTimer() {
 
 bool IbusEngineState::onLostTimer() {
         if (!engineLost_) { lostTimerId_ = 0; return false; }
-        const std::int64_t now = monotonicMs();
-        if (now - engineLostMs_ >= kEngineGraceMs) {
-            giveUpEngineState();
-            lostTimerId_ = 0;
-            return false;
-        }
+        // 看门狗保证 daemon 存活：持续节流重建直到恢复，不再 2s 自动落盘原始串。
         scheduleRebuild();
         return engineLost_;
     }
 
 void IbusEngineState::markEngineLost() {
-        const std::int64_t now = monotonicMs();
-        if (!engineLost_) { engineLost_ = true; engineLostMs_ = now; }
+        engineLost_ = true;
         startLostTimer();
-        if (now - engineLostMs_ >= kEngineGraceMs) { giveUpEngineState(); return; }
         scheduleRebuild();
     }
 
@@ -221,20 +234,6 @@ void IbusEngineState::scheduleRebuild() {
         if (now - lastRebuildMs_ < kRebuildIntervalMs) return;
         lastRebuildMs_ = now;
         submitRebuild(base, text);
-    }
-
-void IbusEngineState::giveUpEngineState() {
-        const chaoset::Comp disp = optimisticComp();
-        std::string base, text;
-        computeOptimistic(nullptr, &base, &text);
-        const std::string raw = confirmed_ + (!text.empty() ? (base + text) : disp.input);
-        resetPipeline(true);
-        last_ = chaoset::Comp();
-        hidePreedit();
-        hideLookupTable();
-        if (raw.empty()) return;
-        confirmed_.clear();
-        commit(raw);
     }
 
 void IbusEngineState::restartFromLocalState() {

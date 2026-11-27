@@ -169,28 +169,35 @@ void ChaosetTIP::render(ITfContext* pic) {
     // 记录合成所属上下文：此后所有对 composition_ 的清理必须对它做——
     // 此前一律 focusContext()，焦点已切走时拿到的是新文档的上下文，
     // 用它的 cookie 清旧合成必然失败，拼音文本永久残留（2026-10-29 审查）。
+    const bool sameCtx = (compCtx_ == ctx);
     if (compCtx_ != ctx) {
         if (compCtx_ != nullptr) compCtx_->Release();
         compCtx_ = ctx;
         ctx->AddRef();
     }
-    // UILess 宿主（游戏/全屏）锚点**取宿主给出的真实输入区**：这类宿主以
-    // IMM32 兼容方式承载 TSF（SDL2 的 UILess 模式即如此），游戏会把聊天输入框
-    // 的位置写进窗口输入上下文（见 updateGameCaretAnchor）。探测不到时保留
-    // 上一轮位置（GetTextExt 不可信、鼠标会被用户从输入框移走，2026-11-15
-    // Dota 2 实测）。非 UILess 宿主照旧每轮重新探测。
-    if (uilessThread_) {
-        updateGameCaretAnchor(ctx);
+    const std::string desiredPreedit = confirmedPreedit_ + optimisticComp().preedit;
+    const bool skipEditSession =
+        sameCtx && composition_ != nullptr && lastPreeditValid_ && desiredPreedit == lastPreedit_ &&
+        !uilessThread_ && caretFound_ && !caretFromMouse_ &&
+        (caretPos_.x != 0 || caretPos_.y != 0);
+    if (skipEditSession) {
+        // 乐观渲染与结果渲染 preedit 一致且有效光标已在手：跳过重复 SetText/GetTextExt 同步编辑会话。
+        preeditWritten_ = true;
     } else {
-        caretFound_ = false;
-        caretFromMouse_ = false;
+        // UILess 宿主（游戏/全屏）锚点取 IMM32 写入的真实输入区；非 UILess 每轮重探。
+        if (uilessThread_) {
+            updateGameCaretAnchor(ctx);
+        } else {
+            caretFound_ = false;
+            caretFromMouse_ = false;
+        }
+        EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
+            static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
+        });
+        const HRESULT hr = es.run(tm_, clientId_);
+        es.Release();
+        if (FAILED(hr)) diagTsfFail("RequestEditSession(render)", hr);
     }
-    EditSession es(ctx, this, [](void* user, ITfContext* c, TfEditCookie ec) {
-        static_cast<ChaosetTIP*>(user)->applyPreedit(c, ec);
-    });
-    const HRESULT hr = es.run(tm_, clientId_);
-    es.Release();
-    if (FAILED(hr)) diagTsfFail("RequestEditSession(render)", hr);
 
     // 缓存承载本合成的宿主窗口（供前台事件回调做无 COM 的比较）。
     composeHostWnd_ = contextHostWindow(ctx);
@@ -208,22 +215,15 @@ void ChaosetTIP::render(ITfContext* pic) {
         return;
     }
 
-    if (comp_.candidates.empty()) {
+    const bool loading = isLoadingCandidates() && (isComposing() || hasDpPending());
+    if (!loading && comp_.candidates.empty()) {
         endCandidatesUiElement();
         candidateWnd_.hide();
         return;
     }
 
-    // UILess 宿主候选：**默认 GDI 自绘**，对一切 UILess 宿主通用——锚点走
-    // 三级兜底（GetTextExt → GDI 光标 → 鼠标）加退化矩形防线（贴主屏左上角
-    // 32px 内的 GetTextExt 矩形一律不采信），不需要按宿主逐个特判（名单式
-    // 特判不可持续：2026-11-15 用户实测 Dota 2 宿主协商渲染画在固定位置不
-    // 跟随输入框、GetTextExt 给贴左上角的退化矩形）。微软《UI less mode》
-    // 官方协商（BeginUIElement 提交 ITfCandidateListUIElement，宿主
-    // pbShow=TRUE 由宿主渲染）保留为显式开关：注册表键 HKCU\Software\Chaoset
-    // 的 UiElementRender（DWORD，缺省 0）= 1 时启用。
-    // 独占全屏免打扰优先：不向宿主提交候选（与 GDI 路径的 show 抑制同语义）。
-    if (cachedFullscreenSuppress() && cachedFullscreenActive()) {
+    // UILess 宿主默认 GDI 自绘；UiElementRender=1 时官方协商（loading 占位不交宿主代绘）。
+    if (loading || (cachedFullscreenSuppress() && cachedFullscreenActive())) {
         endCandidatesUiElement();
     } else if (cachedUiElementRender() && presentCandidatesUiElement()) {
         candidateWnd_.hide();  // 宿主接管渲染（预编辑已照常写入文档）
@@ -233,10 +233,7 @@ void ChaosetTIP::render(ITfContext* pic) {
     }
 
     if (!caretFound_ || (caretPos_.x == 0 && caretPos_.y == 0)) {
-        // 锚点兜底链：真实 GDI 光标 → 鼠标位置。rcCaret 只在 hwndCaret
-        // 非空时有意义；浏览器等自绘应用没有 GDI 光标，借 hwndFocus 的
-        // rcCaret 只会拿到 (0,0)，候选窗飞到屏幕左上角（2026-10-29 实机
-        // 反馈）——该分支已删，直接退回鼠标位置（用户点哪儿鼠标在哪儿）。
+        // 锚点兜底链：真实 GDI 光标 → 鼠标位置（下移一行避免挡住输入）。
         GUITHREADINFO gti{};
         gti.cbSize = sizeof(gti);
         if (GetGUIThreadInfo(0, &gti) && gti.hwndCaret != nullptr &&
@@ -248,28 +245,18 @@ void ChaosetTIP::render(ITfContext* pic) {
             caretFound_ = true;
             caretFromMouse_ = false;
         } else {
-            // 鼠标兜底：**锚点要下移一行**。
-            //
-            // 鼠标通常正停在用户正在输入的那一行上，而候选窗是从锚点
-            // 再往下 6pt 起画的——直接用鼠标坐标会把候选窗画在输入行
-            // 上面，正好挡住正在打的字（Firefox 装到任务栏后的独立窗口
-            // 实测「候选框遮挡输入」，2026-11-05）。下移一行后候选窗
-            // 落在输入行下方，与有真实光标时的观感一致。
             GetCursorPos(&caretPos_);
             caretLineHeight_ = 20;
             caretPos_.y += caretLineHeight_;
             caretFromMouse_ = true;
         }
     }
-    // 候选窗 owner = 宿主窗口（2026-10-30 开始菜单排障）。
-    // ITfContextView::GetWnd 返回承载本上下文的宿主 HWND；拿不到时退回
-    // 前台窗口。owner 关系让候选窗恒在其宿主之上，可跨 Windows 11
-    // 开始菜单/搜索的沉浸式 z 序 band——无主 topmost 窗口会被压住。
-    // owner 用**当前前台窗口**（且限定本进程），不要用 hostWindowOf(ctx)——
-    // 后者可能是另一个窗口的上下文，带 owner 显示时会把它抬到前面，
-    // 表现为「候选窗一出现就把别的窗口顶上来」（2026-11-05 用户反馈）。
     candidateWnd_.setOwner(popupOwner());
-    candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
+    if (loading) {
+        candidateWnd_.showLoading(g_hInst, caretPos_, caretLineHeight_, this);
+    } else {
+        candidateWnd_.show(g_hInst, caretPos_, caretLineHeight_, comp_, this);
+    }
 }
 
 
@@ -508,6 +495,14 @@ void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
                         FAILED(hrRange) ? hrRange : E_POINTER);
             composition_->Release();
             composition_ = nullptr;
+            lastPreeditValid_ = false;
+            lastPreedit_.clear();
+            return;
+        }
+        if (lastPreeditValid_ && combinedPreedit == lastPreedit_) {
+            preeditWritten_ = true;
+            updateCaretFromRange(ctx, ec, range);
+            range->Release();
             return;
         }
         // 先按上一轮布局查光标再改文本：Firefox(Gecko) 对「本次会话刚
@@ -523,6 +518,8 @@ void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
             // EndComposition 交还引用，本地所有权一并清空——保留一个
             // 写不进字的合成只会让后续兜底永远认为「合成还在」。
             preeditWritten_ = false;
+            lastPreeditValid_ = false;
+            lastPreedit_.clear();
             composition_->EndComposition(ec);
             composition_->Release();
             composition_ = nullptr;
@@ -530,6 +527,8 @@ void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
             range->Release();
             return;
         }
+        lastPreedit_ = combinedPreedit;
+        lastPreeditValid_ = true;
         preeditWritten_ = true;
         updateCaretFromRange(ctx, ec, range);
         range->Release();
@@ -569,14 +568,16 @@ void ChaosetTIP::applyPreedit(ITfContext* ctx, TfEditCookie ec) {
                 range->SetText(ec, 0, wide.c_str(), static_cast<LONG>(wide.size()));
             if (FAILED(hrText)) {
                 diagTsfFail("ITfRange::SetText(preedit)", hrText);
-                // StartComposition 成功但文本写不进：与上面同理，
-                // 必须立刻结束合成并清空所有权，否则字母分支的
-                // 「渲染后仍无合成」兜底永远不触发，键照样被吃。
+                // StartComposition 成功但文本写不进：必须立刻结束合成并清空所有权。
                 preeditWritten_ = false;
+                lastPreeditValid_ = false;
+                lastPreedit_.clear();
                 composition_->EndComposition(ec);
                 composition_->Release();
                 composition_ = nullptr;
             } else {
+                lastPreedit_ = combinedPreedit;
+                lastPreeditValid_ = true;
                 preeditWritten_ = true;
             }
         }
@@ -783,7 +784,6 @@ void ChaosetTIP::applyEndComposition(ITfContext* /*ctx*/, TfEditCookie ec) {
     if (FAILED(hrEnd)) diagTsfFail("ITfComposition::EndComposition(clear)", hrEnd);
 }
 
-
 // 合成结束（commit / endComposition / 外部终止）后调用：清空合成所属
 // 上下文记录。composition_ 为空时 compCtx_ 必须为空，避免持有过期引用。
 void ChaosetTIP::releaseCompositionContext() {
@@ -793,11 +793,12 @@ void ChaosetTIP::releaseCompositionContext() {
     }
     composeHostWnd_ = nullptr;
     preeditWritten_ = false;
+    lastPreeditValid_ = false;
+    lastPreedit_.clear();
     // 新一条组词重新采集锚点诊断（换输入框/换游戏的现场才有意义）。
     gameAnchorLogged_ = false;
     gameTextExtLogged_ = false;
 }
-
 
 // 撇号分隔的音节串 → 音节数组（"xian'zai" → ["xian","zai"]）。
 std::vector<std::string> ChaosetTIP::splitSyllables(const std::string& syllables) {

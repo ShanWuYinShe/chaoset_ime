@@ -190,7 +190,7 @@ extension ChaosetController {
         // 方向键（用户反馈调整）：**上/下 = 翻页**，左/右 = 页内预选移动
         // （前/后一项）。无组词/无候选时**不消费**，落到下方 passThrough
         // 放行给宿主；面板实际可见（itemCount > 0）才消费，隐藏/全屏抑制时放行。
-        if isComposing, hasCandidates, CandidatePanelController.itemCount > 0,
+        if !isLoadingCandidates, isComposing, hasCandidates, CandidatePanelController.itemCount > 0,
            let dir = Self.arrowDirection(event.keyCode) {
             switch dir {
             case .prevPage, .nextPage:
@@ -322,12 +322,12 @@ extension ChaosetController {
             return passThrough(client)
         }
         if event.keyCode == 49, isComposing || dpPending {
-            if hasCandidates, let cur = current {
+            if !isLoadingCandidates, hasCandidates, let cur = current {
                 // 空格确认**页内预选项**（默认第 0 项；方向键可移动预选）。
                 let sel = min(max(CandidatePanelController.selectedIndex, 0),
                               max(cur.candidates.count - 1, 0))
                 commit(index: sel, client: client)
-            } else if !pendingOps.isEmpty {
+            } else if isLoadingCandidates || !pendingOps.isEmpty {
                 // 结果尚未应用（乐观窗口）：按页内第 0 项入队，由引擎按完整输入
                 // 解析；绝不能把拼音当原始串顶屏。
                 submitSelectPrefix(index: 0, text: "", syllables: [])
@@ -368,7 +368,7 @@ extension ChaosetController {
            scalar.value >= 49, scalar.value <= 57,
            isComposing {
             let idx = Int(scalar.value - 49)
-            if hasCandidates, idx < (current?.candidates.count ?? 0) {
+            if !isLoadingCandidates, hasCandidates, idx < (current?.candidates.count ?? 0) {
                 commit(index: idx, client: client)
                 return true
             }
@@ -400,7 +400,7 @@ extension ChaosetController {
         // - / =、[ / ]、PageUp / PageDown：候选翻页（组词中且有候选时消费；空组词放行原键/出标点）
         let isPageUp = chars == "-" || chars == "[" || event.keyCode == 116 || chars == "\u{F72C}"
         let isPageDown = chars == "=" || chars == "]" || event.keyCode == 121 || chars == "\u{F72D}"
-        if (isPageUp || isPageDown) && hasCandidates {
+        if (isPageUp || isPageDown) && hasCandidates && !isLoadingCandidates {
             // 异步管线：翻页只入队；失败保持当前页不动（不关候选窗、不清组词）。
             submitPage(next: isPageDown)
             refresh(client)

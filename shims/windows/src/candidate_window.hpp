@@ -83,6 +83,8 @@ public:
     // 显示候选窗：非激活/无候选/全屏免打扰直接 hide，绝不建窗。
     void show(HINSTANCE hinst, POINT pt, int lineH, const chaoset::Comp& comp,
               CandidateWindowHost* host);
+    // 等待异步结果时显示 1 条「...」只读占位（保留上一帧有效宽度避免跳动）。
+    void showLoading(HINSTANCE hinst, POINT pt, int lineH, CandidateWindowHost* host);
 
     void hide();
     // 主动销毁走 DestroyWindow，统一在 WM_NCDESTROY 回收（见 onWindowDestroyed）。
@@ -147,6 +149,7 @@ private:
     void onAssociateChanged();
 
     void ensureWindow(HINSTANCE hinst);
+    bool beginShow(HINSTANCE hinst, POINT pt, int lineH, CandidateWindowHost* host, bool dark);
     static LRESULT CALLBACK CandidateWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     void layoutAndPosition();
     void onPaint(HWND hwnd);
@@ -188,6 +191,11 @@ private:
     bool gearPressed_ = false;     // 按在设置齿轮上
     int pressedItemIndex_ = -1;    // 按在候选词上（当前页切片内序号）
     int chevronPressed_ = 0;       // -1 上箭头 / +1 下箭头 / 0 无
+    bool lastDark_ = false;        // 上次渲染主题，供 show() 无变更早退判定
+    bool loading_ = false;         // 异步加载中：显示 1 条不可选「...」占位
+    int lastRealWinW_ = 0;         // 上一次真实候选窗宽：loading 期间保持宽度不抖动
+    RECT loadingDotRect_{};        // loading 占位文字绘制矩形
+    RECT lastWindowRect_{};        // 上次窗口屏幕坐标：几何未变时跳过 SetWindowPos
 };
 
 }  // namespace chaoset::win

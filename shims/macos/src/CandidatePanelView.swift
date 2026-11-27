@@ -16,6 +16,7 @@ final class CandidatePanelView: NSView {
     }
 
     private var items: [Item] = []
+    private var isLoading = false
     private var page = 0
     private var pageCount = 0
     /// 页内预选序号（0 起，当前页切片内）。方向键移动、空格确认与高亮 pill
@@ -60,6 +61,7 @@ final class CandidatePanelView: NSView {
 
     /// 用组词状态刷新内容；返回内容尺寸（pt）。items 为空时返回 .zero。
     func layout(candidates: [Item], page: Int, pageCount: Int) -> NSSize {
+        self.isLoading = false
         self.items = candidates
         self.page = page
         self.pageCount = pageCount
@@ -74,6 +76,29 @@ final class CandidatePanelView: NSView {
         cachedRows = rows
         cachedLineH = lineH
         let size = contentSize(rows: rows, lineH: lineH)
+        frame.size = size
+        needsDisplay = true
+        return size
+    }
+
+    /// 异步等待期间布局单行平静的 `"..."` 占位，可选沿用先前的宽度。
+    func layoutLoading(preserveWidth: CGFloat) -> NSSize {
+        self.isLoading = true
+        self.items = []
+        self.page = 0
+        self.pageCount = 0
+        self.selectedIndex = 0
+        self.displayTexts = [:]
+        self.cachedRows = []
+        self.cachedLineH = Layout.textH + Layout.lineSpacing
+        let dotsW = ceil(("..." as NSString).size(withAttributes: [.font: textFont]).width)
+        let naturalW = ceil(Layout.padding * 2 + Layout.firstPadLeft + dotsW
+                            + Layout.itemPadX + Layout.chevronBoxW + SettingsGear.boxW)
+        let minW = Layout.padding * 2 + Layout.chevronBoxW + SettingsGear.boxW + 8
+        let width = min(ceil(max(max(naturalW, minW), preserveWidth)), Layout.maxWidth)
+        let height = ceil(max(Layout.padding * 2 + Layout.textH, 20))
+        contentHeight = height
+        let size = NSSize(width: width, height: height)
         frame.size = size
         needsDisplay = true
         return size
@@ -223,8 +248,16 @@ final class CandidatePanelView: NSView {
         let panelR = Layout.panelRadius
 
         hitAreas = []
+        if isLoading {
+            // 平静的次要占位文字：无亮蓝胶囊、无键帽、无学习星标、不可点击。
+            ("..." as NSString).draw(
+                at: NSPoint(x: Layout.padding + Layout.firstPadLeft,
+                            y: Layout.padding + (textH - textLineH) / 2),
+                withAttributes: [.font: textFont, .foregroundColor: theme.pageColor]
+            )
+        }
         var y: CGFloat = Layout.padding
-        for row in rows {
+        for row in rows where !isLoading {
             var x = Layout.padding
             for frame in row.frames {
                 let item = items[frame.index]
@@ -473,8 +506,8 @@ final class CandidatePanelView: NSView {
               hitAreas.contains(where: { $0.index == index && $0.rect.contains(point) })
         else {
             // 按在候选/齿轮/翻页上但抬起时已移出：不执行动作即可；
-            // 若按下本就在空白区，则收起候选窗，避免静默吞掉这次点击。
-            if wasIndex == nil, !wasSettings { onDismiss?() }
+            // 若按下本就在空白区，则收起候选窗，避免静默吞掉这次点击（loading 期间保持显示）。
+            if !isLoading, wasIndex == nil, !wasSettings { onDismiss?() }
             return
         }
         switch index {

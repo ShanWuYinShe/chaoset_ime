@@ -27,6 +27,7 @@ func TestCheckLinuxAsyncPipelineMutations(t *testing.T) {
 		"shims/linux/engine/engine_pump.hpp",
 		"shims/linux/engine/engine_pump.cpp",
 		"shims/linux/engine/daemon.hpp",
+		"shims/linux/engine/daemon.cpp",
 		"shims/linux/engine/build.sh",
 		uiParityDoc,
 	}
@@ -85,10 +86,14 @@ func TestCheckLinuxAsyncPipelineMutations(t *testing.T) {
 		"        ++epoch_;\n        pendingOps_.clear();",
 		"        pendingOps_.clear();",
 		"++epoch_")
-	expect("宽限放弃不按原始串落盘", linuxAsync,
-		"        confirmed_.clear();\n        commit(raw);",
-		"        confirmed_.clear();",
-		"commit(raw)")
+	expect("异步读取退回硬超时", "shims/linux/engine/engine_pump.cpp",
+		"    daemon_.setDeadlineMs(0);",
+		"    daemon_.setDeadlineMs(200);",
+		"daemon_.setDeadlineMs(0);")
+	expect("加载占位退化", linuxAsync,
+		"showLoadingLookup();",
+		"updateLookupTable(disp);",
+		"showLoadingLookup();")
 	expect("显式选词失败不兜底上屏", linuxAsync,
 		"            if (!text.empty()) commit(all);",
 		"            // 兜底删除",

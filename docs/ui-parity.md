@@ -416,8 +416,8 @@ TSF 把 TIP 加载进每个宿主进程，**所有 TSF 回调都在宿主 UI 线
 零跨进程等待」组逐函数机器断言（含变异测试），禁止回退。
 
 macOS/Linux 的异步管线实现与不变量见下方「macOS 异步引擎管线」「Linux 异步引擎管线」
-两节；三端共同不变量相同（按键路径不等待、失败不弹乐观项、纪元作废、2s 宽限、
-显式选词兜底、候选窗只在既有语义路径关闭）。
+两节；三端共同不变量相同（按键路径不等待、异步无硬等待超时、等待响应展示平静 `"..."` 占位、
+失败不弹乐观项、纪元作废、显式选词兜底、候选窗只在既有语义路径关闭）。
 
 - **禁止项（TSF 回调体内）**：`Sleep(`、`WaitNamedPipeW`、
   `WaitForSingleObject`、`CreateProcessW`、`CreateFileW`、`WriteFile(`、
@@ -436,10 +436,11 @@ macOS/Linux 的异步管线实现与不变量见下方「macOS 异步引擎管�
 - **异步日志**：`diagPrintf` 对 `tsf.log` 只做 `enqueueLogLine`（有界 ring，
   worker 批量写盘；worker 未启动直接丢弃，**绝不回退同步写**）；按键路径不写盘
   （`candidate shown` 整条删除），前台风暴日志限流 5s。
-- **管道 I/O**：`FILE_FLAG_OVERLAPPED` + 明确截止时间（引擎线程
-  `kEngineRequestDeadlineMs`=200ms、worker/设置窗 200ms，`setDeadlineMs`）。5s 熔断
-  （`circuitOpen`）只用于 worker 的慢连接路径 `ensureDaemonConnected`；**TSF 按键
-  路径不做任何 I/O、也不熔断**——按键只入队，连接与重试全部在引擎线程。
+- **管道 I/O**：`FILE_FLAG_OVERLAPPED`；异步引擎线程读取不设硬超时（`INFINITE` +
+  `abortEvent_` 经 `WaitForMultipleObjects` 等待响应或停机取消 `CancelIoEx`），
+  worker/设置窗保留 200ms 截止（`setDeadlineMs`）。5s 熔断（`circuitOpen`）只用于
+  worker 的慢连接路径 `ensureDaemonConnected`；**TSF 按键路径不做任何 I/O、也不熔断**
+  ——按键只入队，连接与重试全部在引擎线程。
 - **读超时不断连（三端）**：I/O 超时的处置按方向区分——读超时只说明 daemon 这次算得
   慢，**连接没坏**，断连会让 daemon 会话随连接消失、用户已输入拼音全丢（失步恢复 +
   `base` 重建只是补救）。现在读超时保留连接，把该响应记为「迟到待丢」，下次请求前
@@ -492,11 +493,14 @@ macOS/Linux 的异步管线实现与不变量见下方「macOS 异步引擎管�
   seq ≤ 本结果的乐观项，再更新组词/候选/上屏；**失败结果不弹出乐观项**（本地显示保留到
   整串重建覆盖）；纪元（`engineEpoch_`）不匹配的结果直接丢弃（失焦、取消、合成被宿主
   终止都走 `resetEnginePipeline`：纪元递增 + 清空乐观项 + 丢弃引擎线程积压 + 引擎复位）。
-  失败进入失联宽限：保留本地组词，按节流用 `kRebuild`（`base=""` + 壳侧完整输入串）
-  整串重建；2s 宽限后按原始串落盘（一个键都不丢）。显式选词/联想/标点在失败时用壳侧
-  已显示文本兜底上屏，绝不静默丢键。候选窗始终显示最后一次已应用组词态的候选、结果
-  回来按序刷新（**不关闭、不清空**）。由 `tools/checkuiparity` 的「异步引擎管线」组
-  机器断言（含 11 个变异测试）。
+  失败进入失联重建：保留本地组词，按节流用 `kRebuild`（`base=""` + 壳侧完整输入串）
+  持续整串重建，不再 2s 硬超时强制按原始串落盘（看门狗程序保证 daemon 存活）。
+  显式选词/联想/标点在失败时用壳侧已显示文本兜底上屏，绝不静默丢键。
+  只要影响候选结果的异步请求仍在等待（`isLoadingCandidates`：`input`/`rebuild`/
+  退格/翻页），候选窗立刻呈现**单条平静的 `"..."` 占位**（次要文本色、无亮蓝高亮、
+  无数字键帽、无学习星标、不响应点击，面板已显示时沿用先前真实宽度以防边缘抖动）；
+  响应到达后仅呈现实际返回的候选（少于 6 项绝不用占位符填满）。由
+  `tools/checkuiparity` 的「异步引擎管线」组机器断言（含变异测试）。
 - **配置缓存**：ModeScope / Associate / 深色主题 / 全屏抑制 / UILess 激活开关
   均带 TTL 缓存，候选窗每键不再做注册表/Shell 查询。
 - **前台钩子**：每线程最多一个系统级钩子，回调体内只 `PostMessage`（不 hide、
@@ -614,12 +618,17 @@ Electron/终端对 marked 区激活期间的 insertText 有缺陷；Windows 部�
   回放**（`backspaceLocally`：末段整段删除、用户自己敲的分隔符保留在输入串、预编辑不留
   悬空分隔符；双拼同样按末段近似）。结果按 seq 回投主队列后顺序应用（成功先丢弃已覆盖的
   乐观项）。
-- **失败语义**：失败结果**不弹出**乐观项（本地预编辑与组词保留）；失焦/取消/会话结束
-  递增纪元（`engineEpoch`）作废在飞结果；daemon 不可用按节流用 `rebuild`（`base` 空 +
-  完整输入串）整串重建，2s 宽限后按原始串落盘（一个键都不丢）；显式选词/联想/标点
-  失败用壳侧已显示文本兜底上屏。失败处理不调用面板隐藏。
-- **候选窗**：慢/失败期间保持最后一次已应用候选（`refresh` 只在 `pendingOps` 为空时
-  才收起）；失焦、Esc/取消、上屏结束、模式切换等既有路径照旧关闭。
+- **失败与等待语义**：`EnginePipeline` 以 `unboundedRead: true` 连接 `DaemonTransport`
+  （`poll` 等待数据或 `abort()` 唤醒，不再受 250ms 读超时制约）。失败结果**不弹出**
+  乐观项（本地预编辑与组词保留）；失焦/取消/会话结束递增纪元（`engineEpoch`）作废
+  在飞结果；daemon 不可用按节流用 `rebuild`（`base` 空 + 完整输入串）整串重建，
+  不做 2s 强制落盘；显式选词/联想/标点失败用壳侧已显示文本兜底上屏。失败处理不调用
+  面板隐藏。
+- **候选窗与 `"..."` 加载占位**：只要有 `isLoadingCandidates` 在飞请求，立即调用
+  `showNativeLoadingPanel` 展示单条平静 `"..."` 占位（沿用 `lastRealWidth`、次要字色、
+  无蓝胶囊与键帽），响应到达后只显示实际候选（不补占位）；`refresh` 仅在
+  `pendingOps` 为空且无候选时才收起，失焦、Esc/取消、上屏结束、模式切换等既有路径
+  照旧关闭（不关闭候选窗的慢请求契约不变）。
 - **测试**：`shims/macos/tests/key_routing` 用 `settleEngineForTests()` 把「入队 →
   引擎线程 → 主队列应用」跑完再断言；新增乐观预编辑、快打后有序选词、失败不关候选窗
   三条断言；`EnginePipeline.failureInjectionForTests` 只用于测试注入失败。
@@ -632,19 +641,21 @@ Linux ibus 壳（`shims/linux/engine/`）与 Windows/macOS 同构：**按键路�
 daemon**。daemon 慢或挂起只影响候选刷新，不会按住 ibus 主循环，也不会因此关闭候选窗。
 
 - **每 engine 实例一个 `EnginePump` 线程**（`engine_pump.*`）：独占自己的 daemon
-  连接（组词会话按连接隔离，同进程多个 engine 不能共用）、FIFO 执行、200ms 请求
-  截止、连不上时 1s 内不重复懒启动。主循环只入队，工作线程绝不触碰 ibus API。
-- **乐观预编辑**：按键只做三件事——操作压入 `pendingOps_`、用 `optimisticComp()`
-  （最后已应用组词态 + 未应用输入/退格回放）立即渲染、投递引擎线程。候选表保持
-  最后一次已应用组词态的候选，结果回来按 seq 刷新；**只有既有语义路径**（focus_out、
-  Esc/取消、上屏结束、模式切换）才隐藏/清空候选窗与预编辑。
+  连接（组词会话按连接隔离，同进程多个 engine 不能共用）、FIFO 执行、`setDeadlineMs(0)`
+  无限期异步等待响应（`poll` + `abort()` 停机唤醒）、连不上时冷却期外异步拉起。
+  主循环只入队，工作线程绝不触碰 ibus API。
+- **乐观预编辑与 `"..."` 加载占位**：按键只做三件事——操作压入 `pendingOps_`、用
+  `optimisticComp()` 立即渲染、投递引擎线程。在 `isLoadingCandidates()` 期间调用
+  `showLoadingLookup()` 在 lookup 展示单条无高亮/无键帽的 `"..."` 占位；结果到达
+  后按 seq 刷新真实候选（少于 6 项不填充）；**只有既有语义路径**（focus_out、Esc/取消、
+  上屏结束、模式切换）才隐藏/清空候选窗与预编辑。
 - **结果回投**：引擎线程用 `g_idle_add_full` 唤醒主循环，`drainResults` 按 seq 应用；
   纪元（`epoch_`）不匹配的过期结果直接丢弃（focus_out / 取消 / reset 时递增纪元并
   清空管线）。
 - **失败语义（与 Windows `tip_async` 一致）**：失败结果不弹出乐观项；显式选词/
   联想/标点失败用壳侧已显示文本兜底上屏；daemon 不可用保留本地组词，按节流用
-  `kRebuild`（`base=""` 先清空引擎输入，再重放壳侧完整输入串）整串重建，2s 宽限后
-  按原始串落盘（一个键都不丢）；没有本地组词时内容键 fail-open 并节流探测。
+  `kRebuild`（`base=""` 先清空引擎输入，再重放壳侧完整输入串）整串重建（不做 2s
+  强制落盘，看门狗保证 daemon 存活）；没有本地组词时内容键 fail-open 并节流探测。
 - **构建与验证**：`shims/linux/engine/build.sh` 编译 `engine_pump.cpp`；本契约由
   `checkuiparity` 的「Linux 异步引擎管线」组静态断言（含变异测试），运行时验证交给
   CI 的 `linux-e2e` 与真机走查。

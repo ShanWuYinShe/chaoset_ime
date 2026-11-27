@@ -38,8 +38,10 @@ public:
 
     // TSF 线程上的 TIP 用 setAutoConnect(false)：writeAll 绝不自行发起需要等待的连接。
     void setAutoConnect(bool on) { autoConnect_ = on; }
-    // 单次 I/O 等待上限（引擎线程 200ms；worker 200ms）。
+    // 单次 I/O 等待上限（INFINITE = 不设置超时硬等，依赖停止/取消事件与断管唤醒）。
     void setDeadlineMs(DWORD ms) { deadlineMs_ = (ms == 0) ? 200 : ms; }
+    // 异步停止/取消事件（SetEvent 时立即 CancelIoEx 唤醒阻塞中的 pipeIo）。
+    void setAbortEvent(HANDLE ev) { abortEvent_ = ev; }
 
     // 单次非阻塞连接：成功即返回；失败（含管道忙）立即返回 false，不做任何等待。
     // 这是 TSF 线程唯一允许的连接动作（一次 CreateFileW + 交回句柄）。
@@ -157,9 +159,22 @@ private:
             if (!ok) {
                 DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) {
-                    DWORD wait = ::WaitForSingleObject(ov.hEvent, deadlineMs_);
+                    DWORD wait;
+                    if (abortEvent_ != nullptr) {
+                        HANDLE handles[2] = {ov.hEvent, abortEvent_};
+                        wait = ::WaitForMultipleObjects(2, handles, FALSE, deadlineMs_);
+                    } else {
+                        wait = ::WaitForSingleObject(ov.hEvent, deadlineMs_);
+                    }
                     if (wait == WAIT_OBJECT_0) {
                         ok = ::GetOverlappedResult(pipe_, &ov, &done, FALSE);
+                    } else if (abortEvent_ != nullptr && wait == WAIT_OBJECT_0 + 1) {
+                        ::CancelIoEx(pipe_, &ov);
+                        DWORD cancelled = 0;
+                        (void)::GetOverlappedResult(pipe_, &ov, &cancelled, TRUE);
+                        ::CloseHandle(ov.hEvent);
+                        failConn();
+                        return false;
                     } else {
                         // 有界失败（不等待）：先取消本次重叠 I/O，再取回取消前已实际
                         // 读进缓冲的字节数——这决定这次超时能不能保留连接。
@@ -206,6 +221,7 @@ private:
     }
 
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
+    HANDLE abortEvent_ = nullptr;
     std::uint64_t connGen_ = 0;
     DWORD lastFail_ = 0;
     DWORD brokenUntil_ = 0;

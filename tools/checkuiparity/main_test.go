@@ -832,8 +832,10 @@ func TestCheckAsyncEnginePipeline(t *testing.T) {
 		"        resetEnginePipeline(true);\n        if (engineCtx_ != nullptr) {",
 		"        if (engineCtx_ != nullptr) {",
 		"只有 1 处 resetEnginePipeline(true)")
-	expect("宽限放弃不再按原始串落盘", winTipAsync,
-		"    if (!commit(ctx, raw)) endComposition();", "    endComposition();", "commit(")
+	expect("异步等待退回硬超时", winEnginePumpCpp,
+		"transport_.setDeadlineMs(INFINITE);", "transport_.setDeadlineMs(200);", "INFINITE")
+	expect("加载占位退化", winTipComp,
+		"candidateWnd_.showLoading(", "candidateWnd_.hide(", "showLoading(")
 	expect("乐观预编辑改回只读 comp_", winTipComp,
 		"    const chaoset::Comp display = optimisticComp();",
 		"    const chaoset::Comp display = comp_;",

@@ -1,6 +1,8 @@
 #include "daemon.hpp"
 
+#include <fcntl.h>
 #include <glib.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -53,19 +55,46 @@ LinuxPaths defaultLinuxPaths() {
     return p;
 }
 
-UnixTransport::UnixTransport(std::string path) : path_(std::move(path)) {}
-UnixTransport::~UnixTransport() { closeConn(); }
+UnixTransport::UnixTransport(std::string path) : path_(std::move(path)) {
+    if (::pipe(wakeFds_) == 0) {
+        for (int pfd : wakeFds_) {
+            const int fl = ::fcntl(pfd, F_GETFL, 0);
+            if (fl >= 0) ::fcntl(pfd, F_SETFL, fl | O_NONBLOCK);
+            const int fdFl = ::fcntl(pfd, F_GETFD, 0);
+            if (fdFl >= 0) ::fcntl(pfd, F_SETFD, fdFl | FD_CLOEXEC);
+        }
+    }
+}
+
+UnixTransport::~UnixTransport() {
+    abort();
+    closeConn();
+    for (int& pfd : wakeFds_) {
+        if (pfd >= 0) { ::close(pfd); pfd = -1; }
+    }
+}
+
+void UnixTransport::abort() {
+    if (!aborted_.exchange(true) && wakeFds_[1] >= 0) {
+        const char b = 1;
+        const ssize_t r = ::write(wakeFds_[1], &b, 1);
+        (void)r;
+    }
+}
 
 bool UnixTransport::connectSocket() {
     closeConn();
+    if (aborted_.load()) return false;
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return false;
+    const int sndMs = deadlineMs_ > 0 ? deadlineMs_ : 300;
     struct timeval tv {};
-    tv.tv_sec = 0;
-    tv.tv_usec = deadlineMs_ * 1000;  // 默认 300ms（与 mac EngineClient 同量级；
-                                      // 异步引擎线程设 200ms，见 engine_pump.hpp）
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    tv.tv_sec = sndMs / 1000;
+    tv.tv_usec = (sndMs % 1000) * 1000;
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (deadlineMs_ > 0) {
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
     struct sockaddr_un addr {};
     addr.sun_family = AF_UNIX;
     if (path_.size() >= sizeof(addr.sun_path)) { ::close(fd); return false; }
@@ -80,9 +109,10 @@ bool UnixTransport::connectSocket() {
 }
 
 bool UnixTransport::writeAll(const std::uint8_t* data, std::size_t len) {
-    if (fd_ < 0) return false;
+    if (fd_ < 0 || aborted_.load()) return false;
     std::size_t off = 0;
     while (off < len) {
+        if (aborted_.load()) return false;
         const ssize_t n = ::send(fd_, data + off, len - off, MSG_NOSIGNAL);
         if (n < 0 && errno == EINTR) continue;
         if (n <= 0) { closeConn(); return false; }
@@ -93,15 +123,30 @@ bool UnixTransport::writeAll(const std::uint8_t* data, std::size_t len) {
 
 bool UnixTransport::readAll(std::uint8_t* buf, std::size_t len) {
     lastReadTimedOut_ = false;
-    if (fd_ < 0) return false;
+    if (fd_ < 0 || aborted_.load()) return false;
     std::size_t off = 0;
     while (off < len) {
+        if (aborted_.load()) return false;
+        if (deadlineMs_ <= 0) {
+            struct pollfd pfds[2] = {
+                {fd_, POLLIN, 0},
+                {wakeFds_[0], POLLIN, 0},
+            };
+            const nfds_t nfds = wakeFds_[0] >= 0 ? 2 : 1;
+            const int pr = ::poll(pfds, nfds, -1);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                closeConn();
+                return false;
+            }
+            if (nfds == 2 && (pfds[1].revents & POLLIN) != 0) return false;
+            if ((pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) == 0) continue;
+        }
         const ssize_t n = ::recv(fd_, buf + off, len - off, 0);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            // 读超时（SO_RCVTIMEO 300ms）：**只有本次一个字节都没消费**才能保留连接；
+            // 有界模式超时：**只有本次一个字节都没消费**才能保留连接；
             // 已读到的字节若随失败丢弃，帧边界永久错位，只能按连接已坏处理。
-            // 与 Windows pipeIo / macOS recv 的分支同口径（core.hpp 契约）。
             lastReadTimedOut_ = (off == 0);
             return false;  // 干净超时不 closeConn：会话与连接都保留
         }
@@ -123,14 +168,10 @@ Daemon::Daemon(Options options)
 Daemon::~Daemon() = default;
 
 Comp Daemon::inputWithRebuild(const std::string& text, bool halfWidth, const std::string& base) {
-    // 与其它请求同口径：先确保连接（daemon 懒启动/断线重连全靠这里）。
     if (!ensureReady()) return Comp();
     Comp comp = session_.input(text, halfWidth);
     if (comp.ok) return comp;
-    // 失败（读超时/断连）：用 base 幂等重放，避免 daemon 会话与壳侧预编辑错位。
-    // 读超时连接还在（connected()=true），直接重放；写失败/EOF/部分读取已 closeConn，
-    // 先非阻塞重连——新连接是空会话，带 base 重建才有效。这里不用 ensureReady()：
-    // 它在 daemon 不在时会等懒启动（最长约 5s），不能压在按键热路径上。
+    // 失败后用 base 幂等重放；新连接是空会话，带 base 重建同样有效。
     if (!transport_.connected() && !connectOnce()) {
         std::fprintf(stderr, "IPC input 失败（重连失败，无法重放）base=\"%s\" text=\"%s\"\n",
                      base.c_str(), text.c_str());

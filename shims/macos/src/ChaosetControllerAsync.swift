@@ -93,6 +93,18 @@ extension ChaosetController {
     /// 组词中 = 引擎已确认的输入串或仍在飞的按键（乐观）。
     func isComposingOptimistic() -> Bool { !(optimisticComp()?.input.isEmpty ?? true) }
 
+    /// 是否有影响候选结果的异步请求正在等待 daemon 返回（input/rebuild/退格/翻页）。
+    var isLoadingCandidates: Bool {
+        pendingOps.contains {
+            switch $0.kind {
+            case .input, .rebuild, .backspace, .backspaceWord, .nextPage, .prevPage:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     // MARK: - 入队
 
     func submitOp(_ op: EngineOp) {
@@ -194,11 +206,7 @@ extension ChaosetController {
             stopEngineLostTimer()
             return
         }
-        let now = Date().timeIntervalSince1970
-        if now - engineLostAt >= EnginePipeline.graceSeconds {
-            giveUpEngineState()
-            return
-        }
+        // 看门狗保障 daemon 存活：保持节流重建直到连回，不再做 2s 自动上屏原始串。
         scheduleRebuild()
     }
 
@@ -210,7 +218,6 @@ extension ChaosetController {
         pendingOps.removeAll()
         current?.dpPending = ""
         engineLost = false
-        engineLostAt = 0
         lastRebuildAt = 0
         stopEngineLostTimer()
         engineSeq += 1
@@ -503,19 +510,11 @@ extension ChaosetController {
         }
     }
 
-    // MARK: - 失联宽限
+    // MARK: - 失联重建（看门狗维持 daemon 存活，保持异步等待/重连，不做硬超时落盘）
 
     func markEngineLost() {
-        let now = Date().timeIntervalSince1970
-        if !engineLost {
-            engineLost = true
-            engineLostAt = now
-        }
+        engineLost = true
         startEngineLostTimer()
-        if now - engineLostAt >= EnginePipeline.graceSeconds {
-            giveUpEngineState()
-            return
-        }
         scheduleRebuild()
     }
 
@@ -527,20 +526,6 @@ extension ChaosetController {
         if now - lastRebuildAt < EnginePipeline.rebuildInterval { return }
         lastRebuildAt = now
         submitRebuild(text, base: base)
-    }
-
-    /// 宽限期到：本地内容按原始串落盘（一个键都不丢），再清空管线。
-    private func giveUpEngineState() {
-        let client = lastClient
-        let (_, base, text) = computeOptimistic()
-        let raw = confirmedText + (!text.isEmpty ? (base + text) : optimisticInput())
-        resetEnginePipeline(keepLearning: false)
-        confirmedText = ""
-        current = nil
-        if !raw.isEmpty {
-            client?.insertText(raw, replacementRange: NSRange(location: NSNotFound, length: 0))
-        }
-        refresh(client)
     }
 
     // MARK: - 连接探测

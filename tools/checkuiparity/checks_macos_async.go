@@ -64,7 +64,10 @@ func checkMacOSAsyncPipeline(fsys fs.FS, problems *[]string) {
 		"DispatchQueue.main.async",
 		"func submit(",
 		"var connected: Bool",
-		"static let graceSeconds")
+		"unboundedRead: true",
+		"client.abort()")
+	checkContains(fsys, problems, group, macTransport,
+		"private let unboundedRead: Bool", "func abort()", "poll(")
 
 	// b) IMK 回调零等待：按键/控制器文件里不得直接调用引擎，也不得有阻塞原语。
 	for _, p := range []string{macKeyRouterFile, macController, macAsyncController} {
@@ -110,12 +113,18 @@ func checkMacOSAsyncPipeline(fsys fs.FS, problems *[]string) {
 		fail("%s 的会话结束路径（activateServer/deactivateServer/endSession）没有全部复位管线（%d 处）", macController, n)
 	}
 
-	// e) 失败语义：不弹乐观项、不关候选窗；显式选词/联想/标点用壳侧已显示文本兜底。
+	// e) 失败语义与 loading 占位：不弹乐观项、不关候选窗；显式选词/联想/标点用壳侧
+	// 已显示文本兜底；在飞请求期间展示单个平静 "..." 占位，绝不靠 2s 强制清会话。
 	checkContains(fsys, problems, group, macAsyncController,
 		"case .selectPrefix:", "insertText(confirmedText + text",
 		"insertText(confirmedText + r.op.text", "restartEngineFromLocalState()",
 		"break  // 失败不收起联想面板",
-		"func markEngineLost()", "func scheduleRebuild()", "func giveUpEngineState()")
+		"var isLoadingCandidates: Bool",
+		"func markEngineLost()", "func scheduleRebuild()")
+	checkContains(fsys, problems, group, macController,
+		"showNativeLoadingPanel(client: client)")
+	checkContains(fsys, problems, group, "shims/macos/src/CandidatePanel.swift",
+		"static func showLoading(")
 	failBlock := swiftBraceBlock(ctrl, "private func handleEngineFailure(_ r: EngineResult) {")
 	if failBlock == "" {
 		fail("%s 找不到 handleEngineFailure 函数体", macAsyncController)

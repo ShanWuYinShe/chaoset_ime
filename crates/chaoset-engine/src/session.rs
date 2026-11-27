@@ -333,12 +333,116 @@ fn expand_token_variants(tokens: &[Token], fuzzy: bool) -> Vec<Vec<Token>> {
     out
 }
 
+/// 单次 `compose()` 生命周期内复用的用户词库查询与评分缓存：
+/// 同一把 RwLock 读锁 + 单次时间戳 + Bigram 键缓冲复用 + 词分结果缓存，
+/// 同时对 `(tokens, limit)` 相同的用户库查询去重。
+struct ComposeUserCache<'a> {
+    ctx: Option<crate::userdict::UserQueryCtx<'a>>,
+    prev: Option<&'a str>,
+    bigram_buf: String,
+    scores: std::collections::HashMap<String, (i32, bool)>,
+    tokens_cache: std::collections::HashMap<String, usize>,
+    tokens_results: Vec<(Vec<crate::userdict::TokenHit>, Vec<crate::userdict::TokenHit>)>,
+    exact_cache: std::collections::HashMap<String, usize>,
+    exact_results: Vec<Vec<crate::userdict::TokenHit>>,
+    key_buf: String,
+}
+
+impl<'a> ComposeUserCache<'a> {
+    fn new(user: Option<&'a UserDict>, prev: Option<&'a str>) -> Self {
+        Self {
+            ctx: user.map(|u| u.query_ctx()),
+            prev,
+            bigram_buf: String::new(),
+            scores: std::collections::HashMap::new(),
+            tokens_cache: std::collections::HashMap::new(),
+            tokens_results: Vec::new(),
+            exact_cache: std::collections::HashMap::new(),
+            exact_results: Vec::new(),
+            key_buf: String::new(),
+        }
+    }
+
+    fn score(&mut self, word: &str) -> (i32, bool) {
+        let Some(ref ctx) = self.ctx else {
+            return (0, false);
+        };
+        if let Some(&cached) = self.scores.get(word) {
+            return cached;
+        }
+        let (b, f) = ctx.score_with_buf(word, self.prev, &mut self.bigram_buf);
+        let res = (b as i32, f);
+        self.scores.insert(word.to_string(), res);
+        res
+    }
+
+    fn fill_token_key(&mut self, tokens: &[(&str, bool)], limit: usize) {
+        use std::fmt::Write;
+        self.key_buf.clear();
+        let _ = write!(self.key_buf, "{limit}");
+        for &(tok, exact) in tokens {
+            self.key_buf.push('\u{0}');
+            self.key_buf.push_str(tok);
+            self.key_buf.push(if exact { '1' } else { '0' });
+        }
+    }
+
+    fn query_tokens(
+        &mut self,
+        tokens: &[(&str, bool)],
+        limit: usize,
+    ) -> &(Vec<crate::userdict::TokenHit>, Vec<crate::userdict::TokenHit>) {
+        self.fill_token_key(tokens, limit);
+        if let Some(&idx) = self.tokens_cache.get(self.key_buf.as_str()) {
+            return &self.tokens_results[idx];
+        }
+        let res = self
+            .ctx
+            .as_ref()
+            .expect("query_tokens requires active user ctx")
+            .query_tokens(tokens, limit);
+        let idx = self.tokens_results.len();
+        self.tokens_results.push(res);
+        self.tokens_cache.insert(self.key_buf.clone(), idx);
+        &self.tokens_results[idx]
+    }
+
+    fn query_tokens_exact(
+        &mut self,
+        tokens: &[(&str, bool)],
+        limit: usize,
+    ) -> &[crate::userdict::TokenHit] {
+        self.fill_token_key(tokens, limit);
+        if let Some(&idx) = self.exact_cache.get(self.key_buf.as_str()) {
+            return &self.exact_results[idx];
+        }
+        let res = self
+            .ctx
+            .as_ref()
+            .expect("query_tokens_exact requires active user ctx")
+            .query_tokens_exact(tokens, limit);
+        let idx = self.exact_results.len();
+        self.exact_results.push(res);
+        self.exact_cache.insert(self.key_buf.clone(), idx);
+        &self.exact_results[idx]
+    }
+}
+
+fn fill_dict_key(buf: &mut String, tokens: &[&str], limit: usize) {
+    use std::fmt::Write;
+    buf.clear();
+    let _ = write!(buf, "{limit}");
+    for tok in tokens {
+        buf.push('\u{0}');
+        buf.push_str(tok);
+    }
+}
+
 fn add_typo_corrections(
     dict: &Dictionary,
-    user: Option<&UserDict>,
+    user_cache: &mut ComposeUserCache<'_>,
     input: &str,
     shape: &ComposeShape,
-    prev: Option<&str>,
     pool: &mut Pool,
     typo: &mut TypoState,
 ) {
@@ -413,11 +517,9 @@ fn add_typo_corrections(
                 typo.is_near.insert(key.clone(), fix.is_near);
                 typo.lens.insert(key.clone(), fix.text.len());
                 let mut boost = 0i32;
-                if let Some(u) = user {
-                    if !mistake_only && !shape.mistake_input {
-                        let (b, _) = u.score(&word, prev);
-                        boost = b as i32;
-                    }
+                if user_cache.ctx.is_some() && !mistake_only && !shape.mistake_input {
+                    let (b, _) = user_cache.score(&word);
+                    boost = b;
                 }
                 let mut score = freq as i32 + boost - penalty;
                 if score < 1 {
@@ -439,37 +541,34 @@ fn add_typo_corrections(
 
             // 用户词库：自学习词与主词典同层参与纠错召回（Go 同口径：仅在非
             // mistake-only 且非反序输入时；用户词条本身即用户分，不再加 Score）。
-            if let Some(user) = user {
-                if !mistake_only && !shape.mistake_input {
-                    let qp_pairs: Vec<(&str, bool)> =
-                        qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
-                    let (u_exacts, _) = user.query_tokens(&qp_pairs, 4);
-                    for hit in u_exacts {
-                        let syllables = hit.syllables.join("'");
-                        let (_, key) = pool.key_for(&hit.word, &syllables);
-                        if typo.added.contains(&key) {
-                            continue;
-                        }
-                        typo.added.insert(key.clone());
-                        typo.is_near.insert(key.clone(), fix.is_near);
-                        typo.lens.insert(key.clone(), fix.text.len());
-                        let mut score = hit.freq - penalty;
-                        if score < 1 {
-                            score = 1;
-                        }
-                        pool.add(
-                            &hit.word,
-                            syllables,
-                            score,
-                            true,
-                            RANK_TYPO_FIX,
-                            true,
-                        );
-                        if is_cluster_fix {
-                            typo.mistake_keys.insert(key);
-                        }
-                        typo.word_found = true;
+            if user_cache.ctx.is_some() && !mistake_only && !shape.mistake_input {
+                let qp_pairs: Vec<(&str, bool)> =
+                    qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
+                for hit in user_cache.query_tokens_exact(&qp_pairs, 4) {
+                    let syllables = hit.syllables.join("'");
+                    let (_, key) = pool.key_for(&hit.word, &syllables);
+                    if typo.added.contains(&key) {
+                        continue;
                     }
+                    typo.added.insert(key.clone());
+                    typo.is_near.insert(key.clone(), fix.is_near);
+                    typo.lens.insert(key.clone(), fix.text.len());
+                    let mut score = hit.freq - penalty;
+                    if score < 1 {
+                        score = 1;
+                    }
+                    pool.add(
+                        &hit.word,
+                        syllables,
+                        score,
+                        true,
+                        RANK_TYPO_FIX,
+                        true,
+                    );
+                    if is_cluster_fix {
+                        typo.mistake_keys.insert(key);
+                    }
+                    typo.word_found = true;
                 }
             }
 
@@ -775,10 +874,9 @@ fn place_typo_fixed_position(items: Vec<(Candidate, i32, i32)>) -> Vec<(Candidat
 /// 回退之后），不会挤掉正常首选；最多 4 条。
 fn add_composition_candidates(
     dict: &Dictionary,
-    user: Option<&UserDict>,
+    user_cache: &mut ComposeUserCache<'_>,
     shape: &ComposeShape,
     patterns: &[Vec<Token>],
-    prev: Option<&str>,
     pool: &mut Pool,
 ) {
     if shape.typo_suspicious || shape.mid_suspicious || shape.tail_suspicious || patterns.is_empty()
@@ -790,12 +888,7 @@ fn add_composition_candidates(
         return;
     }
     for e in crate::typo::composed_phrase_entries(dict, clean, 4) {
-        let (boost, from_user) = if let Some(u) = user {
-            let (b, is_user) = u.score(&e.word, prev);
-            (b as i32, is_user)
-        } else {
-            (0, false)
-        };
+        let (boost, from_user) = user_cache.score(&e.word);
         pool.add(
             &e.word,
             e.syllables.join("'"),
@@ -1153,7 +1246,16 @@ impl Session {
         } else {
             RANK_CONTINUATION_LEAD
         };
+        let dict = Arc::clone(&self.dict);
         let prev = self.last_committed.as_deref();
+        let mut user_cache = ComposeUserCache::new(self.user_dict.as_deref(), prev);
+        let mut dict_key_buf = String::new();
+        let mut dict_full_cache: std::collections::HashMap<
+            String,
+            (Vec<&crate::dict::WordEntry>, Vec<&crate::dict::WordEntry>),
+        > = std::collections::HashMap::new();
+        let mut dict_exact_cache: std::collections::HashMap<String, Vec<&crate::dict::WordEntry>> =
+            std::collections::HashMap::new();
 
         // 4.1 末段残缺续接（Go addContinuations）：
         // 路径一：末音节本身合法但还能延长（gu→guo、jin→jing、xu→xue），把
@@ -1172,21 +1274,20 @@ impl Session {
                 .iter()
                 .map(|t| t.text.as_str())
                 .collect();
-            let mut hits: Vec<(String, Vec<String>, u32, String)> = self
-                .dict
+            let mut hits: Vec<(String, Vec<String>, u32, String)> = dict
                 .query_continuation(&head, &last.text, 24)
                 .into_iter()
                 .map(|(idx, remain)| {
-                    let e = &self.dict.entries[idx];
+                    let e = &dict.entries[idx];
                     (e.word.clone(), e.syllables.clone(), e.freq, remain)
                 })
                 .collect();
-            if let Some(ref u) = self.user_dict {
+            if let Some(ref ctx) = user_cache.ctx {
                 let head_tokens: Vec<(&str, bool)> = pat[..pat.len() - 1]
                     .iter()
                     .map(|t| (t.text.as_str(), t.is_exact))
                     .collect();
-                for (hit, remain) in u.query_continuation(&head_tokens, &last.text, 8) {
+                for (hit, remain) in ctx.query_continuation(&head_tokens, &last.text, 8) {
                     hits.push((hit.word, hit.syllables, hit.freq.max(0) as u32, remain));
                 }
             }
@@ -1194,12 +1295,7 @@ impl Session {
                 if remain.is_empty() {
                     continue; // 末音节本身已是完整音节：等同精确匹配，由常规路径覆盖
                 }
-                let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                    let (b, f) = u.score(&word, prev);
-                    (b as i32, f)
-                } else {
-                    (0, false)
-                };
+                let (boost, from_user) = user_cache.score(&word);
                 // 补全越长越不确定（gu→guo 远强于 gu→guang），按字符数折价
                 let score = freq as i32 + boost - CONTINUATION_PENALTY * remain.len() as i32;
                 pool.add(
@@ -1214,28 +1310,22 @@ impl Session {
         }
         for (head_syls, frag) in crate::syllable::partial_tail_splits(&match_input) {
             let head: Vec<&str> = head_syls.iter().map(|s| s.as_str()).collect();
-            let mut hits: Vec<(String, Vec<String>, u32, String)> = self
-                .dict
+            let mut hits: Vec<(String, Vec<String>, u32, String)> = dict
                 .query_continuation(&head, &frag, 24)
                 .into_iter()
                 .map(|(idx, remain)| {
-                    let e = &self.dict.entries[idx];
+                    let e = &dict.entries[idx];
                     (e.word.clone(), e.syllables.clone(), e.freq, remain)
                 })
                 .collect();
-            if let Some(ref u) = self.user_dict {
+            if let Some(ref ctx) = user_cache.ctx {
                 let head_tokens: Vec<(&str, bool)> = head.iter().map(|s| (*s, true)).collect();
-                for (hit, remain) in u.query_continuation(&head_tokens, &frag, 8) {
+                for (hit, remain) in ctx.query_continuation(&head_tokens, &frag, 8) {
                     hits.push((hit.word, hit.syllables, hit.freq.max(0) as u32, remain));
                 }
             }
             for (word, syllables_vec, freq, remain) in hits {
-                let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                    let (b, f) = u.score(&word, prev);
-                    (b as i32, f)
-                } else {
-                    (0, false)
-                };
+                let (boost, from_user) = user_cache.score(&word);
                 let score = freq as i32 + boost - CONTINUATION_PENALTY * remain.len() as i32;
                 pool.add(
                     &word,
@@ -1253,13 +1343,8 @@ impl Session {
         // 不做（产物全是假词），输入含显式分隔符时也不做（用户已划分音节，
         // 去掉分隔符按连写匹配会把 b'a 误当成 ba）。
         if !shape.typo_suspicious && !self.input_raw.contains('\'') {
-            for e in self.dict.query_joined_pinyin(&match_input, 20) {
-                let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                    let (b, f) = u.score(&e.word, prev);
-                    (b as i32, f)
-                } else {
-                    (0, false)
-                };
+            for e in dict.query_joined_pinyin(&match_input, 20) {
+                let (boost, from_user) = user_cache.score(&e.word);
                 pool.add(
                     &e.word,
                     e.syllables.join("'"),
@@ -1269,8 +1354,8 @@ impl Session {
                     false,
                 );
             }
-            if let Some(ref u) = self.user_dict {
-                for h in u.query_joined_pinyin(&match_input, USER_PHRASES_UNLIMITED) {
+            if let Some(ref ctx) = user_cache.ctx {
+                for h in ctx.query_joined_pinyin(&match_input, USER_PHRASES_UNLIMITED) {
                     pool.add(
                         &h.word,
                         h.syllables.join("'"),
@@ -1285,11 +1370,10 @@ impl Session {
 
         // 4.2 错拼修正（Go addTypoCorrections）+ 组合候选提升（F）
         add_typo_corrections(
-            &self.dict,
-            self.user_dict.as_deref(),
+            &dict,
+            &mut user_cache,
             &match_input,
             &shape,
-            prev,
             &mut pool,
             &mut typo,
         );
@@ -1357,11 +1441,24 @@ impl Session {
                         }
                         let sub = &tokens[..l];
                         let is_full = l == tokens.len();
-                        let (exacts, prefixes) = if typo_shape {
-                            (self.dict.query_exact(sub, 20), Vec::new())
+                        let (exacts, prefixes): (
+                            &[&crate::dict::WordEntry],
+                            &[&crate::dict::WordEntry],
+                        ) = if typo_shape {
+                            fill_dict_key(&mut dict_key_buf, sub, 20);
+                            if !dict_exact_cache.contains_key(dict_key_buf.as_str()) {
+                                let res = dict.query_exact(sub, 20);
+                                dict_exact_cache.insert(dict_key_buf.clone(), res);
+                            }
+                            (dict_exact_cache[dict_key_buf.as_str()].as_slice(), &[])
                         } else if is_full {
-                            let (e, p) = self.dict.query_exact_and_prefix(sub, exact_limit, 20);
-                            (e, p)
+                            fill_dict_key(&mut dict_key_buf, sub, exact_limit);
+                            if !dict_full_cache.contains_key(dict_key_buf.as_str()) {
+                                let res = dict.query_exact_and_prefix(sub, exact_limit, 20);
+                                dict_full_cache.insert(dict_key_buf.clone(), res);
+                            }
+                            let cached = &dict_full_cache[dict_key_buf.as_str()];
+                            (cached.0.as_slice(), cached.1.as_slice())
                         } else {
                             let first_exact = qp.first().map(|t| t.is_exact).unwrap_or(false);
                             let backoff_limit =
@@ -1370,7 +1467,12 @@ impl Session {
                                 } else {
                                     10
                                 };
-                            (self.dict.query_exact(sub, backoff_limit), Vec::new())
+                            fill_dict_key(&mut dict_key_buf, sub, backoff_limit);
+                            if !dict_exact_cache.contains_key(dict_key_buf.as_str()) {
+                                let res = dict.query_exact(sub, backoff_limit);
+                                dict_exact_cache.insert(dict_key_buf.clone(), res);
+                            }
+                            (dict_exact_cache[dict_key_buf.as_str()].as_slice(), &[])
                         };
                         if is_full {
                             full_exact_len = exacts.len();
@@ -1402,12 +1504,7 @@ impl Session {
                         };
 
                         for e in exacts {
-                            let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                                let (b, f) = u.score(&e.word, prev);
-                                (b as i32, f)
-                            } else {
-                                (0, false)
-                            };
+                            let (boost, from_user) = user_cache.score(&e.word);
                             let rank = if is_full { rank_exact } else { effective_rank };
                             pool.add(
                                 &e.word,
@@ -1423,12 +1520,7 @@ impl Session {
                             if single_seg_single_char {
                                 continue;
                             }
-                            let (boost, from_user) = if let Some(ref u) = self.user_dict {
-                                let (b, f) = u.score(&e.word, prev);
-                                (b as i32, f)
-                            } else {
-                                (0, false)
-                            };
+                            let (boost, from_user) = user_cache.score(&e.word);
                             pool.add(
                                 &e.word,
                                 e.syllables.join("'"),
@@ -1442,14 +1534,14 @@ impl Session {
                         // 口径）：完整 token 查询层查 queryTokens（exact+prefix），
                         // 回退层只补 QueryTokensExact(shorter, 5)。前缀层的整句式
                         // 学习记录必须跳过（候选硬约束：部分输入不得出现整词候选）。
-                        if let Some(ref u) = self.user_dict {
+                        if user_cache.ctx.is_some() {
                             if is_full {
                                 let qp_pairs: Vec<(&str, bool)> =
                                     qp.iter().map(|t| (t.text.as_str(), t.is_exact)).collect();
                                 // 用户词组不设上限（用户明确要求：自己输入过的词组
                                 // 数目不限、全部展示；它们经排序置顶且不受词典封顶约束）。
                                 let (u_exacts, u_prefixes) =
-                                    u.query_tokens(&qp_pairs, USER_PHRASES_UNLIMITED);
+                                    user_cache.query_tokens(&qp_pairs, USER_PHRASES_UNLIMITED);
                                 for hit in u_exacts {
                                     pool.add(
                                         &hit.word,
@@ -1479,7 +1571,7 @@ impl Session {
                                     .iter()
                                     .map(|t| (t.text.as_str(), t.is_exact))
                                     .collect();
-                                for hit in u.query_tokens_exact(&sub_tokens, 5) {
+                                for hit in user_cache.query_tokens_exact(&sub_tokens, 5) {
                                     pool.add(
                                         &hit.word,
                                         hit.syllables.join("'"),
@@ -1505,8 +1597,7 @@ impl Session {
             if let Some(first_pat) = patterns.first() {
                 if first_pat.len() >= 2 {
                     let first = [first_pat[0].text.as_str()];
-                    let singles: Vec<(String, Vec<String>, u32)> = self
-                        .dict
+                    let singles: Vec<(String, Vec<String>, u32)> = dict
                         .query_exact(&first, SINGLE_SYLLABLE_EXACT_LIMIT)
                         .iter()
                         .filter(|e| e.word.chars().count() == 1)
@@ -1523,9 +1614,11 @@ impl Session {
                         );
                     }
                     // 用户词库的首音节单字同样补齐（Go 同口径）
-                    if let Some(ref u) = self.user_dict {
+                    if user_cache.ctx.is_some() {
                         let first_pairs = [(first_pat[0].text.as_str(), first_pat[0].is_exact)];
-                        for hit in u.query_tokens_exact(&first_pairs, SINGLE_SYLLABLE_EXACT_LIMIT) {
+                        for hit in
+                            user_cache.query_tokens_exact(&first_pairs, SINGLE_SYLLABLE_EXACT_LIMIT)
+                        {
                             if hit.word.chars().count() != 1 {
                                 continue;
                             }
@@ -1545,13 +1638,14 @@ impl Session {
 
         // 4.6 已有词组合候选（Go addCompositionCandidates，J 段）
         add_composition_candidates(
-            &self.dict,
-            self.user_dict.as_deref(),
+            &dict,
+            &mut user_cache,
             &shape,
             &patterns,
-            prev,
             &mut pool,
         );
+        // 在写回 self 字段前显式释放 user_cache（及其 UserDict 读锁与 self.last_committed 借用）。
+        drop(user_cache);
 
         // 4.7 纠错层级提升（Go promoteTypoCorrections）：必须在常规/单字收集
         // 完之后、单段过滤之前——它按 rank 反推「纯错拼来源」。
@@ -1780,7 +1874,7 @@ impl Session {
     /// 用途（issue #122）：壳侧按键请求超时后管道断开，daemon 会话随连接消失，
     /// 而壳本地仍持有用户已输入的内容。重连后壳把「上次确认的输入串 + 此后
     /// 按键」一次送回（IPC `input` 的 `base` 参数），不必拆掉组词让用户重打。
-    pub fn restore_input(&mut self, text: &str) -> Composition {
+    fn restore_input_state(&mut self, text: &str) {
         let mut cleaned = String::with_capacity(text.len());
         for c in text.chars() {
             if c.is_ascii_alphabetic() || c == '\'' {
@@ -1802,6 +1896,10 @@ impl Session {
                     .collect();
             }
         }
+    }
+
+    pub fn restore_input(&mut self, text: &str) -> Composition {
+        self.restore_input_state(text);
         self.compose()
     }
 
@@ -1814,7 +1912,13 @@ impl Session {
         base: Option<&str>,
     ) -> Result<Composition, String> {
         if let Some(base) = base {
-            self.restore_input(base);
+            // 双拼 ';' 且当前无 pending 时会直接走 punct(";") 提交候选，
+            // 需要 all_candidates 已就绪；其余路径跳过中间 compose 避免双重计算。
+            if self.shuangpin_decoder.is_some() && text.contains(';') {
+                self.restore_input(base);
+            } else {
+                self.restore_input_state(base);
+            }
         }
         self.input(text, half_width)
     }

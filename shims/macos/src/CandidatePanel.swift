@@ -50,6 +50,8 @@ enum CandidatePanelController {
     /// 页内预选序号（0 起，当前页切片内）。方向键移动、空格确认与高亮 pill
     /// 共用；show()（新输入/翻页/选词刷新）时归零。
     static var selectedIndex = 0
+    /// 上一次实际候选展示的宽度（pt），loading `"..."` 复用避免面板边界跳动。
+    private static var lastRealWidth: CGFloat = 0
 
     /// 已布局（可见）候选数：方向键只在可见项内移动。
     static var itemCount: Int { view?.itemCount ?? 0 }
@@ -100,6 +102,30 @@ enum CandidatePanelController {
         selectedIndex = 0
         v.selectedIndex = 0
         let size = v.layout(candidates: candidates, page: page, pageCount: pageCount)
+        lastRealWidth = size.width
+        p.setContentSize(size)
+        p.setFrameTopLeftPoint(originProvider(size))
+        p.orderFront(nil)
+        return true
+    }
+
+    /// 异步请求在飞时显示单条平静 `"..."` 占位：无高亮、无序号键帽，且延续此前真实宽度。
+    static func showLoading(originProvider: (NSSize) -> NSPoint) -> Bool {
+        let p = ensurePanel()
+        guard let v = view else {
+            logger.error("候选窗 view 创建失败，本次不显示加载占位")
+            return false
+        }
+        v.onSelect = nil
+        v.onPageDown = nil
+        v.onPageUp = nil
+        v.onSettings = { onSettings?() }
+        v.onDelete = nil
+        v.onDismiss = nil
+        selectedIndex = 0
+        v.selectedIndex = 0
+        let preserveW = p.isVisible ? lastRealWidth : 0
+        let size = v.layoutLoading(preserveWidth: preserveW)
         p.setContentSize(size)
         p.setFrameTopLeftPoint(originProvider(size))
         p.orderFront(nil)
@@ -108,6 +134,7 @@ enum CandidatePanelController {
 
     static func hide() {
         panel?.orderOut(nil)
+        lastRealWidth = 0
         selectedIndex = 0
         onSelect = nil
         onPageDown = nil

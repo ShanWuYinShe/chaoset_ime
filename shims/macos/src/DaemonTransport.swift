@@ -28,6 +28,12 @@ final class DaemonTransport {
     private var lastSpawnAt: TimeInterval = 0
     private let spawnCooldown: TimeInterval = 5.0
     private let socketPath: String
+    /// 异步管线开启无界读取（poll 等待数据或 abort 唤醒，不使用 250ms 读超时）。
+    private let unboundedRead: Bool
+    private let abortLock = NSLock()
+    private var aborted = false
+    private var wakeReadFd: Int32 = -1
+    private var wakeWriteFd: Int32 = -1
 
     // 壳侧 IPC 失败日志：macOS 输入法进程没有控制台，daemon 日志也看不到
     // 「壳为什么降级成英文」。用统一日志（Console.app / log show）记录，且
@@ -43,12 +49,45 @@ final class DaemonTransport {
         logger.error("\(text, privacy: .public)")
     }
 
-    init(socketPath: String) {
+    init(socketPath: String, unboundedRead: Bool = false) {
         self.socketPath = socketPath
+        self.unboundedRead = unboundedRead
+        if unboundedRead {
+            var fds: [Int32] = [-1, -1]
+            if Darwin.pipe(&fds) == 0 {
+                for pfd in fds {
+                    let fl = fcntl(pfd, F_GETFL, 0)
+                    _ = fcntl(pfd, F_SETFL, fl | O_NONBLOCK)
+                }
+                wakeReadFd = fds[0]
+                wakeWriteFd = fds[1]
+            }
+        }
     }
 
     deinit {
+        abort()
         disconnect()
+        if wakeReadFd >= 0 { Darwin.close(wakeReadFd) }
+        if wakeWriteFd >= 0 { Darwin.close(wakeWriteFd) }
+    }
+
+    private var isAborted: Bool {
+        abortLock.lock(); defer { abortLock.unlock() }
+        return aborted
+    }
+
+    /// 唤醒正在 poll 等待的阻塞读取（EnginePipeline 析构停机时调用）。
+    func abort() {
+        abortLock.lock()
+        let already = aborted
+        aborted = true
+        let wfd = wakeWriteFd
+        abortLock.unlock()
+        if !already && wfd >= 0 {
+            var b: UInt8 = 1
+            _ = Darwin.write(wfd, &b, 1)
+        }
     }
 
     /// 连接快照（引擎线程查询；fd >= 0 即有连接）。
@@ -105,17 +144,13 @@ final class DaemonTransport {
             return false
         }
 
-        // 收发超时：既要绝不无限阻塞输入法主线程（拖慢 WindowServer 与切换 HUD），
-        // 又要给 daemon 留足正常处理时间。
-        //
-        // 2026-10-26 实测：daemon 单键处理 p50 1.5ms，但 GC 尖峰会让单次调用到
-        // 50–90ms；原先的 100ms 超时与尖峰咬合，客户端偶发拿到 nil，表现为
-        // 「切换后首字母丢失」。daemon 侧已把 GOGC 调到 400 削峰（p99 → 18ms），
-        // 这里再放宽到 250ms 作为安全边界——正常路径远用不到，尖峰不至于误杀，
-        // 而 250ms 仍是用户可感知卡顿的上限，不会出现「输入法卡死」的观感。
+        // 写超时保底 250ms；有界模式保留 250ms 读超时，异步引擎管线启用 unboundedRead 后
+        // 由 poll 等待真实响应或 abort 唤醒，不再因慢请求硬超时断连/丢组词。
         var tv = timeval(tv_sec: 0, tv_usec: 250_000) // 250ms
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        if !unboundedRead {
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -253,20 +288,42 @@ final class DaemonTransport {
         var out = [UInt8](repeating: 0, count: count)
         var off = 0
         while off < count {
+            if isAborted { return nil }
+            if unboundedRead {
+                var pfds: [pollfd] = [pollfd(fd: fd, events: Int16(POLLIN), revents: 0)]
+                if wakeReadFd >= 0 {
+                    pfds.append(pollfd(fd: wakeReadFd, events: Int16(POLLIN), revents: 0))
+                }
+                let pr = pfds.withUnsafeMutableBufferPointer { buf in
+                    poll(buf.baseAddress, nfds_t(buf.count), -1)
+                }
+                if pr < 0 {
+                    if errno == EINTR { continue }
+                    logFailure("IPC poll 失败 errno=\(errno) fd=\(fd)")
+                    return nil
+                }
+                if pfds.count > 1 && (pfds[1].revents & Int16(POLLIN)) != 0 {
+                    return nil
+                }
+                if (pfds[0].revents & Int16(POLLIN | POLLHUP | POLLERR)) == 0 {
+                    continue
+                }
+            }
             let n = out.withUnsafeMutableBufferPointer { buf in
                 Darwin.recv(fd, buf.baseAddress! + off, count - off, 0)
             }
-            if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // **只有「一个字节都没读到」的超时才能保留连接**：已经 recv 到的字节
-                // 若随本次失败被丢弃，帧边界就永久错位（后续每次读取都解析到垃圾）。
-                // off > 0 说明本次 readAll 已消费过字节，只能按「连接已坏」处理。
-                lastReadTimedOut = (off == 0)
-                if off == 0 {
-                    logFailure("IPC recv 超时（干净，保留连接）fd=\(fd)")
-                } else {
-                    logFailure("IPC recv 超时且已部分读取 \(off) 字节（字节流已错位，断开）fd=\(fd)")
+            if n < 0 {
+                if errno == EINTR { continue }
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    // **只有「一个字节都没读到」的超时才能保留连接**（有界模式用；异步管线不设 SO_RCVTIMEO）。
+                    lastReadTimedOut = (off == 0)
+                    if off == 0 {
+                        logFailure("IPC recv 超时（干净，保留连接）fd=\(fd)")
+                    } else {
+                        logFailure("IPC recv 超时且已部分读取 \(off) 字节（字节流已错位，断开）fd=\(fd)")
+                    }
+                    return nil
                 }
-                return nil
             }
             guard n > 0 else {
                 logFailure("IPC recv 失败/EOF errno=\(errno) fd=\(fd)")
@@ -299,6 +356,10 @@ final class DaemonTransport {
 
     func callOnce(method: String, params: [String: Any]) -> [String: Any]? {
         lastFailureWasTransportError = false
+        guard !isAborted else {
+            lastFailureWasTransportError = true
+            return nil
+        }
         guard connectIfNeeded() else {
             lastFailureWasTransportError = true
             return nil

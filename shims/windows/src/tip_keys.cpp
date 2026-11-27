@@ -528,12 +528,13 @@ bool ChaosetTIP::wouldHandle(WPARAM vk) {
     // !@# 等字符与本页没有的序号都放行（与 handleKey 的判定保持一致）。
     // 小键盘 1-9（VK_NUMPAD1-9）同样可选词，且不受 Shift 影响。
     const int digit = digitIndex(vk);
-    // 方向键只在组词态**有候选**时消费（页内预选）；无候选时放行给宿主，
-    // 与「输入法没有理由拦截应用自己的方向键」一致。
+    // 方向键只在组词态**有真实候选**时消费（loading 占位时放行/不移动到 ...）；无候选时放行给宿主。
     return vk == kVkBackspace || vk == kVkEscape || vk == kVkReturn || vk == kVkSpace ||
-           (isArrowKey(vk) && hasCandidates() && candidateWnd_.itemCount() > 0) ||
+           (isArrowKey(vk) && hasCandidates() && !isLoadingCandidates() &&
+            candidateWnd_.itemCount() > 0) ||
            (digit >= 0 && (vk >= kVkNumpad1 || !shiftDown()) &&
-            (digit < static_cast<int>(comp_.candidates.size()) || !pendingOps_.empty()));
+            ((!isLoadingCandidates() && digit < static_cast<int>(comp_.candidates.size())) ||
+             !pendingOps_.empty()));
 }
 
 
@@ -715,7 +716,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     }
 
     // 方向键：上/下 = 翻页，左/右 = 页内预选移动；空格随后确认预选项。
-    if (isArrowKey(vk) && isComposing() && hasCandidates() &&
+    if (isArrowKey(vk) && isComposing() && hasCandidates() && !isLoadingCandidates() &&
         candidateWnd_.itemCount() > 0) {
         if (vk == kVkUp || vk == kVkDown) {
             flipCompositionPage(vk == kVkDown, pic);
@@ -798,7 +799,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     const int composeDigit = digitIndex(vk);
     if (composeDigit >= 0 && (vk >= kVkNumpad1 || !shiftDown())) {
         const int index = composeDigit;
-        if (index < static_cast<int>(comp_.candidates.size())) {
+        if (!isLoadingCandidates() && index < static_cast<int>(comp_.candidates.size())) {
             const chaoset::Candidate pick = comp_.candidates[index];
             chaoset::win::EngineOp op;
             op.kind = chaoset::win::EngineOpKind::kSelectPrefix;
@@ -833,7 +834,7 @@ bool ChaosetTIP::handleKey(WPARAM vk, ITfContext* pic) {
     // 空格：组词中一律消费（用户意图永远是「结束组词」，不应有裸空格漏进文档）
     // ——有候选选页内预选项；残缺组词顶屏原始拼音，与回车等效。
     if (vk == kVkSpace) {
-        if (hasCandidates()) {
+        if (!isLoadingCandidates() && hasCandidates()) {
             int sel = candidateWnd_.selectedIndex();
             if (sel < 0 || sel >= static_cast<int>(comp_.candidates.size())) sel = 0;
             const chaoset::Candidate pick = comp_.candidates[sel];
